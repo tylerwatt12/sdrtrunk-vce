@@ -14,23 +14,50 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.usb4java.LibUsb;
 
 class USBTunerControllerUsbTransferHealthTest
 {
     @Test
+    void pairsUsableBytesWithItsCaptureTickBeforeReadingLaterCallbackMetadata()
+    {
+        USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
+        health.beginStreaming(1_024, 2);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000, 0);
+
+        for(long tick: new long[]{0, -1, Long.MAX_VALUE, Long.MIN_VALUE, Long.MIN_VALUE + 1})
+        {
+            long capturedBytes = health.snapshot().usableBytes();
+            int[] clockReads = {0};
+            USBTunerController.UsbTransferHealthSnapshot snapshot = health.snapshot(null, () ->
+            {
+                clockReads[0]++;
+                // A callback after the paired read must not enter this snapshot's rate numerator.
+                health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_001, tick);
+                return tick;
+            });
+
+            assertEquals(1, clockReads[0]);
+            assertEquals(tick, snapshot.observedAtNanoseconds());
+            assertEquals(capturedBytes, snapshot.usableBytes());
+            assertEquals(capturedBytes + 1_024, health.snapshot().usableBytes());
+        }
+    }
+
+    @Test
     void recordsEachSupportedStatusAndUnexpectedStatuses()
     {
         USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
         health.beginStreaming(1_024, 2);
 
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000);
-        health.recordTransfer(LibUsb.TRANSFER_STALL, 1_024, 1_010);
-        health.recordTransfer(LibUsb.TRANSFER_TIMED_OUT, 1_024, 1_020);
-        health.recordTransfer(LibUsb.TRANSFER_ERROR, 1_024, 1_030);
-        health.recordTransfer(LibUsb.TRANSFER_CANCELLED, 1_024, 1_040);
-        health.recordTransfer(LibUsb.TRANSFER_NO_DEVICE, 1_024, 1_050);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000, TimeUnit.MILLISECONDS.toNanos(1_000));
+        health.recordTransfer(LibUsb.TRANSFER_STALL, 1_024, 1_010, TimeUnit.MILLISECONDS.toNanos(1_010));
+        health.recordTransfer(LibUsb.TRANSFER_TIMED_OUT, 1_024, 1_020, TimeUnit.MILLISECONDS.toNanos(1_020));
+        health.recordTransfer(LibUsb.TRANSFER_ERROR, 1_024, 1_030, TimeUnit.MILLISECONDS.toNanos(1_030));
+        health.recordTransfer(LibUsb.TRANSFER_CANCELLED, 1_024, 1_040, TimeUnit.MILLISECONDS.toNanos(1_040));
+        health.recordTransfer(LibUsb.TRANSFER_NO_DEVICE, 1_024, 1_050, TimeUnit.MILLISECONDS.toNanos(1_050));
 
         USBTunerController.UsbTransferHealthSnapshot snapshot = health.snapshot();
         assertEquals(6, snapshot.transferCount());
@@ -69,8 +96,8 @@ class USBTunerControllerUsbTransferHealthTest
         USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
         health.beginStreaming(1_024, 2);
 
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_001, 1_000);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 0, 1_010);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_001, 1_000, TimeUnit.MILLISECONDS.toNanos(1_000));
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 0, 1_010, TimeUnit.MILLISECONDS.toNanos(1_010));
 
         USBTunerController.UsbTransferHealthSnapshot snapshot = health.snapshot();
         assertEquals(2, snapshot.completedTransferCount());
@@ -99,9 +126,9 @@ class USBTunerControllerUsbTransferHealthTest
     {
         USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
         health.beginStreaming(1_024, 2);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_012);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_032);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000, TimeUnit.MILLISECONDS.toNanos(1_000));
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_012, TimeUnit.MILLISECONDS.toNanos(1_012));
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_032, TimeUnit.MILLISECONDS.toNanos(1_032));
         health.recordCallbackToResubmitDuration(20_000);
         health.recordCallbackToResubmitDuration(10_000);
 
@@ -124,7 +151,7 @@ class USBTunerControllerUsbTransferHealthTest
         assertEquals(0, health.snapshot().lastCallbackToResubmitDurationNanoseconds());
 
         health.beginStreaming(1_024, 2);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 100_000);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 100_000, TimeUnit.MILLISECONDS.toNanos(100_000));
 
         USBTunerController.UsbTransferHealthSnapshot secondSession = health.snapshot();
         assertTrue(secondSession.streaming());
@@ -133,6 +160,7 @@ class USBTunerControllerUsbTransferHealthTest
         assertEquals(100_000, secondSession.lastTransferTimestampMilliseconds());
         assertEquals(0, secondSession.lastInterTransferGapMilliseconds());
         assertEquals(20, secondSession.worstInterTransferGapMilliseconds());
+        assertEquals(0, secondSession.longTransferGapCount(), "stopped time is excluded after the monotonic baseline resets");
         assertEquals(20_000, secondSession.worstCallbackToResubmitDurationNanoseconds());
         assertEquals(2, secondSession.callbackCount());
         assertEquals(4, secondSession.transferCount(), "cumulative transfer counters survive stream restarts");
@@ -205,9 +233,9 @@ class USBTunerControllerUsbTransferHealthTest
     {
         USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
         health.beginStreaming(1_024, 2);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_250);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_260);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000, TimeUnit.MILLISECONDS.toNanos(1_000));
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_250, TimeUnit.MILLISECONDS.toNanos(1_250));
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_260, TimeUnit.MILLISECONDS.toNanos(1_260));
 
         USBTunerController.UsbTransferHealthSnapshot snapshot = health.snapshot();
         assertEquals(10, snapshot.lastInterTransferGapMilliseconds());
@@ -216,13 +244,81 @@ class USBTunerControllerUsbTransferHealthTest
     }
 
     @Test
+    void wallClockCorrectionsDoNotHideOrInventElapsedTransferGaps()
+    {
+        USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
+        health.beginStreaming(1_024, 2);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000, 0);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 3_358, 12_000_000);
+
+        USBTunerController.UsbTransferHealthSnapshot forwardCorrection = health.snapshot();
+        assertEquals(1_000, forwardCorrection.firstTransferTimestampMilliseconds());
+        assertEquals(3_358, forwardCorrection.lastTransferTimestampMilliseconds());
+        assertEquals(12, forwardCorrection.lastInterTransferGapMilliseconds());
+        assertEquals(0, forwardCorrection.longTransferGapCount());
+
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 990, 32_000_000);
+        USBTunerController.UsbTransferHealthSnapshot backwardCorrection = health.snapshot();
+        assertEquals(990, backwardCorrection.lastTransferTimestampMilliseconds());
+        assertEquals(20, backwardCorrection.lastInterTransferGapMilliseconds());
+        assertEquals(20, backwardCorrection.worstInterTransferGapMilliseconds());
+        assertEquals(0, backwardCorrection.longTransferGapCount());
+
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 990, 232_000_000);
+        USBTunerController.UsbTransferHealthSnapshot realGap = health.snapshot();
+        assertEquals(1_000, realGap.firstTransferTimestampMilliseconds());
+        assertEquals(990, realGap.lastTransferTimestampMilliseconds());
+        assertEquals(200, realGap.lastInterTransferGapMilliseconds());
+        assertEquals(200, realGap.worstInterTransferGapMilliseconds());
+        assertEquals(1, realGap.longTransferGapCount(), "the unchanged 200ms threshold remains inclusive");
+    }
+
+    @Test
+    void elapsedGapsAcceptNegativeZeroAndWrappedNanoTimeOrigins()
+    {
+        for(long origin: new long[]{Long.MIN_VALUE, -1_000_000_000, -1, 0, Long.MAX_VALUE - 100_000_000})
+        {
+            USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
+            health.beginStreaming(1_024, 2);
+            health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 0, origin);
+            health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1, origin + 199_999_999);
+            assertEquals(199, health.snapshot().lastInterTransferGapMilliseconds(), "origin=" + origin);
+            assertEquals(0, health.snapshot().longTransferGapCount(), "origin=" + origin);
+
+            health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 2, origin + 399_999_999);
+            USBTunerController.UsbTransferHealthSnapshot snapshot = health.snapshot();
+            assertEquals(0, snapshot.firstTransferTimestampMilliseconds(), "wall metadata keeps the first sample");
+            assertEquals(2, snapshot.lastTransferTimestampMilliseconds());
+            assertEquals(200, snapshot.lastInterTransferGapMilliseconds(), "origin=" + origin);
+            assertEquals(200, snapshot.worstInterTransferGapMilliseconds(), "origin=" + origin);
+            assertEquals(1, snapshot.longTransferGapCount(), "origin=" + origin);
+        }
+    }
+
+    @Test
+    void repeatedOrOutOfOrderMonotonicSamplesCannotCreateLongGaps()
+    {
+        USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
+        health.beginStreaming(1_024, 2);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 1_000, 100);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 2_000, 100);
+        assertEquals(0, health.snapshot().lastInterTransferGapMilliseconds());
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 3_000, 90);
+        assertEquals(0, health.snapshot().lastInterTransferGapMilliseconds());
+        assertEquals(0, health.snapshot().longTransferGapCount());
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_024, 3_000, 200_000_090);
+        assertEquals(200, health.snapshot().lastInterTransferGapMilliseconds());
+        assertEquals(1, health.snapshot().longTransferGapCount());
+    }
+
+    @Test
     void invalidLengthsAreBoundedForLossAndAlignmentAccounting()
     {
         USBTunerController.UsbTransferHealth health = new USBTunerController.UsbTransferHealth();
         health.beginStreaming(1_024, 4);
 
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, -1, 1_000);
-        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_025, 1_010);
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, -1, 1_000, TimeUnit.MILLISECONDS.toNanos(1_000));
+        health.recordTransfer(LibUsb.TRANSFER_COMPLETED, 1_025, 1_010, TimeUnit.MILLISECONDS.toNanos(1_010));
 
         USBTunerController.UsbTransferHealthSnapshot snapshot = health.snapshot();
         assertEquals(2_048, snapshot.expectedBytes());

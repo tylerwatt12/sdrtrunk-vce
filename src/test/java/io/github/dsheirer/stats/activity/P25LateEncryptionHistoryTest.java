@@ -23,7 +23,6 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -50,10 +49,7 @@ class P25LateEncryptionHistoryTest
             long start = System.currentTimeMillis();
             var initial = call(start, decoder, "encrypted", false, true);
             var confirmed = call(start, decoder, "encrypted", true, true);
-            AtomicBoolean historyInvalidated = new AtomicBoolean();
             var writer = new ReceiverActivityWriter(database, 30, true, 16, 16, 0);
-            writer.setLiveActivityObserver(() -> false,
-                changed -> historyInvalidated.compareAndSet(false, changed));
             writer.start();
             writer.enqueue(mMapper.mapCallStart(initial));
             writer.enqueue(mMapper.mapCallStart(call(start, decoder, "clear", false, false)));
@@ -78,7 +74,6 @@ class P25LateEncryptionHistoryTest
                 assertEquals(1, scalar(connection,
                     "SELECT sum(logical_call_count) FROM trunked_logical_call_bucket"));
                 assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
-                assertTrue(historyInvalidated.get(), "a committed detail change invalidates cached history");
             }
         }
     }

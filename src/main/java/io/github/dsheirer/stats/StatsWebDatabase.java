@@ -11,10 +11,13 @@
 
 package io.github.dsheirer.stats;
 
+import static io.github.dsheirer.stats.StatsSqlRows.forEachRow;
 import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
 import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
@@ -61,8 +64,30 @@ class StatsWebDatabase
     private static final Logger mLog = LoggerFactory.getLogger(StatsWebDatabase.class);
     private static final long HOUR_MILLISECONDS = 3_600_000L;
     private static final long DAY_MILLISECONDS = 24L * HOUR_MILLISECONDS;
+    private static final int MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT = 5_000;
     private static final int MAX_ACTIVITY_ACTION_FILTERS = ReceiverActivityFilterCatalog.actions().size();
     private static final int MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS = 1_000;
+    private static final Set<String> MAIN_QUALITY_FIELDS = Set.of(
+        "configuration_id", "channel_kind", "name", "site_name", "system_name", "system_name_source",
+        "protocol", "signal_dbfs", "average_signal_dbfs", "decode_health_pct", "last_observed_ms",
+        "remote_origin", "radio_system_key", "wacn", "system_id", "rfss", "site_id", "ran");
+    private static final Set<String> MAIN_SYSTEM_FIELDS = Set.of(
+        "system_name", "system_name_source", "radio_system_key", "entity_ref", "protocol", "protocol_label",
+        "wacn", "system_id", "network_id", "model", "location_category", "alias_lists", "children");
+    private static final Set<String> MAIN_CHANNEL_FIELDS = Set.of(
+        "configuration_id", "name", "site_name", "system_name", "system_name_source", "protocol",
+        "protocol_label", "alias_list_id", "alias_list_name", "processing_state", "frequencies_hz",
+        "display_frequency_hz", "display_frequency_source", "remote_origin", "radio_system_key");
+    static final String DASHBOARD_LAST_SEEN_SQL = """
+        SELECT MAX(last_seen_ms) FROM (
+            SELECT MAX(last_seen_ms) AS last_seen_ms FROM p25_site_snapshot
+            UNION ALL SELECT MAX(last_seen_ms) FROM radio_system
+            UNION ALL SELECT MAX(last_seen_ms) FROM radio_system_identity_summary
+            UNION ALL SELECT MAX(last_seen_ms) FROM p25_site_frequency_band_summary
+            UNION ALL SELECT MAX(last_seen_ms) FROM conventional_activity_summary
+            UNION ALL SELECT MAX(last_seen_ms) FROM trunked_site_snapshot
+        )
+        """;
 
     /** Optional names are projected on the HTTP/request worker, never on decoder or audio ingress callbacks. */
     Object enrichSystemNames(Object value)
@@ -99,7 +124,7 @@ class StatsWebDatabase
             return Map.of("profiles", profiles, "known_systems", List.of());
         }
     }
-    private static final int MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT = 5_000;
+    private static final int MAX_ACTIVITY_SOURCE_LOOKUP_IDS = 5_000;
     private static final long CURRENT_STATE_WINDOW_MILLISECONDS = 6L * HOUR_MILLISECONDS;
     private static final long QUALITY_BUCKET_MILLISECONDS = 10_000L;
     private static final int QUALITY_DEFAULT_POINTS = 240;
@@ -113,8 +138,6 @@ class StatsWebDatabase
     static final int MAXIMUM_PATCH_GROUP_PAGE = 100;
     static final int MAXIMUM_PATCH_MEMBERS_PER_GROUP = 32;
     static final int MAXIMUM_PATCH_MEMBER_ROWS = 512;
-    static final int MAXIMUM_RADIO_SYSTEM_DIRECTORY_WITH_CHANNEL_PREVIEW = 25;
-    static final int MAXIMUM_RADIO_SYSTEM_DIRECTORY_CHANNEL_PREVIEW = 25;
     private static final int IDENTITY_ROLE_DESTINATION = ReceiverActivitySchema.IDENTITY_ROLE_DESTINATION;
     private static final int IDENTITY_ROLE_SOURCE = ReceiverActivitySchema.IDENTITY_ROLE_SOURCE;
     private static final int IDENTITY_KIND_CHANNEL_OR_UNKNOWN =
@@ -362,7 +385,7 @@ class StatsWebDatabase
             activity.resolved_site AS site_id,
             source_directory.last_talker_alias AS source_talker_alias
         """;
-    private static final String ACTIVITY_RELATED_JOINS_SQL = """
+    static final String ACTIVITY_RELATED_JOINS_SQL = """
         LEFT JOIN configuration_channel config ON config.configuration_id = activity.configuration_id
         LEFT JOIN radio_system system ON system.id = activity.radio_system_id
         LEFT JOIN radio_system_identity_summary source_directory
@@ -379,7 +402,7 @@ class StatsWebDatabase
           ON target_canonical.id = target_directory.p25_subscriber_identity_id
         """;
     /** Only graph identity, label and affiliation evidence; internal columns support the shared Alias resolver. */
-    private static final String P25_VISUALIZER_PROJECTION_SQL = """
+    static final String P25_ACTIVITY_PROJECTION_SQL = """
         SELECT activity.id, activity.configuration_id, activity.observed_at_ms,
             activity.channel_kind, activity.protocol, activity.action,
             activity.source_observed_local_id AS source_radio_id,
@@ -1336,9 +1359,13 @@ class StatsWebDatabase
             Long.toString(aliasListId))));
     }
 
+    private final java.util.concurrent.atomic.AtomicLong mAffiliationPresentationGeneration = new java.util.concurrent.atomic.AtomicLong();
+
+    long affiliationPresentationGeneration() { return mAffiliationPresentationGeneration.get(); }
+
     void invalidateAliasActivitySnapshots()
     {
-        mAliasCatalog.invalidateActivitySnapshots();
+        mAffiliationPresentationGeneration.incrementAndGet();
     }
 
     List<Long> matchingAliasIds(StatsRequest request)
@@ -1370,7 +1397,7 @@ class StatsWebDatabase
         return observedGroupIdentities(aliasListId, request, queryObserver, false);
     }
 
-    private Map<String,Object> observedGroupIdentities(long aliasListId, StatsRequest request,
+    Map<String,Object> observedGroupIdentities(long aliasListId, StatsRequest request,
         Consumer<ObservedGroupIdentityQuery> queryObserver, boolean onlyUnassigned)
     {
         if(aliasListId <= 0)
@@ -1600,8 +1627,7 @@ class StatsWebDatabase
                     JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
                     WHERE %d = 3 AND config.alias_list_id = ?
                       AND config.channel_kind = 'CONVENTIONAL' AND config.decoder_type = 'DMR'
-                ) SELECT observed.*, count(*) OVER () AS result_total_count
-                FROM observed WHERE 1 = 1
+                )
                 """.formatted(StatsSystemNameResolver.displayNameSql("system"), protocolCode, protocolCode, IDENTITY_KEY_SQL.formatted("identity"),
                     IDENTITY_KEY_SQL.formatted("identity"), protocolCode, protocolCode,
                     protocolCode, protocolCode, decoderPredicate, protocolCode));
@@ -1612,7 +1638,21 @@ class StatsWebDatabase
                 aliasListId, aliasListName, family, family, aliasListId, aliasListId,
                 aliasListId, aliasListName, family, aliasListId, aliasListId));
 
-            if(!includeExact)
+            if(onlyUnassigned)
+            {
+                String protocols = "P25".equals(family) ? "('APCO25', 'APCO25_PHASE2')" : "('" + family + "')";
+                sql.append("""
+                    , unassigned_ranges AS MATERIALIZED (
+                        SELECT DISTINCT min_value, max_value FROM alias
+                        WHERE alias_list_id = ? AND matcher_type = 'TALKGROUP_RANGE'
+                          AND protocol IN %s AND min_value <= max_value
+                    )
+                    """.formatted(protocols));
+                parameters.add(aliasListId);
+            }
+            sql.append(" SELECT observed.*, count(*) OVER () AS result_total_count FROM observed WHERE 1 = 1");
+
+            if(!includeExact || onlyUnassigned)
             {
                 sql.append(" AND has_exact_definition = 0");
             }
@@ -1621,16 +1661,8 @@ class StatsWebDatabase
             {
                 sql.append("""
                      AND NOT EXISTS (
-                       SELECT 1 FROM alias definition
-                       WHERE definition.alias_list_id = observed.alias_list_id
-                         AND ((definition.matcher_type = 'TALKGROUP'
-                               AND definition.value = observed.group_identity_id)
-                           OR (definition.matcher_type = 'TALKGROUP_RANGE'
-                               AND observed.group_identity_id BETWEEN definition.min_value AND definition.max_value))
-                         AND ((observed.protocol_code = 1
-                               AND definition.protocol IN ('APCO25', 'APCO25_PHASE2'))
-                           OR (observed.protocol_code = 3 AND definition.protocol = 'DMR')
-                           OR (observed.protocol_code = 4 AND definition.protocol = 'NXDN')))
+                       SELECT 1 FROM unassigned_ranges coverage
+                       WHERE observed.group_identity_id BETWEEN coverage.min_value AND coverage.max_value)
                     """);
             }
 
@@ -2041,23 +2073,7 @@ class StatsWebDatabase
     {
         return read(connection -> {
             Map<String,Object> dashboard = new LinkedHashMap<>();
-            dashboard.put("counts", Map.of(
-                "radio_systems", scalarLong(connection, "SELECT COUNT(*) FROM radio_system"),
-                "trunked_channels", scalarLong(connection,
-                    "SELECT COUNT(*) FROM configuration_channel WHERE channel_kind = 'TRUNKED'"),
-                "conventional_channels", scalarLong(connection,
-                    "SELECT COUNT(*) FROM configuration_channel WHERE channel_kind = 'CONVENTIONAL'")
-            ));
-            dashboard.put("last_seen_ms", scalarLong(connection, """
-                SELECT MAX(last_seen_ms) FROM (
-                    SELECT last_seen_ms FROM p25_site_snapshot
-                    UNION ALL SELECT last_seen_ms FROM radio_system
-                    UNION ALL SELECT last_seen_ms FROM radio_system_identity_summary
-                    UNION ALL SELECT last_seen_ms FROM p25_site_frequency_band_summary
-                    UNION ALL SELECT last_seen_ms FROM conventional_activity_summary
-                    UNION ALL SELECT last_seen_ms FROM trunked_site_snapshot
-                )
-                """));
+            dashboard.put("last_seen_ms", scalarLong(connection, DASHBOARD_LAST_SEEN_SQL));
 
             long now = System.currentTimeMillis();
             long firstIdentityHour = Math.floorDiv(now, HOUR_MILLISECONDS) * HOUR_MILLISECONDS -
@@ -2066,11 +2082,117 @@ class StatsWebDatabase
                 firstIdentityHour, now));
             dashboard.put("top_sources", topCallIdentities(connection, IDENTITY_ROLE_SOURCE,
                 firstIdentityHour, now));
-            dashboard.put("recent_channels", recentChannels(connection));
             dashboard.put("call_activity", callActivity(connection));
             dashboard.put("source_activity_24h", sourceActivity24Hours(connection));
             return dashboard;
         });
+    }
+
+    /** Main needs current quality and configured navigation, never identity rankings or activity history. */
+    Map<String,Object> dashboardMain(List<ChannelAdministrationService.ChannelSummary> currentChannels)
+    {
+        return readSnapshot(connection -> {
+            Map<String,Map<String,Object>> configured = new LinkedHashMap<>();
+            queryRows(connection, """
+                SELECT config.configuration_id, system.system_key AS radio_system_key,
+                    system.protocol_code
+                FROM configuration_channel config
+                LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
+                LEFT JOIN radio_system system ON system.id = channel.radio_system_id
+                """).forEach(channel -> configured.put(String.valueOf(channel.get("configuration_id")), channel));
+            Map<String,Map<String,Object>> byConfiguration = new LinkedHashMap<>();
+            Map<String,Map<String,Object>> systems = new LinkedHashMap<>();
+            Map<String,List<Map<String,Object>>> children = new LinkedHashMap<>();
+            List<Map<String,Object>> conventional = new ArrayList<>();
+
+            for(var channel: currentChannels)
+            {
+                Map<String,Object> row = new LinkedHashMap<>();
+                row.put("configuration_id", channel.configurationId());
+                row.put("name", channel.name());
+                row.put("system_name", channel.system());
+                row.put("site_name", channel.site());
+                row.put("protocol_label", channel.protocolLabel());
+                row.put("channel_kind", channel.channelKind());
+                row.put("frequencies_hz", channel.frequenciesHz());
+                row.put("display_frequency_hz", channel.displayFrequencyHz());
+                row.put("display_frequency_source", channel.displayFrequencySource());
+                row.put("processing_state", channel.processingState().name());
+                row.put("alias_list_id", channel.aliasListId());
+                row.put("alias_list_name", channel.aliasListName());
+                if(channel.remoteOrigin() != null) row.put("remote_origin", channel.remoteOrigin());
+                byConfiguration.put(channel.configurationId(), row);
+                if(!"TRUNKED".equals(channel.channelKind()))
+                {
+                    if("CONVENTIONAL".equals(channel.channelKind())) conventional.add(row);
+                    continue;
+                }
+
+                var owner = configured.get(channel.configurationId());
+                String systemKey = owner != null ? (String)owner.get("radio_system_key") : null;
+                String key = systemKey != null ? systemKey : channel.protocolId() + ":" +
+                    (channel.system() != null && !channel.system().isBlank() ?
+                        channel.system().strip().toLowerCase(Locale.ROOT) : channel.configurationId());
+                systems.computeIfAbsent(key, ignored -> {
+                    Map<String,Object> group = new LinkedHashMap<>();
+                    group.put("system_name", channel.system());
+                    group.put("protocol_label", owner != null && owner.get("protocol_code") instanceof Number code ?
+                        StatsApiProtocol.fromCode(code.intValue()).wireName().toUpperCase(Locale.ROOT) :
+                        channel.protocolLabel());
+                    if(systemKey != null)
+                    {
+                        group.put("radio_system_key", systemKey);
+                        WebEntityRef.put(group, WebEntityRef.radioSystem(systemKey));
+                    }
+                    return group;
+                });
+                children.computeIfAbsent(key, ignored -> new ArrayList<>()).add(row);
+            }
+
+            systems.forEach((key, system) -> {
+                List<Map<String,Object>> sites = children.get(key);
+                system.put("children", sites);
+                Map<Object,Map<String,Object>> aliases = new LinkedHashMap<>();
+                sites.forEach(site -> {
+                    if(site.get("alias_list_name") != null)
+                        aliases.putIfAbsent(site.get("alias_list_id"), Map.of("id", site.get("alias_list_id"),
+                            "name", site.get("alias_list_name")));
+                });
+                system.put("alias_lists", List.copyOf(aliases.values()));
+            });
+
+            List<Map<String,Object>> quality = querySignalHealthExport(connection, Math.max(1, configured.size()))
+                .stream().filter(row -> "TRUNKED".equals(row.get("channel_kind"))).toList();
+            quality.forEach(row -> {
+                Map<String,Object> current = byConfiguration.get(row.get("configuration_id"));
+                if(current != null && current.containsKey("remote_origin"))
+                    row.put("remote_origin", current.get("remote_origin"));
+            });
+            Map<String,Object> response = new LinkedHashMap<>();
+            response.put("quality", Map.of("current", quality));
+            response.put("directory", Map.of("systems", List.copyOf(systems.values()), "channels", conventional));
+            return dashboardMainFields(new StatsSystemNameResolver(connection).enrichMap(response));
+        });
+    }
+
+    /** Preserve shared friendly-name resolution, then send only the Main cards' fields. */
+    @SuppressWarnings("unchecked")
+    private static Map<String,Object> dashboardMainFields(Map<String,Object> response)
+    {
+        Map<String,Object> quality = (Map<String,Object>)response.get("quality");
+        ((List<Map<String,Object>>)quality.get("current")).forEach(row -> row.keySet().retainAll(MAIN_QUALITY_FIELDS));
+        Map<String,Object> directory = (Map<String,Object>)response.get("directory");
+        ((List<Map<String,Object>>)directory.get("systems")).forEach(system -> {
+            system.keySet().retainAll(MAIN_SYSTEM_FIELDS);
+            ((List<Map<String,Object>>)system.get("children"))
+                .forEach(row -> row.keySet().retainAll(MAIN_CHANNEL_FIELDS));
+        });
+        ((List<Map<String,Object>>)directory.get("channels")).forEach(row -> {
+            row.keySet().retainAll(MAIN_CHANNEL_FIELDS);
+            row.remove("display_frequency_hz");
+            row.remove("display_frequency_source");
+        });
+        return response;
     }
 
     /**
@@ -2294,8 +2416,7 @@ class StatsWebDatabase
 
     Map<String,Object> radioSystemDirectory(StatsRequest request)
     {
-        boolean includeChannelPreview = request.booleanValue("include_channel_preview", false);
-        int limit = includeChannelPreview ? request.limit(MAXIMUM_RADIO_SYSTEM_DIRECTORY_WITH_CHANNEL_PREVIEW) : request.limit();
+        int limit = request.limit();
         int offset = request.offset();
         String search = request.search();
 
@@ -2326,12 +2447,6 @@ class StatsWebDatabase
             }
 
             attachRadioSystemAliasLists(connection, pageRows);
-
-            if(includeChannelPreview)
-            {
-                attachRadioSystemChannelPreviews(connection, pageRows, search);
-                response.put("channel_preview_limit_per_system", MAXIMUM_RADIO_SYSTEM_DIRECTORY_CHANNEL_PREVIEW);
-            }
 
             return response;
         });
@@ -2469,7 +2584,7 @@ class StatsWebDatabase
             WHERE system.system_key = ? AND summary.identity_kind_code IN (1, 3)
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "TALKGROUP", false);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "TALKGROUP", false);
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
@@ -2516,7 +2631,7 @@ class StatsWebDatabase
                 IDENTITY_KEY_SQL.formatted("summary"),
                 GROUP_IDENTITY_SIGNALING_COUNT_SQL));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "TALKGROUP", false);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "TALKGROUP", false);
         sql.append(" ORDER BY ").append(order(request, GROUP_IDENTITY_SORT_COLUMNS, "logical_call_count"))
             .append(", summary.identity_kind_code, summary.identity_id LIMIT ? OFFSET ?");
         addLimitOffset(parameters, limit, offset);
@@ -3206,7 +3321,7 @@ class StatsWebDatabase
             WHERE system.system_key = ? AND summary.identity_kind_code = 2
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "RADIO_ID", true);
         addRadioFilters(sql, parameters, request, "affiliation.radio_identity_id IS NOT NULL");
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
@@ -3253,7 +3368,7 @@ class StatsWebDatabase
             IDENTITY_KEY_SQL.formatted("affiliated_group"), radioPresenceSelect(),
             radioPresenceJoins("summary.id")));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "RADIO_ID", true);
         addRadioFilters(sql, parameters, request, "affiliation.radio_identity_id IS NOT NULL");
         sql.append(" ORDER BY ").append(order(request, RADIO_SORT_COLUMNS, "logical_call_count"))
             .append(", summary.identity_id LIMIT ? OFFSET ?");
@@ -3462,7 +3577,7 @@ class StatsWebDatabase
             TRUNKED_IDENTITY_DIRECTORY_PROJECTION_SQL));
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
 
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "RADIO_ID", true);
 
         sql.append(" ORDER BY ").append(order(request, TALKER_ALIAS_SORT_COLUMNS, "talker_alias"))
             .append(", summary.identity_id LIMIT ? OFFSET ?");
@@ -3491,7 +3606,7 @@ class StatsWebDatabase
               AND trim(summary.last_talker_alias) <> ''
             """);
         List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        addRadioSystemIdentitySearch(sql, parameters, request.search(), "RADIO_ID", true);
+        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "RADIO_ID", true);
         return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
@@ -4917,11 +5032,10 @@ class StatsWebDatabase
             ActivityAction action = dashboardActivityDefinitions(connection).stream()
                 .filter(candidate -> candidate.name().equalsIgnoreCase(requestedAction)).findFirst().orElseThrow(
                     () -> new StatsApiException(400, "invalid_parameter", "action is not supported", "action"));
-            long actionObservationCount = activityActionTotal(connection, action, window.fromMilliseconds(),
-                window.untilMilliseconds());
             List<Map<String,Object>> queryRows = dashboardActivityRadioRows(connection, action,
                 window.fromMilliseconds(), window.untilMilliseconds(), limit, offset);
             Map<String,Object> totals = queryRows.isEmpty() ? Map.of() : queryRows.getFirst();
+            long actionObservationCount = number(totals.get("action_observation_count"));
             long retainedObservationCount = number(totals.get("retained_observation_count"));
             long identifiedObservationCount = number(totals.get("identified_observation_count"));
             long totalCount = number(totals.get("total_count"));
@@ -4934,6 +5048,7 @@ class StatsWebDatabase
                     continue;
                 }
 
+                row.remove("action_observation_count");
                 row.remove("retained_observation_count");
                 row.remove("identified_observation_count");
                 row.remove("total_count");
@@ -5001,27 +5116,6 @@ class StatsWebDatabase
         return result;
     }
 
-    private static long activityActionTotal(Connection connection, ActivityAction action, long fromMilliseconds,
-                                            long untilMilliseconds) throws SQLException
-    {
-        String sql = """
-            SELECT COALESCE(SUM(action_count), 0)
-            FROM (
-                SELECT COALESCE(SUM(bucket.%1$s), 0) AS action_count
-                FROM trunked_signaling_activity_bucket AS bucket
-                    INDEXED BY idx_trunked_signaling_activity_time
-                WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
-                UNION ALL
-                SELECT COALESCE(SUM(bucket.%1$s), 0) AS action_count
-                FROM conventional_activity_bucket AS bucket
-                    INDEXED BY idx_conventional_bucket_dashboard_time
-                WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
-            )
-            """.formatted(action.column());
-        return scalarLong(connection, sql, fromMilliseconds, untilMilliseconds,
-            fromMilliseconds, untilMilliseconds);
-    }
-
     private static List<Map<String,Object>> dashboardActivityRadioRows(Connection connection, ActivityAction action,
                                                                        long fromMilliseconds,
                                                                        long untilMilliseconds, int limit,
@@ -5029,42 +5123,37 @@ class StatsWebDatabase
     {
         String sql = ("WITH action_slices AS MATERIALIZED (" +
             activityActionSlicesSql(action.column()) + """
+            ), observations AS (
+                SELECT CASE WHEN config.channel_kind = 'TRUNKED' THEN event.radio_system_id END
+                        AS owner_system_id,
+                    CASE WHEN config.channel_kind = 'CONVENTIONAL' THEN event.channel_id END
+                        AS owner_channel_id,
+                    CASE WHEN config.channel_kind = 'TRUNKED' THEN event.source_identity_summary_id END
+                        AS source_identity_id,
+                    CASE WHEN config.channel_kind = 'CONVENTIONAL' THEN event.source_observed_local_id END
+                        AS source_local_id,
+                    event.observed_at_ms
+                FROM action_slices AS slice
+                CROSS JOIN receiver_activity_event AS event
+                    INDEXED BY idx_receiver_activity_event_channel_action_time
+                JOIN receiver_channel channel ON channel.id = event.channel_id
+                JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
+                WHERE event.channel_id = slice.channel_id
+                  AND event.observed_at_ms >= slice.bucket_start_ms
+                  AND event.observed_at_ms < slice.bucket_start_ms + ?
+                  AND event.action_code = ?
+                  AND config.channel_kind IN ('TRUNKED', 'CONVENTIONAL')
             ), grouped AS MATERIALIZED (
-                SELECT event.radio_system_id, NULL AS fallback_channel_id,
-                    NULL AS representative_channel_id, event.source_identity_summary_id,
-                    NULL AS observed_local_id, COUNT(*) AS observation_count,
-                    MAX(event.observed_at_ms) AS last_seen_ms
-                FROM action_slices AS slice
-                CROSS JOIN receiver_activity_event AS event
-                    INDEXED BY idx_receiver_activity_event_channel_action_time
-                JOIN receiver_channel channel ON channel.id = event.channel_id
-                JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
-                WHERE event.channel_id = slice.channel_id
-                  AND event.observed_at_ms >= slice.bucket_start_ms
-                  AND event.observed_at_ms < slice.bucket_start_ms + ?
-                  AND event.action_code = ?
-                  AND config.channel_kind = 'TRUNKED'
-                GROUP BY event.radio_system_id, event.source_identity_summary_id
-
-                UNION ALL
-
-                SELECT NULL AS radio_system_id, event.channel_id AS fallback_channel_id,
-                    event.channel_id AS representative_channel_id, NULL AS source_identity_summary_id,
-                    event.source_observed_local_id AS observed_local_id,
-                    COUNT(*) AS observation_count, MAX(event.observed_at_ms) AS last_seen_ms
-                FROM action_slices AS slice
-                CROSS JOIN receiver_activity_event AS event
-                    INDEXED BY idx_receiver_activity_event_channel_action_time
-                JOIN receiver_channel channel ON channel.id = event.channel_id
-                JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
-                WHERE event.channel_id = slice.channel_id
-                  AND event.observed_at_ms >= slice.bucket_start_ms
-                  AND event.observed_at_ms < slice.bucket_start_ms + ?
-                  AND event.action_code = ?
-                  AND config.channel_kind = 'CONVENTIONAL'
-                GROUP BY event.channel_id, event.source_observed_local_id
+                SELECT owner_system_id AS radio_system_id, owner_channel_id AS fallback_channel_id,
+                    owner_channel_id AS representative_channel_id,
+                    source_identity_id AS source_identity_summary_id, source_local_id AS observed_local_id,
+                    COUNT(*) AS observation_count, MAX(observed_at_ms) AS last_seen_ms
+                FROM observations
+                GROUP BY owner_system_id, owner_channel_id, source_identity_id, source_local_id
             ), totals AS MATERIALIZED (
-                SELECT COALESCE(SUM(observation_count), 0) AS retained_observation_count,
+                SELECT (SELECT COALESCE(SUM(action_count), 0) FROM action_slices)
+                        AS action_observation_count,
+                    COALESCE(SUM(observation_count), 0) AS retained_observation_count,
                     COALESCE(SUM(CASE WHEN source_identity_summary_id IS NOT NULL OR observed_local_id > 0
                         THEN observation_count ELSE 0 END), 0)
                         AS identified_observation_count,
@@ -5084,15 +5173,8 @@ class StatsWebDatabase
             )
             SELECT paged.radio_system_id, paged.representative_channel_id AS channel_id,
                 CASE WHEN paged.radio_system_id IS NULL THEN config.configuration_id END AS configuration_id,
-                CASE WHEN paged.radio_system_id IS NULL THEN nullif(trim(config.system_name), '') ELSE (
-                    SELECT CASE WHEN count(DISTINCT lower(trim(system_config.system_name))) = 1
-                        THEN min(trim(system_config.system_name)) END
-                    FROM receiver_channel system_channel
-                    JOIN configuration_channel system_config
-                      ON system_config.configuration_id = system_channel.configuration_id
-                    WHERE system_channel.radio_system_id = paged.radio_system_id
-                      AND system_config.system_name IS NOT NULL
-                      AND trim(system_config.system_name) <> '') END AS system_name,
+                CASE WHEN paged.radio_system_id IS NULL THEN nullif(trim(config.system_name), '') END
+                    AS system_name,
                 CASE WHEN paged.radio_system_id IS NULL THEN nullif(trim(config.site_name), '') END AS site_name,
                 CASE WHEN paged.radio_system_id IS NULL THEN nullif(trim(config.name), '') END AS name,
                 CASE WHEN paged.radio_system_id IS NULL THEN alias_list.name END AS alias_list_name,
@@ -5139,7 +5221,8 @@ class StatsWebDatabase
                 %s AS identity_key,
                 coalesce(paged.observed_local_id, identity.identity_id) AS observed_local_id,
                 paged.observation_count, paged.last_seen_ms,
-                totals.retained_observation_count, totals.identified_observation_count,
+                totals.action_observation_count, totals.retained_observation_count,
+                totals.identified_observation_count,
                 totals.total_count
             FROM totals
             LEFT JOIN paged ON 1 = 1
@@ -5159,28 +5242,28 @@ class StatsWebDatabase
             """).formatted(IDENTITY_KEY_SQL.formatted("identity"));
         return queryRows(connection, sql,
             fromMilliseconds, untilMilliseconds, fromMilliseconds, untilMilliseconds,
-            HOUR_MILLISECONDS, action.code(), HOUR_MILLISECONDS, action.code(), limit, offset);
+            HOUR_MILLISECONDS, action.code(), limit, offset);
     }
 
-    /**
-     * Narrows retained-detail work to channel-hours whose compact summary records the selected action. Conventional
-     * buckets use a reserved frequency-zero row when the event has no projected frequency, so both branches have the
-     * same complete hourly invariant without a broad compatibility scan of retained detail.
-     */
+    /** Sum every summary bucket, then seek each matching channel-hour's retained detail once. */
     private static String activityActionSlicesSql(String actionColumn)
     {
         return """
-            SELECT bucket.channel_id, bucket.bucket_start_ms
-            FROM trunked_signaling_activity_bucket AS bucket
-                INDEXED BY idx_trunked_signaling_activity_time
-            WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
-              AND bucket.%1$s > 0
-            UNION
-            SELECT bucket.channel_id, bucket.bucket_start_ms
-            FROM conventional_activity_bucket AS bucket
-                INDEXED BY idx_conventional_bucket_dashboard_time
-            WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
-              AND bucket.%1$s > 0
+            SELECT channel_id, bucket_start_ms, SUM(action_count) AS action_count
+            FROM (
+                SELECT bucket.channel_id, bucket.bucket_start_ms, bucket.%1$s AS action_count
+                FROM trunked_signaling_activity_bucket AS bucket
+                    INDEXED BY idx_trunked_signaling_activity_time
+                WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
+                  AND bucket.%1$s > 0
+                UNION ALL
+                SELECT bucket.channel_id, bucket.bucket_start_ms, bucket.%1$s AS action_count
+                FROM conventional_activity_bucket AS bucket
+                    INDEXED BY idx_conventional_bucket_dashboard_time
+                WHERE bucket.bucket_start_ms >= ? AND bucket.bucket_start_ms < ?
+                  AND bucket.%1$s > 0
+            )
+            GROUP BY channel_id, bucket_start_ms
             """.formatted(actionColumn);
     }
 
@@ -5281,19 +5364,15 @@ class StatsWebDatabase
         return read(connection -> scalarLong(connection, "SELECT COALESCE(MAX(id), 0) FROM receiver_activity_event"));
     }
 
-    /** Reuses the existing indexed, bounded forward Activity query and its alias/entity enrichment. */
+    /** Shared append reader: every retained P25 action in ID order, without a history/time cutoff. */
     Map<String,Object> savedActivityAfter(long afterId, Long watermarkId)
     {
-        long now = System.currentTimeMillis();
         Map<String,String> parameters = new LinkedHashMap<>();
+        parameters.put("projection", "p25_visualizer");
         parameters.put("after_id", Long.toString(afterId));
         if(watermarkId != null) parameters.put("watermark_id", Long.toString(watermarkId));
-        parameters.put("from_ms", Long.toString(Math.max(1, now - DAY_MILLISECONDS + 2_000)));
-        parameters.put("to_ms", Long.toString(now + 2_000));
-        parameters.put("actions", "ACKNOWLEDGE,ACTIVE,BUSY,CALL,CHECK,CHECK_ACK,CONTINUE,DATA,DENIAL," +
-            "EMERGENCY,GPS,GRANT,JOIN,LOGOUT,PAGE,PATCH,PATCH_CANCEL,PATCH_CREATE,QUEUED,REGISTER,REQUEST,STATUS,UNKNOWN");
         parameters.put("limit", "64");
-        return activity(new StatsRequest(parameters));
+        return activity(new StatsRequest(parameters), ignored -> { }, true);
     }
 
     Map<String,Object> activity(StatsRequest request)
@@ -5303,12 +5382,17 @@ class StatsWebDatabase
 
     Map<String,Object> activity(StatsRequest request, Consumer<ActivityQuery> queryObserver)
     {
+        return activity(request, queryObserver, false);
+    }
+
+    private Map<String,Object> activity(StatsRequest request, Consumer<ActivityQuery> queryObserver,
+                                         boolean savedP25Append)
+    {
         String projection = request.text("projection");
         boolean p25Visualizer = "p25_visualizer".equals(projection);
         if(projection != null && !p25Visualizer)
         {
-            throw new StatsApiException(400, "invalid_parameter",
-                "projection must be p25_visualizer", "projection");
+            throw new StatsApiException(400, "invalid_parameter", "projection must be p25_visualizer", "projection");
         }
         long beforeId = request.beforeId();
         Long afterId = request.optionalLong("after_id");
@@ -5434,14 +5518,12 @@ class StatsWebDatabase
         boolean globalActivityWindow = systemKey == null && configurationId == null &&
             fromMilliseconds != null && toMilliseconds != null &&
             toMilliseconds - fromMilliseconds <= DAY_MILLISECONDS && actionCodes != null;
-
-        if(p25Visualizer && (!globalActivityWindow || afterId == null))
+        if(p25Visualizer && !savedP25Append && (!globalActivityWindow || afterId == null))
         {
             throw new StatsApiException(400, "invalid_parameter",
                 "p25_visualizer requires a bounded global forward Activity window", "projection");
         }
-
-        if(hasNewFilter && systemKey == null && configurationId == null && !globalActivityWindow)
+        if(hasNewFilter && systemKey == null && configurationId == null && !globalActivityWindow && !savedP25Append)
         {
             throw new StatsApiException(400, "invalid_parameter",
                 "Global Activity filters require from_ms, to_ms within 24 hours, and actions", "radio_system_key");
@@ -5553,14 +5635,164 @@ class StatsWebDatabase
             queryObserver.accept(query);
             List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
             mAliasResolver.enrichActivity(connection, rows);
-            if(!p25Visualizer) io.github.dsheirer.stats.activity.ToneActivitySchema.enrichPage(connection, rows);
             if(!p25Visualizer)
             {
+                io.github.dsheirer.stats.activity.ToneActivitySchema.enrichPage(connection, rows);
                 enrichActivityEncryption(rows);
                 enrichActivityEntityReferences(rows);
                 enrichActivityCallSources(connection, rows);
             }
             return afterId != null ? forwardCursorPage(rows, limit, watermarkId) : cursorPage(rows, limit);
+        });
+    }
+
+    Object p25SourceIdentity()
+    {
+        try
+        {
+            Path path = getDatabasePath();
+            var attributes = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class,
+                java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            return p25SourceIdentity(path, attributes);
+        }
+        catch(IOException exception)
+        {
+            StatsApiException failure = new StatsApiException(503, "P25 source identity is unavailable");
+            failure.initCause(exception);
+            throw failure;
+        }
+    }
+
+    private record CreationStamp(Path path, java.nio.file.attribute.FileTime creationTime) {}
+
+    static Object p25SourceIdentity(Path path, java.nio.file.attribute.BasicFileAttributes attributes) throws IOException
+    {
+        if(!attributes.isRegularFile())
+        {
+            throw new IOException("P25 source is not a regular file");
+        }
+        if(attributes.fileKey() != null)
+        {
+            return attributes.fileKey();
+        }
+        // Windows exposes no fileKey. Creation time stays fixed across ordinary writes and WAL checkpoints.
+        var creationTime = attributes.creationTime();
+        if(creationTime.compareTo(java.nio.file.attribute.FileTime.fromMillis(0)) <= 0)
+        {
+            throw new IOException("P25 source creation time is unavailable");
+        }
+        return new CreationStamp(path.toAbsolutePath().normalize(), creationTime);
+    }
+
+    /** Native current state only; retained Activity is read separately through its global forward cursor. */
+    P25ActivityLiveService.RawSnapshot p25RawSnapshot()
+    {
+        Object identity = p25SourceIdentity();
+        return readSnapshot(connection -> {
+            long[] deadline = {System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(500)};
+            try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
+            org.sqlite.ProgressHandler.setHandler(connection, 1000, new org.sqlite.ProgressHandler()
+            {
+                @Override protected int progress()
+                { return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline[0] ? 1 : 0; }
+            });
+            try
+            {
+                List<Map<String,Object>> affiliations = new ArrayList<>();
+                forEachRow(connection, P25_AFFILIATION_CORE_SQL, row -> {
+                    if(Thread.currentThread().isInterrupted()) throw new StatsApiException(503, "P25 read interrupted");
+                    affiliations.add(row);
+                    // Keep stalled SQL cancellable without timing out a complete read that is making progress.
+                    if(affiliations.size() % 64 == 0)
+                        deadline[0] = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(500);
+                });
+                if(!identity.equals(p25SourceIdentity()))
+                    throw new StatsApiException(503, "P25 source changed during its read");
+                return new P25ActivityLiveService.RawSnapshot(identity, affiliations);
+            }
+            finally { org.sqlite.ProgressHandler.clearHandler(connection); }
+        });
+    }
+
+    static final String P25_AFFILIATION_CORE_SQL = """
+        SELECT system.system_key AS radio_system_key, system.protocol_code,
+            system.p25_wacn AS wacn,system.p25_system_id AS system_id,
+            config.configuration_id,config.alias_list_id,nullif(trim(config.system_name),'') AS system_name,
+            affiliation.confirmed_at_ms, 'APCO25' AS protocol,
+            %s AS source_identity_key, %s AS target_identity_key,
+            radio.identity_id AS source_native_id, talkgroup.identity_id AS target_native_id,
+            radio.home_wacn AS radio_home_wacn,radio.home_system_id AS radio_home_system_id,
+            talkgroup.home_wacn AS talkgroup_home_wacn,talkgroup.home_system_id AS talkgroup_home_system_id,
+            affiliation.radio_observed_local_id AS source_radio_id,
+            affiliation.talkgroup_observed_local_id AS target_id,1 AS target_kind_code,
+            affiliation.radio_observed_working_id AS source_observed_working_id,
+            radio.p25_subscriber_identity_id AS source_p25_subscriber_identity_id,
+            canonical.home_wacn AS source_canonical_wacn,
+            canonical.home_system_id AS source_canonical_system_id,
+            canonical.subscriber_id AS source_canonical_subscriber_id,
+            radio.last_talker_alias AS source_talker_alias
+        FROM trunked_radio_affiliation affiliation INDEXED BY idx_trunked_radio_affiliation_retention
+        JOIN radio_system system ON system.id=affiliation.radio_system_id AND system.protocol_code=1
+        JOIN radio_system_identity_summary radio ON radio.id=affiliation.radio_identity_id
+        JOIN radio_system_identity_summary talkgroup ON talkgroup.id=affiliation.talkgroup_identity_id
+        JOIN receiver_channel channel ON channel.id=affiliation.channel_id
+        JOIN configuration_channel config ON config.configuration_id=channel.configuration_id
+        LEFT JOIN p25_subscriber_identity canonical ON canonical.id=radio.p25_subscriber_identity_id
+        ORDER BY affiliation.confirmed_at_ms DESC,affiliation.radio_system_id DESC,affiliation.radio_identity_id DESC
+        """.formatted(IDENTITY_KEY_SQL.formatted("radio"),IDENTITY_KEY_SQL.formatted("talkgroup"));
+
+    /** Enrich only changed current identities, using the same channel-owned Alias rules as Activity. */
+    List<ObjectNode> presentP25Affiliations(List<Map<String,Object>> core)
+    {
+        if(core.isEmpty()) return List.of();
+        return readSnapshot(connection -> {
+            // Naming runs only for changed native current identities on the shared observer worker.
+            long[] deadline = new long[1];
+            try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA busy_timeout=100"); }
+            org.sqlite.ProgressHandler.setHandler(connection,1000,new org.sqlite.ProgressHandler()
+            {
+                @Override protected int progress()
+                { return Thread.currentThread().isInterrupted() || System.nanoTime() > deadline[0] ? 1 : 0; }
+            });
+            try
+            {
+                List<ObjectNode> result = new ArrayList<>(core.size());
+                // Each fact can name a serving system and two home systems. Process all facts in SQL-sized batches.
+                for(int offset = 0; offset < core.size(); offset += 64)
+                {
+                    if(Thread.currentThread().isInterrupted()) throw new SQLException("P25 naming interrupted");
+                    deadline[0] = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+                    List<Map<String,Object>> rows = core.subList(offset, Math.min(core.size(), offset + 64)).stream()
+                        .map(row -> (Map<String,Object>)new LinkedHashMap<>(row)).toList();
+                    mAliasResolver.enrichActivity(connection,rows);
+                    var named = new StatsSystemNameResolver(connection).enrich(rows);
+                    for(com.fasterxml.jackson.databind.JsonNode row: named)
+                    {
+                        ObjectNode value = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+                        for(String field: List.of("radio_system_key","configuration_id","confirmed_at_ms","wacn","system_id",
+                            "radio_home_wacn","radio_home_system_id","talkgroup_home_wacn","talkgroup_home_system_id",
+                            "system_name","system_names"))
+                            if(row.has(field)) value.set(field,row.get(field));
+                        value.put("protocol","p25");
+                        for(String[] field: new String[][]{{"radio_identity_key","source_identity_key"},
+                            {"talkgroup_identity_key","target_identity_key"},{"radio_id","source_native_id"},
+                            {"talkgroup_id","target_native_id"},{"radio_observed_local_id","source_radio_id"},
+                            {"talkgroup_observed_local_id","target_id"},{"radio_observed_working_id","source_observed_working_id"},
+                            {"radio_alias_name","source_alias_name"},{"radio_talker_alias","source_talker_alias"},
+                            {"talkgroup_alias_name","target_alias_name"},{"radio_home_system_name","source_home_system_name"},
+                            {"talkgroup_home_system_name","target_home_system_name"}})
+                            if(row.has(field[1])) value.set(field[0],row.get(field[1]));
+                        if(row.hasNonNull("source_canonical_wacn") && row.hasNonNull("source_canonical_system_id") &&
+                            row.hasNonNull("source_canonical_subscriber_id"))
+                            value.putObject("radio_canonical_identity").put("wacn",row.path("source_canonical_wacn").asInt())
+                                .put("system_id",row.path("source_canonical_system_id").asInt())
+                                .put("subscriber_id",row.path("source_canonical_subscriber_id").asInt());
+                        result.add(value);
+                    }
+                }
+                return List.copyOf(result);
+            }
+            finally { org.sqlite.ProgressHandler.clearHandler(connection); }
         });
     }
 
@@ -5578,7 +5810,7 @@ class StatsWebDatabase
     Map<Long,String> activitySourceCallReferences(List<Long> activityIds)
     {
         if(activityIds == null || activityIds.isEmpty()) return Map.of();
-        if(activityIds.size() > MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT)
+        if(activityIds.size() > MAX_ACTIVITY_SOURCE_LOOKUP_IDS)
             throw new IllegalArgumentException("Too many Activity rows");
         List<Long> ids = activityIds.stream().distinct().toList();
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(100);
@@ -5678,7 +5910,8 @@ class StatsWebDatabase
         {
             if(filters.groupMatch() != ActivityGroupMatch.VIA_PATCH)
             {
-                branches.add(activityCandidateBranch(filters, candidateSource,
+                branches.add(activityCandidateBranch(filters, activityBroadIdentityHistory(filters) ?
+                    candidateSource + " INDEXED BY idx_receiver_activity_event_target_time" : candidateSource,
                     "candidate.target_identity_summary_id = ?", List.of(filters.groupIdentitySummaryId()), true));
             }
             if(filters.groupMatch() != ActivityGroupMatch.DIRECT)
@@ -5734,7 +5967,7 @@ class StatsWebDatabase
         }
 
         sql.append("\n)\n")
-            .append(filters.p25Visualizer() ? P25_VISUALIZER_PROJECTION_SQL : ACTIVITY_PROJECTION_SQL)
+            .append(filters.p25Visualizer() ? P25_ACTIVITY_PROJECTION_SQL : ACTIVITY_PROJECTION_SQL)
             .append("FROM activity_candidates candidate_match\n")
             .append("JOIN receiver_activity_event_resolved activity ON activity.id = candidate_match.id\n")
             .append(ACTIVITY_RELATED_JOINS_SQL)
@@ -5747,19 +5980,39 @@ class StatsWebDatabase
                                                         boolean sourceRole) throws SQLException
     {
         String source = activityCandidateSource(filters);
-        // Forward polling orders by row ID, so a history/time index can make it slower.
-        if(filters.afterId() != null)
+        // Forward polling and sparse tone evidence seek event IDs instead of scanning a role's history.
+        if(filters.afterId() != null || filters.hasTones())
         {
             return source;
         }
 
+        String identitySource = source + " INDEXED BY idx_receiver_activity_event_" +
+            (sourceRole ? "source" : "target") + "_time";
+        // Broad history is already ordered within this identity. Its population must not redirect a page to
+        // the system-wide history index, including when the page merely hides grants.
+        if(activityBroadIdentityHistory(filters))
+        {
+            return identitySource;
+        }
+
         // SQLite's system/action averages can hide a particular radio's sparse history. Probe at most 1,001
-        // covering-index entries, independently for each role. Busy roles retain planner freedom so selective
-        // action/channel filters can use their own indexes instead of reading the radio's entire history.
+        // covering-index entries only for selective filters. Busy roles retain the selective action/channel path.
         long events = scalarLong(connection, activityRadioIndexProbeSql(sourceRole),
             filters.radioIdentitySummaryId(), MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS + 1);
-        return events <= MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS ? source + " INDEXED BY " +
-            "idx_receiver_activity_event_" + (sourceRole ? "source" : "target") + "_time" : source;
+        return events <= MAX_ACTIVITY_RADIO_INDEX_HINT_EVENTS ? identitySource : source;
+    }
+
+    private static boolean activityBroadIdentityHistory(ActivityFilters filters)
+    {
+        int identityScopes = (filters.groupIdentitySummaryId() != null ? 1 : 0) +
+            (filters.radioIdentitySummaryId() != null ? 1 : 0) +
+            (filters.sourceIdentitySummaryId() != null ? 1 : 0) +
+            (filters.targetIdentitySummaryId() != null ? 1 : 0);
+        return filters.afterId() == null && !filters.hasTones() && filters.channelId() == null &&
+            filters.actionCode() == null && filters.actionCodes() == null && filters.eventTypeCode() == null &&
+            filters.encryption() == null && filters.sourceId() == null && filters.targetId() == null &&
+            filters.targetKind() == null && filters.frequencyHertz() == null && filters.lcnBand() == null &&
+            filters.timeslot() == null && identityScopes == 1;
     }
 
     static String activityRadioIndexProbeSql(boolean sourceRole)
@@ -5775,6 +6028,17 @@ class StatsWebDatabase
      */
     private static String activityCandidateSource(ActivityFilters filters)
     {
+        // Seek the sparse tone IDs even before SQLite has owner/history index statistics.
+        if(filters.hasTones())
+        {
+            return "receiver_activity_event candidate NOT INDEXED";
+        }
+        if(activityBroadIdentityHistory(filters) &&
+            (filters.sourceIdentitySummaryId() != null || filters.targetIdentitySummaryId() != null))
+        {
+            String role = filters.sourceIdentitySummaryId() != null ? "source" : "target";
+            return "receiver_activity_event candidate INDEXED BY idx_receiver_activity_event_" + role + "_time";
+        }
         String index = activityEncryptedOwnerIndex(filters);
         return index != null ? "receiver_activity_event AS candidate INDEXED BY " + index :
             "receiver_activity_event candidate";
@@ -5782,7 +6046,7 @@ class StatsWebDatabase
 
     private static String activityEncryptedOwnerIndex(ActivityFilters filters)
     {
-        if(filters.afterId() != null || !Integer.valueOf(1).equals(filters.encryption()) ||
+        if(filters.afterId() != null || filters.hasTones() || !Integer.valueOf(1).equals(filters.encryption()) ||
             filters.groupIdentitySummaryId() != null || filters.radioIdentitySummaryId() != null ||
             filters.sourceIdentitySummaryId() != null || filters.targetIdentitySummaryId() != null ||
             filters.actionCode() != null || filters.actionCodes() != null || filters.eventTypeCode() != null ||
@@ -5835,7 +6099,7 @@ class StatsWebDatabase
         appendActivityPredicate(sql, parameters, "candidate.event_type_code = ?", filters.eventTypeCode());
         if(filters.hasTones())
         {
-            sql.append("\n  AND EXISTS (SELECT 1 FROM receiver_activity_tone_sequence tones WHERE tones.event_id = candidate.id)");
+            sql.append("\n  AND candidate.id IN (SELECT event_id FROM receiver_activity_tone_sequence)");
         }
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms >= ?", filters.fromMilliseconds());
         appendActivityPredicate(sql, parameters, "candidate.observed_at_ms < ?", filters.toMilliseconds());
@@ -5887,7 +6151,6 @@ class StatsWebDatabase
         appendActivityPredicate(sql, parameters, "candidate.lcn_band = ?", filters.lcnBand());
         appendActivityPredicate(sql, parameters, "candidate.lcn_number = ?", filters.lcnNumber());
         appendActivityPredicate(sql, parameters, "candidate.timeslot = ?", filters.timeslot());
-        appendActivityPredicate(sql, parameters, "candidate.id >= ?", filters.forwardFloorId());
 
         if(filters.beforeTimestamp() != null)
         {
@@ -5897,6 +6160,8 @@ class StatsWebDatabase
             parameters.add(filters.beforeTimestamp());
             parameters.add(filters.beforeId());
         }
+
+        appendActivityPredicate(sql, parameters, "candidate.id >= ?", filters.forwardFloorId());
 
         if(filters.afterId() != null)
         {
@@ -5943,6 +6208,25 @@ class StatsWebDatabase
         List<Map<String,Object>> cursor = queryRows(connection,
             "SELECT observed_at_ms FROM receiver_activity_event WHERE id = ?", afterId);
         return cursor.isEmpty() || number(cursor.getFirst().get("observed_at_ms")) < fromMilliseconds;
+    }
+
+    private static int activityLimit(StatsRequest request, boolean globalForward)
+    {
+        if(!globalForward)
+        {
+            return request.limit();
+        }
+
+        Integer requested = request.optionalInt("limit");
+        int value = requested != null ? requested : StatsRequest.DEFAULT_LIMIT;
+
+        if(value < 1 || value > MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT)
+        {
+            throw new StatsApiException(400, "invalid_parameter",
+                "limit must be between 1 and " + MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT, "limit");
+        }
+
+        return value;
     }
 
     private static Long positiveActivityLong(StatsRequest request, String field)
@@ -6002,25 +6286,6 @@ class StatsWebDatabase
         }
 
         return List.copyOf(codes);
-    }
-
-    private static int activityLimit(StatsRequest request, boolean globalForward)
-    {
-        if(!globalForward)
-        {
-            return request.limit();
-        }
-
-        Integer requested = request.optionalInt("limit");
-        int value = requested != null ? requested : StatsRequest.DEFAULT_LIMIT;
-
-        if(value < 1 || value > MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT)
-        {
-            throw new StatsApiException(400, "invalid_parameter",
-                "limit must be between 1 and " + MAX_GLOBAL_FORWARD_ACTIVITY_LIMIT, "limit");
-        }
-
-        return value;
     }
 
     private static Integer activityEncryption(String value)
@@ -6951,17 +7216,6 @@ class StatsWebDatabase
         }
     }
 
-    private static String selectedRadioSystemsCte(int systemCount)
-    {
-        if(systemCount < 1 || systemCount > StatsRequest.MAX_LIMIT)
-        {
-            throw new IllegalArgumentException("Radio-system count is invalid");
-        }
-
-        String requestedSystems = String.join(", ", java.util.Collections.nCopies(systemCount, "(?)"));
-        return "WITH requested_radio_systems(radio_system_id) AS (VALUES " + requestedSystems + ")";
-    }
-
     private static List<Map<String,Object>> queryRadioSystemChannels(Connection connection, long radioSystemId, StatsRequest request)
         throws SQLException
     {
@@ -7043,129 +7297,6 @@ class StatsWebDatabase
         }
 
         return rows;
-    }
-
-    private static void attachRadioSystemChannelPreviews(Connection connection,
-                                                           List<Map<String,Object>> systems,
-                                                           String search) throws SQLException
-    {
-        if(systems.isEmpty())
-        {
-            return;
-        }
-
-        List<Object> parameters = new ArrayList<>(systems.size() + (search != null ? 3 : 2));
-        systems.forEach(system -> parameters.add(number(system.get("radio_system_id"))));
-        StringBuilder sql = new StringBuilder(selectedRadioSystemsCte(systems.size()));
-
-        sql.append("""
-            , channel_preview_candidate AS (
-                SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
-                    system.protocol_code,
-                    CASE system.protocol_code WHEN 1 THEN 'P25' WHEN 3 THEN 'DMR'
-                        WHEN 4 THEN 'NXDN' ELSE 'Unknown' END AS protocol,
-                    config.configuration_id, config.alias_list_id,
-                    alias_list.name AS alias_list_name,
-                    nullif(trim(config.system_name), '') AS system_name,
-                    nullif(trim(config.site_name), '') AS site_name,
-                    nullif(trim(config.name), '') AS name,
-                    %s,
-                    trunked.observed_system_id AS site_system_id,
-                    trunked.observed_network_id AS site_network_id,
-                    trunked.variant_code AS site_variant_code,
-                    CASE WHEN system.protocol_code = 3 THEN trunked.observed_model_code END AS site_model_code,
-                    CASE WHEN system.protocol_code = 4 THEN trunked.observed_location_category_code END
-                        AS site_location_category_code,
-                    CASE WHEN system.protocol_code = 1 THEN p25.rfss END AS rfss,
-                    CASE WHEN system.protocol_code = 1 THEN p25.site
-                        ELSE trunked.observed_site_id END AS site_id,
-                    CASE WHEN system.protocol_code IN (3, 4) THEN trunked.observed_ran END AS ran,
-                    coalesce(p25.current_control_hz, trunked.current_control_hz) AS current_control_hz,
-                    coalesce(p25.last_seen_ms, trunked.last_seen_ms, channel.last_seen_ms) AS last_seen_ms,
-            """.formatted(RADIO_SYSTEM_IDENTITY_PROJECTION_SQL));
-
-        if(search != null)
-        {
-            sql.append("""
-                    CASE WHEN lower(config.configuration_id || ' ' || coalesce(config.name, '') || ' ' ||
-                        coalesce(config.site_name, '') || ' ' || coalesce(config.system_name, '') || ' ' ||
-                        coalesce(CAST(trunked.observed_network_id AS TEXT), '') || ' ' ||
-                        coalesce(CAST(trunked.observed_system_id AS TEXT), '') || ' ' ||
-                        coalesce(CAST(trunked.observed_site_id AS TEXT), '') || ' ' ||
-                        coalesce(CAST(trunked.observed_ran AS TEXT), '') || ' ' ||
-                        coalesce(CAST(p25.rfss AS TEXT), '') || ' ' || coalesce(CAST(p25.site AS TEXT), '')) LIKE ?
-                        THEN 1 ELSE 0 END AS channel_search_match
-                """);
-            parameters.add(like(search));
-        }
-        else
-        {
-            sql.append("1 AS channel_search_match\n");
-        }
-
-        sql.append("""
-                FROM receiver_channel channel
-                JOIN requested_radio_systems requested ON requested.radio_system_id = channel.radio_system_id
-                JOIN radio_system system ON system.id = channel.radio_system_id
-                JOIN configuration_channel config ON config.configuration_id = channel.configuration_id
-                LEFT JOIN alias_list ON alias_list.id = config.alias_list_id
-                LEFT JOIN p25_site_snapshot p25
-                    ON system.protocol_code = 1 AND p25.channel_id = channel.id
-                LEFT JOIN trunked_site_snapshot trunked
-                    ON system.protocol_code IN (3, 4) AND trunked.channel_id = channel.id
-                WHERE system.protocol_code IN (1, 3, 4)
-            ),
-            ranked_channel_preview AS (
-                SELECT candidate.*,
-                    row_number() OVER (
-                        PARTITION BY candidate.radio_system_id
-                        ORDER BY candidate.channel_search_match DESC, candidate.last_seen_ms DESC,
-                            candidate.configuration_id
-                    ) AS channel_preview_rank
-                FROM channel_preview_candidate candidate
-            )
-            SELECT preview.radio_system_id, preview.radio_system_key, preview.alias_list_id,
-                preview.alias_list_name, preview.protocol_code, preview.protocol,
-                preview.configuration_id,
-                preview.wacn, preview.system_id,
-                preview.system_name, preview.site_name, preview.name,
-                preview.rfss, preview.site_id, preview.ran, preview.current_control_hz,
-                CASE WHEN preview.protocol_code = 1 THEN
-                    (SELECT COUNT(DISTINCT CASE WHEN channel.downlink_hz > 0
-                        THEN 'f:' || channel.downlink_hz ELSE 'k:' || channel.channel_key END)
-                     FROM p25_site_channel_summary channel
-                     JOIN receiver_channel receiver ON receiver.id = channel.channel_id
-                     WHERE receiver.configuration_id = preview.configuration_id)
-                ELSE
-                    (SELECT COUNT(*) FROM trunked_site_channel_summary channel
-                     JOIN receiver_channel receiver ON receiver.id = channel.channel_id
-                     WHERE receiver.configuration_id = preview.configuration_id)
-                END AS learned_channels,
-                preview.last_seen_ms
-            FROM ranked_channel_preview preview
-            WHERE preview.channel_preview_rank <= ?
-            ORDER BY preview.radio_system_id, preview.channel_preview_rank
-            LIMIT ?
-            """);
-        parameters.add(MAXIMUM_RADIO_SYSTEM_DIRECTORY_CHANNEL_PREVIEW);
-        parameters.add(Math.multiplyExact(systems.size(), MAXIMUM_RADIO_SYSTEM_DIRECTORY_CHANNEL_PREVIEW));
-        List<Map<String,Object>> previewRows = queryRows(connection, sql.toString(), parameters.toArray());
-        Map<Long,List<Map<String,Object>>> previewsBySystem = new LinkedHashMap<>();
-
-        for(Map<String,Object> preview: previewRows)
-        {
-            WebEntityRef.put(preview, WebEntityRef.channel(String.valueOf(preview.get("configuration_id"))));
-            long radioSystemId = number(preview.get("radio_system_id"));
-            previewsBySystem.computeIfAbsent(radioSystemId, ignored -> new ArrayList<>()).add(preview);
-        }
-
-        for(Map<String,Object> system: systems)
-        {
-            List<Map<String,Object>> preview = List.copyOf(
-                previewsBySystem.getOrDefault(number(system.get("radio_system_id")), List.of()));
-            system.put("channel_preview", preview);
-            system.put("channel_preview_truncated", number(system.get("channels")) > preview.size());
-        }
     }
 
     private static String trunkedChannelSelect()
@@ -7452,64 +7583,6 @@ class StatsWebDatabase
     /**
      * Returns the newest saved channels across both topologies, including channels with no retained observations.
      */
-    private static List<Map<String,Object>> recentChannels(Connection connection) throws SQLException
-    {
-        List<Map<String,Object>> rows = queryRows(connection, """
-            SELECT config.configuration_id, channel.id AS channel_id, config.channel_kind,
-                config.system_name AS system_name, config.site_name AS site_name, config.name AS name,
-                alias_list.name AS alias_list_name, config.alias_list_id,
-                config.decoder_type AS decoder,
-                CASE config.decoder_type WHEN 'DMR' THEN 3 WHEN 'NXDN' THEN 4
-                    WHEN 'NBFM' THEN 10 WHEN 'AM' THEN 11 ELSE 1 END AS protocol_code,
-                CASE config.decoder_type WHEN 'DMR' THEN 'DMR' WHEN 'NXDN' THEN 'NXDN'
-                    WHEN 'NBFM' THEN 'NBFM' WHEN 'AM' THEN 'AM' ELSE 'P25' END AS protocol,
-                system.id AS radio_system_id, system.system_key AS radio_system_key,
-                system.address_domain_code AS address_domain_code,
-                %s,
-                trunked.observed_system_id AS site_system_id,
-                trunked.observed_network_id AS site_network_id,
-                trunked.variant_code AS site_variant_code,
-                CASE WHEN system.protocol_code = 3 THEN trunked.observed_model_code END AS site_model_code,
-                CASE WHEN system.protocol_code = 4 THEN trunked.observed_location_category_code END
-                    AS site_location_category_code,
-                p25.nac, p25.rfss,
-                CASE WHEN system.protocol_code = 1 THEN p25.site ELSE trunked.observed_site_id END AS site_id,
-                trunked.observed_ran AS ran,
-                coalesce(p25.primary_frequency_hz, trunked.primary_frequency_hz,
-                    config.primary_frequency_hz) AS primary_frequency_hz,
-                coalesce(p25.current_control_hz, trunked.current_control_hz) AS current_control_hz,
-                coalesce(p25.first_seen_ms, trunked.first_seen_ms, channel.first_seen_ms) AS first_seen_ms,
-                coalesce(p25.last_seen_ms, trunked.last_seen_ms, channel.last_seen_ms) AS last_seen_ms,
-                coalesce(p25.observation_count, trunked.observation_count, 0) AS observation_count,
-                CASE WHEN system.protocol_code = 1 THEN
-                    (SELECT COUNT(DISTINCT CASE WHEN learned.downlink_hz > 0
-                        THEN 'f:' || learned.downlink_hz ELSE 'k:' || learned.channel_key END)
-                     FROM p25_site_channel_summary learned WHERE learned.channel_id = channel.id)
-                ELSE (SELECT COUNT(*) FROM trunked_site_channel_summary learned
-                    WHERE learned.channel_id = channel.id) END AS learned_channels,
-                CASE WHEN system.protocol_code = 1 THEN
-                    (SELECT COUNT(*) FROM p25_site_neighbor learned WHERE learned.channel_id = channel.id)
-                ELSE (SELECT COUNT(*) FROM trunked_site_neighbor_summary learned
-                    WHERE learned.channel_id = channel.id) END AS neighbors
-            FROM configuration_channel config
-            LEFT JOIN alias_list ON alias_list.id = config.alias_list_id
-            LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
-            LEFT JOIN radio_system system ON system.id = channel.radio_system_id
-            LEFT JOIN p25_site_snapshot p25 ON p25.channel_id = channel.id
-            LEFT JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
-            ORDER BY coalesce(p25.last_seen_ms, trunked.last_seen_ms, channel.last_seen_ms, 0) DESC,
-                config.sort_order, config.id
-            LIMIT 20
-            """.formatted(RADIO_SYSTEM_IDENTITY_PROJECTION_SQL));
-
-        for(Map<String,Object> row: rows)
-        {
-            WebEntityRef.put(row, WebEntityRef.channel(String.valueOf(row.get("configuration_id"))));
-        }
-
-        return rows;
-    }
-
     /**
      * Ranks all call-producing saved receiver channels using the existing compact hourly buckets. The query is bounded to
      * 24 hours and uses the time-leading trunked and conventional bucket indexes; detailed event history is never
@@ -8479,12 +8552,6 @@ class StatsWebDatabase
     {
         parameters.add(limit);
         parameters.add(offset);
-    }
-
-    private static void addRadioSystemIdentitySearch(StringBuilder sql, List<Object> parameters, String search,
-                                                     String aliasMatcher, boolean includeTalkerAlias)
-    {
-        StatsIdentitySearch.append(sql, parameters, search, aliasMatcher, includeTalkerAlias);
     }
 
     private static void addIssiSubscriberSearch(StringBuilder sql, List<Object> parameters, String search)

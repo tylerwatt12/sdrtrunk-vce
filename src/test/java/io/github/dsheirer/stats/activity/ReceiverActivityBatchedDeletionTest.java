@@ -28,6 +28,104 @@ class ReceiverActivityBatchedDeletionTest
     private static final String SITE = RetainedSiteKey.p25(1, 2, 1, 1L, 1000);
 
     @Test
+    void populatedEventChildrenKeepScopeFiltersCutoffAndOriginalIdWatermark() throws Exception
+    {
+        for(boolean systemWide: List.of(false,true))
+        {
+            try(Connection connection = open())
+            {
+                execute(connection,"INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) " +
+                    "VALUES(2,'p25:abcde:124',1,703710,292,1000,1000)");
+                execute(connection,"INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,name,alias_list_id," +
+                    "decoder_type,primary_frequency_hz,config_json) VALUES('323e4567-e89b-42d3-a456-426614174000','TRUNKED',2,'Other system'," +
+                    "(SELECT id FROM alias_list WHERE family='P25' LIMIT 1),'P25_PHASE1',851000000,'{}')");
+                execute(connection,"INSERT INTO receiver_channel(id,configuration_id,radio_system_id,radio_system_assigned_at_ms,first_seen_ms,last_seen_ms) " +
+                    "VALUES(3,'323e4567-e89b-42d3-a456-426614174000',2,1000,1000,1000)");
+                execute(connection,"INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,identity_id,first_seen_ms,last_seen_ms) " +
+                    "VALUES(101,1,1,45,1000,1000),(102,2,1,46,1000,1000)");
+                execute(connection,"INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code,frequency_hz) VALUES " +
+                    "(1,1,1,1000,4,851000000),(2,1,1,2000,4,851000000),(3,1,1,2001,4,851000000)," +
+                    "(4,1,1,999,4,851000000),(5,1,1,1000,4,852000000),(6,2,1,1000,4,851000000)," +
+                    "(7,3,2,1000,4,851000000)");
+                addEventChildren(connection,1);
+                ScopedData target = new ScopedData("radio_system",SYSTEM,systemWide?null:CHANNEL,systemWide?null:SITE,
+                    "detailed_events",null,List.of("events"),1000L,2001L,851000000L);
+                var batch = ReceiverActivityScopedDeletion.Batch.start(connection,target,2000);
+                int selected = systemWide?3:2;
+                assertEquals(selected*5,batch.rowsTotal(),"Each event has one member, one context and two tone facts");
+                assertEquals(selected*5,batch.preview().countsByPart().get("events"));
+                execute(connection,"INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code,frequency_hz) " +
+                    "VALUES(8,1,1,1000,4,851000000)");
+                addEventChildren(connection,8);
+                int removed = 0;
+                while(!batch.done())
+                {
+                    connection.setAutoCommit(false);
+                    long before = scalar(connection,"SELECT total_changes()");
+                    removed += batch.runPass(connection);
+                    assertTrue(scalar(connection,"SELECT total_changes()")-before<=512);
+                    connection.commit();
+                    connection.setAutoCommit(true);
+                }
+                assertEquals(selected*5,removed);
+                assertEquals(systemWide?"3,4,5,7,8":"3,4,5,6,7,8",text(connection,
+                    "SELECT group_concat(id) FROM (SELECT id FROM receiver_activity_event ORDER BY id)"));
+                assertEquals(8-selected,scalar(connection,"SELECT count(*) FROM activity_event_identity_member"));
+                assertEquals(8-selected,scalar(connection,"SELECT count(*) FROM receiver_activity_tone_sequence"));
+                assertEquals((8-selected)*2,scalar(connection,"SELECT count(*) FROM receiver_activity_tone"));
+                assertEquals(0,scalar(connection,"SELECT count(*) FROM pragma_foreign_key_check"));
+                assertEquals("ok",text(connection,"PRAGMA quick_check"));
+            }
+        }
+    }
+
+    @Test
+    void emptyChildPreviewAndActualPassDoNotEnumerateUnrelatedHistory() throws Exception
+    {
+        try(Connection real = open())
+        {
+            execute(real,"WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<5000) " +
+                "INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code,frequency_hz) " +
+                "SELECT 1,1,1000,4,851000000 FROM n");
+            List<String> queries = new java.util.ArrayList<>();
+            Connection observed = (Connection)Proxy.newProxyInstance(Connection.class.getClassLoader(),
+                new Class<?>[]{Connection.class},(proxy,method,args) -> {
+                    if(method.getName().equals("prepareStatement") && args[0] instanceof String sql &&
+                        List.of("activity_event_identity_member","receiver_activity_tone_sequence","receiver_activity_tone")
+                            .stream().anyMatch(table -> sql.startsWith("SELECT count(*) FROM "+table+" ") ||
+                                sql.startsWith("DELETE FROM "+table+" "))) queries.add(sql);
+                    try { return method.invoke(real,args); }
+                    catch(InvocationTargetException failure) { throw failure.getCause(); }
+                });
+            ScopedData target = new ScopedData("radio_system",SYSTEM,null,null,"detailed_events",null,
+                List.of("events"),null,null,852000000L);
+            var batch = ReceiverActivityScopedDeletion.Batch.start(observed,target,2000);
+            assertEquals(0,batch.rowsTotal());
+            assertEquals(0,batch.runPass(observed));
+            assertTrue(batch.done());
+            assertEquals(6,queries.size(),"Inspect all three child counts and their actual deletion statements");
+            for(String query: queries)
+            {
+                String plan = queryPlan(real,query);
+                assertTrue(plan.contains("INTEGER PRIMARY KEY"),plan);
+                assertFalse(plan.contains("idx_receiver_activity_event_retention"),
+                    "Child reads must seek their owner rather than build the global cutoff event list: "+plan);
+            }
+            assertEquals(5000,scalar(real,"SELECT count(*) FROM receiver_activity_event"));
+        }
+    }
+
+    private static void addEventChildren(Connection connection, int firstId) throws SQLException
+    {
+        execute(connection,"INSERT INTO activity_event_identity_member(event_id,radio_system_id,identity_summary_id,identity_kind_code,channel_id) " +
+            "SELECT id,radio_system_id,100+radio_system_id,1,channel_id FROM receiver_activity_event WHERE id>="+firstId);
+        execute(connection,"INSERT INTO receiver_activity_tone_sequence " +
+            "SELECT id,1,1,1,observed_at_ms,observed_at_ms,observed_at_ms+400,2 FROM receiver_activity_event WHERE id>="+firstId);
+        for(int ordinal=0;ordinal<2;ordinal++) execute(connection,"INSERT INTO receiver_activity_tone " +
+            "SELECT id,"+ordinal+",600000,NULL,NULL,"+(ordinal*200)+",200,NULL FROM receiver_activity_event WHERE id>="+firstId);
+    }
+
+    @Test
     void moreThan100000QualityRowsDeleteInSmallCommittedPassesAndKeepOtherSitesAndActiveBucket() throws Exception
     {
         try(Connection connection = open())
@@ -406,9 +504,11 @@ class ReceiverActivityBatchedDeletionTest
     private static String queryPlan(Connection connection, String sql) throws SQLException
     {
         StringBuilder result = new StringBuilder();
-        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("EXPLAIN QUERY PLAN " + sql))
+        try(var statement = connection.prepareStatement("EXPLAIN QUERY PLAN " + sql))
         {
-            while(rows.next()) result.append(rows.getString("detail")).append('\n');
+            for(int i=1;i<=statement.getParameterMetaData().getParameterCount();i++) statement.setLong(i,1000);
+            try(ResultSet rows = statement.executeQuery())
+            { while(rows.next()) result.append(rows.getString("detail")).append('\n'); }
         }
         return result.toString();
     }

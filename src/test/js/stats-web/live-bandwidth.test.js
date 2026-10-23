@@ -136,7 +136,7 @@ test('mixed compressed/plain frames survive arbitrary fragmentation and retain e
   const frames = [
     envelope(1, 1, Buffer.from(JSON.stringify({ event: 'snapshot', data: { revision: 7 } })), true),
     envelope(5, 2, Uint8Array.of(4, 8, 12), true),
-    envelope(1, 1, Buffer.from(JSON.stringify({ event: 'activity_delta', data: { revision: 8 } })))
+    envelope(1, 1, Buffer.from(JSON.stringify({ event: 'activity_batch', data: { revision: 8 } })))
   ];
   const bytes = Buffer.concat(frames);
   for (let offset = 0; offset < bytes.length; offset += 7) {
@@ -145,7 +145,7 @@ test('mixed compressed/plain frames survive arbitrary fragmentation and retain e
   assert.equal(events[0].name, 'snapshot');
   assert.equal(events[0].data.revision, 7);
   assert.deepEqual([...events[1].bytes], [4, 8, 12]);
-  assert.equal(events[2].name, 'activity_delta');
+  assert.equal(events[2].name, 'activity_batch');
   assert.equal(events[2].data.revision, 8);
   assert.equal(mux.pending.length, 0);
 });
@@ -174,10 +174,10 @@ test('row deltas preserve unchanged aliases, update metadata, remove rows and ho
   const { context } = harness();
   const first = { key: 'first', source_alias: 'Engine 1', status: 'CALL' };
   const baseline = { table_id: 'site', title: 'North', rows: [first, { key: 'old' }] };
-  const update = { table_id: 'site', operation: 'upsert', base_revision: 4, revision: 5,
+  const update = { table_id: 'site', operation: 'upsert', replace: false,
     table: { title: 'North dispatch' }, rows: [{ key: 'second', status: 'IDLE' }],
     removed_row_keys: ['old'], row_order: ['second', 'first'] };
-  const merged = context.mergeLiveChannelActivityDelta(update, baseline);
+  const merged = context.mergeLiveChannelActivityChange(update, baseline);
   assert.equal(merged.table.title, 'North dispatch');
   assert.deepEqual([...merged.table.rows].map((row) => row.key), ['second', 'first']);
   assert.equal(merged.table.rows[1], first);
@@ -191,14 +191,97 @@ test('changed complete table metadata clears removed optional fields while row-o
   const baseline = { table_id: 'site', title: 'North', configuration_id: 'configuration',
     site: { nac: 123 }, radio_system_key: 'system', entity_ref: { kind: 'channel', key: 'channel' },
     remote_origin: { remote: true }, rows: [row] };
-  const unchanged = context.mergeLiveChannelActivityDelta({ table_id: 'site', rows: [] }, baseline).table;
+  const unchanged = context.mergeLiveChannelActivityChange({ operation: 'upsert', replace: false, table_id: 'site', rows: [] }, baseline).table;
   assert.deepEqual(JSON.parse(JSON.stringify(unchanged)), baseline);
   const metadata = { table_id: 'site', title: 'North updated', rows_total: 1 };
-  const cleared = context.mergeLiveChannelActivityDelta({ table_id: 'site', table: metadata,
+  const cleared = context.mergeLiveChannelActivityChange({ operation: 'upsert', replace: false, table_id: 'site', table: metadata,
     rows: [], removed_row_keys: [] }, baseline).table;
   assert.deepEqual(JSON.parse(JSON.stringify(cleared)), { ...metadata, rows: [row] });
   assert.equal(cleared.rows[0], row);
   assert.equal(baseline.site.nac, 123);
+});
+
+test('one published batch atomically updates several tables, replaces baselines and removes tables', () => {
+  const { context, tables } = harness();
+  const unchanged = { key: 'keep', source_alias: 'Dispatch', source_entity_ref: { kind: 'radio' } };
+  context.applyLiveChannelActivitySnapshot({ revision: 10, tables: [
+    { table_id: 'site', title: 'North', rows: [unchanged, { key: 'old', obsolete: true }] },
+    { table_id: 'replace', title: 'Previous', remote_origin: { remote: true }, rows: [{ key: 'stale' }] },
+    { table_id: 'remove', rows: [] }
+  ] });
+  const observed = [];
+  context.liveChannelActivitySubscribers.add({ activityBatch: (batch) => observed.push({
+    revision: context.liveChannelActivityRevision, count: tables.size, changes: batch.changes,
+    replaced: tables.get('replace').rows.map(row => row.key)
+  }) });
+  context.applyLiveChannelActivityBatch({ base_revision: 10, revision: 15, changes: [
+    { operation: 'upsert', table_id: 'site', replace: false, rows: [{ key: 'old', status: 'IDLE' }],
+      row_order: ['old', 'keep'] },
+    { operation: 'upsert', table_id: 'replace', replace: true, table: { table_id: 'replace', title: 'Current' },
+      rows: [{ key: 'fresh' }], row_order: ['fresh'] },
+    { operation: 'remove', table_id: 'remove', replace: false },
+    { operation: 'upsert', table_id: 'new', replace: true, table: { title: 'New site' }, rows: [], row_order: [] }
+  ] });
+  assert.equal(context.liveChannelActivityRevision, 15);
+  assert.equal(observed.length, 1, 'subscribers receive one committed global batch');
+  assert.equal(observed[0].revision, 15);
+  assert.equal(observed[0].count, 3);
+  assert.deepEqual([...tables.get('site').rows].map(row => row.key), ['old', 'keep']);
+  assert.equal(tables.get('site').rows[1], unchanged, 'unchanged rows and typed navigation retain identity');
+  assert.equal(tables.get('site').rows[0].obsolete, undefined, 'changed rows replace all former fields');
+  assert.equal(tables.get('replace').remote_origin, undefined, 'replacement clears former metadata');
+  assert.equal(tables.has('remove'), false);
+  assert.deepEqual([...tables.get('replace').rows].map(row => row.key), ['fresh']);
+});
+
+test('malformed later changes never partially commit earlier changes or advance the revision', () => {
+  for (const invalid of [
+    { operation: 'upsert', table_id: 'missing', replace: false, rows: [] },
+    { operation: 'upsert', table_id: 'site', replace: false, row_order: ['unknown'] },
+    { operation: 'upsert', table_id: 'site', replace: true, table: { title: 'Incomplete' } },
+    { operation: 'remove', table_id: 'other', replace: true },
+    { operation: 'remove', table_id: 'other', replace: false, rows: [] },
+    { operation: 'upsert', table_id: 'new', replace: true, table: {}, rows: [{ key: 'x' }, { key: 'x' }], row_order: ['x'] }
+  ]) {
+    const { context, tables } = harness();
+    const original = { table_id: 'site', title: 'Before', rows: [{ key: 'one', value: 1 }] };
+    context.applyLiveChannelActivitySnapshot({ revision: 10, tables: [original] });
+    assert.throws(() => context.applyLiveChannelActivityBatch({ base_revision: 10, revision: 11, changes: [
+      { operation: 'upsert', table_id: 'site', replace: false, rows: [{ key: 'one', value: 2 }] }, invalid
+    ] }));
+    assert.equal(tables.get('site'), original);
+    assert.equal(context.liveChannelActivityRevision, 10);
+  }
+});
+
+test('batch gaps reconnect once and published recovery snapshots restore future batch continuity', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  installRetainedActivityServer(h);
+  let restarts = 0, updates = 0;
+  const gaps = [];
+  h.mux.restart = () => restarts++;
+  h.context.subscribeLiveChannelActivity({ gap: gap => gaps.push(gap), activityBatch: () => updates++ });
+  await flushMicrotasks();
+  await h.clock.next();
+  await h.receive('activity_batch', { base_revision: 11, revision: 12, changes: [
+    { operation: 'remove', table_id: 'site', replace: false }
+  ] });
+  assert.equal(h.context.liveChannelActivityRevision, 10);
+  assert.equal(h.tables.has('site'), true);
+  assert.equal(h.context.liveChannelActivityNeedsResync, true);
+  assert.equal(restarts, 1);
+  await h.receive('activity_batch', { base_revision: 10, revision: 12, changes: [] });
+  assert.equal(updates, 0, 'nothing commits while the baseline is uncertain');
+  await h.receive('activity_resync', { snapshot: { revision: 12, tables: [{ table_id: 'site', rows: [{ key: 'two' }] }] } });
+  assert.equal(h.context.liveChannelActivityNeedsResync, false);
+  await h.receive('activity_batch', { base_revision: 12, revision: 14, changes: [
+    { operation: 'upsert', table_id: 'site', replace: false, rows: [{ key: 'two', value: 14 }] }
+  ] });
+  assert.equal(h.context.liveChannelActivityRevision, 14);
+  assert.equal(h.tables.get('site').rows[0].value, 14);
+  assert.equal(updates, 1);
+  assert.equal(gaps.length, 2);
 });
 
 test('rebuilding Live after a preference save reacquires a baseline without interrupting another multiplex topic', async (t) => {
@@ -228,8 +311,7 @@ test('rebuilding Live after a preference save reacquires a baseline without inte
   ]);
   assert.notEqual(requests[0].subscriptions.channel_activity.subscription_id,
     requests.at(-1).subscriptions.channel_activity.subscription_id);
-  await h.receive('activity_delta', { table_id: 'site', operation: 'upsert', base_revision: 10,
-    revision: 11, rows: [{ key: 'one', source_alias: 'Dispatch', value: 11 }], removed_row_keys: [] });
+  await h.receive('activity_batch', { base_revision: 10, revision: 11, changes: [{ replace: false, table_id: 'site', operation: 'upsert', rows: [{ key: 'one', source_alias: 'Dispatch', value: 11 }], removed_row_keys: [] }] });
   assert.equal(h.tables.get('site').rows[0].value, 11);
   assert.equal(h.context.liveChannelActivityNeedsResync, false);
   await h.mux.consume(envelope(5, 2, Uint8Array.of(1, 2, 3)));
@@ -290,8 +372,7 @@ test('activity incarnation stays stable while sharing the same source and steady
   const second = h.context.subscribeLiveChannelActivity({ snapshot: (value) => snapshots.push(value) });
   assert.equal(snapshots.length, 1);
   first.close();
-  await h.receive('activity_delta', { table_id: 'site', operation: 'upsert', base_revision: 10,
-    revision: 11, rows: [{ key: 'one', value: 11 }], removed_row_keys: [] });
+  await h.receive('activity_batch', { base_revision: 10, revision: 11, changes: [{ replace: false, table_id: 'site', operation: 'upsert', rows: [{ key: 'one', value: 11 }], removed_row_keys: [] }] });
   assert.equal(h.context.liveChannelActivitySubscriptionId, initialId);
   assert.equal(h.tables.get('site').rows[0].value, 11);
   assert.equal(requests.length, 1);
@@ -328,23 +409,21 @@ for (const failure of [Object.assign(new Error('Unavailable'), { status: 503 }),
     assert.equal(h.context.liveChannelActivityNeedsResync, true);
     assert.equal(h.context.liveChannelActivityState, 'error');
     await h.receive('heartbeat', {}, 0);
-    await h.receive('activity_delta', { table_id: 'site', operation: 'upsert', base_revision: 10,
-      revision: 11, rows: [{ key: 'one', value: 11 }], removed_row_keys: [] });
+    await h.receive('activity_batch', { base_revision: 10, revision: 11, changes: [{ replace: false, table_id: 'site', operation: 'upsert', rows: [{ key: 'one', value: 11 }], removed_row_keys: [] }] });
     assert.ok(h.mux.lastFrameAt > 0);
     assert.equal(h.context.liveChannelActivityRevision, 10);
     assert.equal(requests.length, 2);
     assert.equal(await h.clock.next(), 500);
     assert.equal(requests.length, 3);
     assert.deepEqual(JSON.parse(JSON.stringify(requests[2].subscriptions.channel_activity)), {
-      delta: true, subscription_id: requests[0].subscriptions.channel_activity.subscription_id
+      subscription_id: requests[0].subscriptions.channel_activity.subscription_id
     });
     assert.equal(h.context.liveChannelActivityNeedsResync, false);
     assert.equal(h.context.liveChannelActivityState, 'open');
     assert.equal(observed.length, 1);
     const expected = { table_id: 'site', title: 'North', rows: [{ key: 'one', value: 13,
       source_alias: 'Dispatch' }] };
-    await h.receive('activity_delta', { table_id: 'site', operation: 'upsert', base_revision: 12,
-      revision: 13, rows: expected.rows, removed_row_keys: [] });
+    await h.receive('activity_batch', { base_revision: 12, revision: 13, changes: [{ replace: false, table_id: 'site', operation: 'upsert', rows: expected.rows, removed_row_keys: [] }] });
     assert.deepEqual(JSON.parse(JSON.stringify(h.tables.get('site'))), expected);
     assert.equal(h.context.liveChannelActivityRevision, 13);
     assert.equal(h.clock.timers.size, 0);
@@ -575,11 +654,11 @@ for (const status of [401, 403]) {
 
 test('invalid delta baselines/orders are rejected rather than silently dropping rows', () => {
   const { context } = harness();
-  assert.throws(() => context.mergeLiveChannelActivityDelta({ table_id: 'missing', rows: [] }), /baseline/);
+  assert.throws(() => context.mergeLiveChannelActivityChange({ operation: 'upsert', replace: false, table_id: 'missing', rows: [] }), /baseline/);
   const table = { rows: [{ key: 'one' }, { key: 'two' }] };
-  assert.throws(() => context.mergeLiveChannelActivityDelta({ table_id: 'site',
+  assert.throws(() => context.mergeLiveChannelActivityChange({ operation: 'upsert', replace: false, table_id: 'site',
     row_order: ['one', 'one'] }, table), /row order/);
-  assert.throws(() => context.mergeLiveChannelActivityDelta({ table_id: 'site',
+  assert.throws(() => context.mergeLiveChannelActivityChange({ operation: 'upsert', replace: false, table_id: 'site',
     row_order: ['one', 'absent'] }, table), /Missing activity row/);
 });
 
@@ -620,16 +699,16 @@ test('marker subscriptions upgrade to full rows before sharing a cached baseline
   const subscriptionId = parameters.at(-1).subscription_id;
   assert.ok(subscriptionId);
   assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), {
-    delta: true, subscription_id: subscriptionId, markers: true
+    subscription_id: subscriptionId, markers: true
   });
   context.applyLiveChannelActivitySnapshot({ revision: 10, tables: [{ table_id: 'site', rows: [] }] });
   const full = context.subscribeLiveChannelActivity({ snapshot: (data) => snapshots.push(data) });
-  assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), { delta: true, subscription_id: subscriptionId });
+  assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), { subscription_id: subscriptionId });
   assert.equal(context.liveChannelActivityNeedsResync, true);
   assert.equal(snapshots.length, 0);
   full.close();
   assert.deepEqual(JSON.parse(JSON.stringify(parameters.at(-1))), {
-    delta: true, subscription_id: subscriptionId, markers: true
+    subscription_id: subscriptionId, markers: true
   });
   marker.close();
   assert.equal(context.liveChannelActivitySource, null);
@@ -645,7 +724,7 @@ test('healthy deltas restore Live after an unrelated topic control failure witho
   let updates = 0;
   h.context.subscribeLiveChannelActivity({
     open: () => states.push('open'), error: () => states.push('error'),
-    activityTable: () => updates++
+    activityBatch: () => updates++
   });
   await flushMicrotasks();
   await h.clock.next();
@@ -664,13 +743,11 @@ test('healthy deltas restore Live after an unrelated topic control failure witho
   await h.clock.next();
   assert.equal(h.mux.ready, true);
   assert.equal(h.context.liveChannelActivityState, 'error');
-  await h.receive('activity_delta', { base_revision: 10, revision: 11, table_id: 'site',
-    rows: [{ key: 'one', value: 11 }] });
+  await h.receive('activity_batch', { base_revision: 10, revision: 11, changes: [{ replace: false, operation: 'upsert', table_id: 'site', rows: [{ key: 'one', value: 11 }] }] });
   assert.equal(updates, 1);
   assert.equal(h.context.liveChannelActivityState, 'open');
   assert.deepEqual(states, ['open', 'error', 'open']);
-  await h.receive('activity_delta', { base_revision: 11, revision: 12, table_id: 'site',
-    rows: [{ key: 'one', value: 12 }] });
+  await h.receive('activity_batch', { base_revision: 11, revision: 12, changes: [{ replace: false, operation: 'upsert', table_id: 'site', rows: [{ key: 'one', value: 12 }] }] });
   assert.equal(updates, 2);
   assert.deepEqual(states, ['open', 'error', 'open'], 'healthy delivery must not repeatedly reopen the source');
 });

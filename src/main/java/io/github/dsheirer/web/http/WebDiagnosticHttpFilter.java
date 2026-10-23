@@ -12,6 +12,7 @@ import io.github.dsheirer.support.WebDiagnosticLogService;
 import io.github.dsheirer.support.WebDiagnosticRequestMetrics;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
@@ -131,10 +132,12 @@ public final class WebDiagnosticHttpFilter extends Filter
      * Decorates context registration only. Start and retain the original server: long-lived handlers compare the
      * real HttpContext server identity with the active listener, including when the listener is HTTPS.
      */
-    public static HttpServer instrumentContexts(HttpServer server, WebDiagnosticLogService service)
+    public static HttpServer instrumentContexts(HttpServer server, WebDiagnosticLogService service,
+                                                 Filter... responseFilters)
     {
         Objects.requireNonNull(server);
         Objects.requireNonNull(service);
+        List<Filter> filters = List.of(responseFilters);
         return new HttpServer()
         {
             @Override public void bind(InetSocketAddress address, int backlog) throws IOException
@@ -152,6 +155,7 @@ public final class WebDiagnosticHttpFilter extends Filter
 
             private HttpContext instrument(HttpContext context)
             {
+                context.getFilters().addAll(filters);
                 context.getFilters().add(new WebDiagnosticHttpFilter(service));
                 return context;
             }

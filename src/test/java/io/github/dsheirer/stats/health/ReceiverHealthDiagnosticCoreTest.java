@@ -43,6 +43,22 @@ class ReceiverHealthDiagnosticCoreTest
     }
 
     @Test
+    void elapsedIntervalsSurviveSignedMonotonicClockWrap()
+    {
+        for(long origin : new long[]{0, -1, Long.MIN_VALUE, Long.MAX_VALUE - nanos(500)})
+        {
+            ReceiverHealthDiagnosticCore core = new ReceiverHealthDiagnosticCore();
+            core.begin(1, 1, 1_000, origin).finish(origin + nanos(20));
+            Map<String,Object> next = core.begin(1, 1, 2_100, origin + nanos(1_100))
+                .finish(origin + nanos(1_125));
+            assertEquals(true, next.get("sample_interval_available"));
+            assertEquals(1_100L, next.get("sample_interval_ms"));
+            assertEquals(80L, next.get("sample_lateness_ms"));
+            assertEquals(25L, next.get("sample_duration_ms"));
+        }
+    }
+
+    @Test
     void unavailableReadingsAreExplicitAndDoNotSeedAFutureDelta()
     {
         ReceiverHealthDiagnosticCore core = new ReceiverHealthDiagnosticCore();
@@ -143,6 +159,29 @@ class ReceiverHealthDiagnosticCoreTest
         Map<String,Object> snapshot = sample.finish(1);
         assertEquals(1, snapshot.get("alert_tuners_ambiguous"));
         assertEquals(List.of(Map.of("occurrence_id", 3L, "tuner_id", 3L)), snapshot.get("alert_tuners"));
+    }
+
+    @Test
+    void usbCoreUsesMeasuredDeliveryAgeInsteadOfWallTimestampArithmetic() throws Exception
+    {
+        for(long wallTimestamp: new long[]{Long.MAX_VALUE, 0, -1})
+        {
+            ReceiverHealthDiagnosticCore core = new ReceiverHealthDiagnosticCore();
+            var sample = core.begin(1, 0, 0, 0);
+            var tuner = sample.tuner("test", "Receiver", null, null, true, false, 1);
+            tuner.usb(usb(Map.of("lastTransferTimestampMilliseconds", wallTimestamp, "hasTransfer", true)),
+                123, true, 100, 10, 10);
+            Map<String,Object> usb = map(rows(sample.finish(1).get("tuners")).getFirst().get("usb"));
+            assertEquals(true, usb.get("last_delivery_available"));
+            assertEquals(123L, usb.get("last_delivery_age_ms"));
+        }
+        ReceiverHealthDiagnosticCore core = new ReceiverHealthDiagnosticCore();
+        var sample = core.begin(1, 0, 0, 0);
+        var tuner = sample.tuner("test", "Receiver", null, null, true, false, 1);
+        tuner.usb(usb(Map.of("hasTransfer", false)), 1_001, false, 0, 0, 10);
+        Map<String,Object> waiting = map(rows(sample.finish(1).get("tuners")).getFirst().get("usb"));
+        assertEquals(false, waiting.get("last_delivery_available"));
+        assertEquals(0L, waiting.get("last_delivery_age_ms"));
     }
 
     private static Map<String,Object> deviceSample(ReceiverHealthDiagnosticCore core, long generation,

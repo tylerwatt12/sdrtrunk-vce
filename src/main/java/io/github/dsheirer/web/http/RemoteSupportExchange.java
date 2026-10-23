@@ -11,6 +11,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.URI;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -124,6 +127,7 @@ final class RemoteSupportExchange extends HttpsExchange
     {
         if(mStatus != -1 || mClosed.get() || !mAllowed.getAsBoolean()) throw new IOException("Response is unavailable");
         mStatus = status;
+        mResponseHeaders.set("Date", DateTimeFormatter.RFC_1123_DATE_TIME.format(ZonedDateTime.now(ZoneOffset.UTC)));
         Map<String,List<String>> headers = new LinkedHashMap<>();
         mResponseHeaders.forEach((name, values) -> {
             if(OMIT_HEADERS.contains(name.toLowerCase(java.util.Locale.ROOT))) return;

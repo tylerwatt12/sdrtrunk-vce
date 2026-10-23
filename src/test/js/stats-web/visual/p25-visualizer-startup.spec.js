@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { test, expect } = require('@playwright/test');
-const { installSiteStyleApplication, systemKey, channelId, groupKey, radioKey, systemName } =
+const { installSiteStyleApplication, systemKey, channelId, groupKey, radioKey, systemName, p25Affiliations } =
   require('./fixtures/site-style-app.cjs');
 
 const now = Date.parse('2026-10-01T12:00:00Z');
@@ -40,7 +40,7 @@ async function observeStartup(page, theme = 'light', width = 1280) {
     const original = window.fetch.bind(window);
     window.fetch = async (input, options) => {
       const url = new URL(typeof input === 'string' ? input : input.url, location.href);
-      if (url.pathname !== '/api/v1/activity') return original(input, options);
+      if (url.pathname !== '/api/v1/activity/live/seed') return original(input, options);
       const record = { params: Object.fromEntries(url.searchParams), aborted: false, finished: false };
       window.p25Startup.requests.push(record);
       options?.signal?.addEventListener('abort', () => { record.aborted = true; }, { once: true });
@@ -100,9 +100,9 @@ async function holdVendor(page) {
   return { ...held, requested: () => requested };
 }
 
-async function fulfillPage(route, rows, next, hasMore = false) {
-  await route.fulfill({ json: { data: { rows, next_after_id: next, watermark_id: 4,
-    has_more: hasMore, traffic_grant_age_out_milliseconds: 1_200 } } });
+async function fulfillSeed(route, rows, epoch = 'fixture-p25') {
+  await route.fulfill({ json: { data: { source_epoch: epoch, sequence: 0, available: true, ...p25Affiliations(rows),
+    captured_at_ms: now, traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true } } });
 }
 
 async function expectImmediateSystem(page, key = systemKey, name = systemName) {
@@ -129,104 +129,114 @@ async function expectImmediateSystem(page, key = systemKey, name = systemName) {
   expect(entry.camera.target).toEqual({ x: system.x, y: system.y, z: system.z });
   await expect.poll(() => page.evaluate(() => window.p25Startup.renderedNodeCount()))
     .toBe(result.data.at(-1).nodes.length);
-  expect(result.requests.every((request) => request.params.projection === 'p25_visualizer')).toBe(true);
+  expect(result.requests.every((request) => Object.keys(request.params).length === 0)).toBe(true);
   await expect(page.locator('.network-visualizer-scope-title a.ui-link-text')).toHaveAttribute('href',
     new RegExp(`radio_system_key=${encodeURIComponent(key)}`));
   return result;
 }
 
+async function installHistory(page, getRows, held) {
+  await page.route(/\/api\/v1\/activity(?:\?|$)/, async route => {
+    if (held) await held.ready;
+    const query = new URL(route.request().url()).searchParams;
+    const after = Number(query.get('after_id') || 0), all = getRows();
+    const watermark = Number(query.get('watermark_id') || Math.max(0, ...all.map(row => row.id)));
+    const rows = all.filter(row => row.id > after && row.id <= watermark).sort((a, b) => a.id - b.id);
+    return route.fulfill({ json: { data: rows, meta: { watermark_id: watermark, next_after_id: watermark,
+      has_more: false, reset_required: false } } });
+  });
+}
+
 test.setTimeout(10_000);
 
-test('full saved history paging finishes while the renderer vendor is still loading', async ({ page }, testInfo) => {
+test('the native scene appears before saved history finishes loading', async ({ page }, testInfo) => {
   const fixture = await observeStartup(page);
-  const vendor = await holdVendor(page);
-  await page.route('**/api/v1/activity?**', (route) => {
-    const after = Number(new URL(route.request().url()).searchParams.get('after_id'));
-    return after === 0 ? fulfillPage(route, firstPage, 2, true) : fulfillPage(route, secondPage, 4);
-  });
+  const vendor = await holdVendor(page), history = barrier();
+  await installHistory(page, () => [...firstPage, ...secondPage], history);
+  await page.route('**/api/v1/activity/live/seed*', route => fulfillSeed(route, [...firstPage, ...secondPage]));
   try {
     await page.goto('/app.html?view=network-visualizer', { waitUntil: 'domcontentloaded' });
     await expect.poll(vendor.requested).toBe(true);
-    await expect.poll(() => page.evaluate(() => window.p25Startup.requests.filter((value) =>
-      value.finished).length)).toBe(2);
+    await expect.poll(() => page.evaluate(() => window.p25Startup.requests.filter(value => value.finished).length)).toBe(1);
     expect(await page.evaluate(() => window.p25Startup.rendererReadyAt)).toBeUndefined();
-    await expect(page.locator('.network-visualizer-scope-title')).toHaveText('P25 radio systems');
     vendor.release();
     const result = await expectImmediateSystem(page);
-    expect(result.requests.map((request) => request.params.after_id)).toEqual(['0', '2']);
-    expect(result.requests[1].params.watermark_id).toBe('4');
-    const data = result.data.at(-1);
-    const current = data.links.find((link) => link.kind === 'current');
-    expect(current.target).toBe(`${systemKey}:${groupKey}`,
-      'newer affiliation in the first page survives older observations in a later page');
-    expect(data.nodes.find((node) => node.id === current.source).label).toBe('Engine 4');
-    expect(data.nodes.find((node) => node.id === current.target).label).toBe('Fire Dispatch');
-    expect(data.nodes.some((node) => node.label === 'Fire Tactical')).toBe(true);
-    await page.screenshot({ path: testInfo.outputPath('startup-desktop-light.png') });
+    expect(result.requests).toHaveLength(1);
+    await expect(page.locator('.network-visualizer-status')).toContainText('Loading 1h history');
+    const current = result.data.at(-1).links.find(link => link.kind === 'current');
+    expect(current.target).toBe(`${systemKey}:${groupKey}`);
+    history.release();
+    await expect(page.locator('.network-visualizer-status')).not.toContainText('Loading 1h history');
+    await expect.poll(() => page.evaluate(() => window.p25Startup.calls.filter(call => call.name === 'data')
+      .at(-1)?.nodes.some(node => node.label === 'Fire Tactical'))).toBe(true);
+    const latest = await page.evaluate(() => window.p25Startup.calls.filter(call => call.name === 'data').at(-1));
+    expect(latest.links.find(link => link.kind === 'current').target).toBe(`${systemKey}:${groupKey}`,
+      'older saved joins never replace the current native affiliation');
+    await page.screenshot({ path: testInfo.outputPath('progressive-startup-desktop-light.png') });
     expect(fixture.pageErrors).toEqual([]);
     expect(fixture.unexpected).toEqual([]);
-  } finally { vendor.release(); }
+  } finally { vendor.release(); history.release(); }
 });
 
-test('a ready renderer waits for the final seed page before entering the busiest system', async ({ page }) => {
+test('a ready renderer enters the native scene while history is still pending', async ({ page }) => {
   const fixture = await observeStartup(page);
-  const history = barrier();
-  let secondRequested = false;
-  await page.route('**/api/v1/activity?**', async (route) => {
-    const after = Number(new URL(route.request().url()).searchParams.get('after_id'));
-    if (after === 0) return fulfillPage(route, firstPage, 2, true);
-    secondRequested = true;
-    await history.ready;
-    await fulfillPage(route, secondPage, 4);
+  const seed = barrier(), history = barrier();
+  await installHistory(page, () => [...firstPage, ...secondPage], history);
+  let requested = false;
+  await page.route('**/api/v1/activity/live/seed*', async route => {
+    requested = true;
+    await seed.ready;
+    await fulfillSeed(route, [...firstPage, ...secondPage]);
   });
   try {
     await page.goto('/app.html?view=network-visualizer', { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => secondRequested).toBe(true);
+    await expect.poll(() => requested).toBe(true);
     await expect(page.locator('.network-visualizer-canvas')).toHaveAttribute('data-renderer-state', 'ready');
-    expect(await page.evaluate(() => window.p25Startup.calls.filter((call) => call.name === 'enter' ||
+    expect(await page.evaluate(() => window.p25Startup.calls.filter(call => call.name === 'enter' ||
       call.name === 'data' && call.nodes.length))).toEqual([]);
-    await expect(page.locator('.network-visualizer-status')).toHaveText('Loading saved activity');
-    history.release();
+    seed.release();
     await expectImmediateSystem(page);
+    await expect(page.locator('.network-visualizer-status')).toContainText('Loading 1h history');
+    history.release();
+    await expect(page.locator('.network-visualizer-status')).not.toContainText('Loading 1h history');
     expect(fixture.pageErrors).toEqual([]);
     expect(fixture.unexpected).toEqual([]);
-  } finally { history.release(); }
+  } finally { seed.release(); history.release(); }
 });
 
-test('changing history scope before renderer readiness discards the obsolete seed in mobile dark mode',
+test('source replacement before renderer readiness discards the old source on a dark phone',
   async ({ page }, testInfo) => {
   const fixture = await observeStartup(page, 'dark', 390);
   const vendor = await holdVendor(page);
-  await page.route('**/api/v1/activity?**', (route) => {
-    const params = new URL(route.request().url()).searchParams;
-    const hours = (Number(params.get('to_ms')) - Number(params.get('from_ms'))) / 3_600_000;
-    return fulfillPage(route, hours > 1 ? [otherActivity(4)] : [activity(1)], hours > 1 ? 4 : 1);
-  });
+  let epoch = 'fixture-p25';
+  await installHistory(page, () => epoch === 'fixture-p25' ? [activity(1)] : [otherActivity(4)]);
+  await page.route('**/api/v1/activity/live/seed*', route => fulfillSeed(route,
+    epoch === 'fixture-p25' ? [activity(1)] : [otherActivity(4)], epoch));
   try {
     await page.goto('/app.html?view=network-visualizer', { waitUntil: 'domcontentloaded' });
-    await expect.poll(() => page.evaluate(() => window.p25Startup.requests.filter((value) =>
-      value.finished).length)).toBe(1);
-    await page.getByRole('group', { name: 'History scope' }).getByRole('button', { name: '24h' }).click();
-    await expect.poll(() => page.evaluate(() => window.p25Startup.requests.filter((value) =>
-      value.finished).length)).toBe(2);
+    await expect.poll(() => page.evaluate(() => window.p25Startup.requests.filter(value => value.finished).length)).toBe(1);
+    epoch = 'fixture-p25-next';
+    await page.evaluate(() => window.fixtureSendLiveFrame(7, 'source_change', {
+      source_epoch: 'fixture-p25-next', sequence: 0, watermark_id: 4, history_generation: 0,
+      server_time_ms: Date.now(), collection_enabled: true }));
+    await expect.poll(() => page.evaluate(() => window.p25Startup.requests.filter(value => value.finished).length)).toBe(2);
     vendor.release();
     const result = await expectImmediateSystem(page, otherSystemKey, otherSystemName);
-    expect(result.data.every((data) => data.nodes.every((node) => node.systemKey === otherSystemKey))).toBe(true);
-    await expect(page.getByRole('group', { name: 'History scope' }).getByRole('button', { name: '24h' }))
-      .toHaveAttribute('aria-pressed', 'true');
-    await page.screenshot({ path: testInfo.outputPath('startup-mobile-dark.png') });
+    expect(result.data.every(data => data.nodes.every(node => node.systemKey === otherSystemKey))).toBe(true);
+    await expect(page.getByRole('group', { name: 'History scope' })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('progressive-startup-mobile-dark.png') });
     expect(fixture.pageErrors).toEqual([]);
     expect(fixture.unexpected).toEqual([]);
   } finally { vendor.release(); }
 });
 
-test('early navigation aborts history and disposes a renderer that finishes loading later', async ({ page }) => {
+test('early navigation aborts both data requests and disposes a delayed renderer', async ({ page }) => {
   const fixture = await observeStartup(page);
-  const vendor = await holdVendor(page);
-  const history = barrier();
-  await page.route('**/api/v1/activity?**', async (route) => {
-    await history.ready;
-    await fulfillPage(route, [activity(1)], 1);
+  const vendor = await holdVendor(page), data = barrier();
+  await installHistory(page, () => [activity(1)], data);
+  await page.route('**/api/v1/activity/live/seed*', async route => {
+    await data.ready;
+    await fulfillSeed(route, [activity(1)]);
   });
   try {
     await page.goto('/app.html?view=network-visualizer', { waitUntil: 'domcontentloaded' });
@@ -235,14 +245,12 @@ test('early navigation aborts history and disposes a renderer that finishes load
     await page.evaluate(() => document.querySelector('.primary-nav a[data-view="credits"]').click());
     await expect(page.locator('.credits-copy').first()).toBeVisible();
     await expect.poll(() => page.evaluate(() => window.p25Startup.requests[0].aborted)).toBe(true);
-    vendor.release();
-    history.release();
-    await expect.poll(() => page.evaluate(() => window.p25Startup.calls.some((call) =>
-      call.name === 'dispose'))).toBe(true);
-    expect(await page.evaluate(() => window.p25Startup.calls.some((call) => call.name === 'enter' ||
+    vendor.release(); data.release();
+    await expect.poll(() => page.evaluate(() => window.p25Startup.calls.some(call => call.name === 'dispose'))).toBe(true);
+    expect(await page.evaluate(() => window.p25Startup.calls.some(call => call.name === 'enter' ||
       call.name === 'data' && call.nodes.length))).toBe(false);
     await expect(page.locator('.network-visualizer-canvas')).toHaveCount(0);
     expect(fixture.pageErrors).toEqual([]);
     expect(fixture.unexpected).toEqual([]);
-  } finally { vendor.release(); history.release(); }
+  } finally { vendor.release(); data.release(); }
 });

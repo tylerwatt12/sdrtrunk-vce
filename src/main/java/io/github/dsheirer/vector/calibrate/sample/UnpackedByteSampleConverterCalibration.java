@@ -35,6 +35,7 @@ import java.util.function.LongSupplier;
 
 /**
  * Selects the fastest correct converter for unpacked unsigned 12-bit samples stored in two bytes per sample.
+ * Uses heap-backed buffers to match the isolated USB sample ingress.
  */
 public class UnpackedByteSampleConverterCalibration extends Calibration
 {
@@ -116,8 +117,8 @@ public class UnpackedByteSampleConverterCalibration extends Calibration
     {
         ISampleConverter scalar = createConverter(Implementation.SCALAR);
         ISampleConverter vector = createConverter(Implementation.VECTOR_SIMD_PREFERRED);
-        ByteBuffer scalarBuffer = createDirectBuffer(fixture);
-        ByteBuffer vectorBuffer = createDirectBuffer(fixture);
+        ByteBuffer scalarBuffer = ByteBuffer.wrap(fixture.clone());
+        ByteBuffer vectorBuffer = ByteBuffer.wrap(fixture.clone());
 
         for(int bufferIndex = 0; bufferIndex < CORRECTNESS_STREAM_BUFFER_COUNT; bufferIndex++)
         {
@@ -163,18 +164,6 @@ public class UnpackedByteSampleConverterCalibration extends Calibration
         }
     }
 
-    /**
-     * USB tuner transfers supply direct buffers.  Calibrating with the same memory kind matters because scalar
-     * absolute byte reads and vector memory-segment loads can rank differently for heap-backed buffers.
-     */
-    private static ByteBuffer createDirectBuffer(byte[] fixture)
-    {
-        ByteBuffer buffer = ByteBuffer.allocateDirect(fixture.length);
-        buffer.put(fixture);
-        buffer.clear();
-        return buffer;
-    }
-
     private static class ConverterOperation implements LongSupplier
     {
         private final ISampleConverter mConverter;
@@ -184,7 +173,7 @@ public class UnpackedByteSampleConverterCalibration extends Calibration
         private ConverterOperation(ISampleConverter converter, byte[] fixture)
         {
             mConverter = converter;
-            mBuffer = createDirectBuffer(fixture);
+            mBuffer = ByteBuffer.wrap(fixture.clone());
         }
 
         @Override

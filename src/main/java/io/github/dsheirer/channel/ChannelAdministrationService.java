@@ -29,6 +29,7 @@ import io.github.dsheirer.controller.channel.ChannelException;
 import io.github.dsheirer.dsp.squelch.NoiseSquelch;
 import io.github.dsheirer.dsp.squelch.NoiseSquelchState;
 import io.github.dsheirer.module.decode.nbfm.NBFMDecoder;
+import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.stats.TrunkedDiscoveryEvidence;
@@ -103,14 +104,7 @@ public final class ChannelAdministrationService
 
     public Catalog catalog()
     {
-        Catalog catalog = onConfigurationThread(() ->
-        {
-            List<Channel> channels = List.copyOf(mConfigurationManager.getChannelModel().getChannels());
-            Map<String,Integer> order = effectiveAutoStartOrder(channels);
-            List<ChannelSummary> summaries = channels.stream().map(channel -> summary(channel,
-                order.get(channel.getConfigurationId()))).toList();
-            return new Catalog(revision(), summaries);
-        });
+        Catalog catalog = currentCatalog();
         //History belongs to the request worker, outside the configuration/FX boundary and all receiver callbacks.
         Map<String,Long> lastControl = ChannelControlFrequencyHistory.read(
             mConfigurationManager.getDatabasePath(), catalog.channels());
@@ -119,6 +113,36 @@ public final class ChannelAdministrationService
             Long frequency = lastControl.get(channel.configurationId());
             return frequency != null ? channel.withDisplayFrequency(frequency, "last-control") : channel;
         }).toList());
+    }
+
+    /** Current configured channels and running state, without a separate historical frequency lookup. */
+    public Catalog currentCatalog()
+    {
+        return onConfigurationThread(() ->
+        {
+            List<Channel> channels = List.copyOf(mConfigurationManager.getChannelModel().getChannels());
+            Map<String,Integer> order = effectiveAutoStartOrder(channels);
+            List<ChannelSummary> summaries = channels.stream().map(channel -> summary(channel,
+                order.get(channel.getConfigurationId()))).toList();
+            return new Catalog(revision(), summaries);
+        });
+    }
+
+    /** Web navigation needs availability, without constructing the full channel directory. */
+    public boolean hasRunningP25TrunkedChannel()
+    {
+        return onConfigurationThread(() ->
+        {
+            for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
+            {
+                if(!ChannelConfigurationPolicy.isActive(channel)) continue;
+                DecoderType decoder = channel.getDecodeConfiguration().getDecoderType();
+                if((decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2) &&
+                    ChannelConfigurationPolicy.requireChannelKind(channel) == ChannelConfigurationPolicy.ChannelKind.TRUNKED &&
+                    isProcessing(channel.getConfigurationId())) return true;
+            }
+            return false;
+        });
     }
 
     public Entry get(String configurationId)

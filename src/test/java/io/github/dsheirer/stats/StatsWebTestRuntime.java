@@ -15,7 +15,11 @@ final class StatsWebTestRuntime
 
     static StatsWebServerService start(UserPreferences preferences)
     {
-        ReceiverActivityService activity = new ReceiverActivityService(preferences);
+        return start(preferences, new ReceiverActivityService(preferences));
+    }
+
+    static StatsWebServerService start(UserPreferences preferences, ReceiverActivityService activity)
+    {
         ConfigurationManager configuration = new ConfigurationManager(preferences, new TunerManager(preferences),
             new AliasModel(), null, activity::receiveMaintenanceRequest);
         configuration.init();

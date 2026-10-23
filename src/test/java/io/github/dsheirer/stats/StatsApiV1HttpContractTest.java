@@ -33,6 +33,11 @@ import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.scanlist.ScanListModel;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.stats.activity.ReceiverActivityService;
+import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
+import io.github.dsheirer.web.auth.AccessTier;
+import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.WebCapability;
 import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -53,7 +58,9 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -118,6 +125,136 @@ class StatsApiV1HttpContractTest
         {
             System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, mPreviousAssetOverride);
         }
+    }
+
+    @Test
+    void shellRequestsDoNotReadTheMainChannelCatalog() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("data");
+        ApplicationPreference disabledLogging = new ApplicationPreference(ignored -> {})
+        {
+            @Override public boolean isStatsLoggingEnabled() { return false; }
+        };
+        ReceiverActivityService logging = new ReceiverActivityService(new TestUserPreferences(disabledLogging,
+            new TestDirectoryPreference(dataRoot)))
+        {
+            @Override public ReceiverActivityStatus getStatus()
+            {
+                return new ReceiverActivityStatus(true, true, true, true, 30,
+                    ReceiverActivityStatus.State.RUNNING, "synthetic", 0, 0, 0, null);
+            }
+        };
+        mService.close();
+        mService = StatsWebTestRuntime.start(new TestUserPreferences(new TestApplicationPreference(),
+            new TestDirectoryPreference(dataRoot)), logging);
+        mOrigin = URI.create("http://127.0.0.1:" + mService.getRuntimeState().port());
+        Object catalog = StatsWebTestRuntime.services(mService).mWebChannelCatalog;
+        Field readField = StatsWebSnapshot.class.getDeclaredField("mRead");
+        readField.setAccessible(true);
+        AtomicInteger catalogReads = new AtomicInteger();
+        readField.set(catalog, (java.util.function.Supplier<List<?>>)() -> {
+            catalogReads.incrementAndGet();
+            return List.of();
+        });
+        try
+        {
+            assertEquals(200, get("/api/v1/auth/session").statusCode());
+            for(int visitor = 0; visitor < 3; visitor++)
+            {
+                HttpResponse<String> response = get(StatsApiV1.STATUS);
+                assertEquals(200, response.statusCode(), response.body());
+                JsonNode data = OBJECT_MAPPER.readTree(response.body()).path("data");
+                assertTrue(data.at("/stats_logging/summary_active").asBoolean());
+                assertTrue(data.at("/stats_logging/detailed_history_active").asBoolean());
+                assertFalse(data.path("p25_visualizer_available").asBoolean());
+            }
+            assertEquals(0, catalogReads.get(), "Shell status must not build Main's channel directory");
+            assertEquals(200, get(StatsApiV1.DASHBOARD + "/main").statusCode());
+            assertEquals(1, catalogReads.get(), "Main still reads the shared directory snapshot");
+        }
+        finally
+        {
+            mService.close();
+        }
+    }
+
+    @Test
+    void revisionHeaderMatchesAssetsOnApiSuccessAndErrors() throws Exception
+    {
+        String revision = get("/").headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow();
+        assertEquals("test-revision", revision);
+        for(String path: List.of(StatsApiV1.STATUS, "/api/v1/auth/session", StatsApiV1.ALIAS_LISTS,
+            StatsApiV1.STATUS + "?unknown=true"))
+        {
+            HttpResponse<String> response = get(path);
+            assertEquals(revision, response.headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow(), path);
+            if(path.equals(StatsApiV1.ALIAS_LISTS)) assertEquals(401, response.statusCode());
+            else if(path.contains("?")) assertEquals(400, response.statusCode());
+            else assertEquals(200, response.statusCode());
+        }
+    }
+
+    @Test
+    void authSessionCarriesRevisionWithoutDashboardAccess() throws Exception
+    {
+        mService.provisionOrResetPrimaryAdmin("revision-fixture-password".toCharArray());
+        Field field = StatsWebServerService.class.getDeclaredField("mWebAccessService");
+        field.setAccessible(true);
+        ((WebAccessService)field.get(mService)).setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.ADMIN);
+        HttpResponse<String> session = get("/api/v1/auth/session");
+        assertEquals(200, session.statusCode());
+        assertFalse(OBJECT_MAPPER.readTree(session.body()).at("/data/capabilities/dashboard").booleanValue());
+        assertEquals("test-revision", session.headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+        HttpResponse<String> denied = get(StatsApiV1.STATUS);
+        assertEquals(401, denied.statusCode());
+        assertEquals("test-revision", denied.headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+    }
+
+    @Test
+    void revisionHeaderUsesTheListenerSnapshotAndOmitsMissingRevision() throws Exception
+    {
+        Path index = mTemporaryDirectory.resolve("assets/index.html");
+        Files.writeString(index, "<meta name=\"sdrtrunk-web-revision\" content=\"next-revision\">");
+        assertEquals("test-revision", get("/api/v1/auth/session").headers()
+            .firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+        WebServerRuntimeState reloaded = mService.reloadActiveListener();
+        assertTrue(reloaded.running(), reloaded.statusMessage());
+        mOrigin = URI.create("http://127.0.0.1:" + reloaded.port());
+        for(String path: List.of("/", StatsApiV1.STATUS, "/api/v1/auth/session"))
+            assertEquals("next-revision", get(path).headers().firstValue("X-Sdrtrunk-Web-Revision").orElseThrow());
+
+        Files.writeString(index, "<!doctype html><title>API fixture without a revision</title>");
+        reloaded = mService.reloadActiveListener();
+        assertTrue(reloaded.running(), reloaded.statusMessage());
+        mOrigin = URI.create("http://127.0.0.1:" + reloaded.port());
+        assertTrue(get("/api/v1/auth/session").headers().firstValue("X-Sdrtrunk-Web-Revision").isEmpty());
+    }
+
+    @Test
+    void mainReturnsCurrentPageDataWithoutCallRankingsOrInternalIdentifiers() throws Exception
+    {
+        HttpResponse<String> response = get(StatsApiV1.DASHBOARD + "/main");
+        assertEquals(200, response.statusCode(), response.body());
+        JsonNode data = OBJECT_MAPPER.readTree(response.body()).path("data");
+        assertTrue(data.path("quality").path("current").isArray());
+        assertTrue(data.path("directory").path("systems").isArray());
+        assertTrue(data.path("directory").path("channels").isArray());
+        assertFalse(data.has("top_sources"));
+        assertFalse(data.has("call_activity"));
+        assertFalse(data.path("quality").path("current").isEmpty());
+        for(JsonNode channel: data.path("quality").path("current"))
+        {
+            Set<String> fields = new java.util.HashSet<>();
+            channel.fieldNames().forEachRemaining(fields::add);
+            assertEquals(Set.of("configuration_id", "channel_kind", "name", "site_name", "system_name", "protocol",
+                "signal_dbfs", "average_signal_dbfs", "decode_health_pct", "last_observed_ms", "radio_system_key",
+                "wacn", "system_id", "rfss", "site_id", "ran"), fields);
+        }
+        for(String unused: List.of("system_identity", "system_names", "radio_system_entity_ref", "channel_name",
+            "channel_id", "radio_system_id", "series", "valid_frames", "corrected_bits", "sample_age_seconds"))
+            assertTrue(data.findValues(unused).isEmpty(), unused + " must not reappear in the Main wire response");
+        assertTrue(OBJECT_MAPPER.readTree(get(StatsApiV1.STATUS).body()).path("data")
+            .path("p25_visualizer_available").isBoolean());
     }
 
     @Test
@@ -297,26 +434,6 @@ class StatsApiV1HttpContractTest
         assertEquals(3, talkerAlias.path("entity_ref").size(), talkerAliasesResponse.body());
         assertFalse(talkerAlias.path("entity_ref").has("protocol"), talkerAliasesResponse.body());
 
-        HttpResponse<String> systemPreviewResponse = get(StatsApiV1.RADIO_SYSTEMS +
-            "?include_channel_preview=true&limit=25");
-        assertEquals(200, systemPreviewResponse.statusCode(), systemPreviewResponse.body());
-        JsonNode systemPreview = OBJECT_MAPPER.readTree(systemPreviewResponse.body());
-        assertTrue(systemPreview.get("data").isArray(), systemPreviewResponse.body());
-        assertEquals(StatsWebDatabase.MAXIMUM_RADIO_SYSTEM_DIRECTORY_CHANNEL_PREVIEW,
-            systemPreview.at("/meta/channel_preview_limit_per_system").intValue(),
-            systemPreviewResponse.body());
-        assertTrue(systemPreview.at("/data/0/channel_preview").isArray(), systemPreviewResponse.body());
-        assertEquals(1, systemPreview.at("/data/0/channel_preview").size(), systemPreviewResponse.body());
-        assertFalse(systemPreview.at("/data/0/channel_preview_truncated").booleanValue(),
-            systemPreviewResponse.body());
-        JsonNode previewChannel = systemPreview.at("/data/0/channel_preview/0");
-        assertEquals("p25", previewChannel.path("protocol").textValue(), systemPreviewResponse.body());
-        assertEquals("00000000-0000-0000-0000-000000000071",
-            previewChannel.path("configuration_id").textValue(), systemPreviewResponse.body());
-        assertEquals(2, previewChannel.path("site_id").intValue(), systemPreviewResponse.body());
-        assertEquals(71, previewChannel.path("alias_list_id").intValue(), systemPreviewResponse.body());
-        assertFalse(previewChannel.has("protocol_code"), systemPreviewResponse.body());
-
         HttpResponse<String> aliasesResponse = get(StatsApiV1.ALIAS_LISTS + "?limit=1");
         assertStructuredError(aliasesResponse, 401, "authentication_required", null);
     }
@@ -436,12 +553,8 @@ class StatsApiV1HttpContractTest
         HttpResponse<String> unbounded = get(StatsApiV1.RADIO_SYSTEMS + "?limit=501");
         assertStructuredError(unbounded, 400, "invalid_parameter", "limit");
 
-        HttpResponse<String> invalidPreview = get(StatsApiV1.RADIO_SYSTEMS + "?include_channel_preview=maybe");
-        assertStructuredError(invalidPreview, 400, "invalid_parameter", "include_channel_preview");
-
-        HttpResponse<String> oversizedPreviewPage = get(StatsApiV1.RADIO_SYSTEMS +
-            "?include_channel_preview=true&limit=26");
-        assertStructuredError(oversizedPreviewPage, 400, "invalid_parameter", "limit");
+        HttpResponse<String> retiredPreview = get(StatsApiV1.RADIO_SYSTEMS + "?include_channel_preview=true");
+        assertStructuredError(retiredPreview, 400, "unknown_parameter", "include_channel_preview");
 
         HttpResponse<String> invalidAffiliated = get(StatsApiV1.RADIO_SYSTEMS +
             "/p25%3A00001%3A047/radios?affiliated=maybe");
@@ -543,7 +656,7 @@ class StatsApiV1HttpContractTest
             filteredActivity.body());
 
         HttpResponse<String> forwardActivity = get(StatsApiV1.ACTIVITY +
-            "?from_ms=1&to_ms=86400001&actions=join,denial&after_id=0&limit=5000");
+            "?radio_system_key=p25%3Abee00%3A49f&from_ms=1&to_ms=86400001&actions=join,denial&after_id=0&limit=500");
         assertEquals(200, forwardActivity.statusCode(), forwardActivity.body());
         JsonNode forward = OBJECT_MAPPER.readTree(forwardActivity.body());
         assertTrue(forward.at("/meta/has_more").isBoolean(), forwardActivity.body());
@@ -841,6 +954,82 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void multiplexStreamsOneBatchRevisionForMultipleTablesAndKeepsHttpAvailable() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        ReceiverWebServices features = StatsWebTestRuntime.services(mService);
+        Field liveField = ReceiverWebServices.class.getDeclaredField("mLiveService");
+        liveField.setAccessible(true);
+        ((StatsLiveService)liveField.get(features)).close();
+        StatsLiveService live = StatsLiveService.fromActivitySource(source, null);
+        live.start();
+        liveField.set(features, live);
+        assertEquals(0, live.snapshotWire().revision());
+        String clientId = "00000000-0000-0000-0000-000000000125";
+        HttpRequest request = HttpRequest.newBuilder(mOrigin.resolve(
+            StatsApiV1.LIVE_MULTIPLEX + "?client_id=" + clientId)).timeout(Duration.ofSeconds(5)).GET().build();
+        HttpResponse<InputStream> stream = mClient.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        try(var reader = java.util.concurrent.Executors.newVirtualThreadPerTaskExecutor(); InputStream input = stream.body())
+        {
+            assertEquals("ready", readMultiplexFrame(input).json().path("event").textValue());
+            String body = OBJECT_MAPPER.writeValueAsString(Map.of("client_id", clientId, "revision", 1,
+                "subscriptions", Map.of("channel_activity", Map.of("subscription_id", clientId))));
+            HttpResponse<String> control = send(HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.LIVE_MULTIPLEX_CONTROL))
+                .timeout(Duration.ofSeconds(5)).header("Origin", mOrigin.toString())
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build());
+            assertEquals(200, control.statusCode(), control.body());
+            JsonNode initial = reader.submit(() -> {
+                for(int count = 0; count < 10; count++)
+                {
+                    MultiplexFrame frame = readMultiplexFrame(input);
+                    if(frame.topic() == 1) return frame.json();
+                }
+                throw new AssertionError("Missing initial snapshot");
+            }).get(3, TimeUnit.SECONDS);
+            assertEquals("snapshot", initial.path("event").textValue());
+            assertEquals(0, initial.at("/data/revision").longValue());
+            for(int index = 0; index < 20; index++)
+            {
+                var snapshot = new io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot(
+                    index % 2 == 0 ? "a" : "b", "Update " + index, "System", "Site", "Control", null,
+                    true, true, List.of(), List.of());
+                source.publish(new io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent(
+                    io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent.Operation.UPSERT, snapshot));
+            }
+            int batches = reader.submit(() -> {
+                long revision = 0;
+                int count = 0;
+                java.util.Set<String> tables = new java.util.HashSet<>();
+                while(revision < 20)
+                {
+                    MultiplexFrame frame = readMultiplexFrame(input);
+                    if(frame.topic() != 1) continue;
+                    assertEquals("activity_batch", frame.json().path("event").textValue());
+                    JsonNode data = frame.json().path("data");
+                    assertEquals(revision, data.path("base_revision").longValue());
+                    assertTrue(data.path("revision").longValue() > revision);
+                    for(JsonNode change: data.path("changes"))
+                    {
+                        assertTrue(change.path("replace").isBoolean());
+                        if(change.path("replace").booleanValue())
+                        {
+                            assertTrue(change.path("row_order").isArray(), "Empty table replacements carry an empty order");
+                            assertEquals(0, change.path("row_order").size());
+                        }
+                        tables.add(change.path("table_id").textValue());
+                    }
+                    revision = data.path("revision").longValue();
+                    count++;
+                }
+                assertEquals(java.util.Set.of("a", "b"), tables);
+                return count;
+            }).get(3, TimeUnit.SECONDS);
+            assertTrue(batches < 20, "Real multiplex transport sends coalesced batches");
+            assertEquals(200, get(StatsApiV1.STATUS).statusCode());
+        }
+    }
+
+    @Test
     void browserCallsAreNotAMultiplexTopic() throws Exception
     {
         String clientId = "00000000-0000-0000-0000-000000000123";
@@ -952,34 +1141,69 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
-    void p25VisualizerProjectionReturnsCompactEquivalentLabelsAndForwardMetadata() throws Exception
+    void currentP25SeedWorksWithoutCurrentWriterAndHistoricalCatchupIsSeparate() throws Exception
     {
-        String query = "?from_ms=1&to_ms=86400001&actions=GRANT&after_id=0&limit=5000";
-        HttpResponse<String> ordinaryResponse = get(StatsApiV1.ACTIVITY + query);
-        HttpResponse<String> compactResponse = get(StatsApiV1.ACTIVITY + query + "&projection=p25_visualizer");
-        assertEquals(200, compactResponse.statusCode(), compactResponse.body());
-        JsonNode ordinary = OBJECT_MAPPER.readTree(ordinaryResponse.body());
-        JsonNode compact = OBJECT_MAPPER.readTree(compactResponse.body());
-        assertEquals(1, compact.path("data").size());
-        assertEquals(StatsApiV1Payload.p25Visualizer(ordinary.path("data")), compact.path("data"));
-        assertEquals(ordinary.path("meta"), compact.path("meta"));
-        JsonNode row = compact.at("/data/0");
-        assertEquals("p25", row.path("protocol").asText());
-        assertEquals("trunked_site", row.path("channel_kind").asText());
-        assertEquals("GCRCN", row.path("system_name").asText());
-        assertEquals("CuyCO Jail 35", row.path("target_alias_name").asText());
-        assertEquals("Unit 2 OTA", row.path("source_talker_alias").asText());
-        assertFalse(row.has("system_identity"));
-        assertFalse(row.has("source_entity_ref"));
-        assertFalse(row.has("target_alias_description"));
-        assertFalse(row.has("frequency_hz"));
-        assertTrue(compactResponse.body().length() < ordinaryResponse.body().length() * 0.75,
-            "Compact history must remove repeated detail payload");
-        System.out.printf("P25 visualizer fixture JSON: ordinary=%d bytes, compact=%d bytes%n",
-            ordinaryResponse.body().getBytes(StandardCharsets.UTF_8).length,
-            compactResponse.body().getBytes(StandardCharsets.UTF_8).length);
-        assertStructuredError(get(StatsApiV1.ACTIVITY + query + "&projection=invalid"),
-            400, "invalid_parameter", "projection");
+        assertEquals(404, get(StatsApiV1.ACTIVITY + "/live").statusCode());
+        assertEquals(404, get(StatsApiV1.ACTIVITY + "/live?source_epoch=unknown&after_sequence=0").statusCode());
+        P25ActivityLiveService live = StatsWebTestRuntime.services(mService).mP25ActivityLiveService;
+        try(var subscriber = live.subscribe())
+        {
+            HttpResponse<String> response = get(StatsApiV1.ACTIVITY + "/live/seed");
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode seed = OBJECT_MAPPER.readTree(response.body()).path("data");
+            assertNotNull(java.util.UUID.fromString(seed.path("source_epoch").asText()));
+            assertTrue(seed.path("available").asBoolean());
+            assertFalse(seed.has("rows"), "current state must not silently replace selected history");
+            assertTrue(seed.path("affiliations").isArray());
+            assertFalse(seed.has("affiliations_truncated"));
+            assertFalse(seed.has("affiliation_revision"));
+            assertFalse(seed.has("affiliations_complete"));
+        }
+        assertEquals(WebCapability.RADIO_VIEW, StatsWebServerService.capabilityForTopic("p25_activity"));
+    }
+
+    @Test
+    void p25NativeSeedIsSharedGzipAndCompactHistoryKeepsItsCursorAndLabels() throws Exception
+    {
+        P25ActivityLiveService live = StatsWebTestRuntime.services(mService).mP25ActivityLiveService;
+        try(var subscriber = live.subscribe())
+        {
+            HttpResponse<String> response = get(StatsApiV1.ACTIVITY + "/live/seed");
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode seed = OBJECT_MAPPER.readTree(response.body()).path("data");
+            assertEquals(live.state().epoch(), seed.path("source_epoch").asText());
+            assertNotNull(java.util.UUID.fromString(seed.path("source_epoch").asText()));
+            assertTrue(seed.path("sequence").asLong() > 0);
+            assertTrue(seed.path("captured_at_ms").asLong() > 0);
+            assertTrue(seed.path("available").asBoolean());
+            assertTrue(seed.path("affiliations").isArray());
+            assertFalse(seed.has("rows"));
+            HttpRequest compressed = HttpRequest.newBuilder(mOrigin.resolve(StatsApiV1.ACTIVITY + "/live/seed"))
+                .header("Accept-Encoding", "gzip").GET().build();
+            HttpResponse<byte[]> gzip = mClient.send(compressed, HttpResponse.BodyHandlers.ofByteArray());
+            assertEquals(200, gzip.statusCode());
+            assertEquals("gzip", gzip.headers().firstValue("Content-Encoding").orElseThrow());
+            try(var input = new java.util.zip.GZIPInputStream(new java.io.ByteArrayInputStream(gzip.body())))
+            { assertEquals(response.body(), new String(input.readAllBytes(), StandardCharsets.UTF_8)); }
+        }
+        var response = get(StatsApiV1.ACTIVITY +
+            "?projection=p25_visualizer&from_ms=1&to_ms=5000&actions=GRANT&after_id=0&limit=5000");
+        assertEquals(200,response.statusCode(),response.body());
+        JsonNode history = OBJECT_MAPPER.readTree(response.body());
+        assertEquals(1,history.path("data").size());
+        JsonNode row = history.path("data").get(0);
+        assertEquals("p25",row.path("protocol").asText());
+        assertEquals("trunked_site",row.path("channel_kind").asText());
+        assertEquals("GCRCN",row.path("system_name").asText());
+        assertEquals("CuyCO Jail 35",row.path("target_alias_name").asText());
+        assertEquals("Unit 2 OTA",row.path("source_talker_alias").asText());
+        for(String field:List.of("system_identity","source_entity_ref","target_alias_description","frequency_hz","has_recording"))
+            assertFalse(row.has(field),field);
+        for(String field:List.of("next_after_id","watermark_id","has_more","reset_required"))
+            assertTrue(history.path("meta").has(field),field);
+        assertStructuredError(get(StatsApiV1.ACTIVITY + "?projection=p25_visualizer"),
+            400,"invalid_parameter","projection");
+        assertEquals(400,get(StatsApiV1.ACTIVITY + "/live/seed?limit=501").statusCode());
     }
 
     private static void seedSystemDirectory(Path database) throws Exception

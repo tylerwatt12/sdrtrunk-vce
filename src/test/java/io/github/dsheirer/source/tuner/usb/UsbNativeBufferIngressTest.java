@@ -9,6 +9,8 @@ package io.github.dsheirer.source.tuner.usb;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.buffer.INativeBuffer;
@@ -22,6 +24,7 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -30,6 +33,61 @@ import org.junit.jupiter.api.Test;
 
 class UsbNativeBufferIngressTest
 {
+    @Test
+    void repeatedOutOfOrderRecyclingAndCopyFailuresPreserveInFlightSamples() throws Exception
+    {
+        ArrayBlockingQueue<Integer> received = new ArrayBlockingQueue<>(4);
+        UsbNativeBufferIngress ingress = ingress("USB ingress owned-slot recycling test", 4,
+            buffer -> received.add(((TestNativeBuffer)buffer).id()));
+
+        try
+        {
+            long generation = ingress.start(4, 100, factory());
+
+            for(int round = 0; round < 128; round++)
+            {
+                UsbNativeBufferIngress.TransferSamples[] old = new UsbNativeBufferIngress.TransferSamples[4];
+                for(int index = 0; index < old.length; index++)
+                {
+                    old[index] = copy(ingress, 100 + index, generation);
+                    assertNotNull(old[index]);
+                }
+
+                ingress.stop();
+                assertFalse(ingress.offer(old[2]));
+                assertFalse(ingress.offer(old[0]));
+                assertFalse(ingress.offer(old[3]));
+                generation = ingress.start(4, 100, factory());
+                int base = round * 4;
+                UsbNativeBufferIngress.TransferSamples[] current = new UsbNativeBufferIngress.TransferSamples[4];
+                for(int index = 0; index < 3; index++)
+                {
+                    current[index] = copy(ingress, base + index, generation);
+                    assertNotNull(current[index]);
+                }
+
+                //The final old-generation return must not replace any of the three new in-flight copies.
+                assertFalse(ingress.offer(old[1]));
+                assertNull(ingress.copy(ByteBuffer.allocate(3), 3, 0, generation));
+                current[3] = copy(ingress, base + 3, generation);
+                assertNotNull(current[3], "A copy failure must return its slot");
+                assertNull(copy(ingress, 99, generation), "All four copies remain exclusively owned");
+
+                for(int index : new int[]{3, 1, 0, 2}) assertTrue(ingress.offer(current[index]));
+                for(int index : new int[]{3, 1, 0, 2})
+                    assertEquals((base + index) & 0xFF, received.poll(1, TimeUnit.SECONDS));
+                assertTrue(received.isEmpty());
+                assertEquals(round + 1, ingress.snapshot().copyFailures());
+                assertEquals(round + 1, ingress.snapshot().saturationDroppedBuffers());
+            }
+        }
+        finally
+        {
+            ingress.close();
+            assertTrue(ingress.awaitTermination(1, TimeUnit.SECONDS));
+        }
+    }
+
     @Test
     void saturatedQueueNeverBlocksProducerAndAccountsDroppedSamples() throws Exception
     {
@@ -208,10 +266,15 @@ class UsbNativeBufferIngressTest
 
     private static boolean offer(UsbNativeBufferIngress ingress, int id, long generation)
     {
+        UsbNativeBufferIngress.TransferSamples copy = copy(ingress, id, generation);
+        return copy != null && ingress.offer(copy);
+    }
+
+    private static UsbNativeBufferIngress.TransferSamples copy(UsbNativeBufferIngress ingress, int id, long generation)
+    {
         ByteBuffer samples = ByteBuffer.allocate(4);
         samples.put(0, (byte)id);
-        UsbNativeBufferIngress.TransferSamples copy = ingress.copy(samples, samples.capacity(), 0, generation);
-        return copy != null && ingress.offer(copy);
+        return ingress.copy(samples, samples.capacity(), 0, generation);
     }
 
     private static INativeBufferFactory factory()

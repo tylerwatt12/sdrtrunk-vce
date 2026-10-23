@@ -38,6 +38,22 @@ assert.equal(callFormats.formatVoiceQuality('unknown'), '');
 
 const source = fs.readFileSync(path.resolve(process.argv[2] ||
   path.resolve(__dirname, '../../../../stats-web/assets/app.js')), 'utf8');
+const groupFactsStart = source.indexOf("blocks.push(section('Last-known Facts'");
+const groupFactsEnd = source.indexOf('infoColumn.append(...blocks);', groupFactsStart);
+assert.ok(groupFactsStart >= 0 && groupFactsEnd > groupFactsStart, 'Group facts renderer is present.');
+const groupFacts = vm.runInNewContext(`const blocks = [];
+  ${source.slice(groupFactsStart, groupFactsEnd)}
+  blocks[0].values;`, {
+  groupIdentity: { native_id: 7001, last_encryption_algorithm_name: 'AES',
+    last_encryption_algorithm_id: 132, last_encryption_key_id: 23 },
+  radioLink: () => { assert.fail('A group identity must never be used as an unreported source radio.'); },
+  section: (title, values) => ({ title, values }), keyValues: values => values,
+  encryptionAlgorithmInfoValue: name => name, hexDecimalPair: value => value, dateTime: () => '',
+  fragment: () => '', node: () => ''
+});
+assert.deepEqual(JSON.parse(JSON.stringify(groupFacts)), [
+  ['Last Encryption Algorithm', 'AES'], ['Last Encryption Key ID', 23]
+], 'Group facts retain reported encryption data without an unsupported Last Source field.');
 assert.ok(source.includes('liveDetailCaptureRow(events, order, event,'),
   'Live capture retains the event directly instead of inferring scope from a table selection.');
 assert.ok(!source.includes('liveEventCaptured'), 'Live capture needs no passthrough presentation wrapper.');
@@ -492,6 +508,7 @@ const pageContext = {
   requiredRadioSystem: () => ({ radio_system_key: 'p25:bee00:348' }),
   requiredIdentityKey: () => 'v1-g-bee00-348-7',
   api: async () => pageResponse, channelApiPath: () => '/', radioSystemApiPath: () => '/',
+  loadActivityMessageTypes: async () => {},
   groupIdentityApiPath: () => '/',
   pageHeader: (title, subtitle) => { pageHeaders.push({ title, subtitle }); return null; },
   beginPage: () => false, fragment: (...values) => values,

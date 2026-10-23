@@ -20,6 +20,36 @@ import org.junit.jupiter.api.Test;
 class StatsApiV1PayloadTest
 {
     @Test
+    void compactP25TreesKeepExactWireFieldsAndDoNotMutateTheirSource() throws Exception
+    {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode source = mapper.readTree("""
+            [{"id":7,"configuration_id":"control","observed_at_ms":9,"channel_kind":"TRUNKED",
+              "protocol_code":1,"protocol":"APCO25","action":"JOIN","source_radio_id":42,"target_id":501,
+              "source_identity_key":"v1-r-abcde-123-42","target_identity_key":"v1-g-abcde-123-501",
+              "source_native_id":42,"target_native_id":501,"target_kind_code":1,
+              "source_canonical_wacn":703710,"source_canonical_system_id":291,"source_canonical_subscriber_id":42,
+              "source_alias_name":null,"system_name":null,"unrelated_internal_field":"removed"}]
+            """);
+        JsonNode before = source.deepCopy();
+        JsonNode expected = mapper.readTree("""
+            [{"id":7,"configuration_id":"control","observed_at_ms":9,"channel_kind":"trunked",
+              "protocol":"p25","action":"join","source_radio_id":42,"target_id":501,
+              "source_identity_key":"v1-r-abcde-123-42","target_identity_key":"v1-g-abcde-123-501",
+              "source_native_id":42,"target_native_id":501,"target_kind":"talkgroup",
+              "source_canonical_identity":{"wacn":703710,"system_id":291,"subscriber_id":42},
+              "target_canonical_group_identity":{"wacn":703710,"system_id":291,"talkgroup_id":501},
+              "source_observed_local_id":42,"target_observed_local_id":null,
+              "source_alias_name":null,"system_name":null}]
+            """);
+        var rows = StatsApiV1Payload.p25VisualizerRows(source);
+        assertEquals(expected,mapper.readTree(mapper.writeValueAsBytes(rows)));
+        assertEquals(before,source,"Compact presentation must leave the producer-owned tree unchanged");
+        rows.getFirst().put("source_alias_name","changed later");
+        assertEquals(before,source,"Returned public trees must not borrow mutable producer objects");
+    }
+
+    @Test
     void messageSummaryTypesUseStableEventCodesAndHideRawActionCounters()
     {
         for(var type: io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog.eventTypes().entrySet())
@@ -452,22 +482,6 @@ class StatsApiV1PayloadTest
         assertEquals("channel-4", radio.at("/presence/channel/configuration_id").textValue());
         assertFalse(radio.at("/presence").has("site"));
         assertNoInternalFields(radio);
-    }
-
-    @Test
-    void presentsBoundedChannelPreviewsWithoutDatabaseIds()
-    {
-        JsonNode system = StatsApiV1Payload.present(Map.ofEntries(
-            Map.entry("radio_system_id", 1), Map.entry("radio_system_key", "p25:bee00:348"),
-            Map.entry("protocol_code", 1), Map.entry("channels", 26),
-            Map.entry("channel_preview_truncated", true),
-            Map.entry("channel_preview", List.of(Map.of("channel_id", 1, "protocol_code", 1,
-                "configuration_id", "channel-5", "rfss", 2, "site_id", 7)))));
-        assertEquals("p25", system.path("protocol").textValue());
-        assertTrue(system.path("channel_preview").isArray());
-        assertEquals("channel-5", system.at("/channel_preview/0/configuration_id").textValue());
-        assertTrue(system.path("channel_preview_truncated").booleanValue());
-        assertNoInternalFields(system);
     }
 
     @Test

@@ -46,6 +46,7 @@ final class UsbNativeBufferIngress implements AutoCloseable
     /** Preallocated transfer copy with primitive metadata, so the callback does not allocate a wrapper. */
     static final class TransferSamples
     {
+        private final int mPoolIndex;
         private final byte[] mSamples;
         private final ByteBuffer mView;
         private long mTimestamp;
@@ -53,8 +54,9 @@ final class UsbNativeBufferIngress implements AutoCloseable
         private long mQueuedAt;
         private int mSampleCount;
 
-        private TransferSamples(int transferBufferSize)
+        private TransferSamples(int poolIndex, int transferBufferSize)
         {
+            mPoolIndex = poolIndex;
             mSamples = new byte[transferBufferSize];
             mView = ByteBuffer.wrap(mSamples);
         }
@@ -121,7 +123,7 @@ final class UsbNativeBufferIngress implements AutoCloseable
 
             for(int index = 0; index < mCapacity; index++)
             {
-                mPool.set(index, new TransferSamples(transferBufferSize));
+                mPool.set(index, new TransferSamples(index, transferBufferSize));
             }
 
             mNativeBufferFactory = nativeBufferFactory;
@@ -357,15 +359,10 @@ final class UsbNativeBufferIngress implements AutoCloseable
 
     private void release(TransferSamples transferSamples)
     {
-        for(int index = 0; index < mCapacity; index++)
+        if(!mPool.compareAndSet(transferSamples.mPoolIndex, null, transferSamples))
         {
-            if(mPool.compareAndSet(index, null, transferSamples))
-            {
-                return;
-            }
+            throw new IllegalStateException("USB native-buffer ingress pool overflow");
         }
-
-        throw new IllegalStateException("USB native-buffer ingress pool overflow");
     }
 
     private int sampleCount(int actualLength)

@@ -17,7 +17,9 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -88,18 +90,15 @@ final class StatsApiV1Payload
 
     static JsonNode present(Object value)
     {
-        return transform(source(value), StatsApiProtocol.UNKNOWN);
+        return transform(value instanceof JsonNode tree ? tree : source(value), StatsApiProtocol.UNKNOWN);
     }
 
-    /** Trim only after shared name/canonical/Alias presentation so the compact graph preserves its labels. */
-    static JsonNode p25Visualizer(Object value)
+    /** Identical compact public trees for paged history and the shared saved-activity append stream. */
+    static List<ObjectNode> p25VisualizerRows(Object value)
     {
-        JsonNode rows = source(value);
-        for(JsonNode row: rows)
-        {
-            if(row instanceof ObjectNode object) object.retain(P25_VISUALIZER_FIELDS);
-        }
-        return rows;
+        List<ObjectNode> rows = new ArrayList<>();
+        for(JsonNode row: present(value)) rows.add(((ObjectNode)row).retain(P25_VISUALIZER_FIELDS));
+        return List.copyOf(rows);
     }
 
     /** Preserves producer field casing before optional read-side enrichment. */

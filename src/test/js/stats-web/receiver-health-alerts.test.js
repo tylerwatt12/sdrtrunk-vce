@@ -45,6 +45,37 @@ test('health alert preferences are versioned, bounded, and use stable unique cod
   assert.throws(() => schema.validate(withoutHealthAlerts), /unknown or missing settings/);
 });
 
+test('the status icon catalog contains only receiving and decoding failures', async () => {
+  const alerts = await loadModule('receiver-health-alerts');
+  assert.deepEqual(alerts.receiverHealthAlertIds, [
+    'tuner-error',
+    'receiver-iq-drop',
+    'receiver-ingress-drop',
+    'usb-sample-loss',
+    'usb-delivery-rate-low',
+    'channelizer-drop',
+    'channel-output-drop',
+    'control-channel-lock-lost'
+  ]);
+  assert.deepEqual(alerts.receiverHealthAlertGroups.map(({ id }) => id), [
+    'receiver', 'usb', 'channels'
+  ]);
+  const byId = new Map(alerts.receiverHealthAlertGroups.flatMap(({ alerts }) =>
+    alerts.map((alert) => [alert.id, alert])));
+  assert.equal(byId.get('control-channel-lock-lost').name, 'Control channel is not receiving messages',
+    'A control channel can fail to start decoding as well as lose an established lock.');
+  for (const code of ['receiver-iq-drop', 'receiver-ingress-drop', 'usb-sample-loss',
+    'channelizer-drop', 'channel-output-drop']) {
+    assert.match(`${byId.get(code).name} ${byId.get(code).description}`, /keeps/,
+      `${code} must describe repeated loss rather than a single diagnostic observation.`);
+  }
+  assert.match(byId.get('usb-delivery-rate-low').description, /keeps receiving less radio data/);
+  for (const { name, description } of byId.values()) {
+    assert.doesNotMatch(`${name} ${description}`, /\b(?:ingress|channelizer|frames|transfers|chunks)\b/i,
+      'Status icon choices must explain receiving problems without internal counter terminology.');
+  }
+});
+
 test('the friendly catalog covers every incident code emitted by ReceiverHealthService', async () => {
   const alerts = await loadModule('receiver-health-alerts');
   const stableId = /^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/;
@@ -70,7 +101,7 @@ test('the friendly catalog covers every incident code emitted by ReceiverHealthS
 
   const serviceSource = fs.readFileSync(path.join(repository,
     'src/main/java/io/github/dsheirer/stats/health/ReceiverHealthService.java'), 'utf8');
-  const directIds = [...serviceSource.matchAll(/mIncidents\.observe\(\s*"([^"]+)"/g)]
+  const directIds = [...serviceSource.matchAll(/mIncidents\.observe(?:Recurring)?\(\s*"([^"]+)"/g)]
     .map((match) => match[1]);
   const outputIds = [...serviceSource.matchAll(/observeOutputDrop\(\s*now\s*,\s*"([^"]+)"/g)]
     .map((match) => match[1]);
@@ -83,7 +114,7 @@ test('only explicitly disabled codes are suppressed', async () => {
   const alerts = await loadModule('receiver-health-alerts');
   const preferences = { health_alerts: { disabled_codes: ['receiver-iq-drop'] } };
   assert.equal(alerts.isReceiverHealthAlertEnabled(preferences, 'receiver-iq-drop'), false);
-  assert.equal(alerts.isReceiverHealthAlertEnabled(preferences, 'host-cpu-pressure'), true);
+  assert.equal(alerts.isReceiverHealthAlertEnabled(preferences, 'usb-delivery-rate-low'), true);
   assert.equal(alerts.isReceiverHealthAlertEnabled(preferences, 'future-incident'), true,
     'New incident codes must remain enabled until a user explicitly disables them');
   assert.equal(alerts.isReceiverHealthAlertEnabled({}, 'receiver-iq-drop'), true);

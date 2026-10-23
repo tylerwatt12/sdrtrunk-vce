@@ -97,6 +97,7 @@ const context = {
   systemLabels: labels, node, route, window: { history: { replaceState() {} } },
   captureRenderContext: () => ({}), requiredRadioSystem: () => ({ radio_system_key: marcs.radio_system_key }),
   api: async () => marcs, apiPage: async () => ({ rows: [] }), renderIsCurrent: () => true,
+  loadActivityMessageTypes: async () => {},
   radioSystemApiPath: () => '/', radioSystemTabItems: () => ['info', 'groups', 'radios', 'activity', 'talker-aliases'].map(id => ({ id })),
   radioSystemAssignmentLabel: () => '', radioSystemTabs: () => null,
   pageHeader: (title, subtitle) => { const value = { title, subtitle }; headers.push(value); return value; },

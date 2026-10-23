@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -36,7 +37,7 @@ class WebAccessSessionManagerTest
         assertEquals(List.of("maximumSessions", "tokenBytes"),
             Arrays.stream(WebAccessSessionManager.Configuration.class.getRecordComponents())
                 .map(component -> component.getName()).toList());
-        assertEquals(64, WebAccessSessionManager.Configuration.defaults().maximumSessions());
+        assertEquals(256, WebAccessSessionManager.Configuration.defaults().maximumSessions());
         assertEquals(32, WebAccessSessionManager.Configuration.defaults().tokenBytes());
 
         try(WebAccessSessionManager manager = new WebAccessSessionManager(configuration))
@@ -63,6 +64,26 @@ class WebAccessSessionManagerTest
             assertTrue(manager.resolve(second.sessionId(), accessService).isEmpty(),
                 "credential revocation must apply to every session for the account");
             assertEquals(0, manager.getActiveSessionCount());
+        }
+    }
+
+    @Test
+    void defaultCapacityPreservesTwoHundredBrowsersAndTheAdministratorReserve() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("two-hundred-sessions.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        WebAccessService access = new WebAccessService(database);
+        WebAccessAccount primary = access.provisionOrResetPrimaryAdmin("primary admin password".toCharArray());
+        WebAccessAccount user = access.createUser("listener", "listener password".toCharArray());
+        try(WebAccessSessionManager manager = new WebAccessSessionManager())
+        {
+            List<WebAccessSession> sessions = new ArrayList<>();
+            for(int index = 0; index < 200; index++) sessions.add(manager.create(user).orElseThrow());
+            WebAccessSession administrator = manager.create(primary).orElseThrow();
+            assertEquals(201, manager.getActiveSessionCount());
+            for(WebAccessSession session: sessions)
+                assertTrue(manager.resolve(session.sessionId(), access).isPresent());
+            assertTrue(manager.resolve(administrator.sessionId(), access).isPresent());
         }
     }
 

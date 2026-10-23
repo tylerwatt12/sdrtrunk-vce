@@ -13,30 +13,11 @@ for (const [name, viewport] of [
           <div class="section-title ui-section-title">System Activity</div>
           <div class="ui-notice ui-notice-warning ui-notice-spaced">New activity is not being saved.</div>
         </section>
-        <section class="section ui-section" id="dashboard-notice-sample">
-          <div class="section-title ui-section-title">Source radios</div>
-          <div class="dashboard-activity-radio-body">
-            <div class="dashboard-activity-radio-host">
-              <div class="ui-notice ui-notice-warning ui-notice-spaced ui-inset-notice">No saved activity is available.</div>
-            </div>
-          </div>
-        </section>
-        <section class="section ui-section" id="dashboard-result-notice-sample">
-          <div class="section-title ui-section-title">Source radios</div>
-          <div class="dashboard-activity-radio-body">
-            <div class="dashboard-activity-radio-host">
-              <div class="dashboard-activity-radio-result">
-                <div class="ui-notice ui-notice-warning ui-notice-spaced ui-inset-notice">New activity is not being saved.</div>
-              </div>
-            </div>
-          </div>
-        </section>`);
+`);
     });
 
     for (const selector of [
-      '#activity-notice-sample > .ui-notice',
-      '#dashboard-notice-sample .ui-inset-notice',
-      '#dashboard-result-notice-sample .ui-inset-notice'
+      '#activity-notice-sample > .ui-notice'
     ]) {
       const notice = page.locator(selector);
       await expect(notice).toBeVisible();

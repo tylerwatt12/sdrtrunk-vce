@@ -1,4 +1,4 @@
-import { createFormWorkflow } from '../core/form-workflows.js?v=4';
+import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 
 export function radioReferencePremiumSignup({ node }) {
   const signup = node('p', 'ui-field-detail');

@@ -24,6 +24,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.web.auth.WebAccessService;
+import io.github.dsheirer.web.auth.AccessTier;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
 import io.github.dsheirer.web.http.WebRequestSecurity;
@@ -44,6 +45,8 @@ import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -73,6 +76,8 @@ class ManagedRecordingsHttpControllerTest
     private ExecutorService mExecutor;
     private HttpClient mClient;
     private URI mOrigin;
+    private WebAccessService mAccess;
+    private final AtomicLong mBrowseClock = new AtomicLong();
 
     @BeforeEach
     void setUp() throws Exception
@@ -108,6 +113,7 @@ class ManagedRecordingsHttpControllerTest
         }
 
         WebAccessService access = new WebAccessService(mainDatabase);
+        mAccess = access;
         char[] password = PASSWORD.toCharArray();
         try
         {
@@ -125,7 +131,8 @@ class ManagedRecordingsHttpControllerTest
         mServer.setExecutor(mExecutor);
         new WebSessionHttpController(access, authentication, mSecurity).register(mServer);
         ManagedRecordingsHttpController controller = new ManagedRecordingsHttpController(() -> mCatalog,
-            mPreferences, mSecurity, mMaintenance, new ManagedRecordingLabels(mainDatabase));
+            mPreferences, mSecurity, mMaintenance, new ManagedRecordingLabels(mainDatabase), () -> null,
+            new StatsBrowseReadCache(4, mBrowseClock::get));
         mServer.createContext(ManagedRecordingsHttpController.BROWSE_PATH,
             mSecurity.protectApi(WebCapability.RECORDINGS_VIEW, controller::handleBrowse));
         mServer.createContext(ManagedRecordingsHttpController.ADMIN_PATH,
@@ -211,6 +218,50 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(0, json(emptyStatus).at("/data/call_count").longValue());
         assertTrue(json(send(request(admin + "/status").header("Cookie", primary.cookie()).GET()))
             .at("/data/catalog/call_count").isNumber());
+    }
+
+    @Test
+    void cachedBrowseResponsesRemainBehindCurrentRequestAuthorization() throws Exception
+    {
+        String path = ManagedRecordingsHttpController.BROWSE_PATH + "/calls?from_ms=0&to_ms=5000";
+        mAccess.setCapabilityTier(WebCapability.RECORDINGS_VIEW, AccessTier.USER);
+        assertEquals(401, send(request(path).GET()).statusCode());
+        Session primary = login();
+        HttpResponse<String> allowed = send(request(path).header("Cookie", primary.cookie()).GET());
+        assertEquals(200, allowed.statusCode(), allowed.body());
+        assertEquals(401, send(request(path).GET()).statusCode(), "A cached authorized read must not authorize a peer");
+        mAccess.setCapabilityTier(WebCapability.RECORDINGS_VIEW, AccessTier.PUBLIC);
+        assertEquals(allowed.body(), send(request(path).GET()).body());
+        mAccess.setCapabilityTier(WebCapability.RECORDINGS_VIEW, AccessTier.USER);
+        assertEquals(401, send(request(path).GET()).statusCode(), "Changed policy also protects a warm public cache");
+    }
+
+    @Test
+    void replacementCatalogDoesNotReuseThePriorCatalogsPreparedResponse() throws Exception
+    {
+        String path = ManagedRecordingsHttpController.BROWSE_PATH + "/calls?from_ms=0&to_ms=5000";
+        assertEquals(101, json(send(request(path).GET())).at("/data/calls/0/source_id").intValue());
+        String status = ManagedRecordingsHttpController.BROWSE_PATH + "/status";
+        assertEquals(1, json(send(request(status).GET())).at("/data/call_count").intValue());
+        ManagedRecordingCatalog original = mCatalog;
+        try(ManagedRecordingCatalog replacement = new ManagedRecordingCatalog(
+            mDirectory.resolve("replacement.sqlite"), mDirectory.resolve("replacement-audio")))
+        {
+            mCatalog = replacement;
+            assertEquals(0, json(send(request(status).GET())).at("/data/call_count").intValue());
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + replacement.databaseFile());
+                Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path," +
+                    "size_bytes,protocol,call_type,voice_type,source_id,target_id) " +
+                    "VALUES(1000,2000,1000,'replacement.mp3',5,1,1,1,202,4001)");
+            }
+            mCatalog = replacement;
+            assertEquals(202, json(send(request(path).GET())).at("/data/calls/0/source_id").intValue());
+        }
+        finally { mCatalog = original; }
+        assertEquals(101, json(send(request(path).GET())).at("/data/calls/0/source_id").intValue());
+        assertEquals(1, json(send(request(status).GET())).at("/data/call_count").intValue());
     }
 
     @Test
@@ -500,6 +551,7 @@ class ManagedRecordingsHttpControllerTest
         {
             statement.executeUpdate("UPDATE recording_patch_member SET home_wacn=1,home_system=1");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         HttpResponse<String> local = send(request(base + "/calls?from_ms=0&to_ms=5000&q=Local").GET());
         assertEquals(200, local.statusCode(), local.body());
         assertEquals(1, json(local).at("/data/calls").size());
@@ -510,6 +562,7 @@ class ManagedRecordingsHttpControllerTest
         {
             statement.executeUpdate("DELETE FROM recording_patch_member WHERE local_id<>0");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         local = send(request(base + "/calls?from_ms=0&to_ms=5000&q=Local").GET());
         assertEquals(200, local.statusCode(), local.body());
         assertEquals(1, json(local).at("/data/calls").size(), "A same-home zero-address member is searchable by its Alias");
@@ -518,6 +571,7 @@ class ManagedRecordingsHttpControllerTest
         {
             statement.executeUpdate("UPDATE recording_patch_member SET home_wacn=2,home_system=2");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         foreign = send(request(base + "/calls?from_ms=0&to_ms=5000&q=Local").GET());
         assertEquals(200, foreign.statusCode(), foreign.body());
         assertEquals(0, json(foreign).at("/data/calls").size());
@@ -557,6 +611,7 @@ class ManagedRecordingsHttpControllerTest
         {
             statement.executeUpdate("INSERT INTO recording_patch_member VALUES(1,1,6000,-1,-1,-1,1000)");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         HttpResponse<String> overflow = send(request(base).GET());
         assertEquals(422, overflow.statusCode(), overflow.body());
         assertEquals("recording_alias_lookup_too_broad", json(overflow).at("/error/code").textValue());
@@ -680,6 +735,7 @@ class ManagedRecordingsHttpControllerTest
             statement.executeUpdate("INSERT INTO recording_patch_member(call_id,kind,local_id,home_wacn," +
                 "home_system,home_id,start_ms) VALUES(9,2,777,1,1," + radio + ",2000)");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         response = send(request(base + "&q=Home%20OTA").GET());
         assertEquals(200, response.statusCode(), response.body());
         assertEquals(5, json(response).at("/data/calls").size());
@@ -693,6 +749,7 @@ class ManagedRecordingsHttpControllerTest
                 "source_home_system,source_home_id,target_id) VALUES" +
                 "(10,2000,3000,1000,'canonical-only.mp3',5,501,1,1,1,NULL,1,1," + radio + ",1001)");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         response = send(request(base + "&q=Home%20OTA").GET());
         assertEquals(200, response.statusCode(), response.body());
         assertEquals(6, json(response).at("/data/calls").size());
@@ -974,6 +1031,7 @@ class ManagedRecordingsHttpControllerTest
         {
             statement.executeUpdate("UPDATE recording_call SET alias_list_id=700 WHERE id=1");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         JsonNode rows = json(send(request(base + "&kind=talkgroup").GET())).at("/data");
         assertEquals(1, rows.size());
         assertEquals("Fixture Dispatch", rows.get(0).path("label").textValue());
@@ -1055,6 +1113,7 @@ class ManagedRecordingsHttpControllerTest
             statement.executeUpdate("UPDATE alias SET name='Z Current Dispatch' " +
                 "WHERE matcher_type='TALKGROUP' AND value=4001");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         assertEquals("Z Current Dispatch", json(send(request(base + "&limit=1").GET()))
             .at("/data/0/label").textValue());
     }
@@ -1133,6 +1192,7 @@ class ManagedRecordingsHttpControllerTest
         {
             statement.executeUpdate("DELETE FROM recording_call WHERE id=1");
         }
+        mBrowseClock.addAndGet(TimeUnit.SECONDS.toNanos(2)); // Direct fixture SQL bypasses API invalidation.
         assertEquals(0, json(send(request(path).GET())).at("/data").size());
     }
 

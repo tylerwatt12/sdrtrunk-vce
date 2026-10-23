@@ -28,11 +28,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
@@ -41,16 +41,18 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 /**
- * Optional, bounded diagnostic observer. Producers perform one lock-free queue attempt with immutable references;
- * projection, redaction, correlation, rotation and all disk work belong to the lower-priority worker. Overload loses
- * diagnostic records instead of delaying radio delivery. No appender is installed on receiver logging callbacks.
+ * Optional, bounded diagnostic observer. HTTP, listener and transport workers offer immutable records without
+ * waiting for queue capacity. Projection, redaction, correlation, rotation and disk work belong to the lower-priority
+ * worker. Receiver health has a separate latest-sample slot; no queue producer runs on a receiver callback.
  */
 public final class WebDiagnosticLogService implements AutoCloseable
 {
     public static final String FILE_NAME = "sdrtrunk_web.log";
     public static final int RETENTION_DAYS = 7;
     public static final long MAXIMUM_BYTES = 100L * 1024 * 1024;
-    static final int QUEUE_CAPACITY = 512;
+    // A simultaneous shutdown can enqueue 256 viewers * (6 topic closes + disconnect + request finish),
+    // plus start/finish records for 512 other admitted HTTP requests: 3,072 records before the writer drains.
+    static final int QUEUE_CAPACITY = 4_096;
     static final int CONTEXT_SAMPLES = 60;
     private static final int MAXIMUM_RECORD_BYTES = 64 * 1024;
     private static final int MAXIMUM_FILES = 128;
@@ -63,7 +65,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
     private static final Set<String> EVENT_FIELDS = Set.of("topic", "client_id", "active_clients", "reason", "count",
         "duration_ms", "enabled", "port", "tls", "https", "failure_count", "operation");
     private static final Set<String> EVENT_KINDS = Set.of("listener_started", "listener_stopped", "listener_failed",
-        "request_queue_full", "live_connected", "live_disconnected", "live_slow_disconnect", "stream_topic_open",
+        "request_capacity_full", "live_connected", "live_disconnected", "live_slow_disconnect", "stream_topic_open",
         "stream_topic_close", "stream_topic_failed");
     private static final Set<String> HEALTH_FIELDS = Set.of("generated_at_ms", "started_at_ms", "summary", "active",
         "measurements", "severity", "active_count", "warning_count", "critical_count", "occurrence_id", "code",
@@ -82,9 +84,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
     private final ApplicationLogService mReader;
     private final Semaphore mDownloadReader = new Semaphore(1);
     private final Semaphore mActiveDownloads = new Semaphore(2);
-    private final AtomicReferenceArray<Pending> mQueue = new AtomicReferenceArray<>(QUEUE_CAPACITY);
-    private final AtomicLong mHead = new AtomicLong();
-    private final AtomicLong mTail = new AtomicLong();
+    private final ArrayBlockingQueue<Pending> mQueue = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
     private final AtomicLong mGeneration = new AtomicLong(1);
     private final AtomicLong mRequestSequence = new AtomicLong();
     private final AtomicLong mDropped = new AtomicLong();
@@ -164,7 +164,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
     public Status status()
     {
         return new Status(mEnabled, mEnabled && mActive, FILE_NAME, RETENTION_DAYS, mMaximumBytes,
-            (int)Math.min(QUEUE_CAPACITY + 1, Math.max(0, mTail.get() - mHead.get()) + (mLatestHealth.get() != null ? 1 : 0)), mDropped.get(), mWritten.get(),
+            mQueue.size() + (mLatestHealth.get() != null ? 1 : 0), mDropped.get(), mWritten.get(),
             mLastError, mCanDownload);
     }
 
@@ -209,7 +209,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
             requestId, durationNanos, responseCode, failed));
     }
 
-    /** Fields must be immutable and bounded by the caller; only the explicit safe field set reaches disk. */
+    /** HTTP/listener/transport workers only; immutable bounded fields are projected on the diagnostic worker. */
     public void event(String kind, Map<String,Object> fields)
     {
         if(mEnabled && !mClosed.get())
@@ -260,28 +260,12 @@ public final class WebDiagnosticLogService implements AutoCloseable
 
     private void submit(Pending pending)
     {
-        long tail = mTail.get();
-        // One CAS attempt, no spinning and no blocking admission. Contention itself is safe diagnostic loss.
-        if(tail - mHead.get() >= QUEUE_CAPACITY || !mTail.compareAndSet(tail, tail + 1))
+        if(!mQueue.offer(pending))
         {
             dropped(pending);
             return;
         }
-        mQueue.set((int)(tail % QUEUE_CAPACITY), pending);
         LockSupport.unpark(mWorker);
-    }
-
-    private Pending poll()
-    {
-        long head = mHead.get();
-        if(head >= mTail.get()) return null;
-        int index = (int)(head % QUEUE_CAPACITY);
-        Pending pending = mQueue.get(index);
-        // A producer may have reserved but not yet published its slot. The worker retries after yielding.
-        if(pending == null) return null;
-        mQueue.set(index, null);
-        mHead.set(head + 1);
-        return pending;
     }
 
     private void run()
@@ -320,7 +304,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
                         maintenanceAt = now + 60_000;
                     }
                     Pending pending = carried != null ? carried : mLatestHealth.getAndSet(null);
-                    if(pending == null) pending = poll();
+                    if(pending == null) pending = mQueue.poll();
                     carried = null;
                     long currentGeneration = mGeneration.get();
                     if(currentGeneration != generation)
@@ -380,7 +364,7 @@ public final class WebDiagnosticLogService implements AutoCloseable
                         Map<String,Object> fields = project(pending);
                         activity(pending.kind(), fields);
                         projected(System.nanoTime() - projectionStarted);
-                        write(pending.time(), safeKind(pending.kind()), fields);
+                        write(pending.time(), safeKind(pending.kind()), fields, false, pending.requestId() != 0);
                     }
                 }
                 catch(Exception exception)
@@ -649,6 +633,12 @@ public final class WebDiagnosticLogService implements AutoCloseable
 
     private void write(long time, String kind, Map<String,Object> fields, boolean finalRecord) throws IOException
     {
+        write(time, kind, fields, finalRecord, false);
+    }
+
+    private void write(long time, String kind, Map<String,Object> fields, boolean finalRecord,
+                       boolean sanitizedRequest) throws IOException
+    {
         if(!finalRecord && (!mEnabled || mWorkerGeneration != mGeneration.get() || mClosed.get())) return;
         long writeStarted = System.nanoTime();
         Map<String,Object> timed = new LinkedHashMap<>(fields);
@@ -656,7 +646,9 @@ public final class WebDiagnosticLogService implements AutoCloseable
         timed.put("recorded_at_ms", mClock.getAsLong());
         String line = LOG_TIME.format(Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault())) +
             " [web diagnostic writer] " + level(kind, fields) + " web.diagnostic - " + kind + " " + MAPPER.writeValueAsString(timed) + "\n";
-        byte[] bytes = ApplicationLogService.redact(line).getBytes(StandardCharsets.UTF_8);
+        // Request projection contains only fixed fields and an already-redacted ASCII route. Event kinds do not
+        // confer this trust: all other records still need the final pass, including text exposed by control cleanup.
+        byte[] bytes = (sanitizedRequest ? line : ApplicationLogService.redact(line)).getBytes(StandardCharsets.UTF_8);
         if(bytes.length > MAXIMUM_RECORD_BYTES || bytes.length > mMaximumBytes)
         {
             mDropped.incrementAndGet();

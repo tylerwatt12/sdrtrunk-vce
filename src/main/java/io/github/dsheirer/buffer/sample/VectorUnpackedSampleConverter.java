@@ -23,64 +23,20 @@ import io.github.dsheirer.buffer.DcCorrectionManager;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import jdk.incubator.vector.ShortVector;
+import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.VectorSpecies;
 
 /**
  * Vector implementation of the unpacked 12-bit sample converter.
  */
 public class VectorUnpackedSampleConverter implements ISampleConverter
 {
-    private final int mVectorBitSize;
+    private static final VectorSpecies<Byte> SPECIES = ByteVector.SPECIES_PREFERRED;
 
     /**
      * Manages DC calculations and processing interval
      */
     private final DcCorrectionManager mDcCalculationManager = new DcCorrectionManager();
-
-    /**
-     * Constructs an instance using the preferred SIMD width.
-     */
-    public VectorUnpackedSampleConverter()
-    {
-        this(selectPreferredVectorBitSize(ShortVector.SPECIES_PREFERRED.vectorBitSize()));
-    }
-
-    /**
-     * Package-private constructor for exercising each fixed-width kernel in focused tests.
-     */
-    VectorUnpackedSampleConverter(int vectorBitSize)
-    {
-        if(vectorBitSize != 64 && vectorBitSize != 128 && vectorBitSize != 256 && vectorBitSize != 512)
-        {
-            throw new IllegalArgumentException("Unsupported unpacked sample converter vector width: " +
-                vectorBitSize);
-        }
-
-        mVectorBitSize = vectorBitSize;
-    }
-
-    private static int selectPreferredVectorBitSize(int preferredBitSize)
-    {
-        if(preferredBitSize >= 512)
-        {
-            return 512;
-        }
-        else if(preferredBitSize >= 256)
-        {
-            return 256;
-        }
-        else if(preferredBitSize >= 128)
-        {
-            return 128;
-        }
-        else if(preferredBitSize >= 64)
-        {
-            return 64;
-        }
-
-        throw new IllegalStateException("No supported unpacked sample converter vector width for preferred width " +
-            preferredBitSize);
-    }
 
     @Override
     public short[] convert(ByteBuffer buffer)
@@ -88,15 +44,16 @@ public class VectorUnpackedSampleConverter implements ISampleConverter
         boolean shouldCalculateDc = mDcCalculationManager.shouldCalculateDc();
         short[] samples = new short[buffer.capacity() / 2];
         MemorySegment input = getInputSegment(buffer);
-        int vectorBound = switch(mVectorBitSize)
+        int vectorBound = SPECIES.loopBound(samples.length * Short.BYTES) / Short.BYTES;
+
+        for(int x = 0; x < vectorBound; x += SPECIES.length() / Short.BYTES)
         {
-            case 64 -> convert64(input, samples);
-            case 128 -> convert128(input, samples);
-            case 256 -> convert256(input, samples);
-            case 512 -> convert512(input, samples);
-            default -> throw new IllegalStateException("Unsupported unpacked sample converter vector width: " +
-                mVectorBitSize);
-        };
+            // The Vector API defines reinterpretAsShorts in little-endian order on every platform.
+            ByteVector.fromMemorySegment(SPECIES, input, (long)x * Short.BYTES, ByteOrder.LITTLE_ENDIAN)
+                .reinterpretAsShorts()
+                .and((short)0x0FFF)
+                .intoArray(samples, x);
+        }
 
         long dcAccumulator = 0;
 
@@ -150,70 +107,6 @@ public class VectorUnpackedSampleConverter implements ISampleConverter
         ByteBuffer duplicate = buffer.duplicate();
         duplicate.position(0);
         return MemorySegment.ofBuffer(duplicate);
-    }
-
-    /**
-     * These width-specific kernels keep the species constant at the hot call site so Java 25 can intrinsify the
-     * contiguous little-endian loads instead of materializing vector values on the heap.
-     */
-    private static int convert64(MemorySegment input, short[] samples)
-    {
-        int vectorBound = ShortVector.SPECIES_64.loopBound(samples.length);
-
-        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_64.length())
-        {
-            ShortVector.fromMemorySegment(ShortVector.SPECIES_64, input, (long)x * Short.BYTES,
-                    ByteOrder.LITTLE_ENDIAN)
-                .and((short)0x0FFF)
-                .intoArray(samples, x);
-        }
-
-        return vectorBound;
-    }
-
-    private static int convert128(MemorySegment input, short[] samples)
-    {
-        int vectorBound = ShortVector.SPECIES_128.loopBound(samples.length);
-
-        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_128.length())
-        {
-            ShortVector.fromMemorySegment(ShortVector.SPECIES_128, input, (long)x * Short.BYTES,
-                    ByteOrder.LITTLE_ENDIAN)
-                .and((short)0x0FFF)
-                .intoArray(samples, x);
-        }
-
-        return vectorBound;
-    }
-
-    private static int convert256(MemorySegment input, short[] samples)
-    {
-        int vectorBound = ShortVector.SPECIES_256.loopBound(samples.length);
-
-        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_256.length())
-        {
-            ShortVector.fromMemorySegment(ShortVector.SPECIES_256, input, (long)x * Short.BYTES,
-                    ByteOrder.LITTLE_ENDIAN)
-                .and((short)0x0FFF)
-                .intoArray(samples, x);
-        }
-
-        return vectorBound;
-    }
-
-    private static int convert512(MemorySegment input, short[] samples)
-    {
-        int vectorBound = ShortVector.SPECIES_512.loopBound(samples.length);
-
-        for(int x = 0; x < vectorBound; x += ShortVector.SPECIES_512.length())
-        {
-            ShortVector.fromMemorySegment(ShortVector.SPECIES_512, input, (long)x * Short.BYTES,
-                    ByteOrder.LITTLE_ENDIAN)
-                .and((short)0x0FFF)
-                .intoArray(samples, x);
-        }
-
-        return vectorBound;
     }
 
     @Override

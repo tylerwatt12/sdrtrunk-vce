@@ -18,6 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
@@ -38,6 +40,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVParser;
@@ -137,7 +140,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void namedCommandsUseTheSameTypeForSummaryCountsRadioRankingAndActivityFilters() throws Exception
+    void namedCommandsUseTheSameTypeForSummaryCountsAndActivityFilters() throws Exception
     {
         long now = System.currentTimeMillis();
         long bucket = now / 3_600_000L * 3_600_000L;
@@ -1008,6 +1011,82 @@ class StatsWebDatabaseTest
             request("/?range=24h&action=REGISTER&limit=100"));
         assertEquals(6, number(recent.get("retained_observation_count")));
         assertEquals(5, number(recent.get("identified_observation_count")));
+    }
+
+    @Test
+    void dashboardActivityCountsEachRetainedEventOnceAndKeepsTotalsAfterPagingOrRetention() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        long hour = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
+        int stun = ReceiverActivityFilterCatalog.actionCode("STUN");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("UPDATE receiver_channel SET radio_system_id=NULL, " +
+                "radio_system_assigned_at_ms=NULL WHERE id=71");
+            // Historical counts can span channel kinds, frequencies and slots within one channel-hour.
+            statement.executeUpdate("""
+                INSERT INTO trunked_signaling_activity_bucket(channel_id, radio_system_id, bucket_start_ms,
+                    stun_count) VALUES (71,71,%1$d,2), (74,71,%1$d,3)
+                """.formatted(hour));
+            statement.executeUpdate("""
+                INSERT INTO conventional_activity_bucket(channel_id, frequency_hz, timeslot, bucket_start_ms,
+                    stun_count) VALUES (74,460012500,1,%1$d,3), (74,460012500,2,%1$d,2),
+                    (74,460025000,1,%1$d,4), (73,0,-1,%1$d,5)
+                """.formatted(hour));
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(channel_id, radio_system_id, observed_at_ms, action_code,
+                    source_observed_local_id, source_identity_summary_id) VALUES
+                (71,71,%1$d,%2$d,202,7102), (74,71,%1$d,%2$d,202,NULL),
+                (74,71,%1$d,%2$d,202,NULL), (74,NULL,%1$d,%2$d,0,NULL),
+                (74,NULL,%1$d,%2$d,NULL,NULL)
+                """.formatted(now, stun));
+        }
+
+        String scope = "/?range=24h&action=STUN&limit=10";
+        Map<String,Object> page = mDatabase.dashboardActivityRadios(request(scope));
+        assertEquals(19, number(page.get("action_observation_count")));
+        assertEquals(5, number(page.get("retained_observation_count")));
+        assertEquals(3, number(page.get("identified_observation_count")));
+        assertEquals(2, number(page.get("unknown_source_observation_count")));
+        assertEquals(2, number(page.get("total_count")));
+        assertEquals(2, rows(page).size());
+        Map<String,Object> trunked = rowWith(rows(page), "radio_system_key", RADIO_SYSTEM_KEY);
+        Map<String,Object> conventional = rowWith(rows(page), "configuration_id", DMR_CHANNEL);
+        assertEquals(1, number(trunked.get("observation_count")),
+            "Retained events keep their original system after the receiver channel is reassigned");
+        assertEquals(2, number(conventional.get("observation_count")),
+            "Each event is counted once despite multiple matching summary buckets");
+        assertEquals(202, number(trunked.get("native_id")));
+        assertEquals(202, number(conventional.get("native_id")));
+        assertEquals("radio", map(trunked, "radio_entity_ref").get("kind"));
+        assertEquals("channel", map(conventional, "radio_entity_ref").get("kind"));
+
+        Map<String,Object> beyondEnd = mDatabase.dashboardActivityRadios(request(scope + "&offset=2"));
+        assertTrue(rows(beyondEnd).isEmpty());
+        assertFalse((Boolean)beyondEnd.get("has_more"));
+        assertNull(beyondEnd.get("next_offset"));
+        for(String field: List.of("action_observation_count", "retained_observation_count",
+            "identified_observation_count", "unknown_source_observation_count", "total_count"))
+        {
+            assertEquals(page.get(field), beyondEnd.get(field), field);
+        }
+
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM receiver_activity_event WHERE action_code=" + stun);
+        }
+        Map<String,Object> summaryOnly = mDatabase.dashboardActivityRadios(request(scope));
+        assertEquals(19, number(summaryOnly.get("action_observation_count")));
+        assertEquals(0, number(summaryOnly.get("retained_observation_count")));
+        assertEquals(0, number(summaryOnly.get("identified_observation_count")));
+        assertEquals(0, number(summaryOnly.get("unknown_source_observation_count")));
+        assertEquals(0, number(summaryOnly.get("total_count")));
+        assertTrue(rows(summaryOnly).isEmpty());
+        assertFalse((Boolean)summaryOnly.get("has_more"));
+        assertNull(summaryOnly.get("next_offset"));
     }
 
     @Test
@@ -2273,6 +2352,213 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void unassignedP25GroupsReuseExactCoverageAndDeduplicateTheirProtocolRanges() throws Exception
+    {
+        long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement();
+            PreparedStatement calls = connection.prepareStatement("""
+                INSERT INTO p25_site_call_identity_bucket (
+                    radio_system_id, learned_site_id, channel_id, bucket_start_ms, identity_role_code,
+                    identity_kind_code, identity_summary_id, observed_local_id, last_observed_at_ms,
+                    observed_call_count, encrypted_observed_call_count, observed_working_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                """))
+        {
+            statement.executeUpdate("UPDATE configuration_channel SET alias_list_id=71 WHERE sort_order=72");
+            statement.executeUpdate("""
+                INSERT INTO p25_learned_site (
+                    learned_site_id, radio_system_id, rfss, site, first_seen_ms, last_seen_ms
+                ) VALUES (710,71,1,1,1000,4000),(720,71,1,2,1000,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,
+                    first_seen_ms,last_seen_ms)
+                VALUES (7112,71,1,0xBEE00,0x49F,102,1000,4000),
+                       (7113,71,1,0xBEE00,0x49F,103,1000,4000),
+                       (7114,71,3,0xBEE00,0x49F,103,1000,4000),
+                       (7115,71,1,0xBEE00,0x49F,104,1000,4000),
+                       (7116,71,1,0xBEE00,0x49F,105,1000,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value,min_value,max_value)
+                VALUES (7112,71,'Phase 2 exact','TALKGROUP','APCO25_PHASE2',102,NULL,NULL),
+                       (7113,71,'Phase 2 range','TALKGROUP_RANGE','APCO25_PHASE2',NULL,104,105),
+                       (7114,72,'Other list','TALKGROUP_RANGE','APCO25',NULL,103,104),
+                       (7115,71,'Other protocol','TALKGROUP_RANGE','DMR',NULL,103,104),
+                       (7116,71,'Same bounds phase 1','TALKGROUP_RANGE','APCO25',NULL,104,105),
+                       (7117,71,'Same bounds phase 2','TALKGROUP_RANGE','APCO25_PHASE2',NULL,104,105)
+                """);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7101,101,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7112,102,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7113,103,null,1);
+            insertP25ChannelIdentity(calls,bucket,720,72,1,1,7113,103,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,3,7114,103,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7115,104,null,1);
+            insertP25ChannelIdentity(calls,bucket,710,71,1,1,7116,105,null,1);
+        }
+        StatsWebDatabase.ObservedGroupIdentityQuery[] query = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
+        var result = mDatabase.observedGroupIdentities(71,
+            request("/?include_exact=true&limit=100&sort=group_identity&direction=asc"), value -> query[0]=value, true);
+        assertEquals(3,number(result.get("total_count")));
+        assertEquals(List.of(103L,103L,103L),rows(result).stream()
+            .map(row -> number(row.get("group_identity_id"))).toList());
+        assertEquals(Set.of(P25_CHANNEL_A,P25_CHANNEL_B),rows(result).stream()
+            .map(row -> row.get("configuration_id")).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(1,rows(result).stream().filter(row -> number(row.get("group_identity_kind_code"))==3).count());
+        var all = mDatabase.unassignedGroupIdentities(71,request("/?include_exact=true&limit=100&sort=group_identity&direction=asc"));
+        var second = mDatabase.unassignedGroupIdentities(71,request("/?include_exact=true&limit=1&offset=1&sort=group_identity&direction=asc"));
+        var expected = new LinkedHashMap<>(rows(all).get(1));
+        var actual = new LinkedHashMap<>(rows(second).getFirst());
+        expected.remove("counts_as_of_ms");
+        actual.remove("counts_as_of_ms");
+        assertEquals(expected,actual);
+        assertEquals(3,number(second.get("total_count")));
+        assertEquals(3,number(mDatabase.unassignedGroupIdentities(71,request("/?q=103")).get("total_count")));
+        assertEquals(0,number(mDatabase.unassignedGroupIdentities(71,request("/?q=missing")).get("total_count")));
+        assertTrue(rows(mDatabase.unassignedGroupIdentities(71,request("/?offset=20"))).isEmpty());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            List<String> plan = explain(connection,query[0].sql(),query[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains(
+                "idx_alias_activity_talkgroup_range (alias_list_id=? AND protocol=?")),plan.toString());
+            assertFalse(plan.stream().anyMatch(detail -> detail.contains("MULTI-INDEX OR")),plan.toString());
+        }
+    }
+
+    @Test
+    void unassignedRangesKeepEachFamiliesExactAliasesAndInclusiveBounds() throws Exception
+    {
+        for(String family : List.of("P25", "DMR", "NXDN"))
+        {
+            int id = switch(family) { case "P25" -> 91; case "DMR" -> 92; default -> 93; };
+            String protocol = "P25".equals(family) ? "APCO25_PHASE2" : family;
+            String other = "DMR".equals(family) ? "NXDN" : "DMR";
+            String configuration = "90000000-0000-4000-8000-0000000000" + id;
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+                Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(" + id + ",'" + family + " ranges','" + family + "')");
+                statement.executeUpdate("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
+                    "name,alias_list_id,decoder_type,address_domain_code,primary_frequency_hz,config_json) VALUES('" + configuration +
+                    "','CONVENTIONAL'," + id + ",'Range receiver'," + id + ",'" +
+                    ("P25".equals(family) ? "P25_PHASE1" : family) + "'," + ("NXDN".equals(family) ? 1 : 0) +
+                    ",460012500,'{\"decodeConfiguration\":{\"channelMode\":\"CONVENTIONAL\"}}')");
+                statement.executeUpdate("INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms) " +
+                    "VALUES(" + id + ",'" + configuration + "',1000,2000)");
+                for(int group = 11; group <= 17; group++)
+                {
+                    statement.executeUpdate("DMR".equals(family) ?
+                        "INSERT INTO dmr_conventional_talkgroup_summary(channel_id,frequency_hz,timeslot,talkgroup_id," +
+                            "first_seen_ms,last_seen_ms,call_count,encrypted_count) VALUES(" + id +
+                            ",460012500,1," + group + ",1000,2000,1,0)" :
+                        "INSERT INTO conventional_call_identity_bucket(channel_id,bucket_start_ms,identity_role_code," +
+                            "identity_kind_code,identity_id,call_count) VALUES(" + id + ",0,1,1," + group + ",1)");
+                }
+                statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) VALUES(" +
+                    id + ",'Exact','TALKGROUP','" + protocol + "',11)");
+                statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,min_value,max_value) VALUES" +
+                    "(" + id + ",'Range','TALKGROUP_RANGE','" + protocol + "',12,14)," +
+                    "(" + id + ",'Duplicate','TALKGROUP_RANGE','" + protocol + "',12,14)," +
+                    "(" + id + ",'Other protocol','TALKGROUP_RANGE','" + other + "',15,17)," +
+                    "(72,'Other list','TALKGROUP_RANGE','" + protocol + "',15,17)," +
+                    "(" + id + ",'Radio range','RADIO_ID_RANGE','" + protocol + "',15,17)");
+            }
+            var result = mDatabase.unassignedGroupIdentities(id,
+                request("/?include_exact=true&limit=100&sort=group_identity&direction=asc"));
+            assertEquals(3,number(result.get("total_count")),family);
+            assertEquals(List.of(15L,16L,17L),rows(result).stream()
+                .map(row -> number(row.get("group_identity_id"))).toList(),family);
+        }
+    }
+
+    @Test
+    void unassignedRangeCoverageKeepsNullInvertedAndBoundarySqlSemantics() throws Exception
+    {
+        StatsWebDatabase.ObservedGroupIdentityQuery[] captured = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
+        mDatabase.observedGroupIdentities(71,request("/?limit=1"),query -> captured[0] = query,true);
+        String sql = captured[0].sql();
+        int select = sql.indexOf(" SELECT observed.*");
+        String coverage = sql.substring(sql.indexOf(", unassigned_ranges AS MATERIALIZED"),select);
+        String exclusion = sql.substring(sql.indexOf(" AND NOT EXISTS (",select),sql.indexOf(" ORDER BY",select));
+        // VALUES exercise SQL truth without admitting invalid bounds into the current persisted schema.
+        String facts = """
+            WITH alias(alias_list_id,matcher_type,protocol,min_value,max_value) AS (
+                VALUES (71,'TALKGROUP_RANGE','APCO25',10,20),
+                       (71,'TALKGROUP_RANGE','APCO25_PHASE2',10,20),
+                       (71,'TALKGROUP_RANGE','APCO25',NULL,25),
+                       (71,'TALKGROUP_RANGE','APCO25',5,NULL),
+                       (71,'TALKGROUP_RANGE','APCO25',25,5),
+                       (71,'TALKGROUP_RANGE','APCO25',30,30),
+                       (71,'TALKGROUP_RANGE','DMR',1,40),
+                       (72,'TALKGROUP_RANGE','APCO25',1,40)
+            ), observed(group_identity_id) AS (VALUES(NULL),(9),(10),(15),(20),(21),(30))
+            """;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            PreparedStatement statement = connection.prepareStatement(facts + coverage +
+                " SELECT group_identity_id FROM observed WHERE 1=1" + exclusion + " ORDER BY group_identity_id"))
+        {
+            statement.setLong(1,71);
+            try(ResultSet result = statement.executeQuery())
+            {
+                List<Long> missing = new ArrayList<>();
+                while(result.next()) { long group = result.getLong(1); missing.add(result.wasNull() ? null : group); }
+                assertEquals(java.util.Arrays.asList(null,9L,21L),missing);
+            }
+        }
+    }
+
+    @Test
+    void unassignedDuplicateRangesDoNotMultiplyCoverageWork() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
+                "name,alias_list_id,decoder_type,config_json) VALUES('" + CONVENTIONAL_P25_CHANNEL +
+                "','CONVENTIONAL',75,'P25 receiver',71,'P25_PHASE1','{}')");
+            statement.executeUpdate("INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(75,'" + CONVENTIONAL_P25_CHANNEL + "',1000,2000)");
+            statement.executeUpdate("""
+                WITH RECURSIVE groups(value) AS (VALUES(3001) UNION ALL SELECT value+1 FROM groups WHERE value<3100)
+                INSERT INTO conventional_call_identity_bucket(channel_id,bucket_start_ms,identity_role_code,
+                    identity_kind_code,identity_id,call_count) SELECT 75,0,1,1,value,1 FROM groups
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE ranges(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM ranges WHERE value<5000)
+                INSERT INTO alias(alias_list_id,name,matcher_type,protocol,min_value,max_value)
+                SELECT 71,'Repeated range '||value,'TALKGROUP_RANGE','APCO25',1,3000 FROM ranges
+                """);
+        }
+        StatsWebDatabase.ObservedGroupIdentityQuery[] captured = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
+        var page = mDatabase.observedGroupIdentities(71,request("/?limit=100"),query -> captured[0] = query,true);
+        assertEquals(100,number(page.get("total_count")));
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        {
+            StatsSystemNameResolver.installCatalog(connection);
+            AtomicInteger progressCalls = new AtomicInteger();
+            ProgressHandler.setHandler(connection,1000,new ProgressHandler()
+            {
+                @Override protected int progress() { return progressCalls.incrementAndGet() >= 500 ? 1 : 0; }
+            });
+            try(PreparedStatement statement = connection.prepareStatement(captured[0].sql()))
+            {
+                for(int index = 0; index < captured[0].parameters().size(); index++)
+                    statement.setObject(index + 1,captured[0].parameters().get(index));
+                try(ResultSet result = statement.executeQuery())
+                {
+                    int count = 0;
+                    while(result.next()) count++;
+                    assertEquals(100,count);
+                }
+            }
+            finally { ProgressHandler.clearHandler(connection); }
+            assertTrue(progressCalls.get() < 500,"Repeated aliases must not be tested again for every observed identity");
+        }
+    }
+
+    @Test
     void conventionalDmrAliasDiscoveryKeepsCarrierTimeslotsSeparate() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -2309,6 +2595,29 @@ class StatsWebDatabaseTest
         List<Map<String,Object>> searched = rows(mDatabase.observedGroupIdentities(74,
             request("/?include_exact=true&q=dispatch%20repeater")));
         assertEquals(2, searched.size(), "Search must use the same saved-channel label shown in the browser");
+        assertTrue(rows(mDatabase.unassignedGroupIdentities(74,request("/?include_exact=true"))).isEmpty(),
+            "Unassigned results must exclude exact definitions even when include_exact is requested");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO dmr_conventional_talkgroup_summary (
+                    channel_id,frequency_hz,timeslot,talkgroup_id,first_seen_ms,last_seen_ms,call_count,encrypted_count)
+                VALUES (74,460012500,1,8,2000,5000,1,0),(74,460012500,2,9,2000,5000,1,0),
+                       (74,460012500,1,10,2000,5000,1,0),(74,460012500,2,10,2000,5000,1,0)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,min_value,max_value)
+                VALUES (7411,74,'DMR range','TALKGROUP_RANGE','DMR',8,9),
+                       (7412,74,'Wrong protocol','TALKGROUP_RANGE','NXDN',10,11),
+                       (7413,71,'Wrong list','TALKGROUP_RANGE','DMR',10,11)
+                """);
+        }
+        var unassigned = mDatabase.unassignedGroupIdentities(74,
+            request("/?include_exact=true&sort=slot&direction=asc"));
+        assertEquals(2,number(unassigned.get("total_count")));
+        assertEquals(List.of(1L,2L),rows(unassigned).stream().map(row -> number(row.get("timeslot"))).toList());
+        assertTrue(rows(unassigned).stream().allMatch(row -> number(row.get("group_identity_id"))==10));
     }
 
     @Test
@@ -2545,6 +2854,158 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void dashboardLastSeenUsesIndexedMaximaAndOmitsUnusedCollections() throws Exception
+    {
+        String prior = """
+            SELECT MAX(last_seen_ms) FROM (
+                SELECT last_seen_ms FROM p25_site_snapshot
+                UNION ALL SELECT last_seen_ms FROM radio_system
+                UNION ALL SELECT last_seen_ms FROM radio_system_identity_summary
+                UNION ALL SELECT last_seen_ms FROM p25_site_frequency_band_summary
+                UNION ALL SELECT last_seen_ms FROM conventional_activity_summary
+                UNION ALL SELECT last_seen_ms FROM trunked_site_snapshot
+            )
+            """;
+        long expected;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            try(ResultSet original = statement.executeQuery(prior))
+            {
+                assertTrue(original.next());
+                expected = original.getLong(1);
+            }
+            try(ResultSet current = statement.executeQuery(StatsWebDatabase.DASHBOARD_LAST_SEEN_SQL))
+            {
+                assertTrue(current.next());
+                assertEquals(expected, current.getLong(1));
+            }
+            List<String> plan = explain(connection, StatsWebDatabase.DASHBOARD_LAST_SEEN_SQL);
+            for(String table: List.of("p25_site_snapshot", "radio_system_identity_summary",
+                "p25_site_frequency_band_summary", "trunked_site_snapshot"))
+            {
+                assertTrue(plan.stream().anyMatch(detail -> detail.startsWith("SEARCH " + table + " ") &&
+                    detail.contains("COVERING INDEX")), () -> "Last activity must seek the indexed maximum: " + plan);
+                assertFalse(plan.stream().anyMatch(detail -> detail.startsWith("SCAN " + table + " ")),
+                    () -> "Last activity must not scan retained summaries: " + plan);
+            }
+            expected += 100_000;
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET last_seen_ms=" + expected);
+        }
+        Map<String,Object> dashboard = mDatabase.dashboard();
+        assertEquals(expected, number(dashboard.get("last_seen_ms")));
+        assertEquals(Set.of("last_seen_ms", "top_destinations", "top_sources", "call_activity",
+            "source_activity_24h"), dashboard.keySet());
+    }
+
+    @Test
+    void mainUsesOnlyCardFieldsAndPreservesNamesAliasesAndCurrentFrequencies() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            seedTrunkedDmrAndNxdn(statement);
+            statement.executeUpdate("UPDATE configuration_channel SET system_name='Shared P25 alternate' " +
+                "WHERE configuration_id='" + P25_CHANNEL_B + "'");
+            statement.executeUpdate("""
+                INSERT INTO trunked_control_channel_quality (
+                    channel_id, frequency_hz, bucket_start_ms, observed_at_ms,
+                    signal_dbfs, average_signal_dbfs, minimum_signal_dbfs, maximum_signal_dbfs,
+                    decode_health_pct, valid_frames, invalid_frames, corrected_bits, sync_loss_bits,
+                    dropped_bits, last_valid_decode_ms
+                ) VALUES
+                    (71, 851012500, %1$d, %1$d, -45, -46, -50, -42, 97, 100, 2, 3, 4, 5, %1$d),
+                    (78, 451012500, %1$d, %1$d, -52, -53, -58, -49, 94, 200, 2, 3, 4, 5, %1$d),
+                    (79, 155012500, %1$d, %1$d, -61, -62, -66, -58, 88, 300, 2, 3, 4, 5, %1$d)
+                """.formatted(now));
+        }
+        var running = ChannelAdministrationService.ProcessingState.RUNNING;
+        var stopped = ChannelAdministrationService.ProcessingState.STOPPED;
+        List<ChannelAdministrationService.ChannelSummary> channels = List.of(
+            new ChannelAdministrationService.ChannelSummary(P25_CHANNEL_A, "p25-phase1", "P25", "TRUNKED",
+                "", "North", "North Control", List.of(851012500L), running, 1, 71, "County A", true,
+                null, null, 853012500L, "active-control"),
+            new ChannelAdministrationService.ChannelSummary(P25_CHANNEL_B, "p25-phase1", "P25", "TRUNKED",
+                "Shared P25", "South", "South Control", List.of(852012500L), stopped, null, 72, "County B", true,
+                null, Map.of("remote", true), 852012500L, "configured"),
+            new ChannelAdministrationService.ChannelSummary(ANALOG_CHANNEL, "nbfm", "FM", "CONVENTIONAL",
+                "County Fire", "", "County Fire Dispatch", List.of(154310000L), running, 2, 73, "Analog County", true,
+                null, null, 154310000L, "configured"),
+            new ChannelAdministrationService.ChannelSummary(DMR_CHANNEL, "unsupported", "Unsupported", "UNSUPPORTED",
+                "Other", "", "Unsupported", List.of(), stopped, null, 74, "DMR County", false,
+                null, null, null, "configured"),
+            new ChannelAdministrationService.ChannelSummary(DMR_TRUNKED_CHANNEL, "dmr", "DMR", "TRUNKED",
+                "Metro DMR", "Central", "DMR Control", List.of(451012500L), running, 3, 78, "DMR Trunked", true,
+                null, null, 451012500L, "active-control"),
+            new ChannelAdministrationService.ChannelSummary(NXDN_TRUNKED_CHANNEL, "nxdn", "NXDN", "TRUNKED",
+                "Regional NXDN", "West", "NXDN Control", List.of(155012500L), running, 4, 79, "NXDN Trunked", true,
+                null, null, 155012500L, "active-control"));
+        Map<String,Object> response = mDatabase.dashboardMain(channels);
+        assertEquals(Set.of("quality", "directory"), response.keySet());
+        Map<String,Object> directory = map(response, "directory");
+        List<Map<String,Object>> systems = rowsFrom(directory, "systems");
+        assertEquals(3, systems.size());
+        Map<String,Object> system = systems.getFirst();
+        assertEquals(RADIO_SYSTEM_KEY, system.get("radio_system_key"));
+        assertEquals("Shared P25 / Shared P25 alternate", system.get("system_name"));
+        assertEquals("radio_system", map(system, "entity_ref").get("kind"));
+        assertEquals(List.of("County A", "County B"), rowsFrom(system, "alias_lists").stream()
+            .map(row -> row.get("name")).toList());
+        assertEquals(2, rowsFrom(system, "children").size());
+        Map<String,Object> activeControl = rowWith(rowsFrom(system, "children"), "configuration_id", P25_CHANNEL_A);
+        assertEquals(853012500L, number(activeControl.get("display_frequency_hz")),
+            "The Main card must use the live control frequency rather than configured or retained quality data");
+        assertEquals("active-control", activeControl.get("display_frequency_source"));
+        Map<String,Object> stoppedControl = rowWith(rowsFrom(system, "children"), "configuration_id", P25_CHANNEL_B);
+        assertEquals(852012500L, number(stoppedControl.get("display_frequency_hz")));
+        assertEquals("configured", stoppedControl.get("display_frequency_source"));
+        assertEquals(ANALOG_CHANNEL, rowsFrom(directory, "channels").getFirst().get("configuration_id"));
+        assertEquals(154310000L, number(((List<?>)rowsFrom(directory, "channels").getFirst()
+            .get("frequencies_hz")).getFirst()));
+        assertFalse(rowsFrom(directory, "channels").getFirst().containsKey("display_frequency_hz"));
+        assertFalse(rowsFrom(directory, "channels").getFirst().containsKey("display_frequency_source"));
+        List<Map<String,Object>> quality = rowsFrom(map(response, "quality"), "current");
+        assertEquals(4, quality.size());
+        assertEquals(97, number(rowWith(quality, "configuration_id", P25_CHANNEL_A).get("decode_health_pct")));
+        assertEquals(94, number(rowWith(quality, "configuration_id", DMR_TRUNKED_CHANNEL).get("decode_health_pct")));
+        assertEquals(88, number(rowWith(quality, "configuration_id", NXDN_TRUNKED_CHANNEL).get("decode_health_pct")));
+        assertEquals(Map.of("remote", true), rowWith(quality, "configuration_id", P25_CHANNEL_B).get("remote_origin"));
+        assertEquals(0xBEE00, number(rowWith(quality, "configuration_id", P25_CHANNEL_A).get("wacn")));
+        assertEquals(0x49F, number(rowWith(quality, "configuration_id", P25_CHANNEL_A).get("system_id")));
+
+        // Verify the final API presentation, not just the database maps: native facts cannot recreate rich exports.
+        JsonNode presented = StatsApiV1Payload.present(response);
+        assertEquals(Set.of("configuration_id", "channel_kind", "name", "site_name", "system_name", "protocol",
+            "signal_dbfs", "average_signal_dbfs", "decode_health_pct", "last_observed_ms", "radio_system_key",
+            "wacn", "system_id", "rfss", "site_id", "ran"),
+            fieldNames(presented.path("quality").path("current").get(0)));
+        assertEquals(Set.of("system_name", "radio_system_key", "entity_ref", "protocol", "protocol_label",
+            "wacn", "system_id", "alias_lists", "children"),
+            fieldNames(presented.path("directory").path("systems").get(0)));
+        assertEquals(Set.of("configuration_id", "name", "site_name", "system_name", "protocol", "protocol_label",
+            "alias_list_id", "alias_list_name", "processing_state", "frequencies_hz", "display_frequency_hz",
+            "display_frequency_source", "radio_system_key"),
+            fieldNames(presented.path("directory").path("systems").get(0).path("children").get(0)));
+        for(String unused: List.of("system_identity", "system_names", "radio_system_entity_ref", "channel_name",
+            "valid_frames", "invalid_frames", "minimum_signal_dbfs", "maximum_signal_dbfs", "corrected_bits",
+            "sync_loss_bits", "dropped_bits", "last_valid_decode_ms", "sample_age_seconds", "current_control_hz"))
+            assertTrue(presented.findValues(unused).isEmpty(), unused + " is not consumed by the Main cards");
+
+        String export = new String(mDatabase.csvExport("signal-health", request("/")).content(), StandardCharsets.UTF_8);
+        assertTrue(export.contains("valid_frames_rolling_30s"));
+        assertTrue(export.contains("minimum_signal_dbfs"));
+        assertTrue(export.contains("corrected_bits_rolling_30s"));
+    }
+
+    private static Set<String> fieldNames(JsonNode object)
+    {
+        Set<String> fields = new java.util.HashSet<>();
+        object.fieldNames().forEachRemaining(fields::add);
+        return fields;
+    }
+
+    @Test
     void boundedDirectoryHandlesRepresentativeIdentityVolume() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -2675,6 +3136,50 @@ class StatsWebDatabaseTest
         assertTrue(rows(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
             request("/?q=engine%20twelve"))).isEmpty(),
             "Local P25 evidence must suppress a canonical-ID Alias search");
+    }
+
+    @Test
+    void homeNameSearchKeepsFiltersCountsAndNonDefaultPageOrder() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary (
+                    id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,
+                    first_seen_ms,last_seen_ms,logical_call_count)
+                VALUES (7103,71,2,0xBEE00,0x49F,203,1000,3000,1),
+                    (7104,71,2,0xBEE00,0x49F,204,1000,6000,2),
+                    (7105,71,1,0xBEE00,0x49F,102,1000,6000,1),
+                    (7106,71,3,0xBEE00,0x49F,900,1000,3000,1)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_affiliation (
+                    radio_system_id,radio_identity_id,talkgroup_identity_id,channel_id,
+                    radio_observed_local_id,talkgroup_observed_local_id,confirmed_at_ms)
+                VALUES (71,7102,7101,71,202,101,4000),
+                    (71,7103,7101,71,203,101,4000),(71,7104,7101,71,204,101,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_channel_presence (
+                    radio_system_id,radio_identity_id,channel_id,observed_local_id,evidence_code,confirmed_at_ms)
+                VALUES (71,7102,71,202,2,4000),(71,7103,71,203,2,4000),(71,7104,71,204,2,4000)
+                """);
+        }
+        String filter = "/?q=shared%20p25&sort=last_seen&direction=desc&limit=1&offset=1";
+        Map<String,Object> radios = mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request(filter + "&affiliated=true&configuration_id=" + P25_CHANNEL_A));
+        assertEquals(3,number(radios.get("total_count")));
+        assertEquals(202,number(rows(radios).getFirst().get("native_id")));
+        assertEquals(true,radios.get("has_more"));
+        assertEquals(0,number(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request(filter + "&affiliated=false")).get("total_count")));
+        assertEquals(0,number(mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY,
+            request(filter + "&configuration_id=" + P25_CHANNEL_B)).get("total_count")));
+        Map<String,Object> groups = mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY,request(filter));
+        assertEquals(3,number(groups.get("total_count")));
+        assertEquals(101,number(rows(groups).getFirst().get("native_id")));
+        assertEquals(true,groups.get("has_more"));
     }
 
     @Test
@@ -2866,9 +3371,8 @@ class StatsWebDatabaseTest
                 (990001,1,593750,NULL,NULL,500,500,990000)
                 """);
         }
-        StatsWebDatabase.ActivityQuery[] query = new StatsWebDatabase.ActivityQuery[1];
         Map<String,Object> response = mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
-            "&action=CALL&event_type=CALL_GROUP&has_tones=true&limit=1"), value -> query[0] = value);
+            "&action=CALL&event_type=CALL_GROUP&has_tones=true&limit=1"));
         List<Map<String,Object>> found = rows(response);
         assertEquals(1, found.size());
         assertEquals(990001L, ((Number)found.getFirst().get("id")).longValue());
@@ -2877,11 +3381,95 @@ class StatsWebDatabaseTest
         assertTrue(found.getFirst().containsKey("paging_tone_summary"));
         assertTrue(rows(mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
             "&event_type=CALL&has_tones=true"))).isEmpty());
+    }
+
+    @Test
+    void sparseToneHistoryKeepsScopeFiltersAndBothCursorOrders() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms)
+                VALUES(7105,71,2,0xBEE00,0x49F,303,1000,40000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,
+                    action_code,event_type_code,source_identity_summary_id,source_observed_local_id,
+                    target_identity_summary_id,target_observed_local_id,target_kind_code,encrypted) VALUES
+                (990001,71,71,10000,4,7,7102,202,7102,202,2,0),
+                (990002,71,71,10000,4,7,7102,202,7101,101,1,1),
+                (990003,71,71,20000,4,7,7102,202,7101,101,1,1),
+                (990004,72,71,30000,4,7,7102,202,7101,101,1,1),
+                (990005,71,71,40000,4,7,7105,303,7101,101,1,0)
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE events(value) AS (
+                    VALUES(1) UNION ALL SELECT value+1 FROM events WHERE value<10000
+                )
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,
+                    action_code,event_type_code,encrypted)
+                SELECT 1000000+value,71,71,1000000+value,4,7,1 FROM events
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_tone_sequence
+                SELECT id,1,3,1,observed_at_ms-1000,observed_at_ms-1000,observed_at_ms+500,1
+                FROM receiver_activity_event WHERE id BETWEEN 990001 AND 990005
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_tone
+                SELECT event_id,0,437500,NULL,NULL,0,500,990000 FROM receiver_activity_tone_sequence
+                """);
+        }
+
+        List<StatsWebDatabase.ActivityQuery> queries = new ArrayList<>();
+        String scope = "/?configuration_id=" + P25_CHANNEL_A + "&has_tones=true";
+        Map<String,Object> first = mDatabase.activity(request(scope + "&limit=2"), queries::add);
+        assertEquals(List.of(990005L, 990003L), rows(first).stream().map(row -> number(row.get("id"))).toList());
+        assertTrue((Boolean)first.get("has_more"));
+        Map<String,Object> second = mDatabase.activity(request(scope + "&limit=1&before_id=" +
+            first.get("next_before_id")));
+        assertEquals(990002, number(rows(second).getFirst().get("id")));
+        assertTrue((Boolean)second.get("has_more"));
+        Map<String,Object> third = mDatabase.activity(request(scope + "&limit=1&before_id=" +
+            second.get("next_before_id")));
+        assertEquals(990001, number(rows(third).getFirst().get("id")));
+        assertFalse((Boolean)third.get("has_more"));
+
+        Map<String,Object> forward = mDatabase.activity(request(scope +
+            "&limit=2&after_id=0&watermark_id=990003"));
+        assertEquals(List.of(990001L, 990002L), rows(forward).stream().map(row -> number(row.get("id"))).toList());
+        assertTrue((Boolean)forward.get("has_more"));
+        Map<String,Object> forwardNext = mDatabase.activity(request(scope + "&limit=2&after_id=" +
+            forward.get("next_after_id") + "&watermark_id=990003"));
+        assertEquals(List.of(990003L), rows(forwardNext).stream().map(row -> number(row.get("id"))).toList());
+        assertFalse((Boolean)forwardNext.get("has_more"));
+
+        Map<String,Object> encrypted = mDatabase.activity(request(scope + "&encryption=encrypted&limit=10"), queries::add);
+        assertEquals(List.of(990003L, 990002L), rows(encrypted).stream().map(row -> number(row.get("id"))).toList());
+        Map<String,Object> radio = mDatabase.activity(request(scope + "&radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&radio_identity_key=" + p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO,202) + "&limit=10"), queries::add);
+        assertEquals(List.of(990003L, 990002L, 990001L), rows(radio).stream().map(row -> number(row.get("id"))).toList(),
+            "A tone event matching both source and target roles is returned once");
+        Map<String,Object> window = mDatabase.activity(request(scope + "&from_ms=10000&to_ms=20000&limit=10"));
+        assertEquals(List.of(990002L, 990001L), rows(window).stream().map(row -> number(row.get("id"))).toList());
+
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            List<String> plan = explain(connection, query[0].sql(), query[0].parameters().toArray());
-            assertTrue(plan.stream().anyMatch(line -> line.startsWith("SEARCH tones ") && line.contains("USING INTEGER PRIMARY KEY")),
-                () -> "Tone existence must seek the selected event key: " + plan);
+            for(StatsWebDatabase.ActivityQuery query: queries)
+            {
+                List<String> plan = explain(connection, query.sql(), query.parameters().toArray());
+                List<String> candidateAccess = plan.stream().filter(line ->
+                    line.startsWith("SEARCH candidate ") || line.startsWith("SCAN candidate ")).toList();
+                assertFalse(candidateAccess.isEmpty(), () -> "Missing Activity candidate access: " + plan);
+                assertTrue(candidateAccess.stream().allMatch(line -> line.contains("USING INTEGER PRIMARY KEY")),
+                    () -> "Every tone-filtered branch must seek event IDs instead of scanning owner history: " + plan);
+                assertTrue(plan.stream().anyMatch(line -> line.contains("receiver_activity_tone_sequence") &&
+                        line.contains("FOR IN-OPERATOR")),
+                    () -> "Tone evidence must supply the sparse event-ID set: " + plan);
+            }
         }
     }
 
@@ -2955,31 +3543,10 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void savedActivityPushUsesBoundedForwardRowsAndExistingIdentityEnrichment() throws Exception
+    void activityOwnerActionWindowUsesStableForwardWatermark() throws Exception
     {
         seedActivityFilterRows();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
-            Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("UPDATE receiver_activity_event SET observed_at_ms=" + System.currentTimeMillis());
-        }
-        long watermark = mDatabase.savedActivityWatermark();
-        Map<String,Object> page = mDatabase.savedActivityAfter(0, null);
-        assertEquals(64, page.get("limit"));
-        assertFalse(rows(page).isEmpty());
-        assertTrue(rows(page).stream().anyMatch(row -> "Shared P25".equals(row.get("system_name"))));
-        assertTrue(rows(page).stream().anyMatch(row -> "CALL".equals(row.get("action"))));
-        assertEquals(watermark, number(page.get("watermark_id")));
-        Map<String,Object> empty = mDatabase.savedActivityAfter(watermark, null);
-        assertTrue(rows(empty).isEmpty());
-        assertEquals(watermark, number(empty.get("next_after_id")));
-    }
-
-    @Test
-    void activityGlobalActionWindowUsesStableForwardWatermark() throws Exception
-    {
-        seedActivityFilterRows();
-        String query = "/?from_ms=9000&to_ms=15001&actions=call,denial&after_id=0&limit=2";
+        String query = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&from_ms=9000&to_ms=15001&actions=call,denial&after_id=0&limit=2";
         StatsWebDatabase.ActivityQuery[] observedQuery = new StatsWebDatabase.ActivityQuery[1];
         Map<String,Object> first = mDatabase.activity(request(query), activityQuery ->
             observedQuery[0] = activityQuery);
@@ -2995,11 +3562,6 @@ class StatsWebDatabaseTest
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
         {
-            List<String> floorPlan = explain(connection, StatsWebDatabase.ACTIVITY_GLOBAL_WINDOW_FLOOR_SQL,
-                9_000L, 15_001L);
-            assertTrue(floorPlan.stream().anyMatch(detail ->
-                    detail.contains("idx_receiver_activity_event_retention")),
-                () -> "Expected the global history floor to seek its time window, plan was: " + floorPlan);
             List<String> plan = explain(connection, observedQuery[0].sql(),
                 observedQuery[0].parameters().toArray());
             assertTrue(plan.stream().anyMatch(detail ->
@@ -3019,14 +3581,14 @@ class StatsWebDatabaseTest
             statement.executeUpdate();
         }
 
-        Map<String,Object> second = mDatabase.activity(request("/?from_ms=9000&to_ms=15001" +
+        Map<String,Object> second = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&from_ms=9000&to_ms=15001" +
             "&actions=CALL,DENIAL&after_id=" + firstCursor + "&watermark_id=" + watermark + "&limit=2"));
         assertEquals(List.of(13_000L, 14_000L), activityTimes(second));
         assertFalse((Boolean)second.get("has_more"));
         assertEquals(watermark, number(second.get("next_after_id")),
             "A completed snapshot advances over nonmatching rows through its watermark");
 
-        Map<String,Object> nextPoll = mDatabase.activity(request("/?from_ms=9000&to_ms=15001" +
+        Map<String,Object> nextPoll = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&from_ms=9000&to_ms=15001" +
             "&actions=CALL,DENIAL&after_id=" + watermark + "&limit=2"));
         assertEquals(List.of(12_500L), activityTimes(nextPoll));
         assertFalse((Boolean)nextPoll.get("has_more"));
@@ -3035,13 +3597,13 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void activityGlobalForwardWindowShortCircuitsEmptyRangesAndSignalsDatabaseReset()
+    void activityOwnerForwardWindowSignalsDatabaseReset()
     {
         boolean[] queried = new boolean[1];
         Map<String,Object> empty = mDatabase.activity(request(
-            "/?from_ms=1000000000000&to_ms=1000000001000&actions=JOIN,DENIAL&after_id=0"),
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&from_ms=1000000000000&to_ms=1000000001000&actions=JOIN,DENIAL&after_id=0"),
             ignored -> queried[0] = true);
-        assertFalse(queried[0], "an empty indexed time window must not scan Activity candidates");
+        assertTrue(queried[0]);
         assertTrue(rows(empty).isEmpty());
         assertFalse((Boolean)empty.get("has_more"));
         assertFalse((Boolean)empty.get("reset_required"));
@@ -3049,7 +3611,7 @@ class StatsWebDatabaseTest
         assertEquals(currentMaximum, number(empty.get("next_after_id")));
 
         Map<String,Object> reset = mDatabase.activity(request(
-            "/?from_ms=1&to_ms=1000&actions=JOIN&after_id=" + (currentMaximum + 1)));
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&from_ms=1&to_ms=1000&actions=JOIN&after_id=" + (currentMaximum + 1)));
         assertTrue(rows(reset).isEmpty());
         assertFalse((Boolean)reset.get("has_more"));
         assertTrue((Boolean)reset.get("reset_required"));
@@ -3058,7 +3620,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void p25VisualizerProjectionFiltersBeforePagingAndPreservesOwnedLabelsAndCanonicalIdentities() throws Exception
+    void p25HistoryFiltersBeforePagingAndPreservesOwnedLabelsAndCanonicalIdentities() throws Exception
     {
         seedActivityFilterRows();
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
@@ -3097,71 +3659,127 @@ class StatsWebDatabaseTest
                 """);
             statement.executeUpdate("INSERT INTO receiver_activity_event(id,channel_id,radio_system_id," +
                 "observed_at_ms,action_code) VALUES(12002,71,99,14501,4)");
+            // A much newer unrelated protocol history must not be walked to find sparse P25 facts.
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code)
+                WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<100000)
+                SELECT 500000+n,71,99,900000+n,4 FROM rows
+                """);
             statement.executeUpdate("ANALYZE");
         }
-        String query = "/?from_ms=9000&to_ms=15001&actions=CALL,DENIAL&after_id=0&limit=3";
-        Map<String,Object> full = mDatabase.activity(request(query.replace("limit=3", "limit=5000")));
-        List<Map<String,Object>> expected = rows(full).stream().filter(row ->
-            "TRUNKED_SITE".equals(row.get("channel_kind")) &&
-                number(row.get("protocol_code")) == 1).toList();
-        StatsWebDatabase.ActivityQuery[] observedQuery = new StatsWebDatabase.ActivityQuery[1];
-        Map<String,Object> first = mDatabase.activity(request(query + "&projection=p25_visualizer"),
-            selected -> observedQuery[0] = selected);
-        assertEquals(List.of(10000L,12000L,13000L), activityTimes(first));
-        assertTrue((Boolean)first.get("has_more"));
-        Map<String,Object> second = mDatabase.activity(request("/?from_ms=9000&to_ms=15001&actions=CALL,DENIAL" +
-            "&after_id=" + first.get("next_after_id") + "&watermark_id=" + first.get("watermark_id") +
-            "&limit=3&projection=p25_visualizer"));
-        assertEquals(List.of(14000L,14500L), activityTimes(second),
-            "Non-P25 and conventional rows must not consume the compact page limit");
-        assertFalse((Boolean)second.get("has_more"));
-        assertEquals(first.get("watermark_id"),second.get("next_after_id"));
-        List<Map<String,Object>> actual = new ArrayList<>(rows(first));
-        actual.addAll(rows(second));
-        assertEquals(expected.stream().map(row -> row.get("id")).toList(),
-            actual.stream().map(row -> row.get("id")).toList());
-        for(int index=0;index<expected.size();index++)
+        StatsWebDatabase.ActivityQuery[] query = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> page = mDatabase.activity(request("/?projection=p25_visualizer&from_ms=9000&to_ms=15002" +
+            "&actions=CALL,DENIAL,GRANT&after_id=0&limit=500"), value -> query[0] = value);
+        List<ObjectNode> actual = StatsApiV1Payload.p25VisualizerRows(StatsApiV1Payload.source(rows(page)));
+        assertFalse(actual.isEmpty());
+        assertFalse(actual.stream().anyMatch(row -> row.path("id").asLong() > 10000 && row.path("id").asLong() < 12001));
+        assertFalse(actual.stream().anyMatch(row -> row.path("id").asLong() == 12002));
+        ObjectNode north = actual.stream().filter(row -> row.path("observed_at_ms").asLong() == 10000).findFirst().orElseThrow();
+        ObjectNode south = actual.stream().filter(row -> row.path("id").asLong() == 12001).findFirst().orElseThrow();
+        assertEquals("North Unit", north.path("source_alias_name").textValue());
+        assertEquals(RADIO_SYSTEM_KEY, north.path("radio_system_key").textValue());
+        assertEquals("South Unit", south.path("source_alias_name").textValue());
+        assertEquals("Fireground", south.path("target_alias_name").textValue());
+        assertEquals(777, StatsApiV1Payload.present(north).at("/source_canonical_identity/subscriber_id").intValue());
+        assertFalse(north.has("frequency_hz"));
+        assertFalse(north.has("event_type"));
+        assertEquals(actual, StatsApiV1Payload.p25VisualizerRows(StatsApiV1Payload.source(rows(mDatabase.activity(
+            request("/?projection=p25_visualizer&from_ms=9000&to_ms=15002&actions=CALL,DENIAL,GRANT&after_id=0&limit=500"))))),
+            "Repeated history reads use the same compact projection");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
         {
-            assertEquals(p25VisualizerRows(List.of(expected.get(index))),p25VisualizerRows(List.of(actual.get(index))),
-                "Compact labels and canonical identity must match ordinary Activity presentation");
+            List<String> plan = explain(connection, query[0].sql(), query[0].parameters().toArray());
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("INTEGER PRIMARY KEY")),
+                () -> "Forward history must seek by saved row ID: " + plan);
+            assertFalse(query[0].sql().contains("activity.frequency_hz"));
+            assertTrue(query[0].sql().indexOf("candidate.action_code IN") < query[0].sql().indexOf("LIMIT ?"));
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code)
+                WITH RECURSIVE rows(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<501)
+                SELECT 20000+n,71,71,20000+n,4 FROM rows
+                """);
         }
-        assertEquals("North Unit",actual.getFirst().get("source_alias_name"));
-        assertEquals(RADIO_SYSTEM_KEY,actual.getFirst().get("radio_system_key"),
-            "A channel reassignment must not remove retained event-owned system evidence");
-        assertEquals("South Unit",actual.getLast().get("source_alias_name"));
-        assertEquals("Fireground",actual.getLast().get("target_alias_name"));
-        assertEquals(777, StatsApiV1Payload.present(actual.getFirst())
-            .at("/source_canonical_identity/subscriber_id").intValue());
-        assertEquals(777, StatsApiV1Payload.present(actual.get(1))
-            .at("/target_canonical_identity/subscriber_id").intValue());
-        assertFalse(actual.getFirst().containsKey("frequency_hz"));
-        assertFalse(actual.getFirst().containsKey("event_type"));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
-        {
-            List<String> plan = explain(connection,observedQuery[0].sql(),observedQuery[0].parameters().toArray());
-            assertTrue(plan.stream().anyMatch(detail -> detail.contains("INTEGER PRIMARY KEY (rowid>")),
-                () -> "Compact forward history must keep the bounded row-id seek: " + plan);
-            assertFalse(plan.stream().anyMatch(detail ->
-                detail.equals("SCAN candidate") || detail.startsWith("SCAN candidate ")),
-                () -> "Compact candidate selection must not scan retained history: " + plan);
-        }
-        Map<String,Object> reset = mDatabase.activity(request("/?from_ms=9000&to_ms=15001&actions=CALL" +
-            "&after_id=999999&projection=p25_visualizer"));
-        assertEquals(true,reset.get("reset_required"));
-        assertTrue(rows(reset).isEmpty());
+        Map<String,Object> noteworthy = mDatabase.activity(request("/?projection=p25_visualizer&from_ms=9000&to_ms=22000" +
+            "&actions=DENIAL&after_id=0&limit=500"));
+        assertEquals(List.of(12_000L), activityTimes(noteworthy),
+            "More than500 newer routine calls cannot evict earlier matching history");
     }
 
-    private Object p25VisualizerRows(List<Map<String,Object>> rows)
+    @Test
+    void currentP25AffiliationsUseSkinnyCurrentTablesAndTypedChannelOwnedPresentation() throws Exception
     {
-        return StatsApiV1Payload.p25Visualizer(StatsApiV1Payload.present(mDatabase.enrichSystemNames(rows)));
+        seedActivityFilterRows();
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM trunked_radio_affiliation");
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(9901,71,'Current Unit','RADIO_ID','APCO25',202)");
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_affiliation(radio_system_id,radio_identity_id,talkgroup_identity_id,
+                    channel_id,radio_observed_local_id,talkgroup_observed_local_id,confirmed_at_ms,radio_observed_working_id)
+                VALUES(71,7102,7101,71,202,101,10000,202)
+                """);
+            List<String> plan = explain(connection,StatsWebDatabase.P25_AFFILIATION_CORE_SQL);
+            assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_trunked_radio_affiliation_retention")));
+            assertFalse(plan.stream().anyMatch(detail -> detail.contains("receiver_activity_event")));
+        }
+        List<Map<String,Object>> core = mDatabase.p25RawSnapshot().affiliations();
+        assertEquals(1,core.size());
+        ObjectNode row = mDatabase.presentP25Affiliations(core).getFirst();
+        assertEquals(RADIO_SYSTEM_KEY,row.path("radio_system_key").textValue());
+        assertEquals("v1-r-bee00-49f-202",row.path("radio_identity_key").textValue());
+        assertEquals("v1-g-bee00-49f-101",row.path("talkgroup_identity_key").textValue());
+        assertEquals(P25_CHANNEL_A,row.path("configuration_id").textValue());
+        assertEquals(10000,row.path("confirmed_at_ms").asLong());
+        assertEquals("Current Unit",row.path("radio_alias_name").textValue());
+        assertEquals("p25",row.path("protocol").textValue());
+        assertFalse(row.has("id"));
+        assertFalse(row.has("alias_list_id"));
+        assertFalse(row.has("action"),"current state must not impersonate an Activity event");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(9901,0x12345,0x123,777)");
+            statement.executeUpdate("UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=9901 WHERE id=7102");
+        }
+        List<Map<String,Object>> corrected = mDatabase.p25RawSnapshot().affiliations();
+        assertFalse(core.equals(corrected),"same current radio key must notice canonical corrections");
+        assertEquals(777,mDatabase.presentP25Affiliations(corrected).getFirst().at("/radio_canonical_identity/subscriber_id").asInt());
+        // A first subscriber presents the entire current table, not a single 500-row Activity page.
+        List<Map<String,Object>> bulk = new ArrayList<>();
+        for(int index = 0; index < 10_001; index++)
+        {
+            Map<String,Object> value = new LinkedHashMap<>(corrected.getFirst());
+            int radio = 100_000 + index;
+            value.put("source_identity_key", "v1-r-bee00-49f-" + radio);
+            value.put("source_native_id", radio);
+            value.put("source_radio_id", radio);
+            value.put("source_observed_working_id", radio);
+            value.put("source_p25_subscriber_identity_id", (long)radio);
+            value.put("source_canonical_wacn", 0xBEE00);
+            value.put("source_canonical_system_id", 0x49F);
+            value.put("source_canonical_subscriber_id", radio);
+            bulk.add(value);
+        }
+        List<ObjectNode> presented = mDatabase.presentP25Affiliations(bulk);
+        assertEquals(10_001, presented.size());
+        assertEquals("v1-r-bee00-49f-100000", presented.getFirst().path("radio_identity_key").textValue());
+        assertEquals("v1-r-bee00-49f-110000", presented.getLast().path("radio_identity_key").textValue());
+        assertEquals(row.get("talkgroup_alias_name"), presented.getLast().get("talkgroup_alias_name"));
+        assertEquals(110_000, presented.getLast().at("/radio_canonical_identity/subscriber_id").asInt());
+        assertFalse(bulk.getFirst().containsKey("source_alias_name"), "presentation must not mutate native reader rows");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            Statement statement = connection.createStatement())
+        { statement.executeUpdate("DELETE FROM trunked_radio_affiliation"); }
+        assertTrue(mDatabase.p25RawSnapshot().affiliations().isEmpty(),"logout/retention/site-clear absence is authoritative");
     }
 
     @Test
     void activityGlobalWindowAndForwardParametersStayBounded()
     {
-        Map<String,Object> extendedPage = mDatabase.activity(request(
-            "/?from_ms=1&to_ms=1000&actions=JOIN&after_id=0&limit=501"));
-        assertEquals(501, number(extendedPage.get("limit")));
         StatsApiException missingActions = assertThrows(StatsApiException.class, () -> mDatabase.activity(
             request("/?from_ms=1&to_ms=1000&after_id=0")));
         assertEquals("radio_system_key", missingActions.field());
@@ -3181,16 +3799,9 @@ class StatsWebDatabaseTest
             request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&watermark_id=1")));
         assertEquals("watermark_id", orphanedWatermark.field());
         StatsApiException oversizedPage = assertThrows(StatsApiException.class, () -> mDatabase.activity(
-            request("/?from_ms=1&to_ms=1000&actions=JOIN&after_id=0&limit=5001")));
+            request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&from_ms=1&to_ms=1000&actions=JOIN&after_id=0&limit=501")));
         assertEquals("limit", oversizedPage.field());
-        for(String query: List.of("/?projection=unexpected", "/?projection=p25_visualizer",
-            "/?projection=p25_visualizer&from_ms=1&to_ms=1000&actions=JOIN",
-            "/?projection=p25_visualizer&from_ms=1&to_ms=86400002&actions=JOIN&after_id=0"))
-        {
-            StatsApiException invalidProjection = assertThrows(StatsApiException.class,
-                () -> mDatabase.activity(request(query)));
-            assertEquals("projection",invalidProjection.field());
-        }
+
     }
 
     @Test
@@ -3285,7 +3896,7 @@ class StatsWebDatabaseTest
     }
 
     @Test
-    void radioRegisterHistoryUsesRoleIndexesDespiteSkewedActionStatistics() throws Exception
+    void radioHistoryKeepsBroadPagesOnIdentityIndexesAndSelectiveActionPaths() throws Exception
     {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
             Statement statement = connection.createStatement())
@@ -3350,6 +3961,39 @@ class StatsWebDatabaseTest
                 """);
             statement.execute("ANALYZE sqlite_schema");
         }
+
+        String broadScope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" +
+            p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 303) + "&hide_grants=true&limit=2";
+        StatsWebDatabase.ActivityQuery[] broadQuery = new StatsWebDatabase.ActivityQuery[1];
+        Map<String,Object> broad = mDatabase.activity(request(broadScope), query -> broadQuery[0] = query);
+        assertEquals(List.of(2_001_000L, 2_000_999L), activityTimes(broad));
+        assertTrue((Boolean)broad.get("has_more"));
+        assertTrue(broadQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_source_time"));
+        assertTrue(broadQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"),
+            "Busy default history must not switch to system-wide scanning after 1,000 role events");
+        Map<String,Object> broadNext = mDatabase.activity(request(broadScope + "&before_id=" +
+            broad.get("next_before_id")));
+        assertEquals(List.of(2_000_998L, 2_000_997L), activityTimes(broadNext));
+        assertEquals(List.of(1_099_999L, 1_099_998L), activityTimes(mDatabase.activity(
+            request(broadScope + "&radio_role=target"))));
+
+        String identity303 = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 303);
+        String ownerScope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&hide_grants=true&limit=2";
+        StatsWebDatabase.ActivityQuery[] sourceFilter = new StatsWebDatabase.ActivityQuery[1];
+        assertEquals(List.of(2_001_000L, 2_000_999L), activityTimes(mDatabase.activity(
+            request(ownerScope + "&source_identity_key=" + identity303), query -> sourceFilter[0] = query)));
+        assertTrue(sourceFilter[0].sql().contains("INDEXED BY idx_receiver_activity_event_source_time"));
+        StatsWebDatabase.ActivityQuery[] targetFilter = new StatsWebDatabase.ActivityQuery[1];
+        assertEquals(List.of(1_099_999L, 1_099_998L), activityTimes(mDatabase.activity(
+            request(ownerScope + "&target_identity_key=" + identity303), query -> targetFilter[0] = query)));
+        assertTrue(targetFilter[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"),
+            "System Activity target drilldowns need the same identity seek as the radio's target history");
+        StatsWebDatabase.ActivityQuery[] conjunction = new StatsWebDatabase.ActivityQuery[1];
+        assertEquals(List.of(1_099_999L, 1_099_998L), activityTimes(mDatabase.activity(
+            request(ownerScope + "&source_identity_key=" + identity303 + "&target_identity_key=" + identity303),
+            query -> conjunction[0] = query)));
+        assertFalse(conjunction[0].sql().contains("INDEXED BY"),
+            "Multiple identity constraints retain the planner's choice of the more selective side");
 
         String scope = "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" +
             p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO, 202) + "&action=REGISTER&hide_grants=true";
@@ -3424,6 +4068,10 @@ class StatsWebDatabaseTest
                 "SEARCH candidate USING INDEX idx_receiver_activity_event_source_time")), plan.toString());
             assertTrue(plan.stream().anyMatch(detail -> detail.contains(
                 "SEARCH candidate USING INDEX idx_receiver_activity_event_target_time")), plan.toString());
+            List<String> broadPlan = explain(connection, broadQuery[0].sql(),
+                broadQuery[0].parameters().toArray());
+            assertTrue(broadPlan.stream().noneMatch(detail -> detail.contains(
+                "SEARCH candidate USING INDEX idx_receiver_activity_event_system_time")), broadPlan.toString());
             List<String> busyPlan = explain(connection, busyQuery[0].sql(), busyQuery[0].parameters().toArray());
             assertTrue(busyPlan.stream().anyMatch(detail -> detail.contains(
                 "SEARCH candidate USING INDEX idx_receiver_activity_event_system_action_time")), busyPlan.toString());
@@ -3457,7 +4105,8 @@ class StatsWebDatabaseTest
                         }
                     }
                 }
-                for(StatsWebDatabase.ActivityQuery query : List.of(anyQuery[0], busyQuery[0]))
+                for(StatsWebDatabase.ActivityQuery query : List.of(anyQuery[0], busyQuery[0], broadQuery[0],
+                    sourceFilter[0], targetFilter[0]))
                 {
                     try(PreparedStatement statement = connection.prepareStatement(query.sql()))
                     {
@@ -3472,7 +4121,7 @@ class StatsWebDatabaseTest
                             {
                                 matches++;
                             }
-                            assertEquals(query == anyQuery[0] ? 6 : 2, matches);
+                            assertEquals(query == anyQuery[0] ? 6 : query == busyQuery[0] ? 2 : 3, matches);
                         }
                     }
                 }
@@ -3528,9 +4177,25 @@ class StatsWebDatabaseTest
         mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&radio_identity_key=" + radio202 +
             "&radio_role=any&limit=20"), query -> radioAny[0] = query);
         StatsWebDatabase.ActivityQuery[] groupAll = new StatsWebDatabase.ActivityQuery[1];
-        mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" +
-            p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) + "&group_match=all&limit=20"),
+        Map<String,Object> groupHistory = mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
+            "&group_identity_key=" + p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) +
+            "&group_match=all&hide_grants=true&limit=20"),
             query -> groupAll[0] = query);
+        assertEquals(List.of(10_000L), activityTimes(groupHistory),
+            "Direct and patch-member matches still deduplicate, and hidden grants stay excluded");
+        assertTrue(groupAll[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"));
+        assertEquals(List.of(11_000L, 10_000L), activityTimes(mDatabase.activity(request(
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" +
+                p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) +
+                "&group_match=via_patch&hide_grants=false&limit=20"))));
+        StatsWebDatabase.ActivityQuery[] groupSource = new StatsWebDatabase.ActivityQuery[1];
+        assertEquals(List.of(10_000L), activityTimes(mDatabase.activity(request(
+            "/?radio_system_key=" + RADIO_SYSTEM_KEY + "&group_identity_key=" +
+                p25IdentityKey(RadioSystemIdentityKey.KIND_TALKGROUP, 101) +
+                "&source_identity_key=" + radio202 + "&hide_grants=true&limit=20"),
+            query -> groupSource[0] = query)));
+        assertFalse(groupSource[0].sql().contains("INDEXED BY"),
+            "A group with an additional source constraint retains selective query planning");
         StatsWebDatabase.ActivityQuery[] channelSource = new StatsWebDatabase.ActivityQuery[1];
         mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL + "&source_id=17&limit=20"),
             query -> channelSource[0] = query);

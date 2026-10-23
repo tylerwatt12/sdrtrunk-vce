@@ -5,14 +5,17 @@ import {
   P25_ROUTINE_ACTIONS,
   createP25HistoryState,
   applyP25ActivityRows,
+  applyP25Affiliations,
+  expireP25History,
   buildP25Graph,
   nextP25HighlightExpiry,
   groupedP25Events,
   mostActiveP25System
-} from './history.js?v=15';
+} from './history.js?v=19';
+import { createP25ActivityFeed } from './live.js?v=4';
 import { createP25CameraCoordinator } from './camera.js?v=4';
-import { createP25Renderer } from './renderer.js?v=7';
-import { createFormWorkflow } from '../../core/form-workflows.js?v=4';
+import { createP25Renderer } from './renderer.js?v=8';
+import { createFormWorkflow } from '../../core/form-workflows.js?v=6';
 import {
   P25_EVENT_SETTINGS,
   normalizeP25EventSettings,
@@ -20,13 +23,6 @@ import {
   routineP25ActivityEnabled
 } from './settings.js?v=4';
 
-const HOUR_MS = 60 * 60 * 1_000;
-const POLL_MS = 5_000;
-const PAGE_LIMIT = 5_000;
-const MAX_SEED_ROWS = 250_000;
-const MAX_POLL_ROWS = 25_000;
-const MAX_BUFFERED_ACTIVITY_BATCHES = 64;
-const CLOCK_TOLERANCE_MS = 2_000;
 
 function textButton(node, label, className = 'ui-button ui-button-secondary') {
   const button = node('button', className, label);
@@ -41,27 +37,15 @@ function formatTime(value) {
   }).format(timestamp) : 'Unknown time';
 }
 
-function validPage(value) {
-  if (!value || typeof value !== 'object' || !Array.isArray(value.rows) || typeof value.has_more !== 'boolean') {
-    throw new Error('The receiver returned invalid saved P25 activity.');
-  }
-  return value;
-}
-
-function reseedError(message) {
-  const error = new Error(message);
-  error.reseed = true;
-  return error;
-}
 
 function createP25Visualizer(dependencies = {}) {
-  const required = ['node', 'iconGlyph', 'iconButton', 'requestActivity', 'openReadOnlyModal',
+  const required = ['node', 'iconGlyph', 'iconButton', 'requestActivity', 'requestActivitySeed', 'openReadOnlyModal',
     'preferenceCheckbox', 'settingsCard', 'settingsCardGrid', 'modalFooter',
-    'loadEventSettings', 'saveEventSettings'];
+    'loadEventSettings', 'saveEventSettings', 'openActivityStream'];
   required.forEach((name) => {
     if (typeof dependencies[name] !== 'function') throw new TypeError(`P25 Visualizer dependency ${name} is required.`);
   });
-  const { node, iconGlyph, iconButton, requestActivity, openReadOnlyModal, preferenceCheckbox,
+  const { node, iconGlyph, iconButton, requestActivity, requestActivitySeed, openReadOnlyModal, preferenceCheckbox,
     settingsCard, settingsCardGrid, modalFooter, loadEventSettings, saveEventSettings } = dependencies;
   const layout = node('section', 'network-visualizer-layout');
   layout.setAttribute('aria-label', 'P25 Visualizer');
@@ -70,19 +54,11 @@ function createP25Visualizer(dependencies = {}) {
   toolbar.setAttribute('aria-label', 'P25 Visualizer controls');
   const brand = node('div', 'network-visualizer-brand');
   brand.append(iconGlyph('icon-network-visualizer'), node('strong', '', 'P25 Visualizer'));
-  const status = node('span', 'badge ui-pill state-stale network-visualizer-status', 'Loading saved activity');
+  const status = node('span', 'badge ui-pill state-stale network-visualizer-status', 'Loading recent activity');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
 
   const actions = node('div', 'network-visualizer-actions');
-  const scopeControls = node('div', 'network-visualizer-choice-group');
-  scopeControls.setAttribute('role', 'group');
-  scopeControls.setAttribute('aria-label', 'History scope');
-  const oneHour = textButton(node, '1h');
-  const day = textButton(node, '24h');
-  oneHour.setAttribute('aria-pressed', 'true');
-  day.setAttribute('aria-pressed', 'false');
-  scopeControls.append(oneHour, day);
   const cameraControls = node('div', 'network-visualizer-choice-group');
   cameraControls.setAttribute('role', 'group');
   cameraControls.setAttribute('aria-label', 'Camera mode');
@@ -93,15 +69,22 @@ function createP25Visualizer(dependencies = {}) {
   cameraControls.append(auto, manual);
   const eventsToggle = textButton(node, 'Events');
   eventsToggle.setAttribute('aria-pressed', 'false');
+  const scopes = node('div', 'network-visualizer-choice-group');
+  scopes.setAttribute('role', 'group');
+  scopes.setAttribute('aria-label', 'History scope');
+  const hour = textButton(node, '1h'), day = textButton(node, '24h');
+  hour.setAttribute('aria-pressed', 'true'); day.setAttribute('aria-pressed', 'false');
+  scopes.append(hour, day);
+  const refresh = textButton(node, 'Refresh');
   const settingsButton = textButton(node, 'Settings');
   const fullscreen = iconButton('icon-fullscreen', 'Enter fullscreen');
   fullscreen.classList.add('network-visualizer-fullscreen');
-  actions.append(scopeControls, cameraControls, eventsToggle, settingsButton, fullscreen);
+  actions.append(scopes, refresh, cameraControls, eventsToggle, settingsButton, fullscreen);
   toolbar.append(brand, status, actions);
 
   const stage = node('div', 'network-visualizer-stage');
   stage.tabIndex = 0;
-  stage.setAttribute('aria-label', 'Interactive P25 history visualization');
+  stage.setAttribute('aria-label', 'Interactive recent P25 activity visualization');
   const canvas = node('div', 'network-visualizer-canvas');
   const back = textButton(node, '← All systems',
     'ui-button ui-button-secondary network-visualizer-back');
@@ -121,23 +104,40 @@ function createP25Visualizer(dependencies = {}) {
   manualGuide.append(node('strong', '', 'Manual camera'), node('span', '', 'W/S move · A/D strafe · Q/E rise'),
     node('span', '', 'Arrow keys look · Drag orbits · Wheel zooms at cursor'));
   const empty = node('div', 'network-visualizer-empty');
-  empty.append(iconGlyph('icon-network-visualizer'), node('strong', '', 'Loading saved P25 activity…'),
-    node('p', '', 'This view uses only persisted Activity history.'));
+  empty.append(iconGlyph('icon-network-visualizer'), node('strong', '', 'Loading recent P25 activity…'),
+    node('p', '', 'New saved activity appears automatically.'));
   const legend = node('div', 'network-visualizer-legend');
-  legend.append(node('span', '', 'Sphere · system'), node('span', '', 'Cube · talkgroup'),
-    node('span', '', 'Triangle · radio'), node('span', '', 'Faint line · earlier affiliation'),
-    node('span', '', 'Dashed line · call activity'));
+  legend.setAttribute('role', 'group');
+  legend.setAttribute('aria-label', 'Shape and line key');
+  for (const [label, path, attributes] of [
+    ['System', 'M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0ZM3 12h18M12 3c-4 4-4 14 0 18c4-4 4-14 0-18Z'],
+    ['Talkgroup', 'm12 2 9 5v10l-9 5-9-5V7Zm0 10 9-5M12 12 3 7m9 5v10'],
+    ['Radio', 'm12 3 9 17H3ZM12 3v13m0 0L3 20m9-4 9 4'],
+    ['Last accepted affiliation', 'M2 12h20'],
+    ['Earlier affiliation', 'M2 12h20', { opacity: '0.4' }],
+    ['Call activity', 'M2 12h20', { 'stroke-dasharray': '4 3' }]
+  ]) {
+    const entry = node('span');
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const shape = document.createElementNS(icon.namespaceURI, 'path');
+    Object.entries({ viewBox: '0 0 24 24', 'aria-hidden': 'true', width: 24, height: 24,
+      fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5 }).forEach(([key, value]) => icon.setAttribute(key, value));
+    Object.entries({ d: path, ...attributes }).forEach(([key, value]) => shape.setAttribute(key, value));
+    icon.append(shape);
+    entry.append(icon, node('span', '', label));
+    legend.append(entry);
+  }
   const events = node('aside', 'network-visualizer-events');
   events.hidden = true;
   const eventsHeader = node('header', 'network-visualizer-panel-header');
   const eventsHeading = node('div', 'network-visualizer-panel-heading');
   eventsHeading.append(node('h2', '', 'Noteworthy P25 activity'),
-    node('p', '', 'Grouped from saved Activity history'));
+    node('p', '', 'Grouped P25 observations'));
   const closeEvents = iconButton('icon-close', 'Close noteworthy activity');
   eventsHeader.append(eventsHeading, closeEvents);
   const eventList = node('ol', 'network-visualizer-event-list');
   eventList.tabIndex = 0;
-  eventList.setAttribute('aria-label', 'Saved noteworthy P25 activity');
+  eventList.setAttribute('aria-label', 'Recent noteworthy P25 activity');
   events.append(eventsHeader, eventList);
   stage.append(canvas, back, scopeTitle, autoFocus, manualGuide, empty, legend, events);
   layout.append(toolbar, stage);
@@ -150,27 +150,21 @@ function createP25Visualizer(dependencies = {}) {
   let selectedSystemKey = '';
   let selectedGroupKey = '';
   let visibleNodeKeys = new Set();
-  let historyHours = 1;
   let mode = 'auto';
-  let cursor = 0;
-  let generation = 0;
-  let requestController = null;
-  let pollTimer = 0;
+  let hasSnapshot = false;
+  let feed = null;
+  let serverTimeOffsetMs = 0;
+  let scenePresented = false;
+  let collectionEnabled = true;
+  let sourceEpoch = '';
+  let historyHours = 1, historyLoading = false, historySceneDirty = false;
+  let nextHistoryExpiryAtMs = 0;
+  let feedStatus = 'connecting';
   let highlightTimer = 0;
   let grantActivityTimeoutMs = 1_000;
-  let serverTimeOffsetMs = 0;
-  let liveSource = null;
-  let liveBound = false;
-  let liveReady = false;
-  let collectionEnabled = true;
-  let catchupRequested = false;
-  let bufferedActivity = [];
-  let bufferedRowCount = 0;
   let animationFrame = 0;
   let lastAnimationAt = performance.now();
   let closed = false;
-  let polling = false;
-  let seedReady = false;
   let lastCameraPhase = 'roam';
   let eventsModal = null;
   const shortViewport = window.matchMedia('(max-height: 640px)');
@@ -228,7 +222,7 @@ function createP25Visualizer(dependencies = {}) {
   function openEventsSheet() {
     if (eventsModal || closed || document.body.classList.contains('modal-open')) return;
     const body = node('div', 'network-visualizer-events-sheet');
-    body.append(node('p', 'modal-introduction', 'Grouped from saved Activity history'), events);
+    body.append(node('p', 'modal-introduction', 'Grouped P25 observations'), events);
     eventsModal = openReadOnlyModal('Noteworthy P25 activity', body, {
       id: 'p25-visualizer-events', className: 'network-visualizer-events-modal',
       onClose: () => {
@@ -266,9 +260,9 @@ function createP25Visualizer(dependencies = {}) {
       return choice.control;
     });
     const highlightCard = settingsCard('Scene highlights',
-      'Briefly emphasize new stored observations in the 3D scene.', ...choices('highlight'));
+      'Briefly emphasize new saved observations.', ...choices('highlight'));
     const zoomCard = settingsCard('Automatic camera',
-      'Allow these newly stored observations to interrupt Auto mode. Manual mode never moves itself.',
+      'Let new saved observations move the Auto camera.',
       ...choices('autoZoom'));
     const cancel = textButton(node, 'Cancel');
     const save = textButton(node, 'Save choices', 'ui-button ui-button-primary');
@@ -297,7 +291,7 @@ function createP25Visualizer(dependencies = {}) {
         highlightedCategories = enabledP25EventCategories(eventSettings, 'highlight');
         autoZoomCategories = enabledP25EventCategories(eventSettings, 'autoZoom');
       }, { saving: 'Saving visualizer choices…',
-        onSuccess: () => { if (modal.close()) void loadSeed(); },
+        onSuccess: () => { if (modal.close()) feed?.reloadHistory(); },
         onError: (error) => ({ state: 'error', message: error?.message ||
           'Visualizer choices could not be saved in this browser.' }) });
     });
@@ -307,6 +301,7 @@ function createP25Visualizer(dependencies = {}) {
     if (!renderer) return;
     const graph = buildP25Graph(state, selectedSystemKey, Date.now() + serverTimeOffsetMs, selectedGroupKey,
       { highlightCategories: highlightedCategories });
+    if (feedStatus === 'live') setLiveStatus('live');
     visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
     renderer.setData(graph, { animate, affiliationChanges });
     renderEvents();
@@ -408,23 +403,6 @@ function createP25Visualizer(dependencies = {}) {
     }
   }
 
-  function historyBounds() {
-    const toMs = Date.now() + serverTimeOffsetMs + CLOCK_TOLERANCE_MS;
-    return { fromMs: toMs - historyHours * HOUR_MS, toMs };
-  }
-
-  async function requestForwardPage(afterId, watermarkId, signal, bounds) {
-    const { fromMs, toMs } = bounds;
-    const actions = routineP25ActivityEnabled(eventSettings) ?
-      [...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS] : P25_HISTORY_ACTIONS;
-    const page = validPage(await requestActivity({ from_ms: fromMs, to_ms: toMs,
-      actions: actions.join(','), after_id: afterId, watermark_id: watermarkId,
-      limit: PAGE_LIMIT, projection: 'p25_visualizer' }, { signal }));
-    const timing = page.traffic_grant_age_out_milliseconds;
-    if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
-    return page;
-  }
-
   function waitForRenderer(signal) {
     return new Promise((resolve, reject) => {
       const abort = () => reject(signal.reason || new DOMException('Loading canceled.', 'AbortError'));
@@ -440,259 +418,127 @@ function createP25Visualizer(dependencies = {}) {
     });
   }
 
-  async function loadSeed() {
-    const localGeneration = ++generation;
-    seedReady = false;
-    if (pollTimer) window.clearTimeout(pollTimer);
-    pollTimer = 0;
-    if (highlightTimer) window.clearTimeout(highlightTimer);
-    highlightTimer = 0;
-    requestController?.abort();
-    liveSource?.close();
-    liveSource = null;
-    liveBound = liveReady = catchupRequested = false;
-    bufferedActivity = [];
-    bufferedRowCount = 0;
-    const controller = new AbortController();
-    requestController = controller;
-    const abort = () => controller.abort();
-    dependencies.signal?.addEventListener?.('abort', abort, { once: true });
-    state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
-    selectedSystemKey = '';
-    selectedGroupKey = '';
-    visibleNodeKeys = new Set();
-    cursor = 0;
-    camera.reset();
-    clearAutoFocus();
-    renderer?.setData({ nodes: [], links: [] }, { animate: false });
-    back.hidden = true;
-    scopeTitle.textContent = 'P25 radio systems';
-    setEmpty(`Loading ${historyHours}h of saved P25 activity…`,
-      routineP25ActivityEnabled(eventSettings) ? 'Including saved calls and grants.' :
-        'Routine calls and grants are off in Visualizer settings.');
-    setStatus('Loading saved activity', 'stale');
-    const history = dependencies.historyStatus || {};
-    if (history.available && !history.historyActive && !history.historyRetained) {
-      setEmpty('Saved P25 activity is unavailable',
-        'Turn on Save individual activity events in Administration > Activity settings. The visualizer uses ' +
-          'saved activity rather than live decoder activity.',
-        'error');
-      setStatus('History unavailable', 'error');
-      dependencies.signal?.removeEventListener?.('abort', abort);
+  async function loadSeed(signal, options = {}) {
+    refresh.disabled = true;
+    if (!hasSnapshot) setEmpty('Loading recent P25 activity…', 'New saved activity appears automatically.');
+    return requestActivitySeed(options.refresh === true ? { refresh: true } : {}, { signal });
+  }
+
+  function activityOptions(initial = false) {
+    return { initial, atMs: Date.now() + serverTimeOffsetMs, highlightAtObservationTime: true,
+      highlightCategories: highlightedCategories, grantActivityTimeoutMs };
+  }
+
+  function updateScene(result, replace = false) {
+    if (scenePresented && !selectedSystemKey && !replace && state.systems.size) {
+      empty.hidden = true;
+      renderGraph(true);
       return;
     }
-    try {
-      const bounds = historyBounds();
-      let afterId = 0;
-      let watermarkId = null;
-      let processed = 0;
-      const seedRows = [];
-      do {
-        const page = await requestForwardPage(afterId, watermarkId, controller.signal, bounds);
-        if (closed || localGeneration !== generation) return;
-        if (page.reset_required === true || page.reseed_required === true ||
-            Number(page.watermark_id) < afterId) {
-          throw reseedError('Saved Activity history restarted. Reloading the selected scope.');
-        }
-        if (watermarkId === null) watermarkId = Number(page.watermark_id) || 0;
-        const capacity = Math.max(0, MAX_SEED_ROWS - processed);
-        if (page.rows.length > capacity || page.has_more && processed + page.rows.length >= MAX_SEED_ROWS) {
-          throw new Error('This history scope contains too much noteworthy activity to load safely. Choose 1h.');
-        }
-        const rows = page.rows.slice(0, capacity);
-        seedRows.push(...rows);
-        processed += rows.length;
-        const next = Number(page.next_after_id);
-        if (!Number.isSafeInteger(next) || next < afterId || page.has_more && next === afterId) {
-          throw new Error('Saved activity paging did not advance.');
-        }
-        afterId = next;
-        if (!page.has_more) break;
-      } while (!controller.signal.aborted);
-      // Download saved history while the renderer loads, but apply only the current complete seed.
-      await waitForRenderer(controller.signal);
-      if (closed || localGeneration !== generation) return;
-      applyP25ActivityRows(state, seedRows, { initial: true, highlightCategories: highlightedCategories });
-      cursor = Math.max(afterId, watermarkId || 0, state.latestId);
-      const mostActive = mostActiveP25System(state);
-      if (!mostActive) {
-        renderGraph(false);
-        setEmpty('No noteworthy P25 activity was saved in this scope',
-          routineP25ActivityEnabled(eventSettings) ?
-            'No selected noteworthy, call, or grant activity was found.' :
-            'Enable calls and grants in Visualizer settings to include routine activity.');
-      } else {
-        empty.hidden = true;
-        enterSystem(mostActive.key, { animate: false, immediate: true });
-      }
-      const paused = history.available && !history.historyActive;
-      setStatus(paused ? 'Saved history · updates paused' : 'Saved history', paused ? 'stale' : 'current');
-      seedReady = true;
-      connectLiveActivity(localGeneration);
-      schedulePoll();
-    } catch (error) {
-      if (error?.name === 'AbortError' || closed || localGeneration !== generation) return;
-      if (error?.reseed) {
-        setStatus('Reloading saved history', 'stale');
-        window.setTimeout(() => void loadSeed(), 0);
+    scenePresented = true;
+    const previousSystemKey = selectedSystemKey;
+    const systemKey = state.systems.has(selectedSystemKey) ? selectedSystemKey :
+      mostActiveP25System(state)?.key;
+    if (!systemKey) {
+      selectedSystemKey = selectedGroupKey = '';
+      back.hidden = true;
+      scopeTitle.textContent = 'P25 radio systems';
+      clearAutoFocus();
+      renderGraph(false);
+      renderer?.showOverview();
+      setEmpty('No P25 activity or affiliations to show',
+        routineP25ActivityEnabled(eventSettings) ?
+          'New saved activity will appear automatically.' :
+          'Enable calls and grants in Visualizer settings to include routine activity.');
+      return;
+    }
+    empty.hidden = true;
+    if (!previousSystemKey || systemKey !== previousSystemKey) {
+      enterSystem(systemKey, { animate: false, immediate: true });
+    } else {
+      selectedSystemKey = systemKey;
+      if (selectedGroupKey && state.groups.get(selectedGroupKey)?.systemKey !== systemKey) {
+        enterSystem(systemKey, { animate: false, immediate: true });
+        applyAttention(result.focusCandidates);
         return;
       }
-      setEmpty('Saved P25 activity could not be loaded',
-        error?.message || 'The existing Activity history remains unchanged. Try this view again.', 'error');
-      setStatus('History error', 'error');
-    } finally {
-      dependencies.signal?.removeEventListener?.('abort', abort);
-    }
-  }
-
-  function schedulePoll(delay = POLL_MS) {
-    if (pollTimer) window.clearTimeout(pollTimer);
-    pollTimer = 0;
-    if (!closed && seedReady) pollTimer = window.setTimeout(() => void poll(), delay);
-  }
-
-  function applyActivityUpdate(rows) {
-    const selected = routineP25ActivityEnabled(eventSettings) ? rows :
-      rows.filter((row) => !P25_ROUTINE_ACTIONS.includes(String(row?.action || '').toUpperCase()));
-    const result = applyP25ActivityRows(state, selected, { initial: false,
-      atMs: Date.now() + serverTimeOffsetMs, highlightAtObservationTime: true,
-      highlightCategories: highlightedCategories, grantActivityTimeoutMs });
-    if (result.changed) {
-      if (state.systems.size) empty.hidden = true;
-      renderGraph(true, result.affiliationChanges);
+      back.hidden = false;
+      back.textContent = selectedGroupKey ? '← System' : '← All systems';
+      renderScopeTitle(state.systems.get(systemKey), state.groups.get(selectedGroupKey));
+      renderGraph(!replace, result.affiliationChanges);
     }
     applyAttention(result.focusCandidates);
   }
 
-  function requestCatchup() {
-    liveReady = false;
-    catchupRequested = true;
-    if (!polling) schedulePoll(0);
+  function acceptAffiliations(document, replace = false) {
+    collectionEnabled = document.collection_enabled ?? collectionEnabled;
+    const timing = document.traffic_grant_age_out_milliseconds;
+    if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
+    const result = applyP25Affiliations(state, document, { ...activityOptions(replace), replace, sequence: document.sequence });
+    if (result.changed || replace) { hasSnapshot = true; updateScene(result, replace); }
   }
 
-  function ingestLiveActivity(update) {
-    if (!Array.isArray(update?.rows) || update.rows.length > MAX_POLL_ROWS ||
-        !Number.isSafeInteger(update.next_after_id) || update.next_after_id < 0) return requestCatchup();
-    if (!liveReady || polling || catchupRequested) {
-      if (bufferedRowCount + update.rows.length > MAX_POLL_ROWS ||
-          bufferedActivity.length >= MAX_BUFFERED_ACTIVITY_BATCHES) {
-        bufferedActivity = [];
-        bufferedRowCount = 0;
-        return requestCatchup();
-      }
-      bufferedActivity.push(update);
-      bufferedRowCount += update.rows.length;
-      return;
-    }
-    applyActivityUpdate(update.rows);
-    cursor = Math.max(cursor, update.next_after_id, ...update.rows.map((row) =>
-      Number.isSafeInteger(row?.id) && row.id > 0 ? row.id : 0));
+  function resetHistory() {
+    historySceneDirty = false;
+    nextHistoryExpiryAtMs = 0;
+    const affiliations = [...state.currentAffiliations.values()], available = state.available;
+    state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
+    const result = applyP25Affiliations(state, { affiliations, available }, { ...activityOptions(true), replace: true });
+    clearAutoFocus(); camera.reset(); updateScene(result, true);
   }
 
-  function connectLiveActivity(localGeneration) {
-    if (typeof dependencies.subscribeActivity !== 'function') return;
-    const current = () => !closed && localGeneration === generation;
-    liveSource = dependencies.subscribeActivity({
-      sourceChange: (value) => {
-        if (!current()) return;
-        const timing = value?.traffic_grant_age_out_milliseconds;
-        if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
-        const serverTime = Number(value?.server_time_ms);
-        if (Number.isFinite(serverTime) && serverTime > 0) serverTimeOffsetMs = serverTime - Date.now();
-        if (typeof value?.collection_enabled === 'boolean') collectionEnabled = value.collection_enabled;
-        liveBound = true;
-        requestCatchup();
-      },
-      activityAppend: (value) => current() && ingestLiveActivity(value),
-      gap: () => {
-        if (!current()) return;
-        bufferedActivity = [];
-        bufferedRowCount = 0;
-        requestCatchup();
-      },
-      error: () => {
-        if (!current()) return;
-        liveBound = liveReady = false;
-        setStatus('History update delayed', 'error');
-        schedulePoll();
-      }
-    });
+  function historyParameters() {
+    const now = Date.now() + serverTimeOffsetMs;
+    const actions = routineP25ActivityEnabled(eventSettings) ?
+      [...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS] : P25_HISTORY_ACTIONS;
+    return { from_ms: now - historyHours * 3_600_000, to_ms: now,
+      actions: actions.join(','), projection: 'p25_visualizer', limit: 5_000 };
   }
 
-  async function poll() {
-    if (!seedReady) return;
-    if (closed || polling || document.hidden) return schedulePoll();
-    polling = true;
-    catchupRequested = false;
-    const localGeneration = generation;
-    const controller = requestController;
-    let reseed = false;
-    let recovered = false;
-    try {
-      const bounds = historyBounds();
-      let afterId = cursor;
-      let watermarkId = null;
-      let processed = 0;
-      const pollRows = [];
-      do {
-        const page = await requestForwardPage(afterId, watermarkId, controller.signal, bounds);
-        if (closed || localGeneration !== generation) return;
-        if (page.reset_required === true || page.reseed_required === true ||
-            Number(page.watermark_id) < afterId) {
-          throw reseedError('Saved Activity history restarted. Reloading the selected scope.');
-        }
-        if (watermarkId === null) watermarkId = Number(page.watermark_id) || afterId;
-        const capacity = Math.max(0, MAX_POLL_ROWS - processed);
-        const rows = page.rows.slice(0, capacity);
-        pollRows.push(...rows);
-        processed += rows.length;
-        const next = Number(page.next_after_id);
-        if (!Number.isSafeInteger(next) || next < afterId || page.has_more && next === afterId) {
-          throw new Error('Saved activity paging did not advance.');
-        }
-        afterId = next;
-        if (page.rows.length > capacity || page.has_more && processed >= MAX_POLL_ROWS) {
-          throw reseedError('More saved activity arrived than one update can safely process. Reloading the selected scope.');
-        }
-        if (!page.has_more) break;
-      } while (!controller.signal.aborted);
-      cursor = Math.max(cursor, afterId, watermarkId || 0);
-      applyActivityUpdate(pollRows);
-      recovered = true;
-      setStatus(collectionEnabled ? 'Saved history' : 'Saved history · updates paused',
-        collectionEnabled ? 'current' : 'stale');
-    } catch (error) {
-      if (error?.reseed && !closed && localGeneration === generation) {
-        reseed = true;
-        setStatus('Reloading saved history', 'stale');
-        window.setTimeout(() => void loadSeed(), 0);
-      } else if (error?.name !== 'AbortError' && !closed && localGeneration === generation) {
-        setStatus('History update delayed', 'error');
-      }
-    } finally {
-      polling = false;
-      if (!closed && localGeneration === generation && !reseed) {
-        if (!recovered) schedulePoll();
-        else if (catchupRequested) schedulePoll(0);
-        else if (liveBound) {
-          liveReady = true;
-          const updates = bufferedActivity;
-          bufferedActivity = [];
-          bufferedRowCount = 0;
-          updates.forEach(ingestLiveActivity);
-          if (pollTimer) window.clearTimeout(pollTimer);
-          pollTimer = 0;
-        } else schedulePoll();
-      }
+  function acceptHistory(rows, initial) {
+    const now = Date.now() + serverTimeOffsetMs;
+    const selected = rows.filter(row => row.observed_at_ms >= now - historyHours * 3_600_000 &&
+      row.observed_at_ms <= now + 60_000 &&
+      (routineP25ActivityEnabled(eventSettings) || !P25_ROUTINE_ACTIONS.includes(row.action)));
+    const result = applyP25ActivityRows(state, selected, activityOptions(initial));
+    if (result.changed) {
+      hasSnapshot = true;
+      if (initial) historySceneDirty = true; else updateScene(result);
     }
   }
 
-  function setHistoryHours(value) {
-    historyHours = value === 24 ? 24 : 1;
-    oneHour.setAttribute('aria-pressed', String(historyHours === 1));
-    day.setAttribute('aria-pressed', String(historyHours === 24));
-    void loadSeed();
+  function setLiveStatus(value) {
+    feedStatus = value;
+    refresh.disabled = value === 'loading' || value === 'refreshing';
+    if (value === 'live') {
+      const label = !state.available ? 'P25 data unavailable · Showing previous data' :
+        collectionEnabled ? 'Live' : 'Live affiliations · Activity collection off';
+      setStatus(label + (historyLoading ? ` · Loading ${historyHours}h history…` : ''), state.available ? 'current' : 'stale');
+    }
+    else if (value === 'paused') setStatus('Paused while this tab is hidden', 'stale');
+    else if (value === 'loading') setStatus('Loading recent activity', 'stale');
+    else if (value === 'refreshing') setStatus('Refreshing recent activity…', 'stale');
+    else if (value === 'retrying' || value === 'error') setStatus(hasSnapshot ?
+      'Reconnecting · showing previous activity' : 'Activity unavailable · retrying', 'stale');
+    else setStatus(hasSnapshot ? 'Reconnecting · showing previous activity' : 'Connecting to live activity', 'stale');
   }
+
+  function loadSnapshot(options = {}) { feed?.reseed(options); }
+
+  function onVisibilityChanged() {
+    pressedKeys.clear();
+    if (!document.hidden) expireHistory();
+    feed?.visibilityChanged();
+  }
+
+  function expireHistory() {
+    const now = Date.now() + serverTimeOffsetMs;
+    if (now < nextHistoryExpiryAtMs) return;
+    nextHistoryExpiryAtMs = now + 60_000;
+    const result = expireP25History(state, now - historyHours * 3_600_000);
+    if (result.changed) { historySceneDirty = false; updateScene(result); }
+  }
+
 
   function setMode(value) {
     mode = value === 'manual' ? 'manual' : 'auto';
@@ -726,6 +572,10 @@ function createP25Visualizer(dependencies = {}) {
   function animate(at) {
     animationFrame = 0;
     if (closed) return;
+    if (!document.hidden) expireHistory();
+    if (historySceneDirty && renderer) {
+      historySceneDirty = false; updateScene({ focusCandidates: [], affiliationChanges: [] });
+    }
     const delta = Math.min(0.05, Math.max(0, (at - lastAnimationAt) / 1_000));
     lastAnimationAt = at;
     if (mode === 'manual') renderer?.moveManualCamera({
@@ -747,8 +597,15 @@ function createP25Visualizer(dependencies = {}) {
     animationFrame = requestAnimationFrame(animate);
   }
 
-  oneHour.addEventListener('click', () => historyHours !== 1 && setHistoryHours(1));
-  day.addEventListener('click', () => historyHours !== 24 && setHistoryHours(24));
+  function selectHistory(hours) {
+    if (hours === historyHours) return;
+    historyHours = hours;
+    hour.setAttribute('aria-pressed', String(hours === 1)); day.setAttribute('aria-pressed', String(hours === 24));
+    feed?.reloadHistory();
+  }
+  hour.addEventListener('click', () => selectHistory(1));
+  day.addEventListener('click', () => selectHistory(24));
+  refresh.addEventListener('click', () => void loadSnapshot({ refresh: true }));
   auto.addEventListener('click', () => mode !== 'auto' && setMode('auto'));
   manual.addEventListener('click', () => mode !== 'manual' && setMode('manual'));
   eventsToggle.addEventListener('click', () => {
@@ -770,12 +627,6 @@ function createP25Visualizer(dependencies = {}) {
   });
   stage.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
-  const onVisibilityChange = () => {
-    if (document.hidden) liveReady = false;
-    else requestCatchup();
-  };
-  document.addEventListener('visibilitychange', onVisibilityChange);
-
   async function initialize() {
     renderer = await createP25Renderer({ host: canvas, mode, signal: dependencies.signal,
       onNodeClick: (selected) => {
@@ -799,26 +650,56 @@ function createP25Visualizer(dependencies = {}) {
   const close = () => {
     if (closed) return;
     closed = true;
-    generation += 1;
-    requestController?.abort();
-    liveSource?.close();
-    liveSource = null;
-    bufferedActivity = [];
-    bufferedRowCount = 0;
-    if (pollTimer) window.clearTimeout(pollTimer);
+    feed?.close();
+    document.removeEventListener('visibilitychange', onVisibilityChanged);
     if (highlightTimer) window.clearTimeout(highlightTimer);
     if (animationFrame) cancelAnimationFrame(animationFrame);
     window.removeEventListener('keyup', onKeyUp);
     shortViewport.removeEventListener('change', ensureEventsSpace);
     eventsResizeObserver.disconnect();
-    document.removeEventListener('visibilitychange', onVisibilityChange);
     eventsModal?.close();
     renderer?.dispose();
   };
   dependencies.signal?.addEventListener?.('abort', close, { once: true });
   animationFrame = requestAnimationFrame(animate);
   const rendererReady = initialize();
-  void loadSeed();
+  feed = createP25ActivityFeed({
+    openStream: dependencies.openActivityStream,
+    loadSeed, onDelta: acceptAffiliations, onStatus: setLiveStatus,
+    historyParameters, loadHistory: (parameters, signal) => requestActivity(parameters, { signal }),
+    onHistory: async (rows, signal) => {
+      await waitForRenderer(signal);
+      if (!closed && !signal.aborted) acceptHistory(rows, true);
+    },
+    onAppend: (rows) => acceptHistory(rows, false), onHistoryReset: resetHistory,
+    onHistoryStatus: (loading) => { historyLoading = loading; if (feedStatus === 'live') setLiveStatus('live'); },
+    onSeed: async (document, signal) => {
+      await waitForRenderer(signal);
+      if (!closed && !signal.aborted) acceptAffiliations(document, true);
+    },
+    onBoundary: (boundary) => {
+      if (sourceEpoch && sourceEpoch !== boundary.source_epoch) {
+        state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
+        nextHistoryExpiryAtMs = 0;
+        hasSnapshot = false;
+        clearAutoFocus();
+        if (renderer) renderGraph(false);
+      }
+      sourceEpoch = boundary.source_epoch;
+      collectionEnabled = boundary.collection_enabled !== false;
+      if (Number.isFinite(boundary.server_time_ms)) serverTimeOffsetMs = boundary.server_time_ms - Date.now();
+      const timing = boundary.traffic_grant_age_out_milliseconds;
+      if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
+    },
+    onError: (error) => {
+      if (!hasSnapshot) setEmpty('Recent P25 activity could not be loaded',
+        error?.message || 'Reconnecting automatically. You can also select Refresh.', 'error');
+    },
+    isHidden: () => document.hidden,
+    setTimeout: (callback, delay) => window.setTimeout(callback, delay),
+    clearTimeout: (timer) => window.clearTimeout(timer)
+  });
+  document.addEventListener('visibilitychange', onVisibilityChanged);
 
   return Object.freeze({ element: layout, close });
 }

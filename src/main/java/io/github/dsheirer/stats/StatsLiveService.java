@@ -23,11 +23,14 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
@@ -40,8 +43,8 @@ import java.util.concurrent.locks.LockSupport;
  */
 final class StatsLiveService implements AutoCloseable
 {
-    private static final int MAXIMUM_LIVE_SUBSCRIBERS = 32;
     private static final int LIVE_SUBSCRIBER_QUEUE_CAPACITY = 256;
+    static final long ACTIVITY_BATCH_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(200);
     static final int MAXIMUM_LIVE_TABLES = 128;
     static final int MAXIMUM_ROWS_PER_TABLE = 256;
     static final int MAXIMUM_TOTAL_LIVE_ROWS = 2_048;
@@ -58,7 +61,7 @@ final class StatsLiveService implements AutoCloseable
     private final RemoteOriginLookup mRemoteOriginLookup;
     private final Function<String,String> mCatalogNames;
     private final StatsLiveEventHub mChannelActivityHub =
-        new StatsLiveEventHub(MAXIMUM_LIVE_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
+        new StatsLiveEventHub(StatsLiveEventHub.MAXIMUM_BROWSER_SUBSCRIBERS, LIVE_SUBSCRIBER_QUEUE_CAPACITY);
     private final AtomicLong mDroppedProjectionEvents = new AtomicLong();
     private final AtomicLong mProjectionFailures = new AtomicLong();
     private final AtomicLong mRunGeneration = new AtomicLong();
@@ -211,18 +214,11 @@ final class StatsLiveService implements AutoCloseable
         return subscribeChannelActivity(false);
     }
 
-    StatsLiveEventHub.Subscription subscribeChannelActivity(boolean deltas)
-    {
-        return subscribeChannelActivity(deltas, false);
-    }
-
-    StatsLiveEventHub.Subscription subscribeChannelActivity(boolean deltas, boolean markers)
+    StatsLiveEventHub.Subscription subscribeChannelActivity(boolean markers)
     {
         synchronized(mLifecycleLock)
         {
-            return mCurrentRun != null ? mChannelActivityHub.subscribe(event ->
-                event.markers() == markers &&
-                !Objects.equals(event.name(), deltas ? "activity_table" : "activity_delta")) : null;
+            return mCurrentRun != null ? mChannelActivityHub.subscribe(event -> event.markers() == markers) : null;
         }
     }
 
@@ -284,9 +280,14 @@ final class StatsLiveService implements AutoCloseable
                     publishNavigationRefreshIfNeeded(run);
                     LockSupport.parkNanos(this, 100_000_000L);
                 }
-                else projectAndPublish(run, event);
+                else projectActivity(run, event);
+                if(System.nanoTime() >= run.mNextBatchNanos)
+                {
+                    if(flushActivityBatch(run))
+                        run.mNextBatchNanos = System.nanoTime() + ACTIVITY_BATCH_INTERVAL_NANOS;
+                }
             }
-            catch(RuntimeException exception)
+            catch(IOException | RuntimeException exception)
             {
                 // Initial projection, recovery and navigation are observer work too. Keep the shared worker
                 // available, release a bad startup snapshot, and rebuild from current data after a bounded retry.
@@ -303,80 +304,138 @@ final class StatsLiveService implements AutoCloseable
         run.mRecoveryRetryAfterNanos = System.nanoTime() + PROJECTION_FAILURE_RETRY_NANOS;
     }
 
-    private void projectAndPublish(ProjectionRun run, ChannelActivityEvent event)
+    private void projectActivity(ProjectionRun run, ChannelActivityEvent event)
     {
         publishNavigationRefreshIfNeeded(run);
-        if(event.revision() > 0 && event.revision() <= run.mPublishedRevision)
+        if(event.revision() > 0 && event.revision() <= run.mProcessedRevision) return;
+        PreparedActivityEvent prepared = prepare(event, run.mPublishedNavigation, run.mPublishedRemoteOrigins,
+            run.mRowSystemScopes, run.mSourceTables.get(event.snapshot().tableId()),
+            run.mProjectedTables.get(event.snapshot().tableId()));
+        if(prepared == null) return;
+
+        // Every source event still freezes ownership and observes remove/activation boundaries in order.
+        // Only disposable browser presentation is coalesced.
+        if(prepared.table() == null)
         {
-            return;
+            run.mProjectedTables.remove(prepared.tableId());
+            run.mSourceTables.remove(prepared.tableId());
         }
-        WebEntityNavigationCatalog.Snapshot navigation = run.mPublishedNavigation;
-        RemoteOriginLookup.OriginSnapshot remoteOrigins = run.mPublishedRemoteOrigins;
-        PreparedActivityEvent prepared = prepare(event, navigation, remoteOrigins, run.mRowSystemScopes,
-            run.mSourceTables.get(event.snapshot().tableId()), run.mProjectedTables.get(event.snapshot().tableId()));
-
-        if(prepared == null)
+        else
         {
-            return;
+            run.mProjectedTables.put(prepared.tableId(), prepared.table());
+            run.mSourceTables.put(prepared.tableId(), event.snapshot());
+            while(run.mProjectedTables.size() > MAXIMUM_LIVE_TABLES)
+            {
+                String eldest = run.mProjectedTables.keySet().iterator().next();
+                run.mProjectedTables.remove(eldest);
+                run.mSourceTables.remove(eldest);
+                if(!run.mBatchResyncRequired) run.mDirtyTables.add(eldest);
+            }
         }
-
-        LinkedHashMap<String,Object> update = new LinkedHashMap<>();
-        update.put("operation", prepared.operation().name().toLowerCase());
-        update.put("table_id", prepared.tableId());
-
-        if(prepared.table() != null)
+        if(!run.mBatchResyncRequired) run.mDirtyTables.add(prepared.tableId());
+        run.mProcessedRevision = event.revision() > 0 ? event.revision() :
+            Math.max(run.mProcessedRevision + 1, currentSnapshotSet().revision());
+        if(run.mDirtyTables.size() > MAXIMUM_LIVE_TABLES)
         {
-            update.put("table", prepared.table());
+            run.mBatchResyncRequired = true;
+            run.mDirtyTables.clear();
+        }
+    }
+
+    private boolean flushActivityBatch(ProjectionRun run) throws IOException
+    {
+        if(run.mBatchResyncRequired)
+        {
+            publishAuthoritativeResync(run, run.mPublishedNavigation, run.mPublishedRemoteOrigins);
+            return true;
+        }
+        if(run.mDirtyTables.isEmpty()) return true;
+        ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
+        if(source.revision() > 0 && source.revision() != run.mProcessedRevision)
+        {
+            // Freeze counts with the same revision as the prepared tables. A newly arrived notification is
+            // processed by this worker before publication; neither future rows nor future counts leak on wire.
+            if(run.mBoundaryWaitStartedNanos == 0) run.mBoundaryWaitStartedNanos = System.nanoTime();
+            else if(System.nanoTime() - run.mBoundaryWaitStartedNanos >= ACTIVITY_BATCH_INTERVAL_NANOS)
+                run.mResyncRequired.set(true);
+            return false;
+        }
+        run.mBoundaryWaitStartedNanos = 0;
+        if(!mChannelActivityHub.hasSubscribers())
+        {
+            // Retain authoritative state and ownership; no deltas, marker trees or wire frames without viewers.
+            synchronized(mLifecycleLock) { if(isCurrentRun(run)) publishBoundary(run, source); }
+            run.mMarkerTables.clear();
+            return true;
         }
 
-        update.put("revision", event.revision() > 0 ? event.revision() : currentSnapshotSet().revision());
-        update.put("base_revision", run.mPublishedRevision);
-        long revision = ((Number)update.get("revision")).longValue();
-        Map<String,Object> delta = activityDelta(prepared, run.mProjectedTables.get(prepared.tableId()),
-            run.mPublishedRevision, revision);
-        Map<String,Object> markerTable = prepared.table() != null ? markerTable(prepared.table(),
-            run.mProjectedTables.get(prepared.tableId()), run.mMarkerTables.get(prepared.tableId())) : null;
-        LinkedHashMap<String,Object> markerUpdate = new LinkedHashMap<>(update);
-        if(markerTable != null) markerUpdate.put("table", markerTable);
-        Map<String,Object> markerDelta = activityDelta(new PreparedActivityEvent(prepared.operation(),
-            prepared.tableId(), markerTable), run.mMarkerTables.get(prepared.tableId()),
-            run.mPublishedRevision, revision);
+        PublishedState published = run.mPublishedState;
+        Map<String,Map<String,Object>> previousTables = published != null ? published.tables() : Map.of();
+        long baseRevision = published != null ? published.source().revision() : 0;
+        List<Map<String,Object>> changes = new ArrayList<>();
+        List<Map<String,Object>> fullChanges = new ArrayList<>();
+        List<Map<String,Object>> markerChanges = new ArrayList<>();
+        List<Map<String,Object>> fullMarkerChanges = new ArrayList<>();
+        LinkedHashMap<String,Map<String,Object>> nextMarkers = new LinkedHashMap<>(run.mMarkerTables);
+        for(String tableId: run.mDirtyTables)
+        {
+            Map<String,Object> table = run.mProjectedTables.get(tableId);
+            var prepared = new PreparedActivityEvent(table == null ? ChannelActivityEvent.Operation.REMOVE :
+                ChannelActivityEvent.Operation.UPSERT, tableId, table);
+            changes.add(activityChange(prepared, previousTables.get(tableId), false));
+            fullChanges.add(activityChange(prepared, null, true));
+            Map<String,Object> marker = table != null ? markerTable(table, previousTables.get(tableId),
+                run.mMarkerTables.get(tableId)) : null;
+            var markerPrepared = new PreparedActivityEvent(prepared.operation(), tableId, marker);
+            markerChanges.add(activityChange(markerPrepared, run.mMarkerTables.get(tableId), false));
+            fullMarkerChanges.add(activityChange(markerPrepared, null, true));
+            if(marker == null) nextMarkers.remove(tableId); else nextMarkers.put(tableId, marker);
+        }
+        StatsLiveEventHub.LiveEvent full = batch(baseRevision, run.mProcessedRevision, fullChanges, null, false);
+        StatsLiveEventHub.LiveEvent normal = batch(baseRevision, run.mProcessedRevision, changes, full, false);
+        StatsLiveEventHub.LiveEvent fullMarkers = batch(baseRevision, run.mProcessedRevision, fullMarkerChanges, null, true);
+        StatsLiveEventHub.LiveEvent markers = batch(baseRevision, run.mProcessedRevision, markerChanges, fullMarkers, true);
+        if(!batchFits(normal) || !batchFits(full) || !batchFits(markers) || !batchFits(fullMarkers))
+        {
+            publishAuthoritativeResync(run, run.mPublishedNavigation, run.mPublishedRemoteOrigins);
+            return true;
+        }
         synchronized(mLifecycleLock)
         {
-            if(!isCurrentRun(run))
-            {
-                return;
-            }
-
-            mEncodedChannelActivitySnapshot = null;
-            StatsLiveEventHub.LiveEvent complete = new StatsLiveEventHub.LiveEvent("activity_table", Map.copyOf(update));
-            mChannelActivityHub.publish(complete);
-            mChannelActivityHub.publish(new StatsLiveEventHub.LiveEvent("activity_delta", delta, complete));
-            StatsLiveEventHub.LiveEvent compact = new StatsLiveEventHub.LiveEvent("activity_table",
-                Map.copyOf(markerUpdate), null, true);
-            mChannelActivityHub.publish(compact);
-            mChannelActivityHub.publish(new StatsLiveEventHub.LiveEvent("activity_delta", markerDelta, compact, true));
-            run.mPublishedRevision = revision;
-            if(prepared.table() == null)
-            {
-                run.mProjectedTables.remove(prepared.tableId());
-                run.mSourceTables.remove(prepared.tableId());
-                run.mMarkerTables.remove(prepared.tableId());
-            }
-            else
-            {
-                run.mProjectedTables.put(prepared.tableId(), prepared.table());
-                run.mSourceTables.put(prepared.tableId(), event.snapshot());
-                run.mMarkerTables.put(prepared.tableId(), markerTable);
-                while(run.mProjectedTables.size() > MAXIMUM_LIVE_TABLES)
-                {
-                    String eldest = run.mProjectedTables.keySet().iterator().next();
-                    run.mProjectedTables.remove(eldest);
-                    run.mSourceTables.remove(eldest);
-                    run.mMarkerTables.remove(eldest);
-                }
-            }
+            if(!isCurrentRun(run)) return true;
+            publishBoundary(run, source);
+            run.mMarkerTables.clear();
+            run.mMarkerTables.putAll(nextMarkers);
+            mChannelActivityHub.publish(normal);
+            mChannelActivityHub.publish(markers);
         }
+        return true;
+    }
+
+    private static StatsLiveEventHub.LiveEvent batch(long baseRevision, long revision, List<Map<String,Object>> changes,
+                                                    StatsLiveEventHub.LiveEvent baseline, boolean markers)
+    {
+        return new StatsLiveEventHub.LiveEvent("activity_batch", Map.of("base_revision", baseRevision,
+            "revision", revision, "changes", List.copyOf(changes)), baseline, markers);
+    }
+
+    private static boolean batchFits(StatsLiveEventHub.LiveEvent event) throws IOException
+    {
+        return event.frame(1).bytes(false).length <= LiveMultiplexOutput.EVENT_BYTE_CAPACITY_PER_TOPIC;
+    }
+
+    private void publishBoundary(ProjectionRun run, ChannelActivityModel.SnapshotSet source)
+    {
+        run.mPublishedState = new PublishedState(new ChannelActivityModel.SnapshotSet(run.mProcessedRevision,
+            List.copyOf(run.mSourceTables.values())), Map.copyOf(run.mProjectedTables), run.mPublishedNavigation,
+            run.mPublishedRemoteOrigins,
+            (int)source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).count(),
+            source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).mapToLong(table -> table.rows().size()).sum());
+        run.mDirtyTables.clear();
+        run.mBatchResyncRequired = false;
+        run.mBoundaryWaitStartedNanos = 0;
+        mEncodedChannelActivitySnapshot = null;
+        run.mBaselineReady.countDown();
     }
 
     private void rebuildBaseline(ProjectionRun run, ChannelActivityModel.SnapshotSet source,
@@ -392,11 +451,12 @@ final class StatsLiveService implements AutoCloseable
                 Map<String,Object> projected = activityTable(table, MAXIMUM_ROWS_PER_TABLE,
                     navigation, origins, run.mRowSystemScopes);
                 run.mProjectedTables.put(table.tableId(), projected);
-                run.mMarkerTables.put(table.tableId(), markerTable(projected, null, null));
+
             });
-        run.mPublishedRevision = source.revision();
+        run.mProcessedRevision = source.revision();
         run.mPublishedNavigation = navigation;
         run.mPublishedRemoteOrigins = origins;
+        synchronized(mLifecycleLock) { if(isCurrentRun(run)) publishBoundary(run, source); }
     }
 
     private void publishAuthoritativeResync(ProjectionRun run, WebEntityNavigationCatalog.Snapshot navigation,
@@ -405,9 +465,9 @@ final class StatsLiveService implements AutoCloseable
         // Sample activity after the navigation/origin references and retain those exact references. A catalog
         // change during projection stays visible to the next refresh instead of being silently adopted.
         rebuildBaseline(run, currentSnapshotSet(), navigation, origins);
-        Map<String,Object> authoritative = boundedSnapshot(new ChannelActivityModel.SnapshotSet(run.mPublishedRevision,
-            List.copyOf(run.mSourceTables.values())), MAXIMUM_TOTAL_LIVE_ROWS, run.mPublishedNavigation,
-            run.mPublishedRemoteOrigins, run.mRowSystemScopes);
+        // A later viewer subscribes before reading this published boundary; no wire document is needed yet.
+        if(!mChannelActivityHub.hasSubscribers()) return;
+        Map<String,Object> authoritative = boundedSnapshot(run.mPublishedState);
         synchronized(mLifecycleLock)
         {
             if(isCurrentRun(run))
@@ -421,29 +481,29 @@ final class StatsLiveService implements AutoCloseable
     }
 
     /** Full changed rows keep field removal unambiguous while unchanged rows remain in the browser baseline. */
-    static Map<String,Object> activityDelta(PreparedActivityEvent prepared, Map<String,Object> previous,
-                                            long baseRevision, long revision)
+    static Map<String,Object> activityChange(PreparedActivityEvent prepared, Map<String,Object> previous,
+                                             boolean replace)
     {
         LinkedHashMap<String,Object> delta = new LinkedHashMap<>();
         delta.put("operation", prepared.operation().name().toLowerCase());
         delta.put("table_id", prepared.tableId());
-        delta.put("base_revision", baseRevision);
-        delta.put("revision", revision);
+        replace = replace || previous == null;
+        delta.put("replace", prepared.table() != null && replace);
         if(prepared.table() != null)
         {
             Map<String,Object> current = prepared.table();
             LinkedHashMap<String,Object> metadata = new LinkedHashMap<>(current);
             metadata.remove("rows");
-            LinkedHashMap<String,Object> oldMetadata = previous != null ? new LinkedHashMap<>(previous) : null;
+            LinkedHashMap<String,Object> oldMetadata = !replace && previous != null ? new LinkedHashMap<>(previous) : null;
             if(oldMetadata != null) oldMetadata.remove("rows");
             if(!metadata.equals(oldMetadata)) delta.put("table", Map.copyOf(metadata));
-            Map<String,Map<String,Object>> oldRows = rowIndex(previous);
+            Map<String,Map<String,Object>> oldRows = rowIndex(replace ? null : previous);
             Map<String,Map<String,Object>> newRows = rowIndex(current);
             delta.put("rows", newRows.entrySet().stream()
                 .filter(entry -> !entry.getValue().equals(oldRows.get(entry.getKey())))
                 .map(Map.Entry::getValue).toList());
             delta.put("removed_row_keys", oldRows.keySet().stream().filter(key -> !newRows.containsKey(key)).toList());
-            if(!List.copyOf(oldRows.keySet()).equals(List.copyOf(newRows.keySet())))
+            if(replace || !List.copyOf(oldRows.keySet()).equals(List.copyOf(newRows.keySet())))
             {
                 delta.put("row_order", List.copyOf(newRows.keySet()));
             }
@@ -543,15 +603,17 @@ final class StatsLiveService implements AutoCloseable
     }
 
     /** Initial, recovery and navigation snapshots share one byte budget, including a metadata-only fallback. */
-    private Map<String,Object> boundedSnapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
-                                               WebEntityNavigationCatalog.Snapshot navigation,
-                                               RemoteOriginLookup.OriginSnapshot origins, RowSystemScopeState scopes)
+    private Map<String,Object> boundedSnapshot(PublishedState state)
     {
+        ChannelActivityModel.SnapshotSet source = state.source();
+        WebEntityNavigationCatalog.Snapshot navigation = state.navigation();
+        RemoteOriginLookup.OriginSnapshot origins = state.origins();
+        int maximumRows = MAXIMUM_TOTAL_LIVE_ROWS;
         try
         {
-            Map<String,Object> full = snapshot(source, maximumRows, navigation, origins, scopes);
+            Map<String,Object> full = snapshot(source, maximumRows, MAXIMUM_LIVE_TABLES, MAXIMUM_LIVE_IDENTIFIERS, navigation, origins, null, state);
             if(snapshotFits(full)) return full;
-            Map<String,Object> metadata = snapshot(source, 0, navigation, origins, scopes);
+            Map<String,Object> metadata = snapshot(source, 0, MAXIMUM_LIVE_TABLES, MAXIMUM_LIVE_IDENTIFIERS, navigation, origins, null, state);
             boolean metadataFits = snapshotFits(metadata);
             int low = 1;
             int high = maximumRows - 1;
@@ -559,7 +621,7 @@ final class StatsLiveService implements AutoCloseable
             while(metadataFits && low <= high)
             {
                 int limit = low + (high - low) / 2;
-                Map<String,Object> candidate = snapshot(source, limit, navigation, origins, scopes);
+                Map<String,Object> candidate = snapshot(source, limit, MAXIMUM_LIVE_TABLES, MAXIMUM_LIVE_IDENTIFIERS, navigation, origins, null, state);
                 if(snapshotFits(candidate))
                 {
                     best = candidate;
@@ -577,7 +639,7 @@ final class StatsLiveService implements AutoCloseable
             {
                 int limit = low + (high - low) / 2;
                 Map<String,Object> candidate = snapshot(source, 0, MAXIMUM_LIVE_TABLES, limit,
-                    navigation, origins, scopes);
+                    navigation, origins, null, state);
                 if(snapshotFits(candidate))
                 {
                     best = candidate;
@@ -594,7 +656,7 @@ final class StatsLiveService implements AutoCloseable
             while(low <= high)
             {
                 int limit = low + (high - low) / 2;
-                Map<String,Object> candidate = snapshot(source, 0, limit, 0, navigation, origins, scopes);
+                Map<String,Object> candidate = snapshot(source, 0, limit, 0, navigation, origins, null, state);
                 if(snapshotFits(candidate))
                 {
                     best = candidate;
@@ -633,13 +695,26 @@ final class StatsLiveService implements AutoCloseable
                                         RemoteOriginLookup.OriginSnapshot remoteOrigins,
                                         RowSystemScopeState rowSystemScopes)
     {
+        return snapshot(source, maximumRows, maximumTables, maximumIdentifiers, navigation, remoteOrigins,
+            rowSystemScopes, null);
+    }
+
+    private Map<String,Object> snapshot(ChannelActivityModel.SnapshotSet source, int maximumRows,
+                                        int maximumTables, int maximumIdentifiers,
+                                        WebEntityNavigationCatalog.Snapshot navigation,
+                                        RemoteOriginLookup.OriginSnapshot remoteOrigins,
+                                        RowSystemScopeState rowSystemScopes,
+                                        PublishedState published)
+    {
         List<ChannelActivitySnapshot> snapshots = source.tables().stream()
             .filter(StatsLiveService::isVisibleLiveTable).sorted(Comparator
             .comparingInt((ChannelActivitySnapshot table) -> "conventional".equals(table.tableId()) ? 0 : 1)
             .thenComparing(ChannelActivitySnapshot::tableId)).toList();
         List<Map<String,Object>> tables = new ArrayList<>(Math.min(snapshots.size(), MAXIMUM_LIVE_TABLES));
         int rowsIncluded = 0;
-        long rowsTotal = snapshots.stream().mapToLong(table -> table.rows().size()).sum();
+        long rowsTotal = published != null ? published.totalRows() :
+            snapshots.stream().mapToLong(table -> table.rows().size()).sum();
+        int tablesTotal = published != null ? published.totalTables() : snapshots.size();
         int tableCount = Math.min(snapshots.size(), maximumTables);
         long identifiersOmitted = 0;
 
@@ -648,8 +723,9 @@ final class StatsLiveService implements AutoCloseable
             ChannelActivitySnapshot table = snapshots.get(index);
             int available = Math.max(0, maximumRows - rowsIncluded);
             int rowLimit = Math.min(MAXIMUM_ROWS_PER_TABLE, available);
-            Map<String,Object> projected = activityTable(table, rowLimit, navigation, remoteOrigins,
-                rowSystemScopes);
+            Map<String,Object> projected = published == null ?
+                activityTable(table, rowLimit, navigation, remoteOrigins, rowSystemScopes) :
+                boundedActivityTable(published.tables().get(table.tableId()), rowLimit);
             if(maximumIdentifiers < MAXIMUM_LIVE_IDENTIFIERS)
             {
                 LinkedHashMap<String,Object> bounded = new LinkedHashMap<>(projected);
@@ -676,18 +752,30 @@ final class StatsLiveService implements AutoCloseable
         response.put("row_limit_total", MAXIMUM_TOTAL_LIVE_ROWS);
         response.put("encoded_byte_limit", MAXIMUM_SYSTEM_SNAPSHOT_BYTES);
         response.put("tables_included", tables.size());
-        response.put("tables_omitted_at_least", Math.max(0, snapshots.size() - tableCount));
+        response.put("tables_omitted_at_least", Math.max(0, tablesTotal - tableCount));
         response.put("rows_total", rowsTotal);
         response.put("rows_included", rowsIncluded);
         response.put("rows_omitted", Math.max(0L, rowsTotal - rowsIncluded));
-        response.put("truncated", snapshots.size() > tableCount || rowsTotal > rowsIncluded || identifiersOmitted > 0);
+        response.put("truncated", tablesTotal > tableCount || rowsTotal > rowsIncluded || identifiersOmitted > 0);
         if(maximumIdentifiers < MAXIMUM_LIVE_IDENTIFIERS)
         {
-            response.put("metadata_truncated", identifiersOmitted > 0 || snapshots.size() > tableCount);
+            response.put("metadata_truncated", identifiersOmitted > 0 || tablesTotal > tableCount);
             response.put("identifiers_omitted", identifiersOmitted);
         }
         response.put("revision", source.revision());
         return Map.copyOf(response);
+    }
+
+    private static Map<String,Object> boundedActivityTable(Map<String,Object> table, int rowLimit)
+    {
+        List<?> rows = (List<?>)table.get("rows");
+        if(rows.size() <= rowLimit) return table;
+        LinkedHashMap<String,Object> bounded = new LinkedHashMap<>(table);
+        bounded.put("rows", List.copyOf(rows.subList(0, rowLimit)));
+        long total = ((Number)table.get("rows_total")).longValue();
+        bounded.put("rows_omitted", total - rowLimit);
+        bounded.put("rows_truncated", true);
+        return Map.copyOf(bounded);
     }
 
     /**
@@ -698,16 +786,6 @@ final class StatsLiveService implements AutoCloseable
     private static boolean isVisibleLiveTable(ChannelActivitySnapshot snapshot)
     {
         return snapshot != null && ("conventional".equals(snapshot.tableId()) || snapshot.channelRunning());
-    }
-
-    byte[] encodedSnapshot() throws IOException
-    {
-        return encodedSnapshotState().payload();
-    }
-
-    LiveMultiplexFrame snapshotFrame() throws IOException
-    {
-        return encodedSnapshotState().frame();
     }
 
     SnapshotWire snapshotWire() throws IOException
@@ -728,9 +806,22 @@ final class StatsLiveService implements AutoCloseable
     private EncodedSnapshot encodedSnapshotState() throws IOException
     {
         long generation = mRunGeneration.get();
-        ChannelActivityModel.SnapshotSet source = currentSnapshotSet();
-        WebEntityNavigationCatalog.Snapshot navigation = navigationSnapshot();
-        RemoteOriginLookup.OriginSnapshot remoteOrigins = remoteOriginSnapshot();
+        ProjectionRun run = mCurrentRun;
+        PublishedState state = run != null ? run.mPublishedState : null;
+        if(run != null && state == null)
+        {
+            try { run.mBaselineReady.await(1, TimeUnit.SECONDS); }
+            catch(InterruptedException exception)
+            {
+                Thread.currentThread().interrupt();
+                throw new IOException("Live activity is initializing", exception);
+            }
+            state = run.mPublishedState;
+            if(state == null) throw new IOException("Live activity is initializing");
+        }
+        ChannelActivityModel.SnapshotSet source = state != null ? state.source() : currentSnapshotSet();
+        WebEntityNavigationCatalog.Snapshot navigation = state != null ? state.navigation() : navigationSnapshot();
+        RemoteOriginLookup.OriginSnapshot remoteOrigins = state != null ? state.origins() : remoteOriginSnapshot();
         RowSystemScopeState rowSystemScopes = mRowSystemScopeState;
         EncodedSnapshot cached = mEncodedChannelActivitySnapshot;
 
@@ -750,13 +841,23 @@ final class StatsLiveService implements AutoCloseable
                 return cached;
             }
 
-            Map<String,Object> bestProjection = boundedSnapshot(source, MAXIMUM_TOTAL_LIVE_ROWS, navigation,
-                remoteOrigins, rowSystemScopes);
+            Map<String,Object> bestProjection;
+            if(state != null) bestProjection = boundedSnapshot(state);
+            else
+            {
+                LinkedHashMap<String,Map<String,Object>> tables = new LinkedHashMap<>();
+                source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).sorted(Comparator
+                    .comparingInt((ChannelActivitySnapshot table) -> "conventional".equals(table.tableId()) ? 0 : 1)
+                    .thenComparing(ChannelActivitySnapshot::tableId)).limit(MAXIMUM_LIVE_TABLES)
+                    .forEach(table -> tables.put(table.tableId(), activityTable(table, MAXIMUM_ROWS_PER_TABLE,
+                        navigation, remoteOrigins, rowSystemScopes)));
+                bestProjection = boundedSnapshot(new PublishedState(source, Map.copyOf(tables), navigation, remoteOrigins,
+                    (int)source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).count(),
+                    source.tables().stream().filter(StatsLiveService::isVisibleLiveTable).mapToLong(table -> table.rows().size()).sum()));
+            }
             JsonNode bestDocument = StatsApiV1Payload.present(bestProjection);
-            byte[] best = ApiHttpResponse.encodePayload(bestDocument);
-
             EncodedSnapshot encoded = new EncodedSnapshot(generation, source.revision(), navigation,
-                remoteOrigins, best, LiveMultiplexFrame.json(1, "snapshot", bestDocument),
+                remoteOrigins, LiveMultiplexFrame.json(1, "snapshot", bestDocument),
                 LiveMultiplexFrame.json(1, "snapshot", StatsApiV1Payload.present(markerSnapshot(bestProjection))));
 
             if(mRunGeneration.get() == generation && mRowSystemScopeState == rowSystemScopes)
@@ -1299,10 +1400,15 @@ final class StatsLiveService implements AutoCloseable
     {
     }
 
+    private record PublishedState(ChannelActivityModel.SnapshotSet source,
+                                  Map<String,Map<String,Object>> tables,
+                                  WebEntityNavigationCatalog.Snapshot navigation,
+                                  RemoteOriginLookup.OriginSnapshot origins, int totalTables, long totalRows) {}
+
     private record EncodedSnapshot(long generation, long revision,
                                    WebEntityNavigationCatalog.Snapshot navigation,
                                    RemoteOriginLookup.OriginSnapshot remoteOrigins,
-                                   byte[] payload, LiveMultiplexFrame frame, LiveMultiplexFrame markerFrame)
+                                   LiveMultiplexFrame frame, LiveMultiplexFrame markerFrame)
     {
     }
 
@@ -1328,7 +1434,13 @@ final class StatsLiveService implements AutoCloseable
         private final LinkedHashMap<String,Map<String,Object>> mProjectedTables = new LinkedHashMap<>();
         private final LinkedHashMap<String,ChannelActivitySnapshot> mSourceTables = new LinkedHashMap<>();
         private final LinkedHashMap<String,Map<String,Object>> mMarkerTables = new LinkedHashMap<>();
-        private long mPublishedRevision;
+        private final Set<String> mDirtyTables = new LinkedHashSet<>();
+        private final CountDownLatch mBaselineReady = new CountDownLatch(1);
+        private volatile PublishedState mPublishedState;
+        private long mProcessedRevision;
+        private long mBoundaryWaitStartedNanos;
+        private long mNextBatchNanos = System.nanoTime() + ACTIVITY_BATCH_INTERVAL_NANOS;
+        private boolean mBatchResyncRequired;
         private long mRecoveryRetryAfterNanos;
         private final AtomicBoolean mResyncRequired = new AtomicBoolean();
         private final Listener<ChannelActivityEvent> mListener = event -> receiveChannelActivity(this, event);

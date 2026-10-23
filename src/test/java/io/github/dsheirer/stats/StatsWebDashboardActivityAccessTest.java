@@ -46,7 +46,7 @@ class StatsWebDashboardActivityAccessTest
     Path mTemporaryDirectory;
 
     @Test
-    void enforcesSeparateActivityActionAndRadioCapabilities() throws Exception
+    void keepsActivityTotalsSeparateFromScopedRadioAccess() throws Exception
     {
         Path database = mTemporaryDirectory.resolve("sdrtrunk.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -88,18 +88,10 @@ class StatsWebDashboardActivityAccessTest
                 StatsApiV1.ACTIVITY_ACTIONS + "?range=24h", null);
             assertEquals(200, actions.statusCode(), actions.body());
 
-            HttpResponse<String> anonymousRadios = get(client, origin,
-                StatsApiV1.ACTIVITY_RADIOS + "?range=24h&action=GRANT", null);
-            assertEquals(401, anonymousRadios.statusCode(), anonymousRadios.body());
-            JsonNode error = OBJECT_MAPPER.readTree(anonymousRadios.body());
-            assertEquals("authentication_required", error.at("/error/code").textValue(), anonymousRadios.body());
-
+            HttpResponse<String> anonymousActivity = get(client, origin, StatsApiV1.ACTIVITY + "?limit=1", null);
+            assertEquals(401, anonymousActivity.statusCode(), anonymousActivity.body());
             String cookie = login(client, origin, "listener", "dashboard-activity-user-password");
-            HttpResponse<String> authenticatedRadios = get(client, origin,
-                StatsApiV1.ACTIVITY_RADIOS + "?range=24h&action=GRANT", cookie);
-            assertEquals(200, authenticatedRadios.statusCode(), authenticatedRadios.body());
-            assertEquals("grant", OBJECT_MAPPER.readTree(authenticatedRadios.body())
-                .at("/meta/action").textValue(), authenticatedRadios.body());
+            assertEquals(404, get(client, origin, "/api/v1/activity/radios?range=24h&action=GRANT", cookie).statusCode());
 
             accessService.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.ADMIN);
             HttpResponse<String> activity = get(client, origin, StatsApiV1.ACTIVITY + "?limit=1", cookie);
@@ -111,6 +103,7 @@ class StatsWebDashboardActivityAccessTest
             assertEquals(1750, OBJECT_MAPPER.readTree(updated.body())
                 .at("/meta/traffic_grant_age_out_milliseconds").intValue(), updated.body());
             assertEquals(403, get(client, origin, StatsApiV1.STATUS, cookie).statusCode());
+            assertEquals(403, get(client, origin, StatsApiV1.ACTIVITY_ACTIONS + "?range=24h", cookie).statusCode());
         }
         finally
         {
@@ -121,7 +114,7 @@ class StatsWebDashboardActivityAccessTest
     }
 
     @Test
-    void admitsOnlyOneExactActivityRadioQueryAtATime() throws Exception
+    void twoHundredActivityVisitorsShareTheSamePreparedTotals() throws Exception
     {
         Path database = mTemporaryDirectory.resolve("single-flight.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
@@ -137,51 +130,45 @@ class StatsWebDashboardActivityAccessTest
             Arrays.fill(adminPassword, '\u0000');
         }
 
-        accessService.setCapabilityTier(WebCapability.RADIO_VIEW, AccessTier.PUBLIC);
+        accessService.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.PUBLIC);
         WebAuthenticationService authenticationService = new WebAuthenticationService(accessService);
         WebRequestSecurity requestSecurity = new WebRequestSecurity(accessService, authenticationService);
         HttpServer server = HttpServer.create(
             new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
-        ExecutorService executor = Executors.newFixedThreadPool(2);
+        ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
         server.setExecutor(executor);
         BlockingStatsWebDatabase statsDatabase =
             new BlockingStatsWebDatabase(new UserPreferences(), database);
         new StatsApiV1Controller(statsDatabase, Map::of, requestSecurity, null).register(server);
         server.start();
-        CompletableFuture<HttpResponse<String>> firstResponse = null;
+        List<CompletableFuture<HttpResponse<String>>> responses = new java.util.ArrayList<>();
 
         try
         {
             URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder(origin.resolve(
-                StatsApiV1.ACTIVITY_RADIOS + "?range=24h&action=GRANT")).GET().build();
-            firstResponse = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
-            assertTrue(statsDatabase.awaitQueryStart(), "The first exact query did not start");
-
-            HttpResponse<String> busy = client.send(request, HttpResponse.BodyHandlers.ofString());
-            assertEquals(429, busy.statusCode(), busy.body());
-            JsonNode error = OBJECT_MAPPER.readTree(busy.body());
-            assertEquals("activity_query_busy", error.at("/error/code").textValue(), busy.body());
-            assertEquals(1, statsDatabase.queryCount());
-
+                StatsApiV1.ACTIVITY_ACTIONS + "?range=24h")).GET().build();
+            responses.add(client.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
+            assertTrue(statsDatabase.awaitQueryStart(), "The shared totals query did not start");
+            for(int index = 1; index < 200; index++)
+                responses.add(client.sendAsync(request, HttpResponse.BodyHandlers.ofString()));
             statsDatabase.releaseQuery();
-            HttpResponse<String> completed = firstResponse.get(5, TimeUnit.SECONDS);
-            assertEquals(200, completed.statusCode(), completed.body());
-
-            HttpResponse<String> afterRelease = client.send(request, HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, afterRelease.statusCode(), afterRelease.body());
-            assertEquals(2, statsDatabase.queryCount());
+            String shared = responses.getFirst().get(5, TimeUnit.SECONDS).body();
+            for(var response: responses)
+            {
+                HttpResponse<String> result = response.get(5, TimeUnit.SECONDS);
+                assertEquals(200, result.statusCode(), result.body());
+                assertEquals(shared, result.body());
+            }
+            assertEquals(1, statsDatabase.queryCount());
+            assertEquals(200, get(client, origin, StatsApiV1.ACTIVITY_ACTIONS + "?range=1h", null).statusCode());
+            assertEquals(2, statsDatabase.queryCount(), "Distinct time ranges must retain their own totals");
         }
         finally
         {
             statsDatabase.releaseQuery();
-
-            if(firstResponse != null)
-            {
-                firstResponse.cancel(true);
-            }
-
+            responses.forEach(response -> response.cancel(true));
             server.stop(0);
             executor.shutdownNow();
             requestSecurity.close();
@@ -225,12 +212,9 @@ class StatsWebDashboardActivityAccessTest
         }
 
         @Override
-        Map<String,Object> dashboardActivityRadios(StatsRequest request)
+        Map<String,Object> dashboardActivityActions(StatsRequest request)
         {
-            request.text("range");
-            request.requiredText("action");
-            request.limit();
-            request.longOffset();
+            String range = request.text("range");
             mQueryCount.incrementAndGet();
             mQueryStarted.countDown();
 
@@ -244,7 +228,8 @@ class StatsWebDashboardActivityAccessTest
                 throw new IllegalStateException("Interrupted while waiting to release the exact query", exception);
             }
 
-            return Map.of("rows", List.of());
+            return Map.of("rows", List.of(), "range", range, "from_ms", 0L, "to_ms", 1L,
+                "total_observation_count", 0L);
         }
 
         private boolean awaitQueryStart() throws InterruptedException

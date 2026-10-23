@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import java.io.IOException;
 
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityEvent;
 import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
@@ -32,50 +34,52 @@ class StatsLiveServiceNavigationRecoveryTest
     {
         try(Fixture fixture = new Fixture(true, false))
         {
-            fixture.service.start();
+            fixture.start();
             fixture.initialProjection.awaitEntered();
             try(var subscription = fixture.service.subscribeChannelActivity())
             {
-                var browser = fixture.service.snapshotWire();
-                assertFalse(wire(browser).contains("\"entity_ref\""));
+                assertThrows(IOException.class, fixture.service::snapshotWire,
+                    "an unfinished first projection cannot expose source data ahead of publication");
                 fixture.navigation(0x49F);
                 fixture.initialProjection.release();
                 Map<String,Object> snapshot = resync(subscription);
-                assertTrue(revision(snapshot) >= browser.revision());
+                assertEquals(1L, revision(snapshot));
                 assertEquals("p25:bee00:49f", table(snapshot).get("radio_system_key"));
                 assertTrue(wire(fixture.service.snapshotWire()).contains("\"entity_ref\""));
                 fixture.publish("next");
                 var next = subscription.poll(3, TimeUnit.SECONDS);
                 assertNotNull(next);
-                assertEquals("activity_table", next.name());
+                assertEquals("activity_batch", next.name());
             }
         }
     }
 
     @Test
-    void navigationRecoveryIncludesActivityAlreadyCoveredByTheBrowserSnapshot() throws Exception
+    void browserSnapshotStaysAtThePublishedBoundaryUntilQueuedActivityIsRecovered() throws Exception
     {
         try(Fixture fixture = new Fixture(false, true))
         {
-            fixture.service.start();
+            fixture.start();
             fixture.idleCheck.awaitEntered();
             try(var subscription = fixture.service.subscribeChannelActivity())
             {
                 fixture.publish("queued");
                 var browser = fixture.service.snapshotWire();
-                assertEquals(2L, browser.revision());
+                assertEquals(1L, browser.revision());
+                assertTrue(wire(browser).contains("initial"));
+                assertFalse(wire(browser).contains("queued"));
                 assertFalse(wire(browser).contains("\"entity_ref\""));
                 fixture.navigation(0x49F);
                 fixture.idleCheck.release();
                 Map<String,Object> recovered = resync(subscription);
-                assertEquals(browser.revision(), revision(recovered));
+                assertEquals(2L, revision(recovered));
                 assertEquals("queued", row(recovered).get("key"));
                 assertEquals("p25:bee00:49f", table(recovered).get("radio_system_key"));
                 assertNull(subscription.poll(150, TimeUnit.MILLISECONDS), "covered event2 must not follow resync2");
                 fixture.publish("later");
                 var later = subscription.poll(3, TimeUnit.SECONDS);
                 assertNotNull(later);
-                assertEquals("activity_table", later.name());
+                assertEquals("activity_batch", later.name());
                 assertEquals(3L, ((Number)((Map<?,?>)later.data()).get("revision")).longValue());
             }
         }
@@ -87,7 +91,7 @@ class StatsLiveServiceNavigationRecoveryTest
         Barrier authoritativeRead = new Barrier(true);
         try(Fixture fixture = new Fixture(false, true))
         {
-            fixture.service.start();
+            fixture.start();
             fixture.idleCheck.awaitEntered();
             try(var subscription = fixture.service.subscribeChannelActivity())
             {
@@ -95,12 +99,13 @@ class StatsLiveServiceNavigationRecoveryTest
                 fixture.navigation(0x49F);
                 fixture.idleCheck.release();
                 authoritativeRead.awaitEntered();
-                // Recovery has captured catalog B and source1. A browser now receives source2/catalog C.
+                // Recovery has captured catalog B and source1. Future source2/catalog C must stay out of the wire baseline.
                 fixture.publish("queued");
                 fixture.navigation(0x4A0);
                 var browser = fixture.service.snapshotWire();
-                assertEquals(2L, browser.revision());
-                assertTrue(wire(browser).contains("p25:bee00:4a0"));
+                assertEquals(1L, browser.revision());
+                assertFalse(wire(browser).contains("p25:bee00:4a0"));
+                assertTrue(wire(browser).contains("initial"));
                 authoritativeRead.release();
                 Map<String,Object> earlier = resync(subscription);
                 assertEquals(1L, revision(earlier));
@@ -120,17 +125,17 @@ class StatsLiveServiceNavigationRecoveryTest
     {
         try(Fixture fixture = new Fixture(true, false))
         {
-            fixture.service.start();
+            fixture.start();
             fixture.initialProjection.awaitEntered();
             try(var subscription = fixture.service.subscribeChannelActivity())
             {
-                var browser = fixture.service.snapshotWire();
-                assertFalse(wire(browser).contains("remote_origin"));
+                assertThrows(IOException.class, fixture.service::snapshotWire,
+                    "initial origin projection must finish before a wire baseline is available");
                 fixture.origins.set(new RemoteOriginLookup.OriginSnapshot(1L, Map.of(CONFIGURATION,
                     new RemoteOriginLookup.RemoteOrigin("sender", "Sender", "feed", "Feed", null, null))));
                 fixture.initialProjection.release();
                 Map<String,Object> recovered = resync(subscription);
-                assertTrue(revision(recovered) >= browser.revision());
+                assertEquals(1L, revision(recovered));
                 assertEquals(Map.of("remote", true), table(recovered).get("remote_origin"));
             }
         }
@@ -148,11 +153,13 @@ class StatsLiveServiceNavigationRecoveryTest
         final Barrier initialProjection;
         final Barrier idleCheck;
         final StatsLiveService service;
+        final boolean blockIdle;
 
         Fixture(boolean blockInitial, boolean blockIdle)
         {
+            this.blockIdle = blockIdle;
             initialProjection = new Barrier(blockInitial);
-            idleCheck = new Barrier(blockIdle);
+            idleCheck = new Barrier(false);
             StatsLiveService.ActivitySource source = new StatsLiveService.ActivitySource()
             {
                 @Override public ChannelActivityModel.SnapshotSet snapshot()
@@ -173,6 +180,16 @@ class StatsLiveServiceNavigationRecoveryTest
                 @Override public String get(int index) { if(worker()) initialProjection.pauseOnce(); return "CONTROL"; }
                 @Override public int size() { return 1; }
             });
+        }
+
+        void start() throws Exception
+        {
+            service.start();
+            if(blockIdle)
+            {
+                assertEquals(1L, service.snapshotWire().revision());
+                idleCheck.enabled.set(true);
+            }
         }
 
         void publish(String key) { publish(key, List.of("CONTROL")); }

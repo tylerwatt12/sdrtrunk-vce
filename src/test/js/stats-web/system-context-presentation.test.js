@@ -10,7 +10,7 @@ assert.ok(applicationPath, 'The app.js path is required.');
 const application = fs.readFileSync(applicationPath, 'utf8');
 const assets = path.dirname(applicationPath);
 const labels = fs.readFileSync(path.join(assets, 'core/system-labels.js'), 'utf8');
-const spectrum = fs.readFileSync(path.join(assets, 'features/spectrum-search.js'), 'utf8');
+const spectrum = fs.readFileSync(path.join(assets, 'features/spectrum-search-data.js'), 'utf8');
 
 function functionSource(source, signature) {
   const start = source.indexOf(signature);

@@ -21,7 +21,6 @@ package io.github.dsheirer.dsp.filter.channelizer;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import java.util.Arrays;
 import org.apache.commons.math3.util.FastMath;
-import org.jtransforms.fft.FloatFFT_1D;
 
 /**
  * Implements a two-channel polyphase filer synthesizer.  This class is intended to be used with an M2 polyphase
@@ -48,7 +47,6 @@ public class TwoChannelSynthesizerM2
     private float[] mSerpentineDataBuffer;
     private float[] mIQInterleavedFilter;
     private float[] mFilterVectorProduct;
-    private FloatFFT_1D mFFT = new FloatFFT_1D(2);
     private boolean mTopBlockFlag = true;
 
     /**
@@ -111,33 +109,18 @@ public class TwoChannelSynthesizerM2
         float[] i = new float[iCh1.length];
         float[] q = new float[qCh1.length];
 
-        float[] IFFTBuffer = new float[4];
-
         for(int x = 0; x < iCh1.length; x++)
         {
-            //Load samples from each channel into buffer for IFFT
-            IFFTBuffer[0] = iCh1[x];     //i
-            IFFTBuffer[1] = qCh1[x]; //q
-            IFFTBuffer[2] = iCh2[x];     //i
-            IFFTBuffer[3] = qCh2[x]; //q
-
-            //Perform Inverse FFT (IFFT)
-            mFFT.complexInverse(IFFTBuffer, true);
-
             //Perform serpentine shift of data blocks in the data buffer - make room for 4 new samples
             System.arraycopy(mSerpentineDataBuffer, 0, mSerpentineDataBuffer, 4, mSerpentineDataBuffer.length - 4);
 
-            //Top Block - load samples into data buffer in normal order
-            if(mTopBlockFlag)
-            {
-                System.arraycopy(IFFTBuffer, 0, mSerpentineDataBuffer, 0, IFFTBuffer.length);
-            }
-            //Bottom Block - swap samples via data loading to account for phase shift
-            else
-            {
-                System.arraycopy(IFFTBuffer, 0, mSerpentineDataBuffer, 2, 2);
-                System.arraycopy(IFFTBuffer, 2, mSerpentineDataBuffer, 0, 2);
-            }
+            //The normalized two-point inverse FFT is a sum and difference, with the same float operation order.
+            int sumOffset = mTopBlockFlag ? 0 : 2;
+            int differenceOffset = 2 - sumOffset;
+            mSerpentineDataBuffer[sumOffset] = (iCh1[x] + iCh2[x]) * 0.5f;
+            mSerpentineDataBuffer[sumOffset + 1] = (qCh1[x] + qCh2[x]) * 0.5f;
+            mSerpentineDataBuffer[differenceOffset] = (iCh1[x] - iCh2[x]) * 0.5f;
+            mSerpentineDataBuffer[differenceOffset + 1] = (qCh1[x] - qCh2[x]) * 0.5f;
 
             //Note: in order to use Java's ability to leverage SIMD intrinsics, we perform filtering in two steps
             //(multiply then accumulate) since our filter and data are structured with I and Q vectors interleaved.

@@ -38,8 +38,8 @@ final class LiveMultiplexFrame
     static final int TOPIC_CHANNEL_DIAGNOSTICS = 4;
     static final int TOPIC_TUNER_DIAGNOSTICS = 5;
     static final int TOPIC_FREQUENCY_AUDIO = 6;
-    static final int TOPIC_SAVED_ACTIVITY = 7;
-    static final int TOPIC_MAXIMUM = TOPIC_SAVED_ACTIVITY;
+    static final int TOPIC_P25_ACTIVITY = 7;
+    static final int TOPIC_MAXIMUM = TOPIC_P25_ACTIVITY;
     static final int HEADER_BYTES = 16;
     static final int GZIP_FLAG = 0x80;
     private static final int MINIMUM_COMPRESSION_BYTES = 1_024;
@@ -59,6 +59,12 @@ final class LiveMultiplexFrame
     {
         return new LiveMultiplexFrame(1, topic,
             ApiHttpResponse.encodePayload(Map.of("event", event, "data", data)));
+    }
+
+    static LiveMultiplexFrame preparedJson(int topic, String event, Object data) throws IOException
+    {
+        return new LiveMultiplexFrame(1, topic,
+            ApiHttpResponse.encodeNormalizedPayload(Map.of("event", event, "data", data)));
     }
 
     static LiveMultiplexFrame diagnostic(int topic, byte[] payload)

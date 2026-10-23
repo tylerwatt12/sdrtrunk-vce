@@ -541,11 +541,11 @@ test('incremental remote ownership removes cached local markers and hover detail
     const updated = table([row('CALL', undefined, { channel_name: 'Remote replacement',
       ...(remoteTable ? {} : { remote_origin: { remote: true } }) })]);
     if (remoteTable) updated.remote_origin = { remote: true };
-    h.subscriber().activityTable({ table: updated });
+    h.subscriber().activityBatch({ changes: [{ table: updated }] });
     assert.equal(h.context.activeChannelTables.has('test'), false);
     assert.equal(h.context.spectrumActiveFlags.children.length, 0);
     assert.equal(h.context.cursorPopup.hidden, true);
-    h.subscriber().activityTable({ table: table([row('CALL', undefined, { channel_name: 'Local return' })]) });
+    h.subscriber().activityBatch({ changes: [{ table: table([row('CALL', undefined, { channel_name: 'Local return' })]) }] });
     assert.equal(h.context.spectrumActiveFlags.children.length, 1, 'a later local update remains visible');
   }
 });
@@ -568,10 +568,10 @@ test('idle buttons use the same accessible hover details and clear on active tra
     assert.equal(h.context.cursorPopup.hidden, true);
   }
   flag.dispatch('pointerenter');
-  h.subscriber().activityTable({ table: table([row('CALL')]) });
+  h.subscriber().activityBatch({ changes: [{ table: table([row('CALL')]) }] });
   assert.equal(h.context.cursorPopup.hidden, true);
   assert.equal(h.context.spectrumActiveFlags.children[0].className, 'tuner-spectrum-active-flag status-call');
-  h.subscriber().activityTable({ table: table([row('IDLE')]) });
+  h.subscriber().activityBatch({ changes: [{ table: table([row('IDLE')]) }] });
   assert.equal(h.context.spectrumActiveFlags.children[0].className, 'tuner-spectrum-active-flag status-idle');
 });
 
@@ -607,7 +607,7 @@ test('current control stays visible, alternate control stays hidden, invalid/out
   assert.deepEqual(statuses(h.context.activeCarriers()), ['CONTROL']);
   assert.deepEqual(statuses(h.context.activeCarriers(true)), ['CONTROL', 'IDLE']);
   h.toggle(h.controls.idleChannelsInput, true);
-  h.subscriber().activityTable({ table_id: 'test', operation: 'remove' });
+  h.subscriber().activityBatch({ changes: [{ table_id: 'test', operation: 'remove' }] });
   assert.equal(h.context.spectrumActiveFlags.children.length, 0);
   h.subscriber().snapshot({ tables: [table([row('IDLE')])] });
   h.context.closeActiveChannels();

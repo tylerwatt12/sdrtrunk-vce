@@ -9,8 +9,6 @@ const channel = (configurationId, name, overrides = {}) => ({
   frequencies_hz: [851_012_500, 853_987_500], display_frequency_hz: 851_012_500,
   display_frequency_source: 'active-control', processing_state: 'RUNNING', ...overrides
 });
-const pageOf = rows => ({ rows, total_count: rows.length, limit: 25, offset: 0,
-  has_more: false, next_offset: null });
 
 async function directoryFixture(page, theme = 'light') {
   const fixture = await installSiteStyleApplication(page, theme);
@@ -19,16 +17,17 @@ async function directoryFixture(page, theme = 'light') {
     channel('alpha', 'Alpha', { system: 'Alpha system' }),
     channel('conventional', 'Dispatch', { channel_kind: 'CONVENTIONAL', system: 'Conventional',
       protocol_id: 'nbfm', processing_state: 'STOPPED' })] };
-  await page.route('**/api/v1/channel-catalog', route => {
+  await page.route('**/api/v1/dashboard/main', route => {
     state.polls += 1;
-    return route.fulfill({ json: { data: { revision: state.polls, channels: state.channels } } });
+    return route.fulfill({ json: { data: { quality: { current: [] }, directory: {
+      systems: [
+        { radio_system_key: 'p25:00001:001', entity_ref: { kind: 'radio_system', key: 'p25:00001:001' },
+          system_name: 'Metro', children: state.channels.filter(row => row.system === 'Metro') },
+        { radio_system_key: 'p25:00001:002', entity_ref: { kind: 'radio_system', key: 'p25:00001:002' },
+          system_name: 'Alpha system', children: state.channels.filter(row => row.system === 'Alpha system') }
+      ], channels: state.channels.filter(row => row.channel_kind === 'CONVENTIONAL')
+    } } } });
   });
-  await page.route('**/api/v1/radio-systems?**', route => route.fulfill({ json: { data: pageOf([
-    { radio_system_key: 'p25:00001:001', entity_ref: { kind: 'radio_system', key: 'p25:00001:001' },
-      system_name: 'Metro', channel_preview: state.channels.filter(row => row.system === 'Metro') },
-    { radio_system_key: 'p25:00001:002', entity_ref: { kind: 'radio_system', key: 'p25:00001:002' },
-      system_name: 'Alpha system', channel_preview: state.channels.filter(row => row.system === 'Alpha system') }
-  ]) } }));
   await page.goto('/app.html?view=dashboard&tab=health');
   const directory = page.locator('.radio-directory-local');
   await directory.getByRole('button', { name: 'All', exact: true }).click();
@@ -45,7 +44,7 @@ test('Directory polling preserves cards, rows, reading geometry, and focused lin
   await expect(row('north').locator('.radio-directory-frequency')).toHaveText('Current control851.01250 MHz');
   await expect(row('stale').locator('.radio-directory-frequency')).toHaveText('Current controlUnavailable');
   await expect(row('conventional').locator('.radio-directory-frequency')).toHaveText('Frequency851.01250 MHz');
-  await expect(directory).not.toContainText(/853\.98750|852\.98750|P25 Phase 1|Alias List:|sites shown|channels shown/);
+  await expect(directory).not.toContainText(/853\.98750|852\.98750|Alias List:|sites shown|channels shown/);
   await expect(directory.locator('.radio-directory-system-header .radio-directory-live-action')).toHaveCount(3);
   await expect(directory.locator('[data-directory-card-key="trunked:p25:00001:001"] .radio-directory-live-action'))
     .toHaveAttribute('href', /view=live&channel=north/);
@@ -117,35 +116,27 @@ test('Directory Live actions respect access permissions in dark mode', async ({ 
   await expect(page.locator('.radio-directory-site-row .channel-name-link')).toBeVisible();
 });
 
-test('Directory reads stable bounded system pages without duplicate channels or cards', async ({ page }) => {
-  await installSiteStyleApplication(page);
+test('Directory uses one shared Main snapshot with every configured channel', async ({ page }) => {
+  const fixture = await installSiteStyleApplication(page);
   const north = channel('north', 'North');
   const west = channel('west', 'West');
   const alpha = channel('alpha', 'Alpha', { system: 'Alpha system' });
   const requests = [];
-  await page.route('**/api/v1/channel-catalog', route => route.fulfill({ json: { data: {
-    revision: 1, channels: [west, north, alpha]
+  page.on('request', request => requests.push(new URL(request.url()).pathname));
+  await page.route('**/api/v1/dashboard/main', route => route.fulfill({ json: { data: {
+    quality: { current: [] }, directory: { systems: [
+      { radio_system_key: 'p25:00001:002', system_name: 'Alpha system', children: [alpha] },
+      { radio_system_key: 'p25:00001:001', system_name: 'Metro', children: [north, west] }
+    ], channels: [] }
   } } }));
-  await page.route('**/api/v1/radio-systems?**', route => {
-    const query = new URL(route.request().url()).searchParams;
-    requests.push(Object.fromEntries(query));
-    const alphaSystem = { radio_system_key: 'p25:00001:002', system_name: 'Alpha system', channel_preview: [alpha] };
-    const rows = query.has('offset') ? [alphaSystem,
-      { radio_system_key: 'p25:00001:001', system_name: 'Metro', channel_preview: [north, north, west] }] :
-      [...Array.from({ length: 24 }, (_, index) => ({ radio_system_key: `historical:${index}`,
-        system_name: `Historical ${index}`, channel_preview: [] })), alphaSystem];
-    return route.fulfill({ json: { data: { rows, total_count: 27, limit: 25,
-      offset: query.has('offset') ? 25 : 0, has_more: !query.has('offset'),
-      next_offset: query.has('offset') ? null : 25 } } });
-  });
   await page.goto('/app.html?view=dashboard');
   await expect(page.locator('.radio-directory-system-card')).toHaveCount(2);
   await expect(page.locator('.radio-directory-site-row')).toHaveCount(3);
   await expect(page.locator('[data-directory-row-key="north"]')).toHaveCount(1);
   await expect(page.locator('[data-directory-row-key="alpha"]')).toHaveCount(1);
-  expect(requests).toHaveLength(2);
-  expect(requests.map(({ sort, direction, limit, offset }) => ({ sort, direction, limit, offset }))).toEqual([
-    { sort: 'system_id', direction: 'asc', limit: '25', offset: undefined },
-    { sort: 'system_id', direction: 'asc', limit: '25', offset: '25' }
-  ]);
+  expect(requests.filter(path => path === '/api/v1/dashboard/main')).toHaveLength(1);
+  expect(requests.filter(path => ['/api/v1/channel-catalog', '/api/v1/radio-systems',
+    '/api/v1/quality'].includes(path))).toEqual([]);
+  expect(fixture.unexpected).toEqual([]);
+  expect(fixture.pageErrors).toEqual([]);
 });

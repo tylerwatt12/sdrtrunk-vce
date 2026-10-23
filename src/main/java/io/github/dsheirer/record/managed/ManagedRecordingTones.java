@@ -6,8 +6,10 @@ import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.module.decode.DecoderType;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -46,43 +48,65 @@ public final class ManagedRecordingTones
         }
     }
 
-    /** Indexed reads are bounded to the returned recording, with no inference from filenames or old access codes. */
-    static Map<String,Object> read(Connection connection, long callId) throws SQLException
+    /** Read the selected recordings together; each sequence retains its own ordinal and integrity checks. */
+    static Map<Long,Map<String,Object>> read(Connection connection, List<Long> callIds) throws SQLException
     {
-        try(PreparedStatement context = connection.prepareStatement("SELECT * FROM recording_tone_sequence WHERE call_id=?"))
+        if(callIds.isEmpty()) return Map.of();
+        Map<Long,Sequence> sequences = new HashMap<>();
+        String placeholders = String.join(",",java.util.Collections.nCopies(callIds.size(),"?"));
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT context.*,tone.ordinal,tone.frequency_1_millihz,tone.frequency_2_millihz," +
+            "tone.codec_symbol,tone.offset_ms,tone.duration_ms,tone.confidence_ppm " +
+            "FROM recording_tone_sequence context LEFT JOIN recording_tone tone ON tone.call_id=context.call_id " +
+            "WHERE context.call_id IN (" + placeholders + ") ORDER BY context.call_id,tone.ordinal"))
         {
-            context.setLong(1,callId);
-            try(var row = context.executeQuery())
+            int parameter = 1;
+            for(long callId: callIds) statement.setLong(parameter++,callId);
+            try(ResultSet row = statement.executeQuery())
             {
-                if(!row.next()) return null;
-                int source = row.getInt("source_code"), method = row.getInt("method_code"), expected = row.getInt("tone_count");
-                int rawPhase = row.getInt("phase"); Integer phase = row.wasNull() ? null : rawPhase;
-                long start = row.getLong("call_started_at_ms"), end = row.getLong("completed_at_ms");
-                Long first = nullableLong(row,"first_voice_sample_at_ms");
-                List<CompletedToneSequence.Element> tones = new ArrayList<>();
-                try(PreparedStatement statement = connection.prepareStatement("SELECT * FROM recording_tone WHERE call_id=? ORDER BY ordinal"))
+                while(row.next())
                 {
-                    statement.setLong(1,callId);
-                    try(var values = statement.executeQuery())
+                    long id = row.getLong("call_id");
+                    Sequence sequence = sequences.get(id);
+                    if(sequence == null)
                     {
-                        while(values.next())
-                        {
-                            if(values.getInt("ordinal") != tones.size() || tones.size() >= CompletedToneSequence.MAXIMUM_TONES)
-                                throw new SQLException("Recording tone sequence is incomplete");
-                            List<Integer> frequencies = new ArrayList<>(2);
-                            Long f1 = nullableLong(values,"frequency_1_millihz"), f2 = nullableLong(values,"frequency_2_millihz");
-                            if(f1 != null) frequencies.add(Math.toIntExact(f1));
-                            if(f2 != null) frequencies.add(Math.toIntExact(f2));
-                            Long confidence = nullableLong(values,"confidence_ppm");
-                            tones.add(new CompletedToneSequence.Element(frequencies,values.getString("codec_symbol"),
-                                nullableLong(values,"offset_ms"),values.getLong("duration_ms"),
-                                confidence != null ? confidence / 1_000_000. : null));
-                        }
+                        Long phase = nullableLong(row,"phase");
+                        sequence = new Sequence(row.getInt("source_code"),row.getInt("method_code"),
+                            phase != null ? Math.toIntExact(phase) : null,row.getLong("call_started_at_ms"),
+                            nullableLong(row,"first_voice_sample_at_ms"),row.getLong("completed_at_ms"),
+                            row.getInt("tone_count"),new ArrayList<>());
+                        sequences.put(id,sequence);
                     }
+                    if(row.getObject("ordinal") != null) sequence.add(row);
                 }
-                if(tones.size() != expected) throw new SQLException("Recording tone sequence is incomplete");
-                return ToneSummaryPayload.summary(source,method,phase,start,first,end,tones);
             }
+        }
+        Map<Long,Map<String,Object>> summaries = new HashMap<>();
+        for(var entry: sequences.entrySet()) summaries.put(entry.getKey(),entry.getValue().summary());
+        return summaries;
+    }
+
+    private record Sequence(int source, int method, Integer phase, long start, Long first, long end,
+                            int expected, List<CompletedToneSequence.Element> tones)
+    {
+        private void add(ResultSet row) throws SQLException
+        {
+            if(row.getInt("ordinal") != tones.size() || tones.size() >= CompletedToneSequence.MAXIMUM_TONES)
+                throw new SQLException("Recording tone sequence is incomplete");
+            List<Integer> frequencies = new ArrayList<>(2);
+            Long f1 = nullableLong(row,"frequency_1_millihz"), f2 = nullableLong(row,"frequency_2_millihz");
+            if(f1 != null) frequencies.add(Math.toIntExact(f1));
+            if(f2 != null) frequencies.add(Math.toIntExact(f2));
+            Long confidence = nullableLong(row,"confidence_ppm");
+            tones.add(new CompletedToneSequence.Element(frequencies,row.getString("codec_symbol"),
+                nullableLong(row,"offset_ms"),row.getLong("duration_ms"),
+                confidence != null ? confidence / 1_000_000. : null));
+        }
+
+        private Map<String,Object> summary() throws SQLException
+        {
+            if(tones.size() != expected) throw new SQLException("Recording tone sequence is incomplete");
+            return ToneSummaryPayload.summary(source,method,phase,start,first,end,tones);
         }
     }
 

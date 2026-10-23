@@ -40,9 +40,10 @@ async function openApp(page, view, theme = 'light') {
     } else if (pathname === '/api/v1/status') {
       await respond({ stats_logging: { summary_configured: true, summary_active: true,
         detailed_history_configured: false, detailed_history_active: false }, database: {} });
-    } else if (pathname === '/api/v1/quality') {
-      await respond({ rows: [], total_count: 0, limit: 60, offset: 0,
-        has_more: false, next_offset: null });
+    } else if (pathname === '/api/v1/dashboard/main') {
+      await respond({ quality: { current: [] }, directory: { systems: [{ system_name: 'Metro',
+        alias_lists: [{ id: 1, name: 'Metro P25' }], children: catalog.channels,
+        child_count: 2, running_count: 2 }], channels: [] } });
     } else if (pathname === '/api/v1/channel-catalog' || pathname === '/api/v1/admin/channels') {
       await respond(catalog);
     } else if (pathname === '/api/v1/radio-systems') {
@@ -72,8 +73,8 @@ test('Dashboard Main marks a remote site even when no signal samples exist', asy
   await expect(local).toBeVisible();
   await expect(page.locator('.signal-current-tile')).toHaveCount(0);
   await expect(remote.getByLabel('Received from another receiver.')).toHaveText('');
-  await expect(remote.locator('.channel-origin-line svg')).toHaveCount(1);
-  await expect(local.locator('.channel-origin-line')).toHaveCount(0);
+  await expect(remote.locator('.radio-directory-origin svg')).toHaveCount(1);
+  await expect(local.locator('.radio-directory-origin')).toHaveCount(0);
   await expect(page.locator('.radio-directory-system-header .channel-origin-line')).toHaveCount(0);
   await expect(remote).toHaveScreenshot('dashboard-remote-site-light.png');
 });
@@ -100,6 +101,6 @@ test('Channel Setup marks remote configurations with an accessible cloud and no 
   const nameBounds = await remote.getByRole('button', { name: 'North Control', exact: true }).boundingBox();
   expect(nameBounds.width).toBeGreaterThan(40);
   await expect(remote.getByText('Remote', { exact: true })).toHaveCount(0);
-  await expect(local.locator('.channel-origin-line')).toHaveCount(0);
+  await expect(local.locator('.radio-directory-origin')).toHaveCount(0);
   await expect(remote.locator('.channel-origin-line')).toHaveScreenshot('channels-remote-name-dark.png');
 });

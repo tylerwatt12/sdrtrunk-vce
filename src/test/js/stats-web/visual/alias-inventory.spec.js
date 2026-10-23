@@ -3,6 +3,7 @@
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
 
 let defaultPreferences;
 
@@ -13,8 +14,8 @@ test.beforeAll(async () => {
 
 test('Alias inventory waits for a list selection and includes analog lists', async ({ page }) => {
   const coverageRequests = [];
-  let releaseUnassignedCount;
-  const unassignedCountReady = new Promise((resolve) => { releaseUnassignedCount = resolve; });
+  let releaseUnassignedPage;
+  const unassignedPageReady = new Promise((resolve) => { releaseUnassignedPage = resolve; });
   const pageOf = (rows) => ({ rows, total_count: rows.length, limit: 100, offset: 0,
     has_more: false, next_offset: null });
   const lists = pageOf([
@@ -63,7 +64,7 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname.startsWith('/api/v1/identities/lists')) coverageRequests.push(pathname);
-    if (pathname === '/api/v1/identities/lists/2/unassigned') await unassignedCountReady;
+    if (pathname === '/api/v1/identities/lists/2/unassigned') await unassignedPageReady;
     const data = pathname === '/api/v1/auth/session' ? {
       configured: true, authenticated: true, username: 'operator', tier: 'admin', primary: true,
       csrf_token: 'test-token', capabilities: { dashboard: true, radio: true, 'admin-aliases': true }
@@ -72,7 +73,8 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
     } : pathname === '/api/v1/status' ? {
       stats_logging: { summary_configured: true, summary_active: true,
         detailed_history_configured: false, detailed_history_active: false }, database: {}
-    } : pathname === '/api/v1/quality' ? pageOf([]) :
+    } : pathname === '/api/v1/dashboard/main' ? { quality: { current: [] },
+      directory: { systems: [], channels: [] } } :
       pathname === '/api/v1/channel-catalog' ? { revision: 1, channels: [] } :
         pathname === '/api/v1/radio-systems' ? pageOf([]) :
           pathname === '/api/v1/identities/lists' ? lists :
@@ -185,8 +187,6 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await expect(inventory.getByRole('heading', { name: 'Alias inventory' })).toBeVisible();
   await expect(inventory.getByRole('button', { name: 'Other', exact: true })).toBeVisible();
   await expect(inventory.getByText('Fire Dispatch', { exact: true })).toBeVisible();
-  await expect(inventory.locator('.alias-coverage-summary')).toContainText('Loading…');
-  releaseUnassignedCount();
   await expect(inventory.locator('.alias-coverage-summary')).not.toContainText('Loading…');
   expect(await inventory.evaluate((element) => [...element.childNodes]
     .filter((child) => child.nodeType === Node.TEXT_NODE && child.textContent.trim() === 'null')
@@ -200,8 +200,21 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
   await expect(toneRow).toContainText('123.0 Hz');
   await expect(toneRow).toContainText('Not tracked');
   expect(coverageRequests).toEqual(['/api/v1/identities/lists',
-    '/api/v1/identities/lists/2/overview', '/api/v1/identities/lists/2/aliases',
-    '/api/v1/identities/lists/2/unassigned']);
+    '/api/v1/identities/lists/2/overview', '/api/v1/identities/lists/2/aliases']);
+
+  await inventory.getByRole('button', { name: 'Unknown aliases', exact: true }).click();
+  await expect(inventory.locator('.alias-coverage-table-section')).toHaveAttribute('aria-busy', 'true');
+  await expect(inventory.getByText('Fire Dispatch', { exact: true })).toBeVisible();
+  releaseUnassignedPage();
+  await expect(inventory.getByRole('button', { name: 'Unknown aliases (0)', exact: true })).toBeVisible();
+  await expect(inventory.locator('.alias-coverage-summary')).toContainText('Unknown aliases');
+  await expect(inventory.locator('.alias-coverage-table-section')).not.toHaveAttribute('aria-busy');
+  expect(coverageRequests.filter((pathname) => pathname.endsWith('/unassigned'))).toHaveLength(1);
+
+  await inventory.getByRole('button', { name: 'Configured aliases', exact: true }).click();
+  await expect(inventory.getByText('Fire Dispatch', { exact: true })).toBeVisible();
+  expect(coverageRequests.filter((pathname) => pathname.endsWith('/unassigned'))).toHaveLength(1);
+  await expect(inventory.locator('.alias-coverage-summary')).not.toContainText('Unknown aliases');
 
   await listSelect.selectOption('');
   await expect(inventory.getByRole('combobox', { name: 'Alias List' })).toHaveValue('');
@@ -210,11 +223,72 @@ test('Alias inventory waits for a list selection and includes analog lists', asy
     .evaluate((select) => select.matches(':focus-visible'))).toBe(true);
   await expect(inventory.locator('.alias-coverage-summary, .alias-coverage-scope, .alias-coverage-table-section'))
     .toHaveCount(0);
-  expect(coverageRequests).toHaveLength(4);
+  expect(coverageRequests.filter((pathname) => pathname.endsWith('/unassigned'))).toHaveLength(1);
   await page.setViewportSize({ width: 390, height: 844 });
   const [headingBox, selectBox] = await Promise.all([
     inventoryHeader.locator('.ui-heading-group').boundingBox(), listSelect.boundingBox()
   ]);
   expect(selectBox.y).toBeGreaterThanOrEqual(headingBox.y + headingBox.height);
   expect(await page.locator('body').evaluate((body) => body.scrollWidth <= body.clientWidth)).toBe(true);
+});
+
+test('Alias inventory pagination stays clickable above the compact desktop player', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await openAudioApp(page, { view: 'dashboard', feedCallsEnabled: false,
+    serviceStatus: { stats_logging: { summary_active: true, detailed_history_active: true } } });
+  await page.route('**/api/v1/identities/**', async (route) => {
+    const url = new URL(route.request().url());
+    let data;
+    let meta;
+    if (url.pathname === '/api/v1/identities/lists') {
+      data = [{ alias_list_id: 1, name: 'County Public Safety', family: 'P25', alias_count: 455 }];
+      meta = { limit: 500, offset: 0, total_count: 1, has_more: false, next_offset: null };
+    } else if (url.pathname.endsWith('/overview')) {
+      data = { alias_list: { alias_list_id: 1, name: 'County Public Safety', family: 'P25' },
+        totals: { configured_alias_count: 455, active_alias_count: 10,
+          zero_call_alias_count: 445, never_heard_alias_count: 400 }, channels: [] };
+    } else if (url.pathname.endsWith('/aliases')) {
+      const offset = Number(url.searchParams.get('offset') || 0);
+      data = Array.from({ length: 100 }, (_, index) => ({ alias_id: offset + index + 1,
+        name: `Dispatch ${String(offset + index + 1).padStart(3, '0')}`, matcher_label: 'Talkgroup',
+        identity_display: String(offset + index + 1), identity_type: 'talkgroup', value: offset + index + 1,
+        logical_call_count: index, signaling_observation_count: index }));
+      meta = { limit: 100, offset, total_count: 455, has_more: true, next_offset: offset + 100 };
+    } else {
+      data = [];
+      meta = { limit: 1, offset: 0, total_count: 0, has_more: false, next_offset: null };
+    }
+    await route.fulfill({ json: { data, ...(meta ? { meta } : {}) } });
+  });
+  await page.goto('/app.html?view=dashboard&tab=inventory&alias_list_id=1');
+  const inventory = page.locator('.alias-coverage-table-section');
+  await expect(inventory.locator('tbody tr')).toHaveCount(100);
+  const dock = page.locator('#audio-dock');
+  await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('Home');
+  await dock.locator('#audio-dock-slim-expand').press('ArrowUp');
+  await expect(dock).toHaveAttribute('data-state', 'minimal');
+  await expect.poll(() => dock.evaluate((element) => element.getBoundingClientRect().height))
+    .toBeGreaterThan(100);
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const next = inventory.getByRole('link', { name: 'Next', exact: true });
+  const point = await next.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    const dockBounds = document.getElementById('audio-dock').getBoundingClientRect();
+    const x = bounds.x + bounds.width / 2;
+    const y = bounds.y + bounds.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return { x, y, clickable: hit === element || element.contains(hit),
+      abovePlayer: bounds.bottom < dockBounds.top };
+  });
+  expect(point.clickable).toBe(true);
+  expect(point.abovePlayer).toBe(true);
+  const screenshot = testInfo.outputPath('alias-pagination-above-player.png');
+  await page.screenshot({ path: screenshot });
+  await testInfo.attach('alias-pagination-above-player', { path: screenshot, contentType: 'image/png' });
+  await page.mouse.click(point.x, point.y);
+  await expect(page).toHaveURL(/offset=100/);
+  await expect(inventory.getByRole('navigation', { name: 'Bottom table pagination' }))
+    .toContainText('Aliases 101–200 of 455');
+  await expect(inventory.getByText('Dispatch 101', { exact: true })).toBeVisible();
+  await expect(dock).toHaveAttribute('data-state', 'minimal');
 });

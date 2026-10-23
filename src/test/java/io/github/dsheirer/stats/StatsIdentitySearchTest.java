@@ -19,6 +19,7 @@ import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.sqlite.Function;
 import org.sqlite.ProgressHandler;
 
 class StatsIdentitySearchTest
@@ -224,8 +225,73 @@ class StatsIdentitySearchTest
             () -> "Alias text candidates must be materialized: " + plan);
         assertFalse(plan.stream().anyMatch(detail -> detail.contains("SCAN evidence") ||
             detail.contains("SCAN receiver_activity_event")), () -> "Evidence must remain identity indexed: " + plan);
-        assertEquals(9, query.parameters().size(),
-            "Two native forms, two system-name sets, OTA and three Alias fields are bound once after the owner");
+        assertEquals(10, query.parameters().size(),
+            "Scoped home names, owner, native forms, serving name, OTA and Alias fields are bound once");
+    }
+
+    @Test
+    void resolvesCatalogNamesOncePerDistinctScopedHome() throws Exception
+    {
+        try(Statement statement = mConnection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH RECURSIVE identities(value) AS (
+                    SELECT 1 UNION ALL SELECT value+1 FROM identities WHERE value<800)
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_id,home_wacn,home_system_id)
+                    SELECT value+10000,1,value+10000,0xBEE00,3+value%2 FROM identities
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_id,home_wacn,home_system_id)
+                VALUES (2002,2,400,0xBEE00,5)
+                """);
+        }
+        List<String> catalogLookups = new ArrayList<>();
+        Function.create(mConnection,"radio_system_catalog_name",new Function()
+        {
+            @Override
+            protected void xFunc() throws java.sql.SQLException
+            {
+                catalogLookups.add(value_text(0));
+                result("Remote catalog");
+            }
+        },1,Function.FLAG_DETERMINISTIC);
+        assertEquals(800,search(1,"remote catalog","RADIO_ID").size());
+        assertEquals(List.of("p25:bee00:003","p25:bee00:004"),catalogLookups.stream().sorted().toList(),
+            "Repeated identities must share home-name resolution and other owners must not contribute homes");
+        assertTrue(plan(query(1,"remote catalog","RADIO_ID")).stream()
+            .anyMatch(detail -> detail.contains("MATERIALIZE identity_search_homes")));
+    }
+
+    @Test
+    void preservesConfiguredCatalogLiteralAndUnknownHomeNames() throws Exception
+    {
+        StatsSystemNameResolver.installCatalog(mConnection,RadioSystemNameCatalog.parse("""
+            P25, BEE00.002, "Hidden catalog name"
+            P25, BEE00.003, "Remote%_\\tail"
+            P25, BEE00.004, "RemoteABCtail"
+            P25, 00000.000, "Zero home"
+            """));
+        try(Statement statement = mConnection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_id,home_wacn,home_system_id)
+                VALUES (1101,1,8001,0xBEE00,3),(1102,1,8002,0xBEE00,4),
+                    (1103,1,8003,0,0),(1104,1,8004,NULL,0),(1105,1,8005,0,NULL),
+                    (1106,1,8006,-1,0),(1107,1,8007,0,4096),(1108,1,8008,1048576,0)
+                """);
+        }
+        for(String matcher: List.of("RADIO_ID","TALKGROUP"))
+        {
+            assertEquals(List.of(1007L),search(1,"metro home",matcher));
+            assertEquals(List.of(),search(1,"hidden catalog name",matcher),
+                "Saved home names must retain precedence over the catalog");
+            assertEquals(List.of(1101L),search(1,"remote%_\\tail",matcher));
+            assertEquals(List.of(1103L),search(1,"zero home",matcher),
+                "Unknown and invalid home components must not become the valid zero tuple");
+            assertEquals(List.of(),search(1,"missing home",matcher));
+        }
+        assertEquals(List.of(3001L),search(3,"zero home","RADIO_ID"),
+            "The shared predicate preserves the existing home-name behavior for other protocols");
     }
 
     @Test
@@ -598,7 +664,14 @@ class StatsIdentitySearchTest
         StringBuilder sql = new StringBuilder("SELECT summary.id FROM radio_system_identity_summary summary " +
             "JOIN radio_system system ON system.id=summary.radio_system_id WHERE system.id=?");
         List<Object> parameters = new ArrayList<>(List.of(systemId));
-        StatsIdentitySearch.append(sql,parameters,search,matcher,"RADIO_ID".equals(matcher));
+        String systemKey = switch((int)systemId)
+        {
+            case 1 -> "p25:bee00:001";
+            case 2 -> "p25:bee00:002";
+            case 3 -> "nxdn-d:channel:three";
+            default -> throw new IllegalArgumentException("Unknown fixture system");
+        };
+        StatsIdentitySearch.append(sql,parameters,systemKey,search,matcher,"RADIO_ID".equals(matcher));
         sql.append(" ORDER BY summary.id");
         return new Query(sql.toString(),parameters);
     }

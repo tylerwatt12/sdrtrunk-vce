@@ -8,7 +8,7 @@ const { pathToFileURL } = require('node:url');
 async function main() {
   const assets = path.resolve(process.argv[2] || 'stats-web/assets');
   const { spectrumSearchGroupKey, spectrumSearchIdentityFacts, spectrumSearchSystemName } =
-    await import(pathToFileURL(path.join(assets, 'features/spectrum-search.js')).href);
+    await import(pathToFileURL(path.join(assets, 'features/spectrum-search-data.js')).href);
   const { discoveryRadioReferenceResult, createDiscoveryTalkgroupAvailability, importDiscoveryAliases } =
     await import(pathToFileURL(path.join(assets, 'features/discovery-radioreference.js')).href);
   const app = fs.readFileSync(path.join(assets, 'app.js'), 'utf8');

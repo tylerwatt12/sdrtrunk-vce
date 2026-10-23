@@ -12,12 +12,19 @@
 package io.github.dsheirer.scanlist;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.lang.reflect.Method;
+import java.util.AbstractSet;
+import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class ScanListModelTest
@@ -48,6 +55,60 @@ class ScanListModelTest
         model.removeScanList(2);
         assertEquals(Set.of(1L), model.scanListIdsForAlias(100));
         assertEquals(Set.of(1L), model.scanListIdsForUnmatchedTalkgroups(10));
+    }
+
+    @Test
+    void unchangedMembershipsRetainSnapshotAndChangesPreservePriorSnapshot()
+    {
+        ScanList first = new ScanList(1, 0, "Default", null, true, true);
+        ScanList second = new ScanList(2, 1, "Second", null, true, false);
+        ScanListModel model = new ScanListModel();
+        model.replaceConfiguration(new ScanListConfiguration(List.of(first, second),
+            Map.of(100L, Set.of(1L), 200L, Set.of(2L)), Map.of()));
+        ScanListConfiguration original = model.configuration();
+
+        model.replaceAliasMemberships(100, List.of(1L, 1L));
+        model.replaceAliasMemberships(300, null);
+        model.removeAlias(300);
+        assertSame(original, model.configuration(), "No-op commands do not publish another snapshot");
+
+        model.replaceAliasMemberships(100, Set.of(2L));
+        ScanListConfiguration changed = model.configuration();
+        assertNotSame(original, changed);
+        assertEquals(Set.of(1L), original.scanListIdsForAlias(100));
+        assertEquals(Set.of(2L), changed.scanListIdsForAlias(100));
+        assertEquals(Set.of(2L), changed.scanListIdsForAlias(200));
+        assertThrows(UnsupportedOperationException.class, () -> changed.aliasMemberships().clear());
+        assertThrows(IllegalArgumentException.class, () -> model.replaceAliasMemberships(0, Set.of()));
+        assertThrows(IllegalArgumentException.class, () -> model.replaceAliasMemberships(100, Set.of(999L)));
+        assertSame(changed, model.configuration(), "Invalid edits cannot publish partial state");
+        model.removeAlias(100);
+        assertTrue(model.scanListIdsForAlias(100).isEmpty());
+        assertEquals(Set.of(2L), changed.scanListIdsForAlias(100), "Removal cannot mutate a retained snapshot");
+    }
+
+    @Test
+    void noOpMembershipDoesNotCopyUnrelatedStoredSets() throws ReflectiveOperationException
+    {
+        AtomicInteger unrelatedTraversals = new AtomicInteger();
+        Set<Long> unrelated = new AbstractSet<>()
+        {
+            @Override public Iterator<Long> iterator()
+            {
+                unrelatedTraversals.incrementAndGet();
+                return Set.of(2L).iterator();
+            }
+            @Override public int size() { return 1; }
+        };
+        Map<Long,Set<Long>> source = Map.of(100L, Set.of(1L), 200L, unrelated);
+        Method update = ScanListModel.class.getDeclaredMethod("withMembership", Map.class, long.class,
+            Collection.class);
+        update.setAccessible(true);
+
+        assertSame(source, update.invoke(null, source, 100L, Set.of(1L)));
+        assertSame(source, update.invoke(null, source, 300L, Set.of()));
+        assertSame(source, update.invoke(null, source, 300L, null));
+        assertEquals(0, unrelatedTraversals.get(), "No-op membership edits never walk and copy the whole catalog");
     }
 
     @Test

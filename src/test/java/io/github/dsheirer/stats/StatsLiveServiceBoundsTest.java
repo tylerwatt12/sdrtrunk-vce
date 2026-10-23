@@ -50,18 +50,19 @@ class StatsLiveServiceBoundsTest
         try
         {
             service.start();
-            byte[] initial = service.encodedSnapshot();
-            var document = new ObjectMapper().readTree(initial);
+            byte[] initial = service.snapshotWire().frame().bytes(false);
+            var document = new ObjectMapper().readTree(initial, LiveMultiplexFrame.HEADER_BYTES,
+                initial.length - LiveMultiplexFrame.HEADER_BYTES).path("data");
             assertTrue(initial.length <= StatsLiveService.MAXIMUM_SYSTEM_SNAPSHOT_BYTES);
             assertTrue(document.path("metadata_truncated").asBoolean());
             assertEquals(StatsLiveService.MAXIMUM_LIVE_TABLES, document.path("tables_included").asInt());
             assertTrue(document.path("identifiers_omitted").asLong() > 0);
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity(true))
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 source.publish(maximumMetadataTable("metadata-0", List.of()));
                 StatsLiveEventHub.LiveEvent initialized = subscription.poll(3, TimeUnit.SECONDS);
                 assertNotNull(initialized);
-                assertEquals("activity_delta", initialized.name(), "initialize the worker before refreshing navigation");
+                assertEquals("activity_batch", initialized.name(), "initialize the worker before refreshing navigation");
                 String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
                 loaded.set(WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
                     configurationId, WebEntityRef.channel(configurationId), null, 0, 0, null, null))));
@@ -77,8 +78,8 @@ class StatsLiveServiceBoundsTest
                 source.publish(activity("metadata-0", List.of(activityRow("after-navigation"))));
                 StatsLiveEventHub.LiveEvent update = subscription.poll(3, TimeUnit.SECONDS);
                 assertNotNull(update, "navigation fallback must leave the observer available for later activity");
-                assertEquals("activity_delta", update.name());
-                assertEquals("after-navigation", rows(map((Map<String,Object>)update.baseline().data(), "table"))
+                assertEquals("activity_batch", update.name());
+                assertEquals("after-navigation", rows(firstChange((Map<String,Object>)update.baseline().data()))
                     .getFirst().get("key"));
                 assertEquals(0, service.projectionFailures());
             }
@@ -107,7 +108,7 @@ class StatsLiveServiceBoundsTest
         try
         {
             service.start();
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity(true))
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 source.publish(maximumMetadataTable("metadata-0",
                     List.of(activityRow("blocked", null, blockedTags, null))));
@@ -129,8 +130,8 @@ class StatsLiveServiceBoundsTest
                 source.publish(activity("metadata-0", List.of(activityRow("after-overflow"))));
                 StatsLiveEventHub.LiveEvent update = subscription.poll(3, TimeUnit.SECONDS);
                 assertNotNull(update, "overflow recovery must leave the observer available for later activity");
-                assertEquals("activity_delta", update.name());
-                assertEquals("after-overflow", rows(map((Map<String,Object>)update.baseline().data(), "table"))
+                assertEquals("activity_batch", update.name());
+                assertEquals("after-overflow", rows(firstChange((Map<String,Object>)update.baseline().data()))
                     .getFirst().get("key"));
                 assertEquals(0, service.projectionFailures());
             }
@@ -167,7 +168,7 @@ class StatsLiveServiceBoundsTest
         try
         {
             service.start();
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity(true))
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 assertTrue(failed.await(3, TimeUnit.SECONDS));
                 ChannelActivityEvent valid = activity("site", List.of(activityRow("valid")));
@@ -186,8 +187,8 @@ class StatsLiveServiceBoundsTest
                 listener.get().receive(new ChannelActivityEvent(later.operation(), later.snapshot(), 3));
                 StatsLiveEventHub.LiveEvent update = subscription.poll(3, TimeUnit.SECONDS);
                 assertNotNull(update);
-                assertEquals("activity_delta", update.name());
-                assertEquals("later", rows(map((Map<String,Object>)update.baseline().data(), "table"))
+                assertEquals("activity_batch", update.name());
+                assertEquals("later", rows(firstChange((Map<String,Object>)update.baseline().data()))
                     .getFirst().get("key"));
                 assertTrue(service.projectionFailures() > 0);
             }
@@ -228,7 +229,7 @@ class StatsLiveServiceBoundsTest
                 delegate.publish(activity("alpha", List.of(activityRow("changed-alpha"))));
                 StatsLiveEventHub.LiveEvent update = subscription.poll(1, TimeUnit.SECONDS);
                 assertNotNull(update);
-                assertEquals("activity_table", update.name());
+                assertEquals("activity_batch", update.name());
                 String configurationId = "728d2d66-de4e-476b-a696-919f32dd4d12";
                 loaded.set(WebEntityNavigationCatalog.Snapshot.of(List.of(new WebEntityNavigationCatalog.Channel(
                     configurationId, WebEntityRef.channel(configurationId), null, 0, 0, null, null))));
@@ -245,30 +246,31 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
-    void viewersShareEncodedEventsAndLegacyMarkerVariantsStayIndependent() throws Exception
+    void viewersShareEncodedBatchEventsAndMarkerVariantsStayIndependent() throws Exception
     {
         TestChannelActivitySource source = new TestChannelActivitySource();
         StatsLiveService service = StatsLiveService.fromActivitySource(source, null);
         try
         {
             service.start();
-            try(StatsLiveEventHub.Subscription first = service.subscribeChannelActivity(true);
-                StatsLiveEventHub.Subscription second = service.subscribeChannelActivity(true);
-                StatsLiveEventHub.Subscription legacy = service.subscribeChannelActivity();
-                StatsLiveEventHub.Subscription marker = service.subscribeChannelActivity(true, true))
+            try(StatsLiveEventHub.Subscription first = service.subscribeChannelActivity();
+                StatsLiveEventHub.Subscription second = service.subscribeChannelActivity();
+                StatsLiveEventHub.Subscription third = service.subscribeChannelActivity();
+                StatsLiveEventHub.Subscription marker = service.subscribeChannelActivity(true))
             {
                 source.publish(activity("site", List.of(activityRow("call"))));
                 StatsLiveEventHub.LiveEvent firstEvent = first.poll(1, TimeUnit.SECONDS);
                 StatsLiveEventHub.LiveEvent secondEvent = second.poll(1, TimeUnit.SECONDS);
-                StatsLiveEventHub.LiveEvent legacyEvent = legacy.poll(1, TimeUnit.SECONDS);
+                StatsLiveEventHub.LiveEvent thirdEvent = third.poll(1, TimeUnit.SECONDS);
                 StatsLiveEventHub.LiveEvent markerEvent = marker.poll(1, TimeUnit.SECONDS);
                 assertNotNull(firstEvent);
                 assertNotNull(markerEvent);
                 assertSame(firstEvent, secondEvent);
                 assertSame(firstEvent.frame(1), secondEvent.frame(1));
-                assertSame(firstEvent.baseline(), legacyEvent);
-                assertEquals("activity_table", legacyEvent.name());
-                assertEquals("activity_delta", markerEvent.name());
+                assertSame(firstEvent, thirdEvent);
+                assertNotNull(firstEvent.baseline(), "a shared full batch supports truncated snapshots");
+                assertEquals("activity_batch", thirdEvent.name());
+                assertEquals("activity_batch", markerEvent.name());
                 assertTrue(markerEvent.markers());
                 assertFalse(firstEvent.markers());
                 assertFalse(firstEvent.frame(1) == markerEvent.frame(1));
@@ -314,10 +316,11 @@ class StatsLiveServiceBoundsTest
             List.of(unchanged, oldCall, Map.of("key", "removed")));
         Map<String,Object> current = Map.of("table_id", "site", "title", "County", "rows",
             List.of(newCall, unchanged));
-        Map<String,Object> delta = StatsLiveService.activityDelta(new StatsLiveService.PreparedActivityEvent(
-            ChannelActivityEvent.Operation.UPSERT, "site", current), previous, 40, 41);
-        assertEquals(40L, delta.get("base_revision"));
-        assertEquals(41L, delta.get("revision"));
+        Map<String,Object> delta = StatsLiveService.activityChange(new StatsLiveService.PreparedActivityEvent(
+            ChannelActivityEvent.Operation.UPSERT, "site", current), previous, false);
+        assertFalse(delta.containsKey("base_revision"), "revision belongs to the whole atomic batch");
+        assertFalse(delta.containsKey("revision"));
+        assertEquals(false, delta.get("replace"));
         assertEquals(List.of(newCall), delta.get("rows"));
         assertEquals(List.of("removed"), delta.get("removed_row_keys"));
         assertEquals(List.of("call", "control"), delta.get("row_order"));
@@ -327,7 +330,7 @@ class StatsLiveServiceBoundsTest
     }
 
     @Test
-    void orderedObserverBurstPreservesEveryRevisionWithoutResnapshot() throws Exception
+    void orderedObserverBurstCoalescesToAnExactFinalStateWithoutResnapshot() throws Exception
     {
         CountDownLatch entered = new CountDownLatch(1);
         CountDownLatch release = new CountDownLatch(1);
@@ -346,7 +349,7 @@ class StatsLiveServiceBoundsTest
         try
         {
             service.start();
-            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity(true))
+            try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
                 service.receiveChannelActivity(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT,
                     activity("site", List.of(activityRow("first", null, blockedTags, null))).snapshot(), 1));
@@ -357,16 +360,26 @@ class StatsLiveServiceBoundsTest
                         activity("site", List.of(activityRow("call-" + revision))).snapshot(), revision));
                 }
                 release.countDown();
-                for(long revision = 1; revision <= 20; revision++)
+                long revision = 0;
+                int batches = 0;
+                Map<String,Object> finalChange = null;
+                while(revision < 20 && batches < 20)
                 {
                     StatsLiveEventHub.LiveEvent event = subscription.poll(1, TimeUnit.SECONDS);
                     assertNotNull(event);
-                    assertEquals("activity_delta", event.name());
-                    Map<?,?> delta = (Map<?,?>)event.data();
-                    assertEquals(revision, delta.get("revision"));
-                    assertEquals(revision - 1, delta.get("base_revision"));
-                    assertNotNull(event.baseline(), "a shared full table is available for truncated initial baselines");
+                    assertEquals("activity_batch", event.name());
+                    Map<String,Object> batch = (Map<String,Object>)event.data();
+                    assertEquals(revision, ((Number)batch.get("base_revision")).longValue());
+                    long next = ((Number)batch.get("revision")).longValue();
+                    assertTrue(next > revision && next <= 20, "batches maintain one monotonic revision chain");
+                    revision = next;
+                    batches++;
+                    finalChange = firstChange(batch);
+                    assertNotNull(event.baseline(), "a shared full batch supports truncated initial snapshots");
                 }
+                assertEquals(20, revision);
+                assertTrue(batches < 20, "a queued burst must not create a frame for every source event");
+                assertEquals("call-20", rows(finalChange).getFirst().get("key"));
                 assertEquals(0, service.droppedProjectionEvents());
             }
         }
@@ -583,7 +596,9 @@ class StatsLiveServiceBoundsTest
             var markers = rows(StatsLiveService.markerTable(projectedTable, null, null));
             assertNull(markers.get(1).get("serving_system_key"));
             assertEquals(known.get("target_canonical_group_identity"), markers.getFirst().get("target_canonical_group_identity"));
-            var encoded = new ObjectMapper().readTree(service.encodedSnapshot());
+            byte[] wire = service.snapshotWire().frame().bytes(false);
+            var encoded = new ObjectMapper().readTree(wire, LiveMultiplexFrame.HEADER_BYTES,
+                wire.length - LiveMultiplexFrame.HEADER_BYTES).path("data");
             assertTrue(encoded.at("/tables/0/rows/1").has("serving_system_key"));
             assertTrue(encoded.at("/tables/0/rows/1/serving_system_key").isNull());
         }
@@ -608,18 +623,47 @@ class StatsLiveServiceBoundsTest
 
             try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
             {
-                source.publish(activity("table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES),
-                    List.of(activityRow("omitted"))));
-                boolean receivedUpdate = false;
-
-                for(int attempt = 0; attempt < 4 && !receivedUpdate; attempt++)
+                String latestTable = "table-%03d".formatted(StatsLiveService.MAXIMUM_LIVE_TABLES);
+                source.publish(activity(latestTable, List.of(activityRow("omitted"))));
+                long targetRevision = source.snapshot().revision();
+                boolean receivedBoundary = false;
+                boolean omittedByRecovery = false;
+                for(int attempt = 0; attempt < 4 && !receivedBoundary; attempt++)
                 {
                     StatsLiveEventHub.LiveEvent update = subscription.poll(1, TimeUnit.SECONDS);
-                    receivedUpdate = update != null && "activity_table".equals(update.name());
+                    if(update == null) continue;
+                    Map<String,Object> batch = (Map<String,Object>)update.data();
+                    if("activity_resync".equals(update.name()))
+                    {
+                        Map<String,Object> recovered = map(batch, "snapshot");
+                        if(((Number)recovered.get("revision")).longValue() < targetRevision) continue;
+                        assertEquals(true, recovered.get("truncated"));
+                        assertEquals(1, ((Number)recovered.get("tables_omitted_at_least")).intValue());
+                        omittedByRecovery = tables(recovered).stream()
+                            .noneMatch(table -> latestTable.equals(table.get("table_id")));
+                    }
+                    else
+                    {
+                        assertEquals("activity_batch", update.name());
+                        if(((Number)batch.get("revision")).longValue() < targetRevision) continue;
+                        Map<String,Object> latest = changeFor(update, latestTable);
+                        assertEquals("omitted", rows(latest).getFirst().get("key"));
+                    }
+                    receivedBoundary = true;
                 }
+                assertTrue(receivedBoundary, "a large burst must produce a bounded authoritative boundary");
 
-                assertTrue(receivedUpdate,
-                    "the bounded adapter must publish the latest table even when earlier updates were coalesced");
+                source.publish(activity(latestTable, List.of(activityRow("after-limit"))));
+                StatsLiveEventHub.LiveEvent later = subscription.poll(1, TimeUnit.SECONDS);
+                assertNotNull(later);
+                assertEquals("activity_batch", later.name());
+                Map<String,Object> latest = changeFor(later, latestTable);
+                assertEquals("after-limit", rows(latest).getFirst().get("key"));
+                if(omittedByRecovery)
+                {
+                    assertEquals(true, latest.get("replace"));
+                    assertNotNull(latest.get("table"), "an omitted table needs a complete first live baseline");
+                }
 
                 Map<String,Object> snapshot = service.snapshot();
                 List<Map<String,Object>> tables = tables(snapshot);
@@ -839,8 +883,9 @@ class StatsLiveServiceBoundsTest
         {
             source.publish(new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot));
             service.start();
-            byte[] withoutNavigation = service.encodedSnapshot();
-            assertFalse(new String(withoutNavigation, java.nio.charset.StandardCharsets.UTF_8)
+            byte[] withoutNavigation = service.snapshotWire().frame().bytes(false);
+            assertFalse(new String(withoutNavigation, LiveMultiplexFrame.HEADER_BYTES,
+                withoutNavigation.length - LiveMultiplexFrame.HEADER_BYTES, java.nio.charset.StandardCharsets.UTF_8)
                 .contains("\"entity_ref\""));
 
             try(StatsLiveEventHub.Subscription subscription = service.subscribeChannelActivity())
@@ -862,10 +907,11 @@ class StatsLiveServiceBoundsTest
                     "a catalog change must update already-connected live clients without waiting for activity");
             }
 
-            byte[] withNavigation = service.encodedSnapshot();
+            byte[] withNavigation = service.snapshotWire().frame().bytes(false);
             assertFalse(withoutNavigation == withNavigation,
                 "a changed catalog must rebuild a live snapshot whose activity revision is unchanged");
-            assertTrue(new String(withNavigation, java.nio.charset.StandardCharsets.UTF_8)
+            assertTrue(new String(withNavigation, LiveMultiplexFrame.HEADER_BYTES,
+                withNavigation.length - LiveMultiplexFrame.HEADER_BYTES, java.nio.charset.StandardCharsets.UTF_8)
                 .contains("\"entity_ref\""));
         }
         finally
@@ -1030,7 +1076,7 @@ class StatsLiveServiceBoundsTest
                 StatsLiveEventHub.LiveEvent current = currentSubscription.poll(1, TimeUnit.SECONDS);
                 assertNotNull(current);
                 assertEquals("current-generation", tableId(current));
-                byte[] encodedCurrent = service.encodedSnapshot();
+                byte[] encodedCurrent = service.snapshotWire().frame().bytes(false);
 
                 oldListener.receive(activity("stale-callback", List.of(activityRow("stale-row"))));
                 assertNull(currentSubscription.poll(200, TimeUnit.MILLISECONDS),
@@ -1040,7 +1086,7 @@ class StatsLiveServiceBoundsTest
                 waitUntil(() -> !oldProjectionThread.get().isAlive());
                 assertNull(currentSubscription.poll(200, TimeUnit.MILLISECONDS),
                     "the retired projection must not publish into the restarted event hub");
-                assertSame(encodedCurrent, service.encodedSnapshot(),
+                assertSame(encodedCurrent, service.snapshotWire().frame().bytes(false),
                     "retired work must not invalidate or replace the current encoded snapshot");
             }
 
@@ -1084,8 +1130,8 @@ class StatsLiveServiceBoundsTest
             assertEquals(2L * StatsLiveService.MAXIMUM_ROWS_PER_TABLE, snapshot.get("rows_omitted"));
             assertEquals(true, snapshot.get("truncated"));
 
-            byte[] first = service.encodedSnapshot();
-            byte[] second = service.encodedSnapshot();
+            byte[] first = service.snapshotWire().frame().bytes(false);
+            byte[] second = service.snapshotWire().frame().bytes(false);
             assertTrue(first.length <= StatsLiveService.MAXIMUM_SYSTEM_SNAPSHOT_BYTES);
             assertSame(first, second, "unchanged subscribers should share one encoded snapshot");
         }
@@ -1193,9 +1239,22 @@ class StatsLiveServiceBoundsTest
     }
 
     @SuppressWarnings("unchecked")
+    private static Map<String,Object> changeFor(StatsLiveEventHub.LiveEvent event, String tableId)
+    {
+        var changes = (List<Map<String,Object>>)((Map<?,?>)event.data()).get("changes");
+        return changes.stream().filter(change -> tableId.equals(change.get("table_id"))).findFirst().orElseThrow();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String,Object> firstChange(Map<String,Object> batch)
+    {
+        return ((List<Map<String,Object>>)batch.get("changes")).getFirst();
+    }
+
+    @SuppressWarnings("unchecked")
     private static String tableId(StatsLiveEventHub.LiveEvent event)
     {
-        return String.valueOf(((Map<String,Object>)event.data()).get("table_id"));
+        return String.valueOf(firstChange((Map<String,Object>)event.data()).get("table_id"));
     }
 
     private static void waitUntil(java.util.function.BooleanSupplier condition) throws InterruptedException

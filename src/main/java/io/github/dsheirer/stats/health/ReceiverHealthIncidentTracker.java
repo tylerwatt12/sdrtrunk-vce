@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Process-local incident state for receiver-health measurements.  It deliberately stores only a small active set and
@@ -25,13 +26,16 @@ final class ReceiverHealthIncidentTracker
     static final int MAXIMUM_RESOLVED_INCIDENTS = 200;
     static final long RESOLVED_RETENTION_MILLISECONDS = 24L * 60L * 60L * 1_000L;
     static final long DEFAULT_RESOLUTION_DELAY_MILLISECONDS = 10_000L;
+    private static final long RECURRENCE_HOLD_NANOSECONDS = TimeUnit.SECONDS.toNanos(10);
 
     private final Map<String,MutableIncident> mActive = new LinkedHashMap<>();
+    private final Map<String,PendingIncident> mPending = new LinkedHashMap<>();
     private final Deque<Map<String,Object>> mResolved = new ArrayDeque<>();
     private final Map<String,Map<String,Object>> mLifecycleChanges = new LinkedHashMap<>();
     private final Set<String> mObservedThisSample = new HashSet<>();
     private final long mResolutionDelayMilliseconds;
     private long mOccurrenceSequence;
+    private long mSampleNanos;
 
     ReceiverHealthIncidentTracker()
     {
@@ -43,23 +47,61 @@ final class ReceiverHealthIncidentTracker
         mResolutionDelayMilliseconds = Math.max(0, resolutionDelayMilliseconds);
     }
 
-    void beginSample()
+    void beginSample(long nowNanos)
     {
+        mSampleNanos = nowNanos;
         mObservedThisSample.clear();
         mLifecycleChanges.clear();
     }
 
-    void observe(String code, String severity, String title, String scope, long now, long count,
+    /** A new event must confirm continuing loss; elapsed time alone never promotes an isolated event. */
+    void observeRecurring(String code, String severity, String title, String scopeId, String scope, long now, long count,
+                          String observed, String likelyCause, String impact, String checkNext)
+    {
+        String key = code + '\u0000' + scopeId;
+        mObservedThisSample.add(key);
+        if(!mActive.containsKey(key))
+        {
+            PendingIncident pending = mPending.get(key);
+            if(pending == null || mSampleNanos - pending.lastSeenNanos >= RECURRENCE_HOLD_NANOSECONDS)
+            {
+                mPending.put(key, new PendingIncident(scopeId, mSampleNanos));
+                return;
+            }
+            pending.lastSeenNanos = mSampleNanos;
+            if(mSampleNanos - pending.firstSeenNanos < RECURRENCE_HOLD_NANOSECONDS) return;
+        }
+        observe(code, severity, title, scopeId, scope, now, count, observed, likelyCause, impact, checkNext);
+    }
+
+    /** An interrupted sample cannot establish that an unconfirmed loss continued. */
+    void discardPending()
+    {
+        mPending.clear();
+    }
+
+    /** Missing measurements preserve existing incidents, but cannot establish recurring evidence. */
+    void preserve(String scopeId)
+    {
+        for(Map.Entry<String,MutableIncident> entry: mActive.entrySet())
+        {
+            if(Objects.equals(scopeId, entry.getValue().scopeId)) mObservedThisSample.add(entry.getKey());
+        }
+        mPending.values().removeIf(pending -> Objects.equals(scopeId, pending.scopeId));
+    }
+
+    void observe(String code, String severity, String title, String scopeId, String scope, long now, long count,
                  String observed, String likelyCause, String impact, String checkNext)
     {
-        String key = code + '\u0000' + scope;
+        String key = code + '\u0000' + scopeId;
+        mPending.remove(key);
         mObservedThisSample.add(key);
         MutableIncident incident = mActive.get(key);
         boolean lifecycleChanged = incident == null;
 
         if(incident == null)
         {
-            incident = new MutableIncident(++mOccurrenceSequence, code, severity, title, scope, now);
+            incident = new MutableIncident(++mOccurrenceSequence, code, severity, title, scopeId, scope, now, mSampleNanos);
             mActive.put(key, incident);
         }
         else if(!Objects.equals(incident.severity, severity) || !Objects.equals(incident.title, title))
@@ -69,7 +111,9 @@ final class ReceiverHealthIncidentTracker
 
         incident.severity = severity;
         incident.title = title;
-        incident.lastSeenMs = now;
+        incident.scope = scope;
+        incident.lastSeenMs = Math.max(incident.lastSeenMs, now);
+        incident.lastSeenNanos = mSampleNanos;
         incident.count = Math.max(incident.count, count);
         incident.observed = observed;
         incident.likelyCause = likelyCause;
@@ -84,14 +128,16 @@ final class ReceiverHealthIncidentTracker
 
     void endSample(long now)
     {
+        mPending.entrySet().removeIf(entry -> !mObservedThisSample.contains(entry.getKey()) ||
+            mSampleNanos - entry.getValue().lastSeenNanos >= RECURRENCE_HOLD_NANOSECONDS);
         List<String> resolvedKeys = new ArrayList<>();
 
         for(Map.Entry<String,MutableIncident> entry: mActive.entrySet())
         {
             MutableIncident incident = entry.getValue();
 
-            if(!mObservedThisSample.contains(entry.getKey()) && now - incident.lastSeenMs >=
-                mResolutionDelayMilliseconds)
+            if(!mObservedThisSample.contains(entry.getKey()) && mSampleNanos - incident.lastSeenNanos >=
+                TimeUnit.MILLISECONDS.toNanos(mResolutionDelayMilliseconds))
             {
                 resolvedKeys.add(entry.getKey());
             }
@@ -103,7 +149,7 @@ final class ReceiverHealthIncidentTracker
 
             if(incident != null)
             {
-                Map<String,Object> resolved = incident.toMap(now);
+                Map<String,Object> resolved = incident.toMap(Math.max(now, incident.lastSeenMs));
                 mResolved.addFirst(resolved);
                 mLifecycleChanges.put(key, resolved);
             }
@@ -145,31 +191,49 @@ final class ReceiverHealthIncidentTracker
         return value instanceof Number number ? number.longValue() : 0;
     }
 
+    private static final class PendingIncident
+    {
+        private final String scopeId;
+        private final long firstSeenNanos;
+        private long lastSeenNanos;
+
+        private PendingIncident(String scopeId, long nowNanos)
+        {
+            this.scopeId = scopeId;
+            firstSeenNanos = nowNanos;
+            lastSeenNanos = nowNanos;
+        }
+    }
+
     private static final class MutableIncident
     {
         private final long occurrenceId;
         private final String code;
         private String severity;
         private String title;
-        private final String scope;
+        private final String scopeId;
+        private String scope;
         private final long openedAtMs;
         private long lastSeenMs;
+        private long lastSeenNanos;
         private long count;
         private String observed;
         private String likelyCause;
         private String impact;
         private String checkNext;
 
-        private MutableIncident(long occurrenceId, String code, String severity, String title, String scope,
-                                long openedAtMs)
+        private MutableIncident(long occurrenceId, String code, String severity, String title, String scopeId, String scope,
+                                long openedAtMs, long openedAtNanos)
         {
             this.occurrenceId = occurrenceId;
             this.code = code;
             this.severity = severity;
             this.title = title;
+            this.scopeId = scopeId;
             this.scope = scope;
             this.openedAtMs = openedAtMs;
             lastSeenMs = openedAtMs;
+            lastSeenNanos = openedAtNanos;
         }
 
         private Map<String,Object> toMap(long resolvedAtMs)

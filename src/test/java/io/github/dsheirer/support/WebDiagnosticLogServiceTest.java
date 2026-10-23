@@ -3,8 +3,18 @@ package io.github.dsheirer.support;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.Filter;
+import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.web.http.WebDiagnosticHttpFilter;
 import java.lang.reflect.Field;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,7 +23,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -81,6 +93,82 @@ class WebDiagnosticLogServiceTest
     }
 
     @Test
+    void parallelHttpRequestsBelowCapacityRetainEveryDiagnosticRecord() throws Exception
+    {
+        int requests = 200;
+        CountDownLatch projecting = new CountDownLatch(1);
+        CountDownLatch releaseWriter = new CountDownLatch(1);
+        CountDownLatch requestsEntered = new CountDownLatch(requests);
+        CountDownLatch releaseRequests = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), requests);
+        try(TestPreferences prefs = new TestPreferences();
+            var executor = Executors.newVirtualThreadPerTaskExecutor();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value,
+                System::currentTimeMillis, WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {
+                    projecting.countDown();
+                    try { releaseWriter.await(15, TimeUnit.SECONDS); }
+                    catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+                }))
+        {
+            service.setEnabled(true);
+            service.event("listener_started", Map.of());
+            assertTrue(projecting.await(2, TimeUnit.SECONDS));
+            server.setExecutor(executor);
+            WebDiagnosticHttpFilter.instrumentContexts(server, service,
+                Filter.beforeHandler("Align concurrent HTTP requests", exchange -> {
+                    requestsEntered.countDown();
+                    try
+                    {
+                        if(!releaseRequests.await(10, TimeUnit.SECONDS))
+                            throw new IllegalStateException("Parallel requests did not start");
+                    }
+                    catch(InterruptedException exception)
+                    {
+                        Thread.currentThread().interrupt();
+                        throw new IllegalStateException(exception);
+                    }
+                })).createContext("/fixture", exchange -> {
+                    exchange.sendResponseHeaders(204, -1);
+                    exchange.close();
+                });
+            server.start();
+            try(HttpClient client = HttpClient.newHttpClient())
+            {
+                URI target = URI.create("http://127.0.0.1:" + server.getAddress().getPort() + "/fixture");
+                List<CompletableFuture<HttpResponse<Void>>> responses = new ArrayList<>();
+                for(int index = 0; index < requests; index++)
+                    responses.add(client.sendAsync(HttpRequest.newBuilder(target).build(),
+                        HttpResponse.BodyHandlers.discarding()));
+                assertTrue(requestsEntered.await(10, TimeUnit.SECONDS));
+                releaseRequests.countDown();
+                CompletableFuture.allOf(responses.toArray(CompletableFuture[]::new)).get(10, TimeUnit.SECONDS);
+                for(var response: responses) assertEquals(204, response.join().statusCode());
+                await(() -> service.status().queueDepth() == requests * 2);
+                assertEquals(requests * 2, service.status().queueDepth());
+                assertEquals(0, service.status().droppedRecords(),
+                    "Concurrent requests must not lose records while capacity is available");
+                releaseWriter.countDown();
+                await(() -> read().lines().filter(line -> line.contains(" - request_finished ")).count() == requests);
+                assertEquals(requests,
+                    read().lines().filter(line -> line.contains(" - request_started ")).count());
+                assertFalse(read().contains("diagnostic_gap"));
+            }
+            finally
+            {
+                releaseWriter.countDown();
+                releaseRequests.countDown();
+                server.stop(0);
+            }
+        }
+        finally
+        {
+            releaseWriter.countDown();
+            releaseRequests.countDown();
+            server.stop(0);
+        }
+    }
+
+    @Test
     void blockedWriterNeverProjectsOrWaitsOnProducerAndReportsOverflow() throws Exception
     {
         CountDownLatch projecting = new CountDownLatch(1);
@@ -109,10 +197,24 @@ class WebDiagnosticLogServiceTest
             release.countDown();
             await(() -> service.status().queueDepth() == 0);
             await(() -> read().contains("diagnostic_gap"));
-            assertTrue(read().contains("\"dropped_records\":1024"));
+            assertTrue(read().contains("\"dropped_records\":" + WebDiagnosticLogService.QUEUE_CAPACITY * 2));
             assertTrue(read().contains("WARN web.diagnostic - diagnostic_gap"));
         }
         finally { release.countDown(); }
+    }
+
+    @Test
+    void preservesHttpAdmissionCapacityEventKind() throws Exception
+    {
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value))
+        {
+            service.setEnabled(true);
+            service.event("request_capacity_full", Map.of());
+            await(() -> read().contains(" - request_capacity_full "));
+            assertFalse(read().contains(" - web_event "));
+            assertFalse(read().contains("request_queue_full"));
+        }
     }
 
     @Test
@@ -359,6 +461,105 @@ class WebDiagnosticLogServiceTest
     }
 
     @Test
+    void typedRequestsRetainTheirFieldsAndSanitizeRoutesBeforeSerialization() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value, clock::get,
+                WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {}))
+        {
+            service.setEnabled(true);
+            String route = "/api/v1/channels/{value}/activity";
+            long id = service.requestStarted("GET", route);
+            service.requestFinished(id, "GET", route, 12_500_000, 503, true);
+            long endpointId = service.requestStarted("GET\" password=method-secret", "/api/v1/127.0.0.1:8094");
+            service.requestFinished(endpointId, "GET\" password=method-secret", "/api/v1/127.0.0.1:8094",
+                1_000_000, 204, false);
+            List<String> unsafeRoutes = List.of(
+                "/api/v1/channels/\"password=quoted-secret\"",
+                "/api/v1/channels/C:\\Users\\private-route\\recording.wav",
+                "/api/v1/channels/pa" + (char)0 + "ssword=control-secret",
+                "/api/v1/channels/https://private.invalid/stream?token=endpoint-secret");
+            List<Long> rejectedIds = new ArrayList<>();
+            for(String unsafe: unsafeRoutes)
+            {
+                long rejectedId = service.requestStarted("GET", unsafe);
+                rejectedIds.add(rejectedId);
+                service.requestFinished(rejectedId, "GET", unsafe, 1_000_000, 200, false);
+            }
+            int requests = unsafeRoutes.size() + 2;
+            await(() -> service.status().writtenRecords() >= requests * 2L + 1);
+            List<JsonNode> starts = records("request_started");
+            List<JsonNode> finishes = records("request_finished");
+            assertEquals(requests, starts.size());
+            assertEquals(requests, finishes.size());
+            for(JsonNode start: starts)
+            {
+                JsonNode finish = finishes.stream().filter(value -> value.path("request_id").asLong() ==
+                    start.path("request_id").asLong()).findFirst().orElseThrow();
+                assertEquals(5, start.size());
+                assertEquals(8, finish.size());
+                assertEquals(start.get("method"), finish.get("method"));
+                assertEquals(start.get("route"), finish.get("route"));
+                assertEquals(clock.get(), start.path("observed_at_ms").asLong());
+                assertEquals(clock.get(), start.path("recorded_at_ms").asLong());
+                assertEquals(clock.get(), finish.path("observed_at_ms").asLong());
+                assertEquals(clock.get(), finish.path("recorded_at_ms").asLong());
+            }
+            JsonNode finished = finishes.stream().filter(value -> value.path("request_id").asLong() == id)
+                .findFirst().orElseThrow();
+            assertEquals("GET", finished.path("method").asText());
+            assertEquals(route, finished.path("route").asText());
+            assertEquals(12.5, finished.path("duration_ms").asDouble());
+            assertEquals(503, finished.path("status").asInt());
+            assertTrue(finished.path("failed").asBoolean());
+            JsonNode endpoint = starts.stream().filter(value -> value.path("request_id").asLong() == endpointId)
+                .findFirst().orElseThrow();
+            assertEquals("OTHER", endpoint.path("method").asText());
+            assertEquals("/api/v1/[endpoint hidden]", endpoint.path("route").asText());
+            for(long rejectedId: rejectedIds)
+                assertEquals("other", starts.stream().filter(value -> value.path("request_id").asLong() == rejectedId)
+                    .findFirst().orElseThrow().path("route").asText());
+            for(String secret: List.of("quoted-secret", "method-secret", "control-secret", "endpoint-secret",
+                "private-route", "private.invalid", "127.0.0.1"))
+                assertFalse(read().contains(secret), secret);
+            assertEquals(0, service.status().droppedRecords());
+        }
+    }
+
+    @Test
+    void counterfeitRequestEventsAndHealthRetainTheFinalPrivacyPass() throws Exception
+    {
+        AtomicLong clock = new AtomicLong(System.currentTimeMillis());
+        try(TestPreferences prefs = new TestPreferences();
+            WebDiagnosticLogService service = new WebDiagnosticLogService(() -> mDirectory, prefs.value, clock::get,
+                WebDiagnosticLogService.MAXIMUM_BYTES, 10_000_000, () -> {}))
+        {
+            service.setEnabled(true);
+            service.event("request_finished", Map.of("reason", "pa" + (char)0 +
+                "ssword=counterfeit-secret retained", "operation", "preserved-event"));
+            service.recordHealth(Map.of("generated_at_ms", clock.get(), "active", List.of(),
+                    "summary", Map.of("title", "pa" + (char)0 +
+                        "ssword=health-secret retained C:\\Users\\private-health\\recording.wav")),
+                Map.of("capture_generation", service.captureGeneration(),
+                    "note", "password=core-secret retained https://private-core.invalid/stream"));
+            await(() -> service.status().writtenRecords() >= 3);
+            JsonNode event = records("request_finished").getFirst();
+            assertFalse(event.has("request_id"));
+            assertEquals("preserved-event", event.path("operation").asText());
+            assertEquals("password=[removed] retained", event.path("reason").asText());
+            JsonNode health = records("receiver_health").getFirst();
+            assertTrue(health.path("summary").path("title").asText().contains("password=[removed]"));
+            assertTrue(health.path("summary").path("title").asText().contains("[path hidden]"));
+            assertTrue(health.path("core").path("note").asText().contains("password=[removed]"));
+            assertEquals(service.captureGeneration(), health.path("core").path("capture_generation").asLong());
+            for(String secret: List.of("counterfeit-secret", "health-secret", "core-secret", "private-health",
+                "private-core.invalid"))
+                assertFalse(read().contains(secret), secret);
+        }
+    }
+
+    @Test
     void retainsOneMinuteBeforeAlertAndThirtySecondsAfterWithoutRepeatingAnOngoingAlert() throws Exception
     {
         AtomicLong clock = new AtomicLong(System.currentTimeMillis());
@@ -601,6 +802,16 @@ class WebDiagnosticLogServiceTest
     {
         try { return Files.readString(mDirectory.resolve(WebDiagnosticLogService.FILE_NAME)); }
         catch(Exception exception) { return ""; }
+    }
+
+    private List<JsonNode> records(String kind) throws Exception
+    {
+        ObjectMapper mapper = new ObjectMapper();
+        List<JsonNode> records = new ArrayList<>();
+        for(String line: read().lines().toList())
+            if(line.contains(" web.diagnostic - " + kind + " "))
+                records.add(mapper.readTree(line.substring(line.indexOf('{'))));
+        return records;
     }
 
     private static void await(BooleanSupplier condition) throws Exception

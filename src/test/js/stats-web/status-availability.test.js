@@ -21,7 +21,6 @@ function functionSource(signature) {
 }
 
 const responses = [];
-const delays = [];
 let requestCount = 0;
 const grantedCapabilities = new Set(['dashboard', 'admin-settings', 'receiver-health']);
 const context = {
@@ -30,13 +29,6 @@ const context = {
     const response = responses.shift();
     if (response instanceof Error) throw response;
     return response;
-  },
-  window: {
-    setTimeout: (callback, delay) => {
-      delays.push(delay);
-      callback();
-      return delays.length;
-    }
   },
   applicationRoutes: { dashboard: { databaseNotice: true } },
   accessSessionAvailable: true,
@@ -55,8 +47,6 @@ const context = {
 vm.createContext(context);
 vm.runInContext(`
   const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
-  const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
-  const SERVICE_STATUS_RETRY_DELAY_MS = 500;
   let serviceStatus = null;
   let serviceStatusRequestPending = false;
   let serviceStatusConsecutiveFailures = 0;
@@ -65,9 +55,9 @@ vm.runInContext(`
   ${functionSource('function rejectServiceStatusRequest()')}
   ${functionSource('function clearServiceStatus()')}
   ${functionSource('function serviceStatusWarningRequired()')}
-  ${functionSource('function serviceStatusRetryDelay(milliseconds)')}
   ${functionSource('async function requestServiceStatus()')}
   ${functionSource('function statsLoggingState()')}
+  ${functionSource('function p25VisualizerMenuAvailable()')}
   ${functionSource('function detailedHistoryAvailable()')}
   ${functionSource('function detailedHistoryNotice()')}
   ${functionSource('function databaseLoggingNotice(view)')}
@@ -84,6 +74,8 @@ vm.runInContext(`
   globalThis.noticeFor = databaseLoggingNotice;
   globalThis.historyAvailable = detailedHistoryAvailable;
   globalThis.historyNotice = detailedHistoryNotice;
+  globalThis.visualizerAvailable = p25VisualizerMenuAvailable;
+  globalThis.rejectStatus = rejectServiceStatusRequest;
 `, context);
 
 async function main() {
@@ -99,15 +91,17 @@ async function main() {
 
   const recovered = { stats_logging: { summary_active: true } };
   responses.push(new Error('starting'), recovered);
+  await assert.rejects(context.requestStatus(), /starting/);
+  assert.equal(requestCount, 1, 'An initial failure must not silently extend page loading with retries.');
   assert.strictEqual(await context.requestStatus(), recovered);
   assert.equal(requestCount, 2);
-  assert.deepEqual(delays, [500]);
   assert.deepEqual(plainState(), { value: recovered, pending: false, failures: 0, warning: false });
 
   context.clearStatus();
   responses.push(new Error('first'), new Error('second'), new Error('third'));
-  await assert.rejects(context.requestStatus(), /third/);
-  assert.deepEqual(delays, [500, 500, 1000]);
+  for (const message of ['first', 'second', 'third']) {
+    await assert.rejects(context.requestStatus(), new RegExp(message));
+  }
   assert.deepEqual(plainState(), { value: null, pending: false, failures: 3, warning: true });
 
   const cached = { stats_logging: { summary_active: true }, generation: 1 };
@@ -168,6 +162,14 @@ async function main() {
   assert.equal(context.historyAvailable(), true);
   assert.match(noticeText(historyNotice()), /Saved activity status could not be checked/);
   assert.match(historyNotice().className, /ui-notice-danger/);
+
+  context.acceptStatus({ p25_visualizer_available: true, stats_logging: {
+    summary_active: false, detailed_history_active: false, state: 'DISABLED' } });
+  assert.equal(context.visualizerAvailable(), true, 'live native affiliations remain navigable with collection off');
+  context.rejectStatus();
+  assert.equal(context.visualizerAvailable(), false, 'a failed service-status check cannot expose stale availability');
+  context.acceptStatus({ p25_visualizer_available: false });
+  assert.equal(context.visualizerAvailable(), false, 'server access and receiver availability remain authoritative');
 
   const acceptHistory = (state, retained, settings = {}) => context.acceptStatus({
     stats_logging: {

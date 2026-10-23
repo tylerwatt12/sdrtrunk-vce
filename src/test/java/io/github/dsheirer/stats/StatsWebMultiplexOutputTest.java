@@ -7,6 +7,8 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.web.auth.WebCapability;
@@ -33,6 +35,28 @@ import org.junit.jupiter.api.Test;
 
 class StatsWebMultiplexOutputTest
 {
+    @Test
+    void p25SubscriptionIncarnationsHaveValueEqualityAndRequireRadioAccess() throws Exception
+    {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode parameters = mapper.readTree(
+            "{\"subscription_id\":\"00000000-0000-0000-0000-000000000001\"}");
+        StatsWebServerService.LiveSubscription first =
+            StatsWebServerService.parseMultiplexSubscription("p25_activity", parameters);
+        assertEquals(first, StatsWebServerService.parseMultiplexSubscription("p25_activity", parameters.deepCopy()));
+        assertNotEquals(first, StatsWebServerService.parseMultiplexSubscription("p25_activity", mapper.readTree(
+            "{\"subscription_id\":\"00000000-0000-0000-0000-000000000002\"}")));
+        assertEquals(WebCapability.RADIO_VIEW, StatsWebServerService.capabilityForTopic("p25_activity"));
+
+        for(String invalid: List.of("{}", "{\"subscription_id\":null}",
+            "{\"subscription_id\":\"invalid\"}",
+            "{\"subscription_id\":\"00000000-0000-0000-0000-000000000001\",\"channel_id\":\"other\"}"))
+        {
+            assertThrows(RuntimeException.class, () ->
+                StatsWebServerService.parseMultiplexSubscription("p25_activity", mapper.readTree(invalid)));
+        }
+    }
+
     @Test
     void liveAnalogAudioRequiresTheExistingAudioListeningCapability() throws Exception
     {
@@ -288,50 +312,19 @@ class StatsWebMultiplexOutputTest
     }
 
     @Test
-    void savedActivityGapPreservesUnwrittenSourceBoundaryBeforeLaterAppends() throws Exception
-    {
-        RecordingOutputStream recording = new RecordingOutputStream(3);
-        LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
-        var state = new SavedActivityLiveService.State(1, true, 11, 1, 1500, true);
-        try(output)
-        {
-            output.offerRecovery(7, LiveMultiplexFrame.json(7, "source_change", state.payload("view")).bytes(false));
-            output.offerEvent(7, LiveMultiplexFrame.json(7, "activity_append", Map.of("next_after_id", 11)).bytes(false));
-            StatsWebServerService.recoverSavedActivityGap(output, state, "view", 1);
-            output.offerEvent(7, LiveMultiplexFrame.json(7, "activity_append", Map.of("next_after_id", 12)).bytes(false));
-            output.start();
-            assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
-            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-            List<String> events = new java.util.ArrayList<>();
-            for(byte[] envelope: recording.mEnvelopes)
-            {
-                var json = mapper.readTree(new String(envelope, LiveMultiplexFrame.HEADER_BYTES,
-                    envelope.length - LiveMultiplexFrame.HEADER_BYTES, StandardCharsets.UTF_8));
-                events.add(json.path("event").asText());
-                if("source_change".equals(json.path("event").asText()))
-                {
-                    assertEquals("view", json.at("/data/subscription_id").asText());
-                    assertEquals(1500, json.at("/data/traffic_grant_age_out_milliseconds").asInt());
-                }
-            }
-            assertEquals(List.of("live_gap", "source_change", "activity_append"), events);
-        }
-    }
-
-    @Test
-    void savedActivityRecoveryClearsItsOwnBoundedQueueAndLeavesOtherTopicsIntact() throws Exception
+    void eventRecoveryClearsItsOwnBoundedQueueAndLeavesOtherTopicsIntact() throws Exception
     {
         RecordingOutputStream recording = new RecordingOutputStream(3);
         LiveMultiplexOutput output = new LiveMultiplexOutput(recording);
         try(output)
         {
-            for(int index = 0; index < 128; index++) output.offerEvent(7, new byte[]{7});
+            for(int index = 0; index < 128; index++) output.offerEvent(2, new byte[]{7});
             output.offerEvent(3, new byte[]{3});
-            assertEquals(64, output.eventDrops(7));
+            assertEquals(64, output.eventDrops(2));
             assertEquals(0, output.eventDrops(3));
-            output.offerRecovery(7, new byte[]{8});
-            output.offerEvent(7, new byte[]{9});
-            assertEquals(1, output.pendingEventBytes(7));
+            output.offerRecovery(2, new byte[]{8});
+            output.offerEvent(2, new byte[]{9});
+            assertEquals(1, output.pendingEventBytes(2));
             assertEquals(1, output.pendingEventBytes(3));
             output.start();
             assertTrue(recording.mWrites.await(1, TimeUnit.SECONDS));
@@ -603,8 +596,8 @@ class StatsWebMultiplexOutputTest
         assertFalse(source.contains("output.eventDrops() !="));
         assertFalse(source.contains("mLastChannelActivitySnapshot"));
         assertEquals(6, LiveMultiplexFrame.TOPIC_FREQUENCY_AUDIO);
-        assertEquals(7, LiveMultiplexFrame.TOPIC_SAVED_ACTIVITY);
-        assertEquals(LiveMultiplexFrame.TOPIC_SAVED_ACTIVITY, LiveMultiplexFrame.TOPIC_MAXIMUM);
+        assertEquals(7, LiveMultiplexFrame.TOPIC_P25_ACTIVITY);
+        assertEquals(LiveMultiplexFrame.TOPIC_P25_ACTIVITY, LiveMultiplexFrame.TOPIC_MAXIMUM);
         assertFalse(source.contains("network_activity"));
     }
 

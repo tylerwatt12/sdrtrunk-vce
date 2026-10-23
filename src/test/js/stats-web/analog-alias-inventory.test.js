@@ -106,7 +106,7 @@ assert.deepEqual(Array.from(context.aliasCoverageUnassignedColumns(true), column
   ['system', 'identity', 'calls', 'first', 'last']);
 const summary = context.aliasCoverageSummaryCards({ configured_alias_count: 0,
   logical_call_count: 8, matched_logical_call_count: 5, unmatched_logical_call_count: 3 },
-{ total_count: 2 }, false, true);
+{ total_count: 2 }, true);
 assert.deepEqual(Array.from(summary.entries.slice(4), entry => [entry[0], entry[1]]),
   [['Total calls', 8], ['Matched calls', 5], ['Unmatched calls', 3]],
 'A list with no configured aliases can still show received and unmatched calls');

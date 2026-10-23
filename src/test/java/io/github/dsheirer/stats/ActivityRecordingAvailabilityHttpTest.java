@@ -70,7 +70,7 @@ class ActivityRecordingAvailabilityHttpTest
     }
 
     @Test
-    void catalogFailureKeepsActivityReadableAndTheVisualizerSkipsAvailability() throws Exception
+    void catalogFailureKeepsActivityReadableAndCompactProjectionSkipsRecordingLookups() throws Exception
     {
         try(var fixture = new Fixture(directory))
         {
@@ -84,14 +84,17 @@ class ActivityRecordingAvailabilityHttpTest
             assertEquals(1, fixture.sourceReads);
             assertEquals(1, fixture.catalogReads);
 
-            var compact = fixture.get("?from_ms=1&to_ms=5000&actions=CALL&after_id=0&hide_grants=false" +
-                "&limit=20&projection=p25_visualizer");
-            assertEquals(200, compact.statusCode(), compact.body());
-            assertEquals(2, data(compact).size());
-            assertEquals(1, fixture.sourceReads);
-            assertEquals(1, fixture.catalogReads, "Visualizer traffic must not query the recording catalog");
-            for(JsonNode row: data(compact)) assertFalse(row.has("has_recording"));
+            var compact = fixture.get("?projection=p25_visualizer&from_ms=1&to_ms=5000&actions=CALL&after_id=0&limit=20");
+            assertEquals(200,compact.statusCode(),compact.body());
+            assertEquals(2,data(compact).size());
+            for(JsonNode row:data(compact))
+            {
+                assertFalse(row.has("has_recording"));
+                assertFalse(row.has("has_call_source"));
+            }
             assertPrivateReferencesAbsent(compact);
+            assertEquals(1, fixture.sourceReads,"compact history never looks up private call references");
+            assertEquals(1, fixture.catalogReads,"compact history never reads the recording catalog");
         }
     }
 
@@ -169,7 +172,7 @@ class ActivityRecordingAvailabilityHttpTest
             });
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             new StatsApiV1Controller(new StatsWebDatabase(new UserPreferences(), file), Map::of, security,
-                null, Map::of, null, () -> 2500, RemoteOriginLookup.EMPTY, availability).register(server);
+                null, Map::of, null, () -> 2500, RemoteOriginLookup.EMPTY, availability, List::of).register(server);
             server.start();
             origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
         }

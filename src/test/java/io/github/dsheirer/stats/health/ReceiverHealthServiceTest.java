@@ -11,8 +11,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.application.ComputerInformation;
-import io.github.dsheirer.channel.metadata.activity.ChannelActivityModel;
-import io.github.dsheirer.channel.metadata.activity.ChannelActivitySnapshot;
+import io.github.dsheirer.channel.quality.ControlChannelQualityMonitor;
+import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.metadata.site.SiteReceiverContext;
+import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.dsp.filter.channelizer.PolyphaseChannelManager;
 import io.github.dsheirer.source.tuner.LoggingTunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
@@ -39,6 +44,36 @@ class ReceiverHealthServiceTest
 {
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void zgcConcurrentCycleTimeDoesNotCountAsPauseTime()
+    {
+        long pauses = ReceiverHealthService.gcPauseTime("ZGC Minor Cycles", 1_200) +
+            ReceiverHealthService.gcPauseTime("ZGC Major Cycles", 800) +
+            ReceiverHealthService.gcPauseTime("ZGC Minor Pauses", 1) +
+            ReceiverHealthService.gcPauseTime("ZGC Major Pauses", 2);
+
+        assertEquals(3L, pauses, "Concurrent cycle work must not trigger the 500 ms pause warning");
+    }
+
+    @Test
+    void g1PauseCountersAreRetainedIncludingItsConcurrentCollectorName()
+    {
+        long pauses = ReceiverHealthService.gcPauseTime("G1 Young Generation", 21) +
+            ReceiverHealthService.gcPauseTime("G1 Old Generation", 34) +
+            ReceiverHealthService.gcPauseTime("G1 Concurrent GC", 55);
+
+        assertEquals(110L, pauses, "G1 Concurrent GC reports stop-the-world phases despite its name");
+        assertEquals(500L, ReceiverHealthService.gcPauseTime("Unknown collector", 500));
+    }
+
+    @Test
+    void unavailableGcTimesDoNotBecomeNegativePauseTime()
+    {
+        assertEquals(0L, ReceiverHealthService.gcPauseTime("ZGC Minor Pauses", -1));
+        assertEquals(0L, ReceiverHealthService.gcPauseTime("G1 Concurrent GC", -1));
+        assertEquals(0L, ReceiverHealthService.gcPauseTime("ZGC Major Cycles", -1));
+    }
 
     @Test
     void compactEvidenceIsOnlyBuiltWhileLoggingIsEnabledAndDoesNotChangeTheHealthApi() throws Exception
@@ -109,13 +144,11 @@ class ReceiverHealthServiceTest
     void warningSignalPathIncidentsCannotProduceAHealthyOrEmptySummary()
     {
         Map<String,Object> summary = ReceiverHealthService.summarize(List.of(
-            incident("receiver-queue-pressure", "warning"),
-            incident("channelizer-queue-pressure", "warning"),
-            incident("usb-transfer-gap", "warning")));
+            incident("usb-delivery-rate-low", "warning")));
 
         assertEquals("warning", summary.get("severity"));
-        assertEquals(3, summary.get("active_count"));
-        assertEquals(3L, summary.get("warning_count"));
+        assertEquals(1, summary.get("active_count"));
+        assertEquals(1L, summary.get("warning_count"));
         assertEquals(0L, summary.get("critical_count"));
         assertFalse(summary.containsKey("diagnostic_count"));
     }
@@ -157,7 +190,7 @@ class ReceiverHealthServiceTest
         AtomicLong eventDrops = new AtomicLong(2);
 
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
-            clock::get))
+            clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
         {
             service.setWebStatusSupplier(() -> Map.of(
                 "server", Map.of("live_transport", Map.of(
@@ -178,8 +211,10 @@ class ReceiverHealthServiceTest
 
             clock.set(11_000);
             service.sampleNow();
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
-            assertTrue(rows(service.snapshot().get("resolved")).isEmpty());
+            assertTrue(rows(service.snapshot().get("active")).isEmpty(),
+                () -> "Unexpected active incidents: " + service.snapshot().get("active"));
+            assertTrue(rows(service.snapshot().get("resolved")).isEmpty(),
+                () -> "Unexpected resolved incidents: " + service.snapshot().get("resolved"));
         }
     }
 
@@ -205,9 +240,10 @@ class ReceiverHealthServiceTest
     void distinguishesWebCallCapacityDropsFromEncoderFailures()
     {
         AtomicLong clock = new AtomicLong(1_000);
+        AtomicBoolean outputFailed = new AtomicBoolean();
 
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
-            clock::get))
+            clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
         {
             service.setWebStatusSupplier(() -> Map.of(
                 "server", Map.of("live_transport", Map.of()),
@@ -215,11 +251,14 @@ class ReceiverHealthServiceTest
                     "published_calls", 7,
                     "active_feeds", 1,
                     "encoder_queue_depth", 0,
-                    "dropped_encoder_capacity", 2,
-                    "encoder_failures", 3,
+                    "dropped_encoder_capacity", outputFailed.get() ? 2 : 0,
+                    "encoder_failures", outputFailed.get() ? 3 : 0,
                     "rejected_feeds", 0,
                     "rejected_audio_responses", 0),
                 "diagnostics", Map.of()));
+            service.sampleNow();
+            outputFailed.set(true);
+            clock.set(2_000);
             service.sampleNow();
 
             Map<String,Object> webAudio = measurement(service.snapshot(), "supporting", "Browser audio");
@@ -229,183 +268,249 @@ class ReceiverHealthServiceTest
             assertTrue(detail.contains("Audio preparation failures 3"));
             assertFalse(detail.contains("capacity_drops"));
 
-            Map<String,Object> incident = rows(service.snapshot().get("active")).stream()
-                .filter(row -> "web-audio-drop".equals(row.get("code"))).findFirst().orElseThrow();
-            assertEquals("Browser audio was not available for a call", incident.get("title"));
-            assertEquals(5L, incident.get("count"));
-            assertEquals("5 browser calls dropped or failed", incident.get("observed"));
-            assertTrue(String.valueOf(incident.get("likely_cause")).contains("could not keep up"));
-            assertTrue(String.valueOf(incident.get("likely_cause")).contains("prepare the call's audio"));
+            assertTrue(rows(service.snapshot().get("active")).isEmpty());
+            assertEquals("healthy", map(service.snapshot().get("summary")).get("severity"));
         }
     }
 
     @Test
-    void routesUsbIngressFailureCountersToTheirIntendedIncidents() throws Exception
+    void historicUsbLossCountsAreVisibleWithoutOpeningNewIncidents() throws Exception
     {
-        assertEquals(Set.of("receiver-listener-failure"), usbIncidentCodes(0, 0, 0, 1));
-        assertEquals(Set.of("receiver-ingress-drop"), usbIncidentCodes(1, 0, 0, 0));
-        assertEquals(Set.of("usb-sample-loss"), usbIncidentCodes(0, 1, 0, 0));
-        assertEquals(Set.of("usb-sample-loss"), usbIncidentCodes(0, 0, 1, 0));
-    }
-
-    @Test
-    void usbAlertKeepsMeasuredSlowHandlingClueAfterLaterSamplesAndResolution() throws Exception
-    {
-        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        try(UsbFixture usb = new UsbFixture())
         {
-            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
-            Method collectUsb = usbCollector();
-            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
-
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
-                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
-            measurements.clear();
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
-                usbTimingSnapshot(2_000L, 1_200_000L, 100, 1, 0));
-
-            Map<String,Object> alert = incidents.active().stream()
-                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
-            assertTrue(String.valueOf(alert.get("likely_cause")).contains("VCE took at least 25 ms"));
-            assertTrue(measurements.stream().anyMatch(row ->
-                String.valueOf(row.get("label")).contains("USB data handling time") &&
-                    String.valueOf(row.get("detail")).contains("Took at least 25 ms 1")));
-
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 3_000L,
-                usbTimingSnapshot(3_000L, 2_200_000L, 200, 1, 0));
-            alert = incidents.active().stream()
-                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
-            assertTrue(String.valueOf(alert.get("likely_cause")).contains("VCE took at least 25 ms"));
-
-            incidents.beginSample();
-            incidents.endSample(14_000L);
-            Map<String,Object> cleared = incidents.resolved().stream()
-                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
-            assertTrue(String.valueOf(cleared.get("likely_cause")).contains("VCE took at least 25 ms"));
+            usb.ingressDrops = 7;
+            usb.copyFailures = 3;
+            usb.conversionFailures = 2;
+            usb.listenerFailures = 4;
+            usb.shortTransfers = 5;
+            usb.sample(1_000, 1_000, 2_400_000);
+            usb.sample(2_000, 2_000, 4_800_000);
+            assertTrue(usb.codes().isEmpty());
+            assertTrue(usb.measurements.stream().anyMatch(row ->
+                String.valueOf(row.get("detail")).contains("Dropped 7 chunks")));
+            assertTrue(usb.measurements.stream().anyMatch(row ->
+                String.valueOf(row.get("detail")).contains("Processing errors 5")));
         }
     }
 
     @Test
-    void usbAlertDoesNotBlameVceWhenMeasuredCallbacksWereFast() throws Exception
+    void isolatedUsbLossAndSlowCallbackRemainDiagnosticAfterTimePasses() throws Exception
     {
-        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        try(UsbFixture usb = new UsbFixture())
         {
-            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
-            Method collectUsb = usbCollector();
-            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
-
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
-                usbTimingSnapshot(1_000L, 0, 100, 1, 0));
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
-                usbTimingSnapshot(2_000L, 1_200_000L, 200, 1, 0));
-
-            Map<String,Object> alert = incidents.active().stream()
-                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
-            String cause = String.valueOf(alert.get("likely_cause"));
-            assertTrue(cause.contains("took less than 25 ms"));
-            assertTrue(cause.contains("may have happened before data reached VCE or between USB deliveries"));
+            usb.sample(0, 0, 0);
+            usb.ingressDrops = 1;
+            usb.shortTransfers = 1;
+            usb.slowCallbacks = 1;
+            usb.sample(1_000, 1_000, 2_400_000);
+            for(int second = 2; second <= 12; second++)
+                usb.sample(second * 1_000L, second * 1_000L, second * 2_400_000L);
+            assertTrue(usb.codes().isEmpty());
+            assertTrue(usb.incidents.resolved().isEmpty(), "An isolated event must never open then silently resolve");
         }
     }
 
     @Test
-    void usbAlertSaysWhenNoCallbackTimingWasAvailable() throws Exception
+    void repeatedIncomingPayloadAndConversionLossesRequireTenSecondsOfEvidence() throws Exception
     {
-        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        for(int kind = 0; kind < 3; kind++)
         {
-            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
-            Method collectUsb = usbCollector();
-            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
-
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
-                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
-                usbTimingSnapshot(2_000L, 1_200_000L, 0, 0, 0));
-
-            Map<String,Object> alert = incidents.active().stream()
-                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
-            assertTrue(String.valueOf(alert.get("likely_cause")).contains("could not measure"));
+            try(UsbFixture usb = new UsbFixture())
+            {
+                usb.sample(0, 0, 0);
+                for(int second = 1; second <= 11; second++)
+                {
+                    if(kind == 0) usb.ingressDrops = second;
+                    else if(kind == 1) usb.copyFailures = second;
+                    else usb.conversionFailures = second;
+                    usb.sample(second * 1_000L, second * 1_000L, second * 2_400_000L);
+                    if(second < 11) assertTrue(usb.codes().isEmpty(), "kind=" + kind + ", second=" + second);
+                }
+                assertEquals(Set.of(kind == 0 ? "receiver-ingress-drop" : "usb-sample-loss"), usb.codes());
+                assertEquals("warning", usb.incidents.active().getFirst().get("severity"),
+                    "Continuing loss needs attention without claiming that reception has stopped");
+            }
         }
     }
 
     @Test
-    void usbTimingClueDoesNotLeakFromAnEarlierDifferentAlert() throws Exception
+    void repeatedFullPayloadStatusAndListenerErrorsDoNotClaimRadioLoss() throws Exception
     {
-        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        try(UsbFixture usb = new UsbFixture())
         {
-            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
-            Method collectUsb = usbCollector();
-            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
-
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
-                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
-                usbTimingSnapshot(2_000L, 2_400_000L, 100, 1, 0, 1, 1, 0));
-            Map<String,Object> pause = incidents.active().stream()
-                .filter(row -> "usb-transfer-gap".equals(row.get("code"))).findFirst().orElseThrow();
-            assertTrue(String.valueOf(pause.get("likely_cause")).contains("VCE took at least 25 ms"));
-
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 3_000L,
-                usbTimingSnapshot(3_000L, 4_800_000L, 200, 1, 0, 1, 1, 0));
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 4_000L,
-                usbTimingSnapshot(4_000L, 6_000_000L, 300, 1, 0, 1, 1, 0));
-            Map<String,Object> rate = incidents.active().stream()
-                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
-            assertTrue(String.valueOf(rate.get("likely_cause")).contains("took less than 25 ms"));
+            usb.sample(0, 0, 0);
+            for(int second = 1; second <= 12; second++)
+            {
+                usb.statusErrors = second;
+                usb.listenerFailures = second;
+                usb.sample(second * 1_000L, second * 1_000L, second * 2_400_000L);
+            }
+            assertTrue(usb.codes().isEmpty());
+            assertTrue(usb.measurements.stream().anyMatch(row ->
+                String.valueOf(row.get("detail")).contains("Errors 12")));
+            assertTrue(usb.measurements.stream().anyMatch(row ->
+                String.valueOf(row.get("detail")).contains("Delivery failures 12")));
         }
     }
 
     @Test
-    void usbAlertKeepsItsClueWhenTheTunerRestartsBeforeItClears() throws Exception
+    void aStreamReplacementCannotConfirmThePreviousStreamsPendingLoss() throws Exception
     {
-        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        try(UsbFixture usb = new UsbFixture())
         {
-            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
-            Method collectUsb = usbCollector();
-            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
-
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
-                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
-                usbTimingSnapshot(2_000L, 1_200_000L, 100, 1, 1));
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 3_000L,
-                usbTimingSnapshot(3_000L, 0, 100, 1, 1, 2, 0, 0));
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 4_000L,
-                usbTimingSnapshot(4_000L, 1_200_000L, 200, 1, 1, 2, 0, 0));
-
-            Map<String,Object> alert = incidents.active().stream()
-                .filter(row -> "usb-delivery-rate-low".equals(row.get("code"))).findFirst().orElseThrow();
-            assertTrue(String.valueOf(alert.get("likely_cause")).contains("VCE took at least 100 ms"));
+            usb.sample(0, 0, 0);
+            usb.shortTransfers = 1;
+            usb.sample(1_000, 1_000, 2_400_000);
+            usb.shortTransfers = 2;
+            usb.sample(10_000, 10_000, 24_000_000);
+            usb.sequence++;
+            usb.shortTransfers = 0;
+            usb.sample(11_000, 11_000, 26_400_000);
+            usb.shortTransfers = 1;
+            usb.sample(12_000, 12_000, 28_800_000);
+            usb.shortTransfers = 2;
+            usb.sample(21_000, 21_000, 50_400_000);
+            assertTrue(usb.codes().isEmpty(), "The replacement stream needs its own ten-second evidence period");
+            usb.shortTransfers = 3;
+            usb.sample(22_000, 22_000, 52_800_000);
+            assertEquals(Set.of("usb-sample-loss"), usb.codes());
         }
     }
 
     @Test
-    void incompleteUsbDataAlertAlsoIncludesTheTimingClue() throws Exception
+    void usbClockCorrectionsCannotCreateLowRateOrStoppedDataIncidents() throws Exception
     {
-        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 1_000L))
+        try(UsbFixture usb = new UsbFixture())
         {
-            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
-            Method collectUsb = usbCollector();
-            List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+            usb.sample(100_000, 1_000, 0);
+            usb.sample(1_000_000, 2_000, 2_400_000);
+            usb.sample(500, 3_000, 4_800_000);
+            usb.sample(800, 11_000, 24_000_000);
+            assertTrue(usb.codes().isEmpty());
+            assertTrue(usb.measurements.stream().filter(row ->
+                String.valueOf(row.get("label")).endsWith("radio data rate"))
+                .allMatch(row -> String.valueOf(row.get("detail")).contains("100.0%") ||
+                    String.valueOf(row.get("detail")).contains("warming up")));
+        }
+    }
 
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 1_000L,
-                usbTimingSnapshot(1_000L, 0, 0, 0, 0));
-            collectUsbSample(incidents, collectUsb, service, tuner, measurements, 2_000L,
-                usbTimingSnapshot(2_000L, 2_400_000L, 100, 1, 0, 1, 0, 1));
+    @Test
+    void usbAbsenceIsConfirmedAtTenSecondsWithoutAnAdditionalDebounce() throws Exception
+    {
+        try(UsbFixture usb = new UsbFixture())
+        {
+            usb.lastDelivery = 0L;
+            usb.sample(1_000, 0, 0);
+            usb.sample(10_999, 9_999, 0);
+            assertTrue(usb.codes().isEmpty());
+            usb.sample(11_000, 10_000, 0);
+            assertEquals(Set.of("usb-sample-loss"), usb.codes());
+            assertEquals("critical", usb.incidents.active().getFirst().get("severity"));
+            assertTrue(String.valueOf(usb.incidents.active().getFirst().get("observed")).contains("10 seconds"));
+        }
+    }
 
-            Map<String,Object> alert = incidents.active().stream()
-                .filter(row -> "usb-sample-loss".equals(row.get("code"))).findFirst().orElseThrow();
-            assertTrue(String.valueOf(alert.get("likely_cause")).contains("VCE took at least 25 ms"));
+    @Test
+    void sustainedLowUsbDeliveryOpensOnlyAfterTheCompleteTenSecondWindow() throws Exception
+    {
+        try(UsbFixture usb = new UsbFixture())
+        {
+            usb.sample(0, 0, 0);
+            for(int second = 1; second <= 10; second++)
+            {
+                usb.sample(second * 1_000L, second * 1_000L, second * 1_200_000L);
+                if(second < 10) assertTrue(usb.codes().isEmpty());
+            }
+            assertEquals(Set.of("usb-delivery-rate-low"), usb.codes());
+            assertEquals("warning", usb.incidents.active().getFirst().get("severity"));
+        }
+    }
+
+    @Test
+    void reappearingProducerDoesNotReplayItsLargerHistoricCounters() throws Exception
+    {
+        try(UsbFixture usb = new UsbFixture())
+        {
+            usb.ingressDrops = 7;
+            usb.sample(1_000, 1_000, 2_400_000);
+            usb.wall.set(2_000);
+            usb.nanos.set(TimeUnit.MILLISECONDS.toNanos(2_000));
+            usb.service.sampleNow(); // No registered tuner: the old owner disappears.
+            usb.ingressDrops = 100;
+            usb.sample(4_000, 4_000, 9_600_000);
+            usb.ingressDrops = 101;
+            usb.sample(13_000, 13_000, 31_200_000);
+            usb.ingressDrops = 102;
+            usb.sample(14_000, 14_000, 33_600_000);
+            assertTrue(usb.codes().isEmpty(), "Historic100 is a baseline, not the first event of a continuing loss");
+            usb.ingressDrops = 103;
+            usb.sample(23_000, 23_000, 55_200_000);
+            assertEquals(Set.of("receiver-ingress-drop"), usb.codes());
+        }
+    }
+
+    @Test
+    void receivingIntentSurvivesFailedTunerTeardownButAnIdleSpareIsNotRequired() throws Exception
+    {
+        try(UsbFixture usb = new UsbFixture())
+        {
+            var receiving = new io.github.dsheirer.source.tuner.manager.TestPolyphaseChannelSourceManager(
+                usb.tuner.getTunerController())
+            {
+                @Override public int getTunerChannelCount() { return 1; }
+            };
+            assertEquals(true, usb.prepareOwner.invoke(usb.service, "required", usb.tuner.getTunerController(), receiving, 1L));
+            assertEquals(true, usb.prepareOwner.invoke(usb.service, "required", null, null, 1L),
+                "A failed tuner can release its source manager before status is sampled");
+            assertEquals(false, usb.prepareOwner.invoke(usb.service, "spare", usb.tuner.getTunerController(),
+                usb.tuner.getChannelSourceManager(), 1L));
+            assertEquals(false, usb.prepareOwner.invoke(usb.service, "spare", null, null, 1L));
+        }
+    }
+
+    @Test
+    void spectrumOnlyUsbFaultsStayVisibleWithoutReceiverIncidentsAndResumeNeedsFreshEvidence() throws Exception
+    {
+        try(UsbFixture usb = new UsbFixture())
+        {
+            usb.receiving = false;
+            usb.sample(0, 0, 0);
+            for(int second = 1; second <= 12; second++)
+            {
+                usb.copyFailures = second;
+                usb.sample(second * 1_000L, second * 1_000L, second * 2_400_000L);
+            }
+            assertTrue(usb.codes().isEmpty());
+            assertTrue(usb.measurements.stream().anyMatch(row ->
+                String.valueOf(row.get("detail")).contains("Processing errors 12")));
+            usb.receiving = true;
+            for(int second = 13; second <= 24; second++)
+            {
+                usb.copyFailures = second;
+                usb.sample(second * 1_000L, second * 1_000L, second * 2_400_000L);
+                if(second < 24) assertTrue(usb.codes().isEmpty(), "Idle work cannot confirm receiver loss");
+            }
+            assertEquals(Set.of("usb-sample-loss"), usb.codes());
+        }
+    }
+
+    @Test
+    void scatteredSmallUsbFaultsDoNotAccumulateAcrossHealthyMeasurements() throws Exception
+    {
+        try(UsbFixture usb = new UsbFixture())
+        {
+            usb.sample(0, 0, 0);
+            for(int second = 1; second <= 20; second++)
+            {
+                if(second == 1 || second == 5 || second == 9 || second == 13 || second == 17)
+                    usb.copyFailures++;
+                usb.sample(second * 1_000L, second * 1_000L, second * 2_400_000L);
+                assertTrue(usb.codes().isEmpty(), "A few separated faults are not continuing receiver loss");
+            }
+            assertTrue(usb.incidents.resolved().isEmpty(), "No hidden incident should have opened between checks");
+            assertTrue(usb.measurements.stream().anyMatch(row ->
+                String.valueOf(row.get("detail")).contains("Processing errors 5")),
+                "All isolated faults must remain visible in the diagnostic counters");
         }
     }
 
@@ -445,7 +550,7 @@ class ReceiverHealthServiceTest
         AtomicBoolean fail = new AtomicBoolean();
 
         try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
-            clock::get))
+            clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
         {
             service.setWebStatusSupplier(() ->
             {
@@ -482,192 +587,301 @@ class ReceiverHealthServiceTest
     void reportsSiteLevelControlLockLossAcrossAlternateFrequencySearch()
     {
         AtomicLong clock = new AtomicLong(1_000);
-        AtomicReference<ChannelActivityModel.SnapshotSet> activity = new AtomicReference<>(
-            activity(773_831_250L, 1_000L, 1_000L, 10));
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.observe(773_831_250L, 1_000, 1_000, 10, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
         {
-            service.setChannelActivitySnapshotSupplier(activity::get);
+            service.setControlQualitySupplier(() -> List.of(monitor));
             service.sampleNow();
-            assertEquals("healthy", map(service.snapshot().get("summary")).get("severity"));
-
-            clock.set(10_999L);
-            activity.set(activity(774_281_250L, 10_999L, 0, 0));
+            clock.set(10_999);
+            monitor.observe(774_281_250L, 10_999, 0, 0, 0);
             service.sampleNow();
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
-
-            clock.set(11_000L);
-            activity.set(activity(774_531_250L, 11_000L, 0, 0));
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            clock.set(11_000);
+            monitor.observe(774_531_250L, 11_000, 0, 0, 0);
             service.sampleNow();
-            List<Map<String,Object>> active = rows(service.snapshot().get("active"));
-            assertEquals(1, active.size());
-            assertEquals("control-channel-lock-lost", active.getFirst().get("code"));
+            assertEquals("control-channel-lock-lost", controlIncidents(service.snapshot()).getFirst().get("code"));
             assertEquals("critical", map(service.snapshot().get("summary")).get("severity"));
-
-            clock.set(11_001L);
-            activity.set(activity(774_781_250L, 11_001L, 0, 0));
+            monitor.observe(774_531_250L, 11_001, 11_001, 1, 0);
+            clock.set(11_001);
             service.sampleNow();
-            assertEquals(1, rows(service.snapshot().get("active")).size());
+            clock.set(21_001);
+            monitor.observe(774_531_250L, 21_001, 21_001, 1, 0);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty(), "Received frames resolve the loss after its normal hold");
         }
     }
 
     @Test
-    void doesNotReportControlLockLossBeforeAValidControlFrame()
+    void restartAndReplacementCannotInheritThePreviousDecodersLastFrame()
     {
-        AtomicLong clock = new AtomicLong(30_000L);
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        AtomicLong clock = new AtomicLong(1_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        AtomicReference<TestControl> current = new AtomicReference<>(monitor);
+        monitor.observe(773_831_250L, 1_000, 1_000, 10, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
         {
-            service.setChannelActivitySnapshotSupplier(() -> activity(774_281_250L, clock.get(), 0, 0));
+            service.setControlQualitySupplier(() -> List.of(current.get()));
             service.sampleNow();
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
-            assertEquals("healthy", map(service.snapshot().get("summary")).get("severity"));
+            clock.set(11_000);
+            monitor.generation++;
+            monitor.observe(773_831_250L, 11_000, 0, 0, 0);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            monitor.observe(773_831_250L, 11_001, 11_001, 1, 0);
+            clock.set(11_001);
+            service.sampleNow();
+            current.set(new TestControl("00000000-0000-0000-0000-000000000071"));
+            current.get().observe(773_831_250L, 30_000, 0, 0, 0);
+            clock.set(30_000);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            current.get().observation = null;
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
         }
     }
 
     @Test
-    void keepsRawDecoderDropEvidenceAsAnInformationalMeasurement()
+    void conventionalReceiversNeverBecomeControlLossIncidents()
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        AtomicLong clock = new AtomicLong(30_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.channel.setDecodeConfiguration(new DecodeConfigDMR());
+        monitor.observe(452_012_500L, 30_000, 1_000, 10, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
         {
-            service.setChannelActivitySnapshotSupplier(() -> activity(773_831_250L, clock.get(), 0, 0, 48));
+            service.setControlQualitySupplier(() -> List.of(monitor));
             service.sampleNow();
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
-            assertTrue(rows(service.snapshot().get("resolved")).isEmpty());
-            Map<String,Object> summary = map(service.snapshot().get("summary"));
-            assertEquals("healthy", summary.get("severity"));
-            assertEquals(0, summary.get("active_count"));
-            assertFalse(summary.containsKey("diagnostic_count"));
-            assertTrue(String.valueOf(measurement(service.snapshot(), "decoders", "site-table").get("detail"))
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            assertTrue(rows(rows(service.snapshot().get("measurements")).stream()
+                .filter(section -> "decoders".equals(section.get("id"))).findFirst().orElseThrow().get("rows")).isEmpty());
+        }
+    }
+
+    @Test
+    void staleQualityIsUnavailableButStillPreservesEvidenceOfARealDecoderStall()
+    {
+        AtomicLong clock = new AtomicLong(1_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.observe(773_831_250L, 1_000, 1_000, 10, 48);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
+        {
+            service.setControlQualitySupplier(() -> List.of(monitor));
+            service.sampleNow();
+            assertTrue(String.valueOf(measurement(service.snapshot(), "decoders", monitor.scope()).get("detail"))
                 .contains("Dropped 48 bits"));
+            clock.set(7_000);
+            service.sampleNow();
+            assertEquals("Unavailable", measurement(service.snapshot(), "decoders", monitor.scope()).get("value"));
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            clock.set(11_000);
+            service.sampleNow();
+            assertEquals("control-channel-lock-lost", controlIncidents(service.snapshot()).getFirst().get("code"));
         }
     }
 
     @Test
     void keepsSameNamedSitesAsSeparateControlLockIncidents()
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-        AtomicReference<ChannelActivityModel.SnapshotSet> activity = new AtomicReference<>(
-            new ChannelActivityModel.SnapshotSet(1_000L, List.of(
-                controlTable("site-a", 773_831_250L, 1_000L, 1_000L, 10, 0),
-                controlTable("site-b", 856_162_500L, 1_000L, 1_000L, 10, 0))));
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        AtomicLong clock = new AtomicLong(1_000);
+        TestControl first = new TestControl("00000000-0000-0000-0000-000000000071");
+        TestControl second = new TestControl("00000000-0000-0000-0000-000000000072");
+        first.observe(773_831_250L, 1_000, 1_000, 10, 0);
+        second.observe(856_162_500L, 1_000, 1_000, 10, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
         {
-            service.setChannelActivitySnapshotSupplier(activity::get);
+            service.setControlQualitySupplier(() -> List.of(first, second));
             service.sampleNow();
-            clock.set(11_000L);
-            activity.set(new ChannelActivityModel.SnapshotSet(11_000L, List.of(
-                controlTable("site-a", 774_281_250L, 11_000L, 0, 0, 0),
-                controlTable("site-b", 855_987_500L, 11_000L, 0, 0, 0))));
+            clock.set(11_000);
             service.sampleNow();
-            assertEquals(2, rows(service.snapshot().get("active")).size());
-            assertEquals(2, map(service.snapshot().get("summary")).get("active_count"));
+            assertEquals(2, controlIncidents(service.snapshot()).size());
         }
     }
 
     @Test
-    void publishesFreshControlMeasurementsWithFriendlyNamesAndNativeSiteFacts()
+    void aControlReceiverThatNeverAcquiredFramesStillReportsTenSecondAbsence()
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-        AtomicLong acknowledgedCalls = new AtomicLong(37L);
-        String configuration = "00000000-0000-0000-0000-000000000071";
-        String tableId = "channel:" + configuration;
-        long frequency = 851_012_500L;
-        ChannelActivitySnapshot control = controlTable(tableId, frequency, 2_000L, 2_000L, 10, 0);
-        ChannelActivitySnapshot named = new ChannelActivitySnapshot(tableId, "BEE00-49F", "GCRCN",
-            "Cleveland", "Cleveland Control", configuration, true, true, List.of(), control.rows(),
-            new ChannelActivitySnapshot.Site(0xBEE00, 0x49F, 1, 2, 0x49F));
-
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        AtomicLong wall = new AtomicLong(1_000);
+        AtomicLong nanos = new AtomicLong();
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.observe(773_831_250L, 1_000, 0, 0, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
+            wall::get, null, nanos::get))
         {
-            service.setRadioResolveAcceptedCalls(acknowledgedCalls::get);
-            service.setChannelActivitySnapshotSupplier(() ->
-                new ChannelActivityModel.SnapshotSet(clock.get(), List.of(named)));
-            clock.set(2_000L);
+            service.setControlQualitySupplier(() -> List.of(monitor));
             service.sampleNow();
+            nanos.set(TimeUnit.MILLISECONDS.toNanos(9_999));
+            wall.set(10_999);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            nanos.set(TimeUnit.SECONDS.toNanos(10));
+            wall.set(11_000);
+            service.sampleNow();
+            assertEquals(1, controlIncidents(service.snapshot()).size());
+        }
+    }
 
-            Map<String,Object> snapshot = service.snapshot();
-            assertEquals(2_000L, snapshot.get("generated_at_ms"));
-            assertEquals(37L, snapshot.get("radioresolve_accepted_calls"));
-            Map<String,Object> measurement = measurement(snapshot, "decoders", tableId);
+    @Test
+    void controlFrameProgressAndAbsenceIgnoreBothDirectionsOfWallClockCorrection()
+    {
+        AtomicLong wall = new AtomicLong(100_000);
+        AtomicLong nanos = new AtomicLong();
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.observe(773_831_250L, wall.get(), wall.get(), 10, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
+            wall::get, null, nanos::get))
+        {
+            service.setControlQualitySupplier(() -> List.of(monitor));
+            service.sampleNow();
+            wall.set(1_000_000);
+            nanos.set(TimeUnit.MILLISECONDS.toNanos(9_999));
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty(), "Forward wall time is not receiver absence");
+            wall.set(50_000);
+            nanos.set(TimeUnit.SECONDS.toNanos(10));
+            monitor.observe(773_831_250L, wall.get(), wall.get(), 1, 0);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty(), "A real frame with an earlier wall timestamp is progress");
+            wall.set(500);
+            nanos.set(TimeUnit.MILLISECONDS.toNanos(19_999));
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            nanos.set(TimeUnit.SECONDS.toNanos(20));
+            service.sampleNow();
+            assertEquals(1, controlIncidents(service.snapshot()).size(), "Real absence still alarms despite backward wall time");
+        }
+    }
+
+    @Test
+    void staleDisplaySnapshotDoesNotHideRealFrameProgressOrInventAStall()
+    {
+        AtomicLong clock = new AtomicLong(1_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.observe(773_831_250L, 1_000, 1_000, 10, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
+            clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
+        {
+            service.setControlQualitySupplier(() -> List.of(monitor));
+            service.sampleNow();
+            for(long time: new long[]{11_000, 21_000})
+            {
+                clock.set(time);
+                monitor.validFrameSequence++; // Receiver has decoded a real frame; its display publication is stale.
+                service.sampleNow();
+                assertEquals("Unavailable", measurement(service.snapshot(), "decoders", monitor.scope()).get("value"));
+                assertTrue(controlIncidents(service.snapshot()).isEmpty());
+            }
+            clock.set(31_000);
+            service.sampleNow();
+            assertEquals(1, controlIncidents(service.snapshot()).size());
+        }
+    }
+
+    @Test
+    void unavailableControlEvidenceCannotResolveAnActiveLoss()
+    {
+        AtomicLong clock = new AtomicLong(1_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.observe(773_831_250L, 1_000, 1_000, 10, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
+            clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
+        {
+            service.setControlQualitySupplier(() -> List.of(monitor));
+            service.sampleNow();
+            clock.set(11_000);
+            service.sampleNow();
+            assertEquals(1, controlIncidents(service.snapshot()).size());
+            monitor.observation = null;
+            clock.set(21_000);
+            service.sampleNow();
+            assertEquals(1, controlIncidents(service.snapshot()).size());
+            monitor.observe(773_831_250L, 21_001, 21_001, 1, 0);
+            clock.set(21_001);
+            service.sampleNow();
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
+        }
+    }
+
+    @Test
+    void publishesReceiverMeasurementsWithFriendlyNamesAndNativeSiteFactsWithoutActivityTables()
+    {
+        AtomicLong clock = new AtomicLong(2_000);
+        TestControl monitor = new TestControl("00000000-0000-0000-0000-000000000071");
+        monitor.channel.setSystem("GCRCN");
+        monitor.channel.setSite("Cleveland");
+        monitor.channel.setName("Cleveland Control");
+        monitor.channel.setP25SiteIdentity(new P25SiteIdentity(0xBEE00, 0x49F, 1, 2));
+        monitor.observe(851_012_500L, 2_000, 2_000, 10, 0);
+        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get, null, () -> TimeUnit.MILLISECONDS.toNanos(clock.get())))
+        {
+            service.setControlQualitySupplier(() -> List.of(monitor));
+            service.setRadioResolveAcceptedCalls(() -> 37);
+            service.sampleNow();
+            Map<String,Object> measurement = measurement(service.snapshot(), "decoders", monitor.scope());
             assertEquals("GCRCN", measurement.get("system_name"));
             assertEquals("Cleveland Control", measurement.get("channel_name"));
-            assertEquals(configuration, measurement.get("configuration_id"));
-            assertEquals(frequency, measurement.get("frequency_hz"));
+            assertEquals(monitor.channel.getConfigurationId(), measurement.get("configuration_id"));
             assertEquals(0xBEE00, measurement.get("wacn"));
             assertEquals(0x49F, measurement.get("system_id"));
             assertEquals(1, measurement.get("rfss"));
             assertEquals(2, measurement.get("site_id"));
-            assertEquals("healthy", map(snapshot.get("summary")).get("severity"));
-
-            clock.set(2_500L);
-            acknowledgedCalls.set(40L);
-            service.sampleNow();
-            assertEquals(2_500L, service.snapshot().get("generated_at_ms"),
-                "Control measurement metadata must not prevent later health snapshots from publishing");
-            assertEquals(40L, service.snapshot().get("radioresolve_accepted_calls"),
-                "The acknowledged upload counter must stay current while control channels are active");
+            assertEquals(37L, service.snapshot().get("radioresolve_accepted_calls"));
+            assertTrue(controlIncidents(service.snapshot()).isEmpty());
         }
     }
 
-    @Test
-    void publishesControlMeasurementsBeforeOptionalNamesAndNativeIdentityAreKnown()
+    private static final class TestControl extends ControlChannelQualityMonitor
     {
-        AtomicLong clock = new AtomicLong(1_000L);
-        ChannelActivitySnapshot control = controlTable("unnamed-control", 851_012_500L,
-            2_000L, 2_000L, 10, 0);
-        ChannelActivitySnapshot unnamed = new ChannelActivitySnapshot(control.tableId(), "Control channel",
-            null, null, null, null, true, true, List.of(), control.rows(),
-            new ChannelActivitySnapshot.Site(null, null, null, null, null));
+        private final Channel channel;
+        private ReceiverObservation observation;
+        private long generation = 1;
+        private long validFrameSequence;
+        private long lastFrameAtMs;
 
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, clock::get))
+        private TestControl(String configuration)
         {
-            service.setChannelActivitySnapshotSupplier(() ->
-                new ChannelActivityModel.SnapshotSet(clock.get(), List.of(unnamed)));
-            clock.set(2_000L);
-            service.sampleNow();
-
-            assertEquals(2_000L, service.snapshot().get("generated_at_ms"));
-            Map<String,Object> measurement = measurement(service.snapshot(), "decoders", "unnamed-control");
-            assertEquals("", measurement.get("system_name"));
-            assertEquals("", measurement.get("channel_name"));
-            assertEquals("", measurement.get("configuration_id"));
-            assertNull(measurement.get("wacn"));
-            assertNull(measurement.get("system_id"));
-            assertNull(measurement.get("rfss"));
-            assertNull(measurement.get("site_id"));
-            assertTrue(rows(service.snapshot().get("active")).isEmpty());
+            this(controlChannel(configuration));
         }
+
+        private TestControl(Channel channel)
+        {
+            super(channel, 773_831_250L, ignored -> {});
+            this.channel = channel;
+        }
+
+        private static Channel controlChannel(String configuration)
+        {
+            Channel channel = new Channel("Control", Channel.ChannelType.STANDARD);
+            channel.setConfigurationId(configuration);
+            channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            channel.setSystem("County");
+            channel.setSite("Downtown");
+            return channel;
+        }
+
+        private void observe(long frequency, long observed, long lastValid, long valid, long dropped)
+        {
+            if(valid > 0 && (validFrameSequence == 0 || lastValid != lastFrameAtMs))
+            {
+                validFrameSequence++;
+                lastFrameAtMs = lastValid;
+            }
+            observation = new ReceiverObservation(new ControlChannelQualitySnapshot(channel,
+                SiteReceiverContext.capture(channel, null, frequency), frequency, observed, true,
+                -45.0, -45.0, -45.0, -45.0, valid > 0 ? 98.0 : null, valid, 0, 0, 0, dropped, lastValid),
+                1, generation);
+        }
+
+        @Override public ReceiverObservation getReceiverObservation() { return observation; }
+        @Override public long getValidFrameSequence() { return validFrameSequence; }
+        private String scope() { return "channel:" + channel.getConfigurationId(); }
     }
 
-    private static ChannelActivityModel.SnapshotSet activity(long frequencyHz, long observedAtMs,
-                                                              long lastValidDecodeMs, long validFrames)
+    private static List<Map<String,Object>> controlIncidents(Map<String,Object> snapshot)
     {
-        return activity(frequencyHz, observedAtMs, lastValidDecodeMs, validFrames, 0);
-    }
-
-    private static ChannelActivityModel.SnapshotSet activity(long frequencyHz, long observedAtMs,
-                                                              long lastValidDecodeMs, long validFrames,
-                                                              long droppedBits)
-    {
-        return new ChannelActivityModel.SnapshotSet(observedAtMs, List.of(controlTable("site-table", frequencyHz,
-            observedAtMs, lastValidDecodeMs, validFrames, droppedBits)));
-    }
-
-    private static ChannelActivitySnapshot controlTable(String tableId, long frequencyHz, long observedAtMs,
-                                                         long lastValidDecodeMs, long validFrames,
-                                                         long droppedBits)
-    {
-        ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("control-" + frequencyHz, "Control",
-            null, "ACTIVE", List.of("CURRENT_CONTROL"), 1L, null, frequencyHz, null, -45.0,
-            validFrames > 0 ? 98.0 : null, observedAtMs, validFrames, 0, 0, 0, droppedBits, lastValidDecodeMs,
-            null, null, null, null, null, null, null, null, null, null, null, null, "P25_PHASE1", null, null,
-            "CURRENT_CONTROL");
-        return new ChannelActivitySnapshot(tableId, "County · Downtown", "County",
-            "Downtown", "Control", null, true, true, List.of(), List.of(row));
+        return rows(snapshot.get("active")).stream()
+            .filter(row -> "control-channel-lock-lost".equals(row.get("code"))).toList();
     }
 
     private static Map<String,Object> measurement(Map<String,Object> snapshot, String sectionId, String scope)
@@ -684,109 +898,76 @@ class ReceiverHealthServiceTest
         return Map.of("code", code, "severity", severity);
     }
 
-    private static Set<String> usbIncidentCodes(long saturationDrops, long copyFailures,
-                                                 long conversionFailures, long listenerFailures) throws Exception
+    private static final class UsbFixture implements AutoCloseable
     {
-        Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+        private final Tuner tuner = new TestTuner(new LoggingTunerErrorListener());
+        private boolean receiving = true;
+        private final io.github.dsheirer.source.tuner.manager.ChannelSourceManager sourceManager =
+            new io.github.dsheirer.source.tuner.manager.TestPolyphaseChannelSourceManager(tuner.getTunerController())
+            {
+                @Override public int getTunerChannelCount() { return receiving ? 1 : 0; }
+            };
+        private final AtomicLong wall = new AtomicLong(1_000);
+        private final AtomicLong nanos = new AtomicLong();
+        private final ReceiverHealthService service = new ReceiverHealthService(null, null, null, null,
+            wall::get, null, nanos::get);
+        private final ReceiverHealthIncidentTracker incidents;
+        private final Method collect;
+        private final Method prepareOwner;
+        private final List<Map<String,Object>> measurements = new java.util.ArrayList<>();
+        private long sequence = 1;
+        private long ingressDrops;
+        private long copyFailures;
+        private long conversionFailures;
+        private long listenerFailures;
+        private long shortTransfers;
+        private long statusErrors;
+        private long slowCallbacks;
+        private Long lastDelivery;
 
-        try(ReceiverHealthService service = new ReceiverHealthService(null, null, null, null, () -> 2_000L))
+        private UsbFixture() throws Exception
         {
-            ReceiverHealthIncidentTracker incidents = usbIncidentTracker(service);
-            Method collectUsb = usbCollector();
-            List<Map<String,Object>> rows = new java.util.ArrayList<>();
+            Field field = ReceiverHealthService.class.getDeclaredField("mIncidents");
+            field.setAccessible(true);
+            incidents = (ReceiverHealthIncidentTracker)field.get(service);
+            collect = ReceiverHealthService.class.getDeclaredMethod("collectUsb", long.class, String.class,
+                String.class, Tuner.class, boolean.class, USBTunerController.UsbTransferHealthSnapshot.class,
+                List.class, ReceiverHealthDiagnosticCore.Tuner.class);
+            collect.setAccessible(true);
+            prepareOwner = ReceiverHealthService.class.getDeclaredMethod("prepareCounterOwner", String.class,
+                io.github.dsheirer.source.tuner.TunerController.class, Object.class, long.class);
+            prepareOwner.setAccessible(true);
+        }
 
-            incidents.beginSample();
-            collectUsb.invoke(service, 1_000L, "usb-test", "USB test tuner", tuner,
-                usbSnapshot(1_000L, 0, 0, 0, 0), rows);
-            incidents.endSample(1_000L);
-            incidents.beginSample();
-            collectUsb.invoke(service, 2_000L, "usb-test", "USB test tuner", tuner,
-                usbSnapshot(2_000L, saturationDrops, copyFailures, conversionFailures, listenerFailures), rows);
-            incidents.endSample(2_000L);
+        private void sample(long wallMs, long monotonicMs, long deliveredBytes) throws Exception
+        {
+            long observedNanos = TimeUnit.MILLISECONDS.toNanos(monotonicMs);
+            wall.set(wallMs);
+            nanos.set(observedNanos);
+            long last = lastDelivery != null ? lastDelivery : monotonicMs;
+            var snapshot = new USBTunerController.UsbTransferHealthSnapshot(true, sequence, observedNanos,
+                1_024, 1, 0, "unknown", 8, 8, 0, 0,
+                deliveredBytes > 0 ? 1 : 0, deliveredBytes > 0 ? 1 : 0,
+                0, 0, statusErrors, 0, 0, deliveredBytes, deliveredBytes, deliveredBytes,
+                0, 0, shortTransfers, 0, 0, 0,
+                1_000, wallMs, wallMs, 0, TimeUnit.MILLISECONDS.toNanos(last), deliveredBytes > 0,
+                0, 0, 0, 0, 0, 100, slowCallbacks, 0, slowCallbacks > 0 ? 25_000_000 : 0,
+                16, 0, 0, ingressDrops, ingressDrops * 1_024,
+                copyFailures, conversionFailures, listenerFailures, 0, 0);
+            incidents.beginSample(observedNanos);
+            prepareOwner.invoke(service, "usb-test", tuner.getTunerController(), sourceManager, sequence);
+            measurements.clear();
+            collect.invoke(service, wallMs, "usb-test", "USB test tuner", tuner, receiving, snapshot, measurements, null);
+            incidents.endSample(wallMs);
+        }
+
+        private Set<String> codes()
+        {
             return incidents.active().stream().map(incident -> String.valueOf(incident.get("code")))
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         }
-    }
 
-    private static USBTunerController.UsbTransferHealthSnapshot usbSnapshot(long now, long saturationDrops,
-                                                                             long copyFailures,
-                                                                             long conversionFailures,
-                                                                             long listenerFailures)
-    {
-        long deliveredBytes = now == 1_000L ? 0 : 2_400_000L;
-        return usbSnapshot(now, saturationDrops, copyFailures, conversionFailures, listenerFailures,
-            deliveredBytes, 0, 0, 0);
-    }
-
-    private static USBTunerController.UsbTransferHealthSnapshot usbTimingSnapshot(long now, long deliveredBytes,
-                                                                                   long callbacks, long slow25,
-                                                                                   long slow100)
-    {
-        return usbTimingSnapshot(now, deliveredBytes, callbacks, slow25, slow100, 1, 0, 0);
-    }
-
-    private static USBTunerController.UsbTransferHealthSnapshot usbTimingSnapshot(long now, long deliveredBytes,
-                                                                                   long callbacks, long slow25,
-                                                                                   long slow100, long streamSequence,
-                                                                                   long longGaps, long shortTransfers)
-    {
-        return usbSnapshot(now, 0, 0, 0, 0, deliveredBytes, callbacks, slow25, slow100, streamSequence,
-            longGaps, shortTransfers);
-    }
-
-    private static USBTunerController.UsbTransferHealthSnapshot usbSnapshot(long now, long saturationDrops,
-                                                                             long copyFailures,
-                                                                             long conversionFailures,
-                                                                             long listenerFailures,
-                                                                             long deliveredBytes, long callbacks,
-                                                                             long slow25, long slow100)
-    {
-        return usbSnapshot(now, saturationDrops, copyFailures, conversionFailures, listenerFailures,
-            deliveredBytes, callbacks, slow25, slow100, 1, 0, 0);
-    }
-
-    private static USBTunerController.UsbTransferHealthSnapshot usbSnapshot(long now, long saturationDrops,
-                                                                             long copyFailures,
-                                                                             long conversionFailures,
-                                                                             long listenerFailures,
-                                                                             long deliveredBytes, long callbacks,
-                                                                             long slow25, long slow100,
-                                                                             long streamSequence, long longGaps,
-                                                                             long shortTransfers)
-    {
-        return new USBTunerController.UsbTransferHealthSnapshot(true, streamSequence, 1_024, 1, 0, "unknown",
-            8, 8, 0, 0, deliveredBytes > 0 ? 1 : 0, deliveredBytes > 0 ? 1 : 0,
-            0, 0, 0, 0, 0, deliveredBytes, deliveredBytes, deliveredBytes, 0, 0,
-            shortTransfers, 0, 0, 0, 1_000L, now, now, 0, 0, longGaps, 0, 0,
-            callbacks, slow25, slow100, slow25 > 0 ? 25_000_000L : 0,
-            16, 0, 0, saturationDrops, saturationDrops * 1_024, copyFailures, conversionFailures,
-            listenerFailures, 0, 0);
-    }
-
-    private static ReceiverHealthIncidentTracker usbIncidentTracker(ReceiverHealthService service) throws Exception
-    {
-        Field incidentsField = ReceiverHealthService.class.getDeclaredField("mIncidents");
-        incidentsField.setAccessible(true);
-        return (ReceiverHealthIncidentTracker)incidentsField.get(service);
-    }
-
-    private static Method usbCollector() throws Exception
-    {
-        Method collectUsb = ReceiverHealthService.class.getDeclaredMethod("collectUsb", long.class,
-            String.class, String.class, Tuner.class, USBTunerController.UsbTransferHealthSnapshot.class,
-            List.class);
-        collectUsb.setAccessible(true);
-        return collectUsb;
-    }
-
-    private static void collectUsbSample(ReceiverHealthIncidentTracker incidents, Method collectUsb,
-                                         ReceiverHealthService service, Tuner tuner,
-                                         List<Map<String,Object>> measurements, long now,
-                                         USBTunerController.UsbTransferHealthSnapshot snapshot) throws Exception
-    {
-        incidents.beginSample();
-        collectUsb.invoke(service, now, "usb-test", "USB test tuner", tuner, snapshot, measurements);
-        incidents.endSample(now);
+        @Override public void close() { service.close(); }
     }
 
     @SuppressWarnings("unchecked")

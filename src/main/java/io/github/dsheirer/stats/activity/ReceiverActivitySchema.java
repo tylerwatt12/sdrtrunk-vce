@@ -1375,12 +1375,6 @@ public class ReceiverActivitySchema
     static boolean recordResolvedLogicalCall(Connection connection, ReceiverActivityRecords.ResolvedLogicalCall call)
         throws SQLException
     {
-        return recordResolvedLogicalCall(connection, call, () -> {});
-    }
-
-    static boolean recordResolvedLogicalCall(Connection connection, ReceiverActivityRecords.ResolvedLogicalCall call,
-        Runnable historyChanged) throws SQLException
-    {
         if(call == null)
         {
             return false;
@@ -1436,20 +1430,19 @@ public class ReceiverActivitySchema
             }
         }
 
-        if(enrichResolvedCall(connection, radioSystem, call)) historyChanged.run();
+        enrichResolvedCall(connection, radioSystem, call);
         AliasActivityProjection.recordResolvedLogicalCall(connection, call);
 
         return true;
     }
 
     /** Shared call identity enriches only exact receiver calls; their observed RF addresses remain evidence. */
-    private static boolean enrichResolvedCall(Connection connection, RadioSystemSchema.RadioSystem system,
+    private static void enrichResolvedCall(Connection connection, RadioSystemSchema.RadioSystem system,
         ReceiverActivityRecords.ResolvedLogicalCall call) throws SQLException
     {
         RadioSystemSchema.IdentityReference source = RadioSystemSchema.identityReference(connection, system,
             IDENTITY_KIND_RADIO, call.sourceRadioId(), call.p25SourceIdentity(), call.callStartEpochMilliseconds());
-        if((source == null && call.durationMilliseconds() == null) || call.sourceCallReferences().isEmpty()) return false;
-        boolean changed = false;
+        if((source == null && call.durationMilliseconds() == null) || call.sourceCallReferences().isEmpty()) return;
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE receiver_activity_event SET radio_system_id = ?,
                 source_identity_summary_id = coalesce(?, source_identity_summary_id),
@@ -1472,10 +1465,9 @@ public class ReceiverActivitySchema
                 setLong(statement, 8, source != null ? source.summaryId() : null);
                 setLong(statement, 9, call.durationMilliseconds());
                 setLong(statement, 10, call.durationMilliseconds());
-                changed |= statement.executeUpdate() > 0;
+                statement.executeUpdate();
             }
         }
-        return changed;
     }
 
     /** Completion annotates only its exact retained call and never creates or recounts Activity. */

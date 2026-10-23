@@ -51,7 +51,7 @@ class StatsWebPresentationUiContractTest
         String scanList = function(source,
             "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount)");
         String aliases = function(source, "async function renderAliases()");
-        String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
+        String channelGroups = function(source, "async function channelTopGroupsSection(channel, parent, renderContext)");
         String channelFrequencies = function(source,
             "async function renderTrunkedChannelFrequencies(channel, renderContext, host)");
         String channelNeighbors = function(source, "async function renderChannelNeighbors(channel, renderContext)");
@@ -63,7 +63,8 @@ class StatsWebPresentationUiContractTest
         assertTrue(source.contains("button.title = label"));
         assertFalse(source.contains("inline ? '' : 'Columns'"));
         assertTrue(activity.contains("layoutMenuHost: titleActions"));
-        assertTrue(activity.contains("section(title, activityTable, titleActions)"));
+        assertTrue(activity.contains("const titleActions = activitySection.titleActions"));
+        assertTrue(activity.contains("createAsyncSection(title"));
         assertTrue(activity.contains("titleActions.prepend(refreshControls)"));
         assertTrue(discover.contains("layoutMenuHost: actions"));
         assertTrue(discover.contains("section(analog ? 'Unmatched assignments' : 'Observed Groups', host, actions)"));
@@ -71,10 +72,13 @@ class StatsWebPresentationUiContractTest
         assertTrue(aliases.contains("layoutMenuHost: actions"));
         assertTrue(source.contains("const actions = sectionActionHost(action);"));
         assertTrue(source.contains("layoutMenuHost: actions }"));
-        assertTrue(channelGroups.contains("const titleActions = sectionActionHost(rangeControl.controls)"));
-        assertTrue(channelGroups.contains("controller: tableController, layoutMenuHost: titleActions"));
-        assertTrue(channelGroups.indexOf("cleanupTableLayoutMenu(tableController)") <
-            channelGroups.indexOf("host.replaceChildren(node('div', 'loading'"));
+        assertTrue(channelGroups.contains("directory.titleActions.append(rangeControl.controls)"));
+        assertTrue(channelGroups.contains("controller: directory.tableController, layoutMenuHost: directory.titleActions"));
+        String asyncSection = function(source, "function createAsyncSection(title, options = {})");
+        assertTrue(asyncSection.contains("cleanupTableLayoutMenu(tableController)"));
+        assertTrue(asyncSection.contains("host.replaceChildren(loading)"));
+        assertTrue(asyncSection.indexOf("cleanupTableLayoutMenu(tableController)") <
+            asyncSection.indexOf("host.replaceChildren(loading)"));
         assertTrue(channelFrequencies.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(channelNeighbors.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(channels.contains("tableClass: 'channel-catalog-table ui-data-table-quiet ui-data-table-calm ui-catalog-table'"));
@@ -182,7 +186,7 @@ class StatsWebPresentationUiContractTest
         {
             throw new IllegalArgumentException("Missing " + signature);
         }
-        int brace = source.indexOf('{', start);
+        int brace = source.indexOf('{', start + signature.length());
         int depth = 0;
         boolean single = false;
         boolean dual = false;

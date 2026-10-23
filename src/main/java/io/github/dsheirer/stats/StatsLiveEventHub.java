@@ -26,6 +26,7 @@ import java.util.function.Predicate;
  */
 final class StatsLiveEventHub implements AutoCloseable
 {
+    static final int MAXIMUM_BROWSER_SUBSCRIBERS = 256;
     private volatile int mMaximumSubscribers;
     private final int mQueueCapacity;
     private final Set<Subscription> mSubscriptions = ConcurrentHashMap.newKeySet();
@@ -172,6 +173,13 @@ final class StatsLiveEventHub implements AutoCloseable
             mData = data;
             mBaseline = baseline;
             mMarkers = markers;
+        }
+
+        static LiveEvent prepared(String name, Object data, int topic) throws java.io.IOException
+        {
+            LiveEvent event = new LiveEvent(name, data);
+            event.mFrame = LiveMultiplexFrame.preparedJson(topic, name, data);
+            return event;
         }
 
         String name()

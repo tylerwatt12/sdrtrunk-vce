@@ -1430,11 +1430,93 @@ class StatsAliasResolverTest
     }
 
     @Test
-    void deduplicatesMatchingRangesBeforeApplyingTheLoadedRuleBudget() throws Exception
+    void seeksFiveHundredCanonicalSubscriberTargetsWithoutScanningOrdinaryAliases() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("shared-range-rules.sqlite");
+        Path database = mTemporaryFolder.resolve("requested-canonical-subscriber-volume.sqlite");
         createDatabase(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            clearFactoryAliasLists(statement);
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'Selected','P25'),(2,'Other','P25')");
+            statement.executeUpdate("""
+                WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<50000)
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                SELECT value,1,'Working '||value,'RADIO_ID','APCO25',value FROM ids
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<10500)
+                INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
+                SELECT value,0xABCDE,0x123,value FROM ids
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type) VALUES
+                    (50001,1,'Selected canonical','P25_SUBSCRIBER_IDENTITY'),
+                    (50002,2,'Other canonical','P25_SUBSCRIBER_IDENTITY')
+                """);
+            statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity VALUES(50001,1),(50002,2)");
+            statement.executeUpdate("""
+                WITH RECURSIVE ids(value) AS (SELECT 501 UNION ALL SELECT value+1 FROM ids WHERE value<10500)
+                INSERT INTO alias(id,alias_list_id,name,matcher_type)
+                SELECT 60000+value,2,'Unrelated canonical','P25_SUBSCRIBER_IDENTITY' FROM ids
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
+                SELECT id,id-60000 FROM alias WHERE id>60000
+                """);
+            statement.executeUpdate("""
+                WITH RECURSIVE ids(value) AS (SELECT 1 UNION ALL SELECT value+1 FROM ids WHERE value<20000)
+                INSERT INTO alias(id,alias_list_id,name,matcher_type)
+                SELECT 100000+value,1,'Canonical duplicate '||value,'P25_SUBSCRIBER_IDENTITY' FROM ids
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
+                SELECT id,1 FROM alias WHERE id>100000
+                """);
+            statement.execute("ANALYZE");
+            //A lookup that once had one rule can retain sparse statistics after a bulk import.
+            statement.executeUpdate("UPDATE sqlite_stat1 SET stat='1 1 1' WHERE idx='idx_alias_p25_subscriber_identity'");
+            statement.execute("ANALYZE sqlite_schema");
+            List<Map<String,Object>> identities = new ArrayList<>();
+            for(int identity = 1; identity <= 500; identity++)
+            {
+                Map<String,Object> row = activityRow("APCO25",1,1,identity,700,1);
+                row.put("source_p25_subscriber_identity_id", (long)identity);
+                row.put("source_observed_working_id", identity);
+                identities.add(row);
+            }
+            List<String> canonicalQueries = new ArrayList<>();
+            AtomicInteger returnedWinners = new AtomicInteger();
+            Connection observed = countWinnerQueries(connection, "alias_p25_subscriber_identity subscriber_alias",
+                canonicalQueries, returnedWinners);
+            AtomicInteger progress = new AtomicInteger();
+            ProgressHandler.setHandler(connection, 1000, new ProgressHandler()
+            {
+                @Override protected int progress() { return progress.incrementAndGet() > 1000 ? 1 : 0; }
+            });
+            try { new StatsAliasResolver().enrichActivity(observed, identities); }
+            finally { ProgressHandler.clearHandler(connection); }
+            assertEquals("Canonical duplicate 20000", identities.getFirst().get("source_alias_name"),
+                "The selected channel's canonical Alias must retain precedence over its Working-ID Alias");
+            assertEquals("Working 2", identities.get(1).get("source_alias_name"),
+                "Another Alias List's canonical definition must not replace the selected channel's Working ID");
+            assertEquals("Working 500", identities.getLast().get("source_alias_name"));
+            assertEquals(1, canonicalQueries.size(), "Five hundred requested pairs should use one bounded query");
+            assertEquals(1, returnedWinners.get(), "Twenty thousand losing canonical rules must stay in SQLite");
+            List<Object> parameters = new ArrayList<>();
+            for(int identity = 1; identity <= 500; identity++) { parameters.add(1L); parameters.add((long)identity); }
+            String plan = queryPlan(connection, canonicalQueries.getFirst(), parameters.toArray());
+            assertTrue(plan.contains("SEARCH subscriber_alias USING COVERING INDEX idx_alias_p25_subscriber_identity"), plan);
+            assertFalse(plan.contains("SCAN definition"), plan);
+            assertTrue(progress.get() < 100, "Canonical lookup scanned unrelated Alias definitions: " + progress);
+        }
+    }
 
+    @Test
+    void resolvesTwentyThousandCompetingRulesOncePerRequestedPairInChunks() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("competing-range-rules.sqlite");
+        createDatabase(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
@@ -1442,31 +1524,64 @@ class StatsAliasResolverTest
             statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'Selected', 'P25')");
             statement.executeUpdate("""
                 WITH RECURSIVE rules(value) AS (
-                    SELECT 1 UNION ALL SELECT value + 1 FROM rules WHERE value < 50
+                    SELECT 1 UNION ALL SELECT value + 1 FROM rules WHERE value < 20000
                 )
                 INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, min_value, max_value)
-                SELECT value, 1, 'Range ' || value, 'TALKGROUP_RANGE', 'APCO25', 1, 100
-                FROM rules
+                SELECT value, 1, 'Range ' || value, 'TALKGROUP_RANGE', 'APCO25', 1, 3000 FROM rules
                 """);
-            List<Map<String,Object>> talkgroups = new ArrayList<>();
-            for(int identifier = 1; identifier <= 100; identifier++) talkgroups.add(row(1, identifier));
-            new StatsAliasResolver().enrichP25ConventionalTalkgroups(connection, talkgroups,
-                "identity_id", "alias_");
-            assertTrue(talkgroups.stream().allMatch(identity -> "Range 50".equals(identity.get("alias_name"))),
-                "the 5,000 matching pairs represent only 50 distinct configured rules");
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value) VALUES
+                    (20001,1,'Exact','TALKGROUP','APCO25',25,NULL,NULL),
+                    (20002,1,'Phase 2 exact','TALKGROUP','APCO25_PHASE2',25,NULL,NULL),
+                    (20003,1,'Higher minimum','TALKGROUP_RANGE','APCO25',NULL,1000,2000),
+                    (20004,1,'Higher maximum','TALKGROUP_RANGE','APCO25',NULL,1000,2001),
+                    (20005,1,'Phase 2 range','TALKGROUP_RANGE','APCO25_PHASE2',NULL,1000,2001),
+                    (20006,1,'Latest wide range','TALKGROUP_RANGE','APCO25',NULL,1,3000)
+                """);
+            List<Map<String,Object>> identities = new ArrayList<>();
+            for(int identifier = 1; identifier <= 1101; identifier++) identities.add(observedP25Row(identifier));
+            List<String> queries = new ArrayList<>();
+            AtomicInteger returnedWinners = new AtomicInteger();
+            AtomicInteger progress = new AtomicInteger();
+            Connection observed = countWinnerQueries(connection, "WITH requested(alias_list_id, identifier)",
+                queries, returnedWinners);
+            ProgressHandler.setHandler(connection, 1000, new ProgressHandler()
+            {
+                @Override protected int progress() { return progress.incrementAndGet() > 500 ? 1 : 0; }
+            });
+            try { new StatsAliasResolver().resolveObservedGroupIdentities(observed, identities); }
+            finally { ProgressHandler.clearHandler(connection); }
+            for(int index = 0; index < identities.size(); index++)
+            {
+                int identifier = index + 1;
+                Map<String,Object> identity = identities.get(index);
+                long expected = identifier == 25 ? 20002 : identifier >= 1000 ? 20005 : 20006;
+                assertEquals(expected, identity.get("matched_alias_id"), "identifier " + identifier);
+                assertEquals(identifier == 25 ? "exact" : "range", identity.get("match_kind"));
+            }
+            assertEquals(3, queries.size(), "1,101 pairs should need three 500-pair statements");
+            assertEquals(1101, returnedWinners.get(), "Only the winning rule for each pair should leave SQLite");
+            assertTrue(progress.get() < 500, "Losing ranges must not be scanned for every pair: " + progress);
 
             statement.executeUpdate("""
-                WITH RECURSIVE rules(value) AS (
-                    SELECT 51 UNION ALL SELECT value + 1 FROM rules WHERE value <= 4096
-                )
-                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, min_value, max_value)
-                SELECT value, 1, 'Range ' || value, 'TALKGROUP_RANGE', 'APCO25', 1, 100
-                FROM rules
+                UPDATE alias SET matcher_type='TALKGROUP', value=25, min_value=NULL, max_value=NULL WHERE id<=20000
                 """);
-            StatsApiException exception = assertThrows(StatsApiException.class,
-                () -> new StatsAliasResolver().enrichP25ConventionalTalkgroups(connection,
-                    rows(row(1, 50)), "identity_id", "alias_"));
-            assertEquals("response_too_large", exception.code());
+            queries.clear();
+            returnedWinners.set(0);
+            progress.set(0);
+            Map<String,Object> exact = observedP25Row(25);
+            ProgressHandler.setHandler(connection, 1000, new ProgressHandler()
+            {
+                @Override protected int progress() { return progress.incrementAndGet() > 100 ? 1 : 0; }
+            });
+            try { new StatsAliasResolver().resolveObservedGroupIdentities(observed, rows(exact)); }
+            finally { ProgressHandler.clearHandler(connection); }
+            assertEquals(20002L, exact.get("matched_alias_id"),
+                "The highest exact ID across P25 variants must win over 20,000 duplicate numeric rules");
+            assertEquals("exact", exact.get("match_kind"));
+            assertEquals(1, queries.size());
+            assertEquals(1, returnedWinners.get());
+            assertTrue(progress.get() < 100, "Losing exact rules must stay behind the indexed winner seek: " + progress);
         }
     }
 
@@ -1497,7 +1612,7 @@ class StatsAliasResolverTest
                 VALUES (?, ?, 'TALKGROUP', 'APCO25', ?)
                 """))
             {
-                for(int x = 0; x <= StatsAliasResolver.MAX_LOADED_RULES; x++)
+                for(int x = 0; x < 20_000; x++)
                 {
                     insert.setInt(1, 1);
                     insert.setString(2, "Wrong Selected pair " + x);
@@ -1868,6 +1983,49 @@ class StatsAliasResolverTest
                 {
                     throw exception.getCause();
                 }
+            });
+    }
+
+    private static Connection countWinnerQueries(Connection connection, String sqlFragment,
+                                                   List<String> queries, AtomicInteger returnedWinners)
+    {
+        return (Connection)Proxy.newProxyInstance(Connection.class.getClassLoader(),
+            new Class<?>[]{Connection.class}, (proxy, method, arguments) -> {
+                try
+                {
+                    Object value = method.invoke(connection, arguments);
+                    if(value instanceof PreparedStatement statement && arguments != null &&
+                        arguments[0] instanceof String sql && sql.contains(sqlFragment))
+                    {
+                        queries.add(sql);
+                        return Proxy.newProxyInstance(PreparedStatement.class.getClassLoader(),
+                            new Class<?>[]{PreparedStatement.class}, (prepared, operation, parameters) -> {
+                                try
+                                {
+                                    Object result = operation.invoke(statement, parameters);
+                                    if(result instanceof ResultSet rows)
+                                    {
+                                        return Proxy.newProxyInstance(ResultSet.class.getClassLoader(),
+                                            new Class<?>[]{ResultSet.class}, (cursor, read, inputs) -> {
+                                                try
+                                                {
+                                                    Object field = read.invoke(rows, inputs);
+                                                    if("next".equals(read.getName()) && Boolean.TRUE.equals(field))
+                                                        returnedWinners.incrementAndGet();
+                                                    return field;
+                                                }
+                                                catch(InvocationTargetException exception)
+                                                { throw exception.getCause(); }
+                                            });
+                                    }
+                                    return result;
+                                }
+                                catch(InvocationTargetException exception) { throw exception.getCause(); }
+                            });
+                    }
+                    return value;
+                }
+                catch(InvocationTargetException exception) { throw exception.getCause(); }
             });
     }
 

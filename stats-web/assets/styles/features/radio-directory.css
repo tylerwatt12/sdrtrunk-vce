@@ -170,7 +170,7 @@
 .radio-directory-system-grid {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: var(--space-3);
 }
@@ -180,20 +180,20 @@
 }
 
 .radio-directory-system-card {
-  padding: var(--space-4);
+  overflow: hidden;
 }
 
 .radio-directory-system-header {
   min-width: 0;
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
+  align-items: center;
+  gap: var(--space-2);
+  padding: 12px 14px;
 }
 
 .radio-directory-system-name {
   min-width: 0;
+  flex: 1;
   margin: 0;
   overflow-wrap: anywhere;
   font-size: var(--font-size-body);
@@ -207,43 +207,68 @@
   display: grid;
 }
 
-.radio-directory-site-list {
-  gap: var(--space-3);
-}
+.radio-directory-site-list { gap: 0; }
 
+.radio-directory-row-head,
 .radio-directory-site-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
-  align-items: start;
-  gap: var(--space-1) var(--space-3);
+  grid-template-columns: minmax(145px, 1.5fr) 1.1fr 1fr 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+}
+
+.radio-directory-row-head {
+  padding-block: 6px;
+  background: var(--surface-2);
+}
+
+.radio-directory-site-row + .radio-directory-site-row {
+  border-top: 1px solid var(--line);
 }
 
 .radio-directory-item-identity {
   grid-column: 1;
-  grid-row: 1;
   gap: var(--space-1);
   overflow-wrap: anywhere;
 }
 
-.radio-directory-frequency {
+.radio-directory-row-context,
+.radio-directory-origin,
+.radio-directory-decode-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.radio-directory-origin { flex-wrap: nowrap; }
+
+.radio-directory-reading {
   min-width: 0;
-  min-height: var(--control-height-compact);
   display: grid;
-  grid-column: 1;
-  grid-row: 2;
-  align-content: start;
-  gap: var(--space-1);
-  color: var(--muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-micro);
-  line-height: var(--line-height-body);
+  gap: 3px;
+  font-variant-numeric: tabular-nums;
+}
+
+.radio-directory-reading-label { display: none; }
+
+.radio-directory-value {
+  min-width: 0;
+  font-size: var(--font-size-body);
+  font-weight: var(--font-weight-medium);
   overflow-wrap: anywhere;
 }
 
-.radio-directory-frequency > small,
-.radio-directory-frequency > strong {
-  font: inherit;
+.radio-directory-unit,
+.radio-directory-average {
+  font-size: var(--font-size-micro);
+  font-weight: var(--font-weight-normal);
+}
+
+.radio-directory-conventional-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
 .radio-directory-live-action {
@@ -252,8 +277,7 @@
 }
 
 .radio-directory-live-state {
-  grid-column: 2;
-  grid-row: 1 / 3;
+  grid-column: 3;
   align-self: center;
   justify-self: end;
   white-space: nowrap;
@@ -337,4 +361,23 @@
     width: 100%;
     overflow-x: auto;
   }
+}
+
+@media (max-width: 620px) {
+  .radio-directory-row-head { display: none; }
+
+  .radio-directory-site-row {
+    grid-template-columns: 1.1fr 1fr 1fr;
+    gap: 12px 8px;
+  }
+
+  .radio-directory-item-identity { grid-column: 1 / -1; }
+  .radio-directory-reading-label { display: block; }
+  .radio-directory-frequency .radio-directory-unit { display: block; margin-top: 3px; }
+  .radio-directory-conventional-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .radio-directory-conventional-row .radio-directory-live-state { grid-column: 2; }
+}
+
+@media (max-width: 380px) {
+  .radio-directory-unit { display: block; margin-top: 3px; }
 }

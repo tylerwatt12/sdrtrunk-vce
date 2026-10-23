@@ -11,6 +11,7 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
@@ -34,8 +35,14 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.CountDownLatch;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
+import org.slf4j.LoggerFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -73,6 +80,26 @@ class ReceiverActivityWriterTest
                 """));
             assertEquals(1, scalar(connection, "SELECT grant_count FROM trunked_signaling_activity_bucket"));
         }
+    }
+
+    @Test
+    void defaultStatisticsCadenceCommitsLowRateActivityWithoutViewerDemand() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("live-cadence.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true);
+        writer.start();
+        try
+        {
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+            awaitWritten(writer, 1, 3);
+            assertEquals(0, writer.historyGeneration(), "ordinary inserts preserve the current history seed");
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
+            }
+        }
+        finally { writer.close(); }
     }
 
     @Test
@@ -161,6 +188,74 @@ class ReceiverActivityWriterTest
         assertEquals(1, restarted.getStatus().dropDiagnostics().writerRecordCategories().get("signaling"));
         assertNull(restarted.getStatus().lastError());
         restarted.close();
+    }
+
+    @Test
+    void rejectedRecordDiagnosticsWaitForAConcurrentConfigurationWriteAndQualityResumes() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("constraint-busy-diagnostics.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 1, 0, 1, 5_000);
+        CountDownLatch locked = new CountDownLatch(1);
+        AtomicReference<Thread> writerThread = new AtomicReference<>();
+        AtomicReference<Exception> lockFailure = new AtomicReference<>();
+        Logger logger = (Logger)LoggerFactory.getLogger(ReceiverActivityWriter.class);
+        try(Connection blocker = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            blocker.setAutoCommit(false);
+            AppenderBase<ILoggingEvent> appender = new AppenderBase<>()
+            {
+                @Override protected void append(ILoggingEvent event)
+                {
+                    if(!event.getFormattedMessage().startsWith("Discarded invalid statistics record") ||
+                        !writerThread.compareAndSet(null, Thread.currentThread())) return;
+                    try(Statement statement = blocker.createStatement())
+                    {
+                        // Acquire the second connection's write lock exactly after the rejected transaction rolled back.
+                        statement.executeUpdate("INSERT INTO statistics_status(key,value,updated_at_ms) VALUES ('busy_fixture','1',1)");
+                    }
+                    catch(Exception failure) { lockFailure.set(failure); }
+                    finally { locked.countDown(); }
+                }
+            };
+            appender.start(); logger.addAppender(appender);
+            try
+            {
+                writer.start(); awaitState(writer, ReceiverActivityStatus.State.RUNNING);
+                writer.enqueue(activityWithEncryptionAlgorithm(System.currentTimeMillis(), -1));
+                assertTrue(locked.await(5, TimeUnit.SECONDS)); assertNull(lockFailure.get());
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                boolean retrying = false;
+                while(System.nanoTime() < deadline && writer.getStatus().state() == ReceiverActivityStatus.State.RUNNING)
+                {
+                    retrying = java.util.Arrays.stream(writerThread.get().getStackTrace()).anyMatch(frame ->
+                        frame.getClassName().equals(ReceiverActivityWriter.class.getName()) &&
+                            frame.getMethodName().equals("pauseBeforeDatabaseBusyRetry"));
+                    if(retrying) break;
+                    Thread.sleep(10);
+                }
+                assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+                assertTrue(retrying, "diagnostics must use the existing busy retry while the real write lock is held");
+                long observed = System.currentTimeMillis();
+                writer.enqueue(new ReceiverActivityRecords.ControlChannelQuality(observed, CONFIGURATION_ID, "APCO25",
+                    TrunkedIdentityDomain.STANDARD, 853_000_000, -45.0, -45.0, -46.0, -44.0, 100.0,
+                    10, 0, 0, 0, 0, observed));
+                blocker.commit(); awaitWritten(writer, 1);
+                assertEquals(ReceiverActivityStatus.State.RUNNING, writer.getStatus().state());
+                assertNull(writer.getStatus().lastError());
+                assertEquals(1, writer.getStatus().dropDiagnostics().constraintRejection());
+                try(Connection reader = DriverManager.getConnection("jdbc:sqlite:" + database))
+                {
+                    assertEquals(observed, scalar(reader, "SELECT max(observed_at_ms) FROM trunked_control_channel_quality"));
+                    assertEquals(1, scalar(reader, "SELECT value FROM statistics_status WHERE key='records_dropped'"));
+                    assertEquals(1, scalar(reader, "SELECT value FROM statistics_status WHERE key='constraint_rejection_drops'"));
+                }
+            }
+            finally
+            {
+                blocker.rollback(); writer.close(); logger.detachAppender(appender); appender.stop();
+            }
+        }
     }
 
     @Test
@@ -323,56 +418,11 @@ class ReceiverActivityWriterTest
     }
 
     @Test
-    void liveActivityDemandCapsCollectionAndNotifiesAfterVisibleCommit() throws Exception
-    {
-        Path database = createDatabase(mTemporaryFolder.resolve("live-commit.sqlite"));
-        insertConfiguredChannel(database);
-        var committed = new java.util.concurrent.CountDownLatch(1);
-        var visibleRows = new java.util.concurrent.atomic.AtomicLong(-1);
-        var notifications = new java.util.concurrent.atomic.AtomicInteger();
-        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 10, 10_000);
-        writer.setLiveActivityObserver(() -> true, historyChanged -> {
-            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
-            {
-                visibleRows.set(scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
-                notifications.incrementAndGet();
-            }
-            catch(Exception exception) { throw new IllegalStateException(exception); }
-            finally { committed.countDown(); }
-        });
-        writer.start();
-        try
-        {
-            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, 1_700_000_000_400L));
-            assertTrue(committed.await(2, TimeUnit.SECONDS), "A live viewer must not wait for the ten-second batch");
-            assertEquals(1, visibleRows.get(), "The observer sees only durable committed rows");
-            assertEquals(1, notifications.get());
-        }
-        finally { writer.close(); }
-        assertEquals(TimeUnit.MILLISECONDS.toNanos(10_000) + 50,
-            ReceiverActivityWriter.collectionDeadline(50, 10_000, false));
-        assertEquals(TimeUnit.MILLISECONDS.toNanos(200) + 50,
-            ReceiverActivityWriter.collectionDeadline(50, 10_000, true));
-        assertEquals(TimeUnit.MILLISECONDS.toNanos(100) + 50,
-            ReceiverActivityWriter.collectionDeadline(50, 100, true), "Existing shorter deadlines are preserved");
-    }
-
-    @Test
-    void p25SourceEnrichmentInvalidatesVisibleHistoryEvenWhenNewRowsCommitTogether() throws Exception
+    void p25SourceEnrichmentPreservesExistingHistoryWhenNewRowsCommitTogether() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("live-source-enrichment.sqlite"));
         insertConfiguredChannel(database);
         var writer = new ReceiverActivityWriter(database, 30, true);
-        List<Boolean> invalidations = new ArrayList<>();
-        List<Long> visibleRows = new ArrayList<>();
-        writer.setLiveActivityObserver(() -> true, changed -> {
-            invalidations.add(changed);
-            try(Connection visible = DriverManager.getConnection("jdbc:sqlite:" + database))
-            {
-                visibleRows.add(scalar(visible, "SELECT count(*) FROM receiver_activity_event"));
-            }
-            catch(Exception exception) { throw new IllegalStateException(exception); }
-        });
         long now = System.currentTimeMillis();
         var initial = p25Call("late", now, null);
         var known = p25Call("late", now, 202);
@@ -384,20 +434,17 @@ class ReceiverActivityWriterTest
             assertEquals(202, scalar(connection,
                 "SELECT source_observed_local_id FROM receiver_activity_event WHERE source_call_uuid IS NOT NULL"));
             writeBatch(writer, connection, List.of(update));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_activity_event"),
+                "Repeating enrichment does not insert or lose saved events");
         }
-        assertEquals(List.of(false, true, false), invalidations,
-            "Insert-only and unchanged snapshots append normally; an enriched retained row requires a reload");
-        assertEquals(List.of(1L, 2L, 2L), visibleRows, "Every signal follows a visible durable transaction");
     }
 
     @Test
-    void resolvedExactReferenceInvalidatesOnlyWhenItsSavedSourceActuallyChanges() throws Exception
+    void resolvedExactReferenceEnrichesOnlyItsRetainedSavedSource() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("live-resolved-source.sqlite"));
         insertConfiguredChannel(database);
         var writer = new ReceiverActivityWriter(database, 30, true);
-        List<Boolean> invalidations = new ArrayList<>();
-        writer.setLiveActivityObserver(() -> true, invalidations::add);
         long now = System.currentTimeMillis();
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -409,9 +456,12 @@ class ReceiverActivityWriterTest
                 """));
             writeBatch(writer, connection, List.of(resolved(2, now, "exact")));
             writeBatch(writer, connection, List.of(resolved(3, now, "unrelated")));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(202, scalar(connection, """
+                SELECT identity.identity_id FROM receiver_activity_event event
+                JOIN radio_system_identity_summary identity ON identity.id = event.source_identity_summary_id
+                """));
         }
-        assertEquals(List.of(false, true, false, false), invalidations,
-            "Unchanged exact references and references without a retained row must not trigger reloads");
     }
 
     @Test
@@ -420,8 +470,6 @@ class ReceiverActivityWriterTest
         Path database = createDatabase(mTemporaryFolder.resolve("p25-call-duration.sqlite"));
         insertConfiguredChannel(database);
         var writer = new ReceiverActivityWriter(database, 30, true);
-        List<Boolean> invalidations = new ArrayList<>();
-        writer.setLiveActivityObserver(() -> true, invalidations::add);
         long now = System.currentTimeMillis();
         var initial = p25Call("duration", now, null);
         var finalTiming = new ReceiverActivityRecords.P25CallObservation("duration",
@@ -443,7 +491,6 @@ class ReceiverActivityWriterTest
             assertEquals(202, scalar(connection, "SELECT source_observed_local_id FROM receiver_activity_event"));
             assertEquals(1, scalar(connection, "SELECT sum(logical_call_count) FROM trunked_logical_call_bucket"));
         }
-        assertEquals(List.of(false, true, true, false, false), invalidations);
     }
 
     @Test
@@ -452,8 +499,6 @@ class ReceiverActivityWriterTest
         Path database = createDatabase(mTemporaryFolder.resolve("exact-call-duration.sqlite"));
         insertConfiguredChannel(database);
         var writer = new ReceiverActivityWriter(database, 30, true);
-        List<Boolean> invalidations = new ArrayList<>();
-        writer.setLiveActivityObserver(() -> true, invalidations::add);
         long now = System.currentTimeMillis();
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
@@ -474,7 +519,6 @@ class ReceiverActivityWriterTest
             assertEquals(2_500L, scalar(connection, "SELECT duration_ms FROM receiver_activity_event WHERE source_call_uuid='" +
                 SourceCallReference.fromToken("first") + "'"));
         }
-        assertEquals(List.of(false, false, false, true, false, false), invalidations);
     }
 
     private static ReceiverActivityRecords.ResolvedLogicalCall resolved(long sequence, long timestamp, String token)
@@ -741,20 +785,25 @@ class ReceiverActivityWriterTest
             setLastRetentionCleanup(writer, System.currentTimeMillis());
             runScheduledRetention(writer, connection);
             assertEquals(5_000, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(0, writer.historyGeneration());
 
             setLastRetentionCleanup(writer, System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1) - 1_000);
             runScheduledRetention(writer, connection);
             long afterHourly = scalar(connection, "SELECT count(*) FROM receiver_activity_event");
             assertTrue(afterHourly < 5_000 && afterHourly >= 4_000, "an hourly pass must stay bounded");
+            long hourlyGeneration = writer.historyGeneration();
+            assertTrue(hourlyGeneration > 0);
             runScheduledRetention(writer, connection);
             assertEquals(afterHourly, scalar(connection, "SELECT count(*) FROM receiver_activity_event"),
                 "a backlog must wait before its next pass");
+            assertEquals(hourlyGeneration, writer.historyGeneration());
 
             setLastRetentionCleanup(writer, System.currentTimeMillis() - TimeUnit.SECONDS.toMillis(6));
             runScheduledRetention(writer, connection);
             long afterCatchup = scalar(connection, "SELECT count(*) FROM receiver_activity_event");
             assertTrue(afterCatchup < afterHourly && afterCatchup >= afterHourly - 1_000,
                 "the five-second backlog schedule must continue expiry without waiting another hour");
+            assertTrue(writer.historyGeneration() > hourlyGeneration);
             assertEquals(123, ReceiverActivitySchema.readStatusLong(connection, "last_maintenance_ms"));
             assertEquals(0, scalar(connection, """
                 SELECT count(*) FROM sqlite_stat1 WHERE idx='idx_receiver_activity_event_channel_time'
@@ -770,6 +819,33 @@ class ReceiverActivityWriterTest
         {
             setWriterRunning(writer, false);
         }
+    }
+
+    @Test
+    void unrelatedAutomaticRetentionDoesNotInvalidateDetailedHistory() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("summary-only-history-generation.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=ON");
+            statement.executeUpdate("""
+                INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms)
+                VALUES (1,'%s',1,1)
+                """.formatted(CONFIGURATION_ID));
+            statement.executeUpdate("""
+                INSERT INTO trunked_control_channel_quality(channel_id,frequency_hz,bucket_start_ms,observed_at_ms)
+                VALUES (1,854187500,0,1)
+                """);
+            setWriterRunning(writer, true);
+            setLastRetentionCleanup(writer, 0);
+            runScheduledRetention(writer, connection);
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM trunked_control_channel_quality"));
+            assertEquals(0, writer.historyGeneration(), "expiring unrelated measurements must not reload Activity");
+        }
+        finally { setWriterRunning(writer, false); }
     }
 
     @Test
@@ -845,6 +921,115 @@ class ReceiverActivityWriterTest
                 Thread.sleep(10);
             }
             assertTrue(ReceiverActivitySchema.readStatusLong(connection, "last_retention_cleanup_ms") > 1);
+        }
+    }
+
+    @Test
+    void scopedInteriorDeletionInvalidatesHistoryWithoutAnAppendOrChangingMaximumId() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("interior-history-generation.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 1, 0);
+        writer.start();
+        try
+        {
+            long first = System.currentTimeMillis();
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, first));
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, first + 1_000));
+            awaitWritten(writer, 2);
+            assertEquals(0, writer.historyGeneration());
+            StatsDatabaseMaintenanceRequest.ScopedData target = new StatsDatabaseMaintenanceRequest.ScopedData(
+                "radio_system", "p25:bee00:3a9", null, null, "detailed_events", null, List.of("events"),
+                first, first + 1, null);
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                long maximum = scalar(connection, "SELECT MAX(id) FROM receiver_activity_event");
+                StatsDatabaseMaintenanceRequest deletion = StatsDatabaseMaintenanceRequest.delete(target);
+                writer.submitMaintenance(deletion);
+                assertTrue(deletion.result().get(5, TimeUnit.SECONDS).rowsDeleted() > 0);
+                assertTrue(writer.historyGeneration() > 0);
+                assertEquals(maximum, scalar(connection, "SELECT MAX(id) FROM receiver_activity_event"));
+                assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+                long generation = writer.historyGeneration();
+                StatsDatabaseMaintenanceRequest missing = StatsDatabaseMaintenanceRequest.delete(target);
+                writer.submitMaintenance(missing);
+                assertEquals(0, missing.result().get(5, TimeUnit.SECONDS).rowsDeleted());
+                assertEquals(generation, writer.historyGeneration());
+            }
+        }
+        finally { writer.close(); }
+    }
+
+    @Test
+    void rolledBackClearDoesNotAdvanceHistoryUntilADeletionCommits() throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("rollback-history-generation.sqlite"));
+        insertConfiguredChannel(database);
+        ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 1, 0);
+        writer.start();
+        try
+        {
+            writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
+            awaitWritten(writer, 1);
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                Statement statement = connection.createStatement())
+            {
+                statement.execute("""
+                    CREATE TRIGGER prevent_history_delete BEFORE DELETE ON receiver_activity_event
+                    BEGIN SELECT RAISE(ABORT,'history generation rollback fixture'); END
+                    """);
+                StatsDatabaseMaintenanceRequest rollback = StatsDatabaseMaintenanceRequest.clearChannel(CONFIGURATION_ID);
+                writer.submitMaintenance(rollback);
+                assertThrows(ExecutionException.class, () -> rollback.result().get(5, TimeUnit.SECONDS));
+                assertEquals(0, writer.historyGeneration());
+                assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+                statement.execute("DROP TRIGGER prevent_history_delete");
+                StatsDatabaseMaintenanceRequest deletion = StatsDatabaseMaintenanceRequest.clearChannel(CONFIGURATION_ID);
+                writer.submitMaintenance(deletion);
+                assertTrue(deletion.result().get(5, TimeUnit.SECONDS).rowsDeleted() > 0);
+                assertEquals(1, writer.historyGeneration());
+                StatsDatabaseMaintenanceRequest noOp = StatsDatabaseMaintenanceRequest.clearChannel(CONFIGURATION_ID);
+                writer.submitMaintenance(noOp);
+                assertEquals(0, noOp.result().get(5, TimeUnit.SECONDS).rowsDeleted());
+                assertEquals(1, writer.historyGeneration());
+            }
+        }
+        finally { writer.close(); }
+    }
+
+    @Test
+    void committedRetentionStillInvalidatesHistoryWhenLaterMaintenanceStatusFails() throws Exception
+    {
+        for(String statusKey: List.of(ReceiverActivityRetention.CURSOR_STATUS_KEY, "last_maintenance_ms"))
+        {
+            Path database = createDatabase(mTemporaryFolder.resolve(statusKey + "-history-generation.sqlite"));
+            insertConfiguredChannel(database);
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                Statement statement = connection.createStatement())
+            {
+                seedExpiredActivity(statement, 50, 1);
+                statement.execute("""
+                    CREATE TRIGGER fail_after_history_commit BEFORE INSERT ON statistics_status
+                    WHEN NEW.key='%s'
+                    BEGIN SELECT RAISE(ABORT,'postcommit history generation fixture'); END
+                    """.formatted(statusKey));
+            }
+            ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true);
+            writer.start();
+            try
+            {
+                StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.forOperation(
+                    ReceiverActivityMaintenance.Operation.MAINTAIN);
+                writer.submitMaintenance(request);
+                assertThrows(ExecutionException.class, () -> request.result().get(5, TimeUnit.SECONDS));
+                assertTrue(writer.historyGeneration() > 0,
+                    "a postcommit status failure must not hide already durable history deletions");
+                try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+                {
+                    assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+                }
+            }
+            finally { writer.close(); }
         }
     }
 

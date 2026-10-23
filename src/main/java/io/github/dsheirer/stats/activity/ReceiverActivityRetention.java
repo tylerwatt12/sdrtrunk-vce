@@ -17,6 +17,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
 import org.sqlite.ProgressHandler;
 
@@ -51,6 +52,18 @@ final class ReceiverActivityRetention
     static Pass runPass(Connection connection, long cutoffEpochMilliseconds, LongSupplier nanoTime)
         throws SQLException
     {
+        return runPass(connection, cutoffEpochMilliseconds, nanoTime, null);
+    }
+
+    static Pass runPass(Connection connection, long cutoffEpochMilliseconds, AtomicLong historyGeneration)
+        throws SQLException
+    {
+        return runPass(connection, cutoffEpochMilliseconds, System::nanoTime, historyGeneration);
+    }
+
+    private static Pass runPass(Connection connection, long cutoffEpochMilliseconds, LongSupplier nanoTime,
+                                AtomicLong historyGeneration) throws SQLException
+    {
         //An interrupted SQLite DELETE can roll back its entire transaction. Each task must own only its statement,
         //so earlier completed batches stay durable and the writer is released when an expensive task is interrupted.
         if(!connection.getAutoCommit())
@@ -76,7 +89,7 @@ final class ReceiverActivityRetention
             RetentionTask task = TASKS.get(cursor);
             int maximumRows = Math.min(MAXIMUM_ROWS_PER_TASK, MAXIMUM_ROWS_PER_PASS - deleted);
             int taskDeleted = task.delete(connection, task.hourly() ? hourlyCutoff : cutoffEpochMilliseconds,
-                maximumRows, nanoTime, startedAt);
+                maximumRows, nanoTime, startedAt, historyGeneration);
             cursor = (cursor + 1) % TASKS.size();
             visited++;
             if(taskDeleted < 0)
@@ -138,7 +151,7 @@ final class ReceiverActivityRetention
                 LIMIT ?
             )
             """));
-        tasks.add(sql("activity events", false, """
+        tasks.add(historyEvents("activity events", """
             DELETE FROM receiver_activity_event
             WHERE id IN (
                 SELECT event.id
@@ -422,17 +435,22 @@ final class ReceiverActivityRetention
 
     private static RetentionTask task(String name, boolean hourly, boolean usesCutoff, String sql)
     {
-        return new RetentionTask(name, hourly, usesCutoff, sql);
+        return new RetentionTask(name, hourly, usesCutoff, sql, false);
+    }
+
+    private static RetentionTask historyEvents(String name, String sql)
+    {
+        return new RetentionTask(name, false, true, sql, true);
     }
 
     record Pass(int deletedRows, boolean moreWorkLikely, int tasksVisited, int nextCursor)
     {
     }
 
-    private record RetentionTask(String name, boolean hourly, boolean usesCutoff, String sql)
+    private record RetentionTask(String name, boolean hourly, boolean usesCutoff, String sql, boolean historyEvents)
     {
         private int delete(Connection connection, long cutoff, int maximumRows, LongSupplier nanoTime,
-                           long passStartedAt) throws SQLException
+                           long passStartedAt, AtomicLong historyGeneration) throws SQLException
         {
             long taskStartedAt = nanoTime.getAsLong();
             boolean[] budgetExhausted = {false};
@@ -455,7 +473,12 @@ final class ReceiverActivityRetention
                     statement.setLong(index++, cutoff);
                 }
                 statement.setInt(index, maximumRows);
-                return statement.executeUpdate();
+                int deleted = statement.executeUpdate();
+                if(deleted > 0 && historyEvents && historyGeneration != null)
+                {
+                    historyGeneration.incrementAndGet();
+                }
+                return deleted;
             }
             catch(SQLException e)
             {

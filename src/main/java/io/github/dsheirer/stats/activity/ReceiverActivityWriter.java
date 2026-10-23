@@ -39,8 +39,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongArray;
 import java.util.function.LongSupplier;
-import java.util.function.BooleanSupplier;
-import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -54,7 +52,7 @@ class ReceiverActivityWriter implements AutoCloseable
     /* Queue entries are observations that may fan out to multiple SQL statements, not changed-row counts. */
     private static final int BATCH_SIZE = 1250;
     /* Normal 40-100 observation/second traffic reaches the deadline before this bounded safety cap. */
-    private static final long BATCH_COLLECTION_MILLISECONDS = 10000;
+    private static final long BATCH_COLLECTION_MILLISECONDS = 1000;
     private static final long BATCH_COLLECTION_POLL_MILLISECONDS = 100;
     private static final long POLL_TIMEOUT_MILLISECONDS = 1000;
     private static final long CLEANUP_YIELD_MILLISECONDS = 25;
@@ -95,8 +93,11 @@ class ReceiverActivityWriter implements AutoCloseable
     private long mObservationDropBaseline;
     private long mPersistedObservationDrops;
     private long mPersistedObservationDropMs;
+    private boolean mDropDiagnosticsDirty;
     private final AtomicLong mWrittenRecords = new AtomicLong();
     private final AtomicLong mLastSuccessfulWriteMs = new AtomicLong();
+    /* Shared by replacement writers belonging to one service, including a writer finishing its final commit. */
+    private AtomicLong mHistoryGeneration = new AtomicLong();
     /* Writer-thread-owned evidence that the matching logical-call counters committed successfully. */
     private final Map<LogicalCallId,Long> mResolvedLogicalCalls = new LinkedHashMap<>(1024, 0.75f, true);
     private ActivityToneAssociations mActivityToneAssociations = new ActivityToneAssociations();
@@ -112,22 +113,6 @@ class ReceiverActivityWriter implements AutoCloseable
     private volatile long mLastRetentionCleanup;
     private volatile ReceiverActivityStatus.State mState = ReceiverActivityStatus.State.STOPPED;
     private volatile String mLastError;
-    private BooleanSupplier mLiveActivityDemand = () -> false;
-    private Consumer<Boolean> mAfterCommit = ignored -> {};
-
-    /** Installed before start; the callback only signals the independent saved-activity reader. */
-    void setLiveActivityObserver(BooleanSupplier demand, Consumer<Boolean> afterCommit)
-    {
-        mLiveActivityDemand = java.util.Objects.requireNonNull(demand);
-        mAfterCommit = java.util.Objects.requireNonNull(afterCommit);
-    }
-
-    static long collectionDeadline(long startedNanos, long normalMilliseconds, boolean liveDemand)
-    {
-        return startedNanos + TimeUnit.MILLISECONDS.toNanos(liveDemand ?
-            Math.min(normalMilliseconds, 200) : normalMilliseconds);
-    }
-
     ReceiverActivityWriter(Path databasePath, int retentionDays, boolean detailedEventHistoryEnabled)
     {
         this(databasePath, retentionDays, detailedEventHistoryEnabled, DEFAULT_QUEUE_CAPACITY);
@@ -257,9 +242,19 @@ class ReceiverActivityWriter implements AutoCloseable
         return mWrittenRecords.get();
     }
 
-    Path getDatabasePath()
+    /** Committed history maintenance only; ordinary observations do not invalidate saved history seeds. */
+    public long historyGeneration()
     {
-        return mDatabasePath;
+        return mHistoryGeneration.get();
+    }
+
+    void setHistoryGeneration(AtomicLong generation)
+    {
+        if(mRunning.get() || mExecutorService != null)
+        {
+            throw new IllegalStateException("History generation must be assigned before writer startup");
+        }
+        mHistoryGeneration = java.util.Objects.requireNonNull(generation, "generation cannot be null");
     }
 
     boolean isWorkerTerminated()
@@ -538,9 +533,8 @@ class ReceiverActivityWriter implements AutoCloseable
                             continue;
                         }
 
-                        // Recheck demand on each bounded queue poll, including a viewer opened during a long batch.
-                        long remainingNanoseconds = collectionDeadline(batchStarted, normalCollection,
-                            mLiveActivityDemand.getAsBoolean()) - System.nanoTime();
+                        long remainingNanoseconds = batchStarted +
+                            TimeUnit.MILLISECONDS.toNanos(normalCollection) - System.nanoTime();
 
                         if(remainingNanoseconds <= 0)
                         {
@@ -663,7 +657,7 @@ class ReceiverActivityWriter implements AutoCloseable
         {
             ReceiverActivityMaintenance.Result result = mRunning.get() ?
                 ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, mDatabasePath, request,
-                    mDroppedRecords.get()) : ReceiverActivityMaintenance.interruptRetainedStats(mDatabasePath, request);
+                    mDroppedRecords.get(), mHistoryGeneration) : ReceiverActivityMaintenance.interruptRetainedStats(mDatabasePath, request);
             request.observeWriter(mQueue.size(), mDroppedRecords.get());
             if(result == null) mDeletionJobs.addLast(request);
             else request.result().complete(result);
@@ -728,17 +722,17 @@ class ReceiverActivityWriter implements AutoCloseable
                 if(request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS)
                 {
                     result = ReceiverActivityMaintenance.clearChannelStats(connection, mDatabasePath,
-                        request.configurationId());
+                        request.configurationId(), mHistoryGeneration);
                 }
                 else if(request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS)
                 {
                     result = ReceiverActivityMaintenance.deleteRetainedStats(connection, mDatabasePath,
-                        request.deletionTarget());
+                        request.deletionTarget(), mHistoryGeneration);
                 }
                 else
                 {
                     result = ReceiverActivityMaintenance.run(connection, mDatabasePath, mRetentionDays,
-                        request.operation());
+                        request.operation(), mHistoryGeneration);
                 }
 
                 if(request.operation() == ReceiverActivityMaintenance.Operation.MAINTAIN ||
@@ -821,11 +815,12 @@ class ReceiverActivityWriter implements AutoCloseable
     {
         long count = observationDrops();
         long lastDrop = lastObservationDropMs();
-        if(count != mPersistedObservationDrops || lastDrop != mPersistedObservationDropMs)
+        if(mDropDiagnosticsDirty || count != mPersistedObservationDrops || lastDrop != mPersistedObservationDropMs)
         {
             persistDropDiagnosticsWithRetry(connection);
             mPersistedObservationDrops = count;
             mPersistedObservationDropMs = lastDrop;
+            mDropDiagnosticsDirty = false;
         }
     }
 
@@ -859,6 +854,7 @@ class ReceiverActivityWriter implements AutoCloseable
 
     private void persistDropDiagnostics(Connection connection) throws SQLException
     {
+        ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
         ReceiverActivitySchema.updateStatus(connection, "writer_queue_overflow_drops", Long.toString(mQueueOverflowDrops.get()));
         ReceiverActivitySchema.updateStatus(connection, "constraint_rejection_drops", Long.toString(mConstraintDrops.get()));
         ReceiverActivitySchema.updateStatus(connection, "last_writer_queue_overflow_ms", Long.toString(mLastQueueOverflowMs.get()));
@@ -932,15 +928,14 @@ class ReceiverActivityWriter implements AutoCloseable
         if(batch.size() == 1)
         {
             ReceiverActivityRecord rejected = batch.getFirst();
-            long droppedRecords = mDroppedRecords.incrementAndGet();
+            mDroppedRecords.incrementAndGet();
             mConstraintDrops.incrementAndGet();
             mDroppedCategories.incrementAndGet(DropCategory.of(rejected).ordinal());
             mLastConstraintDropMs.set(System.currentTimeMillis());
+            mDropDiagnosticsDirty = true;
             String warning = "Discarded invalid statistics record [" + diagnosticSummary(rejected) + "]: " +
                 batchFailure.getMessage();
             mLog.warn(warning);
-            ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(droppedRecords));
-            persistDropDiagnostics(connection);
             return;
         }
 
@@ -1050,7 +1045,6 @@ class ReceiverActivityWriter implements AutoCloseable
         try
         {
             int writtenRecords = 0;
-            boolean[] historyChanged = {false};
             ActivityToneAssociations toneAssociations = mActivityToneAssociations.copy();
             Set<LogicalCallId> acceptedLogicalCalls = new LinkedHashSet<>();
             Set<ToneReceipt> acceptedToneSequences = new LinkedHashSet<>();
@@ -1137,8 +1131,6 @@ class ReceiverActivityWriter implements AutoCloseable
                         p25RecoveryFloor);
                     if(updated != null)
                     {
-                        historyChanged[0] |= state != null && updated.credit().detailedEventId() != null &&
-                            !state.credit().equals(updated.credit());
                         acceptedP25Calls.put(observation.callToken(), updated);
                         toneAssociations.call(connection, observation.callToken(), observation.activity().configurationId(),
                             updated.credit().detailedEventId(), System.currentTimeMillis());
@@ -1149,7 +1141,6 @@ class ReceiverActivityWriter implements AutoCloseable
                 {
                     if(ReceiverActivitySchema.applyActivityCallTiming(connection, timing))
                     {
-                        historyChanged[0] = true;
                         writtenRecords++;
                     }
                 }
@@ -1164,8 +1155,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 {
                     LogicalCallId logicalCallId = logicalCall.logicalCallId();
                     if(!hasResolvedLogicalCall(logicalCallId, acceptedLogicalCalls) &&
-                        ReceiverActivitySchema.recordResolvedLogicalCall(connection, logicalCall,
-                            () -> historyChanged[0] = true))
+                        ReceiverActivitySchema.recordResolvedLogicalCall(connection, logicalCall))
                     {
                         acceptedLogicalCalls.add(logicalCallId);
                         writtenRecords++;
@@ -1224,12 +1214,12 @@ class ReceiverActivityWriter implements AutoCloseable
             long writtenTotal = mWrittenRecords.get() + writtenRecords;
             long successfulWrite = System.currentTimeMillis();
             ReceiverActivitySchema.updateStatus(connection, "records_written", Long.toString(writtenTotal));
-            ReceiverActivitySchema.updateStatus(connection, "records_dropped", Long.toString(mDroppedRecords.get()));
             persistDropDiagnostics(connection);
             ReceiverActivitySchema.updateStatus(connection, "last_successful_write_ms",
                 Long.toString(successfulWrite));
 
             connection.commit();
+            mDropDiagnosticsDirty = false;
             mActivityToneAssociations = toneAssociations;
             rememberResolvedLogicalCalls(acceptedLogicalCalls, successfulWrite);
             for(ToneReceipt receipt: acceptedToneSequences) mCompletedToneReceipts.put(receipt, successfulWrite);
@@ -1244,15 +1234,6 @@ class ReceiverActivityWriter implements AutoCloseable
             mWrittenRecords.addAndGet(writtenRecords);
             mLastSuccessfulWriteMs.set(successfulWrite);
             mLastError = null;
-            try
-            {
-                mAfterCommit.accept(historyChanged[0]);
-            }
-            catch(RuntimeException exception)
-            {
-                // A failed web observer cannot undo the completed transaction or stop history collection.
-                mLog.warn("Saved Activity observer notification failed", exception);
-            }
         }
         catch(SQLException e)
         {
@@ -1402,7 +1383,7 @@ class ReceiverActivityWriter implements AutoCloseable
     private ReceiverActivityMaintenance.RetentionResult cleanupRetention(Connection connection) throws SQLException
     {
         ReceiverActivityMaintenance.RetentionResult result =
-            ReceiverActivityMaintenance.cleanupRetentionPass(connection, mRetentionDays);
+            ReceiverActivityMaintenance.cleanupRetentionPass(connection, mRetentionDays, mHistoryGeneration);
         mLastRetentionCleanup = System.currentTimeMillis();
         return result;
     }

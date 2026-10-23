@@ -25,7 +25,7 @@ function functionSource(signature) {
 }
 
 const context = {
-  receiverHealthAlertIds: ['receiver-iq-drop', 'gc-pause'],
+  receiverHealthAlertIds: ['receiver-iq-drop', 'usb-delivery-rate-low'],
   isReceiverHealthAlertEnabled: (preferences, incidentCode) =>
     !preferences?.health_alerts?.disabled_codes?.includes(incidentCode)
 };
@@ -47,7 +47,7 @@ const snapshot = {
   summary: { severity: 'critical', active_count: 2, critical_count: 1, warning_count: 1 },
   active: [
     { code: 'receiver-iq-drop', severity: 'critical' },
-    { code: 'gc-pause', severity: 'warning' }
+    { code: 'usb-delivery-rate-low', severity: 'warning' }
   ]
 };
 
@@ -68,7 +68,7 @@ assert.deepEqual(plain(context.summarize(snapshot, {
   warning_count: 1
 });
 assert.deepEqual(plain(context.summarize(snapshot, {
-  health_alerts: { disabled_codes: ['receiver-iq-drop', 'gc-pause'] }
+  health_alerts: { disabled_codes: ['receiver-iq-drop', 'usb-delivery-rate-low'] }
 })), {
   active_count: 2,
   enabled_count: 0,
@@ -93,11 +93,11 @@ assert.deepEqual(plain(context.summarize(futureAlert, {
 
 const controls = new Map([
   ['receiver-iq-drop', { checked: true }],
-  ['gc-pause', { checked: false }]
+  ['usb-delivery-rate-low', { checked: false }]
 ]);
 assert.deepEqual(plain(context.disabledCodesForSave({
   health_alerts: { disabled_codes: ['future-disabled-alert', 'receiver-iq-drop'] }
-}, controls)), ['future-disabled-alert', 'gc-pause'],
+}, controls)), ['future-disabled-alert', 'usb-delivery-rate-low'],
 'Saving known switches must preserve an unknown disabled code while replacing known choices.');
 
 const openAlerts = functionSource('function openStatusIconSettings(returnFocusSelector = null)');
@@ -148,3 +148,64 @@ assert.match(stylesheet, /\.read-only-modal\.health-alert-settings-modal\s*\{/);
 assert.match(stylesheet, /\.settings-card-grid\s*\{[^}]*align-items: stretch/s);
 assert.match(stylesheet, /\.settings-card\s*\{[^}]*height: 100%/s,
   'Alert group cards must align to the height of their grid row.');
+
+
+async function checkServerRelativeFreshness() {
+  const serverNow = Date.parse('Thu, 22 Oct 2026 12:00:00 GMT');
+  let monotonic = 0;
+  let clientOffset = 0;
+  let serverDate = new Date(serverNow).toUTCString();
+  let payload = { generated_at_ms: serverNow - 1_000 };
+  let bodyDelay = 0;
+  const healthContext = vm.createContext({ AbortController, Headers,
+    Date: { parse: Date.parse, now: () => serverNow + clientOffset },
+    performance: { now: () => monotonic }, document: { hidden: false },
+    RECEIVER_HEALTH_STALE_MILLISECONDS: 15_000,
+    normalizeReceiverHealthSnapshot: value => value,
+    api: async (_path, _parameters, options) => {
+      options.onResponse({ headers: new Headers(serverDate === null ? {} : { Date: serverDate }) });
+      monotonic += bodyDelay;
+      return payload;
+    }
+  });
+  vm.runInContext(`globalThis.refreshHealth = ({ ${functionSource('  async refresh() {')} }).refresh;`, healthContext);
+  const health = { requestController: null, snapshot: null, stale: false, lastError: '',
+    desktopEnabled: () => true, updateIndicator() {}, updatePage() {} };
+  for (clientOffset of [-300_000, 300_000]) {
+    monotonic += 100;
+    await healthContext.refreshHealth.call(health);
+    assert.equal(health.stale, false, 'Unsynchronized browser time must not make fresh receiver status stale.');
+  }
+  serverDate = new Date(serverNow + 20_000).toUTCString();
+  await healthContext.refreshHealth.call(health);
+  assert.equal(health.stale, true, 'A retained old server payload must become stale as the server clock advances.');
+  assert.match(health.lastError, /has not updated recently/);
+  payload = { generated_at_ms: serverNow + 20_000 };
+  await healthContext.refreshHealth.call(health);
+  assert.equal(health.stale, false, 'A genuinely new server snapshot restores current status.');
+  for (const rounding of [999, 1000]) {
+    payload = { generated_at_ms: serverNow + 20_000 + rounding };
+    await healthContext.refreshHealth.call(health);
+    assert.equal(health.stale, false, 'HTTP Date rounding may put a valid sample up to one second ahead.');
+  }
+  const previous = health.snapshot;
+  payload = { generated_at_ms: serverNow + 21_001 };
+  await healthContext.refreshHealth.call(health);
+  assert.equal(health.stale, true, 'A genuinely future-dated sample cannot be declared current after a clock step.');
+  assert.match(health.lastError, /unavailable/);
+  assert.equal(health.snapshot, previous, 'An untrusted future timestamp must not replace the last complete status.');
+  payload = previous;
+  for (serverDate of [null, 'not a date']) {
+    await healthContext.refreshHealth.call(health);
+    assert.equal(health.stale, true);
+    assert.match(health.lastError, /unavailable/);
+    assert.equal(health.snapshot, previous, 'Missing clock metadata must retain the last complete status.');
+  }
+  serverDate = new Date(serverNow + 20_000).toUTCString();
+  payload = { generated_at_ms: serverNow + 5_500 };
+  bodyDelay = 600;
+  await healthContext.refreshHealth.call(health);
+  assert.equal(health.stale, true, 'Body-reading time must be measured with the browser monotonic clock.');
+}
+
+checkServerRelativeFreshness().catch(error => { console.error(error); process.exitCode = 1; });

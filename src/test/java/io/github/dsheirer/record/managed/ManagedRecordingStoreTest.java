@@ -38,6 +38,98 @@ class ManagedRecordingStoreTest
     Path temporary;
 
     @Test
+    @SuppressWarnings("unchecked")
+    void pageMetadataUsesFiveReadsAndOneSnapshotAcrossConcurrentChanges() throws Exception
+    {
+        Path database = temporary.resolve("page-snapshot.sqlite");
+        Site winner = new Site(1,2,3,4), other = new Site(1,2,3,5);
+        try(var store = new ManagedRecordingStore(database,temporary.resolve("page-audio")))
+        {
+            for(int id = 1; id <= 100; id++)
+                store.insert(metadata((101-id)*1000L,"p25:00001:002",id + ".mp3",501,7001,
+                    ManagedRecordingCatalog.CALL_PATCH,winner,List.of(other,winner),
+                    List.of(new Member("radio",502,null,null,null),new Member("talkgroup",7002,1,2,7003))));
+            try(var writer = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = writer.createStatement())
+            {
+                sql.executeUpdate("INSERT INTO recording_tone_sequence SELECT id,1,1,1,start_ms,start_ms,end_ms,2 " +
+                    "FROM recording_call WHERE id IN(1,2)");
+                sql.executeUpdate("INSERT INTO recording_tone SELECT id,0,600000,NULL,NULL,0,200,NULL " +
+                    "FROM recording_call WHERE id IN(1,2)");
+                sql.executeUpdate("INSERT INTO recording_tone SELECT id,1,900000,NULL,NULL,200,200,NULL " +
+                    "FROM recording_call WHERE id IN(1,2)");
+                sql.executeUpdate("INSERT INTO recording_identifier SELECT id,'MDC1200','radio','source','unit',start_ms " +
+                    "FROM recording_call WHERE id IN(1,2)");
+            }
+            var expected = new java.util.ArrayList<ManagedRecordingCatalog.RecordingCall>();
+            for(long id = 100; id > 0; id--) expected.add(store.find(id));
+            assertEquals(expected,store.search(SearchFilter.builder().fromMs(0L).toMs(101000L)
+                .limit(100).sortAscending(true).build()).calls());
+            var reads = new java.util.concurrent.atomic.AtomicInteger();
+            try(var reader = DriverManager.getConnection("jdbc:sqlite:" + database))
+            {
+                reader.setAutoCommit(false);
+                var counted = (java.sql.Connection)java.lang.reflect.Proxy.newProxyInstance(
+                    getClass().getClassLoader(),new Class<?>[]{java.sql.Connection.class},(proxy,method,args) -> {
+                        if(method.getName().equals("prepareStatement") && reads.incrementAndGet() == 2)
+                        {
+                            try(var writer = DriverManager.getConnection("jdbc:sqlite:" + database);
+                                var sql = writer.createStatement())
+                            {
+                                writer.setAutoCommit(false);
+                                sql.executeUpdate("UPDATE recording_call SET target_id=999");
+                                sql.executeUpdate("UPDATE recording_patch_member SET local_id=local_id+10000");
+                                sql.executeUpdate("UPDATE recording_identifier SET value='changed'");
+                                sql.executeUpdate("UPDATE recording_tone SET frequency_1_millihz=700000");
+                                sql.executeUpdate("DELETE FROM recording_call_site");
+                                writer.commit();
+                            }
+                        }
+                        try { return method.invoke(reader,args); }
+                        catch(java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                    });
+                var read = ManagedRecordingStore.class.getDeclaredMethod("readCalls",java.sql.Connection.class,List.class);
+                read.setAccessible(true);
+                var page = (List<ManagedRecordingCatalog.RecordingCall>)read.invoke(null,counted,
+                    java.util.stream.LongStream.rangeClosed(1,100).boxed().toList());
+                assertEquals(expected,page,"Base rows and every child stay in the same pre-commit snapshot");
+                assertEquals(5,reads.get(),"Hydration query count must stay independent of the page size");
+                reader.commit();
+            }
+            var changed = store.find(1);
+            assertEquals(999,changed.targetId());
+            assertTrue(changed.alsoReceivedOn().isEmpty());
+            assertEquals("changed",changed.auxiliaryIdentifiers().getFirst().value());
+        }
+    }
+
+    @Test
+    void incompleteToneSequencesRejectMixedPagesAndIndividualDetails() throws Exception
+    {
+        Path database = temporary.resolve("incomplete-tones.sqlite");
+        try(var store = new ManagedRecordingStore(database,temporary.resolve("tone-audio")))
+        {
+            for(int id = 1; id <= 2; id++) store.insert(metadata(id*1000L,"system-a",id + ".mp3",501,7001,
+                ManagedRecordingCatalog.CALL_GROUP,null,List.of(),List.of()));
+            try(var writer = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = writer.createStatement())
+            {
+                sql.executeUpdate("INSERT INTO recording_tone_sequence SELECT id,1,1,1,start_ms,start_ms,end_ms,2 FROM recording_call");
+                sql.executeUpdate("INSERT INTO recording_tone SELECT id,0,600000,NULL,NULL,0,200,NULL FROM recording_call");
+                sql.executeUpdate("INSERT INTO recording_tone SELECT id,1,900000,NULL,NULL,200,200,NULL FROM recording_call");
+                var filter = SearchFilter.builder().fromMs(0L).toMs(5000L).build();
+                assertEquals(2,store.search(filter).calls().size());
+                for(String damage: List.of("UPDATE recording_tone SET ordinal=2 WHERE call_id=2 AND ordinal=1",
+                    "DELETE FROM recording_tone WHERE call_id=2"))
+                {
+                    sql.executeUpdate(damage);
+                    assertThrows(SQLException.class,() -> store.search(filter));
+                    assertThrows(SQLException.class,() -> store.find(2));
+                    assertNotNull(store.find(1).pagingToneSummary());
+                }
+            }
+        }
+    }
+
+    @Test
     void browserServingContextUsesTheStoredAudioWinnerRatherThanOtherReceiverSites() throws Exception
     {
         Path root = temporary.resolve("serving-context");

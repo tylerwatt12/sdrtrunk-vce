@@ -165,7 +165,7 @@ class StatsWebTrunkedChannelUiContractTest
         String radioSystemFact = function(source, "function radioSystemInfoFact(row, includeIdentity = true)");
         String radioSystemIdentity = function(source, "function radioSystemIdentityValue(row)");
         String siteName = function(source, "function siteNameValue(row)");
-        String groups = function(source, "async function channelTopGroupsSection(channel)");
+        String groups = function(source, "async function channelTopGroupsSection(channel, parent, renderContext)");
         String frequencies = function(source, "function trunkedChannelFrequencyColumns()");
         assertTrue(channelInfo.contains("['Metadata Updates', channel.observation_count]"));
         assertTrue(channelInfo.contains("['Decoder', decoderDisplay(channel.decoder)]"));
@@ -182,7 +182,7 @@ class StatsWebTrunkedChannelUiContractTest
         assertTrue(channelInfo.contains("configuration_id: channel.configuration_id"));
         assertFalse(channelInfo.contains("['Name', channel.channel_name]"));
         assertFalse(siteName.contains("channel_name"));
-        assertTrue(groups.contains("section('Calls heard on this channel'"));
+        assertTrue(groups.contains("createAsyncSection('Calls heard on this channel'"));
         assertTrue(groups.contains("label: isP25(channel) ? 'Calls heard' : 'Calls'"));
         assertTrue(groups.contains("fullLabel: isP25(channel) ? 'Calls heard on this channel' : 'Calls'"));
         assertTrue(groups.contains("row.logical_call_count"));
@@ -225,9 +225,13 @@ class StatsWebTrunkedChannelUiContractTest
         assertFalse(source.contains("channelCapability(channel, 'quality-live')"));
         assertTrue(tabItems.contains("channelCapability(channel, 'quality')"));
         assertTrue(channelInfo.contains("channelCapability(channel, 'group_identities')"));
-        assertTrue(channelInfo.contains("channelTopGroupsSection(channel)"));
-        assertTrue(channel.contains("const signalHistory = await channelSignalHistorySection(channel)"));
-        assertTrue(channel.contains("if (!renderIsCurrent(renderContext)) return"));
+        assertTrue(channelInfo.contains("channelTopGroupsSection(channel, activityColumn, renderContext)"));
+        assertTrue(channel.contains("await channelSignalHistorySection(channel, content, renderContext)"));
+        assertTrue(channel.contains("if (!beginPage(renderContext,"));
+        String beginPage = function(source, "function beginPage(renderContext, ...children)");
+        String asyncSection = function(source, "function createAsyncSection(title, options = {})");
+        assertTrue(beginPage.contains("if (!renderIsCurrent(renderContext)) return false;"));
+        assertTrue(asyncSection.contains("renderIsCurrent(renderContext) && host.isConnected"));
     }
 
     @Test

@@ -36,14 +36,15 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertFalse(index.contains("data-nav-group=\"radio\""));
         assertFalse(index.contains("data-view=\"identities\""));
         assertTrue(index.contains("data-view=\"channel-setup\""));
-        assertTrue(index.contains("<summary>Manage</summary>"));
+        assertTrue(index.matches("(?s).*data-nav-group=\"configuration\"[^>]*><summary>" +
+            "(?:<[^>]+>)*Manage</summary>.*"), "Manage remains the configuration disclosure label with an optional icon");
         assertFalse(index.contains("data-view=\"channels\""));
         assertFalse(routes.contains("id: 'channels'"));
         assertFalse(routes.contains("id: 'configuration'"));
         assertFalse(routes.contains("id: 'hardware'"));
         assertFalse(app.contains("if (view === 'channels' || view === 'radio-systems')"));
         assertFalse(app.contains("if (view === 'identities')"));
-        assertTrue(app.contains("renderNestedRadioDirectory(renderContext)"));
+        assertTrue(app.contains("renderNestedRadioDirectory(renderContext, snapshot.directory, snapshot.quality.current)"));
         assertFalse(app.contains("editable ? 'Channels' : 'Radio Directory'"));
         assertFalse(app.contains("if (editable) columns.push"));
     }
@@ -60,8 +61,10 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("function renderAliasCoverageDirectory(renderContext, embedded = false)"));
         assertFalse(app.contains("See aliases that activity-only views cannot show"));
         assertFalse(app.contains("Where this Alias List is used"));
-        assertTrue(app.contains("node('h2', '', 'Channels using this Alias List')"));
-        assertTrue(app.contains("node('h2', '', 'Alias inventory')"));
+        assertTrue(app.contains("node('details', 'ui-section-disclosure alias-coverage-scope')"));
+        assertTrue(app.contains("node('summary', 'ui-section-summary')"));
+        assertTrue(app.contains("header.append(node('span', '', 'Channels using this Alias List')"));
+        assertTrue(app.contains("createAsyncSection('Alias inventory'"));
         assertTrue(app.contains("const navigateCoverage = (target, options = {}) => routeFoundation.navigate"));
         assertTrue(app.contains("directory.host.replaceChildren(present(model))"));
         assertTrue(app.contains("scrollToTable: Boolean(link.closest('.pager'))"));
@@ -69,7 +72,9 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(app.contains("value: 'never_heard'"));
         assertTrue(app.contains("value: 'talkgroup', label: 'Talkgroups'"));
         assertTrue(app.contains("value: 'radio', label: 'Radios'"));
-        assertTrue(app.contains("entityTarget(row.entity_ref, { channel: row.identity_type === 'radio' ? 'radios' : 'groups' })"));
+        assertTrue(app.contains("const target = aliasIdentityDetailTarget(row)"));
+        assertTrue(app.contains("entityTarget(reference, configuredAliasAssignment(row) ? {} :"));
+        assertTrue(app.contains("{ channel: row?.identity_type === 'radio' ? 'radios' : 'groups' }"));
         assertFalse(app.contains("identitySummaryValue(label, row.identity_key || ''"));
         assertTrue(app.contains("function adminSettingsTree(groups, active)"));
         assertTrue(app.contains("{ label: 'Receiver configuration', items: ["));
@@ -88,7 +93,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertTrue(css.contains("grid-template-columns: var(--settings-sidebar-width) minmax(0, 1fr);"));
         assertFalse(css.contains(".admin-settings-nested-branch"));
         assertFalse(css.contains(".alias-coverage-guidance"));
-        assertTrue(css.contains(".alias-coverage-scope-list"));
+        assertTrue(app.contains("node('div', 'ui-section-body alias-coverage-scope-list')"));
         assertTrue(css.contains(".alias-coverage-table-header"));
         assertTrue(css.contains(".ui-time-pair"));
     }

@@ -28,7 +28,6 @@ function binding(source, name) {
 
 async function checkMessageTypes(core, source) {
   const { createMessageTypeCatalog } = await import(pathToFileURL(path.join(core, 'message-types.js')).href);
-  const { formatSourceName } = await import(pathToFileURL(path.join(core, 'source-names.js')).href);
   const rows = [
     { definition_kind: 'ACTION', code: 12, name: 'GRANT', label: 'Assigned channel',
       meaning: 'A channel was assigned.', p25: true, dmr: false, nxdn: false, sort_order: 2 },
@@ -44,22 +43,14 @@ async function checkMessageTypes(core, source) {
   let requests = 0;
   const node = (tag, className = '', text = '') => ({ tag, className, text,
     children: [], append(...values) { this.children.push(...values); } });
-  const context = vm.createContext({ createMessageTypeCatalog, formatSourceName, node,
-    identitySummaryValue: (primary, secondary, target) => ({ primary, secondary, target }),
-    radioIdentifierText: (_row, id) => `Radio ${id}`, radioDisplayId: row => row.native_id,
-    aliasLabel: row => row.alias_name, sourceNameDisplayMode: () => 'source_alias',
-    p25ServingSystemKey: () => '', specialIdentifierLabel: () => '',
-    ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true,
-    entityReferenceAllowed: reference => Boolean(reference?.href),
-    entityTarget: reference => reference.href,
+  const context = vm.createContext({ createMessageTypeCatalog, node,
     api: async () => { requests += 1; return { rows }; }
   });
   const catalogStart = source.indexOf('const activityMessageTypes =');
   const catalogEnd = source.indexOf('const DASHBOARD_ACTIVITY_RANGES =', catalogStart);
   vm.runInContext(source.slice(catalogStart, catalogEnd), context);
   vm.runInContext(['activityOptionLabel', 'activityEventValue', 'dashboardActivityActionConfiguration',
-    'signalingActionRows', 'activityMetricGuide', 'tableIdentityParts', 'tableIdentityValue',
-    'radioIdentityValue', 'dashboardActivityRadio'].map(name => binding(source, name)).join('\n'), context);
+    'signalingActionRows', 'activityMetricGuide'].map(name => binding(source, name)).join('\n'), context);
   await Promise.all([context.loadActivityMessageTypes(), context.loadActivityMessageTypes()]);
   assert.equal(requests, 1, 'Concurrent page work shares the catalog request.');
   assert.equal(context.activityOptionLabel('GRANT'), 'Assigned channel');
@@ -95,13 +86,6 @@ async function checkMessageTypes(core, source) {
     source_radio_id: 123, target_identity_key: 'v1-g-456', target_kind: 'talkgroup', target_id: 456 }]);
   assert.equal(history.groupedP25Events(historyState)[0].title, 'Receiver emergency wording',
     'The visualizer uses the same database action label as tables and charts.');
-  for (const [alias, expected] of [['Dispatch', 'Dispatch'], ['', 'Radio 123']]) {
-    const identity = context.dashboardActivityRadio({ native_id: 123, alias_name: alias,
-      radio_entity_ref: { href: '/radio/123' } });
-    assert.equal(identity.primary, expected);
-    assert.equal(identity.secondary, alias ? 'Radio 123' : '');
-    assert.equal(identity.target, '/radio/123', 'The consolidated radio preserves its typed detail link.');
-  }
   assert.match(source, /activityDefinitions\(\)\.map\(\(definition\) => \(\{ value: definition\.name, label: definition\.label \}\)\)/,
     'Action filter choices come from the database catalog.');
   assert.match(source, /activityDefinitions\('EVENT'\)\.map\(\(definition\) => \(\{ value: definition\.name, label: definition\.label \}\)\)/,

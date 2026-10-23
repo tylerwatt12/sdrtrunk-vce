@@ -379,6 +379,16 @@ body[data-view="network-visualizer"] .content {
   border-radius: var(--radius-control);
 }
 
+.network-visualizer-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.network-visualizer-legend svg {
+  flex: none;
+}
+
 .network-visualizer-events {
   color: var(--network-space-ink);
   position: absolute;

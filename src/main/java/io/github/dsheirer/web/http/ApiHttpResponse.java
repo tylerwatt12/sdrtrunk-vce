@@ -18,6 +18,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import java.io.IOException;
+import java.io.ByteArrayOutputStream;
+import java.util.zip.GZIPOutputStream;
+import java.util.zip.Deflater;
 import java.io.OutputStream;
 import java.util.Iterator;
 import java.util.Map;
@@ -36,9 +39,15 @@ public final class ApiHttpResponse
     /** Sends one explicitly selected resource value in the shared success envelope. */
     public static void sendData(HttpExchange exchange, int status, Object value) throws IOException
     {
+        sendPreparedJson(exchange, status, prepareData(value));
+    }
+
+    /** Prepares a shareable response without retaining a request, session or exchange. */
+    public static byte[] prepareData(Object value) throws IOException
+    {
         ObjectNode response = OBJECT_MAPPER.createObjectNode();
         response.set("data", normalize(OBJECT_MAPPER.valueToTree(value)));
-        sendJson(exchange, status, response);
+        return OBJECT_MAPPER.writeValueAsBytes(response);
     }
 
     /** Sends a complete endpoint-owned JSON document without the shared data envelope. */
@@ -51,6 +60,11 @@ public final class ApiHttpResponse
     public static void sendDataWithMeta(HttpExchange exchange, int status, Object data, Object meta)
         throws IOException
     {
+        sendPreparedJson(exchange, status, prepareDataWithMeta(data, meta));
+    }
+
+    public static byte[] prepareDataWithMeta(Object data, Object meta) throws IOException
+    {
         ObjectNode response = OBJECT_MAPPER.createObjectNode();
         response.set("data", normalize(OBJECT_MAPPER.valueToTree(data)));
         JsonNode normalizedMeta = normalize(OBJECT_MAPPER.valueToTree(meta));
@@ -60,7 +74,7 @@ public final class ApiHttpResponse
             response.set("meta", normalizedMeta);
         }
 
-        sendJson(exchange, status, response);
+        return OBJECT_MAPPER.writeValueAsBytes(response);
     }
 
     public static void sendError(HttpExchange exchange, int status, String code, String message) throws IOException
@@ -100,7 +114,12 @@ public final class ApiHttpResponse
 
     private static void sendJson(HttpExchange exchange, int status, JsonNode value) throws IOException
     {
-        byte[] body = OBJECT_MAPPER.writeValueAsBytes(value);
+        sendPreparedJson(exchange, status, OBJECT_MAPPER.writeValueAsBytes(value));
+    }
+
+    /** Sends only trusted JSON bytes produced by this response encoder. */
+    public static void sendPreparedJson(HttpExchange exchange, int status, byte[] body) throws IOException
+    {
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", "application/json; charset=utf-8");
         headers.set("Cache-Control", "no-store");
@@ -111,6 +130,43 @@ public final class ApiHttpResponse
         {
             outputStream.write(body);
         }
+    }
+
+    /** Canonical public data prepared once by a shared reader; callers retain these immutable byte arrays. */
+    public record PreparedJson(byte[] identity, byte[] gzip)
+    {
+        public void send(HttpExchange exchange, int status) throws IOException
+        {
+            HttpContentEncoding.Encoding encoding = HttpContentEncoding.choose(
+                exchange.getRequestHeaders().get("Accept-Encoding"), identity.length, gzip != null ? gzip.length : null);
+            if(encoding == HttpContentEncoding.Encoding.UNACCEPTABLE)
+            {
+                sendError(exchange, 406, "encoding_unavailable", "The requested response encoding is unavailable");
+                return;
+            }
+            exchange.getResponseHeaders().set("Vary", "Accept-Encoding");
+            if(encoding == HttpContentEncoding.Encoding.GZIP) exchange.getResponseHeaders().set("Content-Encoding", "gzip");
+            sendPreparedJson(exchange, status, encoding == HttpContentEncoding.Encoding.GZIP ? gzip : identity);
+        }
+    }
+
+    /** The caller has already applied public presentation and canonical field names. */
+    public static byte[] encodeNormalizedPayload(Object value) throws IOException
+    {
+        return OBJECT_MAPPER.writeValueAsBytes(value);
+    }
+
+    /** Prepare both representations away from request/receiver producers, without cloning public row trees. */
+    public static PreparedJson prepareNormalizedData(Object value) throws IOException
+    {
+        byte[] identity = encodeNormalizedPayload(Map.of("data", value));
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream(identity.length / 2);
+        try(GZIPOutputStream output = new GZIPOutputStream(buffer)
+        {
+            { def.setLevel(Deflater.BEST_SPEED); }
+        }) { output.write(identity); }
+        byte[] gzip = buffer.toByteArray();
+        return new PreparedJson(identity, gzip.length < identity.length ? gzip : null);
     }
 
     private static JsonNode normalize(JsonNode value)

@@ -2268,6 +2268,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     mLog.warn("P25 traffic channel rejected - downlink {} Hz is outside site envelope [{} - {}] Hz channel:{} {}",
                         downlink, parentMulti.getMinimumFrequency(), parentMulti.getMaximumFrequency(), apco25Channel,
                         describeFrequencyResolution(apco25Channel));
+                    returnTrafficChannelToPool(trafficChannel);
                     return;
                 }
 

@@ -109,16 +109,28 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String synchronize = function(source, "function synchronizeLiveChannelActivitySource()");
         String snapshot = function(source, "function applyLiveChannelActivitySnapshot(snapshot)");
+        String batch = function(source, "function applyLiveChannelActivityBatch(batch)");
+        String change = function(source, "function mergeLiveChannelActivityChange(change, currentTable)");
 
         assertTrue(snapshot.contains("liveChannelActivityTables.clear()"));
         assertTrue(snapshot.contains("liveChannelActivityNeedsResync = false"));
-        assertTrue(synchronize.contains("revision !== liveChannelActivityRevision + 1"));
+        assertTrue(batch.contains("batch.base_revision !== liveChannelActivityRevision"));
+        assertTrue(batch.contains("Number.isSafeInteger(batch?.revision)"));
+        assertTrue(batch.contains("const tables = new Map(liveChannelActivityTables)"));
+        assertTrue(batch.indexOf("batch.changes.map") < batch.indexOf("liveChannelActivityTables.clear()"));
+        assertTrue(batch.indexOf("liveChannelActivityRevision = batch.revision") > batch.indexOf("batch.changes.map"));
+        assertTrue(batch.contains("Repeated activity table change."));
+        assertTrue(batch.contains("if (merged.operation === 'remove') tables.delete(merged.table_id)"));
+        assertTrue(change.contains("change.replace ? [] : currentTable.rows || []"));
+        assertTrue(change.contains("rows.set(key, row)"));
+        assertTrue(change.contains("change.row_order.length !== rows.size"));
         assertTrue(synchronize.contains("liveChannelActivityNeedsResync = true"));
-        assertTrue(synchronize.contains("if (update.operation === 'remove')"));
         assertTrue(synchronize.contains("source.addEventListener('activity_resync'"));
         assertTrue(synchronize.contains("applyLiveChannelActivitySnapshot(snapshot)"));
-        assertTrue(synchronize.contains("source.addEventListener('activity_delta'"));
-        assertTrue(synchronize.contains("Number(update.base_revision) !== liveChannelActivityRevision"));
+        assertTrue(synchronize.contains("source.addEventListener('activity_batch'"));
+        assertTrue(synchronize.contains("applyLiveChannelActivityBatch(JSON.parse(event.data))"));
+        assertFalse(synchronize.contains("source.addEventListener('activity_delta'"));
+        assertFalse(synchronize.contains("source.addEventListener('activity_table'"));
         assertTrue(synchronize.contains("source.addEventListener('live_gap'"));
         assertTrue(synchronize.contains("invokeLiveSubscriber(target, 'gap', detail)"));
     }
@@ -128,7 +140,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String loggingNotice = function(source, "function databaseLoggingNotice(view)");
-        String signalHealth = function(source, "async function signalHealthSection()");
+        String liveLink = function(source, "function radioDirectoryLiveLink(children)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertFalse(loggingNotice.contains("Live Channels"));
@@ -141,9 +153,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(loggingNotice.contains("Last saved update:"));
         assertFalse(loggingNotice.contains("${logging.state}"));
         assertFalse(loggingNotice.contains("logging.lastError"));
-        assertTrue(signalHealth.contains("capabilityAllowed(ACCESS_CAPABILITIES.LIVE)"));
-        assertTrue(signalHealth.contains("Saved signal history is turned off."));
-        assertTrue(signalHealth.contains("anchor('Open Live signal levels', href('live'))"));
+        assertTrue(liveLink.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
+        assertTrue(liveLink.contains("capabilityAllowed(ACCESS_CAPABILITIES.LIVE)"));
+        assertTrue(liveLink.contains("return null"));
+        assertTrue(liveLink.contains("anchor('Live', href('live'"));
         assertFalse(activity.contains("Live Channels remain available"));
     }
 
@@ -329,21 +342,21 @@ class StatsWebInteractionUiContractTest
     void reloadsStaleWebClientsWithoutRestoringLegacyGroupIdentityReads() throws Exception
     {
         String source = source();
-        String reload = function(source, "async function reloadForWebClientRevision()");
-        String status = function(source, "async function loadStatus(refreshCurrentView = false)");
+        String reload = function(source, "function reloadForWebClientRevision(revision)");
+        String status = function(source, "async function requestServiceStatus()");
+        String requestJson = function(source, "async function requestJson(path, options = {})");
         String groupIdentity = function(source, "async function renderGroupIdentity()");
         String index = readText(INDEX_HTML);
 
         assertTrue(index.matches("(?s).*<meta name=\"sdrtrunk-web-revision\" content=\"[1-9][0-9]*\">.*"));
         assertTrue(source.contains("meta[name=\"sdrtrunk-web-revision\"]"));
-        assertTrue(reload.contains("const response = await fetch('/', {"));
-        assertTrue(reload.contains("method: 'HEAD', cache: 'no-store', credentials: 'same-origin'"));
-        assertTrue(reload.contains("signal: controller.signal"));
-        assertTrue(reload.contains("response.headers.get('X-Sdrtrunk-Web-Revision')"));
+        assertTrue(reload.contains("serverRevision === WEB_CLIENT_REVISION"));
+        assertTrue(reload.contains("webClientReloadAttempted"));
         assertTrue(reload.contains("window.location.reload()"));
-        assertTrue(status.contains("if (await reloadForWebClientRevision()) return;"));
-        assertTrue(status.indexOf("await reloadForWebClientRevision()") <
-            status.indexOf("capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)"));
+        assertFalse(reload.contains("fetch("));
+        assertTrue(status.contains("api('/api/v1/status'"));
+        assertFalse(status.contains("onResponse"));
+        assertTrue(requestJson.contains("reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'))"));
         assertTrue(groupIdentity.contains("api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey))"));
         assertFalse(source.contains("/api/talkgroup"));
     }
@@ -365,12 +378,17 @@ class StatsWebInteractionUiContractTest
     void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
         String source = source();
-        String directory = function(source, "function renderNestedRadioDirectory(renderContext)");
+        String directory = function(source, "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [])");
         assertFalse(source.contains("function renderRadioSystems()"));
         assertFalse(source.contains("if (!editable) return renderNestedRadioDirectory(renderContext)"));
-        assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', loading.element)"));
-        assertTrue(directory.contains("radioDirectoryTrunkedGroups(directory.catalog, directory.systems)"));
+        assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', wrapper)"));
+        assertTrue(directory.contains("snapshot.systems.forEach((parent)"));
+        assertTrue(directory.contains("parent.children.filter((row)"));
+        assertTrue(directory.contains("update(updated, quality)"));
+        assertTrue(directory.contains("directory = updated; currentQuality = quality"));
+        assertFalse(directory.contains("await api("));
         assertTrue(directory.contains("radioDirectoryConventionalGroups(conventionalRows)"));
+        assertTrue(directory.contains("exportCsvLink('signal-health')"));
         assertTrue(directory.contains("value: 'running'"));
         assertTrue(directory.contains("value: 'stopped'"));
         assertFalse(StatsWebStylesheetTestSupport.readAll().contains(".directory-secondary"));
@@ -408,14 +426,14 @@ class StatsWebInteractionUiContractTest
             .contains("tableSection('Collected Signaling Observations'"));
         assertTrue(function(source, "async function renderRadio()")
             .contains("section('Signaling activity'"));
-        String history = function(source, "async function groupIdentityActivityHistorySection(scopeParameters)");
+        String history = function(source, "async function groupIdentityActivityHistorySection(scopeParameters, parent, renderContext)");
         assertTrue(history.contains("section('Call history'"));
         assertTrue(history.contains("section('Calls by time'"));
         assertTrue(history.contains("section('Signaling activity'"));
         assertTrue(history.indexOf("section('Call history'") < history.indexOf("section('Calls by time'"));
         assertTrue(history.indexOf("section('Calls by time'") <
             history.indexOf("section('Signaling activity'"));
-        assertTrue(history.contains("panels.append(historySection, chartSection, signalingSection)"));
+        assertTrue(history.contains("parent.append(directory.element)"));
         assertTrue(history.contains("groupIdentityHistoryTotals(response.totals)"));
         assertTrue(source.contains("GROUP_IDENTITY_CALL_ACTIVITY_SERIES"));
         assertTrue(source.contains("activitySignalingSeries()"));
@@ -475,7 +493,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(groupIdentity.contains(
             "renderActivity({ ...radioSystem, group_identity_key: identityKey, _activity_context:"));
         assertTrue(groupIdentity.contains(
-            "groupIdentityActivityHistorySection({ ...radioSystem,\n      identity_key: identityKey })"));
+            "groupIdentityActivityHistorySection({ ...radioSystem, identity_key: identityKey }, layout, renderContext)"));
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         assertFalse(activity.contains("scopeParameters.kind === 'patch'"));
         assertTrue(activity.contains("const refreshed = await api('/api/v1/activity'"));
@@ -490,7 +508,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("target_kind_code"));
         assertFalse(activity.contains("identity_kind_code"));
         assertFalse(source.contains("last_talkgroup_kind_code"));
-        String channelGroups = function(source, "async function channelTopGroupsSection(channel)");
+        String channelGroups = function(source, "async function channelTopGroupsSection(channel, parent, renderContext)");
         assertTrue(channelGroups.contains("id: 'group-identity-kind'"));
         assertTrue(channelGroups.contains("groupIdentityLabel(row)"));
     }
@@ -1246,7 +1264,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(filters.contains("className: 'live-filter-modal'"));
         assertTrue(filters.contains("returnFocusSelector:"));
         assertTrue(filters.contains("trigger.setAttribute('aria-haspopup', 'dialog')"));
-        assertTrue(filters.contains("node('ul', 'live-filter-tree')"));
+        assertTrue(filters.contains("node('ul', 'live-filter-tree ui-surface-inset')"));
         assertTrue(filters.contains("node('li', `live-filter-tree-item"));
         assertFalse(filters.contains("tree.setAttribute('role', 'tree')"));
         assertTrue(filters.contains("iconButton('icon-chevron-down'"));
@@ -1755,7 +1773,7 @@ class StatsWebInteractionUiContractTest
                 "parent: 'tuner-spectrum', access: 'admin-tuner'"));
         assertTrue(tunerPage.contains("pageConnections.add(spectrum)"));
         assertTrue(tunerPage.contains("pageHeader('Browse Spectrum'"));
-        assertTrue(html.contains("<span>Browser Spectrum</span>"));
+        assertTrue(html.contains("id=\"nav-tuner-spectrum-label\">Browser Spectrum</span>"));
         assertTrue(tunerPage.contains("for (const next of ['live', 'setup'])"));
         assertTrue(tunerPage.contains("node('div', 'ui-segmented')"));
         assertTrue(tunerPage.contains("if (next === 'setup') void takeOverSelectedTuner()"));
@@ -1867,9 +1885,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
         assertTrue(systems.contains("subscribeLiveChannelActivity({"));
         assertTrue(activity.contains("liveConnection('channel_activity', parameters, false)"));
-        assertTrue(activity.contains("const parameters = { delta: true, subscription_id: liveChannelActivitySubscriptionId }"));
+        assertTrue(activity.contains("const parameters = { subscription_id: liveChannelActivitySubscriptionId }"));
         assertTrue(activity.contains("if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true"));
-        assertTrue(activity.contains("liveChannelActivityTables"));
+        assertTrue(activity.contains("applyLiveChannelActivitySnapshot(JSON.parse(event.data))"));
+        assertTrue(activity.contains("applyLiveChannelActivityBatch(JSON.parse(event.data))"));
         assertTrue(subscribeActivity.contains("invokeLiveSubscriber(subscriber, 'snapshot'"));
         assertTrue(tuner.contains("const tableChannelName = String(table?.channel_name || '').trim()"));
         assertTrue(tuner.contains("const tableSystemName = String(table?.system_name || '').trim()"));
@@ -2099,7 +2118,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains(".tuner-spectrum-options[open] .tuner-spectrum-options-panel"));
         assertTrue(tuner.contains("preferenceCheckbox('', label, checked, detail)"));
         assertTrue(tuner.contains("autoRangeInput.name = 'auto_range_on_retune'"));
-        assertTrue(css.contains(".settings-card-body .settings-field-control"));
+        assertTrue(css.contains(".settings-card-body {\n  flex: 1 1 auto;\n  display: grid;"));
         assertTrue(css.contains(".settings-field-control {"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-encrypted"));
         assertTrue(css.contains(".tuner-spectrum-active-flag.status-call"));
@@ -2269,15 +2288,18 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String request = function(source, "async function requestJson(path, options = {})");
+        String timedFetch = function(source, "async function timedFetch(path, options, consume)");
         String invoke = function(source,
             "function invokeLiveSubscriber(target, callback, ...parameters)");
         String listener = function(source, "function invokeLiveListener(callback, ...parameters)");
-        String channelActivity = function(source, "function synchronizeLiveChannelActivitySource()");
+        String channelActivity = function(source, "function applyLiveChannelActivityBatch(batch)");
         String multiplexer = source.substring(source.indexOf("class LiveMultiplexer"),
             source.indexOf("const liveMultiplexer = new LiveMultiplexer()"));
 
-        assertTrue(request.indexOf("result = await response.json()") <
-            request.indexOf("window.clearTimeout(timeout)"));
+        assertTrue(request.contains("await timedFetch(path"));
+        assertTrue(request.contains("result = await response.json()"));
+        assertTrue(timedFetch.indexOf("await consume(response, controller.signal)") <
+            timedFetch.indexOf("window.clearTimeout(timeout)"));
         assertTrue(source.contains("const LIVE_MULTIPLEX_READY_TIMEOUT_MS = 10_000"));
         assertTrue(source.contains("const LIVE_MULTIPLEX_LIVENESS_TIMEOUT_MS = 25_000"));
         assertTrue(multiplexer.contains("const watchdog = window.setInterval"));
@@ -2292,7 +2314,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(multiplexer.contains("this.failedTopics.add(topic)"));
         assertTrue(multiplexer.contains("this.failedTopics.delete(topic)"));
         assertTrue(source.contains("invokeLiveListener(callback, { type: event"));
-        assertTrue(channelActivity.contains("invokeLiveSubscriber(target, 'activityTable', update)"));
+        assertTrue(channelActivity.contains("invokeLiveSubscriber(target, 'activityBatch', current)"));
         assertTrue(source.contains("invokeLiveSubscriber(target, 'snapshot', current)"));
         assertTrue(multiplexer.contains("error?.status === 401 || error?.status === 403"));
         assertTrue(multiplexer.contains("!this.authorizationRecoveryUsed"));

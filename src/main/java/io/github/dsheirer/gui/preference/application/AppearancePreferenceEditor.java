@@ -91,10 +91,6 @@ public class AppearancePreferenceEditor extends HBox
             sliderRow.getChildren().addAll(getGuiScaleSlider(), getGuiScaleValueLabel(), resetButton);
             mEditorPane.add(sliderRow, 0, ++row, 3, 1);
 
-            Label hint = new Label("Adjusts local windows.");
-            hint.setWrapText(true);
-            mEditorPane.add(hint, 0, ++row, 3, 1);
-
             ColumnConstraints c1 = new ColumnConstraints();
             c1.setPercentWidth(30);
             ColumnConstraints c2 = new ColumnConstraints();

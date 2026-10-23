@@ -6,7 +6,7 @@ import { ALERT_TRIGGERS, ALERT_PROTOCOL_FAMILIES, ALERT_FIELDS, ALERT_OPERATORS,
 import { readAlertDevice, saveAlertDevice, forgetAlertDevice } from './alerts-device-storage.js?v=1';
 import { reconcileDirectSubscription, syncDirectWorkerDevice } from './alerts-direct.js?v=1';
 import { enrollmentQrCanvas } from './alerts-qr.js?v=2';
-import { receiverHealthAlertGroups } from '../core/receiver-health-alerts.js?v=3';
+import { receiverHealthAlertGroups } from '../core/receiver-health-alerts.js?v=4';
 
 const ADMIN = '/api/v1/admin/alerts';
 const PUBLIC = '/api/v1/alerts';

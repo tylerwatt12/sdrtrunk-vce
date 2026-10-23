@@ -10,6 +10,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
+import java.io.ByteArrayOutputStream;
+import java.io.EOFException;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.InetAddress;
@@ -37,16 +39,34 @@ class EmbeddedHttpServerPolicyTest
     @Test
     void incompleteBodiesAreSocketTimedOutAndRequestCapacityRecovers() throws Exception
     {
+        runProbe(SlowRequestProbe.class, "SLOW_REQUEST_PROBE_PASSED");
+    }
+
+    @Test
+    void browserConnectionsRemainReusableAboveTheJdkIdleDefault() throws Exception
+    {
+        runProbe(KeepAliveProbe.class, "KEEP_ALIVE_PROBE_PASSED");
+    }
+
+    @Test
+    void explicitIdleConnectionBudgetIsPreserved() throws Exception
+    {
+        runProbe(KeepAliveProbe.class, "KEEP_ALIVE_PROBE_PASSED", "333");
+    }
+
+    private static void runProbe(Class<?> probe, String success, String... arguments) throws Exception
+    {
         String javaExecutable = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        String testClasses = Path.of(SlowRequestProbe.class.getProtectionDomain().getCodeSource().getLocation()
+        String testClasses = Path.of(probe.getProtectionDomain().getCodeSource().getLocation()
             .toURI()).toString();
         String mainClasses = Path.of(EmbeddedHttpServerPolicy.class.getProtectionDomain().getCodeSource()
             .getLocation().toURI()).toString();
         String classpath = testClasses.equals(mainClasses) ? testClasses :
             testClasses + java.io.File.pathSeparator + mainClasses;
-        Process process = new ProcessBuilder(javaExecutable, "--add-modules=jdk.httpserver", "-cp",
-            classpath, SlowRequestProbe.class.getName())
-            .redirectErrorStream(true).start();
+        List<String> command = new ArrayList<>(List.of(javaExecutable, "--add-modules=jdk.httpserver", "-cp",
+            classpath, probe.getName()));
+        command.addAll(List.of(arguments));
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
         boolean completed = process.waitFor(15, TimeUnit.SECONDS);
 
         if(!completed)
@@ -57,7 +77,80 @@ class EmbeddedHttpServerPolicyTest
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertTrue(completed, output);
         assertEquals(0, process.exitValue(), output);
-        assertTrue(output.contains("SLOW_REQUEST_PROBE_PASSED"), output);
+        assertTrue(output.contains(success), output);
+    }
+
+    /** Real HTTP sockets exercise the JDK's static policy and completed-response idle transition. */
+    public static final class KeepAliveProbe
+    {
+        public static void main(String[] args) throws Exception
+        {
+            String expected = args.length == 0 ? "1536" : args[0];
+            System.clearProperty(EmbeddedHttpServerPolicy.MAXIMUM_IDLE_CONNECTIONS_PROPERTY);
+            if(args.length > 0) System.setProperty(EmbeddedHttpServerPolicy.MAXIMUM_IDLE_CONNECTIONS_PROPERTY, args[0]);
+            EmbeddedHttpServerPolicy.configureBeforeServerInitialization();
+            if(!expected.equals(System.getProperty(EmbeddedHttpServerPolicy.MAXIMUM_IDLE_CONNECTIONS_PROPERTY)))
+                throw new AssertionError("The idle connection policy did not preserve the requested budget");
+
+            ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor();
+            HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 8);
+            server.setExecutor(executor);
+            AtomicInteger requests = new AtomicInteger();
+            server.createContext("/", exchange -> {
+                requests.incrementAndGet();
+                SlowRequestProbe.health(exchange);
+            });
+            server.start();
+            List<Socket> clients = new ArrayList<>();
+            try
+            {
+                int port = server.getAddress().getPort();
+                // The former JDK limit closed the 201st completed connection before it could be reused.
+                for(int index = 0; index < 256; index++)
+                {
+                    Socket socket = new Socket(InetAddress.getLoopbackAddress(), port);
+                    socket.setSoTimeout(2_000);
+                    clients.add(socket);
+                    request(socket);
+                }
+                // A later request forces the dispatcher past all previous completion/idle transitions.
+                try(Socket barrier = new Socket(InetAddress.getLoopbackAddress(), port))
+                {
+                    barrier.setSoTimeout(2_000);
+                    request(barrier);
+                }
+                for(Socket socket: clients) request(socket);
+                if(requests.get() != 513) throw new AssertionError("Not every original socket was reused");
+                System.out.println("KEEP_ALIVE_PROBE_PASSED");
+            }
+            finally
+            {
+                for(Socket socket: clients) socket.close();
+                server.stop(0);
+                executor.shutdownNow();
+            }
+        }
+
+        private static void request(Socket socket) throws IOException
+        {
+            socket.getOutputStream().write(("GET / HTTP/1.1\r\nHost: localhost\r\n" +
+                "Connection: keep-alive\r\n\r\n").getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            ByteArrayOutputStream headers = new ByteArrayOutputStream();
+            int lastFour = 0;
+            while(lastFour != 0x0d0a0d0a)
+            {
+                int value = socket.getInputStream().read();
+                if(value < 0) throw new EOFException("A completed keep-alive connection was closed before reuse");
+                headers.write(value);
+                lastFour = (lastFour << 8) | value;
+                if(headers.size() > 8_192) throw new IOException("Unexpected response headers");
+            }
+            String response = headers.toString(StandardCharsets.US_ASCII).toLowerCase(java.util.Locale.ROOT);
+            if(!response.startsWith("http/1.1 200 ") || !response.contains("\r\ncontent-length: 2\r\n") ||
+                !java.util.Arrays.equals("ok".getBytes(StandardCharsets.US_ASCII), socket.getInputStream().readNBytes(2)))
+                throw new AssertionError("Unexpected keep-alive response");
+        }
     }
 
     /** Runs in a fresh JVM because the JDK caches its HTTP server policy in a static initializer. */

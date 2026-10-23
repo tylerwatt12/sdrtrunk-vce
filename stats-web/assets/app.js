@@ -4,8 +4,8 @@ import { formatSourceName } from './core/source-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
-import * as tableLayouts from './core/table-layout.js?v=4';
-import * as tableDefaults from './core/table-defaults.js?v=27';
+import * as tableLayouts from './core/table-layout.js?v=5';
+import * as tableDefaults from './core/table-defaults.js?v=29';
 import { createTableOverflow } from './core/table-overflow.js?v=1';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -24,36 +24,25 @@ import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
   isReceiverHealthAlertEnabled
-} from './core/receiver-health-alerts.js?v=3';
-import * as radioSystemsDirectory from './features/radio-systems-directory.js';
-import { createListenMap } from './features/listen-map.js?v=12';
+} from './core/receiver-health-alerts.js?v=4';
 import { buildRadioResolvePlannerUrl } from './features/radioresolve-analysis.js?v=2';
 import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
 } from './features/alias-list-create.js?v=8';
-import { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } from './features/radioreference-import.js?v=31';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
-import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=2';
-import { createStreamingWorkspace } from './features/streaming.js?v=13';
-import { createRetainedStatisticsWorkspace } from './features/retained-statistics.js?v=11';
-import { createRemoteLinksWorkspace } from './features/remote-links.js?v=20';
-import { createAlertsWorkspace } from './features/alerts.js?v=19';
-import { createCallRelations } from './features/call-relations.js?v=3';
+import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=55';
-import { createPagingToneDetectionSettings } from './features/paging-tone-detection.js?v=4';
-import { openSpectrumSearchWizard, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search.js?v=31';
+import { createRecordingsFeature } from './features/recordings.js?v=56';
+import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=28';
+import { createAudioDock } from './core/audio-dock.js?v=29';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
-import { createApplicationLogWorkspace } from './core/application-log.js?v=5';
-import { createWebDiagnosticLogWorkspace } from './features/web-diagnostic-log.js?v=3';
-import { createRemoteSupportWorkspace } from './features/remote-support.js?v=3';
+import { createRemoteSupportWorkspace } from './features/remote-support.js?v=4';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
 import { WebCallPlayer } from './web-call-player.js?v=19';
 
@@ -267,15 +256,11 @@ const SERVER_TABLE_DEFAULT_SORTS = {
 };
 const CHANNEL_IDENTITY_PAGE_LIMIT = 100;
 const SERVICE_STATUS_FAILURE_WARNING_THRESHOLD = 3;
-const SERVICE_STATUS_INITIAL_ATTEMPTS = 3;
-const SERVICE_STATUS_RETRY_DELAY_MS = 500;
 const ALIAS_BULK_SELECTION_LIMIT = 10_000;
 const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
 let serviceStatus = null;
 let serviceStatusRequestPending = false;
 let serviceStatusConsecutiveFailures = 0;
-let p25VisualizerCatalogHasRunningSystem = false;
-let p25VisualizerCatalogRequest = null;
 let alertPushEnabled = null;
 let alertTopicsAvailabilityRefreshedAt = 0;
 let alertTopicsAvailabilityVersion = 0;
@@ -291,6 +276,7 @@ let aliasEditorPageController = null;
 let aliasEditorWorkspaceController = null;
 let accessSession = anonymousAccessSession();
 let accessSessionAvailable = false;
+let initialPageDeadline = 0;
 let applicationRoutes = null;
 let userPreferenceError = null;
 let appearanceHuePreview = null;
@@ -377,23 +363,19 @@ async function jsonDocumentFetch(path, options = {}) {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method) && accessSession.csrfToken) {
     headers.set('X-CSRF-Token', accessSession.csrfToken);
   }
-  const response = await fetch(path, {
-    ...options,
-    method,
-    headers,
-    cache: 'no-store',
-    credentials: 'same-origin'
+  return timedFetch(path, { ...options, method, headers, page: false }, async (response) => {
+    const body = await response.text();
+    let consumed = false;
+    return {
+      ok: response.ok,
+      status: response.status,
+      async json() {
+        if (consumed) throw new Error('The preference response was already read.');
+        consumed = true;
+        return JSON.parse(body);
+      }
+    };
   });
-  let consumed = false;
-  return {
-    ok: response.ok,
-    status: response.status,
-    async json() {
-      if (consumed) throw new Error('The preference response was already read.');
-      consumed = true;
-      return response.json();
-    }
-  };
 }
 
 function activeUserPreferences() {
@@ -2541,41 +2523,7 @@ function statsLoggingState() {
 }
 
 function p25VisualizerMenuAvailable() {
-  const logging = statsLoggingState();
-  return Boolean(serviceStatus) && serviceStatusConsecutiveFailures === 0 &&
-    logging.summaryActive && logging.historyActive && p25VisualizerCatalogHasRunningSystem;
-}
-
-function catalogHasRunningP25System(catalog) {
-  return Array.isArray(catalog?.channels) && catalog.channels.some((channel) =>
-    channel?.channel_kind === 'TRUNKED' && channel.processing_state === 'RUNNING' &&
-    ['p25-phase1', 'p25-phase2'].includes(String(channel.protocol_id || '').toLowerCase()));
-}
-
-function refreshP25VisualizerMenu() {
-  p25VisualizerCatalogRequest?.abort();
-  p25VisualizerCatalogRequest = null;
-  if (!serviceStatus || serviceStatusConsecutiveFailures !== 0 ||
-      !statsLoggingState().summaryActive || !statsLoggingState().historyActive) {
-    p25VisualizerCatalogHasRunningSystem = false;
-    updateNavigationAccess();
-    return;
-  }
-  updateNavigationAccess();
-  const controller = new AbortController();
-  p25VisualizerCatalogRequest = controller;
-  void requestJson('/api/v1/channel-catalog', { csrf: false, page: false, signal: controller.signal,
-    timeoutMs: 5_000 }).then((catalog) => {
-    if (p25VisualizerCatalogRequest === controller) {
-      p25VisualizerCatalogHasRunningSystem = catalogHasRunningP25System(catalog);
-    }
-  }).catch(() => {
-    if (p25VisualizerCatalogRequest === controller) p25VisualizerCatalogHasRunningSystem = false;
-  }).finally(() => {
-    if (p25VisualizerCatalogRequest !== controller) return;
-    p25VisualizerCatalogRequest = null;
-    updateNavigationAccess();
-  });
+  return serviceStatus?.p25_visualizer_available === true && serviceStatusConsecutiveFailures === 0;
 }
 
 function beginServiceStatusRequest() {
@@ -2603,26 +2551,16 @@ function serviceStatusWarningRequired() {
   return serviceStatusConsecutiveFailures >= SERVICE_STATUS_FAILURE_WARNING_THRESHOLD;
 }
 
-function serviceStatusRetryDelay(milliseconds) {
-  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
 async function requestServiceStatus() {
-  const attempts = serviceStatus ? 1 : SERVICE_STATUS_INITIAL_ATTEMPTS;
-  let lastError = null;
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    beginServiceStatusRequest();
-    try {
-      const value = await api('/api/v1/status', {}, { page: false });
-      acceptServiceStatus(value);
-      return value;
-    } catch (error) {
-      lastError = error;
-      rejectServiceStatusRequest();
-    }
-    if (attempt < attempts) await serviceStatusRetryDelay(SERVICE_STATUS_RETRY_DELAY_MS * attempt);
+  beginServiceStatusRequest();
+  try {
+    const value = await api('/api/v1/status', {}, { page: false });
+    acceptServiceStatus(value);
+    return value;
+  } catch (error) {
+    rejectServiceStatusRequest();
+    throw error;
   }
-  throw lastError;
 }
 
 function detailedHistoryAvailable() {
@@ -2899,8 +2837,10 @@ function renderTableRow(data, columns, rowKey, rowClass, onRowClick) {
       const key = row.dataset.id;
       onRowClick(row.tableRowData, row, event);
       if (!key || !body) return;
-      window.requestAnimationFrame(() => [...body.children]
-        .find((candidate) => candidate.dataset.id === key)?.focus({ preventScroll: true }));
+      window.requestAnimationFrame(() => {
+        if (!activeReadOnlyModal) [...body.children]
+          .find((candidate) => candidate.dataset.id === key)?.focus({ preventScroll: true });
+      });
     };
     row.addEventListener('click', (event) => {
       if (!event.target.closest('a, button, input, select, textarea, label')) {
@@ -3308,16 +3248,19 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
       replaceBody(orderedRows);
       return;
     }
+    const focused = body.contains(document.activeElement) ? document.activeElement : null;
+    const incoming = new Set(incomingKeys.map(String));
+    [...body.children].forEach((row) => {
+      if (!incoming.has(row.dataset.id)) row.remove();
+    });
     const existing = new Map([...body.children]
       .filter((row) => row.dataset.id !== undefined)
       .map((row) => [row.dataset.id, row]));
     let cursor = body.firstElementChild;
-    const retained = new Set();
     orderedRows.forEach((data, index) => {
       const key = String(incomingKeys[index]);
       let current = existing.get(key);
       if (current) {
-        retained.add(current);
         current.tableRowData = data;
         const classes = typeof options.rowClass === 'function' ? options.rowClass(data) : options.rowClass;
         if (current.className !== (classes || '')) current.className = classes || '';
@@ -3342,14 +3285,12 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
         while (current.children.length > columns.length) current.lastElementChild.remove();
       } else {
         current = renderTableRow(data, columns, options.rowKey, options.rowClass, options.onRowClick);
-        retained.add(current);
       }
       if (current !== cursor) body.insertBefore(current, cursor);
       cursor = current.nextElementSibling;
     });
-    [...body.children].forEach((row) => {
-      if (!retained.has(row)) row.remove();
-    });
+    if (focused instanceof HTMLElement && focused.isConnected && body.contains(focused) &&
+        document.activeElement !== focused) focused.focus({ preventScroll: true });
   };
 
   const renderBody = (reconcile = false) => {
@@ -4910,10 +4851,9 @@ function scanListMemberColumns(rows, onSelectionChange) {
 
 function aliasEditorEmptyState(lists) {
   const wrapper = node('section', 'alias-editor-welcome ui-empty-state');
-  wrapper.append(node('h2', '', lists.length ? 'Select an alias list' : 'No alias lists are configured'),
-    node('p', '', lists.length ?
-      'Aliases load only after you select a list. This keeps large radio systems responsive.' :
-      'Create an alias list to begin organizing talkgroups, radio IDs, and other identifiers.'));
+  wrapper.append(node('h2', '', lists.length ? 'Select an alias list' : 'No alias lists are configured'));
+  if (!lists.length) wrapper.append(node('p', '',
+    'Create an alias list to begin organizing talkgroups, radio IDs, and other identifiers.'));
   const create = node('button', 'ui-button ui-button-primary', 'Create Alias List');
   create.type = 'button';
   create.addEventListener('click', () => openAliasListCreateModal());
@@ -8877,8 +8817,9 @@ function signalChannelState(channel, now = Date.now()) {
     return { label: 'Offline', className: 'offline', rank: 0 };
   }
   const decode = optionalNumber(channel.decode_health_pct);
-  if (channel?.remote_origin?.remote !== true && !Number.isFinite(optionalNumber(channel.average_signal_dbfs))) {
-    return { label: 'No signal', className: 'poor', rank: 1 };
+  if (!Number.isFinite(decode) && channel?.remote_origin?.remote !== true &&
+    !Number.isFinite(optionalNumber(channel.average_signal_dbfs))) {
+    return { label: 'Unknown', className: 'unknown', rank: 2 };
   }
   if (!Number.isFinite(decode)) return { label: 'Monitoring', className: 'unknown', rank: 2 };
   if (decode >= DECODE_HEALTHY_MINIMUM_PERCENT) {
@@ -9064,76 +9005,6 @@ function qualityChartPanel(title, description, chart) {
   return panel;
 }
 
-function updateSignalCurrentTile(tile, channel) {
-  const state = signalChannelState(channel);
-  const remote = channel?.remote_origin?.remote === true;
-  const tone = state.className === 'healthy' ? 'success' :
-    state.className === 'degraded' ? 'warning' : state.className === 'poor' ? 'danger' : 'neutral';
-  const next = node('article', 'signal-current-tile ui-surface ui-surface-soft');
-  next.dataset.configurationId = channel.configuration_id || '';
-  const header = node('div', 'signal-current-header');
-  header.append(node('span', 'signal-current-protocol', protocolFamily(channel) || channel.protocol || 'Trunked site'));
-  const status = node('div', 'signal-current-status');
-  if (remote) status.append(remoteOriginIcon(channel.remote_origin));
-  const statePill = uiPill(state.label, tone);
-  statePill.classList.add('signal-state');
-  status.append(statePill);
-  header.append(status);
-
-  const labels = node('div', 'signal-current-labels');
-  const configured = node('strong', 'signal-current-name');
-  const name = channel.name || 'Unnamed channel';
-  configured.append(capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
-    anchor(name, href('channel', { configuration_id: channel.configuration_id })) : name);
-  labels.append(configured);
-  const site = String(channel.site_name || '').trim();
-  const system = String(channel.system_name || channel.system || '').trim();
-  // Friendly saved names belong here; protocol IDs remain available in channel details.
-  if (site) labels.append(node('span', 'signal-current-context', site));
-  if (system) labels.append(node('span', 'signal-current-context signal-current-system', system));
-
-  const power = node('div', 'signal-current-power');
-  if (!remote) {
-    power.append(node('strong', '', signalNumber(channel.signal_dbfs).replace(/\s*dBFS$/, '')),
-      node('span', '', 'dBFS'));
-    power.title = `30s average ${signalNumber(channel.average_signal_dbfs)}`;
-  } else power.setAttribute('aria-hidden', 'true');
-  const decode = optionalNumber(channel.decode_health_pct);
-  const meter = node('meter', 'ui-quality-meter');
-  meter.min = 0;
-  meter.max = 100;
-  meter.low = DECODE_DEGRADED_MINIMUM_PERCENT;
-  meter.high = DECODE_HEALTHY_MINIMUM_PERCENT;
-  meter.optimum = 100;
-  meter.value = Number.isFinite(decode) ? Math.max(0, Math.min(100, decode)) : 0;
-  meter.setAttribute('aria-label', 'Decode quality');
-  meter.setAttribute('aria-valuetext', percentNumber(channel.decode_health_pct));
-  meter.hidden = remote || !Number.isFinite(decode);
-  const details = node('div', 'signal-current-details');
-  details.append(node('span', '', `Decode ${percentNumber(channel.decode_health_pct)}`));
-  next.append(header, labels, power, meter, details);
-  patchElementTree(tile, next);
-  // Meter state is a property, so it also needs updating when its DOM is retained.
-  const retainedMeter = tile.querySelector('meter');
-  retainedMeter.min = meter.min;
-  retainedMeter.max = meter.max;
-  retainedMeter.low = meter.low;
-  retainedMeter.high = meter.high;
-  retainedMeter.optimum = meter.optimum;
-  retainedMeter.value = meter.value;
-  return tile;
-}
-
-function signalCurrentTile(channel) {
-  return updateSignalCurrentTile(node('article', 'signal-current-tile ui-surface'), channel);
-}
-
-function sortSignalChannels(channels) {
-  return [...channels].sort((left, right) =>
-    channelLabel(left).localeCompare(channelLabel(right), undefined, { sensitivity: 'base' }) ||
-      String(left.configuration_id || '').localeCompare(String(right.configuration_id || '')));
-}
-
 function signalOverview(channel, includeName = true, decodeOnly = channel?.remote_origin?.remote === true) {
   const overview = node('div', 'signal-history-overview ui-metric-grid');
   overview.classList.toggle('without-identity', !includeName);
@@ -9188,101 +9059,16 @@ function signalRangeControls(selectedRange, onChange) {
   return rangeControls(SIGNAL_RANGES, selectedRange, onChange);
 }
 
-function rethrowPageHandlingError(error) {
-  if (pageLifecycle.requiresPageHandling(error)) throw error;
-}
-
-async function signalHealthSection() {
-  const renderContext = captureRenderContext();
-  const host = node('div', 'signal-health');
-  const currentPanel = node('div', 'signal-current-panel');
-  const currentToolbar = node('div', 'signal-current-toolbar');
-  const summary = node('div', 'signal-health-summary');
-  currentToolbar.append(summary);
-  const tiles = node('div', 'signal-current-grid');
-  currentPanel.append(currentToolbar, tiles);
-  host.append(currentPanel);
-  const block = section('Trunked site signal quality', host, exportCsvLink('signal-health'));
-  let currentResponse = null;
-  const tileNodes = new Map();
-  let loading = false;
-
-  const renderCurrent = () => {
-    const now = Date.now();
-    const channels = sortSignalChannels((currentResponse?.rows || []).filter((channel) =>
-      String(channel.channel_kind || '').toUpperCase() === 'TRUNKED' &&
-      canonicalConfigurationId(channel?.configuration_id) &&
-      now - Number(channel.last_observed_ms || 0) <= SIGNAL_OFFLINE_MILLISECONDS));
-    const healthy = channels.filter((channel) =>
-      optionalNumber(channel.decode_health_pct) >= DECODE_HEALTHY_MINIMUM_PERCENT).length;
-    const degraded = channels.filter((channel) => {
-      const decode = optionalNumber(channel.decode_health_pct);
-      return Number.isFinite(decode) && decode >= DECODE_DEGRADED_MINIMUM_PERCENT &&
-        decode < DECODE_HEALTHY_MINIMUM_PERCENT;
-    }).length;
-    const poor = channels.filter((channel) => {
-      const decode = optionalNumber(channel.decode_health_pct);
-      return Number.isFinite(decode) && decode < DECODE_DEGRADED_MINIMUM_PERCENT;
-    }).length;
-    const unknown = channels.length - healthy - degraded - poor;
-    summary.textContent = `${number(channels.length)} sites reporting · ${number(healthy)} healthy · ` +
-      `${number(degraded)} degraded · ${number(poor)} poor${unknown ? ` · ${number(unknown)} unknown` : ''}`;
-
-    const activeKeys = new Set();
-    const orderedTiles = channels.map((channel) => {
-      const key = canonicalConfigurationId(channel.configuration_id);
-      activeKeys.add(key);
-      const existing = tileNodes.get(key);
-      const tile = existing ? updateSignalCurrentTile(existing, channel) : signalCurrentTile(channel);
-      tileNodes.set(key, tile);
-      return tile;
-    });
-    [...tileNodes.keys()].filter((key) => !activeKeys.has(key)).forEach((key) => tileNodes.delete(key));
-    reconcileKeyedChildren(tiles, orderedTiles, 'configurationId', () => {});
-    if (!channels.length) tiles.append(node('div', 'empty', 'No trunked sites are currently reporting.'));
-  };
-
-  const logging = statsLoggingState();
-  if (logging.available && !logging.summaryActive) {
-    currentToolbar.hidden = true;
-    const message = node('div', 'empty signal-disabled');
-    message.append('Saved signal history is turned off.');
-    if (capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) {
-      message.append(' ', anchor('Open Live signal levels', href('live')), '.');
-    }
-    tiles.append(message);
-  } else {
-    const loadCurrent = async (initial = false, pageOwned = false) => {
-      if (loading) return;
-      loading = true;
-      if (initial) summary.textContent = 'Loading current signal quality…';
-      try {
-        currentResponse = await apiPage('/api/v1/quality', {
-          range: '1h', points: 60, include_history: false
-        });
-        renderCurrent();
-      } catch (error) {
-        if (pageOwned) rethrowPageHandlingError(error);
-        summary.textContent = currentResponse ? `Signal quality update failed: ${error.message}` : '';
-        if (!currentResponse) tiles.replaceChildren(node('div', 'error', error.message));
-      } finally {
-        loading = false;
-      }
-    };
-    await loadCurrent(true, true);
-    if (renderIsCurrent(renderContext)) pageInterval(loadCurrent, 10_000);
-  }
-  return block;
-}
-
-async function channelSignalHistorySection(channel) {
-  const renderContext = captureRenderContext();
-  const host = node('div', 'site-signal-history');
-  const block = section('Control Channel Quality History', host);
-  block.classList.add('site-signal-history-section');
+async function channelSignalHistorySection(channel, parent, renderContext) {
+  const directory = createAsyncSection('Control Channel Quality History', {
+    loadingMessage: 'Loading control channel quality history…',
+    errorMessage: 'The control channel quality history could not be loaded.'
+  });
+  const host = directory.host;
+  host.classList.add('site-signal-history');
+  directory.element.classList.add('site-signal-history-section');
   const configuredDecodeOnly = channel?.remote_origin?.remote === true;
   let selectedRange = '1h';
-  let loadingSequence = 0;
   let loading = false;
   const rangeControl = signalRangeControls(selectedRange, async (value, buttons) => {
     selectedRange = value;
@@ -9294,57 +9080,41 @@ async function channelSignalHistorySection(channel) {
   const exportLink = exportCsvLink('channel-quality', {
     configuration_id: channel.configuration_id, range: selectedRange
   });
-  const titleActions = node('div', 'section-title-actions ui-section-actions');
-  titleActions.append(rangeControl.controls, exportLink);
-  block.querySelector('.section-title').append(titleActions);
-  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
+  directory.titleActions.append(rangeControl.controls, exportLink);
+  parent.append(directory.element);
+  const load = async (buttons = rangeControl.buttons, interactive = false) => {
     if (loading && !interactive) return;
-    const sequence = ++loadingSequence;
     loading = true;
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
       disconnectPageObserversWithin(host);
-      host.replaceChildren(node('div', 'loading', 'Loading control channel quality history'));
     }
     try {
-      const response = await api(channelApiPath(channel.configuration_id, 'quality'), {
+      return await directory.load(() => api(channelApiPath(channel.configuration_id, 'quality'), {
         range: selectedRange, points: 300
-      });
-      if (sequence !== loadingSequence) return;
-      const qualitySite = (response.rows || [])[0];
-      const decodeOnly = configuredDecodeOnly || qualitySite?.remote_origin?.remote === true;
-      disconnectPageObserversWithin(host);
-      host.replaceChildren();
-      if (!qualitySite || !Array.isArray(qualitySite.series) || !qualitySite.series.length) {
-        host.append(node('div', 'empty',
-          decodeOnly ? `No remote decode quality samples are available in the selected ${selectedRange} range` :
-            `No retained control channel quality samples are available in the selected ${selectedRange} range`));
-        return;
-      }
-      const charts = node('div', 'quality-chart-stack');
-      if (!decodeOnly) {
-        charts.append(qualityChartPanel('Signal Strength', '30s average and observed range · dBFS',
-          qualityHistoryChart(qualitySite, response, 'signal', sharedSignalDomain([qualitySite]))));
-      }
-      charts.append(qualityChartPanel('Decode Quality', '30s rolling successful-frame rate · percent',
-        qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }, decodeOnly)));
-      if (decodeOnly) {
-        host.append(node('p', 'ui-section-note',
-          'Decode quality reflects frames decoded from the remote bits, not RF signal strength.'));
-      }
-      host.append(signalOverview(qualitySite, false, decodeOnly), charts);
-      host.removeAttribute('title');
-    } catch (error) {
-      if (pageOwned) rethrowPageHandlingError(error);
-      if (sequence === loadingSequence) {
-        if (interactive) host.replaceChildren(node('div', 'error', error.message));
-        else host.title = `Quality history update failed: ${error.message}`;
-      }
+      }), (response) => {
+        const qualitySite = (response.rows || [])[0];
+        const decodeOnly = configuredDecodeOnly || qualitySite?.remote_origin?.remote === true;
+        disconnectPageObserversWithin(host);
+        if (!qualitySite || !Array.isArray(qualitySite.series) || !qualitySite.series.length) {
+          return node('div', 'empty', decodeOnly ?
+            `No remote decode quality samples are available in the selected ${selectedRange} range` :
+            `No retained control channel quality samples are available in the selected ${selectedRange} range`);
+        }
+        const charts = node('div', 'quality-chart-stack');
+        if (!decodeOnly) {
+          charts.append(qualityChartPanel('Signal Strength', '30s average and observed range · dBFS',
+            qualityHistoryChart(qualitySite, response, 'signal', sharedSignalDomain([qualitySite]))));
+        }
+        charts.append(qualityChartPanel('Decode Quality', '30s rolling successful-frame rate · percent',
+          qualityHistoryChart(qualitySite, response, 'decode', { minimum: 0, maximum: 100 }, decodeOnly)));
+        return fragment(decodeOnly ? node('p', 'ui-section-note',
+          'Decode quality reflects frames decoded from the remote bits, not RF signal strength.') : null,
+          signalOverview(qualitySite, false, decodeOnly), charts);
+      }, renderContext, !interactive);
     } finally {
-      if (sequence === loadingSequence) {
-        loading = false;
-        if (interactive) buttons.forEach((button) => { button.disabled = false; });
-      }
+      loading = false;
+      if (interactive) buttons.forEach((button) => { button.disabled = false; });
     }
   };
   const logging = statsLoggingState();
@@ -9352,10 +9122,9 @@ async function channelSignalHistorySection(channel) {
     rangeControl.controls.hidden = true;
     host.append(node('div', 'empty', 'Saved control-channel quality history is turned off.'));
   } else {
-    await load(rangeControl.buttons, true, true);
+    await load(rangeControl.buttons, true);
     if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
   }
-  return block;
 }
 
 function groupIdentityHistoryTotals(totals) {
@@ -9367,91 +9136,71 @@ function groupIdentityHistoryTotals(totals) {
   ]);
 }
 
-async function groupIdentityActivityHistorySection(scopeParameters) {
-  const renderContext = captureRenderContext();
-  const panels = node('div', 'entity-info-column group-identity-activity-panels');
-  const historyHost = node('div', 'group-identity-activity-history');
-  const chartHost = node('div', 'group-identity-call-activity');
-  const signalingHost = node('div', 'group-identity-signaling-totals');
+async function groupIdentityActivityHistorySection(scopeParameters, parent, renderContext) {
+  const directory = createAsyncSection('Call history', {
+    bare: true,
+    loadingMessage: 'Loading group activity history…',
+    errorMessage: 'The group activity history could not be loaded.'
+  });
+  directory.element.classList.add('entity-info-column', 'group-identity-activity-panels');
   let selectedRange = '24h';
-  let loadingSequence = 0;
   let loading = false;
   const rangeControl = rangeControls(ACTIVITY_RANGES, selectedRange, async (value, buttons) => {
     selectedRange = value;
     await load(buttons, true);
   });
-  const historySection = section('Call history', historyHost, sectionActionHost(rangeControl.controls));
-  historySection.classList.add('group-identity-history-section');
-  const chartSection = section('Calls by time', chartHost);
-  const signalingSection = section('Signaling activity', signalingHost);
-  panels.append(historySection, chartSection, signalingSection);
-
-  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
+  parent.append(directory.element);
+  const load = async (buttons = rangeControl.buttons, interactive = false) => {
     if (loading && !interactive) return;
-    const sequence = ++loadingSequence;
     loading = true;
     if (interactive) {
       buttons.forEach((button) => { button.disabled = true; });
-      historyHost.replaceChildren(node('div', 'loading', 'Loading activity totals'));
-      disconnectPageObserversWithin(chartHost);
-      chartHost.replaceChildren(node('div', 'loading', 'Loading call activity'));
-      signalingHost.replaceChildren(node('div', 'loading', 'Loading signaling totals'));
+      disconnectPageObserversWithin(directory.host);
     }
     try {
-      const response = await api(groupIdentityApiPath(scopeParameters.radio_system_key,
-        scopeParameters.identity_key, 'activity'), { range: selectedRange });
-      if (sequence !== loadingSequence) return;
-      historyHost.replaceChildren(
-        groupIdentityHistoryTotals(response.totals), callCountDates(response, 'selected'),
-        node('p', 'ui-section-note', systemCallTitle(scopeParameters)));
-      disconnectPageObserversWithin(chartHost);
-      chartHost.replaceChildren(groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
-        'Group calls and call outcomes by time'));
-      signalingHost.replaceChildren(signalingMetrics(signalingCounts(response.totals || {})),
-        callCountDates({ call_totals_started_at_ms: response.signaling_totals_started_at_ms,
-          call_totals_as_of_ms: response.counts_as_of_ms }, 'totals'),
-        activityMetricGuide(true));
-    } catch (error) {
-      if (pageOwned) rethrowPageHandlingError(error);
-      if (sequence === loadingSequence) {
-        historyHost.replaceChildren(node('div', 'error', error.message));
-        disconnectPageObserversWithin(chartHost);
-        chartHost.replaceChildren();
-        signalingHost.replaceChildren();
-      }
+      return await directory.load(() => api(groupIdentityApiPath(scopeParameters.radio_system_key,
+        scopeParameters.identity_key, 'activity'), { range: selectedRange }), (response) => {
+        disconnectPageObserversWithin(directory.host);
+        const history = section('Call history', fragment(groupIdentityHistoryTotals(response.totals),
+          callCountDates(response, 'selected'), node('p', 'ui-section-note', systemCallTitle(scopeParameters))),
+          sectionActionHost(rangeControl.controls));
+        history.classList.add('group-identity-history-section');
+        return fragment(history,
+          section('Calls by time', groupIdentityActivityChart(response, GROUP_IDENTITY_CALL_ACTIVITY_SERIES,
+            'Group calls and call outcomes by time')),
+          section('Signaling activity', fragment(signalingMetrics(signalingCounts(response.totals || {})),
+            callCountDates({ call_totals_started_at_ms: response.signaling_totals_started_at_ms,
+              call_totals_as_of_ms: response.counts_as_of_ms }, 'totals'), activityMetricGuide(true))));
+      }, renderContext, !interactive);
     } finally {
-      if (sequence === loadingSequence) {
-        loading = false;
-        buttons.forEach((button) => { button.disabled = false; });
-      }
+      loading = false;
+      buttons.forEach((button) => { button.disabled = false; });
     }
   };
-
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
-    rangeControl.controls.hidden = true;
-    historyHost.append(node('div', 'empty', 'Saved group activity history is turned off.'));
-    chartSection.hidden = true;
-    signalingSection.hidden = true;
+    directory.host.append(section('Call history',
+      node('div', 'empty', 'Saved group activity history is turned off.')));
   } else {
-    await load(rangeControl.buttons, true, true);
+    await load(rangeControl.buttons, true);
     if (renderIsCurrent(renderContext)) pageInterval(load, 30_000);
   }
-  return panels;
 }
 
-async function channelTopGroupsSection(channel) {
-  const host = node('div', 'channel-top-groups');
+async function channelTopGroupsSection(channel, parent, renderContext) {
+  const directory = createAsyncSection('Calls heard on this channel', {
+    loadingMessage: 'Loading group activity for this channel…',
+    errorMessage: 'The group activity for this channel could not be loaded.'
+  });
+  const host = directory.host;
+  host.classList.add('channel-top-groups');
   let selectedRange = '24h';
-  let loadingSequence = 0;
-  let loading = false;
-  const tableController = {};
   const rangeControl = rangeControls(SIGNAL_RANGES, selectedRange, async (value, buttons) => {
     selectedRange = value;
-    await load(buttons, true);
+    await load(buttons);
   });
-  const titleActions = sectionActionHost(rangeControl.controls);
-  const block = section('Calls heard on this channel', host, titleActions);
+  directory.titleActions.append(rangeControl.controls);
+  parent.append(directory.element);
   const columns = [
     { id: 'group-identity-id', label: 'Group', render: (row) => groupIdentityValue(row),
       className: 'alias-cell', sortValue: (row) => groupIdentitySortValue(row) },
@@ -9468,46 +9217,26 @@ async function channelTopGroupsSection(channel) {
       sortValue: (row) => Number(row.encrypted_logical_call_count || 0) }
   ];
 
-  const load = async (buttons = rangeControl.buttons, interactive = false, pageOwned = false) => {
-    if (loading && !interactive) return;
-    const sequence = ++loadingSequence;
-    loading = true;
-    if (interactive) {
-      buttons.forEach((button) => { button.disabled = true; });
-      cleanupTableLayoutMenu(tableController);
-      host.replaceChildren(node('div', 'loading', 'Loading group activity for this channel'));
-    }
+  const load = async (buttons = rangeControl.buttons) => {
+    buttons.forEach((button) => { button.disabled = true; });
     try {
-      const response = await api(channelApiPath(channel.configuration_id, 'group-identities'), {
+      return await directory.load(() => api(channelApiPath(channel.configuration_id, 'group-identities'), {
         range: selectedRange, limit: 20
-      });
-      if (sequence !== loadingSequence) return;
-      host.replaceChildren(callCountDates(response, 'selected'), table(response.rows || [], columns,
+      }), (response) => fragment(callCountDates(response, 'selected'), table(response.rows || [], columns,
         'No group activity is available for this range', {
-          type: 'channel-top-groups', controller: tableController, layoutMenuHost: titleActions
-        }));
-    } catch (error) {
-      if (sequence === loadingSequence) cleanupTableLayoutMenu(tableController);
-      if (pageOwned) rethrowPageHandlingError(error);
-      if (sequence === loadingSequence) {
-        host.replaceChildren(node('div', 'error', error.message));
-      }
+          type: 'channel-top-groups', controller: directory.tableController, layoutMenuHost: directory.titleActions
+        })), renderContext);
     } finally {
-      if (sequence === loadingSequence) {
-        loading = false;
-        buttons.forEach((button) => { button.disabled = false; });
-      }
+      buttons.forEach((button) => { button.disabled = false; });
     }
   };
-
   const logging = statsLoggingState();
   if (logging.available && !logging.summaryActive) {
     rangeControl.controls.hidden = true;
     host.append(node('div', 'empty', 'Saved group activity is turned off.'));
   } else {
-    await load(rangeControl.buttons, true, true);
+    await load();
   }
-  return block;
 }
 
 function snakeCaseKey(value) {
@@ -9529,55 +9258,30 @@ async function requestJson(path, options = {}) {
   if (options.csrf !== false && !['GET', 'HEAD', 'OPTIONS'].includes(method) && accessSession.csrfToken) {
     headers.set('X-CSRF-Token', accessSession.csrfToken);
   }
-  const controller = new AbortController();
-  const upstreamSignal = options.signal || (options.page === false ? null : activeRenderController?.signal);
-  const timeoutMs = Math.max(250, Number(options.timeoutMs) || 10_000);
-  let timedOut = false;
-  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
-  if (upstreamSignal?.aborted) abortFromUpstream();
-  else upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
-  const timeout = window.setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-  let response;
-  let result = null;
-  try {
-    response = await fetch(path, {
-      method,
-      headers,
-      body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
-      cache: 'no-store',
-      credentials: 'same-origin',
-      keepalive: options.keepalive === true,
-      signal: controller.signal
-    });
+  const { response, result } = await timedFetch(path, {
+    ...options, method, headers,
+    body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
+    keepalive: options.keepalive === true
+  }, async (response, signal) => {
+    options.onResponse?.(response);
+    let result = null;
+    reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'));
     const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
     if (response.status !== 204) {
       if (contentType.includes('json')) result = await response.json().catch((error) => {
-        if (controller.signal.aborted) throw error;
+        if (signal.aborted) throw error;
         return null;
       });
       else {
         const message = await response.text().catch((error) => {
-          if (controller.signal.aborted) throw error;
+          if (signal.aborted) throw error;
           return '';
         });
         result = message ? { error: message } : null;
       }
     }
-  } catch (error) {
-    if (timedOut) {
-      const timeoutError = new Error('The receiver did not respond in time.');
-      timeoutError.code = 'request_timeout';
-      timeoutError.path = path;
-      throw timeoutError;
-    }
-    throw error;
-  } finally {
-    window.clearTimeout(timeout);
-    upstreamSignal?.removeEventListener('abort', abortFromUpstream);
-  }
+    return { response, result };
+  });
   if (!response.ok) {
     const failure = result?.error && typeof result.error === 'object' ? result.error : result;
     const fallback = typeof result?.error === 'string' ? result.error : 'The receiver could not complete the request.';
@@ -9599,6 +9303,37 @@ async function requestJson(path, options = {}) {
   const data = Array.isArray(result.data) ? { rows: result.data, ...(result.meta || {}) } :
     result.meta && typeof result.meta === 'object' ? { ...result.data, ...result.meta } : result.data;
   return systemLabels.rememberSystemNames(data);
+}
+
+async function timedFetch(path, options, consume) {
+  const controller = new AbortController();
+  const upstreamSignal = options.signal || (options.page === false ? null : activeRenderController?.signal);
+  const timeoutMs = Math.min(Math.max(250, Number(options.timeoutMs) || 10_000),
+    initialPageDeadline ? Math.max(0, initialPageDeadline - performance.now()) : Infinity);
+  let timedOut = timeoutMs === 0;
+  const abortFromUpstream = () => controller.abort(upstreamSignal?.reason);
+  if (upstreamSignal?.aborted) abortFromUpstream();
+  else upstreamSignal?.addEventListener('abort', abortFromUpstream, { once: true });
+  const timeout = timedOut ? null : window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    if (timedOut) throw new Error('Initial page deadline expired.');
+    const response = await fetch(path, {
+      ...options, cache: 'no-store', credentials: 'same-origin', signal: controller.signal
+    });
+    return await consume(response, controller.signal);
+  } catch (error) {
+    if (!timedOut) throw error;
+    const failure = new Error('The receiver did not respond in time.');
+    failure.code = 'request_timeout';
+    failure.path = path;
+    throw failure;
+  } finally {
+    window.clearTimeout(timeout);
+    upstreamSignal?.removeEventListener('abort', abortFromUpstream);
+  }
 }
 
 function waitForRequestRetry(delayMilliseconds, signal) {
@@ -9788,14 +9523,25 @@ class ReceiverHealthController {
     if (!this.desktopEnabled() || document.hidden || this.requestController) return;
     const controller = new AbortController();
     this.requestController = controller;
+    let serverTime = NaN;
+    let receivedAt = 0;
     try {
       const response = await api('/api/v1/receiver-health', {}, {
-        page: false, signal: controller.signal, timeoutMs: 10_000
+        page: false, signal: controller.signal, timeoutMs: 10_000,
+        onResponse: (response) => {
+          serverTime = Date.parse(response.headers.get('Date'));
+          receivedAt = performance.now();
+        }
       });
       if (this.requestController !== controller || !this.desktopEnabled()) return;
+      // HTTP Date has whole-second precision; a later timestamp cannot establish a current sample.
+      if (!Number.isFinite(serverTime) || Number(response?.generated_at_ms) > serverTime + 1000) {
+        throw new Error('Receiver status time is unavailable.');
+      }
       this.snapshot = normalizeReceiverHealthSnapshot(response);
-      this.stale = this.snapshot.generated_at_ms <= 0 ||
-        Date.now() - this.snapshot.generated_at_ms > RECEIVER_HEALTH_STALE_MILLISECONDS;
+      const age = Math.max(0, serverTime - this.snapshot.generated_at_ms) +
+        Math.max(0, performance.now() - receivedAt);
+      this.stale = this.snapshot.generated_at_ms <= 0 || age > RECEIVER_HEALTH_STALE_MILLISECONDS;
       this.lastError = this.stale ? 'Receiver status has not updated recently.' : '';
     } catch (error) {
       if (controller.signal.aborted || this.requestController !== controller) return;
@@ -9954,12 +9700,13 @@ function createAsyncSection(title, options = {}) {
   let loadSequence = 0;
   let focusAfterAttempt = false;
 
-  const load = (loader, present, renderContext) => {
+  const load = (loader, present, renderContext, background = false) => {
     const sequence = ++loadSequence;
     return pageLifecycle.run({
       isCurrent: () => sequence === loadSequence && renderIsCurrent(renderContext) && host.isConnected,
       onLoading: ({ retry }) => {
-        focusAfterAttempt = retry;
+        focusAfterAttempt = !background && retry;
+        if (background) return;
         host.setAttribute('aria-busy', 'true');
         host.classList.remove('ui-table-content');
         const loading = node('div', 'loading', options.loadingMessage || 'Loading…');
@@ -9971,7 +9718,9 @@ function createAsyncSection(title, options = {}) {
       },
       load: loader,
       onReady: (value) => {
+        cleanupTableLayoutMenu(tableController);
         replaceAsyncContent(host, present(value));
+        host.removeAttribute('title');
         host.setAttribute('aria-busy', 'false');
         if (focusAfterAttempt) {
           host.tabIndex = -1;
@@ -9979,6 +9728,10 @@ function createAsyncSection(title, options = {}) {
         }
       },
       onError: (error, retry) => {
+        if (background) {
+          host.title = error?.message || options.errorMessage || 'This section could not be updated.';
+          return;
+        }
         const failure = asyncSectionFailure(error, options.errorMessage, retry);
         cleanupTableLayoutMenu(tableController);
         host.classList.remove('ui-table-content');
@@ -10032,7 +9785,7 @@ const LIVE_MULTIPLEX_TOPICS = Object.freeze({
   4: 'channel_diagnostics',
   5: 'tuner_diagnostics',
   6: 'frequency_audio',
-  7: 'saved_activity'
+  7: 'p25_activity',
 });
 const LIVE_MULTIPLEX_DECODER = new TextDecoder();
 
@@ -10706,37 +10459,83 @@ function applyLiveChannelActivitySnapshot(snapshot) {
   liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'snapshot', current));
 }
 
-function mergeLiveChannelActivityDelta(update, currentTable) {
-  const id = String(update?.table_id || '');
-  if (!id) throw new Error('Missing activity table identity.');
-  if (update.operation === 'remove') return { ...update, table_id: id };
-  if (!currentTable && !update.table) throw new Error('Missing activity table baseline.');
+function mergeLiveChannelActivityChange(change, currentTable) {
+  const id = change?.table_id;
+  if (typeof id !== 'string' || !id || typeof change.replace !== 'boolean') {
+    throw new Error('Invalid activity table change.');
+  }
+  if (change.operation === 'remove') {
+    if (change.replace || change.table !== undefined || change.rows !== undefined ||
+        change.removed_row_keys !== undefined || change.row_order !== undefined) {
+      throw new Error('Invalid removed activity table.');
+    }
+    return { ...change, table_id: id };
+  }
+  if (change.operation !== 'upsert') throw new Error('Invalid activity operation.');
+  if (change.table !== undefined && (!change.table || typeof change.table !== 'object' ||
+      Array.isArray(change.table) || change.table.rows !== undefined ||
+      change.table.table_id !== undefined && change.table.table_id !== id)) {
+    throw new Error('Invalid activity table metadata.');
+  }
+  if (change.replace ? !change.table || !Array.isArray(change.rows) || !Array.isArray(change.row_order) : !currentTable) {
+    throw new Error('Missing activity table baseline.');
+  }
   const rows = new Map();
-  for (const row of currentTable?.rows || []) {
-    const key = String(row?.key ?? '');
-    if (!key || rows.has(key)) throw new Error('Invalid activity row baseline.');
+  for (const row of change.replace ? [] : currentTable.rows || []) {
+    const key = row?.key;
+    if (typeof key !== 'string' || !key || rows.has(key)) throw new Error('Invalid activity row baseline.');
     rows.set(key, row);
   }
-  for (const key of update.removed_row_keys || []) rows.delete(String(key));
-  for (const row of update.rows || []) {
-    const key = String(row?.key ?? '');
-    if (!key) throw new Error('Missing activity row identity.');
+  if (change.removed_row_keys !== undefined && !Array.isArray(change.removed_row_keys) ||
+      change.rows !== undefined && !Array.isArray(change.rows)) throw new Error('Invalid activity rows.');
+  for (const key of change.removed_row_keys || []) {
+    if (typeof key !== 'string' || !key) throw new Error('Invalid removed activity row.');
+    rows.delete(key);
+  }
+  const changedKeys = new Set();
+  for (const row of change.rows || []) {
+    const key = row?.key;
+    if (typeof key !== 'string' || !key || changedKeys.has(key)) throw new Error('Invalid changed activity row.');
+    changedKeys.add(key);
     rows.set(key, row);
   }
   let orderedRows = [...rows.values()];
-  if (update.row_order !== undefined) {
-    if (!Array.isArray(update.row_order) || update.row_order.length !== rows.size ||
-        new Set(update.row_order.map(String)).size !== rows.size) {
-      throw new Error('Invalid activity row order.');
-    }
-    orderedRows = update.row_order.map((key) => {
-      const row = rows.get(String(key));
+  if (change.row_order !== undefined) {
+    if (!Array.isArray(change.row_order) || change.row_order.length !== rows.size ||
+        new Set(change.row_order).size !== rows.size) throw new Error('Invalid activity row order.');
+    orderedRows = change.row_order.map((key) => {
+      const row = typeof key === 'string' ? rows.get(key) : null;
       if (!row) throw new Error('Missing activity row in order.');
       return row;
     });
   }
-  return { ...update, table_id: id,
-    table: { ...(update.table === undefined ? currentTable : update.table), table_id: id, rows: orderedRows } };
+  return { ...change, table_id: id,
+    table: { ...(change.table === undefined ? currentTable : change.table), table_id: id, rows: orderedRows } };
+}
+
+function applyLiveChannelActivityBatch(batch) {
+  if (liveChannelActivityNeedsResync) return;
+  if (!Number.isSafeInteger(batch?.revision) || batch.revision < 1 ||
+      !Number.isSafeInteger(batch.base_revision) || batch.base_revision < 0 || !Array.isArray(batch.changes)) {
+    throw new Error('Invalid activity batch.');
+  }
+  if (batch.revision <= liveChannelActivityRevision) return;
+  if (batch.base_revision !== liveChannelActivityRevision) throw new Error('Activity batch baseline does not match.');
+  const tables = new Map(liveChannelActivityTables);
+  const changedTables = new Set();
+  const changes = batch.changes.map((change) => {
+    const merged = mergeLiveChannelActivityChange(change, tables.get(change?.table_id));
+    if (changedTables.has(merged.table_id)) throw new Error('Repeated activity table change.');
+    changedTables.add(merged.table_id);
+    if (merged.operation === 'remove') tables.delete(merged.table_id);
+    else tables.set(merged.table_id, merged.table);
+    return merged;
+  });
+  liveChannelActivityTables.clear();
+  tables.forEach((table, id) => liveChannelActivityTables.set(id, table));
+  liveChannelActivityRevision = batch.revision;
+  const current = { ...batch, changes };
+  liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityBatch', current));
 }
 
 function reportLiveChannelActivityGap(detail, reconnect = false) {
@@ -10758,9 +10557,9 @@ function synchronizeLiveChannelActivitySource() {
     return;
   }
 
-  // A rebuilt view has no delta baseline, even when the server coalesces its close/open controls.
+  // A rebuilt view needs a batch baseline, even when the server coalesces its close/open controls.
   if (!liveChannelActivitySource) liveChannelActivitySubscriptionId = randomLiveClientId();
-  const parameters = { delta: true, subscription_id: liveChannelActivitySubscriptionId };
+  const parameters = { subscription_id: liveChannelActivitySubscriptionId };
   if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true;
   if (liveChannelActivitySource?.update(parameters)) liveChannelActivityNeedsResync = true;
   if (!liveChannelActivitySource) {
@@ -10781,53 +10580,12 @@ function synchronizeLiveChannelActivitySource() {
         //Ignore a malformed optional live update and retain the last complete snapshot.
       }
     });
-    source.addEventListener('activity_table', (event) => {
+    source.addEventListener('activity_batch', (event) => {
       try {
-        const update = JSON.parse(event.data);
-        const id = String(update?.table_id || update?.table?.table_id || '');
-        if (!id) return;
-        const revision = Math.max(0, Number(update?.revision) || 0);
-        if (liveChannelActivityNeedsResync) return;
-        if (revision && revision <= liveChannelActivityRevision) return;
-        const baseRevision = update.base_revision === undefined ?
-          liveChannelActivityRevision : Number(update.base_revision);
-        if (revision && liveChannelActivityRevision && (baseRevision !== liveChannelActivityRevision ||
-            (update.base_revision === undefined && revision !== liveChannelActivityRevision + 1))) {
-          liveChannelActivityNeedsResync = true;
-          liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'gap', {
-            reason: 'channel_activity_revision_gap', expected_revision: liveChannelActivityRevision + 1,
-            observed_revision: revision
-          }));
-          return;
-        }
-        if (update.operation === 'remove') liveChannelActivityTables.delete(id);
-        else if (update.table) liveChannelActivityTables.set(id, update.table);
-        if (revision) liveChannelActivityRevision = revision;
-        liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityTable', update));
-        reportHealthyDelivery();
-      } catch (error) {
-        //Ignore one malformed update; a later snapshot restores authoritative state.
-      }
-    });
-    source.addEventListener('activity_delta', (event) => {
-      try {
-        const update = JSON.parse(event.data);
-        const revision = Math.max(0, Number(update?.revision) || 0);
-        if (liveChannelActivityNeedsResync || !revision || revision <= liveChannelActivityRevision) return;
-        if (Number(update.base_revision) !== liveChannelActivityRevision) {
-          reportLiveChannelActivityGap({ reason: 'channel_activity_revision_gap',
-            expected_revision: liveChannelActivityRevision, observed_revision: update.base_revision }, true);
-          return;
-        }
-        const id = String(update?.table_id || '');
-        const merged = mergeLiveChannelActivityDelta(update, liveChannelActivityTables.get(id));
-        if (merged.operation === 'remove') liveChannelActivityTables.delete(id);
-        else liveChannelActivityTables.set(id, merged.table);
-        liveChannelActivityRevision = revision;
-        liveChannelActivitySubscribers.forEach((target) => invokeLiveSubscriber(target, 'activityTable', merged));
+        applyLiveChannelActivityBatch(JSON.parse(event.data));
         reportHealthyDelivery();
       } catch (_) {
-        reportLiveChannelActivityGap({ reason: 'channel_activity_invalid_delta' }, true);
+        reportLiveChannelActivityGap({ reason: 'channel_activity_invalid_batch' }, true);
       }
     });
     source.addEventListener('activity_resync', (event) => {
@@ -10876,7 +10634,7 @@ function subscribeLiveChannelActivity(callbacks = {}, options = {}) {
   const subscriber = {
     markers: options.markers === true,
     snapshot: typeof callbacks.snapshot === 'function' ? callbacks.snapshot : null,
-    activityTable: typeof callbacks.activityTable === 'function' ? callbacks.activityTable : null,
+    activityBatch: typeof callbacks.activityBatch === 'function' ? callbacks.activityBatch : null,
     gap: typeof callbacks.gap === 'function' ? callbacks.gap : null,
     open: typeof callbacks.open === 'function' ? callbacks.open : null,
     error: typeof callbacks.error === 'function' ? callbacks.error : null
@@ -10886,7 +10644,7 @@ function subscribeLiveChannelActivity(callbacks = {}, options = {}) {
 
   if (liveChannelActivitySource) {
     if (liveChannelActivityTables.size && !liveChannelActivityNeedsResync) {
-      invokeLiveSubscriber(subscriber, 'snapshot', { tables: [...liveChannelActivityTables.values()] });
+      invokeLiveSubscriber(subscriber, 'snapshot', { revision: liveChannelActivityRevision, tables: [...liveChannelActivityTables.values()] });
     }
     if (liveChannelActivityState === 'open') invokeLiveSubscriber(subscriber, 'open');
     else if (liveChannelActivityState === 'error') invokeLiveSubscriber(subscriber, 'error');
@@ -12444,6 +12202,17 @@ function dashboardIdentitySortValue(row) {
     dashboardIdentityOptions(row)).primary;
 }
 
+function dashboardIdentitySystem(row) {
+  if (dashboardChannelKind(row) === 'CONVENTIONAL') {
+    return channelLink({ entity_ref: { kind: 'channel', key: row.configuration_id } },
+      row.name || row.source_label || radioSystemPrimaryName(row) || '—');
+  }
+  const scopedSystem = row.radio_system_key ? radioSystemDisplayName(row) : '';
+  const label = radioSystemPrimaryName(row) || row.name || scopedSystem || row.source_label ||
+    row.radio_system_key || '—';
+  return radioSystemLink({ kind: 'radio_system', key: row.radio_system_key }, label);
+}
+
 const dashboardCallSourceColumns = [
   { id: 'receiver', label: 'Conventional Channel', render: callSourceLink, className: 'alias-cell',
     sortValue: callSourceLabel },
@@ -12464,7 +12233,7 @@ function dashboardIdentityColumns(identityLabel) {
   return [
     { id: 'identity', label: identityLabel, render: dashboardIdentity, className: 'alias-cell',
       sortValue: dashboardIdentitySortValue },
-    { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
+    { id: 'system', label: 'System / Channel', render: dashboardIdentitySystem, className: 'alias-cell' },
     { id: 'mode', label: 'Mode', fullLabel: 'Protocol and Topology',
       render: dashboardMode, sortValue: dashboardModeLabel },
     { id: 'logical-calls', label: 'Calls', fullLabel: 'Calls',
@@ -12493,8 +12262,8 @@ function dashboardActivityActionConfiguration(action) {
 }
 
 function dashboardActivityActionRows(response) {
-  return (response?.rows || []).map((row, index) => {
-    const configuration = dashboardActivityActionConfiguration(row.action, index);
+  return (response?.rows || []).map((row) => {
+    const configuration = dashboardActivityActionConfiguration(row.action);
     return {
       ...row,
       ...configuration,
@@ -12584,21 +12353,13 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
   return wrapper;
 }
 
-function dashboardActivitySystem(row) {
-  const scopedSystem = row.radio_system_key ? radioSystemDisplayName(row) : '';
-  const label = radioSystemPrimaryName(row) || row.name || scopedSystem || row.source_label ||
-    row.radio_system_key || '—';
-  const target = entityReferenceAllowed(row.entity_ref) ? entityTarget(row.entity_ref) : '';
-  return target ? anchor(label, target) : node('span', '', label);
-}
-
 function dashboardActivityRadio(row) {
   return radioIdentityValue(row, { reference: row.radio_entity_ref,
     context: String(row.alias_description || '').trim(), fallback: '—' });
 }
 
 const dashboardActivityRadioColumns = [
-  { id: 'system', label: 'System / Channel', render: dashboardActivitySystem, className: 'alias-cell' },
+  { id: 'system', label: 'System / Channel', render: dashboardIdentitySystem, className: 'alias-cell' },
   { id: 'radio', label: 'Radio', render: dashboardActivityRadio, className: 'alias-cell' },
   { id: 'observations', label: 'Events', render: (row) => number(row.observation_count),
     className: 'numeric' },
@@ -12621,7 +12382,7 @@ function dashboardActivityRadioPager(page, onOffset) {
   return navigation;
 }
 
-function dashboardActivityRadioNote(page, actionLabel) {
+function dashboardActivityRadioNote(page) {
   return node('p', 'ui-section-note',
     `Events in this time range: ${number(page.action_observation_count)}. ` +
     `Saved event details: ${number(page.retained_observation_count)}; ` +
@@ -12630,6 +12391,7 @@ function dashboardActivityRadioNote(page, actionLabel) {
 }
 
 async function renderDashboardActivity(renderContext) {
+  const messageTypes = loadActivityMessageTypes();
   let selectedRange = '24h';
   let selectedAction = '';
   let selectedActionLabel = '';
@@ -12643,6 +12405,7 @@ async function renderDashboardActivity(renderContext) {
   let radioTitle = null;
   let radioTitleActions = null;
   const radioTableController = {};
+  renderContext.signal?.addEventListener('abort', () => cleanupTableLayoutMenu(radioTableController), { once: true });
   const toolbar = node('div', 'ui-surface dashboard-activity-page-controls');
   toolbar.setAttribute('aria-label', 'Radio activity controls');
   toolbar.append(node('span', 'dashboard-control-label', 'Time range'));
@@ -12696,7 +12459,8 @@ async function renderDashboardActivity(renderContext) {
   };
 
   const loadRadios = async (offset = 0, restorePagingFocus = false) => {
-    if (!selectedAction || !radioHost || !radioStatus || !radioTitle) return;
+    if (!selectedAction || !radioHost || !radioStatus || !radioTitle ||
+        !renderIsCurrent(renderContext) || !host.isConnected) return;
     selectedOffset = Math.max(0, Number(offset) || 0);
     const sequence = ++radioSequence;
     const action = selectedAction;
@@ -12744,7 +12508,7 @@ async function renderDashboardActivity(renderContext) {
       const pager = dashboardActivityRadioPager(page,
         (nextOffset) => void loadRadios(nextOffset, true));
       if (historyNotice) result.append(historyNotice);
-      result.append(dashboardActivityRadioNote(page, actionLabel),
+      result.append(dashboardActivityRadioNote(page),
         table(page.rows, dashboardActivityRadioColumns,
           `No source radios were identified in saved ${actionLabel.toLowerCase()} events.`,
           {
@@ -12789,7 +12553,7 @@ async function renderDashboardActivity(renderContext) {
       'A call or radio can produce several signaling events.'));
     const mix = section(`Activity types · ${dashboardActivityRangeLabel(selectedRange)}`, mixBody);
     const radioBody = node('div', 'dashboard-activity-radio-body');
-    radioStatus = node('p', 'dashboard-activity-radio-status');
+    radioStatus = node('p', 'ui-muted dashboard-activity-radio-status');
     radioStatus.setAttribute('aria-live', 'polite');
     radioHost = node('div', 'dashboard-activity-radio-host');
     radioBody.append(radioStatus, radioHost);
@@ -12801,6 +12565,7 @@ async function renderDashboardActivity(renderContext) {
   };
 
   const loadSummary = async (buttons = rangeControl.buttons) => {
+    if (!renderIsCurrent(renderContext) || !host.isConnected) return;
     const sequence = ++summarySequence;
     radioSequence += 1;
     radioRequest?.controller.abort();
@@ -12813,8 +12578,10 @@ async function renderDashboardActivity(renderContext) {
     host.setAttribute('aria-busy', 'true');
     host.replaceChildren(node('div', 'loading', 'Loading radio activity…'));
     try {
-      const response = await api('/api/v1/activity/actions', { range: selectedRange },
-        { signal: request.controller.signal });
+      const [response] = await Promise.all([
+        api('/api/v1/activity/actions', { range: selectedRange },
+          { signal: request.controller.signal }), messageTypes
+      ]);
       if (sequence !== summarySequence || !renderIsCurrent(renderContext) || !host.isConnected) return;
       renderSummary(response);
     } catch (error) {
@@ -12894,18 +12661,29 @@ function radioTableType(baseType, columns, system) {
   return tableLayouts.tableId(`${baseType}.${variant}`);
 }
 
+async function loadMainDashboard() {
+  const snapshot = await api('/api/v1/dashboard/main');
+  if (!Array.isArray(snapshot?.quality?.current) || capabilityAllowed(ACCESS_CAPABILITIES.RADIO) &&
+      (!Array.isArray(snapshot?.directory?.systems) || !Array.isArray(snapshot?.directory?.channels) ||
+        !snapshot.directory.systems.every((system) => Array.isArray(system.children)))) {
+    throw new Error('Main could not be loaded. Reload the page to try again.');
+  }
+  return snapshot;
+}
+
 async function renderDashboard() {
   const renderContext = captureRenderContext();
   // Preserve links to the former directory perspective after promoting inventory.
   const requestedTab = route.get('directory_view') === 'coverage' ? 'inventory' : route.get('tab') || 'health';
   const tab = ['health', 'calls', 'activity', 'inventory'].includes(requestedTab) ? requestedTab : 'health';
-  const dashboard = ['health', 'inventory'].includes(tab) ? {} : await api('/api/v1/dashboard');
+  const dashboard = tab === 'calls' ? await api('/api/v1/dashboard') : {};
   const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
   const descriptions = {
     health: 'Check signal quality and browse systems and channels.',
     calls: 'See call totals, activity over time, and the most active sources and destinations.',
-    activity: 'Explore radio signaling events and see which radios sent them.'
+    activity: 'Explore radio signaling events and see which radios sent them.',
+    inventory: 'Browse aliases, see which have been heard, and find activity without a matching alias.'
   };
   const navigation = tabs([
     { id: 'health', label: 'Overview', href: href('dashboard', { tab: 'health' }) },
@@ -12927,19 +12705,25 @@ async function renderDashboard() {
   }
 
   if (tab === 'health') {
-    const signalHost = node('div', 'ui-feedback ui-feedback-loading', 'Loading signal quality…');
-    content.append(signalHost);
-    const signalPromise = signalHealthSection();
-    const directoryPromise = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
-      renderNestedRadioDirectory(renderContext) : Promise.resolve();
-    try {
-      const signalHealth = await signalPromise;
-      if (renderIsCurrent(renderContext)) signalHost.replaceWith(signalHealth);
-    } catch (error) {
-      if (renderIsCurrent(renderContext)) signalHost.replaceWith(
-        node('div', 'ui-feedback ui-feedback-error', error.message));
-    }
-    await directoryPromise;
+    const loading = node('div', 'ui-feedback ui-feedback-loading', 'Loading systems and channels…');
+    content.append(loading);
+    const snapshot = await loadMainDashboard();
+    if (!renderIsCurrent(renderContext)) return;
+    loading.remove();
+    const directory = renderNestedRadioDirectory(renderContext, snapshot.directory, snapshot.quality.current);
+    if (!renderIsCurrent(renderContext)) return;
+    let refreshing = false;
+    pageInterval(async () => {
+      if (refreshing || !renderIsCurrent(renderContext)) return;
+      refreshing = true;
+      try {
+        const updated = await loadMainDashboard();
+        if (!renderIsCurrent(renderContext)) return;
+        directory.update(updated.directory, updated.quality.current);
+      } catch (error) {
+        if (renderIsCurrent(renderContext)) directory.failed(error);
+      } finally { refreshing = false; }
+    }, 5_000);
     return;
   }
 
@@ -13487,7 +13271,7 @@ function liveDetailFilterController(options) {
     if (!catalog) return;
     const modalBody = node('div', 'live-filter-editor');
     modalBody.append(node('p', 'modal-lead',
-      `Choose which ${options.noun} to show. Filters only change what you see here.`));
+      `Choose which ${options.noun} to show.`));
     const typeSection = node('section', 'live-filter-section');
     typeSection.append(node('h3', '', options.typeHeading || 'Types'));
     const typeActions = node('div', 'live-filter-type-actions');
@@ -14221,28 +14005,36 @@ function liveChannelPane() {
     parameters.strength_encoding = 'packed6';
     stream = binaryFrameConnection('channel_diagnostics', parameters, {
       onOpen: () => {
-        if (epoch === streamEpoch) setStatus('Connected', 'state-current');
+        if (epoch === streamEpoch) {
+          awaitingState = true;
+          setStatus('Connected', 'state-current');
+        }
       },
       onFrame: (frame) => {
         if (epoch !== streamEpoch || frame.type === DIAGNOSTIC_FRAME_TYPES.HEARTBEAT) return;
         if (frame.type === DIAGNOSTIC_FRAME_TYPES.STATE) {
           const nextState = diagnosticJsonPayload(frame);
           if (!liveChannelStateMatchesSelection(selection, expectedSubscriptionId, nextState)) return;
+          const resetHistory = awaitingState || frame.generation !== generation;
           awaitingState = false;
           state = nextState;
           generation = frame.generation;
-          signalSequence = 0;
-          symbolSequence = 0;
-          signalValues = new Float32Array(0);
-          signalPeak = null;
-          signalLatencyMs = null;
-          latencyClock.offsetMs = null;
-          resetWaterfall();
+          if (resetHistory) {
+            signalSequence = 0;
+            symbolSequence = 0;
+            signalValues = new Float32Array(0);
+            signalPeak = null;
+            signalLatencyMs = null;
+            latencyClock.offsetMs = null;
+            resetWaterfall();
+          }
           const maximumSymbols = Math.max(1, Number(state?.maximum_visible_symbols) || 4800);
-          symbolValues = new Float32Array(maximumSymbols);
-          symbolValues.fill(Number.NaN);
-          symbolCursor = 0;
-          symbolCount = 0;
+          if (resetHistory || symbolValues.length !== maximumSymbols) {
+            symbolValues = new Float32Array(maximumSymbols);
+            symbolValues.fill(Number.NaN);
+            symbolCursor = 0;
+            symbolCount = 0;
+          }
           const signalState = state?.signal_state;
           const symbolsState = state?.symbols_state;
           updateDiagnosticState(signalDiagnostic, signalState,
@@ -15288,7 +15080,6 @@ function openSpectrumDiscoveryWizard(selection) {
   };
   const showSettings = () => {
     showStep(1, 'Ready for audio');
-    stage.append(node('p', 'muted', 'The usual audio settings are selected. You can keep them or make adjustments.'));
     const summary = audioSummary();
     summary.classList.add('spectrum-discovery-summary');
     const form = node('form', 'channel-editor-form');
@@ -15359,8 +15150,7 @@ function openSpectrumDiscoveryWizard(selection) {
     });
     const labels = node('div', 'channel-editor-grid');
     labels.append(controls.system, controls.site);
-    const optional = disclosure('Additional labels (optional)',
-      node('p', 'ui-field-hint', 'System and site labels help organize your channels. You can keep the suggested labels.'), labels);
+    const optional = disclosure('Additional labels (optional)', labels);
     optional.classList.add('spectrum-discovery-optional');
     channel.append(controls.name, optional);
     const mapFields = trunkedProtocol() && profile.id !== 'p25-phase1' ?
@@ -16335,7 +16125,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const smoothControl = smoothToggle.control;
   const smoothInput = smoothToggle.input;
   const idleToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, false),
-    'Idle channel markers', 'Outline idle channels from the activity feed without implying tuner allocation.');
+    'Idle channel markers', 'Outline idle channels from the activity feed.');
   const idleChannelsControl = idleToggle.control;
   const idleChannelsInput = idleToggle.input;
   const liveActivityAllowed = capabilityAllowed(ACCESS_CAPABILITIES.LIVE);
@@ -16396,8 +16186,6 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const optionsHeader = node('header', 'tuner-spectrum-options-header');
   optionsHeader.append(node('span', 'tuner-spectrum-options-kicker', 'Display'),
     node('strong', '', basicOperator ? 'Signal display' : 'Spectrum and waterfall'));
-  if (!basicOperator) optionsHeader.append(
-    node('span', '', 'Tune the visualization without changing receiver gain or decoder behavior.'));
   const optionGroups = settingsCardGrid(displayOptions, fftOptions, waterfallOptions,
     ...(!basicOperator ? [profilePanel] : []));
   optionGroups.classList.add('tuner-spectrum-settings-grid');
@@ -17921,11 +17709,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         });
         renderActiveChannels();
       },
-      activityTable: (update) => {
-        const id = String(update?.table_id || update?.table?.table_id || '');
-        if (!id) return;
-        if (update.operation === 'remove') activeChannelTables.delete(id);
-        else if (update.table) updateSpectrumActivityTable(update.table);
+      activityBatch: ({ changes }) => {
+        changes.forEach((change) => {
+          if (change.operation === 'remove') activeChannelTables.delete(change.table_id);
+          else updateSpectrumActivityTable(change.table);
+        });
         renderActiveChannels();
       }
     }, { markers: true });
@@ -19699,9 +19487,11 @@ function liveChannelsSection(onSelectionChange) {
       });
       values.forEach(receiveTable);
     },
-    activityTable: (update) => {
-      if (update.operation === 'remove') receiveRemoval(update.table_id);
-      else receiveTable(update.table);
+    activityBatch: ({ changes }) => {
+      changes.forEach((change) => {
+        if (change.operation === 'remove') receiveRemoval(change.table_id);
+        else receiveTable(change.table);
+      });
     },
     open: () => {
       connection.textContent = 'Live';
@@ -19761,8 +19551,8 @@ function saveP25VisualizerEventSettings(value) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=46');
-  const visualizerModule = await p25VisualizerModulePromise;
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=56');
+  const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer({
     node,
@@ -19778,27 +19568,22 @@ async function renderP25Visualizer() {
     messageTypeLabel: (name) => activityOptionLabel(name),
     messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
     requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
-    subscribeActivity: (callbacks) => {
-      const subscriptionId = randomLiveClientId();
-      const source = liveConnection('saved_activity', { subscription_id: subscriptionId });
-      for (const [event, callback] of [['source_change', callbacks.sourceChange],
-        ['activity_append', callbacks.activityAppend], ['live_gap', callbacks.gap]]) {
-        source.addEventListener(event, (value) => {
-          try {
-            const data = JSON.parse(value.data);
-            if (data?.subscription_id && data.subscription_id !== subscriptionId) return;
-            callback(data);
-          } catch (_) {
-            callbacks.gap();
-          }
+    requestActivitySeed: (parameters, options) => api('/api/v1/activity/live/seed', parameters, options),
+    openActivityStream: (callbacks) => {
+      const source = liveConnection('p25_activity', { subscription_id: randomLiveClientId() }, false);
+      [['source_change', 'boundary'], ['p25_state_delta', 'delta'], ['activity_append', 'append'],
+        ['activity_reset', 'historyReset'], ['resync_required', 'resync'],
+        ['live_gap', 'resync']].forEach(([eventName, callbackName]) => {
+        source.addEventListener(eventName, (event) => {
+          try { callbacks[callbackName]?.(JSON.parse(event.data), event.data); }
+          catch (_) { callbacks.resync?.({ reason: 'transport_gap' }); }
         });
-      }
-      source.onerror = callbacks.error;
+      });
+      source.onerror = () => callbacks.error?.();
       return source;
     },
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
-    historyStatus: statsLoggingState(),
     signal: renderContext.signal
   });
   if (!renderIsCurrent(renderContext)) {
@@ -20978,7 +20763,9 @@ async function renderRadioSystemIssi(system, renderContext) {
 async function renderRadioSystem() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
-  const response = await api(radioSystemApiPath(radioSystem.radio_system_key));
+  const [response] = await Promise.all([
+    api(radioSystemApiPath(radioSystem.radio_system_key)), loadActivityMessageTypes()
+  ]);
   if (!renderIsCurrent(renderContext)) return;
   const system = response;
   const requestedTab = route.get('tab') || 'info';
@@ -21111,7 +20898,9 @@ async function renderGroupIdentity() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
   const identityKey = requiredIdentityKey();
-  const response = await api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey));
+  const [response] = await Promise.all([
+    api(groupIdentityApiPath(radioSystem.radio_system_key, identityKey)), loadActivityMessageTypes()
+  ]);
   const groupIdentity = response;
   const kind = rowGroupIdentityKind(groupIdentity);
   const tab = route.get('tab') || 'info';
@@ -21194,8 +20983,6 @@ async function renderGroupIdentity() {
       blocks.push(section('Current State', metrics(currentState, true)));
     }
     blocks.push(section('Last-known Facts', keyValues([
-      ['Last Source', radioLink(groupIdentity, groupIdentity.last_source_radio_id, undefined,
-        groupIdentity.last_source_entity_ref, 'last_source')],
       ['Last Encryption Algorithm', encryptionAlgorithmInfoValue(groupIdentity.last_encryption_algorithm_name,
         groupIdentity.last_encryption_algorithm_id)],
       ['Last Encryption Key ID', hexDecimalPair(groupIdentity.last_encryption_key_id)]
@@ -21205,11 +20992,9 @@ async function renderGroupIdentity() {
     ]), node('p', 'ui-section-note', 'Includes calls and signaling.'))));
     infoColumn.append(...blocks);
     const layout = node('div', 'entity-info-layout');
-    const activityHistory = await groupIdentityActivityHistorySection({ ...radioSystem,
-      identity_key: identityKey });
-    if (!renderIsCurrent(renderContext)) return;
-    layout.append(infoColumn, activityHistory);
+    layout.append(infoColumn);
     content.append(layout);
+    await groupIdentityActivityHistorySection({ ...radioSystem, identity_key: identityKey }, layout, renderContext);
   }
 }
 
@@ -21316,7 +21101,9 @@ async function renderRadio() {
   const renderContext = captureRenderContext();
   const radioSystem = requiredRadioSystem();
   const identityKey = requiredIdentityKey();
-  const response = await api(`${radioSystemApiPath(radioSystem.radio_system_key, 'radios')}/${encodeURIComponent(identityKey)}`);
+  const [response] = await Promise.all([
+    api(`${radioSystemApiPath(radioSystem.radio_system_key, 'radios')}/${encodeURIComponent(identityKey)}`), loadActivityMessageTypes()
+  ]);
   const radio = response;
   const tab = route.get('tab') || 'info';
   const permanentIdentity = p25CanonicalSubscriber(radio);
@@ -21758,14 +21545,13 @@ async function renderTrunkedChannelInfo(channel, renderContext) {
   }
 
   const activityColumn = node('div', 'entity-info-column');
-  if (channelCapability(channel, 'group_identities')) {
-    activityColumn.append(await channelTopGroupsSection(channel));
-  }
+  const showGroups = channelCapability(channel, 'group_identities');
   if (!renderIsCurrent(renderContext)) return;
   const layout = node('div', 'entity-info-layout');
   layout.append(infoColumn);
-  if (activityColumn.childNodes.length) layout.append(activityColumn);
+  if (showGroups) layout.append(activityColumn);
   content.append(metrics(summary), layout);
+  if (showGroups) await channelTopGroupsSection(channel, activityColumn, renderContext);
 }
 
 function renderTrunkedChannelBandPlans(channel, data) {
@@ -21855,9 +21641,7 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
     trunkedChannelTabs(channel, tab))) return;
 
   if (tab === 'quality') {
-    const signalHistory = await channelSignalHistorySection(channel);
-    if (!renderIsCurrent(renderContext)) return;
-    content.append(signalHistory);
+    await channelSignalHistorySection(channel, content, renderContext);
   } else if (tab === 'frequencies') {
     const showFrequencies = channelCapability(channel, 'channels');
     const showBandPlans = channelCapability(channel, 'frequency_bands');
@@ -21888,55 +21672,62 @@ async function renderTrunkedChannel(channel, configurationId, renderContext) {
   } else if (tab === 'neighbors') {
     await renderChannelNeighbors(channel, renderContext);
   } else if (tab === 'patches') {
-    const data = await api(channelApiPath(configurationId, 'patch-groups'), {
-      offset: route.get('offset'), limit: 100
+    const directory = createAsyncSection('Patches', {
+      loadingMessage: 'Loading patches…',
+      errorMessage: 'The patches could not be loaded.'
     });
-    const talkgroups = patchMembersByLocalGroup(data.talkgroups);
-    const radios = patchMembersByLocalGroup(data.radios);
-    const memberValues = (values, formatter, omitted = 0) => {
-      const span = node('span');
-      const rendered = (values || []).map(formatter).filter((value) =>
-        value !== null && value !== undefined && value !== '');
-      rendered.forEach((value) => span.append(valueNode(value)));
-      if (omitted > 0) {
-        span.append(node('small', 'identity-summary-context', `+${number(omitted)} more`));
-      }
-      return span;
-    };
-    const omittedMembers = (row, member) => Math.max(0,
-      Number(row?.[`${member.slice(0, -1)}_count`] || 0) - Number(row?.[`${member}_included`] || 0));
-    const groups = data.groups || [];
-    const columns = [
-      { id: 'patch-id', label: 'Local Patch', fullLabel: 'Local Patch Talkgroup',
-        render: (row) => groupIdentityValue(row, { id: row.local_patch_group_id, alias: row.patch_alias_name }),
-        className: 'alias-cell', sortValue: (row) => groupIdentitySortValue(row, {
-          id: row.local_patch_group_id, alias: row.patch_alias_name
-        }) },
-      { id: 'member-talkgroup-ids', label: 'Local Talkgroups', fullLabel: 'Local Member Talkgroups',
-        className: 'alias-cell', render: (row) =>
-        memberValues(talkgroups.get(row.local_patch_group_id), (member) =>
-          groupIdentityValue(member, { id: member.local_talkgroup_id }), omittedMembers(row, 'talkgroups')) },
-      { id: 'member-radio-ids', label: 'Local Radios', className: 'alias-cell', render: (row) =>
-        memberValues(radios.get(row.local_patch_group_id), (member) =>
-          radioIdentityValue(member, { id: member.local_radio_id }), omittedMembers(row, 'radios')) },
-      { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
-      { id: 'observations', label: 'Observations',
-        render: (row) => number(row.observation_count), className: 'numeric',
-        sortValue: (row) => Number(row.observation_count || 0) },
-      { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
-    ];
-    if (groups.some((row) => Number(row.version))) columns.splice(1, 0,
-      { id: 'version', label: 'Version', key: 'version', className: 'numeric' });
-    const patchPage = { rows: groups, offset: Number(data.offset || 0), limit: Number(data.limit || 100),
-      has_more: Boolean(data.has_more), next_offset: data.next_offset };
-    const trailing = fragment();
-    if (data.members_truncated) trailing.append(node('p', 'ui-notice ui-notice-danger ui-notice-spaced',
-      `Large patches are bounded to ${number(data.member_limit_per_group)} members per patch and ` +
-      `${number(data.member_limit_total)} members per type on this page. Omitted counts are shown in the table.`));
-    trailing.append(pager(patchPage, 'bottom', 'Patch groups'));
-    content.append(tableSection('Patches', groups, columns, 'No patches recorded',
-      { type: groups.some((row) => Number(row.version)) ? 'channel-patches-versioned' :
-        'channel-patches' }, trailing));
+    content.append(directory.element);
+    await directory.load(() => api(channelApiPath(configurationId, 'patch-groups'), {
+      offset: route.get('offset'), limit: 100
+    }), (data) => {
+      const talkgroups = patchMembersByLocalGroup(data.talkgroups);
+      const radios = patchMembersByLocalGroup(data.radios);
+      const memberValues = (values, formatter, omitted = 0) => {
+        const span = node('span');
+        const rendered = (values || []).map(formatter).filter((value) =>
+          value !== null && value !== undefined && value !== '');
+        rendered.forEach((value) => span.append(valueNode(value)));
+        if (omitted > 0) {
+          span.append(node('small', 'identity-summary-context', `+${number(omitted)} more`));
+        }
+        return span;
+      };
+      const omittedMembers = (row, member) => Math.max(0,
+        Number(row?.[`${member.slice(0, -1)}_count`] || 0) - Number(row?.[`${member}_included`] || 0));
+      const groups = data.groups || [];
+      const columns = [
+        { id: 'patch-id', label: 'Local Patch', fullLabel: 'Local Patch Talkgroup',
+          render: (row) => groupIdentityValue(row, { id: row.local_patch_group_id, alias: row.patch_alias_name }),
+          className: 'alias-cell', sortValue: (row) => groupIdentitySortValue(row, {
+            id: row.local_patch_group_id, alias: row.patch_alias_name
+          }) },
+        { id: 'member-talkgroup-ids', label: 'Local Talkgroups', fullLabel: 'Local Member Talkgroups',
+          className: 'alias-cell', render: (row) =>
+          memberValues(talkgroups.get(row.local_patch_group_id), (member) =>
+            groupIdentityValue(member, { id: member.local_talkgroup_id }), omittedMembers(row, 'talkgroups')) },
+        { id: 'member-radio-ids', label: 'Local Radios', className: 'alias-cell', render: (row) =>
+          memberValues(radios.get(row.local_patch_group_id), (member) =>
+            radioIdentityValue(member, { id: member.local_radio_id }), omittedMembers(row, 'radios')) },
+        { id: 'state', label: 'State', render: (row) => stateBadge(row.state), sortValue: (row) => row.state || '' },
+        { id: 'observations', label: 'Observations',
+          render: (row) => number(row.observation_count), className: 'numeric',
+          sortValue: (row) => Number(row.observation_count || 0) },
+        { id: 'last-seen', label: 'Seen', fullLabel: 'Last Seen', render: (row) => dateTime(row.last_seen_ms), sortValue: (row) => Number(row.last_seen_ms || 0) }
+      ];
+      if (groups.some((row) => Number(row.version))) columns.splice(1, 0,
+        { id: 'version', label: 'Version', key: 'version', className: 'numeric' });
+      const patchPage = { rows: groups, offset: Number(data.offset || 0), limit: Number(data.limit || 100),
+        has_more: Boolean(data.has_more), next_offset: data.next_offset };
+      const trailing = fragment();
+      if (data.members_truncated) trailing.append(node('p', 'ui-notice ui-notice-danger ui-notice-spaced',
+        `Large patches are bounded to ${number(data.member_limit_per_group)} members per patch and ` +
+        `${number(data.member_limit_total)} members per type on this page. Omitted counts are shown in the table.`));
+      trailing.append(pager(patchPage, 'bottom', 'Patch groups'));
+      return fragment(table(groups, columns, 'No patches recorded',
+        { type: groups.some((row) => Number(row.version)) ? 'channel-patches-versioned' :
+          'channel-patches', layoutMenuHost: directory.titleActions, controller: directory.tableController,
+          overflowLabel: 'Patches' }), trailing);
+    }, renderContext);
   } else if (tab === 'activity') {
     await renderActivity({
       configuration_id: configurationId,
@@ -23703,148 +23494,158 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     }
     return;
   }
-  const data = await api('/api/v1/activity', {
-    ...scopeParameters,
-    ...activityApiFilterParameters(filters, Date.now()),
-    before_id: route.get('before_id'),
-    limit: 200
+  const activitySection = createAsyncSection(title, {
+    loadingMessage: 'Loading activity…',
+    errorMessage: 'Activity could not be loaded.'
   });
-  if (!renderIsCurrent(renderContext)) return;
-  const callPlayback = createActivityCallPlayback({
-    node, iconButton, setIconButton, requestJson, playback: recordingsFeature.playback,
-    canPlay: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS),
-    isCurrent: () => renderIsCurrent(renderContext), signal: renderContext.signal
-  });
-  pageConnections.add(callPlayback);
-  const columns = activityColumnsForContext({ ...activityContext, callPlayback }, filters);
-  const initialRows = filters.includeGrants ? data.rows : withoutGrantActions(data.rows);
-  const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
-    'Detailed event history is enabled, but no matching activity has been recorded yet.';
-  const titleActions = node('div', 'section-title-actions ui-section-actions');
-  const activityTable = table(initialRows, columns, emptyMessage,
-    { type: activityTableType(activityContext), rowKey: (row) => row.id, layoutMenuHost: titleActions,
-      layout: activityTableLayout(activityContext, columns) });
-  const refreshSourceNames = () => activityTable.tableController.render();
-  sourceNamePresentationRenderer = refreshSourceNames;
-  pageConnections.add({ close: () => {
-    if (sourceNamePresentationRenderer === refreshSourceNames) sourceNamePresentationRenderer = null;
-  } });
-  activityTable.setAttribute('aria-live', 'off');
-  const block = section(title, activityTable, titleActions);
-  const filterToolbar = activityFilterToolbar(activityContext, filters);
-  block.insertBefore(filterToolbar, activityTable);
-  if (historyNotice) block.insertBefore(historyNotice, filterToolbar);
-  const controls = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Activity pages' });
-  const updatePager = (page) => {
-    controls.update({
-      previous: { label: 'Newest', enabled: Boolean(route.get('before_id')),
-        href: currentHref({ before_id: null }) },
-      next: { label: 'Older', enabled: Boolean(page?.has_more),
-        href: currentHref({ before_id: page?.next_before_id }) }
-    });
-  };
-  updatePager(data);
-  block.append(controls);
+  const block = activitySection.element;
+  const titleActions = activitySection.titleActions;
   content.append(block);
-
-  if (!route.get('before_id') && filters.range !== 'custom' &&
-      (!statsLoggingState().available || statsLoggingState().historyActive)) {
-    const refreshControls = node('div', 'section-title-actions ui-section-actions activity-refresh-controls');
-    const countdown = node('span', 'activity-refresh-countdown');
-    countdown.setAttribute('role', 'timer');
-    countdown.setAttribute('aria-live', 'off');
-    const announcement = node('span', 'visually-hidden');
-    announcement.setAttribute('role', 'status');
-    announcement.setAttribute('aria-live', 'polite');
-    const pause = node('button', 'ui-button ui-button-secondary', 'Pause refresh');
-    pause.type = 'button';
-    pause.setAttribute('aria-pressed', 'false');
-    refreshControls.append(countdown, pause, announcement);
-    titleActions.prepend(refreshControls);
-    let paused = false;
-    let refreshInFlight = false;
-    let refreshFailed = false;
-    let refreshGeneration = 0;
-    let nextRefreshAt = Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS;
-    const activityRowKey = (row) => row?.id === null || row?.id === undefined ? null : String(row.id);
-    const updateRefreshDisplay = () => {
-      const seconds = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
-      countdown.textContent = paused ? 'Refresh paused' : refreshInFlight ? 'Refreshing…' :
-        `${refreshFailed ? 'Retry' : 'Refresh'} in ${seconds}s`;
-      countdown.classList.toggle('is-error', refreshFailed && !refreshInFlight);
-      pause.textContent = paused ? 'Resume refresh' : 'Pause refresh';
-      pause.setAttribute('aria-pressed', String(paused));
-    };
-    const highlightActivityRows = (rowIds) => {
-      if (!rowIds.size) return;
-      const highlighted = [];
-      activityTable.querySelectorAll('tbody tr[data-id]').forEach((row) => {
-        if (rowIds.has(row.dataset.id)) {
-          row.classList.add('activity-row-new');
-          highlighted.push(row);
-        }
-      });
-      pageTimeout(() => highlighted.forEach((row) => row.classList.remove('activity-row-new')), 8_000);
-    };
-    const refreshActivity = async () => {
-      if (paused || refreshInFlight || document.hidden || !renderIsCurrent(renderContext) ||
-          !block.isConnected) return;
-      const generation = refreshGeneration;
-      refreshInFlight = true;
-      updateRefreshDisplay();
-      try {
-        const refreshed = await api('/api/v1/activity', {
-          ...scopeParameters,
-          ...activityApiFilterParameters(filters, Date.now()),
-          limit: 200
-        });
-        if (generation !== refreshGeneration || paused || document.hidden || !renderIsCurrent(renderContext) ||
-            !block.isConnected) return;
-        const rows = filters.includeGrants ? refreshed.rows : withoutGrantActions(refreshed.rows);
-        const currentRows = activityTable.tableController.rows();
-        const currentIds = new Set(currentRows.map(activityRowKey).filter((key) => key !== null));
-        const newIds = new Set(rows.map(activityRowKey)
-          .filter((key) => key !== null && !currentIds.has(key)));
-        if (JSON.stringify(rows) !== JSON.stringify(currentRows)) {
-          activityTable.tableController.replaceRows(rows);
-          highlightActivityRows(newIds);
-        }
-        updatePager(refreshed);
-        if (newIds.size) {
-          announcement.textContent = `${number(newIds.size)} new activity entr${newIds.size === 1 ? 'y' : 'ies'}.`;
-        } else if (refreshFailed) announcement.textContent = 'Activity refresh recovered.';
-        else announcement.textContent = '';
-        refreshFailed = false;
-      } catch (error) {
-        if (generation !== refreshGeneration || document.hidden || !renderIsCurrent(renderContext) ||
-            !block.isConnected || error?.name === 'AbortError') return;
-        refreshFailed = true;
-        announcement.textContent = 'Activity refresh failed. The current entries are still shown; retrying automatically.';
-      } finally {
-        refreshInFlight = false;
-        if (!renderIsCurrent(renderContext) || !block.isConnected) return;
-        nextRefreshAt = generation === refreshGeneration && !paused && !document.hidden ?
-          Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS : Date.now();
-        updateRefreshDisplay();
-      }
-    };
-    pause.addEventListener('click', () => {
-      paused = !paused;
-      refreshGeneration += 1;
-      nextRefreshAt = paused ? nextRefreshAt : Date.now();
-      updateRefreshDisplay();
-      if (!paused && !refreshInFlight) void refreshActivity();
+  await activitySection.load(async () => {
+    const data = await api('/api/v1/activity', {
+      ...scopeParameters,
+      ...activityApiFilterParameters(filters, Date.now()),
+      before_id: route.get('before_id'),
+      limit: 200
+    }, { signal: renderContext.signal });
+    if (!renderIsCurrent(renderContext)) return;
+    return data;
+  }, (data) => {
+    const callPlayback = createActivityCallPlayback({
+      node, iconButton, setIconButton, requestJson, playback: recordingsFeature.playback,
+      canPlay: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS),
+      isCurrent: () => renderIsCurrent(renderContext), signal: renderContext.signal
     });
-    const refreshTick = () => {
-      if (!renderIsCurrent(renderContext) || !block.isConnected) return;
-      updateRefreshDisplay();
-      if (!paused && !refreshInFlight && !document.hidden && Date.now() >= nextRefreshAt) {
-        void refreshActivity();
-      }
+    pageConnections.add(callPlayback);
+    const columns = activityColumnsForContext({ ...activityContext, callPlayback }, filters);
+    const initialRows = filters.includeGrants ? data.rows : withoutGrantActions(data.rows);
+    const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
+      'Detailed event history is enabled, but no matching activity has been recorded yet.';
+    const activityTable = table(initialRows, columns, emptyMessage,
+      { type: activityTableType(activityContext), rowKey: (row) => row.id, layoutMenuHost: titleActions,
+        layout: activityTableLayout(activityContext, columns) });
+    const refreshSourceNames = () => activityTable.tableController.render();
+    sourceNamePresentationRenderer = refreshSourceNames;
+    pageConnections.add({ close: () => {
+      if (sourceNamePresentationRenderer === refreshSourceNames) sourceNamePresentationRenderer = null;
+    } });
+    activityTable.setAttribute('aria-live', 'off');
+    const body = fragment(activityTable);
+    const filterToolbar = activityFilterToolbar(activityContext, filters);
+    body.insertBefore(filterToolbar, activityTable);
+    if (historyNotice) body.insertBefore(historyNotice, filterToolbar);
+    const controls = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Activity pages' });
+    const updatePager = (page) => {
+      controls.update({
+        previous: { label: 'Newest', enabled: Boolean(route.get('before_id')),
+          href: currentHref({ before_id: null }) },
+        next: { label: 'Older', enabled: Boolean(page?.has_more),
+          href: currentHref({ before_id: page?.next_before_id }) }
+      });
     };
-    updateRefreshDisplay();
-    pageInterval(refreshTick, 1_000);
-  }
+    updatePager(data);
+    body.append(controls);
+
+    if (!route.get('before_id') && filters.range !== 'custom' &&
+        (!statsLoggingState().available || statsLoggingState().historyActive)) {
+      const refreshControls = node('div', 'section-title-actions ui-section-actions activity-refresh-controls');
+      const countdown = node('span', 'activity-refresh-countdown');
+      countdown.setAttribute('role', 'timer');
+      countdown.setAttribute('aria-live', 'off');
+      const announcement = node('span', 'visually-hidden');
+      announcement.setAttribute('role', 'status');
+      announcement.setAttribute('aria-live', 'polite');
+      const pause = node('button', 'ui-button ui-button-secondary', 'Pause refresh');
+      pause.type = 'button';
+      pause.setAttribute('aria-pressed', 'false');
+      refreshControls.append(countdown, pause, announcement);
+      titleActions.prepend(refreshControls);
+      let paused = false;
+      let refreshInFlight = false;
+      let refreshFailed = false;
+      let refreshGeneration = 0;
+      let nextRefreshAt = Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS;
+      const activityRowKey = (row) => row?.id === null || row?.id === undefined ? null : String(row.id);
+      const updateRefreshDisplay = () => {
+        const seconds = Math.max(0, Math.ceil((nextRefreshAt - Date.now()) / 1000));
+        countdown.textContent = paused ? 'Refresh paused' : refreshInFlight ? 'Refreshing…' :
+          `${refreshFailed ? 'Retry' : 'Refresh'} in ${seconds}s`;
+        countdown.classList.toggle('is-error', refreshFailed && !refreshInFlight);
+        pause.textContent = paused ? 'Resume refresh' : 'Pause refresh';
+        pause.setAttribute('aria-pressed', String(paused));
+      };
+      const highlightActivityRows = (rowIds) => {
+        if (!rowIds.size) return;
+        const highlighted = [];
+        activityTable.querySelectorAll('tbody tr[data-id]').forEach((row) => {
+          if (rowIds.has(row.dataset.id)) {
+            row.classList.add('activity-row-new');
+            highlighted.push(row);
+          }
+        });
+        pageTimeout(() => highlighted.forEach((row) => row.classList.remove('activity-row-new')), 8_000);
+      };
+      const refreshActivity = async () => {
+        if (paused || refreshInFlight || document.hidden || !renderIsCurrent(renderContext) ||
+            !block.isConnected) return;
+        const generation = refreshGeneration;
+        refreshInFlight = true;
+        updateRefreshDisplay();
+        try {
+          const refreshed = await api('/api/v1/activity', {
+            ...scopeParameters,
+            ...activityApiFilterParameters(filters, Date.now()),
+            limit: 200
+          });
+          if (generation !== refreshGeneration || paused || document.hidden || !renderIsCurrent(renderContext) ||
+              !block.isConnected) return;
+          const rows = filters.includeGrants ? refreshed.rows : withoutGrantActions(refreshed.rows);
+          const currentRows = activityTable.tableController.rows();
+          const currentIds = new Set(currentRows.map(activityRowKey).filter((key) => key !== null));
+          const newIds = new Set(rows.map(activityRowKey)
+            .filter((key) => key !== null && !currentIds.has(key)));
+          if (JSON.stringify(rows) !== JSON.stringify(currentRows)) {
+            activityTable.tableController.replaceRows(rows);
+            highlightActivityRows(newIds);
+          }
+          updatePager(refreshed);
+          if (newIds.size) {
+            announcement.textContent = `${number(newIds.size)} new activity entr${newIds.size === 1 ? 'y' : 'ies'}.`;
+          } else if (refreshFailed) announcement.textContent = 'Activity refresh recovered.';
+          else announcement.textContent = '';
+          refreshFailed = false;
+        } catch (error) {
+          if (generation !== refreshGeneration || document.hidden || !renderIsCurrent(renderContext) ||
+              !block.isConnected || error?.name === 'AbortError') return;
+          refreshFailed = true;
+          announcement.textContent = 'Activity refresh failed. The current entries are still shown; retrying automatically.';
+        } finally {
+          refreshInFlight = false;
+          if (!renderIsCurrent(renderContext) || !block.isConnected) return;
+          nextRefreshAt = generation === refreshGeneration && !paused && !document.hidden ?
+            Date.now() + ACTIVITY_REFRESH_INTERVAL_MILLISECONDS : Date.now();
+          updateRefreshDisplay();
+        }
+      };
+      pause.addEventListener('click', () => {
+        paused = !paused;
+        refreshGeneration += 1;
+        nextRefreshAt = paused ? nextRefreshAt : Date.now();
+        updateRefreshDisplay();
+        if (!paused && !refreshInFlight) void refreshActivity();
+      });
+      const refreshTick = () => {
+        if (!renderIsCurrent(renderContext) || !block.isConnected) return;
+        updateRefreshDisplay();
+        if (!paused && !refreshInFlight && !document.hidden && Date.now() >= nextRefreshAt) {
+          void refreshActivity();
+        }
+      };
+      updateRefreshDisplay();
+      pageInterval(refreshTick, 1_000);
+    }
+    return body;
+  }, renderContext);
 }
 
 function channelAdminFrequencyList(values) {
@@ -24280,59 +24081,6 @@ function channelCatalogAfterAutoStartMove(catalog, configurationId, direction) {
   };
 }
 
-function radioDirectoryTrunkedGroups(catalog, systems) {
-  const channels = (catalog.channels || []).filter((row) =>
-    String(row.channel_kind || '').toUpperCase() === 'TRUNKED');
-  const byId = new Map(channels.map((row) => [String(row.configuration_id), row]));
-  const assigned = new Set();
-  const groups = (systems.rows || []).map((system) => {
-    const children = (system.channel_preview || []).map((preview) => {
-      const channel = byId.get(String(preview.configuration_id));
-      if (!channel || assigned.has(String(channel.configuration_id))) return null;
-      assigned.add(String(channel.configuration_id));
-      return { ...preview, ...channel, directory_type: 'channel' };
-    }).filter(Boolean);
-    return {
-      ...system,
-      directory_type: 'radio_system',
-      children,
-      child_count: children.length,
-      running_count: children.filter((row) => row.processing_state === 'RUNNING').length
-    };
-  });
-
-  // The system directory preview is intentionally bounded. Keep every configured trunked channel visible.
-  const unmatched = channels.filter((row) => !assigned.has(String(row.configuration_id)));
-  const unmatchedBySystem = new Map();
-  unmatched.forEach((row) => {
-    const key = String(row.system || 'Other trunked channels');
-    const rows = unmatchedBySystem.get(key) || [];
-    rows.push({ ...row, directory_type: 'channel' });
-    unmatchedBySystem.set(key, rows);
-  });
-  unmatchedBySystem.forEach((children, systemName) => {
-    const existing = groups.find((group) => String(group.system_name || '').trim().toLowerCase() ===
-      String(systemName).trim().toLowerCase());
-    if (existing) {
-      existing.children.push(...children);
-      existing.child_count = existing.children.length;
-      existing.running_count = existing.children.filter((row) => row.processing_state === 'RUNNING').length;
-      return;
-    }
-    const aliasLists = [...new Map(children.filter((row) => row.alias_list_name).map((row) => [
-      String(row.alias_list_id || row.alias_list_name), { id: row.alias_list_id, name: row.alias_list_name }
-    ])).values()];
-    groups.push({
-      directory_type: 'radio_system', system_name: systemName, protocol: children[0]?.protocol_id,
-      children, child_count: children.length,
-      running_count: children.filter((row) => row.processing_state === 'RUNNING').length,
-      alias_lists: aliasLists, local_catalog_group: true
-    });
-  });
-  return groups.sort((left, right) => String(left.system_name || radioSystemLabel(left)).localeCompare(
-    String(right.system_name || radioSystemLabel(right))));
-}
-
 function radioDirectoryConventionalGroups(rows) {
   const groups = new Map();
   (rows || []).forEach((row) => {
@@ -24391,7 +24139,7 @@ function radioDirectoryField(element, field) {
 }
 
 function radioDirectoryLiveLink(children) {
-  if (!capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) return null;
+  if (!capabilityAllowed(ACCESS_CAPABILITIES.RADIO) || !capabilityAllowed(ACCESS_CAPABILITIES.LIVE)) return null;
   const running = children.filter((row) => row.processing_state === 'RUNNING');
   const target = running[0];
   const link = anchor('Live', href('live', target ? { channel: target.configuration_id } : {}),
@@ -24404,35 +24152,91 @@ function radioDirectoryLiveLink(children) {
   return radioDirectoryField(link, 'live');
 }
 
-function radioDirectorySiteRow(row, conventional = false) {
+function radioDirectoryReading(label, field, value, unit = '') {
+  const reading = radioDirectoryField(node('div', 'radio-directory-reading'), field);
+  reading.setAttribute('role', 'group');
+  reading.setAttribute('aria-label', label);
+  reading.append(node('span', 'ui-muted ui-label radio-directory-reading-label', label));
+  const amount = node('strong', 'radio-directory-value', value);
+  if (unit) amount.append(' ', node('small', 'ui-muted radio-directory-unit', unit));
+  reading.append(amount);
+  return reading;
+}
+
+function radioDirectorySiteRow(row, conventional = false, quality = null) {
   const site = node('div', `radio-directory-site-row${conventional ? ' radio-directory-conventional-row' : ''}`);
   site.dataset.directoryRowKey = String(row.configuration_id);
   const identity = radioDirectoryField(node('div', 'radio-directory-item-identity'), 'identity');
-  const name = anchor(row.name || 'Unnamed channel', href('channel', {
-    configuration_id: row.configuration_id
-  }), 'channel-name-link');
+  const label = row.name || 'Unnamed channel';
+  identity.append(capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
+    anchor(label, href('channel', { configuration_id: row.configuration_id }), 'channel-name-link') :
+    node('strong', 'channel-name-link', label));
   const context = String(row.site || row.site_name || '').trim();
-  identity.append(channelOriginName(name, row));
   if (context && context !== String(row.name || '').trim())
-    identity.append(node('span', 'channel-row-context', context));
+    identity.append(node('span', 'ui-muted ui-label', context));
   const running = row.processing_state === 'RUNNING';
+  const stopped = row.processing_state && !running;
+  const operating = node('div', 'ui-muted ui-label radio-directory-row-context');
+  if (!conventional) operating.append(node('span', '', running ? 'Running' : stopped ? 'Stopped' : 'Status unavailable'));
+  const remote = row.remote_origin?.remote === true || quality?.remote_origin?.remote === true;
+  if (remote) {
+    const origin = node('span', 'radio-directory-origin');
+    origin.append(remoteOriginIcon(row.remote_origin?.remote === true ? row.remote_origin : quality.remote_origin), 'Remote');
+    operating.append(origin);
+  }
+  const observed = Number(quality?.last_observed_ms || 0);
+  if (!conventional && observed > 0) operating.append(node('span', '', `Updated ${elapsedLabel(observed)}`));
+  if (operating.children.length) identity.append(operating);
   // Only the catalog's fresh active-control result is a confirmed current control frequency.
   const current = running && row.display_frequency_source === 'active-control' ?
     Number(row.display_frequency_hz) : null;
   const configured = (row.frequencies_hz || []).map(Number).find((value) => Number.isFinite(value) && value > 0);
   const frequencyHz = conventional ? configured : current;
-  const reading = radioDirectoryField(node('span', 'radio-directory-frequency'), 'frequency');
-  reading.append(node('small', '', conventional ? 'Frequency' : 'Current control'),
-    node('strong', '', Number.isFinite(frequencyHz) && frequencyHz > 0 ?
-      `${frequency(frequencyHz)} MHz` : 'Unavailable'));
-  const status = radioDirectoryField(uiStatus(running ? 'Running' : 'Stopped',
-    running ? 'success' : 'neutral'), 'status');
-  status.classList.add('radio-directory-live-state');
-  site.append(identity, reading, status);
+  const frequencyReading = radioDirectoryReading(conventional ? 'Frequency' : 'Current control', 'frequency',
+    Number.isFinite(frequencyHz) && frequencyHz > 0 ? frequency(frequencyHz) : 'Unavailable',
+    Number.isFinite(frequencyHz) && frequencyHz > 0 ? 'MHz' : '');
+  frequencyReading.classList.add('radio-directory-frequency');
+  site.append(identity, frequencyReading);
+  if (conventional) {
+    const status = radioDirectoryField(uiStatus(running ? 'Running' : 'Stopped',
+      running ? 'success' : 'neutral'), 'status');
+    status.classList.add('radio-directory-live-state');
+    site.append(status);
+    return site;
+  }
+  const fresh = !stopped && observed > 0 && observed <= Date.now() + 2000 &&
+    Date.now() - observed <= SIGNAL_OFFLINE_MILLISECONDS;
+  const signal = fresh && !remote ? optionalNumber(quality?.signal_dbfs) : null;
+  const average = fresh && !remote ? optionalNumber(quality?.average_signal_dbfs) : null;
+  const signalReading = radioDirectoryReading('Signal', 'signal',
+    Number.isFinite(signal) ? signal.toFixed(1) : '—', Number.isFinite(signal) ? 'dBFS' : '');
+  signalReading.append(node('small', 'ui-muted radio-directory-average', Number.isFinite(average) ?
+    `30s avg ${average.toFixed(1)}` : remote ? 'Remote site' : 'No samples'));
+  const decode = fresh ? optionalNumber(quality?.decode_health_pct) : null;
+  const state = stopped ? { label: 'Stopped', className: 'offline' } : !fresh ?
+    { label: observed ? 'Out of date' : 'No samples', className: 'offline' } : signalChannelState({ ...quality, remote_origin: { remote } });
+  const tone = state.className === 'healthy' ? 'success' : state.className === 'degraded' ? 'warning' :
+    state.className === 'poor' ? 'danger' : 'neutral';
+  const decodeReading = radioDirectoryReading('Decode', 'decode', percentNumber(decode));
+  const inline = node('div', 'radio-directory-decode-value');
+  const value = decodeReading.querySelector('.radio-directory-value');
+  const pill = uiPill(state.label, tone);
+  pill.classList.add('radio-directory-quality-state');
+  value.replaceWith(inline);
+  inline.append(value, pill);
+  const meter = node('meter', 'ui-quality-meter');
+  Object.assign(meter, { min: 0, max: 100, low: DECODE_DEGRADED_MINIMUM_PERCENT,
+    high: DECODE_HEALTHY_MINIMUM_PERCENT, optimum: 100 });
+  meter.setAttribute('aria-label', 'Decode quality');
+  meter.setAttribute('aria-valuetext', percentNumber(decode));
+  meter.setAttribute('value', String(Number.isFinite(decode) ? Math.max(0, Math.min(100, decode)) : 0));
+  meter.hidden = !Number.isFinite(decode);
+  decodeReading.append(meter);
+  site.append(signalReading, decodeReading);
   return site;
 }
 
-function radioDirectorySystemCard(row, conventional = false) {
+function radioDirectorySystemCard(row, conventional = false, qualityById = new Map()) {
   const children = [...(row.children || [])].sort(radioDirectoryCompare);
   const systemName = conventional ? row.system_name || 'Other channels' :
     radioSystemDisplayName(row) || row.system_name || 'Trunked system';
@@ -24445,21 +24249,33 @@ function radioDirectorySystemCard(row, conventional = false) {
   const heading = radioDirectoryField(node('h3', 'radio-directory-system-name'), 'system-name');
   heading.append(conventional ? systemName : radioSystemLink(row.entity_ref, systemName));
   header.append(heading);
+  const protocol = conventional ? (row.protocol_labels || []).join(' · ') :
+    protocolFamily(row) || row.protocol_label || row.protocol || '';
+  if (protocol) header.append(radioDirectoryField(node('span', 'ui-muted ui-label', protocol), 'protocol'));
   const live = radioDirectoryLiveLink(children);
   if (live) header.append(live);
   const sites = node('div', 'radio-directory-site-list');
-  children.forEach((channel) => sites.append(radioDirectorySiteRow(channel, conventional)));
-  card.append(header, sites);
+  children.forEach((channel) => sites.append(radioDirectorySiteRow(channel, conventional,
+    qualityById.get(canonicalConfigurationId(channel.configuration_id)))));
+  card.append(header);
+  if (!conventional) {
+    const columns = node('div', 'ui-muted ui-label radio-directory-row-head');
+    columns.setAttribute('aria-hidden', 'true');
+    ['Channel / site', 'Current control', 'Signal', 'Decode quality']
+      .forEach((label) => columns.append(node('span', '', label)));
+    card.append(columns);
+  }
+  card.append(sites);
   return card;
 }
 
-function radioDirectoryCardSection(title, rows, kind, emptyText) {
+function radioDirectoryCardSection(title, rows, kind, emptyText, qualityById) {
   const sectionElement = node('section', 'radio-directory-section');
   sectionElement.dataset.directorySectionKey = kind;
   const header = node('header', 'radio-directory-section-header');
   header.append(node('h2', '', title));
   const grid = node('div', 'radio-directory-system-grid');
-  const cards = rows.map((row) => radioDirectorySystemCard(row, kind === 'conventional'));
+  const cards = rows.map((row) => radioDirectorySystemCard(row, kind === 'conventional', qualityById));
   cards.sort((left, right) => left.querySelector('h3').textContent.localeCompare(
     right.querySelector('h3').textContent, undefined, { numeric: true, sensitivity: 'base' }) ||
     left.dataset.directoryCardKey.localeCompare(right.dataset.directoryCardKey));
@@ -24520,117 +24336,100 @@ function radioDirectoryEmbeddedPanel(view, directory) {
   return section('Systems & channels', body);
 }
 
-function renderNestedRadioDirectory(renderContext) {
+function radioDirectoryQualityOnly(currentQuality) {
+  const systems = new Map();
+  for (const row of currentQuality) {
+    if (row.channel_kind !== 'TRUNKED' || !canonicalConfigurationId(row.configuration_id)) continue;
+    const key = row.radio_system_key || JSON.stringify([row.protocol, row.system_name]);
+    if (!systems.has(key)) systems.set(key, { ...row, children: [] });
+    systems.get(key).children.push(row);
+  }
+  return { systems: [...systems.values()], channels: [] };
+}
+
+function renderNestedRadioDirectory(renderContext, directory, currentQuality = []) {
   if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, true);
-  const loading = createAsyncSection('Radio Directory', {
-    bare: true,
-    loadingMessage: 'Loading radio systems and channels…',
-    errorMessage: 'The radio directory could not be loaded.'
-  });
-  content.append(radioDirectoryEmbeddedPanel('systems', loading.element));
+  const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
+  wrapper.dataset.uiDensity = 'comfortable';
+  const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
+  const searchWrap = node('label', 'ui-search');
+  searchWrap.append(iconGlyph('icon-search'));
+  const search = node('input', 'ui-input');
+  search.type = 'search';
+  search.placeholder = 'Search systems, sites, channels, frequencies, protocols, or alias lists';
+  search.setAttribute('aria-label', search.placeholder);
+  searchWrap.append(search);
+  const hasDirectory = Boolean(directory);
+  let activeView = hasDirectory ? 'running' : 'all';
+  const filters = uiSegmentedControl([
+    { value: 'running', label: 'Running' },
+    { value: 'stopped', label: 'Stopped' },
+    { value: 'all', label: 'All' }
+  ], activeView, (value) => { activeView = value; draw(); });
+  filters.setAttribute('aria-label', 'Filter radio directory');
+  const exportLink = exportCsvLink('channels');
+  const refresh = uiActionButton('', 'icon-refresh', () => render(),
+    'ui-button ui-button-secondary ui-icon-button');
+  refresh.title = 'Refresh radio directory';
+  refresh.setAttribute('aria-label', refresh.title);
+  toolbar.append(searchWrap);
+  if (hasDirectory) toolbar.append(filters, exportLink);
+  toolbar.append(exportCsvLink('signal-health'), refresh);
+  const feedback = node('p', 'ui-notice ui-notice-warning');
+  feedback.hidden = true;
+  feedback.setAttribute('role', 'status');
+  const directoryHost = node('div', 'radio-directory-content');
 
-  const loadDirectory = async (options = {}) => {
-    const parameters = { limit: 25, sort: 'system_id', direction: 'asc', includeChannelPreview: true };
-    const [catalog, firstSystems] = await Promise.all([
-      requestChannelConfigurationJson('/api/v1/channel-catalog', { csrf: false, ...options }),
-      apiPage('/api/v1/radio-systems', parameters, options)
-    ]);
-    // Activity-ranked top pages can change membership on every poll. Read the stable system order
-    // completely; each request retains the server's bounded channel-preview/page size.
-    const rows = [...firstSystems.rows];
-    let page = firstSystems;
-    if (page.has_more && !Number.isInteger(firstSystems.total_count))
-      throw new Error('Radio systems could not be loaded. Try refreshing the page.');
-    while (page.has_more && page.next_offset < firstSystems.total_count) {
-      if (!Number.isInteger(page.next_offset) || page.next_offset <= page.offset)
-        throw new Error('Radio systems could not be loaded. Try refreshing the page.');
-      const offset = page.next_offset;
-      page = await apiPage('/api/v1/radio-systems', { ...parameters, offset }, options);
-      if (page.offset !== offset)
-        throw new Error('Radio systems could not be loaded. Try refreshing the page.');
-      rows.push(...page.rows);
-    }
-    const unique = [...new Map(rows.map((row, index) => [
-      row.radio_system_key || row.entity_ref?.key || index, row
-    ])).values()];
-    return { catalog, systems: { ...firstSystems, rows: unique } };
+  const matches = (row, term) => !term || [row.system_name, row.system, row.site_name, row.site,
+    row.name, row.protocol, row.protocol_label, row.alias_list_name,
+    ...(Array.isArray(row.alias_lists) ? row.alias_lists.map((entry) => entry.name) : []),
+    channelAdminFrequencyList(row.frequencies_hz)]
+    .some((value) => String(value || '').toLowerCase().includes(term));
+  const draw = () => {
+    const qualityById = new Map(currentQuality.filter((row) => canonicalConfigurationId(row.configuration_id))
+      .map((row) => [canonicalConfigurationId(row.configuration_id), row]));
+    const snapshot = directory || radioDirectoryQualityOnly(currentQuality);
+    const term = search.value.trim().toLowerCase();
+    const matchesState = (row) => activeView === 'all' ||
+      activeView === 'running' && row.processing_state === 'RUNNING' ||
+      activeView === 'stopped' && row.processing_state !== 'RUNNING';
+    const trunkedSystems = [];
+    snapshot.systems.forEach((parent) => {
+      const parentMatches = matches(parent, term);
+      const children = parent.children.filter((row) => matchesState(row) && (parentMatches || matches(row, term)));
+      if (children.length) {
+        trunkedSystems.push({ ...parent, children, child_count: children.length,
+          running_count: children.filter((row) => row.processing_state === 'RUNNING').length });
+      }
+    });
+    const conventionalRows = snapshot.channels.filter((row) => matchesState(row) && matches(row, term));
+    const conventionalSystems = radioDirectoryConventionalGroups(conventionalRows);
+    const sections = [radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
+      'No trunked systems or sites match this search', qualityById)];
+    if (hasDirectory) sections.push(radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
+      'No conventional channels match this search'));
+    radioDirectoryReconcile(directoryHost, ...sections);
   };
+  search.addEventListener('input', draw);
+  wrapper.append(toolbar, feedback, directoryHost);
+  draw();
 
-  return loading.load(() => loadDirectory(), (initial) => {
-    let directory = initial;
-    const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
-    wrapper.dataset.uiDensity = 'compact';
-    const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
-    const searchWrap = node('label', 'ui-search');
-    searchWrap.append(iconGlyph('icon-search'));
-    const search = node('input', 'ui-input');
-    search.type = 'search';
-    search.placeholder = 'Search systems, sites, channels, frequencies, protocols, or alias lists';
-    search.setAttribute('aria-label', search.placeholder);
-    searchWrap.append(search);
-    let activeView = 'running';
-    const filters = uiSegmentedControl([
-      { value: 'running', label: 'Running' },
-      { value: 'stopped', label: 'Stopped' },
-      { value: 'all', label: 'All' }
-    ], activeView, (value) => { activeView = value; draw(); });
-    filters.setAttribute('aria-label', 'Filter radio directory');
-    const exportLink = exportCsvLink('channels');
-    const refresh = uiActionButton('', 'icon-refresh', () => renderDashboard(),
-      'ui-button ui-button-secondary ui-icon-button');
-    refresh.title = 'Refresh radio directory';
-    refresh.setAttribute('aria-label', refresh.title);
-    toolbar.append(searchWrap, filters, exportLink, refresh);
-    const directoryHost = node('div', 'radio-directory-content');
-
-    const matches = (row, term) => !term || [row.system_name, row.system, row.site_name, row.site,
-      row.name, row.protocol, row.protocol_label, row.alias_list_name,
-      ...(Array.isArray(row.alias_lists) ? row.alias_lists.map((entry) => entry.name) : []),
-      channelAdminFrequencyList(row.frequencies_hz)]
-      .some((value) => String(value || '').toLowerCase().includes(term));
-    const draw = () => {
-      const term = search.value.trim().toLowerCase();
-      const matchesState = (row) => activeView === 'all' ||
-        activeView === 'running' && row.processing_state === 'RUNNING' ||
-        activeView === 'stopped' && row.processing_state !== 'RUNNING';
-      const trunkedSystems = [];
-      radioDirectoryTrunkedGroups(directory.catalog, directory.systems).forEach((parent) => {
-        const parentMatches = matches(parent, term);
-        const children = parent.children.filter((row) => matchesState(row) && (parentMatches || matches(row, term)));
-        if (children.length) {
-          trunkedSystems.push({ ...parent, children, child_count: children.length,
-            running_count: children.filter((row) => row.processing_state === 'RUNNING').length });
-        }
-      });
-      const conventionalRows = (directory.catalog.channels || []).filter((row) =>
-        String(row.channel_kind || '').toUpperCase() === 'CONVENTIONAL' && matchesState(row) && matches(row, term));
-      const conventionalSystems = radioDirectoryConventionalGroups(conventionalRows);
-      radioDirectoryReconcile(directoryHost,
-        radioDirectoryCardSection('Trunked Systems', trunkedSystems, 'system',
-          'No trunked systems or sites match this search'),
-        radioDirectoryCardSection('Conventional Channels', conventionalSystems, 'conventional',
-          'No conventional channels match this search')
-      );
-    };
-    search.addEventListener('input', draw);
-    wrapper.append(toolbar, directoryHost);
-    draw();
-
-    let refreshInFlight = false;
-    pageInterval(async () => {
-      if (refreshInFlight || !renderIsCurrent(renderContext) || !wrapper.isConnected || document.hidden) return;
-      refreshInFlight = true;
-      try {
-        directory = await loadDirectory({ page: false });
-        draw();
-      } catch (_) { /* Preserve the last confirmed directory until the next refresh. */ }
-      finally { refreshInFlight = false; }
-    }, 5_000);
-    return wrapper;
-  }, renderContext);
+  content.append(radioDirectoryEmbeddedPanel('systems', wrapper));
+  return {
+    update(updated, quality) {
+      if (!renderIsCurrent(renderContext)) return;
+      directory = updated; currentQuality = quality; feedback.hidden = true; draw();
+    },
+    failed() {
+      feedback.textContent = 'Systems and channels could not be updated. Showing the last update received.';
+      feedback.hidden = false;
+      draw();
+    }
+  };
 }
 
 async function renderModernChannelCatalog(renderContext, revealId = null) {
+  if (!renderIsCurrent(renderContext)) return;
   const loading = createAsyncSection('Channels', {
     bare: true,
     loadingMessage: 'Loading channel configuration…',
@@ -24713,26 +24512,30 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     newChannelButton.dataset.guideTarget = 'channel-new';
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
-      'icon-scan-search', () => openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
-        uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
-        channelEditorControl, channelEditorFieldValue, protocols,
-        connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null }, {
-        prepareReceiver: async (tuner) => {
-          const count = Math.max(0, Number(tuner.channel_count) || 0);
-          const stop = count > 0 || /channel|serving/i.test(String(tuner.reason || ''));
-          const name = tuner.name || 'This receiver';
-          const message = stop ? `${name} is running ${count ? `${count} active channel${count === 1 ? '' : 's'}` :
-            'active channels'}. Stopping them will end any calls in progress; those calls will not resume. ` +
-            'VCE will restart the same configured channels when you finish or close the search.' :
-            `${name} has Lock center on. VCE will unlock it temporarily and restore the lock when you finish or close the search.`;
-          if (!await confirmAction(message, { title: stop ? 'Stop channels for this search?' :
-            'Unlock center temporarily?', confirmLabel: stop ? 'Stop channels and search' : 'Unlock and search',
-            cancelLabel: 'Cancel', tone: 'primary' })) return null;
-          return requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/browse`, {
-            method: 'POST', body: { takeover: true }, page: false
-          });
-        }
-      }), 'ui-button ui-button-primary') : null;
+      'icon-scan-search', async () => {
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=33');
+        if (!renderIsCurrent(renderContext)) return;
+        return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
+          uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
+          channelEditorControl, channelEditorFieldValue, protocols,
+          connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null }, {
+          prepareReceiver: async (tuner) => {
+            const count = Math.max(0, Number(tuner.channel_count) || 0);
+            const stop = count > 0 || /channel|serving/i.test(String(tuner.reason || ''));
+            const name = tuner.name || 'This receiver';
+            const message = stop ? `${name} is running ${count ? `${count} active channel${count === 1 ? '' : 's'}` :
+              'active channels'}. Stopping them will end any calls in progress; those calls will not resume. ` +
+              'VCE will restart the same configured channels when you finish or close the search.' :
+              `${name} has Lock center on. VCE will unlock it temporarily and restore the lock when you finish or close the search.`;
+            if (!await confirmAction(message, { title: stop ? 'Stop channels for this search?' :
+              'Unlock center temporarily?', confirmLabel: stop ? 'Stop channels and search' : 'Unlock and search',
+              cancelLabel: 'Cancel', tone: 'primary' })) return null;
+            return requestJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/browse`, {
+              method: 'POST', body: { takeover: true }, page: false
+            });
+          }
+        });
+      }, 'ui-button ui-button-primary') : null;
     if (findSystemsButton) {
       findSystemsButton.dataset.guideTarget = 'channel-discover';
       creationActions.append(findSystemsButton);
@@ -24961,6 +24764,9 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
             revealRowGroups: () => guideSampleData.isActive('channel-catalog') || Boolean(search.value.trim())
           } : {}),
           rowKey: (row) => row.configuration_id,
+          onRowClick: (row) => {
+            if (row.editable !== false) void openChannelEditorModal('edit', row.configuration_id);
+          },
           rowClass: (row) => [
             displayedSelection().has(row.configuration_id) ? 'selected' : '',
             highlightedOrderRows.has(row.configuration_id) ? 'channel-order-row-moved' : ''
@@ -25700,8 +25506,7 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
   advancedSummary.append(node('span', '', 'Advanced diagnostics'), node('small', 'muted', 'Exact values'));
   const advancedBody = node('div', 'channel-squelch-advanced-body');
   advancedBody.append(node('p', 'muted',
-    'These are the exact manual thresholds used by the decoder. Timing values are 10 ms evidence steps; ' +
-    'nothing is learned automatically.'), diagnosticReadouts);
+    'These are the exact manual thresholds used by the decoder. Timing values are 10 ms evidence steps.'), diagnosticReadouts);
   advancedFields.forEach((wrapper) => advancedBody.append(wrapper));
   advanced.append(advancedSummary, advancedBody);
 
@@ -26612,7 +26417,7 @@ function aliasCoverageSearch(placeholder, onNavigate) {
   return form;
 }
 
-function aliasCoverageSummaryCards(totals, unassigned, countFailed = false, analog = false) {
+function aliasCoverageSummaryCards(totals, unassigned, analog = false) {
   const configured = Number(totals.configured_alias_count || 0);
   const activityEligible = Number(totals.activity_eligible_alias_count ?? configured);
   const recent = Number(totals.active_alias_count || 0);
@@ -26620,8 +26425,8 @@ function aliasCoverageSummaryCards(totals, unassigned, countFailed = false, anal
     ['Configured aliases', configured, 'icon-identities', 'blue'],
     ['Heard recently', recent, 'icon-live', 'success'],
     ['Not heard recently', Math.max(0, activityEligible - recent), 'icon-pause', 'neutral'],
-    [analog ? 'Unmatched assignments' : 'Unknown aliases', unassigned?.total_count, 'icon-warning',
-      unassigned ? 'warning' : 'neutral', unassigned ? undefined : countFailed ? 'Unavailable' : 'Loading…'],
+    ...(unassigned ? [[analog ? 'Unmatched assignments' : 'Unknown aliases',
+      unassigned.total_count, 'icon-warning', 'warning']] : []),
     ...(totals.logical_call_count != null ? [
       ['Total calls', totals.logical_call_count, 'icon-live', 'blue'],
       ['Matched calls', totals.matched_logical_call_count, 'icon-identities', 'success'],
@@ -26725,7 +26530,6 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   let selectedModel = null;
   let updateSequence = 0;
   let updateController = null;
-  let countController = null;
   const navigateCoverage = (target, options = {}) => routeFoundation.navigate(window, target, (nextRoute) => {
     route = nextRoute;
     void refreshCoverage(nextRoute, options);
@@ -26776,7 +26580,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     const totals = overview.totals || {};
     const selectedList = overview.alias_list || lists.rows.find((row) => row.alias_list_id === selectedListId);
     const analog = analogAliasList(selectedList);
-    const summary = aliasCoverageSummaryCards(totals, unassigned, model.unassignedCountFailed, analog);
+    const summary = aliasCoverageSummaryCards(totals, unassigned, analog);
 
     const tabs = uiSegmentedControl([
       { value: 'configured', label: 'Configured aliases' },
@@ -26844,35 +26648,9 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     return wrapper;
   };
 
-  const hydrateUnassignedCount = async (model) => {
-    if (!model?.selectedListId || model.activeTab !== 'configured' || model.unassigned ||
-        !renderIsCurrent(renderContext) || renderContext.signal?.aborted) return;
-    countController?.abort();
-    const controller = new AbortController();
-    countController = controller;
-    const sequence = updateSequence;
-    const isCurrent = () => !controller.signal.aborted && sequence === updateSequence &&
-      selectedModel === model && renderIsCurrent(renderContext) && directory.host.isConnected;
-    try {
-      const count = await apiPage(`/api/v1/identities/lists/${encodeURIComponent(model.selectedListId)}/unassigned`,
-        { limit: 1, offset: 0, sort: 'logical_call_count', direction: 'desc' }, { signal: controller.signal });
-      if (!isCurrent()) return;
-      model.unassigned = count;
-    } catch (error) {
-      if (error?.name === 'AbortError' || !isCurrent()) return;
-      model.unassignedCountFailed = true;
-    } finally {
-      if (countController === controller) countController = null;
-    }
-    if (isCurrent()) directory.host.querySelector('.alias-coverage-summary')?.replaceWith(
-      aliasCoverageSummaryCards(model.overview.totals || {}, model.unassigned, model.unassignedCountFailed,
-        analogAliasList(model.overview.alias_list || model.lists.rows.find((row) => row.alias_list_id === model.selectedListId))));
-  };
-
   const refreshCoverage = async (parameters, options = {}) => {
     const sequence = ++updateSequence;
     updateController?.abort();
-    countController?.abort();
     updateController = new AbortController();
     const tableSection = directory.host.querySelector('.alias-coverage-table-section');
     const oldTop = tableSection?.getBoundingClientRect().top;
@@ -26886,7 +26664,6 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       if (sequence !== updateSequence || !renderIsCurrent(renderContext) || !directory.host.isConnected) return;
       directory.host.replaceChildren(present(model));
       selectedModel = model;
-      void hydrateUnassignedCount(model);
       const newTable = directory.host.querySelector('.alias-coverage-table-section');
       const newTop = newTable?.getBoundingClientRect().top;
       if (options.scrollToTable) newTable?.scrollIntoView({ block: 'start', behavior: 'instant' });
@@ -26898,7 +26675,6 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       failure.append(node('span', '', error.message || 'Alias inventory could not be updated.'),
         uiActionButton('Retry', null, () => void refreshCoverage(new URLSearchParams(route))));
       (tableSection || directory.host).prepend(failure);
-      void hydrateUnassignedCount(selectedModel);
     } finally {
       if (sequence === updateSequence) {
         status.remove();
@@ -26908,11 +26684,9 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   };
   renderContext.signal?.addEventListener('abort', () => {
     updateController?.abort();
-    countController?.abort();
   }, { once: true });
   await directory.load(() => loadAliasCoverageModel(new URLSearchParams(route), null, renderContext.signal),
     (model) => { selectedModel = model; return present(model); }, renderContext);
-  void hydrateUnassignedCount(selectedModel);
 }
 
 function channelTabItems(channel) {
@@ -27107,7 +26881,9 @@ async function renderChannel() {
   const renderContext = captureRenderContext();
   const configurationId = String(route.get('configuration_id') || '').trim();
   if (!configurationId) throw new Error('Channel configuration ID is missing from the URL');
-  const data = await api(channelApiPath(configurationId));
+  const [data] = await Promise.all([
+    api(channelApiPath(configurationId)), loadActivityMessageTypes()
+  ]);
   let channel = data?.channel;
   if (!channel || typeof channel !== 'object' || Array.isArray(channel)) {
     throw new Error('The channel response is invalid');
@@ -27985,6 +27761,8 @@ function replaceRadioReferenceOptions(select, options, selectedId, placeholder) 
 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=31');
+  if (!renderIsCurrent(renderContext)) return;
   if (!beginPage(renderContext, pageHeader('RadioReference',
     'Browse systems and agencies, compare changes, and import'))) return;
   const page = node('div', 'radioreference-page');
@@ -30319,6 +30097,8 @@ async function renderSettings() {
 
 async function renderStreaming() {
   const renderContext = captureRenderContext();
+  const { createStreamingWorkspace } = await import('./features/streaming.js?v=13');
+  if (!renderIsCurrent(renderContext)) return;
   const workspace = createStreamingWorkspace({
     node, metricCard, metrics, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, table, browsingWorkflows,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, formatNumber: number, href,
@@ -30335,7 +30115,9 @@ async function renderStreaming() {
   }
 }
 
-function renderAdminRemoteLinks(renderContext) {
+async function renderAdminRemoteLinks(renderContext) {
+  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=20');
+  if (!renderIsCurrent(renderContext)) return;
   const workspace = createRemoteLinksWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconGlyph, remoteOriginIcon, createFormWorkflow,
     openReadOnlyModal, confirmAction, requestJson, modalFooter: aliasModalFooter, signal: renderContext.signal
@@ -30345,7 +30127,9 @@ function renderAdminRemoteLinks(renderContext) {
   content.append(workspace.element);
 }
 
-function alertsWorkspace(renderContext, view) {
+async function alertsWorkspace(renderContext, view) {
+  const { createAlertsWorkspace } = await import('./features/alerts.js?v=20');
+  if (!renderIsCurrent(renderContext)) return;
   return createAlertsWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
@@ -30363,9 +30147,10 @@ function alertsWorkspace(renderContext, view) {
   });
 }
 
-function renderPublicAlertTopics() {
+async function renderPublicAlertTopics() {
   const renderContext = captureRenderContext();
-  const workspace = alertsWorkspace(renderContext, 'public');
+  const workspace = await alertsWorkspace(renderContext, 'public');
+  if (!workspace) return;
   if (!beginPage(renderContext, pageHeader('Topics', 'Follow alerts published by this VCE installation'), workspace.element)) {
     workspace.close();
     return;
@@ -30373,9 +30158,10 @@ function renderPublicAlertTopics() {
   pageConnections.add(workspace);
 }
 
-function renderAlertManagement() {
+async function renderAlertManagement() {
   const renderContext = captureRenderContext();
-  const workspace = alertsWorkspace(renderContext, 'manage');
+  const workspace = await alertsWorkspace(renderContext, 'manage');
+  if (!workspace) return;
   if (!beginPage(renderContext, pageHeader('Alerts',
     'Create topics and choose the activity that publishes alerts.'), workspace.element)) {
     workspace.close();
@@ -30384,7 +30170,9 @@ function renderAlertManagement() {
   pageConnections.add(workspace);
 }
 
-function renderAdminApplicationLog(renderContext) {
+async function renderAdminApplicationLog(renderContext) {
+  const { createApplicationLogWorkspace } = await import('./core/application-log.js?v=5');
+  if (!renderIsCurrent(renderContext)) return;
   const workspace = createApplicationLogWorkspace({
     node, formField, uiSelectFrame, uiStatus, iconButton, setIconButton, uiActionButton,
     api, signal: renderContext.signal
@@ -30393,7 +30181,9 @@ function renderAdminApplicationLog(renderContext) {
   pageConnections.add(workspace);
 }
 
-function renderAdminWebDiagnosticLog(renderContext) {
+async function renderAdminWebDiagnosticLog(renderContext) {
+  const { createWebDiagnosticLogWorkspace } = await import('./features/web-diagnostic-log.js?v=4');
+  if (!renderIsCurrent(renderContext)) return;
   const workspace = createWebDiagnosticLogWorkspace({
     node, section, sectionActionHost, formField, uiSelectFrame, uiToggleField, setUiToggle,
     uiStatus, iconButton, setIconButton, uiActionButton, api, requestJson, signal: renderContext.signal
@@ -30402,8 +30192,10 @@ function renderAdminWebDiagnosticLog(renderContext) {
   pageConnections.add(workspace);
 }
 
-function renderListenMap() {
+async function renderListenMap() {
   const renderContext = captureRenderContext();
+  const { createListenMap } = await import('./features/listen-map.js?v=12');
+  if (!renderIsCurrent(renderContext)) return;
   const map = createListenMap({
     node, iconGlyph, iconButton, radioSystemLink,
     fetchSnapshot: () => api('/api/v1/listen/map', {}, { signal: renderContext.signal }),
@@ -34006,8 +33798,8 @@ async function renderAdmin() {
   if (active === 'health') await renderAdminHealth();
   else if (active === 'call-matching') await renderAdminCallMatching(renderContext);
   else if (active === 'tuner-allocation') await renderAdminTunerAllocation(renderContext);
-  else if (active === 'application-log') renderAdminApplicationLog(renderContext);
-  else if (active === 'web-diagnostic-log') renderAdminWebDiagnosticLog(renderContext);
+  else if (active === 'application-log') await renderAdminApplicationLog(renderContext);
+  else if (active === 'web-diagnostic-log') await renderAdminWebDiagnosticLog(renderContext);
   else if (active === 'support') renderAdminSupportReport();
   else if (active === 'remote-support') await renderAdminRemoteSupport(body, renderContext);
   else if (active === 'display') {
@@ -34024,14 +33816,17 @@ async function renderAdmin() {
       display.append(personal);
     }
   }
-  else if (active === 'remote-links') renderAdminRemoteLinks(renderContext);
+  else if (active === 'remote-links') await renderAdminRemoteLinks(renderContext);
   else if (active === 'push-setup') {
-    const workspace = alertsWorkspace(renderContext, 'setup');
+    const workspace = await alertsWorkspace(renderContext, 'setup');
+    if (!workspace) return;
     content.append(workspace.element);
     pageConnections.add(workspace);
   }
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'audio-quality') {
+    const { createPagingToneDetectionSettings } = await import('./features/paging-tone-detection.js?v=5');
+    if (!renderIsCurrent(renderContext)) return;
     const pagingTones = createPagingToneDetectionSettings({ node, section, sectionActionHost, uiToggleField,
       setUiToggle, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
       isCurrent: () => renderIsCurrent(renderContext) });
@@ -34070,6 +33865,8 @@ async function renderAdmin() {
   }
   else if (active === 'transcription') await recordingsFeature.renderAdminTranscription();
   else if (active === 'retained-statistics') {
+    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=11');
+    if (!renderIsCurrent(renderContext)) return;
     content.append(createRetainedStatisticsWorkspace({
       node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost, browsingWorkflows,
       table, openReadOnlyModal, modalFooter: aliasModalFooter, requestJson,
@@ -34247,23 +34044,9 @@ function loggingAvailabilitySignature() {
     serviceStatusWarningRequired()].join('|');
 }
 
-async function reloadForWebClientRevision() {
-  let serverRevision = '';
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 5_000);
-  try {
-    const response = await fetch('/', {
-      method: 'HEAD', cache: 'no-store', credentials: 'same-origin', signal: controller.signal
-    });
-    if (!response.ok) return false;
-    serverRevision = String(response.headers.get('X-Sdrtrunk-Web-Revision') || '').trim();
-  } catch (error) {
-    return false;
-  } finally {
-    window.clearTimeout(timeout);
-  }
-
-  if (!WEB_CLIENT_REVISION || !serverRevision || serverRevision === WEB_CLIENT_REVISION ||
+function reloadForWebClientRevision(revision) {
+  const serverRevision = String(revision || '').trim();
+  if (!WEB_CLIENT_REVISION || !/^[A-Za-z0-9._-]{1,64}$/.test(serverRevision) || serverRevision === WEB_CLIENT_REVISION ||
       webClientReloadAttempted) return false;
 
   webClientReloadAttempted = true;
@@ -34278,11 +34061,10 @@ async function reloadForWebClientRevision() {
 
 async function loadStatus(refreshCurrentView = false) {
   const previousSignature = loggingAvailabilitySignature();
-  if (await reloadForWebClientRevision()) return;
   void refreshAlertTopicsNavigation();
   if (accessSessionAvailable && !capabilityAllowed(ACCESS_CAPABILITIES.DASHBOARD)) {
     clearServiceStatus();
-    refreshP25VisualizerMenu();
+    updateNavigationAccess();
     const status = document.getElementById('global-status');
     if (status) status.textContent = 'Status restricted';
     return;
@@ -34295,7 +34077,7 @@ async function loadStatus(refreshCurrentView = false) {
     const status = document.getElementById('global-status');
     if (status) status.textContent = serviceStatus ? 'Receiver status stale' : 'Receiver status unavailable';
   }
-  refreshP25VisualizerMenu();
+  updateNavigationAccess();
 
   const currentView = route.get('view') || 'dashboard';
   if (refreshCurrentView && currentView === 'admin' && ['health', 'activity'].includes(route.get('tab') || 'health')) {
@@ -34349,20 +34131,32 @@ const recordingsFeature = createRecordingsFeature({
   }
 });
 
-const showCallRelations = createCallRelations({
-  node, openReadOnlyModal, requestJson, dateTime, anchor, href, iconGlyph, entityRefHref,
-  radioIdentifierText, groupIdentifierText,
-  activitySource: row => activitySourceAlias(row) || activityIdentifier(row, row.source_radio_id, 'radio',
-    row.source_entity_ref, true, 'source'),
-  activityTarget: row => activityTargetAlias(row) || activityTargetIdentifier(row),
-  activityChannel: row => activityChannel(row),
-  activityEventLabel: row => row.event_type ? activityOptionLabel(row.event_type, 'EVENT') : activityOptionLabel(row.action),
-  playback: recordingsFeature.playback,
-  canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
-  canViewRecordings: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)
-});
-
-function openCallRelations(kind, id) { return showCallRelations(kind, id); }
+async function openCallRelations(kind, id) {
+  const renderContext = captureRenderContext();
+  let relationsModule;
+  try {
+    [relationsModule] = await Promise.all([
+      import('./features/call-relations.js?v=5'), loadActivityMessageTypes()
+    ]);
+  } catch (error) {
+    if (!renderIsCurrent(renderContext)) return;
+    throw error;
+  }
+  if (!renderIsCurrent(renderContext)) return;
+  const showCallRelations = relationsModule.createCallRelations({
+    node, openReadOnlyModal, requestJson, dateTime, anchor, href, iconGlyph, entityRefHref,
+    radioIdentifierText, groupIdentifierText,
+    activitySource: row => activitySourceAlias(row) || activityIdentifier(row, row.source_radio_id, 'radio',
+      row.source_entity_ref, true, 'source'),
+    activityTarget: row => activityTargetAlias(row) || activityTargetIdentifier(row),
+    activityChannel: row => activityChannel(row),
+    activityEventLabel: row => row.event_type ? activityOptionLabel(row.event_type, 'EVENT') : activityOptionLabel(row.action),
+    playback: recordingsFeature.playback,
+    canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
+    canViewRecordings: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)
+  });
+  return showCallRelations(kind, id);
+}
 
 const audioDock = createAudioDock({
   node, iconButton, uiToggleField, recordings: recordingsFeature.playback,
@@ -34495,7 +34289,9 @@ async function render() {
       renderAccessDenied(effectiveView, renderContext);
       return;
     }
-    await loadActivityMessageTypes();
+    if (['live', 'aliases'].includes(effectiveView)) {
+      await loadActivityMessageTypes();
+    }
     if (epoch !== activeRenderEpoch || renderController.signal.aborted) return;
     await entry.handler();
     if (epoch !== activeRenderEpoch || renderController.signal.aborted) return;
@@ -34530,7 +34326,7 @@ async function render() {
     const notice = databaseLoggingNotice(effectiveView);
     const failureHeading = pendingTitle ?
       (content.querySelector(':scope > .page-header') || pageHeader(pendingTitle)) : null;
-    beginPage(renderContext, ...[failureHeading, notice, node('div', 'error', error.message)].filter(Boolean));
+    beginPage(renderContext, ...[failureHeading, notice, asyncSectionFailure(error, 'This page could not be loaded.', render)].filter(Boolean));
   }
 }
 
@@ -34571,9 +34367,17 @@ initializePlaybackHeader();
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) void refreshAlertTopicsNavigation(true);
 });
+initialPageDeadline = performance.now() + 10_000;
 refreshAccessSession(false)
-  .then(() => Promise.all([loadStatus(false), receiverHealthController.refresh()]))
-  .finally(render);
+  .then(() => loadStatus(false))
+  .finally(async () => {
+    try {
+      await render();
+    } finally {
+      initialPageDeadline = 0;
+      void receiverHealthController.refresh();
+    }
+  });
 let refreshCycle = null;
 window.setInterval(() => {
   if (document.hidden || refreshCycle) return;

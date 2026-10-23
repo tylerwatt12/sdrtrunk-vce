@@ -297,6 +297,22 @@ function snapshot(duplicates = [duplicate()]) {
 }
 
 
+function p25Affiliations(rows) {
+  const facts = new Map();
+  for (const row of [...rows].sort((a, b) => a.observed_at_ms - b.observed_at_ms || a.id - b.id)) {
+    facts.set(`${row.radio_system_key}:${row.source_identity_key}`, { radio_system_key: row.radio_system_key,
+      radio_identity_key: row.source_identity_key, talkgroup_identity_key: row.target_identity_key,
+      configuration_id: row.configuration_id, confirmed_at_ms: row.observed_at_ms, protocol: 'p25',
+      system_name: row.system_name, radio_id: row.source_radio_id, talkgroup_id: row.target_id,
+      radio_alias_name: row.source_alias_name, talkgroup_alias_name: row.target_alias_name });
+  }
+  return { affiliations: [...facts.values()] };
+}
+const defaultP25Affiliations = p25Affiliations([{ id: 1, observed_at_ms: now,
+  radio_system_key: systemKey, source_identity_key: radioKey, target_identity_key: groupKey,
+  configuration_id: channelId, system_name: systemName, source_radio_id: 30914,
+  target_id: 1201, source_alias_name: 'Engine 4', target_alias_name: 'Fire Dispatch' }]);
+
 async function installSiteStyleApplication(page, theme = 'light', liveInitialSnapshot = liveSnapshot, options = {}) {
   const defaults = (await import(pathToFileURL(path.join(root, 'stats-web/assets/core/preference-schema.js')).href)).defaults;
   const preferences = structuredClone(defaults);
@@ -345,10 +361,32 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       username: 'fixture-admin', tier: 'admin', primary: true, csrf_token: 'fixture-csrf',
       guide_dismissal_scope: state.guideDismissalScope ?? 'account-1-100',
       capabilities: Object.fromEntries(policies.map(({ id }) => [id, true])) });
-    if (p === '/api/v1/status') return respond({ stats_logging: { summary_configured: true,
+    if (p === '/api/v1/status') return respond({ p25_visualizer_available: true,
+      stats_logging: { summary_configured: true,
       summary_active: true, detailed_history_configured: true, detailed_history_active: true },
       database: { database_exists: true, database_bytes: 1048576, detailed_history_available: true, logger: [] } });
-    if (p === '/api/v1/receiver-health') return respond(health);
+    if (p === '/api/v1/dashboard/main') return respond({ quality: { current: [quality] },
+      directory: { systems: [{ ...identity, entity_ref: { kind: 'radio_system', key: systemKey },
+        children: [channel], child_count: 1, running_count: 1 }], channels: [] } });
+    if (p === '/api/v1/activity/actions') return respond({ rows: [
+      { action: 'GRANT', observation_count: 1000 }, { action: 'AFFILIATE', observation_count: 500 }
+    ] });
+    if (p === '/api/v1/activity/radios') {
+      const offset = Number(url.searchParams.get('offset') || 0);
+      return respond({ rows: Array.from({ length: Math.min(100, Math.max(0, 101 - offset)) }, (_, index) => {
+        const id = 30914 + offset + index;
+        return { ...radio, channel_kind: 'TRUNKED', native_id: id, radio_id: id,
+          alias_name: index === 0 && offset === 0 ? 'Engine 4' : `Field unit ${id}`,
+          alias_description: 'North station', observation_count: 20, last_seen_ms: now,
+          radio_entity_ref: { kind: 'radio', radio_system_key: systemKey,
+            identity_key: `v1-r-00001-001-${id}` } };
+      }), total_count: 101, offset, limit: 100, has_more: offset === 0,
+      next_offset: offset === 0 ? 100 : null, action_observation_count: 1000,
+      retained_observation_count: 900, identified_observation_count: 800,
+      unknown_source_observation_count: 100 });
+    }
+    if (p === '/api/v1/receiver-health') return route.fulfill({
+      headers: { Date: new Date(health.generated_at_ms).toUTCString() }, json: { data: health } });
     if (p === '/api/v1/remote-support') return respond({ enabled: false, connected: false, code: '',
       expires_at_ms: 0, unlimited: false, can_start: true });
     if (p === '/api/v1/dashboard') return respond(dashboard);
@@ -396,13 +434,24 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       `/api/v1/radio-systems/${systemKey}/radios/${radioKey}/activity`].includes(p)) {
       return respond({ totals, series: [] });
     }
-    if (p === '/api/v1/activity') return respond({ ...pageOf([{ id: 1, observed_at_ms: now,
+    if (p === '/api/v1/activity') return route.fulfill({ json: { data: Number(url.searchParams.get('after_id') || 0) >= 1 ? [] : [{ id: 1, observed_at_ms: now,
       action: 'GRANT', protocol: 'P25', channel_kind: 'TRUNKED_SITE', radio_system_key: systemKey,
       system_name: systemName, configuration_id: channelId, source_radio_id: 30914, source_native_id: 30914,
       source_identity_key: radioKey, source_alias_name: 'Engine 4', target_id: 1201, target_native_id: 1201,
-      target_identity_key: groupKey, target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }]),
-      watermark_id: 1, next_after_id: 1 });
-    if (p === '/api/v1/live/multiplex/control') return respond({ accepted: true });
+      target_identity_key: groupKey, target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }],
+      meta: { watermark_id: 1, next_after_id: 1, has_more: false, reset_required: false } } });
+    if (p === '/api/v1/activity/live/seed') return respond({ source_epoch: 'fixture-p25', sequence: 0,
+      available: true, ...defaultP25Affiliations, captured_at_ms: now,
+      traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true });
+    if (p === '/api/v1/live/multiplex/control') {
+      const subscription = request.postDataJSON()?.subscriptions?.p25_activity;
+      if (subscription) await page.evaluate((subscriptionId) => {
+        window.fixtureSendLiveFrame?.(7, 'source_change', { subscription_id: subscriptionId,
+          source_epoch: 'fixture-p25', sequence: 0, watermark_id: 1, history_generation: 0,
+          server_time_ms: Date.now(), traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true });
+      }, subscription.subscription_id);
+      return respond({ accepted: true });
+    }
     if (p === '/api/v1/scan-lists' || p === '/api/v1/admin/scan-lists') return respond({ revision: 1,
       scan_lists: scanLists.map(item => ({ ...item, alias_count: 2, unmatched_alias_list_count: 1, published: true })) });
     if (p === '/api/v1/calls/feed') {
@@ -470,7 +519,8 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       topics: alertTopics, rules: alertRules, options: {} });
     if (p === '/api/v1/admin/alerts/config') return respond({ revision: 1, enabled: true, mode: 'proxy', site_url: '',
       sender_label: 'VCE installation', registration: { status: 'pending', sender_id: 'fixture-sender' } });
-    if (p === '/api/v1/alerts/topics') return respond({ topics: alertTopics.filter(topic => topic.visible), mode: 'proxy', push_enabled: false });
+    if (p === '/api/v1/alerts/topics') return respond({ enabled: true,
+      topics: alertTopics.filter(topic => topic.visible), mode: 'proxy', push_enabled: true });
     if (p === '/api/v1/alerts/history') return respond({ items: [{ id: 'fire-alert', topic_id: 'fire', title: 'Fire Tactical is active',
       body: 'Engine 12 transmitted on Fire Tactical.', created_at_ms: now }], total: 1, limit: 30, offset: 0 });
     if (p === '/api/v1/admin/tuners') return respond({ tuners: [operatorTuner({ spectrum_target_id: 'target-a', spectrum_available: true })] });
@@ -493,3 +543,5 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
 }
 
 module.exports = { installSiteStyleApplication, operatorTuner, systemKey, channelId, groupKey, radioKey, channelName, systemName };
+
+module.exports.p25Affiliations = p25Affiliations;

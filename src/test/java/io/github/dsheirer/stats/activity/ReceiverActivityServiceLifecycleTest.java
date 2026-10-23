@@ -1409,6 +1409,69 @@ class ReceiverActivityServiceLifecycleTest
     }
 
     @Test
+    void historyGenerationIncludesAnOverlappingRetiredWritersFinalCommit() throws Exception
+    {
+        Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        Path secondRoot = mTemporaryFolder.resolve("history-generation-replacement");
+        Path secondDatabase = SdrTrunkDatabasePath.getDatabasePath(secondRoot);
+        Channel channel = nbfmChannel(ACTIVITY_CONFIGURATION_ID);
+        for(Path database: List.of(firstDatabase, secondDatabase))
+        {
+            SdrTrunkTestDatabase.create(database);
+            persistChannels(database, channel);
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                Statement statement = connection.createStatement())
+            {
+                statement.executeUpdate("""
+                    INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms)
+                    VALUES (1,'%s',1,1)
+                    """.formatted(ACTIVITY_CONFIGURATION_ID));
+                statement.executeUpdate("""
+                    INSERT INTO receiver_activity_event(channel_id,observed_at_ms,action_code)
+                    VALUES (1,1,4)
+                    """);
+            }
+        }
+        AtomicBoolean deferFirstClose = new AtomicBoolean(true);
+        ReceiverActivityWriter retiring = new ReceiverActivityWriter(firstDatabase, 30, true)
+        {
+            @Override public void close()
+            {
+                if(!deferFirstClose.getAndSet(false)) super.close();
+            }
+        };
+        TestDirectoryPreference directory = new TestDirectoryPreference(mTemporaryFolder);
+        ReceiverActivityService service = new ReceiverActivityService(
+            new TestUserPreferences(new TestApplicationPreference(true, 30, true), directory),
+            2, TimeUnit.SECONDS, null, null,
+            (path, retention, detailed) -> path.equals(firstDatabase) ? retiring :
+                new ReceiverActivityWriter(path, retention, detailed));
+        try
+        {
+            assertEquals(0, service.historyGeneration());
+            directory.setRoot(secondRoot);
+            service.preferenceUpdated(PreferenceType.DIRECTORY);
+            awaitWriterTransition(service, secondDatabase);
+            assertEquals(0, service.historyGeneration(), "replacing a writer does not itself delete history");
+            StatsDatabaseMaintenanceRequest current = StatsDatabaseMaintenanceRequest.clearChannel(ACTIVITY_CONFIGURATION_ID);
+            service.receiveMaintenanceRequest(current);
+            assertTrue(current.result().get(5, TimeUnit.SECONDS).rowsDeleted() > 0);
+            assertEquals(1, service.historyGeneration());
+            StatsDatabaseMaintenanceRequest late = StatsDatabaseMaintenanceRequest.clearChannel(ACTIVITY_CONFIGURATION_ID);
+            retiring.submitMaintenance(late);
+            assertTrue(late.result().get(5, TimeUnit.SECONDS).rowsDeleted() > 0);
+            assertEquals(2, service.historyGeneration(), "a retired writer's durable deletion must remain visible");
+        }
+        finally
+        {
+            deferFirstClose.set(false);
+            retiring.close();
+            disposeAndAwait(service);
+        }
+        assertEquals(2, service.historyGeneration());
+    }
+
+    @Test
     void writerReplacementUsesDistinctInactiveAndActiveEpochs() throws Exception
     {
         Path firstDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);

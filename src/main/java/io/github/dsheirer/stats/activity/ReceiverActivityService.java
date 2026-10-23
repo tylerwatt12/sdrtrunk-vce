@@ -100,6 +100,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final Semaphore mObservationWakeup = new Semaphore(0);
     private final AtomicLong mObservationDrops = new AtomicLong();
     private final AtomicLong mLastObservationDropMs = new AtomicLong();
+    private final AtomicLong mHistoryGeneration = new AtomicLong();
     private final AtomicBoolean mDisposed = new AtomicBoolean();
     private final AtomicBoolean mObservationStateClearRequested = new AtomicBoolean();
     private final AtomicBoolean mWriterTransitionActive = new AtomicBoolean();
@@ -111,27 +112,12 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private final Runnable mBeforeWriterActivationForTest;
     private final WriterFactory mWriterFactory;
     private volatile ReceiverActivityWriter mWriter;
-    private final AtomicBoolean mLiveActivityDemand = new AtomicBoolean();
-    private final AtomicReference<java.util.function.Consumer<Boolean>> mSavedActivityCommitSignal =
-        new AtomicReference<>(ignored -> {});
 
     private volatile boolean mCollectionEnabled;
     private volatile boolean mObservationWorkerStarted;
     private BoundedMpscPairQueue<Object,Object> mWorkerObservationIngress;
     private Path mCurrentDatabasePath;
     private ReceiverActivityWriter.WriterStatus mLastWriterStatus;
-
-    /** Web demand changes only writer batching; decoder callbacks retain their existing bounded handoff. */
-    public void setLiveActivityDemand(boolean active)
-    {
-        mLiveActivityDemand.set(active);
-    }
-
-    /** The supplied signal must be nonblocking and must not read, project, or fan out activity. */
-    public void setSavedActivityCommitSignal(java.util.function.Consumer<Boolean> signal)
-    {
-        mSavedActivityCommitSignal.set(signal != null ? signal : ignored -> {});
-    }
 
     public ReceiverActivityService(UserPreferences userPreferences)
     {
@@ -853,9 +839,8 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         try
         {
+            writer.setHistoryGeneration(mHistoryGeneration);
             writer.setObservationDropProviders(mObservationDrops::get, mLastObservationDropMs::get);
-            writer.setLiveActivityObserver(mLiveActivityDemand::get,
-                historyChanged -> mSavedActivityCommitSignal.get().accept(historyChanged));
             writer.start();
             return writer;
         }
@@ -1725,6 +1710,12 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 break;
             }
         }
+    }
+
+    /** Constant-time maintenance version shared across this service's active and retiring writers. */
+    public long historyGeneration()
+    {
+        return mHistoryGeneration.get();
     }
 
     /**

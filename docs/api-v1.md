@@ -38,6 +38,10 @@ sort fields, ambiguous identifiers, and invalid booleans are rejected. Repeated 
 a resource explicitly accepts them, such as `scan_list_id` on the browser call feed. Path segments are decoded once.
 A literal `+` remains a plus, and encoded separators are rejected.
 
+Responses include `X-Sdrtrunk-Web-Revision` when the listener serves a versioned web client. The browser uses this
+header on its existing API requests to detect a deployed update, including responses that require authentication.
+API clients can ignore it; it does not version the API or its data.
+
 ## Identity model
 
 The API has two top-level radio resources:
@@ -86,7 +90,8 @@ instead of guessing a resource type from whichever fields happen to be present.
 | --- | --- |
 | `GET /api/v1/status` | Server, database, logging, and live-stream status. |
 | `GET /api/v1/me/preferences` | The signed-in user's bounded browser preference document and revision. |
-| `GET /api/v1/dashboard` | Bounded summary counts, recent channels, call activity, and top identities. |
+| `GET /api/v1/dashboard` | Bounded call and source activity, top identities, and the last-seen time. |
+| `GET /api/v1/dashboard/main` | Shared current signal quality and configured system/channel cards for Main. Includes names, aliases, navigation references and confirmed display frequencies; omits history, rankings and export-only fields. |
 | `GET /api/v1/quality` | Current quality across a bounded channel page. Global requests cannot include history. |
 | `GET /api/v1/identities` | Bounded directory of recently active talkgroups, patch groups, and radios. |
 | `GET /api/v1/alias-lists` | Paged Alias List catalog. |
@@ -94,7 +99,7 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/aliases` | Paged Alias catalog and bounded activity metrics. |
 | `GET /api/v1/aliases/{id}` | One Alias and its bounded activity breakdown. |
 | `GET /api/v1/scan-lists` | Published Scan Lists available to the signed-in browser listener. |
-| `GET /api/v1/radio-systems` | Paged radio systems with an optional bounded channel preview. |
+| `GET /api/v1/radio-systems` | Paged radio systems. Use the system's channels resource for its saved channels. |
 | `GET /api/v1/radio-systems/{radio_system_key}` | One radio system and its summary. |
 | `GET /api/v1/radio-systems/{radio_system_key}/channels` | Paged saved channels assigned to the radio system. |
 | `GET /api/v1/radio-systems/{radio_system_key}/group-identities` | Paged talkgroups and patch groups. |
@@ -121,8 +126,9 @@ instead of guessing a resource type from whichever fields happen to be present.
 | `GET /api/v1/channels/{configuration_id}/neighbors` | Paged RF-site neighbors learned by that channel. |
 | `GET /api/v1/channels/{configuration_id}/patch-groups` | Bounded P25 patch groups and members learned by that channel. |
 | `GET /api/v1/activity` | Cursor-paged detailed activity. |
+| `GET /api/v1/activity/live/seed` | Shared complete current P25 affiliations. |
 | `GET /api/v1/activity/actions` | Activity action totals for a selected time range. Dashboard access is required. |
-| `GET /api/v1/activity/radios` | Paged SOURCE-radio aggregation across retained matching activity events. Radio access is required. |
+| `GET /api/v1/activity/radios` | Paged source-radio counts for an activity category and time range. Radio access is required. |
 | `GET /api/v1/calls/feed` | Live-edge, cursor-based completed-call announcements for selected Scan Lists. |
 | `GET /api/v1/calls/{id}/audio` | WAV audio for one call still in the shared bounded ring. |
 | `GET /api/v1/recordings/status` | Recording mode, catalog availability, and whether indexed recordings exist. |
@@ -136,15 +142,9 @@ instead of guessing a resource type from whichever fields happen to be present.
 
 Common statistics collection parameters are `limit`, `offset`, `q`, `sort`, and `direction`. `limit` defaults to 100
 and must be between 1 and 500; `offset` must be between 0 and 100,000. Detailed activity uses the positive `before_id` cursor.
-Bounded global forward Activity reads are the sole exception and allow up to 5,000 rows. Every database materializer
-also has a 20,000-row emergency ceiling. Normal endpoint and export limits are lower.
+Every database materializer also has a 20,000-row emergency ceiling. Normal endpoint and export limits are lower.
 
 ### Radio-system directory
-
-`GET /api/v1/radio-systems` accepts `include_channel_preview=true`. Preview requests are limited to 25 parent systems
-and a fixed number of channels per system. Metadata reports `channel_preview_limit_per_system`. The browser adds its
-own `directory_type` while flattening system rows and their channel previews; that display-only field is not part of
-the API resource.
 
 The complete channel collection is always available at
 `/api/v1/radio-systems/{radio_system_key}/channels`. Radio-system responses report every distinct Alias List assigned
@@ -233,12 +233,15 @@ points require a channel-specific request.
 ### Activity and affiliations
 
 `GET /api/v1/activity/actions` accepts `range=1h|6h|24h|7d|30d`. Its metadata includes `range`, `from_ms`, `to_ms`,
-and `total`. The response omits `CONTINUE`.
+and `total_observation_count`. The response omits `CONTINUE`. Totals use compact hourly buckets and share a prepared
+response for up to two seconds per range.
 
-`GET /api/v1/activity/radios` accepts `range`, required `action`, and normal `limit`/`offset` paging. `CONTINUE` is
-rejected because continuation events are not retained as detailed SOURCE-radio events. SQLite aggregates every
-retained matching event before paging. Rows use `radio_system_key` for trunked activity or `configuration_id` for
-channel-owned activity, so the same numeric radio ID on different systems or channels remains separate.
+`GET /api/v1/activity/radios` accepts `range`, required `action`, and normal `limit`/`offset` paging. It groups every
+retained matching event before paging; rows remain separate by trunked system/subscriber or conventional channel/radio.
+Summary buckets supply `action_observation_count`; retained detail supplies `retained_observation_count`,
+`identified_observation_count`, `unknown_source_observation_count` and `total_count`. Summary totals can exceed retained
+detail after pruning, and all metadata remains available on an empty page. Matching concurrent requests share the
+prepared response for up to two seconds. `CALL`, `CONTINUE` and `TONE` are excluded from this signaling breakdown.
 
 `GET /api/v1/activity` retains its newest-first `before_id` paging contract. It also supports a history-consumer mode
 with comma-separated canonical `actions`, `after_id`, and optional `watermark_id`. Forward mode orders rows by
@@ -247,9 +250,11 @@ ascending insertion ID and returns `next_after_id`, `watermark_id`, and `has_mor
 that snapshot. On its final page, `next_after_id` advances to the watermark. A later poll starts from that cursor and
 omits the old watermark. Forward pages include `reset_required`. It is normally false; true means the supplied cursor
 is newer than the current Activity store, such as after a database replacement, and the consumer must discard that
-cursor and rebuild its selected history window. Global reads require inclusive `from_ms`, exclusive `to_ms`, a window
-no larger than 24 hours, and a nonempty `actions` whitelist. `action` and `actions` are mutually exclusive. This mode
-reads the existing retained Activity table and does not introduce a second history store.
+cursor and rebuild its selected history window. Filtered and forward reads require `radio_system_key` or
+`configuration_id`. `action` and `actions` are mutually exclusive. This mode reads the existing retained Activity table.
+Forward paging pins insertion IDs; it does not detect later changes to an existing event. The P25 Visualizer uses
+`projection=p25_visualizer` for compact, global P25 trunked history with action/time filters before paging. This
+projection supports forward cursors without an owner filter. Its current affiliations and live appends are described below.
 
 Owner-scoped Activity reads also accept `has_tones=true`, independently of `action` and `event_type`.
 The tone filter applies before cursor paging. A call containing tones keeps its original classification, such as
@@ -317,10 +322,54 @@ Pages share one multiplexed connection per browser document:
   `revision` and a `subscriptions` object.
 
 Subscription names are `channel_activity`, `decode_events`, `decode_messages`, `channel_diagnostics`,
-`tuner_diagnostics`, and `frequency_audio`. Their numeric topic IDs are respectively 1 through 6; topic 0 is
+`tuner_diagnostics`, `frequency_audio`, and `p25_activity`. Their numeric topic IDs are respectively 1 through 7; topic 0 is
 transport control. Parameters use `snake_case`. Channel-owned subscriptions use `configuration_id`.
 `decode_messages` also requires positive `frequency_hz`; `timeslot` is supported by decoder events and channel
-diagnostics, not decoder messages. `channel_activity` accepts an empty parameter object.
+diagnostics, not decoder messages. `channel_activity` accepts an empty parameter object, an optional
+`subscription_id`, and `markers: true` for compact tuner-marker rows.
+
+`p25_activity` requires Radio activity access and a UUID `subscription_id`. Register it before requesting the
+native baseline or the first history page. Its `source_change` boundary includes `subscription_id`, opaque
+`source_epoch`, native `sequence`, published history `watermark_id`, `history_generation`, `server_time_ms`,
+`traffic_grant_age_out_milliseconds`, `collection_enabled`, and `available`. The shared history cursor is initialized before this boundary is sent. A service restart or
+detected database replacement changes the epoch. Replace a saved database with the receiver stopped, then restart
+it afterward. Use the fresh boundary time for clock alignment.
+
+`GET /api/v1/activity/live/seed` requires an active `p25_activity` subscription. Optional `refresh=true` requests an
+explicit user Refresh; ordinary startup and reconnect omit it. The `data` object contains `source_epoch`, `sequence`,
+`affiliations`, `available`, `captured_at_ms`, `traffic_grant_age_out_milliseconds`, and `collection_enabled`.
+The receiver prepares one plain/gzip response shared by viewers. `captured_at_ms` describes that snapshot, not a clock sample.
+
+`affiliations` contains all authoritative current P25 associations, keyed by `(radio_system_key, radio_identity_key)`.
+Each row includes `talkgroup_identity_key`, `configuration_id`, `confirmed_at_ms`, identity facts, and available
+Alias/system names. Associations remain present independently of the saved-history window or detailed Activity
+collection. Explicit logout, retention, corrections, and site clears update this map. Absence from a complete map
+must not be replaced with an older saved JOIN observation.
+
+Topic 7 `p25_state_delta` contains `source_epoch`, `base_sequence`, `sequence`, `affiliations`, `removed_radio_keys`,
+`available`, `collection_enabled`, `traffic_grant_age_out_milliseconds`, `part`, and `parts`. Native upserts fully
+replace rows by their composite key; removed keys contain `radio_system_key` and `radio_identity_key`. Parts are
+zero-based transport chunks: apply the complete batch only when its base matches the last complete native sequence.
+Buffer native deltas during seed loading, replace the native map, discard revisions at or below the seed sequence,
+and apply contiguous newer batches. The server installs the shared seed before broadcasting its delta. There is
+no total-row, system-count, or P25 dataset-byte cutoff.
+
+Saved history uses the ordinary action/time-filtered forward Activity pages at one fixed watermark. Fold each page
+into the graph and discard the raw page; continue until `has_more:false`. Meanwhile `activity_append` carries
+`source_epoch`, `history_generation`, `after_id`, `rows`, `next_after_id`, and `watermark_id` independently of the
+native sequence. Each append covers the verified cursor span `(after_id, next_after_id]`, including empty filtered
+progress. Split frames chain their spans. Apply rows above the initial history watermark; a forward gap requires
+cursor catchup before later appends are applied. New routine traffic does not remove older history.
+`activity_reset` contains `source_epoch`, `watermark_id`, and the processed `history_generation` after committed
+maintenance. A changed generation, including on reconnect or resync, reloads the selected historical scope while
+preserving the native map. Same-generation reconnects use cursor catchup. Forward paging does not report
+in-place changes to existing event IDs.
+
+One shared reader polls the committed history edge and current affiliations while viewers are connected. It drains
+new history in pages and enriches native changes once, away from receiver processing. Native updates continue when
+Activity collection is off. A first native-read failure returns 503; a later failure retains the previous complete map
+and publishes `available:false`. Recover native gaps through a full native seed and history gaps through its cursor
+or a selected-scope reload. A source-epoch change resets both. Closing the view releases shared read demand.
 
 The framed envelope is version 2. Metadata topics use bounded FIFOs; dense diagnostic topics use replaceable
 latest-value slots. Slow clients can lose stale diagnostic frames or be disconnected, but never apply backpressure to
@@ -331,6 +380,27 @@ For stateful `channel_activity`, loss in the receiver-to-model ingress, subscrib
 `live_gap` followed by a fresh authoritative `snapshot`. Active rows in that first post-gap snapshot restore current
 presentation conservatively without proving uninterrupted continuity or replaying a key-up: a dropped burst boundary
 can make an apparently active transmission uncertain.
+
+Channel activity is published as one shared batch at most every 200 ms. An initial `snapshot` contains `revision`
+and `tables`; its revision is a published batch boundary. Subsequent `activity_batch` events contain:
+
+```json
+{"base_revision":10,"revision":14,"changes":[{"operation":"upsert","table_id":"channel-id","replace":false,"rows":[{"key":"row-key"}]}]}
+```
+
+Each batch has one global revision pair. Apply it only when `base_revision` matches the current snapshot or batch
+revision and `revision` is greater. Validate every change before committing the batch, then advance the revision
+once. Revisions may skip values when receiver updates are coalesced. On a mismatch, obtain an authoritative
+snapshot; do not apply a partial batch.
+
+An `upsert` change has `table_id` and `replace`. With `replace: false`, optional `rows` fully replace changed rows
+by `key`; optional `removed_row_keys` remove rows, and optional `row_order` specifies the complete resulting order.
+Optional `table` replaces table metadata and never contains `rows`. With `replace: true`, `table` contains full
+metadata, `rows` contains the complete row baseline, and `row_order` lists every row key. This establishes first
+coverage and replaces a truncated baseline. A `remove` change has `table_id` and `replace: false` and removes the
+table. The same contract serves full Live tables and compact tuner markers. `activity_resync` supplies an
+authoritative `snapshot` at a published boundary after bounded loss. Old single-table activity event types and
+the `delta` subscription parameter are not supported.
 
 Channel-activity snapshots include `configuration_id`, protocol-neutral system/site/channel display labels, explicit
 navigation references, protocol facts, a proven `radio_system_key` when available, and structured P25 WACN, System,
@@ -391,6 +461,12 @@ cursor as `cursor` with the same filters to continue. The search returns at most
 Without a time range, it searches the previous 24 hours. Labels are resolved from current Alias configuration;
 `transcript` searches stored transcript text.
 
+Browse status, searches and filter suggestions may share an identical prepared response for up to two seconds.
+Exact submitted time bounds, filters and cursors remain part of the request identity. Replacement catalogs use a
+separate cache, and successful recording administration updates invalidate browse responses immediately.
+Concurrent distinct requests wait for the existing bounded metadata-read capacity; a prolonged busy read returns
+`503 browse_busy` so the caller can retry. Audio responses and recording production do not use this browse cache.
+
 `GET /api/v1/recordings/calls/{id}` includes a `transcription` object. Its displayed status can be `pending`,
 `complete`, `failed`, `disabled`, or `too_short`; stored text is present when transcription has completed. Browsing
 access does not grant recording deletion, settings changes, maintenance, or transcription retries. Those actions
@@ -408,7 +484,7 @@ replacement session is delivered, the account password changes, the account is d
 administrator password is reset, the web server is disabled, or the session service shuts down. A receiver restart
 therefore ends every session.
 
-Session storage is bounded to 64 sessions with no per-account limit, and two slots are reserved for the primary
+Session storage is bounded to 256 sessions with no per-account limit, and two slots are reserved for the primary
 administrator. When a successful sign-in reaches an ordinary-user or global limit, the presented current session is
 reused when it already belongs to that account. Otherwise, the least-recently-used eligible session is replaced.
 Replacement prefers a session from the same account, then a non-primary session when ordinary-user capacity is full,

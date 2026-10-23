@@ -153,7 +153,7 @@ export function createRemoteSupportWorkspace({ node, formField, uiSelectFrame, m
     }
     codeRow.hidden = !value.code;
     copy.disabled = !value.code;
-    connection.textContent = value.connected ? 'Connected' : 'Connecting… VCE will keep trying.';
+    connection.textContent = value.connected ? 'Remote support allowed.' : 'Connecting… VCE will keep trying.';
     end.textContent = remoteSupportEnd(value);
     sync();
   };

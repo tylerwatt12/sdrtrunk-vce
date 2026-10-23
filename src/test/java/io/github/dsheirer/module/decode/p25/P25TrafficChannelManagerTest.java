@@ -55,6 +55,7 @@ import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigRemote;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -225,6 +226,76 @@ class P25TrafficChannelManagerTest
             MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, 1_100L);
 
         assertEquals(1, subscriber.requests.size());
+    }
+
+    @Test
+    void rejectedPhaseOneGrantsPreserveExactlyOneTrafficPoolSlot() throws Exception
+    {
+        assertRejectedEnvelopeGrantsPreserveOneSlot(false);
+    }
+
+    @Test
+    void rejectedPhaseTwoGrantsPreserveExactlyOneTrafficPoolSlot() throws Exception
+    {
+        assertRejectedEnvelopeGrantsPreserveOneSlot(true);
+    }
+
+    private static void assertRejectedEnvelopeGrantsPreserveOneSlot(boolean phaseTwo) throws Exception
+    {
+        long base = 851_000_000L;
+        Channel parent = new Channel("Control", Channel.ChannelType.STANDARD);
+        SourceConfigTunerMultipleFrequency source = new SourceConfigTunerMultipleFrequency();
+        source.addFrequency(base + 12_500L);
+        source.setMinimumFrequency(base + 12_500L);
+        source.setMaximumFrequency(base + 25_000L);
+        parent.setSourceConfiguration(source);
+        if(phaseTwo)
+        {
+            DecodeConfigP25Phase2 config = new DecodeConfigP25Phase2();
+            config.setTrafficChannelPoolSize(1);
+            parent.setDecodeConfiguration(config);
+        }
+        else
+        {
+            DecodeConfigP25Phase1 config = new DecodeConfigP25Phase1();
+            config.setTrafficChannelPoolSize(1);
+            parent.setDecodeConfiguration(config);
+        }
+        P25TrafficChannelManager manager = new P25TrafficChannelManager(parent);
+        P25FrequencyBand band = new P25FrequencyBand(0, base, -45_000_000L, 12_500L, 12_500, phaseTwo ? 2 : 1);
+        manager.processFrequencyBand(band);
+        manager.processFrequencyBand(band);
+        StartRequestSubscriber subscriber = new StartRequestSubscriber();
+        EventBus eventBus = new EventBus();
+        eventBus.register(subscriber);
+        manager.setInterModuleEventBus(eventBus);
+        int step = phaseTwo ? 2 : 1;
+        // Reject both sides and repeat the first grant, then request the two inclusive envelope edges.
+        int[] channelNumbers = {0, 3 * step, 0, step, 2 * step};
+        for(int index = 0; index < channelNumbers.length; index++)
+        {
+            APCO25Channel channel = APCO25Channel.create(0, channelNumbers[index]);
+            MutableIdentifierCollection identifiers = identifiers(1201 + channelNumbers[index], null);
+            identifiers.update(APCO25Nac.create(0x491));
+            long timestamp = 1_000L + index * 100L;
+            if(phaseTwo)
+                manager.processP2ChannelGrant(channel, null, identifiers,
+                    MacOpcode.TDMA_05_GROUP_VOICE_CHANNEL_GRANT_UPDATE_MULTIPLE_IMPLICIT, timestamp);
+            else
+                manager.processP1ControlDirectedChannelGrant(channel, null, identifiers,
+                    Opcode.OSP_GROUP_VOICE_CHANNEL_GRANT, timestamp);
+            if(index < 3)
+            {
+                assertTrue(subscriber.requests.isEmpty(), "Out-of-envelope grants must not request startup");
+                assertTrue(allocatedTrafficChannels(manager).isEmpty(), "Rejected grants must not reserve a carrier");
+            }
+        }
+        assertEquals(1, subscriber.requests.size(), "Rejections must preserve one slot without returning duplicates");
+        assertEquals(1, allocatedTrafficChannels(manager).size());
+        assertTrue(allocatedTrafficChannels(manager).containsKey(source.getMinimumFrequency()),
+            "The first valid edge must still be able to allocate after repeated rejections");
+        assertFalse(allocatedTrafficChannels(manager).containsKey(source.getMaximumFrequency()),
+            "The one-slot pool must not permit a second simultaneous carrier");
     }
 
     @Test

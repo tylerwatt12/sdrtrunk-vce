@@ -112,14 +112,14 @@ public final class StaticWebAssetResponse
         headers.set("Vary", "Accept-Encoding");
         if(webClientRevision != null) headers.set("X-Sdrtrunk-Web-Revision", webClientRevision);
 
-        Encoding encoding = encoding(exchange.getRequestHeaders().get("Accept-Encoding"), asset);
-        if(encoding == Encoding.UNACCEPTABLE)
+        HttpContentEncoding.Encoding encoding = encoding(exchange.getRequestHeaders().get("Accept-Encoding"), asset);
+        if(encoding == HttpContentEncoding.Encoding.UNACCEPTABLE)
         {
             exchange.sendResponseHeaders(406, -1);
             exchange.close();
             return;
         }
-        boolean gzip = encoding == Encoding.GZIP;
+        boolean gzip = encoding == HttpContentEncoding.Encoding.GZIP;
         byte[] bytes = gzip ? asset.gzip() : asset.identity();
         String etag = gzip ? asset.gzipEtag() : asset.etag();
         headers.set("ETag", etag);
@@ -292,43 +292,10 @@ public final class StaticWebAssetResponse
             type.startsWith("image/svg+xml");
     }
 
-    private static Encoding encoding(List<String> values, Asset asset)
+    private static HttpContentEncoding.Encoding encoding(List<String> values, Asset asset)
     {
-        if(values == null || values.isEmpty()) return Encoding.IDENTITY;
-        double gzip = -1, identity = -1, wildcard = -1;
-        for(String value: values)
-        {
-            for(String part: value.split(","))
-            {
-                String[] parameters = part.trim().split(";");
-                String name = parameters[0].trim().toLowerCase(Locale.ROOT);
-                double quality = 1;
-                for(int index = 1; index < parameters.length; index++)
-                {
-                    String parameter = parameters[index].trim();
-                    if(parameter.toLowerCase(Locale.ROOT).startsWith("q="))
-                    {
-                        try { quality = Double.parseDouble(parameter.substring(2).trim()); }
-                        catch(NumberFormatException ignored) { quality = 0; }
-                        if(!Double.isFinite(quality) || quality < 0 || quality > 1) quality = 0;
-                    }
-                }
-                switch(name)
-                {
-                    case "gzip" -> gzip = quality;
-                    case "identity" -> identity = quality;
-                    case "*" -> wildcard = quality;
-                    default -> { }
-                }
-            }
-        }
-        if(gzip < 0) gzip = Math.max(0, wildcard);
-        if(identity < 0) identity = wildcard == 0 ? 0 : 1;
-        if(asset.gzip() != null && gzip > 0 && gzip >= identity &&
-            (identity == 0 || asset.gzip().length < asset.identity().length)) return Encoding.GZIP;
-        if(identity > 0) return Encoding.IDENTITY;
-        if(asset.gzip() != null && gzip > 0) return Encoding.GZIP;
-        return Encoding.UNACCEPTABLE;
+        return HttpContentEncoding.choose(values, asset.identity() != null ? asset.identity().length : (int)Math.min(Integer.MAX_VALUE, asset.stamp().size()),
+            asset.gzip() != null ? asset.gzip().length : null);
     }
 
     private static boolean matches(List<String> values, String etag)
@@ -348,7 +315,6 @@ public final class StaticWebAssetResponse
         return false;
     }
 
-    private enum Encoding { IDENTITY, GZIP, UNACCEPTABLE }
     private record AssetKey(Path file, String publicOrigin) { }
     private record FileStamp(long size, FileTime modified, FileTime created, Object fileKey) { }
     private record Asset(FileStamp stamp, byte[] identity, byte[] gzip, String etag, String gzipEtag)

@@ -5,6 +5,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 import com.sun.net.httpserver.HttpServer;
 import java.net.URI;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -36,6 +40,33 @@ class RemoteSupportExchangeTest
         assertFalse(messages.toString().contains("unrelated"));
         exchange.close();
         server.stop(0);
+    }
+
+    @Test void responseDateUsesTheReceiverClockAndIsForwardedToTheBrowser() throws Exception
+    {
+        HttpServer server = HttpServer.create();
+        try
+        {
+            var context = server.createContext("/", exchange -> {});
+            List<Map<String,?>> messages = new CopyOnWriteArrayList<>();
+            RemoteSupportExchange exchange = new RemoteSupportExchange("1", "GET", URI.create("/api/test"), Map.of(),
+                "vce-example.radioresolve.com", "private", context, messages::add, () -> true);
+            exchange.getResponseHeaders().set("Date", "Thu, 1 Jan 1970 00:00:00 GMT");
+            Instant before = Instant.now().truncatedTo(ChronoUnit.SECONDS);
+            exchange.sendResponseHeaders(200, -1);
+            Instant after = Instant.now();
+            Map<?,?> headers = (Map<?,?>)messages.getFirst().get("headers");
+            @SuppressWarnings("unchecked")
+            List<String> dates = (List<String>)headers.entrySet().stream()
+                .filter(entry -> "Date".equalsIgnoreCase(String.valueOf(entry.getKey())))
+                .findFirst().orElseThrow().getValue();
+            assertEquals(1, dates.size());
+            Instant date = ZonedDateTime.parse(dates.getFirst(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant();
+            assertFalse(date.isBefore(before), "The transport must replace stale handler metadata with receiver time");
+            assertFalse(date.isAfter(after));
+            exchange.close();
+        }
+        finally { server.stop(0); }
     }
 
     @Test void acknowledgesConsumedUploadAndResponseWaitsForAcknowledgement() throws Exception

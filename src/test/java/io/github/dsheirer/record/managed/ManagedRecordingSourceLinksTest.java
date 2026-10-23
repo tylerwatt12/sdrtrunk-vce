@@ -22,6 +22,21 @@ class ManagedRecordingSourceLinksTest
     private static final String C = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 
     @Test
+    void sourceLookupSelectsSmallestIdsBeforeOrderingTheSelectedCallsByTime() throws Exception
+    {
+        try(var store = new ManagedRecordingStore(directory.resolve("reversed.sqlite"),directory))
+        {
+            store.insert(call(3000,1,List.of(A)));
+            store.insert(call(1000,2,List.of(A)));
+            store.insert(call(2000,3,List.of(A)));
+            assertEquals(List.of(1L),store.findBySourceCallReferences(List.of(A),1).stream()
+                .map(ManagedRecordingCatalog.RecordingCall::id).toList());
+            assertEquals(List.of(2L,1L),store.findBySourceCallReferences(List.of(A),2).stream()
+                .map(ManagedRecordingCatalog.RecordingCall::id).toList());
+        }
+    }
+
+    @Test
     void splitPartsAndConfirmedReceiverCopiesKeepExactLinksAcrossRestartAndIndependentDeletion() throws Exception
     {
         Path database = directory.resolve("links.sqlite");

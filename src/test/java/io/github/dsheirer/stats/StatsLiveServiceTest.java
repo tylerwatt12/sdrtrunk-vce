@@ -29,6 +29,8 @@ import io.github.dsheirer.remote.RemoteLinkAdministrationService;
 import io.github.dsheirer.remote.RemoteOriginLookup;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -37,6 +39,30 @@ import org.junit.jupiter.api.Test;
 
 class StatsLiveServiceTest
 {
+    @Test
+    void twoHundredBrowsersShareTheSameProjectedActivityEvent() throws Exception
+    {
+        TestChannelActivitySource source = new TestChannelActivitySource();
+        List<StatsLiveEventHub.Subscription> subscriptions = new ArrayList<>();
+        try(StatsLiveService service = StatsLiveService.fromActivitySource(source, null))
+        {
+            service.start();
+            for(int index = 0; index < 200; index++)
+            {
+                var subscription = service.subscribeChannelActivity();
+                assertNotNull(subscription);
+                subscriptions.add(subscription);
+            }
+            source.publish(namedDigitalActivity("Serving system", "p25:bee00:349"));
+            StatsLiveEventHub.LiveEvent shared = subscriptions.getFirst().poll(1, TimeUnit.SECONDS);
+            assertNotNull(shared);
+            for(int index = 1; index < subscriptions.size(); index++)
+                org.junit.jupiter.api.Assertions.assertSame(shared, subscriptions.get(index).poll(1, TimeUnit.SECONDS),
+                    "Projection is shared across browsers");
+        }
+        finally { subscriptions.forEach(StatsLiveEventHub.Subscription::close); }
+    }
+
     @Test
     void catalogNamesUseCapturedSystemsAndNeverReplaceSavedLabels() throws Exception
     {
@@ -54,7 +80,7 @@ class StatsLiveServiceTest
             StatsLiveEventHub.LiveEvent published = subscription.poll(1, TimeUnit.SECONDS);
             assertNotNull(published);
             @SuppressWarnings("unchecked")
-            Map<String,Object> table = (Map<String,Object>)((Map<?,?>)published.data()).get("table");
+            Map<String,Object> table = activityTable(published);
             assertEquals("Serving catalog", table.get("system_name"));
             assertEquals("catalog", table.get("system_name_source"));
             @SuppressWarnings("unchecked")
@@ -212,7 +238,12 @@ class StatsLiveServiceTest
                 .filter(table -> startedTableId.equals(table.get("table_id"))).findFirst().orElseThrow();
             assertEquals(true, active.get("channel_running"));
             assertEquals(false, active.get("control_active"), "running does not require a quality observation");
-            String encoded = new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8);
+            long expectedRevision = model.getSnapshotSet().revision();
+            waitUntil(() -> {
+                try { return service.snapshotWire().revision() >= expectedRevision; }
+                catch(java.io.IOException initializing) { return false; }
+            });
+            String encoded = snapshotWireText(service);
             assertFalse(encoded.contains(neverStartedTableId));
             assertTrue(encoded.contains(startedTableId));
         }
@@ -248,8 +279,8 @@ class StatsLiveServiceTest
             assertEquals(List.of("conventional"), tables(service).stream()
                 .map(table -> String.valueOf(table.get("table_id"))).toList(),
                 "a browser recovery snapshot must contain only active channels");
-            assertFalse(new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8)
-                .contains(stoppedTableId), "refresh uses the encoded recovery snapshot");
+            assertFalse(snapshotWireText(service).contains(stoppedTableId),
+                "refresh uses the encoded recovery snapshot");
         }
         finally
         {
@@ -305,8 +336,9 @@ class StatsLiveServiceTest
             assertEquals("1201", firstRow.get("source_id"));
             assertEquals("101", firstRow.get("target_id"));
 
-            source.publish(unresolvedDigitalActivity());
+            source.publish(unresolvedDigitalActivity("IDLE"));
             Map<String,Object> repeated = firstRow(subscription.poll(1, TimeUnit.SECONDS));
+            assertEquals("IDLE", repeated.get("status"));
             assertEquals(sourceKey, repeated.get("source_identity_key"));
             assertEquals(targetKey, repeated.get("target_identity_key"));
         }
@@ -334,16 +366,16 @@ class StatsLiveServiceTest
             source.publish(unresolvedDigitalActivity());
             StatsLiveEventHub.LiveEvent event = subscription.poll(1, TimeUnit.SECONDS);
             @SuppressWarnings("unchecked")
-            Map<String,Object> update = (Map<String,Object>)event.data();
+            Map<String,Object> update = firstChange(event);
             @SuppressWarnings("unchecked")
-            Map<String,Object> table = (Map<String,Object>)update.get("table");
+            Map<String,Object> table = activityTable(event);
             @SuppressWarnings("unchecked")
             Map<String,Object> tableOrigin = (Map<String,Object>)table.get("remote_origin");
             @SuppressWarnings("unchecked")
             Map<String,Object> rowOrigin = (Map<String,Object>)firstRow(event).get("remote_origin");
             assertEquals(Map.of("remote", true), tableOrigin);
             assertEquals(Map.of("remote", true), rowOrigin);
-            String encoded = new String(service.encodedSnapshot(), java.nio.charset.StandardCharsets.UTF_8);
+            String encoded = snapshotWireText(service);
             assertFalse(encoded.contains("sender_id"));
             assertFalse(encoded.contains("sender_name"));
             assertFalse(encoded.contains("feed_id"));
@@ -424,13 +456,18 @@ class StatsLiveServiceTest
 
     private static ChannelActivityEvent unresolvedDigitalActivity()
     {
+        return unresolvedDigitalActivity("CALL");
+    }
+
+    private static ChannelActivityEvent unresolvedDigitalActivity(String status)
+    {
         String configurationId = "00000000-0000-0000-0000-000000000017";
         ChannelActivitySnapshot.Navigation navigation = new ChannelActivitySnapshot.Navigation(configurationId,
             null, null, "p25", List.of(),
             new ChannelActivitySnapshot.MatcherReference("radio", "p25", "phase_1", 1_201), List.of(),
             new ChannelActivitySnapshot.MatcherReference("talkgroup", "p25", "phase_1", 101));
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("traffic:851012500:1", null,
-            configurationId, "CALL", List.of("VOICE"), 17L, null, 851_012_500L, null, null, null, 0L,
+            configurationId, status, List.of("VOICE"), 17L, null, 851_012_500L, null, null, null, 0L,
             0L, 0L, 0L, 0L, 0L, 0L, null, 1, "1201", "RADIO", null, null, null, null, "101",
             "TALKGROUP", null, null, "P25 Phase 1", null, navigation, "TRAFFIC",
             new ChannelActivitySnapshot.Transmission("leg-17", "active", 1_050L, 1_000L, 1_075L, false,
@@ -441,24 +478,41 @@ class StatsLiveServiceTest
     }
 
     @SuppressWarnings("unchecked")
+    private static Map<String,Object> firstChange(StatsLiveEventHub.LiveEvent event)
+    {
+        assertNotNull(event);
+        assertEquals("activity_batch", event.name());
+        var changes = (List<Map<String,Object>>)((Map<?,?>)event.data()).get("changes");
+        assertEquals(1, changes.size(), "this fixture changes exactly one table");
+        return changes.getFirst();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String,Object> activityTable(StatsLiveEventHub.LiveEvent event)
+    {
+        Map<String,Object> change = firstChange(event);
+        Map<String,Object> table = new LinkedHashMap<>((Map<String,Object>)change.getOrDefault("table", Map.of()));
+        table.put("rows", change.getOrDefault("rows", List.of()));
+        return table;
+    }
+
+    @SuppressWarnings("unchecked")
     private static Map<String,Object> firstRow(StatsLiveEventHub.LiveEvent event)
     {
         assertNotNull(event);
-        Map<String,Object> update = (Map<String,Object>)event.data();
-        Map<String,Object> table = (Map<String,Object>)update.get("table");
-        return ((List<Map<String,Object>>)table.get("rows")).getFirst();
+        return ((List<Map<String,Object>>)firstChange(event).get("rows")).getFirst();
     }
 
     @SuppressWarnings("unchecked")
     private static void assertActivityStatus(StatsLiveEventHub.LiveEvent event, String expectedStatus)
     {
         assertNotNull(event);
-        assertEquals("activity_table", event.name());
-        Map<String,Object> update = (Map<String,Object>)event.data();
+        assertEquals("activity_batch", event.name());
+        Map<String,Object> update = firstChange(event);
         assertEquals("upsert", update.get("operation"));
         assertEquals("conventional", update.get("table_id"));
-        Map<String,Object> table = (Map<String,Object>)update.get("table");
-        assertEquals("conventional", table.get("table_id"));
+        Map<String,Object> table = activityTable(event);
+        if(update.containsKey("table")) assertEquals("conventional", table.get("table_id"));
         List<Map<String,Object>> rows = (List<Map<String,Object>>)table.get("rows");
         assertEquals("channel-17:155730000:0", rows.getFirst().get("key"));
         assertEquals(expectedStatus, rows.getFirst().get("status"));
@@ -473,6 +527,13 @@ class StatsLiveServiceTest
         assertEquals(false, rows.getFirst().get("tx_end_certain"));
         assertEquals(3L, rows.getFirst().get("tx_burst_generation"));
         assertEquals(1_025L, rows.getFirst().get("tx_burst_started_at_ms"));
+    }
+
+    private static String snapshotWireText(StatsLiveService service) throws java.io.IOException
+    {
+        byte[] wire = service.snapshotWire().frame().bytes(false);
+        return new String(wire, LiveMultiplexFrame.HEADER_BYTES, wire.length - LiveMultiplexFrame.HEADER_BYTES,
+            java.nio.charset.StandardCharsets.UTF_8);
     }
 
     @SuppressWarnings("unchecked")

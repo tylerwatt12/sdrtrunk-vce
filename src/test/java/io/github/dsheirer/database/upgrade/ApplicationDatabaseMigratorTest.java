@@ -544,6 +544,70 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    void preservesValidAnalogAliasSummariesAndRepairsTheirProtocolDrift() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            long analogList = Long.parseLong(scalar(connection,
+                "SELECT id FROM alias_list WHERE family='NBFM' LIMIT 1"));
+            statement.executeUpdate("""
+                INSERT INTO alias(id, alias_list_id, name, matcher_type, protocol, value, min_value, max_value)
+                VALUES (18501, %1$d, 'FM exact', 'TALKGROUP', 'NBFM', 17, NULL, NULL),
+                       (18502, %1$d, 'FM range', 'TALKGROUP_RANGE', 'NBFM', NULL, 20, 30),
+                       (18503, %1$d, 'AM exact', 'TALKGROUP', 'AM', 18, NULL, NULL),
+                       (18504, %1$d, 'AM range', 'TALKGROUP_RANGE', 'AM', NULL, 40, 50),
+                       (18505, %1$d, 'Fleetsync without activity metrics', 'TALKGROUP', 'FLEETSYNC', 8193, NULL, NULL),
+                       (18506, %1$d, 'MDC without activity metrics', 'TALKGROUP_RANGE', 'MDC1200', NULL, 60, 70)
+                """.formatted(analogList));
+            io.github.dsheirer.stats.AliasActivitySummaryMaintenance.resetAll(connection);
+            statement.executeUpdate("""
+                INSERT INTO statistics_status(key, value, updated_at_ms) VALUES ('keep-healthy-activity', 'keep', 1)
+                """);
+        }
+        String fingerprint = new ConfigurationRepository(database).fingerprint();
+
+        CommandResult healthy = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, healthy.exitCode(), healthy.error());
+        assertFalse(healthy.output().contains(completedCurrentStep("reset-damaged-current-derived-state")),
+            healthy::output);
+        assertEquals(fingerprint, new ConfigurationRepository(database).fingerprint(), healthy::output);
+        assertEquals("1", scalar(database, "SELECT COUNT(*) FROM statistics_status WHERE key='keep-healthy-activity'"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertFalse(CurrentDatabaseDerivedStateRepair.inspect(connection).requiresRepair());
+            statement.executeUpdate("""
+                UPDATE alias_activity_summary SET protocol_code=0, metrics_state='unsupported' WHERE alias_id=18502
+                """);
+        }
+
+        CommandResult repaired = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, repaired.exitCode(), repaired.error());
+        assertTrue(repaired.output().contains(completedCurrentStep("reset-damaged-current-derived-state")),
+            repaired::output);
+        assertEquals("2", scalar(database, """
+            SELECT COUNT(*) FROM alias_activity_summary
+            WHERE alias_id IN (18501,18502) AND protocol_code=10 AND metrics_state='not_collected'
+            """));
+        assertEquals("2", scalar(database, """
+            SELECT COUNT(*) FROM alias_activity_summary
+            WHERE alias_id IN (18503,18504) AND protocol_code=11 AND metrics_state='not_collected'
+            """));
+        assertEquals("2", scalar(database, """
+            SELECT COUNT(*) FROM alias_activity_summary
+            WHERE alias_id IN (18505,18506) AND protocol_code=0 AND metrics_state='unsupported'
+            """));
+        assertEquals(fingerprint, new ConfigurationRepository(database).fingerprint());
+        try(Connection connection = open(database))
+        {
+            assertFalse(CurrentDatabaseDerivedStateRepair.inspect(connection).requiresRepair());
+        }
+    }
+
+    @Test
     void skipsMalformedCurrentChannelsAndProvidersWithoutLosingUsableConfiguration() throws Exception
     {
         Path database = newStagedDatabase();

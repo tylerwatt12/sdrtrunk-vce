@@ -47,8 +47,7 @@ final class ManagedRecordingsHttpController
     private static final int MAXIMUM_JSON_BYTES = 8 * 1024;
     private static final int MAXIMUM_SEARCH_IDENTITIES = 200;
     private static final Semaphore AUDIO_RESPONSES = new Semaphore(16);
-    private static final Semaphore RECORDING_SEARCHES = new Semaphore(4);
-    private static final Semaphore LABEL_LOOKUPS = new Semaphore(4);
+    private final StatsBrowseReadCache mBrowseReads;
     private final Supplier<ManagedRecordingCatalog> mCatalog;
     private final UserPreferences mPreferences;
     private final WebRequestSecurity mSecurity;
@@ -82,12 +81,22 @@ final class ManagedRecordingsHttpController
                                     ManagedRecordingLabels labels,
                                     Supplier<ManagedRecordingTranscriptionService> transcriptionService)
     {
+        this(catalog, preferences, security, maintenance, labels, transcriptionService, new StatsBrowseReadCache(4));
+    }
+
+    ManagedRecordingsHttpController(Supplier<ManagedRecordingCatalog> catalog, UserPreferences preferences,
+                                    WebRequestSecurity security, ManagedRecordingMaintenance maintenance,
+                                    ManagedRecordingLabels labels,
+                                    Supplier<ManagedRecordingTranscriptionService> transcriptionService,
+                                    StatsBrowseReadCache browseReads)
+    {
         mCatalog = catalog;
         mPreferences = preferences;
         mSecurity = security;
         mLabels = labels;
         mMaintenance = maintenance;
         mTranscriptionService = transcriptionService;
+        mBrowseReads = java.util.Objects.requireNonNull(browseReads);
     }
 
     void handleBrowse(HttpExchange exchange) throws IOException
@@ -102,43 +111,34 @@ final class ManagedRecordingsHttpController
                 {
                     throw new StatsApiException(400, "unknown_parameter", "Query is not supported");
                 }
-                ApiHttpResponse.sendData(exchange, 200, browseStatus());
+                ManagedRecordingCatalog catalog = mCatalog.get();
+                ApiHttpResponse.sendPreparedJson(exchange, 200, mBrowseReads.get(catalog,
+                    exchange.getRequestURI(), () -> ApiHttpResponse.prepareData(browseStatus(catalog))));
                 return;
             }
             ManagedRecordingCatalog catalog = available();
             if((BROWSE_PATH + "/calls").equals(path))
             {
                 requireMethod(exchange, "GET");
-                if(!RECORDING_SEARCHES.tryAcquire())
-                {
-                    throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
-                }
-                try
-                {
-                    search(exchange, catalog);
-                }
-                finally
-                {
-                    RECORDING_SEARCHES.release();
-                }
+                sendBrowse(exchange, catalog, () -> search(exchange.getRequestURI(), catalog));
                 return;
             }
             if((BROWSE_PATH + "/entities").equals(path))
             {
                 requireMethod(exchange, "GET");
-                entities(exchange, catalog);
+                sendBrowse(exchange, catalog, () -> entities(exchange.getRequestURI(), catalog));
                 return;
             }
             if((BROWSE_PATH + "/identities").equals(path))
             {
                 requireMethod(exchange, "GET");
-                identities(exchange, catalog);
+                sendBrowse(exchange, catalog, () -> identities(exchange.getRequestURI(), catalog));
                 return;
             }
             if((BROWSE_PATH + "/suggestions").equals(path))
             {
                 requireMethod(exchange, "GET");
-                suggest(exchange, catalog);
+                sendBrowse(exchange, catalog, () -> suggest(exchange.getRequestURI(), catalog));
                 return;
             }
             String callPrefix = BROWSE_PATH + "/calls/";
@@ -342,7 +342,23 @@ final class ManagedRecordingsHttpController
             ApiHttpResponse.sendError(exchange, 409, "recordings_busy",
                 "Recording maintenance is already running");
         }
+        finally
+        {
+            if(!"GET".equals(exchange.getRequestMethod()) && exchange.getResponseCode() >= 200 &&
+                exchange.getResponseCode() < 300) mBrowseReads.clear();
+        }
     }
+
+    private void sendBrowse(HttpExchange exchange, ManagedRecordingCatalog catalog, BrowseRead read)
+        throws IOException, SQLException
+    {
+        byte[] response = mBrowseReads.get(catalog, exchange.getRequestURI(),
+            () -> ApiHttpResponse.prepareData(read.get()));
+        ApiHttpResponse.sendPreparedJson(exchange, 200, response);
+    }
+
+    @FunctionalInterface
+    private interface BrowseRead { Object get() throws IOException, SQLException; }
 
     private ManagedRecordingCatalog available()
     {
@@ -355,9 +371,8 @@ final class ManagedRecordingsHttpController
     }
 
     /** Exposes only the mode and catalog presence needed to render the public recordings page. */
-    private Map<String,Object> browseStatus() throws SQLException
+    private Map<String,Object> browseStatus(ManagedRecordingCatalog catalog) throws SQLException
     {
-        ManagedRecordingCatalog catalog = mCatalog.get();
         Map<String,Object> status = new LinkedHashMap<>();
         status.put("mode", mPreferences.getRecordPreference().getRecordingMode().name());
         status.put("available", catalog != null);
@@ -402,9 +417,9 @@ final class ManagedRecordingsHttpController
         }
     }
 
-    private void search(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
+    private Map<String,Object> search(URI uri, ManagedRecordingCatalog catalog) throws SQLException, IOException
     {
-        StatsRequest request = StatsRequest.from(exchange.getRequestURI(),
+        StatsRequest request = StatsRequest.from(uri,
             Map.of("talkgroups", 16384, "radios", 49152, "channel_ids", 32768), 262144, 48);
         List<ManagedRecordingCatalog.Selection> talkgroups = selections(request, "talkgroups", false);
         List<ManagedRecordingCatalog.Selection> radios = selections(request, "radios", true);
@@ -495,26 +510,12 @@ final class ManagedRecordingsHttpController
             }
             else if(!identityConstrained)
             {
-                if(!LABEL_LOOKUPS.tryAcquire())
-                {
-                    throw new StatsApiException(429, "search_busy", "Too many recording searches are active");
-                }
-                List<ManagedRecordingCatalog.IdentityNameMatch> identities;
-                try
-                {
-                    identities = mLabels.matchingIdentityNames(query, systemKey,
-                        MAXIMUM_SEARCH_IDENTITIES);
-                }
-                finally
-                {
-                    LABEL_LOOKUPS.release();
-                }
+                List<ManagedRecordingCatalog.IdentityNameMatch> identities = mLabels.matchingIdentityNames(
+                    query, systemKey, MAXIMUM_SEARCH_IDENTITIES);
                 if(identities.isEmpty())
                 {
                     request.requireFullyConsumed();
-                    ApiHttpResponse.sendData(exchange, 200, Map.of("calls", List.of(),
-                        "from_ms", period.fromMs, "to_ms", period.toMs));
-                    return;
+                    return Map.of("calls", List.of(), "from_ms", period.fromMs, "to_ms", period.toMs);
                 }
                 filter.identityNameMatches(identities);
             }
@@ -556,7 +557,7 @@ final class ManagedRecordingsHttpController
         {
             payload.put("next_cursor", page.nextCursor());
         }
-        ApiHttpResponse.sendData(exchange, 200, payload);
+        return payload;
     }
 
     private static List<ManagedRecordingCatalog.Selection> selections(StatsRequest request, String field,
@@ -669,9 +670,9 @@ final class ManagedRecordingsHttpController
         return role;
     }
 
-    private void identities(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
+    private Map<String,Object> identities(URI uri, ManagedRecordingCatalog catalog) throws SQLException, IOException
     {
-        StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+        StatsRequest request = StatsRequest.from(uri);
         String kind = request.requiredText("kind");
         if(!Set.of("talkgroup", "radio").contains(kind))
             throw new StatsApiException(400, "invalid_kind", "Choose talkgroups or radios", "kind");
@@ -688,24 +689,15 @@ final class ManagedRecordingsHttpController
         boolean grouped = request.booleanValue("grouped", false);
         String groupKey = pickerGroup(request, grouped, offset);
         request.requireFullyConsumed();
-        if(!LABEL_LOOKUPS.tryAcquire())
-            throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
-        try
-        {
-            ApiHttpResponse.sendData(exchange, 200, grouped ? mLabels.identityGroups(catalog.databaseFile(), kind,
+        return grouped ? mLabels.identityGroups(catalog.databaseFile(), kind,
                 query, system, period.fromMs, period.toMs, offset, limit, role, sort, groupKey) :
                 mLabels.identities(catalog.databaseFile(), kind, query,
-                    system, period.fromMs, period.toMs, offset, limit, role, sort));
-        }
-        finally
-        {
-            LABEL_LOOKUPS.release();
-        }
+                    system, period.fromMs, period.toMs, offset, limit, role, sort);
     }
 
-    private void entities(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
+    private Map<String,Object> entities(URI uri, ManagedRecordingCatalog catalog) throws SQLException, IOException
     {
-        StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+        StatsRequest request = StatsRequest.from(uri);
         String kind = request.requiredText("kind");
         if(!Set.of("system", "site", "channel", "dcs").contains(kind))
             throw new StatsApiException(400, "invalid_kind", "Choose systems, sites, channels, or DCS codes", "kind");
@@ -721,16 +713,10 @@ final class ManagedRecordingsHttpController
         boolean grouped = request.booleanValue("grouped", false);
         String groupKey = pickerGroup(request, grouped, offset);
         request.requireFullyConsumed();
-        if(!LABEL_LOOKUPS.tryAcquire())
-            throw new StatsApiException(429, "search_busy", "Too many recording searches are active. Try again.");
-        try
-        {
-            ApiHttpResponse.sendData(exchange, 200, grouped ? mLabels.entityGroups(catalog.databaseFile(), kind,
+        return grouped ? mLabels.entityGroups(catalog.databaseFile(), kind,
                 query, system, period.fromMs, period.toMs, offset, limit, sort, groupKey) :
                 mLabels.entities(catalog.databaseFile(), kind, query,
-                    system, period.fromMs, period.toMs, offset, limit, sort));
-        }
-        finally { LABEL_LOOKUPS.release(); }
+                    system, period.fromMs, period.toMs, offset, limit, sort);
     }
 
     private static String pickerGroup(StatsRequest request, boolean grouped, int offset)
@@ -770,9 +756,9 @@ final class ManagedRecordingsHttpController
         return false;
     }
 
-    private void suggest(HttpExchange exchange, ManagedRecordingCatalog catalog) throws SQLException, IOException
+    private List<Map<String,Object>> suggest(URI uri, ManagedRecordingCatalog catalog) throws SQLException, IOException
     {
-        StatsRequest request = StatsRequest.from(exchange.getRequestURI());
+        StatsRequest request = StatsRequest.from(uri);
         String query = request.search();
         String kind = request.text("kind");
         String systemKey = request.text("system_key");
@@ -782,117 +768,104 @@ final class ManagedRecordingsHttpController
         request.requireFullyConsumed();
         if(query == null || (query.length() < 2 && !query.matches("[0-9]")))
         {
-            ApiHttpResponse.sendData(exchange, 200, List.of());
-            return;
+            return List.of();
         }
         if(kind != null && !Set.of("system", "site", "talkgroup", "radio", "channel").contains(kind))
         {
             throw new StatsApiException(400, "invalid_kind", "Suggestion kind is invalid", "kind");
         }
-        if(!LABEL_LOOKUPS.tryAcquire())
+        List<Map<String,Object>> suggestions = new ArrayList<>(
+            mLabels.facetSuggestions(query, kind, systemKey, limit, catalog.databaseFile()));
+        if(kind == null || "talkgroup".equals(kind) || "radio".equals(kind))
         {
-            throw new StatsApiException(429, "search_busy", "Too many recording suggestions are active");
+            //Identity suggestions use the same stable selections as the focused picker, including latest TA.
+            for(String identityKind: kind == null ? List.of("talkgroup", "radio") : List.of(kind))
+            {
+                Map<String,Object> discovered = mLabels.identities(catalog.databaseFile(), identityKind,
+                    query, systemKey, period.fromMs, period.toMs, 0, limit, "any");
+                if(discovered.get("rows") instanceof List<?> identities)
+                {
+                    for(Object value: identities)
+                    {
+                        if(!(value instanceof Map<?,?> identity)) continue;
+                        Map<String,Object> row = new LinkedHashMap<>();
+                        identity.forEach((field, item) -> { if(field instanceof String key) row.put(key, item); });
+                        row.put("id", String.valueOf(row.get("id") != null ? row.get("id") : row.get("value")));
+                        if(!row.containsKey("alias") && !row.containsKey("ota_alias"))
+                            row.put("label", ("talkgroup".equals(identityKind) ? "Talkgroup " : "Radio ") + row.get("id"));
+                        List<String> detail = new ArrayList<>();
+                        if(row.get("group") instanceof String group) detail.add(group);
+                        if(row.get("system_name") instanceof String name) detail.add(name);
+                        else if(row.get("system_key") instanceof String key) detail.add(key);
+                        if(!detail.isEmpty()) row.put("detail", String.join(" · ", detail));
+                        suggestions.add(row);
+                    }
+                }
+            }
         }
-        try
+        Set<String> seen = new LinkedHashSet<>();
+        Set<String> seenSites = new LinkedHashSet<>();
+        for(Map<String,Object> row: suggestions)
         {
-            List<Map<String,Object>> suggestions = new ArrayList<>(
-                mLabels.facetSuggestions(query, kind, systemKey, limit, catalog.databaseFile()));
-            if(kind == null || "talkgroup".equals(kind) || "radio".equals(kind))
+            seen.add(row.get("kind") + ":" + row.get("id"));
+            if("site".equals(row.get("kind")) && row.get("wacn") != null && row.get("sysid") != null &&
+                row.get("rfss") != null && row.get("site_id") != null)
             {
-                //Identity suggestions use the same stable selections as the focused picker, including latest TA.
-                for(String identityKind: kind == null ? List.of("talkgroup", "radio") : List.of(kind))
-                {
-                    Map<String,Object> discovered = mLabels.identities(catalog.databaseFile(), identityKind,
-                        query, systemKey, period.fromMs, period.toMs, 0, limit, "any");
-                    if(discovered.get("rows") instanceof List<?> identities)
-                    {
-                        for(Object value: identities)
-                        {
-                            if(!(value instanceof Map<?,?> identity)) continue;
-                            Map<String,Object> row = new LinkedHashMap<>();
-                            identity.forEach((field, item) -> { if(field instanceof String key) row.put(key, item); });
-                            row.put("id", String.valueOf(row.get("id") != null ? row.get("id") : row.get("value")));
-                            if(!row.containsKey("alias") && !row.containsKey("ota_alias"))
-                                row.put("label", ("talkgroup".equals(identityKind) ? "Talkgroup " : "Radio ") + row.get("id"));
-                            List<String> detail = new ArrayList<>();
-                            if(row.get("group") instanceof String group) detail.add(group);
-                            if(row.get("system_name") instanceof String name) detail.add(name);
-                            else if(row.get("system_key") instanceof String key) detail.add(key);
-                            if(!detail.isEmpty()) row.put("detail", String.join(" · ", detail));
-                            suggestions.add(row);
-                        }
-                    }
-                }
+                seenSites.add(row.get("wacn") + ":" + row.get("sysid") + ":" + row.get("rfss") +
+                    ":" + row.get("site_id"));
             }
-            Set<String> seen = new LinkedHashSet<>();
-            Set<String> seenSites = new LinkedHashSet<>();
-            for(Map<String,Object> row: suggestions)
-            {
-                seen.add(row.get("kind") + ":" + row.get("id"));
-                if("site".equals(row.get("kind")) && row.get("wacn") != null && row.get("sysid") != null &&
-                    row.get("rfss") != null && row.get("site_id") != null)
-                {
-                    seenSites.add(row.get("wacn") + ":" + row.get("sysid") + ":" + row.get("rfss") +
-                        ":" + row.get("site_id"));
-                }
-            }
-            if(query.matches("[0-9]{1,10}"))
-            {
-                List<Map<String,Object>> exact = suggestions.stream().filter(row ->
-                    ("talkgroup".equals(row.get("kind")) || "radio".equals(row.get("kind"))) &&
-                        query.equals(row.get("id"))).toList();
-                suggestions.removeAll(exact);
-                suggestions.addAll(0, exact);
-            }
-            if((kind == null || "system".equals(kind)) && suggestions.size() < limit)
-            {
-                for(String key: catalog.systemKeys(query, limit - suggestions.size()))
-                {
-                    if(seen.add("system:" + key))
-                    {
-                        suggestions.add(Map.of("kind", "system", "id", key, "label", key,
-                            "system_key", key));
-                    }
-                }
-            }
-            if((kind == null || "channel".equals(kind)) && suggestions.size() < limit)
-            {
-                for(String id: catalog.channelIds(systemKey, query, limit - suggestions.size()))
-                {
-                    if(seen.add("channel:" + id))
-                    {
-                        suggestions.add(Map.of("kind", "channel", "id", id, "label", id,
-                            "channel_id", id));
-                    }
-                }
-            }
-            if("site".equals(kind) && suggestions.size() < limit)
-            {
-                for(ManagedRecordingCatalog.Site site: catalog.sites(systemKey, query, limit))
-                {
-                    if(!seenSites.add(site.wacn() + ":" + site.systemId() + ":" + site.rfss() + ":" + site.siteId()))
-                    {
-                        continue;
-                    }
-                    String label = "RFSS " + site.rfss() + " · Site " + site.siteId();
-                    Map<String,Object> row = new LinkedHashMap<>(site.toMap());
-                    row.put("kind", "site");
-                    row.put("id", site.rfss() + ":" + site.siteId());
-                    row.put("label", label);
-                    if(systemKey != null) row.put("system_key", systemKey);
-                    row.put("sysid", site.systemId());
-                    row.put("rfss", site.rfss());
-                    suggestions.add(row);
-                    if(suggestions.size() >= limit) break;
-                }
-            }
-            ApiHttpResponse.sendData(exchange, 200,
-                mLabels.enrichSystemNames(suggestions.size() > limit ? suggestions.subList(0, limit) : suggestions));
         }
-        finally
+        if(query.matches("[0-9]{1,10}"))
         {
-            LABEL_LOOKUPS.release();
+            List<Map<String,Object>> exact = suggestions.stream().filter(row ->
+                ("talkgroup".equals(row.get("kind")) || "radio".equals(row.get("kind"))) &&
+                    query.equals(row.get("id"))).toList();
+            suggestions.removeAll(exact);
+            suggestions.addAll(0, exact);
         }
+        if((kind == null || "system".equals(kind)) && suggestions.size() < limit)
+        {
+            for(String key: catalog.systemKeys(query, limit - suggestions.size()))
+            {
+                if(seen.add("system:" + key))
+                {
+                    suggestions.add(Map.of("kind", "system", "id", key, "label", key,
+                        "system_key", key));
+                }
+            }
+        }
+        if((kind == null || "channel".equals(kind)) && suggestions.size() < limit)
+        {
+            for(String id: catalog.channelIds(systemKey, query, limit - suggestions.size()))
+            {
+                if(seen.add("channel:" + id))
+                {
+                    suggestions.add(Map.of("kind", "channel", "id", id, "label", id,
+                        "channel_id", id));
+                }
+            }
+        }
+        if("site".equals(kind) && suggestions.size() < limit)
+        {
+            for(ManagedRecordingCatalog.Site site: catalog.sites(systemKey, query, limit))
+            {
+                if(!seenSites.add(site.wacn() + ":" + site.systemId() + ":" + site.rfss() + ":" + site.siteId()))
+                {
+                    continue;
+                }
+                String label = "RFSS " + site.rfss() + " · Site " + site.siteId();
+                Map<String,Object> row = new LinkedHashMap<>(site.toMap());
+                row.put("kind", "site");
+                row.put("id", site.rfss() + ":" + site.siteId());
+                row.put("label", label);
+                if(systemKey != null) row.put("system_key", systemKey);
+                row.put("sysid", site.systemId());
+                row.put("rfss", site.rfss());
+                suggestions.add(row);
+                if(suggestions.size() >= limit) break;
+            }
+        }
+        return mLabels.enrichSystemNames(suggestions.size() > limit ? suggestions.subList(0, limit) : suggestions);
     }
 
     private void audio(HttpExchange exchange, ManagedRecordingCatalog catalog, long id)

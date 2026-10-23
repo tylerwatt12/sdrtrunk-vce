@@ -1,6 +1,6 @@
 // Reuse map: Administration sections, shared toggles/page form actions,
 // form busy/dirty feedback, and warning notices cover both themes and sizes.
-import { createFormWorkflow } from '../core/form-workflows.js?v=4';
+import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 
 const ROOT = '/api/v1/admin/paging-tone-detection';
 const REVISION = /^[0-9a-f]{64}$/;

@@ -18,34 +18,6 @@ async function mockApplication(page, theme) {
   preferences.appearance.theme = theme;
   const now = Date.parse('2026-10-01T12:00:00Z');
   await page.clock.setFixedTime(new Date(now));
-  await page.addInitScript(() => {
-    const originalFetch = window.fetch.bind(window);
-    window.mobileSavedActivityBound = false;
-    window.mobileSavedActivityCaughtUp = false;
-    window.fetch = (input, options) => {
-      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
-      if (url.pathname !== '/api/v1/live/multiplex') return originalFetch(input, options).then((response) => {
-        if (url.pathname === '/api/v1/activity' && Number(url.searchParams.get('after_id')) > 0 && response.ok) {
-          window.mobileSavedActivityCaughtUp = true;
-        }
-        return response;
-      });
-      const frame = (topic, event, data) => {
-        const payload = new TextEncoder().encode(JSON.stringify({ event, data }));
-        const bytes = new Uint8Array(16 + payload.length), header = new DataView(bytes.buffer);
-        header.setUint32(0, 0x534c4d58); header.setUint8(4, 2); header.setUint8(5, 1);
-        header.setUint16(6, topic); header.setUint32(8, payload.length); bytes.set(payload, 16);
-        return bytes;
-      };
-      return Promise.resolve(new Response(new ReadableStream({ start(controller) {
-        controller.enqueue(frame(0, 'ready', { client_id: url.searchParams.get('client_id') }));
-        window.mobileSendSavedActivitySource = (data) => {
-          controller.enqueue(frame(7, 'source_change', data));
-          window.mobileSavedActivityBound = true;
-        };
-      } }), { status: 200 }));
-    };
-  });
   const list = { alias_list_id: 1, id: 1, name: 'County Public Safety', family: 'P25',
     alias_count: 1, assigned_channel_count: 0 };
   const aliases = [{ alias_id: 101, alias_list_id: 1, name: 'Fire Dispatch', group: 'Fire',
@@ -62,19 +34,27 @@ async function mockApplication(page, theme) {
     source_identity_key: `v1-r-00001-001-${30914 + i}`, source_alias_name: `Engine ${i + 1}`,
     target_id: 1201, target_native_id: 1201, target_identity_key: 'v1-g-00001-001-1201',
     target_kind: 'talkgroup', target_alias_name: 'Fire Dispatch' }));
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    window.fetch = (input, options) => {
+      const url = new URL(typeof input === 'string' ? input : input.url, location.href);
+      if (url.pathname !== '/api/v1/live/multiplex') return original(input, options);
+      const frame = (topic, event, data) => {
+        const payload = new TextEncoder().encode(JSON.stringify({ event, data }));
+        const bytes = new Uint8Array(16 + payload.length), header = new DataView(bytes.buffer);
+        header.setUint32(0, 0x534c4d58); header.setUint8(4, 2); header.setUint8(5, 1);
+        header.setUint16(6, topic); header.setUint32(8, payload.length); bytes.set(payload, 16);
+        return bytes;
+      };
+      return Promise.resolve(new Response(new ReadableStream({ start(controller) {
+        controller.enqueue(frame(0, 'ready', { client_id: url.searchParams.get('client_id') }));
+        window.mobileP25Frame = (event, data) => controller.enqueue(frame(7, event, data));
+      } }), { status: 200 }));
+    };
+  });
   const writes = [];
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), url = new URL(request.url()), p = url.pathname;
-    if (p === '/api/v1/live/multiplex/control') {
-      const subscription = request.postDataJSON().subscriptions?.saved_activity;
-      await route.fulfill({ json: { data: { accepted: true } } });
-      if (subscription) await page.evaluate(({ subscription, now }) => window.mobileSendSavedActivitySource({
-        subscription_id: subscription.subscription_id, watermark_id: 16, server_time_ms: now,
-        traffic_grant_age_out_milliseconds: 1_000, collection_enabled: true
-      }), { subscription, now });
-      return;
-    }
-    if (request.method() !== 'GET') writes.push(p);
     let data;
     if (p === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } }); return;
@@ -106,6 +86,13 @@ async function mockApplication(page, theme) {
     else if (p === '/api/v1/admin/streaming/destination/aliases') {
       const offset = Number(url.searchParams.get('offset')) || 0;
       data = { revision: 'assignments-1', total: 51, limit: 50, items: assignments.slice(offset, offset + 50) };
+    } else if (p === '/api/v1/activity/live/seed') data = {
+      source_epoch: 'mobile-p25', available: true, affiliations_truncated: false, affiliations: [], sequence: 0, rows: activity, captured_at_ms: now,
+      traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true };
+    else if (p === '/api/v1/live/multiplex/control') {
+      if (request.postDataJSON()?.subscriptions?.p25_activity) await page.evaluate(() => window.mobileP25Frame?.('source_change', {
+        source_epoch: 'mobile-p25', sequence: 0, server_time_ms: Date.now(), collection_enabled: true }));
+      data = { accepted: true };
     } else if (p === '/api/v1/activity') data = {
       rows: Number(url.searchParams.get('after_id')) > 0 ? [] : activity,
       watermark_id: 16, next_after_id: 16, has_more: false };
@@ -114,10 +101,8 @@ async function mockApplication(page, theme) {
   return writes;
 }
 
-async function savedActivityReady(page) {
-  await expect.poll(() => page.evaluate(() => window.mobileSavedActivityBound)).toBe(true);
-  await expect.poll(() => page.evaluate(() => window.mobileSavedActivityCaughtUp)).toBe(true);
-  await expect(page.locator('.network-visualizer-status')).toHaveText('Saved history');
+async function savedHistoryReady(page) {
+  await expect(page.locator('.network-visualizer-status')).toHaveText(/^Live(?: · Loading (?:1|24)h history…)?$/);
 }
 
 async function dockSize(page, state) {
@@ -197,7 +182,7 @@ for (const theme of ['light', 'dark']) for (const [width, height] of sizes) {
     await page.keyboard.press('Escape');
 
     await page.goto('/app.html?view=network-visualizer');
-    await savedActivityReady(page);
+    await savedHistoryReady(page);
     for (const state of ['collapsed', 'minimal']) {
       await dockSize(page, state);
       const toggle = page.getByRole('button', { name: 'Events', exact: true });
@@ -234,7 +219,7 @@ test('P25 Events retains its single list through a short-screen orientation chan
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApplication(page, 'light');
   await page.goto('/app.html?view=network-visualizer');
-  await savedActivityReady(page);
+  await savedHistoryReady(page);
   await dockSize(page, 'collapsed');
   const toggle = page.getByRole('button', { name: 'Events', exact: true });
   await toggle.click();
@@ -293,7 +278,7 @@ test('resizing open P25 Events never replaces a different modal with unsaved cho
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApplication(page, 'light');
   await page.goto('/app.html?view=network-visualizer');
-  await savedActivityReady(page);
+  await savedHistoryReady(page);
   await dockSize(page, 'collapsed');
   await page.getByRole('button', { name: 'Events', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
@@ -325,7 +310,7 @@ test('short-screen P25 Events uses the shared modal inside the browser fullscree
   await page.setViewportSize({ width: 844, height: 390 });
   await mockApplication(page, 'dark');
   await page.goto('/app.html?view=network-visualizer');
-  await savedActivityReady(page);
+  await savedHistoryReady(page);
   await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
   await expect.poll(() => page.evaluate(() => document.fullscreenElement?.className)).toBe('network-visualizer-layout');
   const toggle = page.getByRole('button', { name: 'Events', exact: true });

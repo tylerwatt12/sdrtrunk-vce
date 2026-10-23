@@ -276,6 +276,8 @@ final class CurrentDatabaseDerivedStateRepair
                                    WHEN 'APCO25_PHASE2' THEN 1
                                    WHEN 'DMR' THEN 3
                                    WHEN 'NXDN' THEN 4
+                                   WHEN 'NBFM' THEN CASE WHEN configured.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 10 ELSE 0 END
+                                   WHEN 'AM' THEN CASE WHEN configured.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 11 ELSE 0 END
                                    ELSE 0
                                END
                                ELSE 0

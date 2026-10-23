@@ -481,30 +481,12 @@ final class ManagedRecordingStore implements AutoCloseable
                 boolean more = keys.size() > filter.limit;
                 List<CallKey> pageKeys = keys.subList(0, Math.min(keys.size(), filter.limit));
                 Map<Long,RecordingCall> byId = new HashMap<>();
-                if(!pageKeys.isEmpty())
+                checkSearchDeadline(deadline);
+                for(RecordingCall call: readCalls(connection,pageKeys.stream().map(CallKey::id).toList()))
                 {
-                    String placeholders = String.join(",",
-                        java.util.Collections.nCopies(pageKeys.size(), "?"));
-                    try(PreparedStatement statement = connection.prepareStatement(
-                        SELECT_CALL + " WHERE c.id IN (" + placeholders + ")"))
-                    {
-                        int p = 1;
-                        for(CallKey key : pageKeys)
-                        {
-                            checkSearchDeadline(deadline);
-                            statement.setLong(p++, key.id());
-                        }
-                        try(ResultSet rows = statement.executeQuery())
-                        {
-                            while(rows.next())
-                            {
-                                checkSearchDeadline(deadline);
-                                RecordingCall call = mapCall(connection, rows);
-                                byId.put(call.id(), call);
-                            }
-                        }
-                    }
+                    byId.put(call.id(),call);
                 }
+                checkSearchDeadline(deadline);
                 List<RecordingCall> calls = new ArrayList<>(pageKeys.size());
                 for(CallKey key : pageKeys)
                 {
@@ -1379,14 +1361,12 @@ final class ManagedRecordingStore implements AutoCloseable
         {
             return null;
         }
-        try(Connection connection = openReader();
-            PreparedStatement statement = connection.prepareStatement(SELECT_CALL + "WHERE c.id=?"))
+        try(Connection connection = openReader())
         {
-            statement.setLong(1, id);
-            try(ResultSet rows = statement.executeQuery())
-            {
-                return rows.next() ? mapCall(connection, rows) : null;
-            }
+            connection.setAutoCommit(false);
+            List<RecordingCall> calls = readCalls(connection,List.of(id));
+            connection.commit();
+            return calls.isEmpty() ? null : calls.getFirst();
         }
     }
 
@@ -1477,57 +1457,81 @@ final class ManagedRecordingStore implements AutoCloseable
         List<Long> ids = recordingIdsBySourceCallReferences(references, limit).values().stream()
             .flatMap(List::stream).distinct().sorted().limit(limit).toList();
         if(ids.isEmpty()) return List.of();
-        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
-        try(Connection connection = openReader(); PreparedStatement statement = connection.prepareStatement(
-            SELECT_CALL + "WHERE c.id IN (" + placeholders + ") ORDER BY c.start_ms,c.id"))
+        try(Connection connection = openReader())
         {
-            int parameter = 1;
-            for(long id: ids) statement.setLong(parameter++, id);
-            List<RecordingCall> calls = new ArrayList<>();
-            try(ResultSet rows = statement.executeQuery())
-            { while(rows.next()) calls.add(mapCall(connection, rows)); }
-            return List.copyOf(calls);
+            connection.setAutoCommit(false);
+            List<RecordingCall> calls = readCalls(connection,ids);
+            connection.commit();
+            return calls;
         }
     }
 
-    private static RecordingCall mapCall(Connection connection, ResultSet row) throws SQLException
+    /** All selected rows and metadata use the caller's read snapshot, independent of the page size. */
+    private static List<RecordingCall> readCalls(Connection connection, List<Long> ids) throws SQLException
     {
-        long id = row.getLong("id");
-        Site winner = site(row, "winner_");
-        List<Site> also = new ArrayList<>();
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT s.wacn,s.system_id,s.rfss,s.site_id FROM recording_call_site cs " +
-                "JOIN recording_site s ON s.id=cs.site_id WHERE cs.call_id=? ORDER BY s.id"))
+        if(ids.isEmpty()) return List.of();
+        String placeholders = String.join(",",java.util.Collections.nCopies(ids.size(),"?"));
+        List<RecordingCall> calls = new ArrayList<>();
+        try(PreparedStatement statement = connection.prepareStatement(SELECT_CALL +
+            "WHERE c.id IN (" + placeholders + ") ORDER BY c.start_ms,c.id"))
         {
-            statement.setLong(1, id);
-            try(ResultSet sites = statement.executeQuery())
+            int parameter = 1;
+            for(long id: ids) statement.setLong(parameter++,id);
+            try(ResultSet rows = statement.executeQuery())
             {
-                while(sites.next())
+                if(!rows.next()) return List.of();
+                Map<Long,List<Site>> sites = readChildren(connection,ids,
+                    "SELECT cs.call_id,s.wacn,s.system_id,s.rfss,s.site_id FROM recording_call_site cs " +
+                    "JOIN recording_site s ON s.id=cs.site_id WHERE cs.call_id IN (" + placeholders + ") " +
+                    "ORDER BY cs.call_id,s.id",row -> new Site(row.getInt(2),row.getInt(3),row.getInt(4),row.getInt(5)));
+                Map<Long,List<Member>> members = readChildren(connection,ids,
+                    "SELECT call_id,kind,local_id,home_wacn,home_system,home_id FROM recording_patch_member " +
+                    "WHERE call_id IN (" + placeholders + ") ORDER BY call_id,kind,local_id",
+                    row -> new Member(row.getInt(2) == 2 ? "radio" : "talkgroup",row.getInt(3),
+                        home(row.getInt(4)),home(row.getInt(5)),home(row.getInt(6))));
+                Map<Long,List<AuxiliaryIdentifier>> identifiers = readChildren(connection,ids,
+                    "SELECT call_id,protocol,kind,role,value FROM recording_identifier WHERE call_id IN (" +
+                    placeholders + ") ORDER BY call_id,protocol,kind,role,value",
+                    row -> new AuxiliaryIdentifier(row.getString(2),row.getString(3),row.getString(4),row.getString(5)));
+                Map<Long,Map<String,Object>> tones = ManagedRecordingTones.read(connection,ids);
+                do
                 {
-                    Site observed = new Site(sites.getInt(1), sites.getInt(2), sites.getInt(3),
-                        sites.getInt(4));
-                    if(!observed.equals(winner))
-                    {
-                        also.add(observed);
-                    }
+                    long id = rows.getLong("id");
+                    calls.add(mapCall(rows,sites.getOrDefault(id,List.of()),members.getOrDefault(id,List.of()),
+                        tones.get(id),identifiers.getOrDefault(id,List.of())));
                 }
+                while(rows.next());
             }
         }
-        List<Member> members = new ArrayList<>();
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT kind,local_id,home_wacn,home_system,home_id FROM recording_patch_member " +
-                "WHERE call_id=? ORDER BY kind,local_id"))
+        return List.copyOf(calls);
+    }
+
+    @FunctionalInterface
+    private interface ChildReader<T> { T read(ResultSet row) throws SQLException; }
+
+    private static <T> Map<Long,List<T>> readChildren(Connection connection, List<Long> ids, String sql,
+                                                     ChildReader<T> reader) throws SQLException
+    {
+        Map<Long,List<T>> children = new HashMap<>();
+        try(PreparedStatement statement = connection.prepareStatement(sql))
         {
-            statement.setLong(1, id);
+            int parameter = 1;
+            for(long id: ids) statement.setLong(parameter++,id);
             try(ResultSet rows = statement.executeQuery())
             {
                 while(rows.next())
-                {
-                    members.add(new Member(rows.getInt(1) == 2 ? "radio" : "talkgroup", rows.getInt(2),
-                        home(rows.getInt(3)), home(rows.getInt(4)), home(rows.getInt(5))));
-                }
+                    children.computeIfAbsent(rows.getLong(1),ignored -> new ArrayList<>()).add(reader.read(rows));
             }
         }
+        return children;
+    }
+
+    private static RecordingCall mapCall(ResultSet row, List<Site> sites, List<Member> members,
+                                         Map<String,Object> tones, List<AuxiliaryIdentifier> identifiers)
+        throws SQLException
+    {
+        Site winner = site(row,"winner_");
+        List<Site> also = sites.stream().filter(observed -> !observed.equals(winner)).toList();
         int protocol = row.getInt("protocol");
         String systemKey = row.getString("system_key");
         String servingSystemKey = isP25Protocol(protocol) && RadioSystemKey.isP25Native(systemKey) &&
@@ -1550,7 +1554,7 @@ final class ManagedRecordingStore implements AutoCloseable
                 systemKey = RadioSystemKey.p25(owner.wacn(), owner.systemId());
             }
         }
-        return new RecordingCall(id, row.getLong("start_ms"), row.getLong("end_ms"),
+        return new RecordingCall(row.getLong("id"), row.getLong("start_ms"), row.getLong("end_ms"),
             row.getLong("duration_ms"), row.getString("relative_path"), row.getLong("size_bytes"),
             systemKey, row.getString("channel_uuid"),
             nullableLong(row, "alias_list_id") != null ? row.getLong("alias_list_id") : 0L,
@@ -1561,25 +1565,8 @@ final class ManagedRecordingStore implements AutoCloseable
             nullableInt(row, "target_id"), nullableInt(row, "target_home_wacn"),
             nullableInt(row, "target_home_system"), nullableInt(row, "target_home_id"),
             nullableLong(row, "frequency_hz"), nullableInt(row, "timeslot"), nullableInt(row, "nac"),
-            nullableInt(row, "tone_kind"), row.getString("tone"), winner, List.copyOf(also),
-            List.copyOf(members), servingSystemKey, ManagedRecordingTones.read(connection, id),
-            readAuxiliaryIdentifiers(connection,id));
-    }
-
-    private static List<AuxiliaryIdentifier> readAuxiliaryIdentifiers(Connection connection, long callId) throws SQLException
-    {
-        List<AuxiliaryIdentifier> identifiers = new ArrayList<>();
-        try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT protocol,kind,role,value FROM recording_identifier WHERE call_id=? ORDER BY protocol,kind,role,value"))
-        {
-            statement.setLong(1,callId);
-            try(ResultSet rows = statement.executeQuery())
-            {
-                while(rows.next()) identifiers.add(new AuxiliaryIdentifier(rows.getString(1),rows.getString(2),
-                    rows.getString(3),rows.getString(4)));
-            }
-        }
-        return List.copyOf(identifiers);
+            nullableInt(row, "tone_kind"), row.getString("tone"), winner, also,
+            List.copyOf(members), servingSystemKey, tones, List.copyOf(identifiers));
     }
 
     private static Site site(ResultSet rows, String prefix) throws SQLException
