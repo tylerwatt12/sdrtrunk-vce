@@ -73,20 +73,54 @@ async function main() {
     assert.equal(discoveryRadioReferenceResult(ui, { radio_reference: { state } }), null,
       'Results must never offer a late account connection prompt.');
   }
-  const catalogCalls = [];
+  const availabilityCalls = [];
+  let availabilityRecovered = false;
   const availableTalkgroups = createDiscoveryTalkgroupAvailability(async (url, options) => {
-    catalogCalls.push([url, options.timeoutMs]);
-    if (url.includes('system_id=3')) throw new Error('Temporary directory failure');
-    return { items: url.includes('system_id=1&') ? [{ id: 100 }] : [], total_items: 0 };
+    availabilityCalls.push([url, options.timeoutMs, options.csrf]);
+    const requestUrl = new URL(url, 'http://fixture.invalid');
+    assert.equal(requestUrl.pathname, '/api/v1/admin/radioreference/systems/talkgroups/availability');
+    assert.deepEqual([...requestUrl.searchParams.keys()], ['system_id']);
+    const systemId = Number(requestUrl.searchParams.get('system_id'));
+    if (systemId === 3 && !availabilityRecovered) throw new Error('Temporary directory failure');
+    return { has_talkgroups: systemId !== 2 };
   });
   const targets = [1, 2, 3].map((rrSystemId) => ({ rrSystemId, matched: true }));
   await assert.rejects(availableTalkgroups([...targets, { rrSystemId: 4, matched: false },
-    { rrSystemId: 0, matched: true }]), /could not be checked/);
-  assert.equal(catalogCalls.length, 3);
-  assert.ok(catalogCalls.every(([url, timeout]) => url.endsWith('&offset=0&limit=1') && timeout === 15000));
+    { rrSystemId: 0, matched: true }, { rrSystemId: 1.5, matched: true }]), /could not be checked/);
+  assert.equal(availabilityCalls.length, 3);
+  assert.ok(availabilityCalls.every(([, timeout, csrf]) => timeout === 65000 && csrf === false));
   await assert.rejects(availableTalkgroups(targets), /could not be checked/);
   assert.deepEqual(await availableTalkgroups(targets.slice(0, 2)), [targets[0]]);
-  assert.equal(catalogCalls.length, 4, 'Successful catalogs are cached; failed catalogs can be retried.');
+  assert.equal(availabilityCalls.length, 4, 'Successful and empty availability checks are cached; failures can be retried.');
+  availabilityRecovered = true;
+  assert.deepEqual(await availableTalkgroups(targets), [targets[0], targets[2]]);
+  assert.equal(availabilityCalls.length, 5, 'Retrying a failed system must keep the other systems cached.');
+
+  let releaseAvailability;
+  let pendingChecks = 0;
+  const sharedAvailability = createDiscoveryTalkgroupAvailability(() => {
+    pendingChecks += 1;
+    return new Promise((resolve) => { releaseAvailability = resolve; });
+  });
+  const sharedTarget = { rrSystemId: 7, matched: true };
+  const firstCheck = sharedAvailability([sharedTarget]);
+  const duplicateCheck = sharedAvailability([sharedTarget, { ...sharedTarget, name: 'Another site' }]);
+  assert.equal(pendingChecks, 1, 'Concurrent sites from the same system share one pending availability request.');
+  releaseAvailability({ has_talkgroups: false });
+  assert.deepEqual(await firstCheck, []);
+  assert.deepEqual(await duplicateCheck, []);
+  assert.deepEqual(await sharedAvailability([sharedTarget]), []);
+  assert.equal(pendingChecks, 1, 'A confirmed empty system must not be checked again after Back.');
+
+  const availabilityReplies = [{}, { has_talkgroups: 'false' }, { has_talkgroups: true }];
+  const validAvailability = createDiscoveryTalkgroupAvailability(async () => availabilityReplies.shift());
+  await assert.rejects(validAvailability([sharedTarget]), /could not be checked/,
+    'A missing availability field must not silently skip the import.');
+  await assert.rejects(validAvailability([sharedTarget]), /could not be checked/,
+    'A nonboolean availability field must not be cached as an empty system.');
+  assert.deepEqual(await validAvailability([sharedTarget]), [sharedTarget],
+    'A malformed availability response must allow a successful retry.');
+  assert.equal(availabilityReplies.length, 0);
   const progress = [];
   const imports = [];
   const imported = await importDiscoveryAliases(async (url, options) => {

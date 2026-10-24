@@ -1,5 +1,6 @@
 const API = '/api/v1/admin/radioreference';
 const DIRECTORY_TIMEOUT_MS = 15_000;
+const TALKGROUP_AVAILABILITY_TIMEOUT_MS = 65_000;
 
 export function createDiscoveryRadioReferenceContext(ui, request, { signal, requiredRegion = false } = {}) {
   const { node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href } = ui;
@@ -350,21 +351,23 @@ export function createDiscoveryAliasListChoice(ui, {
 }
 
 export function createDiscoveryTalkgroupAvailability(request) {
-  const catalogs = new Map();
+  const checks = new Map();
   return async (targets) => {
     const checked = await Promise.all(targets.map(async (target) => {
       const id = Number(target.rrSystemId);
       if (!target.matched || !Number.isSafeInteger(id) || id <= 0) return null;
-      if (!catalogs.has(id)) {
-        const pending = request(`${API}/systems/talkgroups?system_id=${id}&offset=0&limit=1`,
-          { csrf: false, timeoutMs: DIRECTORY_TIMEOUT_MS }).then((page) =>
-          (Array.isArray(page) ? page : page?.items || []).length > 0).catch(() => {
-          catalogs.delete(id);
+      if (!checks.has(id)) {
+        const pending = request(`${API}/systems/talkgroups/availability?system_id=${id}`,
+          { csrf: false, timeoutMs: TALKGROUP_AVAILABILITY_TIMEOUT_MS }).then((availability) => {
+          if (typeof availability?.has_talkgroups !== 'boolean') throw new Error('Invalid talkgroup availability response.');
+          return availability.has_talkgroups;
+        }).catch(() => {
+          checks.delete(id);
           throw new Error('RadioReference talkgroups could not be checked. Try again.');
         });
-        catalogs.set(id, pending);
+        checks.set(id, pending);
       }
-      return await catalogs.get(id) ? target : null;
+      return await checks.get(id) ? target : null;
     }));
     return checked.filter(Boolean);
   };

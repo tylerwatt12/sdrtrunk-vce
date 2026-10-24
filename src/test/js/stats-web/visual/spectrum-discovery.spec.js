@@ -212,11 +212,11 @@ async function install(page, state = {}) {
         account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 };
       return respond(state.directoryConfiguration);
     }
-    if (path === '/api/v1/admin/radioreference/systems/talkgroups') {
+    if (path === '/api/v1/admin/radioreference/systems/talkgroups/availability') {
       if (state.failTalkgroupCatalog) return route.fulfill({ status: 503, json: { error: {
         code: 'unavailable', message: 'Talkgroups temporarily unavailable.' } } });
       const count = state.talkgroupCount ?? 73;
-      return respond({ items: count > 0 ? [{ talkgroup_id: 101, alpha_tag: 'Dispatch' }] : [], total_items: count });
+      return respond({ has_talkgroups: count > 0 });
     }
     if (path === '/api/v1/admin/radioreference/countries') {
       if (state.failDirectoryCountriesCount > 0) {
@@ -398,6 +398,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await expect(wizard(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText(ohioSystem);
     await expect(wizard(page).getByRole('button', { name: 'Back', exact: true })).toBeVisible();
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+    expect(state.requests.filter(({ path }) => path.endsWith('/systems/talkgroups/availability'))).toHaveLength(1);
+    expect(state.requests.filter(({ path }) => path.endsWith('/systems/talkgroups'))).toHaveLength(0);
     const fits = await wizard(page).evaluate((element) => {
       const bounds = element.getBoundingClientRect();
       const footer = element.querySelector('.spectrum-discovery-actions').getBoundingClientRect();
