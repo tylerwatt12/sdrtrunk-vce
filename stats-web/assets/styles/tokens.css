@@ -376,12 +376,12 @@
   --guide-coverage-call-width: 8;
   --guide-coverage-missed-dashes: 4 5;
   --guide-coverage-rtl: var(--info);
-  --guide-coverage-airspy: var(--signal-fair);
+  --guide-coverage-secondary: var(--signal-fair);
   --guide-coverage-received: var(--success);
   --guide-coverage-missed: var(--danger);
   --guide-coverage-edge: var(--muted);
   --guide-coverage-rtl-fill: color-mix(in srgb, var(--guide-coverage-rtl) 18%, var(--ui-panel-fill));
-  --guide-coverage-airspy-fill: color-mix(in srgb, var(--guide-coverage-airspy) 16%, var(--ui-panel-fill));
+  --guide-coverage-secondary-fill: color-mix(in srgb, var(--guide-coverage-secondary) 16%, var(--ui-panel-fill));
   --guide-coverage-edge-pattern: repeating-linear-gradient(135deg, var(--guide-coverage-edge) 0 1px, transparent 1px 5px);
   --guide-coverage-missed-pattern: repeating-linear-gradient(0deg, var(--guide-coverage-missed) 0 3px, transparent 3px 5px);
   --modal-backdrop-strong: rgb(9 18 27 / 90%);

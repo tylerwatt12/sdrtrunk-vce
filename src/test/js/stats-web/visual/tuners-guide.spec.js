@@ -68,6 +68,9 @@ async function expectOverview(page) {
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
   await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
   await expect(graph(page)).toBeVisible();
+  await expect(graph(page).locator('.ui-setup-guide-coverage-identity strong')).toHaveText(['RTL-SDR 1', 'RTL-SDR 2']);
+  await expect(graph(page).locator('.coverage-control')).toHaveCount(1);
+  await expect(graph(page)).not.toContainText('Airspy');
   await expect(graph(page).locator('button, input, select, [data-coverage-time]')).toHaveCount(0);
   await expect(graph(page).locator('.ui-setup-guide-coverage-recent, .ui-setup-guide-coverage-note')).toHaveCount(0);
   await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample], .ui-setup-guide-layer')).toHaveCount(0);
@@ -427,6 +430,65 @@ test('Tuners returns an expanded Recordings player after all sample receiver mod
   await expect(page.locator('[data-guide-sample], .ui-setup-guide-layer, .read-only-modal')).toHaveCount(0);
   expectNoEffects(fixture, requests);
 });
+
+for (const { theme, width, height } of [
+  { theme: 'light', width: 1280, height: 720 }, { theme: 'dark', width: 1440, height: 1000 }
+]) {
+  test(`Tuners keeps one control channel on its locked RTL-SDR while the second hops often in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.clock.install();
+    const { fixture, requests } = await openTuners(page, { theme });
+    await expectOverview(page);
+    await expectWithinViewport(guide(page), { width, height });
+    await expectWithinViewport(graph(page), { width, height });
+    const fixedCenter = await graph(page).getAttribute('data-rtl-center');
+    const controlBefore = await graph(page).locator('.coverage-control').evaluate(element => ({
+      x: Number(element.getAttribute('x1')), width: Number.parseFloat(getComputedStyle(element).strokeWidth)
+    }));
+    expect(controlBefore.width).toBe(8);
+    const positions = [], geometry = [];
+    for (let index = 0; index < 120; index += 1) {
+      await page.clock.fastForward(500);
+      positions.push(Number(await graph(page).getAttribute('data-secondary-center')));
+      await expect(graph(page)).toHaveAttribute('data-rtl-center', fixedCenter);
+      if (index === 7) await expect(graph(page).locator('.ui-setup-guide-coverage-identity').last()).toContainText('Unlocked');
+      if ([7, 19, 39].includes(index)) {
+        const measure = await graph(page).evaluate(root => {
+          const svg = root.querySelector('svg'), control = root.querySelector('.coverage-control');
+          const names = [...svg.querySelectorAll('text')].filter(element => /^RTL-SDR [12]$/.test(element.textContent));
+          const bounds = names.map(element => ({ text: element.textContent, x: element.getBoundingClientRect().x,
+            right: element.getBoundingClientRect().right, y: element.getBoundingClientRect().y,
+            bottom: element.getBoundingClientRect().bottom }));
+          const chart = svg.getBoundingClientRect();
+          return { bounds, chart: { x: chart.x, right: chart.right },
+            controlX: Number(control.getAttribute('x1')), primaryCenter: Number(names[0].getAttribute('x')),
+            band: root.querySelector('.coverage-band-secondary').getAttribute('d') };
+        });
+        expect(measure.bounds).toHaveLength(2);
+        expect(Math.abs(measure.controlX - measure.primaryCenter), 'The control channel stays visibly off center').toBeGreaterThan(15);
+        for (const label of measure.bounds) {
+          expect(label.x, `${label.text} fits inside the graph`).toBeGreaterThanOrEqual(measure.chart.x);
+          expect(label.right, `${label.text} fits inside the graph`).toBeLessThanOrEqual(measure.chart.right);
+        }
+        expect(Math.min(measure.bounds[0].right, measure.bounds[1].right) - Math.max(measure.bounds[0].x, measure.bounds[1].x),
+          'The two tuner captions remain separate').toBeLessThanOrEqual(0);
+        expect((measure.band.match(/L/g) || []).length, 'The history shows several discrete tuner positions').toBeGreaterThan(6);
+        geometry.push(measure);
+        await screenshot(page, `tuners-two-rtl-hopping-${index}-${theme}`);
+      }
+    }
+    const jumps = positions.slice(1).filter((position, index) => position !== positions[index]).length;
+    expect(jumps, 'The second RTL-SDR hops frequently throughout the one-minute illustration').toBeGreaterThanOrEqual(30);
+    expect(new Set(positions).size, 'The second RTL-SDR visits several parts of the band').toBeGreaterThanOrEqual(4);
+    await expect(graph(page).locator('.coverage-control')).toHaveAttribute('x1', String(controlBefore.x));
+    await expect(graph(page).locator('.ui-setup-guide-coverage-identity').first()).toContainText('Locked');
+    fs.mkdirSync(evidence, { recursive: true });
+    fs.writeFileSync(path.join(evidence, `two-rtl-measurements-${theme}.json`), JSON.stringify({ jumps,
+      positions: [...new Set(positions)], control: controlBefore, geometry }, null, 2));
+    await page.keyboard.press('Escape');
+    expectNoEffects(fixture, requests);
+  });
+}
 
 test('the Tuners overview graph loops after a minute, preserves reception history, and releases animation on Start and Back', async ({ page }) => {
   await page.clock.install();

@@ -478,15 +478,12 @@ async function checkGuides(assetsRoot) {
   const { TUNER_COVERAGE_MODEL: coverageModel, coverageCenterAt, coverageReceiverFor, coverageTimeAt,
     coverageCallsAt, createTunerCoverageDiagram } =
     await load('guides/tuner-coverage.js');
-  assert.deepEqual([coverageModel.rtl.sampleRate, coverageModel.rtl.usableBandwidth,
-    coverageModel.airspy.sampleRate, coverageModel.airspy.usableBandwidth], [2.4, 2.352, 10, 9]);
-  for (const center of [coverageModel.initialCenter, coverageModel.shiftedCenter]) {
-    assert.ok(Math.abs(coverageModel.controls[0].frequency - center) >= coverageModel.rtl.usableBandwidth * .2,
-      'The RTL-SDR control channel stays visibly away from the center in both receiving-window positions.');
-  }
-  assert.ok(Math.abs(coverageModel.controls[1].frequency - coverageModel.airspy.center) >=
-    coverageModel.airspy.usableBandwidth * .2,
-    'The Airspy control channel is visibly offset from the center of its receiving window.');
+  assert.equal(coverageModel.receivers.length, 2);
+  assert.deepEqual(coverageModel.receivers.map(receiver => [receiver.name, receiver.sampleRate, receiver.usableBandwidth]),
+    [['RTL-SDR 1', 2.4, 2.352], ['RTL-SDR 2', 2.4, 2.352]]);
+  assert.equal(coverageModel.controls.length, 1, 'One RTL-SDR holds the single control channel throughout the example.');
+  assert.ok(Math.abs(coverageModel.controls[0].frequency - coverageModel.primaryCenter) >=
+    coverageModel.rtl.usableBandwidth * .2, 'The control channel stays visibly away from its tuner center.');
   assert.equal(coverageModel.duration / coverageModel.speed, 60,
     'The overview runs for one minute before repeating.');
   assert.ok(coverageModel.history / coverageModel.speed <= 4,
@@ -495,6 +492,8 @@ async function checkGuides(assetsRoot) {
   for (const call of coverageModel.calls) {
     assert.ok([call.frequency, call.start, call.end].every(Number.isFinite) && call.end > call.start);
     assert.ok(call.start >= 0 && call.start < coverageModel.duration);
+    assert.ok(call.end <= coverageModel.duration - .25 && call.end - call.start <= coverageModel.arrivalInterval - .5,
+      'Calls finish before the next placement and before the loop resets.');
   }
   for (let time = coverageModel.history; time <= coverageModel.duration; time += coverageModel.history) {
     const arrivals = coverageModel.calls.filter(call => call.start >= time - coverageModel.history && call.start < time);
@@ -509,44 +508,64 @@ async function checkGuides(assetsRoot) {
   assert.equal(coverageTimeAt(coverageModel.duration), 0);
   assert.equal(coverageTimeAt(-.25), coverageModel.duration - .25);
   const coverageCall = id => coverageModel.calls.find(call => call.id === id);
+  assert.equal(coverageReceiverFor(coverageCall('fire')), 'RTL-SDR 1');
+  assert.equal(coverageReceiverFor(coverageCall('sheriff')), 'RTL-SDR 1');
   assert.equal(coverageReceiverFor(coverageCall('regional-missed')), null);
-  assert.equal(coverageReceiverFor(coverageCall('regional-later')), 'RTL-SDR');
+  assert.equal(coverageReceiverFor(coverageCall('regional-later')), 'RTL-SDR 2');
   assert.equal(coverageReceiverFor(coverageCall('regional-later'), false), null);
-  assert.equal(coverageReceiverFor(coverageCall('distant-later')), null);
+  assert.equal(coverageReceiverFor(coverageCall('distant-followed')), 'RTL-SDR 2');
+  assert.equal(coverageReceiverFor(coverageCall('distant-later')), 'RTL-SDR 2');
   assert.equal(coverageReceiverFor(coverageCall('regional-missed')), null,
     'The earlier missed transmission stays missed after a later transmission fits the shifted window.');
   const rtlCovers = (frequency, center) => frequency - .00625 >= center - coverageModel.rtl.usableBandwidth / 2 &&
     frequency + .00625 <= center + coverageModel.rtl.usableBandwidth / 2 &&
     !(frequency - .00625 < center + .005 && frequency + .00625 > center - .005);
-  assert.ok(coverageModel.retunes.length >= 4, 'Long playback includes occasional placements in both directions.');
+  assert.ok(coverageModel.retunes.length > 30, 'The second RTL-SDR hops frequently throughout the minute.');
+  assert.ok(new Set(coverageModel.retunes.map(retune => retune.to)).size >= 4,
+    'The hopping example visits several distinct receiving windows.');
+  assert.ok(rtlCovers(coverageModel.controls[0].frequency, coverageModel.primaryCenter));
   for (const retune of coverageModel.retunes) {
     assert.ok([retune.start, retune.end, retune.from, retune.to].every(Number.isFinite));
-    assert.ok(retune.end > retune.start && retune.start >= 0 && retune.end <= coverageModel.duration);
+    assert.ok(retune.end > retune.start && retune.start >= coverageModel.unlockAt && retune.end <= coverageModel.duration);
     assert.equal(coverageCenterAt(retune.start), retune.from);
     assert.equal(coverageCenterAt(retune.end), retune.to);
     const activeCalls = coverageModel.calls.filter(call => call.start < retune.end && call.end > retune.end &&
-      coverageReceiverFor(call) === 'RTL-SDR');
-    for (const frequency of [coverageModel.controls[0].frequency, coverageCall('fire').frequency,
-      ...activeCalls.map(call => call.frequency)]) {
-      assert.ok(rtlCovers(frequency, retune.from) && rtlCovers(frequency, retune.to),
-        'A center change keeps full control, conventional, and currently received voice channels inside usable bandwidth.');
+      coverageReceiverFor(call) === 'RTL-SDR 2');
+    for (const call of activeCalls) {
+      assert.ok(rtlCovers(call.frequency, retune.from) && rtlCovers(call.frequency, retune.to),
+        'The roaming tuner retains full voice coverage for every in-progress received call.');
     }
   }
-  const retainedHistory = coverageModel.retunes.filter(retune => retune.to === coverageModel.initialCenter)
-    .map(returnPlacement => ({ returnPlacement, earlierReceived: coverageModel.calls.find(call =>
-      call.frequency === coverageCall('regional-later').frequency && call.end < returnPlacement.end &&
-      call.end > returnPlacement.end - coverageModel.history && coverageReceiverFor(call) === 'RTL-SDR') }))
+  for (const call of coverageModel.calls) {
+    const receiver = coverageReceiverFor(call);
+    const fitsAtStart = rtlCovers(call.frequency, coverageModel.primaryCenter) ||
+      rtlCovers(call.frequency, coverageCenterAt(call.start));
+    assert.equal(Boolean(receiver), fitsAtStart,
+      'Every call fitting at its start retains reception through its full transmission.');
+    if (!receiver) continue;
+    const placements = receiver === 'RTL-SDR 1' ? [coverageModel.primaryCenter] :
+      [coverageCenterAt(call.start), ...coverageModel.retunes.filter(retune => retune.end > call.start &&
+        retune.end < call.end).map(retune => retune.to)];
+    assert.ok(placements.every(center => rtlCovers(call.frequency, center)),
+      'Every received channel fits completely inside its assigned tuner bandwidth and avoids its center notch.');
+  }
+  const retainedHistory = coverageModel.retunes.map(retune => ({ retune, earlierReceived: coverageModel.calls.find(call =>
+    call.end < retune.end && call.end > retune.end - coverageModel.history &&
+    coverageReceiverFor(call) === 'RTL-SDR 2' && !rtlCovers(call.frequency, retune.to)) }))
     .find(example => example.earlierReceived);
-  assert.ok(retainedHistory, 'A received call remains in visible history when the RTL-SDR returns to its earlier center.');
-  const { returnPlacement, earlierReceived } = retainedHistory;
-  assert.equal(rtlCovers(earlierReceived.frequency, coverageCenterAt(returnPlacement.end)), false);
-  assert.equal(coverageReceiverFor(earlierReceived), 'RTL-SDR',
+  assert.ok(retainedHistory, 'A received call remains in visible history when the roaming tuner hops elsewhere.');
+  assert.equal(coverageReceiverFor(retainedHistory.earlierReceived), 'RTL-SDR 2',
     'A later center change preserves the reception outcome of calls already in the waterfall.');
   const lowerEdge = coverageModel.initialCenter - coverageModel.rtl.usableBandwidth / 2;
   assert.equal(coverageReceiverFor({ frequency: lowerEdge + .001, start: 0 }), null,
     'The whole channel must fit inside usable bandwidth, including its width near an edge.');
-  assert.equal(coverageReceiverFor({ frequency: coverageModel.initialCenter, start: 0 }), null,
-    'The RTL-SDR center notch stays excluded just as it does for actual channel placement.');
+  for (const center of [coverageModel.primaryCenter, coverageModel.initialCenter]) {
+    assert.equal(coverageReceiverFor({ frequency: center, start: 0 }), null,
+      'Both RTL-SDR center notches stay excluded just as they do for actual channel placement.');
+  }
+  const firstHop = coverageModel.retunes[0];
+  assert.equal(coverageReceiverFor({ frequency: 861.5125, start: firstHop.start - 1, end: firstHop.end + 1 }), null,
+    'A synthetic call spanning an out-of-band retune cannot claim uninterrupted reception.');
   const precedingHistory = coverageCallsAt(0);
   assert.ok(precedingHistory.length >= 2 && precedingHistory.some(call => call.start < 0),
     'The first displayed history window retains transmissions from the preceding loop.');

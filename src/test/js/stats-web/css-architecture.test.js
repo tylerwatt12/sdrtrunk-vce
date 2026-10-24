@@ -11,7 +11,7 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=2") layer(reset);',
-  '@import url("./styles/tokens.css?v=52") layer(tokens);',
+  '@import url("./styles/tokens.css?v=53") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=7") layer(components);',
   '@import url("./styles/components/controls.css?v=48") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=13") layer(components);',
@@ -21,7 +21,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/compositions/app-chrome.css?v=22") layer(compositions);',
   '@import url("./styles/compositions/audio-dock.css?v=22") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=10") layer(compositions);',
-  '@import url("./styles/compositions/modals.css?v=21") layer(compositions);',
+  '@import url("./styles/compositions/modals.css?v=22") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=16") layer(compositions);',
   '@import url("./styles/features/access-landing.css?v=2") layer(features);',
   '@import url("./styles/features/about.css?v=2") layer(features);',

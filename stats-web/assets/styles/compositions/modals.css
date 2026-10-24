@@ -318,14 +318,14 @@ body.modal-open {
 .ui-setup-guide-coverage-detail { color: var(--muted); }
 .ui-setup-guide-coverage-key { width: var(--space-4); height: var(--space-2); }
 .ui-setup-guide-coverage-key.rtl { background: var(--guide-coverage-rtl); }
-.ui-setup-guide-coverage-key.airspy { background: var(--guide-coverage-airspy); }
+.ui-setup-guide-coverage-key.secondary { background: var(--guide-coverage-secondary); }
 .ui-setup-guide-coverage-scene { display: grid; gap: 0; }
 .ui-setup-guide-coverage-chart { display: block; width: 100%; height: var(--guide-coverage-chart-height); font-family: var(--font-sans); }
 .ui-setup-guide-coverage-chart text { fill: var(--ink); font-size: var(--font-size-secondary); }
 .ui-setup-guide-coverage-chart .coverage-grid { stroke: var(--line); stroke-width: var(--guide-coverage-grid-width); }
 .ui-setup-guide-coverage-chart .coverage-edge-line { stroke: var(--guide-coverage-edge); stroke-width: var(--guide-coverage-grid-width); }
 .ui-setup-guide-coverage-chart .coverage-band-rtl { fill: var(--guide-coverage-rtl-fill); }
-.ui-setup-guide-coverage-chart .coverage-band-airspy { fill: var(--guide-coverage-airspy-fill); }
+.ui-setup-guide-coverage-chart .coverage-band-secondary { fill: var(--guide-coverage-secondary-fill); }
 .ui-setup-guide-coverage-chart .coverage-control { stroke: var(--ink); stroke-width: var(--guide-coverage-call-width); }
 .ui-setup-guide-coverage-chart .coverage-call { fill: none; stroke-width: var(--guide-coverage-call-width); stroke-linecap: round; }
 .ui-setup-guide-coverage-chart .received { stroke: var(--guide-coverage-received); }
