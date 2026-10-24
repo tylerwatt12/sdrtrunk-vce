@@ -1,3 +1,5 @@
+import { contextualTargets } from '../context.js?v=1';
+
 function targets(documentValue, ...names) {
   return () => names.flatMap((name) =>
     [...(documentValue?.querySelectorAll(`[data-guide-target="${name}"]`) || [])]);
@@ -22,6 +24,12 @@ export function channelSetupSteps(documentValue, preparePlayer, preparePage, can
   const canImport = allowed(documentValue, canView, 'radioreference');
   const canDiscover = allowed(documentValue, canView, 'tuners');
   const canListen = allowed(documentValue, canView, 'scanner');
+  const contexts = {
+    'new-channel': '.channel-catalog-overview', 'channel-choice': '.read-only-modal',
+    'channel-choice-close': '.read-only-modal', discover: '.channel-catalog-overview',
+    'select-channel': 'tr', receiving: 'tr, .channel-selection-bar', startup: '.channel-admin-toolbar',
+    'player-overview': '.audio-dock', 'listening-controls': '.audio-dock', listening: '.audio-dock'
+  };
   const steps = [
     { id: 'new-channel', title: 'Add a channel',
       targets: targets(documentValue, 'channel-new'),
@@ -51,6 +59,10 @@ export function channelSetupSteps(documentValue, preparePlayer, preparePage, can
     { id: 'startup', title: 'Ready when you are', samples: [catalogSample()],
       targets: targets(documentValue, 'channel-startup'),
       paragraphs: ['Choose which channels begin receiving when VCE starts, and the order in which they start.'] },
+    { id: 'player-overview', title: 'Listen as you browse', prepare: prepare('player-overview'),
+      samples: [catalogSample(), guideSample('player-overview')],
+      targets: targets(documentValue, 'player'),
+      paragraphs: ['The player plays completed calls from the Scan Lists you choose.'] },
     { id: 'listening-controls', title: 'Open your listening choices', prepare: prepare('listening-controls'),
       samples: [catalogSample(), guideSample('listening-controls')],
       targets: targets(documentValue, 'player-lists'),
@@ -60,6 +72,9 @@ export function channelSetupSteps(documentValue, preparePlayer, preparePage, can
       targets: targets(documentValue, 'scan-lists-player-lists'),
       paragraphs: ['Select the Scan Lists you want to hear. VCE plays each completed call after the transmission finishes.'] }
   ].filter((step) => (step.id !== 'discover' || canDiscover) &&
-    (!['listening-controls', 'listening'].includes(step.id) || canListen));
-  return steps.map((step, index) => index === steps.length - 1 ? { ...step, nextLabel: 'Finish' } : step);
+    (!['player-overview', 'listening-controls', 'listening'].includes(step.id) || canListen));
+  return steps.map((step, index) => ({ ...step,
+    contextTargets: contextualTargets(step.targets, contexts[step.id]),
+    ...(index === steps.length - 1 ? { nextLabel: 'Finish' } : {})
+  }));
 }

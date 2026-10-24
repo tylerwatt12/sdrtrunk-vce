@@ -8,10 +8,10 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="tuner-spectrum"]');
 const steps = ['receiver', 'activity', 'measurements', 'zoom', 'pan', 'reset-zoom', 'channel-marker', 'channel-details',
-  'waterfall', 'waterfall-details', 'pause', 'select-signal', 'listen', 'lookup', 'add-channel', 'modes',
+  'waterfall', 'waterfall-details', 'pause', 'select-signal', 'frequency-actions', 'listen', 'lookup', 'add-channel', 'modes',
   'display-options', 'display-settings', 'plot-settings', 'performance', 'display-close'];
 const compactSteps = new Set(['activity', 'zoom', 'pan', 'waterfall']);
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:4';
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:5';
 const evidence = process.env.SPECTRUM_GUIDE_EVIDENCE ||
   path.resolve(__dirname, '../../../../../build/playwright-results/spectrum-guide-evidence');
 const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
@@ -41,6 +41,7 @@ async function openSpectrum(page, { theme = 'light', replay = true, firstVisit =
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1', '1');
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:2', '1');
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:3', '1');
+    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:4', '1');
     if (!firstVisit) localStorage.setItem(key, '1');
   }, { firstVisit, key: memoryKey });
   if (noHardware) {
@@ -182,6 +183,15 @@ async function expectLessonState(page, id) {
     await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Pause', exact: true })).toHaveAttribute('aria-pressed', 'false');
   }
+  if (id === 'frequency-actions') {
+    const panel = page.locator('[data-guide-target="bs-frequency-actions"]');
+    await expect(panel).toHaveClass(/\bspectrum-browse-control-rail\b/);
+    await expect(panel.locator('.tuner-frequency-action-frequency')).toHaveText('856.412500 MHz');
+    for (const name of ['Listen in NBFM', 'Look up on RadioReference', 'Add channel or system']) {
+      await expect(panel.getByRole('button', { name, exact: true })).toBeVisible();
+    }
+    await expect(guide(page)).toContainText('Use this panel to investigate the selected frequency and choose how to receive it.');
+  }
   if (id === 'display-options') await expect(page.getByRole('button', { name: 'Display options', exact: true }))
     .toHaveAttribute('aria-expanded', 'false');
   if (['display-settings', 'plot-settings', 'performance', 'display-close'].includes(id)) {
@@ -275,7 +285,7 @@ for (const { theme, width, height } of [
         return !header || element.getBoundingClientRect().top >= header.bottom - 1;
       }), { message: 'The guide card clears the application header' }).toBe(true);
       await expectBranchEntriesOnly(page, id);
-      if (['listen', 'lookup', 'add-channel', 'modes', 'display-options', 'display-settings',
+      if (['frequency-actions', 'listen', 'lookup', 'add-channel', 'modes', 'display-options', 'display-settings',
         'plot-settings', 'performance', 'display-close'].includes(id)) {
         await expect(page.locator('.tuner-frequency-action-frequency')).toHaveText('856.412500 MHz');
       }

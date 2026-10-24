@@ -33,7 +33,7 @@ const call = {
 async function openRecordings(page, options = {}) {
   // Exercise recording searches without covering their controls with onboarding.
   await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['recordings', 3]]) {
+    for (const [id, version] of [['welcome', 1], ['recordings', 4]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:recordings-fixture-account:${id}:${version}`, '1');
     }
   });

@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=26';
+import { createGuideController } from './guides/controller.js?v=27';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -36,7 +36,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=57';
+import { createRecordingsFeature } from './features/recordings.js?v=58';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
@@ -7857,7 +7857,7 @@ async function prepareChannelGuideSample(section, context) {
       const close = modal.dialog.querySelector('.modal-close');
       if (close) close.dataset.guideTarget = 'channel-choice-close';
       releases.push(guideSampleData.register('channel-guide', () => {}, { root: modal.dialog }));
-    } else if (['listening-controls', 'listening'].includes(section)) {
+    } else if (['player-overview', 'listening-controls', 'listening'].includes(section)) {
       releases.push(audioDock.prepareGuide({ sampleScanLists: getScanListsGuideData().scanLists.map(item => ({
         ...item, selected: item.default === true })), openSampleLists: section === 'listening' }));
       const dock = document.getElementById('audio-dock');
@@ -8195,7 +8195,7 @@ async function preparePageGuideSample(view, section, context) {
           releases.push(guideSampleData.register('recordings-workspace', () => {}, { root }));
         }
       }
-      if (!context.signal.aborted && context.isCurrent() && ['player-button', 'click-mode'].includes(section)) {
+      if (!context.signal.aborted && context.isCurrent() && ['player-overview', 'player-button', 'click-mode'].includes(section)) {
         releasePlayer = audioDock.prepareGuide({ sampleRecordings: releasePage.playback,
           recordingsSize: section === 'click-mode' ? 'full' : 'minimal' });
       }
@@ -8295,7 +8295,7 @@ async function preparePageGuideSample(view, section, context) {
       if (section === 'add-alias-list') {
         targetModal = openFullScanListMembershipModal(data.selectedScanList, 'add', data);
         if (targetModal) targetModal.dialog.querySelector('[name="aliasListId"]').value = String(data.list.id);
-      } else if (['listening-controls', 'listening'].includes(section)) {
+      } else if (['player-overview', 'listening-controls', 'listening'].includes(section)) {
         data.releases.push(audioDock.prepareGuide({ sampleScanLists: data.scanLists.map(item => ({ ...item,
           selected: item.default === true })), openSampleLists: section === 'listening' }));
         const dock = document.getElementById('audio-dock');
@@ -21427,7 +21427,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       }
       if (['zoom', 'select-signal'].includes(section)) {
         spectrum.prepareGuideFrequency(workspaceOptions.selectedAnalogHz);
-      } else if (['listen', 'lookup', 'add-channel', 'modes', 'display-options',
+      } else if (['frequency-actions', 'listen', 'lookup', 'add-channel', 'modes', 'display-options',
         'display-settings', 'plot-settings', 'performance', 'display-close'].includes(section)) {
         spectrum.prepareGuideFrequency(workspaceOptions.selectedAnalogHz, { select: true });
         await frequencyActionController?.ready;
@@ -21462,7 +21462,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
         waterfall: spectrum.surfaces.waterfall,
         'waterfall-details': spectrum.surfaces.cursorPopup,
         pause: spectrum.controls.pause,
-        'select-signal': spectrum.surfaces.spectrum,
+        'select-signal': spectrum.surfaces.spectrum, 'frequency-actions': frequencyRail,
         listen: frequencyRail.querySelector('[aria-label="Listen in NBFM"]'),
         lookup: frequencyRail.querySelector('[aria-label="Look up on RadioReference"]'),
         'add-channel': frequencyRail.querySelector('[aria-label="Add channel or system"]'),

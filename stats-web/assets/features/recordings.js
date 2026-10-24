@@ -1514,6 +1514,7 @@ export function createRecordingsFeature(deps) {
     const detail = action('icon-info-circle', 'i', 'Call details', 'Call details', () => void openDetails(row), 'ui-button ui-icon-button recordings-card-action recordings-call-details');
     const info = action('icon-more', '…', `More actions for ${description}`, 'Call actions', () => openCallActions(row), 'ui-button ui-icon-button recordings-call-info recordings-card-action');
     if (deps.guideMode && Number(row.id) === RECORDINGS_GUIDE_CALL_ID) {
+      card.dataset.guideTarget = 'rec-call-card';
       detail.dataset.guideTarget = 'rec-details-button';
       info.dataset.guideTarget = 'rec-actions-button';
     }
@@ -2968,7 +2969,8 @@ export function createRecordingsFeature(deps) {
 
   async function prepareGuideSection(name, context) {
     const steps = new Set(['targets-button', 'targets', 'time-range', 'search', 'transcript-search', 'transcript-submit',
-      'details-button', 'details', 'details-close', 'actions-button', 'playback', 'player-button', 'click-mode']);
+      'call-card', 'details-button', 'details', 'details-close', 'actions-button', 'playback',
+      'player-overview', 'player-button', 'click-mode']);
     if (!steps.has(name)) throw new Error('Unknown Recordings guide section.');
     const current = () => !context.signal.aborted && context.isCurrent();
     const show = target => pageHost.querySelector(`[data-guide-target="rec-${target}"]`)
@@ -3007,10 +3009,10 @@ export function createRecordingsFeature(deps) {
     const call = currentResults.find(row => Number(row.id) === RECORDINGS_GUIDE_CALL_ID);
     if (!call) throw new Error('The example call could not be found.');
     if (['details', 'details-close'].includes(name)) await openDetails(call);
-    else if (['playback', 'player-button', 'click-mode'].includes(name)) {
+    else if (['playback', 'player-overview', 'player-button', 'click-mode'].includes(name)) {
       const modal = openCallActions(call);
       if (modal?.ready && !await modal.ready || !current()) return;
-      if (['player-button', 'click-mode'].includes(name)) {
+      if (['player-overview', 'player-button', 'click-mode'].includes(name)) {
         modal?.dialog.querySelector('button[aria-label="Continue from here"]')?.click();
         // The production player reads only the in-memory API and inert transport.
         for (let turn = 0; turn < 20 && current(); turn++) {

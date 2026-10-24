@@ -1,4 +1,5 @@
 import { pageGuidePresentation } from '../presentation.js?v=1';
+import { contextualTargets } from '../context.js?v=1';
 
 function targets(documentValue, ...names) {
   return () => names.flatMap(name => [...(documentValue?.querySelectorAll(
@@ -6,6 +7,17 @@ function targets(documentValue, ...names) {
 }
 
 export function tunersSteps(documentValue, preparePlayer, preparePage) {
+  const contexts = {
+    modes: '.tuners-selected-header', 'setup-button': '.tuners-selected-header', 'enter-setup': '.read-only-modal',
+    'receiving-window': '.tuners-readouts', 'center-frequency': '.tuners-readouts', 'lock-center': '.tuners-readouts',
+    gain: '.tuners-gain-section', 'frequency-correction': '.ui-section',
+    'frequency-limits-button': '.ui-section', 'frequency-limits': '.ui-section',
+    'resume-button': '.tuners-recovery', 'resume-channels': '.read-only-modal',
+    'disable-button': '.tuners-selected-header', 'disable-tuner': '.read-only-modal',
+    disabled: '.tuners-selected-header, .tuner-spectrum-toolbar',
+    'restart-setup-button': '.tuners-selected-header', 'restart-channels': '.read-only-modal',
+    live: '.tuners-selected-header, .tuners-readouts, .tuners-list-item'
+  };
   const steps = [
     { id: 'modes', title: 'Three ways to use a tuner', paragraphs: [], items: [
       { label: 'Live', text: 'Available for receiving channels.' },
@@ -52,10 +64,13 @@ export function tunersSteps(documentValue, preparePlayer, preparePage) {
     { id: 'live', title: 'Ready to receive again',
       paragraphs: ['The tuner is back in Live with its previous channels receiving again.'] }
   ];
-  return steps.map((step, index) => ({ ...step,
-    targets: targets(documentValue, ...(step.id === 'disabled' ? ['disabled-mode', 'disabled-signal'] :
-      step.id === 'live' ? ['live-mode', 'live-count'] : [step.id])),
-    nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...pageGuidePresentation('tuners', step.id, preparePlayer, preparePage)
-  }));
+  return steps.map((step, index) => {
+    const focus = targets(documentValue, ...(step.id === 'disabled' ? ['disabled-mode', 'disabled-signal'] :
+      step.id === 'live' ? ['live-mode', 'live-count'] : [step.id]));
+    return { ...step,
+      targets: focus, contextTargets: contextualTargets(focus, contexts[step.id]),
+      nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
+      ...pageGuidePresentation('tuners', step.id, preparePlayer, preparePage)
+    };
+  });
 }

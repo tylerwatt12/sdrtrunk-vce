@@ -1,4 +1,5 @@
 import { pageGuidePresentation } from '../presentation.js?v=1';
+import { contextualTargets } from '../context.js?v=1';
 
 function targets(documentValue, name) {
   return () => [...(documentValue?.querySelectorAll(`[data-guide-target="lv-${name}"]`) || [])];
@@ -9,6 +10,11 @@ export function liveOverviewPresentation(preparePlayer, preparePage) {
 }
 
 export function liveSteps(documentValue, preparePlayer, preparePage) {
+  const contexts = {
+    reception: 'tr', 'detail-views': '.live-details', pause: '.live-details',
+    'event-filters': '.live-details', 'messages-tab': '.live-details', 'channel-tab': '.live-details',
+    presentation: '.live-selected-view-header'
+  };
   const steps = [
     { id: 'views', title: 'Choose a view',
       paragraphs: ['Choose a trunked site to follow its activity. Conventional brings your running conventional channels together.'] },
@@ -42,9 +48,12 @@ export function liveSteps(documentValue, preparePlayer, preparePage) {
     { id: 'presentation', title: 'Choose how activity appears',
       paragraphs: ['Choose how active and idle rows appear, their order, and whether the last call stays visible. These choices apply to your sign-in.'] }
   ];
-  return steps.map((step, index) => ({ ...step, compact: step.id !== 'views',
-    targets: targets(documentValue, step.id),
-    nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...pageGuidePresentation('live', step.id, preparePlayer, preparePage)
-  }));
+  return steps.map((step, index) => {
+    const focus = targets(documentValue, step.id);
+    return { ...step, compact: step.id !== 'views',
+      targets: focus, contextTargets: contextualTargets(focus, contexts[step.id]),
+      nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
+      ...pageGuidePresentation('live', step.id, preparePlayer, preparePage)
+    };
+  });
 }

@@ -77,16 +77,16 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('welcome').steps.length, 11);
   assert.equal(createGuideDefinition('welcome').steps.some(step => step.overview), false,
     'The general welcome retains its own introduction and numbered progression.');
-  assert.equal(createGuideDefinition('channel-setup').version, 3);
+  assert.equal(createGuideDefinition('channel-setup').version, 4);
   assert.equal(createGuideDefinition('aliases').version, 5);
   assert.equal(createGuideDefinition('radioreference').version, 3);
   assert.equal(createGuideDefinition('streaming').version, 3);
   assert.equal(createGuideDefinition('tuners').version, 3);
-  assert.equal(createGuideDefinition('tuner-spectrum').version, 4);
+  assert.equal(createGuideDefinition('tuner-spectrum').version, 5);
   assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('dashboard').version, 3);
   assert.equal(createGuideDefinition('scanner').version, 4);
-  assert.equal(createGuideDefinition('recordings').version, 3);
+  assert.equal(createGuideDefinition('recordings').version, 4);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -101,19 +101,19 @@ async function checkGuides(assetsRoot) {
     }
   });
   const channelSections = ['overview', 'new-channel', 'channel-choice', 'channel-choice-close',
-    'discover', 'select-channel', 'receiving', 'startup', 'listening-controls', 'listening'];
+    'discover', 'select-channel', 'receiving', 'startup', 'player-overview', 'listening-controls', 'listening'];
   assert.deepEqual(channelTour.steps.map(step => step.id), channelSections,
     'Channel Setup teaches the chooser opening and return actions, then the actual player entry point.');
   const channelStop = id => channelTour.steps.find(step => step.id === id);
   for (const [id, target] of [['new-channel', 'channel-new'], ['channel-choice', 'channel-choice'],
     ['channel-choice-close', 'channel-choice-close'], ['discover', 'channel-discover'],
     ['select-channel', 'channel-sample-select'],
-    ['startup', 'channel-startup'], ['listening-controls', 'player-lists'],
+    ['startup', 'channel-startup'], ['player-overview', 'player'], ['listening-controls', 'player-lists'],
     ['listening', 'scan-lists-player-lists']]) {
     assert.deepEqual(targetNames(channelStop(id)), [target],
       `${id} highlights its own control or destination instead of a later feature’s opener.`);
   }
-  for (const id of ['channel-choice', 'channel-choice-close', 'listening-controls', 'listening']) {
+  for (const id of ['channel-choice', 'channel-choice-close', 'player-overview', 'listening-controls', 'listening']) {
     const context = { registerLayer() {} };
     const release = await channelStop(id).prepare(context);
     assert.deepEqual(prepared.splice(0), [['channel-setup', id, context]],
@@ -121,7 +121,7 @@ async function checkGuides(assetsRoot) {
     release();
     assert.deepEqual(released.splice(0), [id], 'Leaving each prepared channel step restores its actual interface.');
   }
-  assert.ok(channelTour.steps.filter(step => !['channel-choice', 'channel-choice-close', 'listening-controls', 'listening'].includes(step.id))
+  assert.ok(channelTour.steps.filter(step => !['channel-choice', 'channel-choice-close', 'player-overview', 'listening-controls', 'listening'].includes(step.id))
     .every(step => step.prepare === undefined), 'Channel steps open a dialog or player only when their lesson needs it.');
   assert.deepEqual(channelStop('receiving').samples[0].value.selected_channel_ids, ['guide-sample-channel']);
   assert.deepEqual(channelStop('select-channel').samples[0].value.selected_channel_ids, [],
@@ -133,7 +133,7 @@ async function checkGuides(assetsRoot) {
     'The Channel Setup tour omits the self-explanatory filter lesson.');
   const channelOnly = createGuideDefinition('channel-setup', { canView: view => view === 'channel-setup' });
   assert.deepEqual(channelOnly.steps.map(step => step.id), channelSections.filter(id =>
-    !['discover', 'listening-controls', 'listening'].includes(id)),
+    !['discover', 'player-overview', 'listening-controls', 'listening'].includes(id)),
   'Unavailable tuner and player actions are omitted together with their destinations.');
   assert.equal(channelOnly.steps.at(-1).nextLabel, 'Finish');
   const channelOnlyCopy = channelOnly.steps.flatMap(step => step.paragraphs || []).join(' ');
@@ -719,8 +719,8 @@ async function checkGuides(assetsRoot) {
     }
   });
   const scanListSections = ['overview', 'lists', 'members', 'add-list-button', 'add-alias-list',
-    'back-to-lists', 'listening-controls', 'listening'];
-  assert.equal(scanListsTour.version, 6, 'The focused Scan Lists tour supersedes its earlier unmatched-traffic walkthrough.');
+    'back-to-lists', 'player-overview', 'listening-controls', 'listening'];
+  assert.equal(scanListsTour.version, 7, 'The focused Scan Lists tour introduces the player before its listening controls.');
   assert.equal(scanListsTour.steps[0].diagram, 'scan-lists',
     'The opening overview uses the approved relationship chart without preparing a sample workspace.');
   assert.deepEqual(scanListsTour.steps.map(({ id }) => id), scanListSections);
@@ -759,8 +759,12 @@ async function checkGuides(assetsRoot) {
     scanListTargets.steps.indexOf(scanStop('back-to-lists')),
     'The dialog closes onto its originating member workspace before the return action is taught.');
   assert.equal(scanListTargets.steps.indexOf(scanStop('back-to-lists')) + 1,
-    scanListTargets.steps.indexOf(scanStop('listening-controls')),
+    scanListTargets.steps.indexOf(scanStop('player-overview')),
     'The return control is taught immediately before the Scan Lists catalog is shown again.');
+  assert.deepEqual(targetNames(scanStop('player-overview')), ['player']);
+  assert.equal(scanListTargets.steps.indexOf(scanStop('player-overview')) + 1,
+    scanListTargets.steps.indexOf(scanStop('listening-controls')),
+    'The player is introduced before its Lists control.');
   assert.deepEqual(targetNames(scanStop('listening-controls')), ['player-lists'],
     'The actual Lists button is shown before its player panel opens.');
   assert.deepEqual(targetNames(scanStop('listening')), ['scan-lists-player-lists']);
@@ -771,14 +775,14 @@ async function checkGuides(assetsRoot) {
     'The add-list dialog lesson stays on its own operation.');
   assert.equal(scanListsTour.steps.at(-1).nextLabel, 'Finish');
   const noAudioScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'scanner' });
-  assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -2),
+  assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -3),
     'An account without Live audio access is not shown player listening choices.');
   assert.equal(noAudioScanListsTour.steps.at(-1).id, 'back-to-lists');
   assert.equal(noAudioScanListsTour.steps.at(-1).nextLabel, 'Finish');
   assert.ok(noAudioScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const noAliasesScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'aliases' });
   assert.deepEqual(noAliasesScanListsTour.steps.map(({ id }) => id),
-    ['overview', 'lists', 'listening-controls', 'listening'],
+    ['overview', 'lists', 'player-overview', 'listening-controls', 'listening'],
     'An account without Alias administration is not sent into member management.');
   assert.equal(noAliasesScanListsTour.steps.at(-1).nextLabel, 'Finish');
   assert.ok(noAliasesScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
@@ -936,20 +940,24 @@ async function checkGuides(assetsRoot) {
     }
   });
   const recordingsSections = ['overview', 'targets-button', 'targets', 'time-range', 'search', 'transcript-search',
-    'transcript-submit', 'details-button', 'details', 'details-close', 'actions-button', 'playback', 'player-button', 'click-mode'];
+    'transcript-submit', 'call-card', 'details-button', 'details', 'details-close', 'actions-button', 'playback',
+    'player-overview', 'player-button', 'click-mode'];
   assert.deepEqual(recordingsTour.steps.map(step => step.id), recordingsSections);
   assert.equal(recordingsTour.steps[0].prepare, undefined,
     'Recordings begins with its concept while the actual library remains visible.');
   const recordingsStop = id => recordingsTour.steps.find(step => step.id === id);
   assert.match(recordingsStop('targets').paragraphs[0], /Use selection/);
   assert.match(recordingsStop('transcript-search').paragraphs[0], /past 24 hours/);
+  assert.match([recordingsStop('call-card').title, ...recordingsStop('call-card').paragraphs].join(' '), /call/i);
+  assert.doesNotMatch(recordingsStop('call-card').paragraphs.join(' '), /Open Call details/);
+  assert.doesNotMatch(recordingsStop('player-overview').paragraphs.join(' '), /Expand the player/);
   assert.deepEqual(recordingsStop('details').items.map(item => item.label), ['Transcript', 'Identities', 'Technical']);
   assert.deepEqual(recordingsStop('playback').items.map(item => item.label), ['Play once', 'Continue from here', 'Add to queue']);
   assert.match(recordingsStop('playback').items[1].text, /newer calls matching your search in time order/);
   for (const step of recordingsTour.steps.slice(1)) {
     const names = step.id === 'transcript-search' ? ['transcript-search', 'transcript-range'] :
       step.id === 'transcript-submit' ? ['search'] : [step.id];
-    assert.deepEqual(targetNames(step), names.map(name => `rec-${name}`));
+    assert.deepEqual(targetNames(step), names.map(name => name === 'player-overview' ? 'player' : `rec-${name}`));
     assert.deepEqual(step.samples, [{ id: 'recordings-workspace', value: { section: step.id } }]);
     const context = { registerLayer() {} };
     const release = await step.prepare(context);
@@ -964,6 +972,10 @@ async function checkGuides(assetsRoot) {
   }
   assert.equal(recordingsSections.indexOf('details-close') + 1, recordingsSections.indexOf('actions-button'),
     'Call details teaches its actual return control before the next lesson.');
+  for (const [introduction, opener] of [['call-card', 'details-button'], ['player-overview', 'player-button']]) {
+    assert.equal(recordingsSections.indexOf(introduction) + 1, recordingsSections.indexOf(opener),
+      'Recordings explains a new surface before highlighting a control inside it.');
+  }
   assert.equal(recordingsTour.steps.at(-1).nextLabel, 'Finish');
   const failedRecordings = createGuideDefinition('recordings', {
     preparePlayer: () => () => released.push('recordings-player'),
@@ -1014,7 +1026,7 @@ async function checkGuides(assetsRoot) {
   });
   const spectrumSections = ['overview', 'receiver', 'activity', 'measurements', 'zoom', 'pan', 'reset-zoom',
     'channel-marker', 'channel-details', 'waterfall', 'waterfall-details', 'pause', 'select-signal',
-    'listen', 'lookup', 'add-channel', 'modes', 'display-options', 'display-settings', 'plot-settings', 'performance', 'display-close'];
+    'frequency-actions', 'listen', 'lookup', 'add-channel', 'modes', 'display-options', 'display-settings', 'plot-settings', 'performance', 'display-close'];
   assert.deepEqual(spectrumTour.steps.map(step => step.id), spectrumSections,
     'Spectrum teaches actual instrument interactions while keeping service branches at entry points.');
   assert.equal(spectrumTour.steps[0].targets, undefined);
@@ -1042,7 +1054,7 @@ async function checkGuides(assetsRoot) {
   const restrictedSpectrum = createGuideDefinition('tuner-spectrum', { canAccess: () => false });
   assert.deepEqual(restrictedSpectrum.steps.map(step => step.id),
     ['overview', 'receiver', 'activity', 'measurements', 'zoom', 'pan', 'reset-zoom', 'waterfall', 'waterfall-details',
-      'pause', 'select-signal', 'modes', 'display-options', 'display-settings', 'plot-settings', 'performance', 'display-close'],
+      'pause', 'select-signal', 'frequency-actions', 'modes', 'display-options', 'display-settings', 'plot-settings', 'performance', 'display-close'],
     'Restricted accounts are not taught audio, RadioReference or channel actions they cannot use.');
   const failedSpectrum = createGuideDefinition('tuner-spectrum', {
     preparePlayer: () => () => released.push('spectrum-player'),
@@ -1187,12 +1199,12 @@ async function checkGuides(assetsRoot) {
   deniedLive.controller.destroy();
 
   const firstSpectrumVisit = makeHarness({ context: { view: 'tuner-spectrum' }, storage: {
-    getItem: key => key.endsWith(':welcome:1') || key.endsWith(':tuner-spectrum:3') ? '1' : null,
+    getItem: key => key.endsWith(':welcome:1') || key.endsWith(':tuner-spectrum:4') ? '1' : null,
     setItem() {}
   } });
   await firstSpectrumVisit.controller.pageReady();
   assert.equal(firstSpectrumVisit.shown.at(-1).options.id, 'tuner-spectrum');
-  assert.equal(firstSpectrumVisit.shown.at(-1).options.version, 4,
+  assert.equal(firstSpectrumVisit.shown.at(-1).options.version, 5,
     'The earlier short Spectrum tour does not suppress its revised interaction walkthrough.');
 
   const firstStreamingVisit = makeHarness({ context: { view: 'streaming', canAccess: () => false }, storage: {
@@ -1311,12 +1323,12 @@ async function checkGuides(assetsRoot) {
     'Completing an older Aliases tour cannot suppress the walkthrough with visible navigation actions.');
 
   const dismissedScanListPlaceholder = makeHarness({ context: { view: 'scan-lists' }, storage: {
-    getItem: key => /:welcome:1$|:scan-lists:[12345]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scan-lists:[123456]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await dismissedScanListPlaceholder.controller.pageReady();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists');
-  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 6,
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 7,
     'Completing an older Scan Lists tour cannot suppress its focused membership and listening walkthrough.');
   dismissedScanListPlaceholder.finish();
   await dismissedScanListPlaceholder.controller.openPage();

@@ -9,8 +9,8 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="recordings"]');
 const steps = ['targets-button', 'targets', 'time-range', 'search', 'transcript-search', 'transcript-submit',
-  'details-button', 'details', 'details-close', 'actions-button', 'playback', 'player-button', 'click-mode'];
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:recordings:3';
+  'call-card', 'details-button', 'details', 'details-close', 'actions-button', 'playback', 'player-overview', 'player-button', 'click-mode'];
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:recordings:4';
 const evidence = process.env.RECORDINGS_GUIDE_EVIDENCE ||
   path.resolve(__dirname, '../../../../../build/playwright-results/recordings-guide-evidence');
 const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
@@ -38,7 +38,7 @@ async function openRecordings(page, { theme = 'light', replay = true, firstVisit
   const fixture = await installSiteStyleApplication(page, theme, { revision: 1, tables: [] }, { guides: firstVisit });
   await page.addInitScript(({ firstVisit, key }) => {
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1', '1');
-    for (const version of [1, 2]) localStorage.setItem(
+    for (const version of [1, 2, 3]) localStorage.setItem(
       `sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:recordings:${version}`, '1');
     if (!firstVisit) localStorage.setItem(key, '1');
     window.recordingsGuideAudioEvents = [];
@@ -117,7 +117,8 @@ async function goTo(page, destination) {
 async function expectSpotlight(page, id) {
   const names = id === 'transcript-search' ? ['transcript-search', 'transcript-range'] :
     id === 'transcript-submit' ? ['search'] : [id];
-  const targets = page.locator(names.map(name => `[data-guide-target="rec-${name}"]:visible`).join(', '));
+  const targets = page.locator(names.map(name => name === 'player-overview' ?
+    '[data-guide-target="player"]:visible' : `[data-guide-target="rec-${name}"]:visible`).join(', '));
   await expect(targets.first()).toBeVisible();
   for (const target of await targets.all()) {
     await expectInViewport(target);
@@ -173,6 +174,11 @@ async function expectLessonState(page, id) {
     await expect(guide(page)).toContainText('24 hours');
   }
   if (id === 'details-button') await expect(page.locator('.recordings-call-details').first()).toBeVisible();
+  if (id === 'call-card') {
+    await expect(page.locator('[data-guide-target="rec-call-card"]')).toHaveClass(/recordings-call/);
+    await expect(guide(page)).toContainText(/call/i);
+    await expect(guide(page)).not.toContainText('Open Call details');
+  }
   if (['details', 'details-close'].includes(id)) {
     await expect(details).toBeVisible();
     for (const tab of ['Overview', 'Transcript', 'Identities', 'Technical', 'Recording'])
@@ -185,8 +191,15 @@ async function expectLessonState(page, id) {
       await expect(actions.getByRole('button', { name, exact: true })).toBeVisible();
     await expect(guide(page)).toContainText('newer');
   }
-  if (id === 'player-button') {
+  if (['player-overview', 'player-button'].includes(id)) {
     await expect(page.locator('#audio-dock')).toHaveAttribute('data-source', 'recordings');
+    await expect(page.locator('#audio-dock')).not.toHaveAttribute('data-state', 'full');
+  }
+  if (id === 'player-overview') {
+    await expect(page.locator('[data-guide-target="player"]')).toHaveAttribute('id', 'audio-dock');
+    await expect(guide(page)).not.toContainText('Expand the player');
+  }
+  if (id === 'player-button') {
     await expect(page.locator('[data-guide-target="rec-player-button"]')).toHaveAttribute('aria-label', 'Expand player');
   }
   if (id === 'click-mode') {

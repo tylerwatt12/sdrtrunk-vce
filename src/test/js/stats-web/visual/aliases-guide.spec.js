@@ -9,7 +9,7 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="aliases"]');
 const samples = page => page.locator('.alias-editor-workspace[data-guide-sample]');
 const target = (page, name) => page.locator(`[data-guide-target="${name}"]:visible`).first();
-const memoryKey = id => `sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 3 : 1}`;
+const memoryKey = id => `sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 4 : 1}`;
 const steps = [
   { id: 'lists', targets: ['aliases-lists'] },
   { id: 'views', targets: ['aliases-configure', 'aliases-activity', 'aliases-custom', 'aliases-discover'] },
@@ -75,7 +75,7 @@ async function openAliases(page, { theme = 'light', replay = true, firstVisit = 
       route.fulfill({ json: { revision: 1, preferences } }));
   }
   if (firstVisit) await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['channel-setup', 3]]) {
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 4]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     }
     // A dismissed coming-soon placeholder must not suppress the authored tour.

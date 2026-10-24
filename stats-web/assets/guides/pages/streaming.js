@@ -1,4 +1,5 @@
 import { pageGuidePresentation } from '../presentation.js?v=1';
+import { contextualTargets } from '../context.js?v=1';
 
 function targets(documentValue, ...names) {
   return () => names.flatMap(name => [...(documentValue?.querySelectorAll(
@@ -6,6 +7,14 @@ function targets(documentValue, ...names) {
 }
 
 export function streamingSteps(documentValue, preparePlayer, preparePage, canView, canAccess) {
+  const contexts = {
+    'add-button': '.streaming-page-toolbar', provider: '.read-only-modal', 'add-cancel': '.read-only-modal',
+    'feeds-button': '.streaming-page-toolbar', feeds: '.read-only-modal', 'feeds-close': '.read-only-modal',
+    'manage-button': '.streaming-destination-card', sections: '.read-only-modal',
+    'aliases-button': '.read-only-modal', 'assign-alias': '.read-only-modal', 'save-assignments': '.read-only-modal',
+    'status-button': '.read-only-modal', delivery: '.read-only-modal', recovery: '.read-only-modal',
+    'destination-close': '.read-only-modal'
+  };
   const feedButton = documentValue?.querySelector?.('[data-guide-target="st-feeds-button"]');
   const administrationAvailable = typeof canAccess === 'function' ? canAccess('admin-settings') !== false :
     !feedButton || (!feedButton.disabled && !feedButton.hidden && !feedButton.closest?.('[hidden]'));
@@ -54,9 +63,12 @@ export function streamingSteps(documentValue, preparePlayer, preparePage, canVie
     { id: 'patch-routing', title: 'Identify patched conversations',
       paragraphs: ['Choose whether patched conversations are identified by the patch ID or individual member talkgroup IDs.'] }
   ].filter(step => administrationAvailable || !administrationSteps.has(step.id));
-  return steps.map((step, index) => ({ ...step,
-    targets: targets(documentValue, ...(step.id === 'recovery' ? ['recovery-state', 'recovery-error'] : [step.id])),
-    nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...pageGuidePresentation('streaming', step.id, preparePlayer, preparePage)
-  }));
+  return steps.map((step, index) => {
+    const focus = targets(documentValue, ...(step.id === 'recovery' ? ['recovery-state', 'recovery-error'] : [step.id]));
+    return { ...step,
+      targets: focus, contextTargets: contextualTargets(focus, contexts[step.id]),
+      nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
+      ...pageGuidePresentation('streaming', step.id, preparePlayer, preparePage)
+    };
+  });
 }

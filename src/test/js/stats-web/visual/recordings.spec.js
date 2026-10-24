@@ -151,7 +151,7 @@ async function openRecordings(page, options = {}) {
   // These fixtures exercise an existing listener's recording workflows.
   // First-visit onboarding is covered by recordings-guide.spec.js.
   await page.addInitScript(() => {
-    for (const account of ['admin', 'anonymous']) for (const [id, version] of [['welcome', 1], ['recordings', 3]]) {
+    for (const account of ['admin', 'anonymous']) for (const [id, version] of [['welcome', 1], ['recordings', 4]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:${account}:recordings-fixture-account:${id}:${version}`, '1');
     }
   });

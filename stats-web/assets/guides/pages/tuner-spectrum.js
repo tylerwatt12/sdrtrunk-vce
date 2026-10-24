@@ -1,4 +1,5 @@
 import { pageGuidePresentation } from '../presentation.js?v=1';
+import { contextualTargets } from '../context.js?v=1';
 
 function targets(documentValue, name) {
   return () => [...(documentValue?.querySelectorAll(`[data-guide-target="bs-${name}"]`) || [])];
@@ -10,6 +11,16 @@ export function spectrumOverviewPresentation(preparePlayer, preparePage) {
 
 export function spectrumSteps(documentValue, preparePlayer, preparePage, canView, canAccess) {
   const allowed = capability => typeof canAccess !== 'function' || canAccess(capability) !== false;
+  const contexts = {
+    receiver: '.spectrum-browse-toolbar', 'reset-zoom': '.spectrum-browse-toolbar',
+    'channel-marker': '.tuner-spectrum-visual-window', pause: '.spectrum-browse-toolbar',
+    'frequency-actions': '.spectrum-browse-control-rail',
+    listen: '.spectrum-browse-control-rail', lookup: '.spectrum-browse-control-rail',
+    'add-channel': '.spectrum-browse-control-rail', modes: '.spectrum-browse-toolbar',
+    'display-options': '.spectrum-browse-toolbar', 'display-settings': '.tuner-spectrum-options-panel',
+    'plot-settings': '.tuner-spectrum-options-panel', performance: '.tuner-spectrum-options-panel',
+    'display-close': { owner: '.tuner-spectrum-options', surfaces: '.tuner-spectrum-options-panel' }
+  };
   const steps = [
     { id: 'receiver', title: 'Choose your receiver',
       paragraphs: ['Choose the receiver covering the frequencies you want to inspect.'] },
@@ -39,6 +50,8 @@ export function spectrumSteps(documentValue, preparePlayer, preparePage, canView
       paragraphs: ['Pause holds the FFT and waterfall still for inspection. Receiving continues. Resume brings the display back to live activity.'] },
     { id: 'select-signal', title: 'Select a signal',
       paragraphs: ['Hover over the FFT to read a signal’s frequency and level. Click a signal in either plot to open its frequency actions.'] },
+    { id: 'frequency-actions', title: 'Work with this frequency',
+      paragraphs: ['Use this panel to investigate the selected frequency and choose how to receive it.'] },
     { id: 'listen', title: 'Preview analog FM', capability: 'call-audio',
       paragraphs: ['Listen to an analog FM signal to hear what is using the frequency.'] },
     { id: 'lookup', title: 'Identify the user', capability: 'admin-settings',
@@ -62,9 +75,12 @@ export function spectrumSteps(documentValue, preparePlayer, preparePage, canView
     { id: 'display-close', title: 'Return to browsing',
       paragraphs: ['Close Display options to return to the plots and your selected frequency.'] }
   ].filter(step => !step.capability || allowed(step.capability));
-  return steps.map(({ capability, ...step }, index) => ({ ...step,
-    targets: targets(documentValue, step.id),
-    nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...pageGuidePresentation('tuner-spectrum', step.id, preparePlayer, preparePage)
-  }));
+  return steps.map(({ capability, ...step }, index) => {
+    const focus = targets(documentValue, step.id);
+    return { ...step,
+      targets: focus, contextTargets: contextualTargets(focus, contexts[step.id]),
+      nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
+      ...pageGuidePresentation('tuner-spectrum', step.id, preparePlayer, preparePage)
+    };
+  });
 }

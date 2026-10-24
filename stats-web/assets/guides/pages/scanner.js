@@ -1,4 +1,5 @@
 import { pageGuidePresentation } from '../presentation.js?v=1';
+import { contextualTargets } from '../context.js?v=1';
 
 function targets(documentValue, name) {
   return () => [...(documentValue?.querySelectorAll(`[data-guide-target="sc-${name}"]`) || [])];
@@ -6,6 +7,13 @@ function targets(documentValue, name) {
 
 export function scannerSteps(documentValue, preparePlayer, preparePage, canView, canAccess) {
   const radio = typeof canAccess !== 'function' || canAccess('radio') !== false;
+  const contexts = {
+    'lists-button': '.scanner-header-actions', call: '.scanner-display',
+    playback: '.scanner-playback-transport', hold: '.scanner-playback-transport', avoid: '.scanner-playback-transport',
+    'detail-level': '.scanner-header-actions', 'settings-button': '.scanner-header-actions',
+    'playback-order': '.read-only-modal', 'settings-close': '.read-only-modal',
+    'avoids-button': '.scanner-playback-transport', avoids: '.read-only-modal', 'avoids-close': '.read-only-modal'
+  };
   const steps = [
     { id: 'lists-button', title: 'Choose your listening groups',
       paragraphs: ['Open Scan Lists to choose the groups you want to hear, including traffic from different radio systems.'] },
@@ -41,10 +49,13 @@ export function scannerSteps(documentValue, preparePlayer, preparePage, canView,
     { id: 'avoids-close', title: 'Return to Scanner',
       paragraphs: ['Close the Avoid List to return to Scanner.'] }
   ].filter(step => !step.radio || radio);
-  return steps.map(({ radio: requiresRadio, ...step }, index) => ({ ...step,
-    compact: !['call', 'playback', 'details'].includes(step.id),
-    targets: targets(documentValue, step.id),
-    nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...pageGuidePresentation('scanner', step.id, preparePlayer, preparePage, { restoreScroll: true })
-  }));
+  return steps.map(({ radio: requiresRadio, ...step }, index) => {
+    const focus = targets(documentValue, step.id);
+    return { ...step,
+      compact: !['call', 'playback', 'details'].includes(step.id),
+      targets: focus, contextTargets: contextualTargets(focus, contexts[step.id]),
+      nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
+      ...pageGuidePresentation('scanner', step.id, preparePlayer, preparePage, { restoreScroll: true })
+    };
+  });
 }

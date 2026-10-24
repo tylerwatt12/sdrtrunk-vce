@@ -4,7 +4,7 @@ const { expect, test } = require('@playwright/test');
 async function openAliasForm(page, editing) {
   await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-save-fixture:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 3 : 1}`, '1');
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-save-fixture:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 4 : 1}`, '1');
     }
   });
   const list = { alias_list_id: 1, name: 'County', family: 'P25', alias_count: 1, assigned_channel_count: 0 };

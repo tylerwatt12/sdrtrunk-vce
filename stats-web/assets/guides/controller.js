@@ -1,5 +1,5 @@
-import { openSetupGuide } from '../core/setup-guide.js?v=16';
-import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=24';
+import { openSetupGuide } from '../core/setup-guide.js?v=17';
+import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=25';
 import { createGuideMemory } from './persistence.js?v=1';
 
 const sessionKey = (context) => JSON.stringify([context.account || '', context.dismissalScope || '',

@@ -175,8 +175,12 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     schedule();
     return restore;
   };
-  const targets = () => steps[index].overview ? [] : [...(steps[index].targets?.() || [])]
+  const stepElements = name => steps[index].overview ? [] : [...new Set(steps[index][name]?.() || [])]
     .filter(target => target?.isConnected && target.getClientRects().length);
+  const targets = () => stepElements('targets');
+  // Context keeps the owning production panel readable without outlining it.
+  // Only the precise targets receive temporary IDs and a visible focus boundary.
+  const contextTargets = () => stepElements('contextTargets');
   const paintRect = (element, rectangle) => {
     for (const [name, value] of Object.entries({
       x: rectangle.left, y: rectangle.top, width: rectangle.right - rectangle.left,
@@ -225,9 +229,11 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       element.style.top = `${Math.max(popoverGutter, Math.min(anchor.bottom + alignment.topOffset,
         height - popoverGutter - rectangle.height))}px`;
     });
-    const bounds = targets().map(target => {
-      if (!targetIds.has(target)) targetIds.set(target, target.getAttribute('id'));
-      if (!target.id) target.id = `${heading.id}-target-${targetIds.size}`;
+    const measureBounds = (elements, identify = false) => elements.map(target => {
+      if (identify) {
+        if (!targetIds.has(target)) targetIds.set(target, target.getAttribute('id'));
+        if (!target.id) target.id = `${heading.id}-target-${targetIds.size}`;
+      }
       const rectangle = target.getBoundingClientRect();
       return { left: rectangle.left, top: rectangle.top, right: rectangle.right,
         bottom: rectangle.bottom, target };
@@ -236,21 +242,33 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       .map(rect => ({ left: Math.max(0, rect.left - padding), top: Math.max(0, rect.top - padding),
         right: Math.min(width, rect.right + padding), bottom: Math.min(height, rect.bottom + padding),
         target: rect.target }));
+    const bounds = measureBounds(targets(), true);
+    const rectangleKey = rect => `${rect.left},${rect.top},${rect.right},${rect.bottom}`;
+    const measured = new Set(bounds.map(rectangleKey));
+    const contextBounds = measureBounds(contextTargets()).filter(rect => {
+      const key = rectangleKey(rect);
+      if (measured.has(key)) return false;
+      measured.add(key);
+      return true;
+    });
+    const illuminatedBounds = [...bounds, ...contextBounds];
     shade.setAttribute('viewBox', `0 0 ${width} ${height}`);
     mask.setAttribute('width', String(width));
     mask.setAttribute('height', String(height));
     paintRect(maskSurface, { left: 0, top: 0, right: width, bottom: height });
     dimmer.setAttribute('d', `M0 0H${width}V${height}H0Z`);
-    // Black mask regions form a union: overlapping targets never dim one another.
+    // Black mask regions form a union: context and focus stay equally readable.
     mask.replaceChildren(maskSurface);
     definitions.replaceChildren(mask);
     highlights.replaceChildren();
-    bounds.forEach((rect, rectIndex) => {
+    illuminatedBounds.forEach(rect => {
       const hole = svgNode('rect');
       hole.classList.add('ui-setup-guide-mask-hole');
       hole.setAttribute('rx', String(radius));
       paintRect(hole, rect);
       mask.append(hole);
+    });
+    bounds.forEach((rect, rectIndex) => {
       const highlight = svgNode('rect');
       highlight.classList.add('ui-setup-guide-highlight');
       highlight.setAttribute('data-setup-guide-target', rect.target.id);
@@ -282,7 +300,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       // Transparent filled hit regions shield the live controls underneath.
       highlights.append(highlight);
     });
-    bounds.forEach(rect => {
+    illuminatedBounds.forEach(rect => {
       const hitRegion = svgNode('rect');
       hitRegion.classList.add('ui-setup-guide-hit-region');
       hitRegion.setAttribute('rx', String(radius));
@@ -291,32 +309,39 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     });
 
     const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
-    const topGutter = bounds.length ? Math.max(gutter, headerBottom + gap / 2) : gutter;
+    const topGutter = illuminatedBounds.length ? Math.max(gutter, headerBottom + gap / 2) : gutter;
     modal.dialog.style.maxHeight = `${Math.max(0, height - topGutter - gutter)}px`;
     const panel = modal.dialog.getBoundingClientRect();
     let left = (width - panel.width) / 2;
     let top = (height - panel.height) / 2;
     let anchor = null;
-    if (bounds.length) {
-      anchor = { left: Math.min(...bounds.map(rect => rect.left)),
-        top: Math.min(...bounds.map(rect => rect.top)),
-        right: Math.max(...bounds.map(rect => rect.right)),
-        bottom: Math.max(...bounds.map(rect => rect.bottom)) };
+    if (illuminatedBounds.length) {
+      const enclosingBounds = rectangles => ({ left: Math.min(...rectangles.map(rect => rect.left)),
+        top: Math.min(...rectangles.map(rect => rect.top)),
+        right: Math.max(...rectangles.map(rect => rect.right)),
+        bottom: Math.max(...rectangles.map(rect => rect.bottom)) });
+      const preciseAnchor = bounds.length ? enclosingBounds(bounds) : null;
+      let placementAnchor = enclosingBounds(illuminatedBounds);
       const targetDialog = [...(modal.state.guideTargets || [])].at(-1)?.dialog;
+      let dialogBounds = null;
       if (targetDialog?.isConnected) {
         const rectangle = targetDialog.getBoundingClientRect();
-        anchor = { left: rectangle.left, top: rectangle.top, right: rectangle.right, bottom: rectangle.bottom };
+        dialogBounds = { left: rectangle.left, top: rectangle.top, right: rectangle.right, bottom: rectangle.bottom };
+        placementAnchor = dialogBounds;
       }
-      const sideTop = Math.max(topGutter, anchor.top);
+      const sideTop = Math.max(topGutter, placementAnchor.top);
       const candidates = [
-        { left: anchor.right + gap, top: sideTop },
-        { left: anchor.left, top: anchor.bottom + gap },
-        { left: anchor.left - panel.width - gap, top: sideTop },
-        { left: anchor.left, top: anchor.top - panel.height - gap }
+        { left: placementAnchor.right + gap, top: sideTop },
+        { left: placementAnchor.left, top: placementAnchor.bottom + gap },
+        { left: placementAnchor.left - panel.width - gap, top: sideTop },
+        { left: placementAnchor.left, top: placementAnchor.top - panel.height - gap }
       ];
       // Separate targets can leave usable space inside their combined bounds.
-      // Consider those gaps before accepting a card over a highlighted control.
-      const obstacles = targetDialog?.isConnected ? [anchor] : bounds;
+      // Prefer clear context, but protect the precise control first when a large
+      // owning panel leaves too little room for the guide card outside it.
+      const hasContext = contextBounds.length > 0;
+      const obstacles = hasContext ? [...bounds, ...contextBounds, ...(dialogBounds ? [dialogBounds] : [])] :
+        dialogBounds ? [dialogBounds] : bounds;
       const horizontal = [gutter, width - gutter - panel.width,
         ...obstacles.flatMap(rect => [rect.left, rect.right + gap, rect.left - panel.width - gap])];
       const vertical = [topGutter, height - gutter - panel.height,
@@ -329,23 +354,45 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
         left: Math.max(gutter, Math.min(candidate.left, width - gutter - panel.width)),
         top: Math.max(topGutter, Math.min(candidate.top, height - gutter - panel.height))
       });
-      const overlap = candidate => {
+      const distance = (candidate, rectangles) => {
         const placed = position(candidate);
-        return obstacles.reduce((area, rect) => area +
+        return rectangles.length ? Math.min(...rectangles.map(rect =>
+          Math.max(0, rect.left - placed.left - panel.width, placed.left - rect.right) +
+          Math.max(0, rect.top - placed.top - panel.height, placed.top - rect.bottom))) : 0;
+      };
+      // A panel can meet the viewport edge. Its nearby candidate may only need
+      // clamping, so compare that valid placement before a distant empty corner.
+      if (hasContext) candidates.push(...candidates.map(position));
+      const overlap = (candidate, rectangles) => {
+        const placed = position(candidate);
+        return rectangles.reduce((area, rect) => area +
           Math.max(0, Math.min(placed.left + panel.width, rect.right) - Math.max(placed.left, rect.left)) *
           Math.max(0, Math.min(placed.top + panel.height, rect.bottom) - Math.max(placed.top, rect.top)), 0);
       };
       const candidate = candidates.reduce((best, value) => {
-        const difference = overlap(value) - overlap(best);
-        return difference < 0 || difference === 0 && overflow(value) < overflow(best) ? value : best;
+        if (hasContext) {
+          const focusDifference = overlap(value, bounds) - overlap(best, bounds);
+          if (focusDifference !== 0) return focusDifference < 0 ? value : best;
+        }
+        const contextDifference = overlap(value, obstacles) - overlap(best, obstacles);
+        if (contextDifference !== 0) return contextDifference < 0 ? value : best;
+        const overflowDifference = overflow(value) - overflow(best);
+        if (overflowDifference !== 0) return overflowDifference < 0 ? value : best;
+        if (hasContext) {
+          const focusDistance = distance(value, bounds) - distance(best, bounds);
+          if (focusDistance !== 0) return focusDistance < 0 ? value : best;
+          return distance(value, contextBounds) < distance(best, contextBounds) ? value : best;
+        }
+        return best;
       });
       left = candidate.left;
       top = candidate.top;
-      if (!targetDialog?.isConnected && bounds.length > 1) {
+      anchor = hasContext ? preciseAnchor : dialogBounds || preciseAnchor;
+      if ((hasContext || !dialogBounds) && bounds.length > 1) {
         const placed = position(candidate);
-        const distance = rect => Math.max(0, rect.left - placed.left - panel.width, placed.left - rect.right) +
+        const anchorDistance = rect => Math.max(0, rect.left - placed.left - panel.width, placed.left - rect.right) +
           Math.max(0, rect.top - placed.top - panel.height, placed.top - rect.bottom);
-        anchor = bounds.reduce((closest, rect) => distance(rect) < distance(closest) ? rect : closest);
+        anchor = bounds.reduce((closest, rect) => anchorDistance(rect) < anchorDistance(closest) ? rect : closest);
       }
     }
     left = Math.max(gutter, Math.min(left, width - gutter - panel.width));
@@ -465,7 +512,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
         // Page reflow can move a target without changing the target's size.
         const pageContent = document.getElementById('content');
         if (pageContent) observer.observe(pageContent, { box: 'border-box' });
-        targets().forEach(target => observer.observe(target));
+        new Set([...targets(), ...contextTargets()]).forEach(target => observer.observe(target));
       }
       options.onStepChange?.(index, step);
       preparing = false;

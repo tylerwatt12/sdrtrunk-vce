@@ -1,4 +1,5 @@
 import { pageGuidePresentation } from '../presentation.js?v=1';
+import { contextualTargets } from '../context.js?v=1';
 
 function targets(documentValue, ...names) {
   return () => names.flatMap(name => [...(documentValue?.querySelectorAll(
@@ -7,6 +8,15 @@ function targets(documentValue, ...names) {
 
 export function radioReferenceSteps(documentValue, preparePlayer, preparePage) {
   const focus = (...names) => targets(documentValue, ...names);
+  const contexts = {
+    bookmark: '.radioreference-directory-item', 'bookmarks-button': '.ui-segmented',
+    'saved-system': '.radioreference-directory-item', 'system-sections': '.radioreference-system-workspace',
+    'site-button': 'tr', 'site-import': '.read-only-modal', 'channel-review-button': '.read-only-modal',
+    'channel-preview': '.read-only-modal', 'channel-complete-close': '.read-only-modal',
+    'talkgroups-button': '.radioreference-system-tabs', 'alias-list': '.radioreference-talkgroup-toolbar',
+    comparison: 'tr', 'select-update': 'tr', 'import-selected': '.radioreference-talkgroup-actions',
+    'alias-preview': '.read-only-modal', 'alias-complete-close': '.read-only-modal'
+  };
   const steps = [
     { id: 'area-groups', title: 'Results grouped by area',
       targets: focus('rr-area-county', 'rr-area-state', 'rr-area-national'),
@@ -55,6 +65,7 @@ export function radioReferenceSteps(documentValue, preparePlayer, preparePage) {
       paragraphs: ['Close this window to continue reviewing the system.'], nextLabel: 'Finish' }
   ];
   return steps.map(step => ({ ...step,
+    contextTargets: contextualTargets(step.targets, contexts[step.id]),
     ...pageGuidePresentation('radioreference', step.id, preparePlayer, preparePage)
   }));
 }

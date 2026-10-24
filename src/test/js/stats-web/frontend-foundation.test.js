@@ -659,6 +659,7 @@ async function main() {
   await require('./guide-persistence.test').checkGuidePersistence(path.resolve(core, '..'));
   await require('./guide-sample-data.test').checkGuideSampleData(path.resolve(core, '..'));
   await require('./guide-presentation.test').checkGuidePresentation(path.resolve(core, '..'));
+  await require('./guide-context.test').checkGuideContext(path.resolve(core, '..'));
   await require('./recordings-guide-data.test').checkRecordingsGuideData(path.resolve(core, '..'));
   await require('./guides.test').checkGuides(path.resolve(core, '..'));
   await require('./dashboard-data.test').checkDashboardData(appSource, functionBinding);

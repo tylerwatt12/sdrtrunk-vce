@@ -11,7 +11,7 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 test.use({ viewport: { width: 1280, height: 800 } });
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="scan-lists"]');
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:6';
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:7';
 const steps = [
   { id: 'lists', targets: ['scan-lists-manage-aliases'],
     copy: 'Open this Scan List’s members to see the aliases that feed your listening group.' },
@@ -23,6 +23,8 @@ const steps = [
     copy: 'Choose an Alias List. Add All Aliases adds its current aliases and returns you to the members page.' },
   { id: 'back-to-lists', targets: ['scan-lists-back-to-lists'],
     copy: 'Return to Scan Lists to review your listening groups.' },
+  { id: 'player-overview', targets: ['player'],
+    copy: 'The player plays completed calls from the Scan Lists you choose.' },
   { id: 'listening-controls', targets: ['player-lists'],
     copy: 'Each listener chooses a listening mix here.' },
   { id: 'listening', targets: ['scan-lists-player-lists'],
@@ -77,10 +79,10 @@ async function openScanLists(page, { theme = 'light', replay = true, firstVisit 
   });
   const fixture = await installSiteStyleApplication(page, theme, undefined, { guides: firstVisit });
   if (firstVisit) await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['channel-setup', 3], ['aliases', 5]]) {
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 4], ['aliases', 5]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     }
-    for (const version of [1, 2, 3, 4, 5]) {
+    for (const version of [1, 2, 3, 4, 5, 6]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:${version}`, '1');
     }
   });
@@ -284,7 +286,7 @@ for (const { theme, width, height } of [
     await startTour(page);
     for (const [index, step] of steps.entries()) {
       await expectStep(page, step, index);
-      if (['lists', 'listening-controls', 'listening'].includes(step.id)) {
+      if (['lists', 'player-overview', 'listening-controls', 'listening'].includes(step.id)) {
         await expect(page.locator('.scan-list-catalog')).toBeVisible();
         await expect(page.locator('.scan-list-selector')).toHaveCount(2);
         await expect(page.locator('.scan-list-catalog')).not.toContainText('Unidentified Traffic');
@@ -295,7 +297,7 @@ for (const { theme, width, height } of [
         expect(destination.searchParams.get('scanListId')).toBe('900001');
         await expect(page.locator('.alias-confirm-modal')).toHaveCount(0);
       }
-      if (['listening-controls', 'listening'].includes(step.id)) {
+      if (['player-overview', 'listening-controls', 'listening'].includes(step.id)) {
         await expect(page.locator('.scan-list-detail-title')).toHaveText('Public Safety');
       }
       if (['members', 'add-list-button', 'add-alias-list', 'back-to-lists'].includes(step.id)) {
@@ -323,11 +325,11 @@ for (const { theme, width, height } of [
         await expect(modal.getByRole('combobox')).toHaveValue('900001');
         await expect(modal.getByRole('button', { name: 'Add All Aliases', exact: true })).toBeVisible();
       }
-      if (['listening-controls', 'listening'].includes(step.id)) {
+      if (['player-overview', 'listening-controls', 'listening'].includes(step.id)) {
         const player = page.locator('#audio-dock');
         await expect(player).toBeVisible();
         await expect(player).toHaveAttribute('data-source', 'live');
-        if (step.id === 'listening-controls') {
+        if (step.id !== 'listening') {
           await expect(player.locator('.audio-dock-lists-trigger:visible').first()).toBeVisible();
           await expect(player.locator('.audio-dock-selection-list')).toHaveCount(0);
         } else {
@@ -474,12 +476,16 @@ test('opening controls have their own lesson before the actual member view, dial
     await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
   }
   await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+  await expectStep(page, steps[5], 5);
+  await expectSpotlight(page, 'player');
+  await expect(page.locator('#audio-dock .audio-dock-selection-list')).toHaveCount(0);
+  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
   for (let index = 0; index < 3; index++) {
-    await expectStep(page, steps[5], 5);
+    await expectStep(page, steps[6], 6);
     await expect(page.locator('#audio-dock .audio-dock-selection-list')).toHaveCount(0);
     await expect(page.locator('.alias-confirm-modal, .ui-setup-guide-layer')).toHaveCount(0);
     await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
-    await expectStep(page, steps[6], 6);
+    await expectStep(page, steps[7], 7);
     await expect(page.locator('#audio-dock .audio-dock-selection-list')).toHaveCount(1);
     await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
   }
@@ -488,7 +494,7 @@ test('opening controls have their own lesson before the actual member view, dial
   expectNoEffects(fixture, requests);
 });
 
-test('Scan Lists omits both player stops when call audio is unavailable', async ({ page }) => {
+test('Scan Lists omits player stops when call audio is unavailable', async ({ page }) => {
   const { fixture, requests } = await openScanLists(page, { deniedCapabilities: ['call-audio'] });
   for (const [index, step] of steps.slice(0, 5).entries()) {
     await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
@@ -537,6 +543,7 @@ for (const { stop, dismiss } of [
   { stop: 'add-alias-list', dismiss: 'Escape' },
   { stop: 'back-to-lists', dismiss: 'Close guide' },
   { stop: 'add-list-button', dismiss: 'shade' },
+  { stop: 'player-overview', dismiss: 'Escape' },
   { stop: 'listening-controls', dismiss: 'Escape' },
   { stop: 'listening', dismiss: 'Close guide' }
 ]) {
@@ -663,7 +670,7 @@ for (const theme of ['light', 'dark']) {
     const { fixture, requests } = await openScanLists(page, { theme });
     for (const [index, step] of steps.entries()) {
       await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
-      if (['lists', 'add-alias-list', 'listening-controls', 'listening'].includes(step.id)) {
+      if (['lists', 'add-alias-list', 'player-overview', 'listening-controls', 'listening'].includes(step.id)) {
         await page.evaluate(() => {
           const backdrop = document.querySelector('.ui-setup-guide-backdrop');
           window.scanGuideContrast = { backdrop, visibility: backdrop.style.visibility,
@@ -679,10 +686,10 @@ for (const theme of ['light', 'dark']) {
             }, hue);
             const selector = step.id === 'lists' ? '.scan-list-catalog' :
               step.id === 'add-alias-list' ? '.alias-confirm-modal' :
-                step.id === 'listening-controls' ? '#audio-dock' : '#audio-dock .audio-dock-selection-list';
+                ['player-overview', 'listening-controls'].includes(step.id) ? '#audio-dock' : '#audio-dock .audio-dock-selection-list';
             const result = await expectContrast(page, { rootSelector: selector,
               reportName: `scan-lists-${step.id}-${theme}-hue-${hue}` });
-            expect(result.summary.text.checked).toBeGreaterThanOrEqual(step.id === 'listening-controls' ? 2 : 3);
+            expect(result.summary.text.checked).toBeGreaterThanOrEqual(['player-overview', 'listening-controls'].includes(step.id) ? 2 : 3);
           }
         } finally {
           await page.evaluate(async () => {

@@ -38,7 +38,7 @@ async function expectMenu(page, name, views) {
   for (const view of views) await expectSpotlight(page, `.primary-nav [data-view="${view}"]`);
 }
 
-async function expectUnionSpotlights(page, dimmedSelector) {
+async function expectUnionSpotlights(page, contextSiblingSelector) {
   const geometry = await page.locator('.ui-setup-guide-shade').evaluate((shade, selector) => {
     const highlights = [...shade.querySelectorAll('.ui-setup-guide-highlight')];
     const attribute = (element, name) => Number(element.getAttribute(name));
@@ -56,12 +56,16 @@ async function expectUnionSpotlights(page, dimmedSelector) {
         return mask ? document.getElementById(mask.slice(5, -1))
           .querySelectorAll('.ui-setup-guide-mask-hole').length : 0;
       }),
-      unselectedIsDimmed: !holes.some(hole => pointInRect(hole, point))
+      contextSiblingIsLit: holes.some(hole => pointInRect(hole, point)),
+      contextSiblingIsOutlined: highlights.some(highlight => pointInRect(highlight, point)),
+      unrelatedPageIsDimmed: !holes.some(hole => pointInRect(hole, { x: innerWidth - 4, y: innerHeight - 4 }))
     };
-  }, dimmedSelector);
+  }, contextSiblingSelector);
   expect(geometry.targetCount).toBeGreaterThan(1);
   expect(geometry.outlineCutouts).toEqual(Array(geometry.targetCount).fill(geometry.targetCount - 1));
-  expect(geometry.unselectedIsDimmed).toBe(true);
+  expect(geometry.contextSiblingIsLit).toBe(true);
+  expect(geometry.contextSiblingIsOutlined).toBe(false);
+  expect(geometry.unrelatedPageIsDimmed).toBe(true);
 }
 
 for (const theme of ['light', 'dark']) {
@@ -124,7 +128,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample]')).toHaveCount(0);
     await guide(page).getByRole('button', { name: 'Start tour', exact: true }).click();
     await expect(guide(page).getByRole('heading', { name: 'Add a channel', exact: true })).toBeVisible();
-    await expect(guide(page)).toContainText('Step 1 of 9');
+    await expect(guide(page)).toContainText('Step 1 of 10');
     await expect(page.locator('.primary-nav [data-nav-group][open]')).toHaveCount(0);
     expect(writes).toEqual([]);
     expect(fixture.pageErrors).toEqual([]);

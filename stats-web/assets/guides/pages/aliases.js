@@ -1,4 +1,5 @@
 import { pageGuidePresentation } from '../presentation.js?v=1';
+import { contextualTargets } from '../context.js?v=1';
 
 function targets(documentValue, ...names) {
   return () => names.flatMap(name => [...(documentValue?.querySelectorAll(
@@ -7,6 +8,17 @@ function targets(documentValue, ...names) {
 
 export function aliasesSteps(documentValue, preparePlayer, preparePage) {
   const focus = (...names) => targets(documentValue, ...names);
+  const contexts = {
+    views: '.alias-editor-view-switcher', 'alias-button': 'tr',
+    'alias-editor': '.read-only-modal', 'alias-close': '.read-only-modal',
+    'defaults-button': '.alias-list-summary', 'defaults-unmatched': '.read-only-modal',
+    'defaults-new-button': '.read-only-modal', 'defaults-new': '.read-only-modal', 'defaults-close': '.read-only-modal',
+    bulk: 'tr', 'scan-lists-button': '.alias-bulk-bar', 'scan-lists': '.read-only-modal',
+    'clear-selection': '.alias-bulk-bar', 'activity-button': '.alias-editor-view-switcher',
+    'custom-button': '.alias-editor-view-switcher', 'columns-button': '.section-title',
+    'discover-button': '.alias-editor-view-switcher', 'configure-button': '.alias-editor-view-switcher',
+    transfer: '.alias-list-summary'
+  };
   const steps = [
     { id: 'lists', title: 'Your Alias Lists', targets: focus('aliases-lists'),
       paragraphs: ['Alias Lists connect recognizable names and call settings to your channels. Select a list here to explore its aliases.'] },
@@ -72,6 +84,7 @@ export function aliasesSteps(documentValue, preparePlayer, preparePage) {
         'Export a report for analysis or a configuration file you can import again later.'], nextLabel: 'Finish' }
   ];
   return steps.map(step => ({ ...step,
+    contextTargets: contextualTargets(step.targets, contexts[step.id]),
     ...pageGuidePresentation('aliases', step.id, preparePlayer, preparePage)
   }));
 }

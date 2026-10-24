@@ -265,13 +265,13 @@ for (const theme of ['light', 'dark']) {
     await page.locator('#page-guide-button').click();
     await startTour(page);
     await expect(guide(page)).toBeVisible();
-    await expect(guideRoot(page)).toContainText('Step 1 of 9');
+    await expect(guideRoot(page)).toContainText('Step 1 of 10');
     await expectToolbarActionsUnmoved(page, actions);
     await expectSpotlightsFollowToolbar(page);
     await expectWithinViewport(guideRoot(page), page.viewportSize());
     await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
     await expect(guideRoot(page)).toContainText('Choose your source');
-    await expect(guideRoot(page)).toContainText('Step 2 of 9');
+    await expect(guideRoot(page)).toContainText('Step 2 of 10');
     await expect(page.getByRole('dialog', { name: 'How would you like to create a channel?', exact: true })).toBeVisible();
     await guideRoot(page).getByRole('button', { name: 'Back', exact: true }).click();
     await expect(guide(page)).toBeVisible();
@@ -280,7 +280,7 @@ for (const theme of ['light', 'dark']) {
     await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample]')).toHaveCount(0);
     await expectToolbarActionsUnmoved(page, actions);
     await startTour(page);
-    await expect(guideRoot(page)).toContainText('Step 1 of 9');
+    await expect(guideRoot(page)).toContainText('Step 1 of 10');
     await page.keyboard.press('Escape');
     await expect(guideRoot(page)).toHaveCount(0);
     await expectToolbarActionsUnmoved(page, actions);
@@ -314,10 +314,18 @@ for (const theme of ['light', 'dark']) {
       await expect(lists).not.toContainText('Unidentified');
     };
     const expectedTitles = ['Choose your source', 'Return to your channels', 'Search for trunked systems',
-      'Choose a channel to start', 'Start receiving', 'Ready when you are', 'Open your listening choices', 'Choose what you hear'];
+      'Choose a channel to start', 'Start receiving', 'Ready when you are', 'Listen as you browse',
+      'Open your listening choices', 'Choose what you hear'];
     for (const title of expectedTitles) {
       await guideRoot(page).getByRole('button', { name: 'Next', exact: true }).click();
       await expect(guideRoot(page)).toContainText(title);
+      if (title === 'Listen as you browse') {
+        await expect(guideRoot(page)).toHaveAttribute('data-guide-step', 'player-overview');
+        await expectSpotlightOn(page, player);
+        await expect(player.locator('.audio-dock-lists-trigger:visible').first()).toBeVisible();
+        await expect(player.locator('.audio-dock-selection-list')).toHaveCount(0);
+        await expect(guideRoot(page)).toContainText('The player plays completed calls from the Scan Lists you choose.');
+      }
     }
     await expectListeningStep();
     await page.screenshot({ path: testInfo.outputPath(`channel-listening-step-${theme}.png`) });

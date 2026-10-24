@@ -151,7 +151,7 @@ async function installLiveStream(page) {
 
 async function install(page) {
   await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['tuners', 3], ['tuner-spectrum', 4]]) {
+    for (const [id, version] of [['welcome', 1], ['tuners', 3], ['tuner-spectrum', 5]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:spectrum-drag-tests:${id}:${version}`, '1');
     }
   });

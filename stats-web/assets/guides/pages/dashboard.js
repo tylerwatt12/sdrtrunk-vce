@@ -1,4 +1,5 @@
 import { pageGuidePresentation } from '../presentation.js?v=1';
+import { contextualTargets } from '../context.js?v=1';
 
 function targets(documentValue, name) {
   return () => [...(documentValue?.querySelectorAll(`[data-guide-target="mn-${name}"]`) || [])];
@@ -16,6 +17,12 @@ export function mainOverviewItems(canAccess) {
 
 export function mainSteps(documentValue, preparePlayer, preparePage, canView, canAccess) {
   const radio = typeof canAccess !== 'function' || canAccess('radio') !== false;
+  const contexts = {
+    reception: '[data-directory-card-key]', 'calls-tab': '.ui-page-nav-tabs',
+    'call-history': '.dashboard-call-activity', 'activity-tab': '.ui-page-nav-tabs',
+    'event-type': '.dashboard-activity-layout', 'inventory-tab': '.ui-page-nav-tabs',
+    'alias-list': '.alias-coverage-header', 'unknown-tab': '.alias-coverage-table-header'
+  };
   const steps = [
     { id: 'systems', title: 'Your systems and sites',
       paragraphs: ['Sites are grouped under their radio system.' + (radio ?
@@ -48,10 +55,13 @@ export function mainSteps(documentValue, preparePlayer, preparePage, canView, ca
     { id: 'unknown', title: 'Identify traffic worth naming', radio: true,
       paragraphs: ['Review the talkgroup IDs, calls, and channels to help identify traffic worth naming. Select an identity to explore its history.'] }
   ].filter(step => !step.radio || radio);
-  return steps.map(({ radio: requiresRadio, ...step }, index) => ({ ...step,
-    compact: !['systems', 'call-totals', 'call-history', 'identities', 'configured', 'unknown'].includes(step.id),
-    targets: targets(documentValue, step.id),
-    nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...pageGuidePresentation('dashboard', step.id, preparePlayer, preparePage, { restoreScroll: true })
-  }));
+  return steps.map(({ radio: requiresRadio, ...step }, index) => {
+    const focus = targets(documentValue, step.id);
+    return { ...step,
+      compact: !['systems', 'call-totals', 'call-history', 'identities', 'configured', 'unknown'].includes(step.id),
+      targets: focus, contextTargets: contextualTargets(focus, contexts[step.id]),
+      nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
+      ...pageGuidePresentation('dashboard', step.id, preparePlayer, preparePage, { restoreScroll: true })
+    };
+  });
 }
