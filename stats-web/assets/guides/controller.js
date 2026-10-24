@@ -1,6 +1,6 @@
 import { openSetupGuide } from '../core/setup-guide.js?v=18';
 import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=28';
-import { createGuideMemory } from './persistence.js?v=1';
+import { createGuideMemory } from './persistence.js?v=2';
 
 const sessionKey = (context) => JSON.stringify([context.account || '', context.dismissalScope || '',
   context.authenticated === true]);
@@ -9,8 +9,10 @@ const visitKey = (context) => `${sessionKey(context)}:${context.view}${context.v
 // The application calls pageReady after a successful route render and close when
 // rendering/signing out starts. Tour state stays independent of page builders.
 export function createGuideController({ ui, getContext, navigate, consumeGuide, preparePlayer, preparePage,
-  documentValue = globalThis.document, storage, openGuide = openSetupGuide }) {
-  const memory = createGuideMemory(storage);
+  documentValue = globalThis.document, storage, fetchDocument, onHistoryError, onHistorySaved,
+  openGuide = openSetupGuide }) {
+  const memory = createGuideMemory(storage, { fetchDocument, onError: onHistoryError, onSaved: onHistorySaved,
+    definitions: [{ id: 'welcome', version: createGuideDefinition('welcome').version }, ...Object.values(pageGuideTemplates)] });
   let active = null;
   let generation = 0;
   let destroyed = false;
@@ -36,6 +38,7 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
     if (key === currentVisit) return;
     clearActive();
     currentVisit = key;
+    void memory.synchronize(context);
     suppressAutomatic = false;
     consumedRequest = null;
     if (replayOnPage && (replayOnPage.session !== sessionKey(context) || replayOnPage.id !== context.view)) {
@@ -113,8 +116,8 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
     });
   }
 
-  function pageReady() {
-    if (destroyed) return Promise.resolve(false);
+  async function pageReady() {
+    if (destroyed) return false;
     const context = { ...getContext() };
     updateVisit(context);
     if (active) {
@@ -147,6 +150,9 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
       return present(context.view, true);
     }
     if (!eligible(context, false) || suppressAutomatic) return Promise.resolve(false);
+    const expectedGeneration = generation;
+    if (!await memory.synchronize(context) || !contextMatches(context) || expectedGeneration !== generation ||
+        active || suppressAutomatic || getContext().canPresent === false) return false;
     const welcome = definitionFor('welcome', context);
     if (!memory.has(context, welcome)) return present('welcome', false);
     const page = definitionFor(context.view, context);
@@ -158,7 +164,9 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
     pageReady,
     openPage: () => present(getContext().view, true),
     openWelcome: () => present('welcome', true),
+    synchronizeAccount: () => { updateVisit({ ...getContext() }); return memory.synchronize(getContext()); },
+    retryHistory: () => memory.retry(getContext()),
     close: clearActive,
-    destroy() { destroyed = true; replayOnPage = null; clearActive(); }
+    destroy() { destroyed = true; replayOnPage = null; clearActive(); memory.destroy(); }
   };
 }

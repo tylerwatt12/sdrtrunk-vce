@@ -886,7 +886,11 @@ async function main() {
     /@media \(max-width: 560px\)[\s\S]*?\.topbar \{[^}]*grid-template-columns: var\(--icon-action-size\) minmax\(78px, 1fr\) max-content;[^}]*gap: 10px;[^}]*padding: 5px 8px;[\s\S]*?\.brand \{[^}]*width: 78px;[^}]*min-width: 78px;/);
   assert.match(appCssSource, /\.preference-status \{/);
   assert.match(functionBinding(appSource, 'showUserPreferenceError'),
-    /preference-status ui-notice ui-notice-danger/);
+    /applicationNoticeStack\(\)/);
+  assert.match(functionBinding(appSource, 'showUserPreferenceError'),
+    /ui-notice ui-notice-danger ui-action-row/);
+  assert.match(functionBinding(appSource, 'applicationNoticeStack'), /preference-status preference-status-stack/);
+  assert.match(appCssSource, /\.preference-status-stack\s*\{\s*display: grid;/);
   assert.doesNotMatch(appSource, /logging-notice/);
   assert.doesNotMatch(appCssSource, /\.logging-notice\b|\.preference-status\.preference-error/);
   const settingsSource = functionBinding(appSource, 'renderSettings');

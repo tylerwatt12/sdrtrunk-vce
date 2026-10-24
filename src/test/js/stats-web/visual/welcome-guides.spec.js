@@ -73,7 +73,8 @@ for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width: 1440, height: 1000 });
     const writes = [];
     page.on('request', request => {
-      if (new URL(request.url()).pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method())) {
+      if (new URL(request.url()).pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method()) &&
+          !(request.method() === 'PUT' && new URL(request.url()).pathname === '/api/v1/me/tour-dismissals')) {
         writes.push(`${request.method()} ${new URL(request.url()).pathname}`);
       }
     });

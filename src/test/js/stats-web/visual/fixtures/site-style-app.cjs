@@ -318,6 +318,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
   const preferences = structuredClone(defaults);
   preferences.appearance.theme = theme;
   const state = { unexpected: [], requests: [], pageErrors: [] };
+  state.tourDismissals = { version: 1, dismissed: {} };
   page.on('pageerror', error => state.pageErrors.push(error.message));
   await page.clock.setFixedTime(new Date(now));
   // Most fixtures inspect existing page workflows. Tour tests opt into a fresh
@@ -355,6 +356,13 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     const request = route.request(), url = new URL(request.url()), p = decodeURIComponent(url.pathname);
     state.requests.push(p);
     const respond = data => route.fulfill({ json: { data } });
+    if (p === '/api/v1/me/tour-dismissals') {
+      if (request.method() === 'PUT') {
+        for (const [id, version] of Object.entries(request.postDataJSON().dismissed))
+          state.tourDismissals.dismissed[id] = Math.max(state.tourDismissals.dismissed[id] || 0, version);
+      }
+      return respond(state.tourDismissals);
+    }
     if (p === '/api/v1/activity/message-types') return respond([]);
     if (p === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
     if (p === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,

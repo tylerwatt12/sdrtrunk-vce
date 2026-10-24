@@ -27,7 +27,8 @@ async function installTopics(page, { theme = 'light', firstVisit = false, connec
   page.on('request', request => {
     const url = new URL(request.url());
     if (!url.pathname.startsWith('/api/v1/')) return;
-    if (!['GET', 'HEAD'].includes(request.method()) && url.pathname !== '/api/v1/live/multiplex/control')
+    if (!['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals') && url.pathname !== '/api/v1/live/multiplex/control')
       effects.writes.push(`${request.method()} ${url.pathname}`);
     if (/guide-fire-activity|guide-receiver-health|guide-topic|guide-alert/.test(decodeURIComponent(url.pathname + url.search + (request.postData() || ''))))
       effects.samples.push(`${request.method()} ${url.pathname}`);

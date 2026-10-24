@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=30';
+import { createGuideController } from './guides/controller.js?v=31';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -323,7 +323,7 @@ function clearUserPreferenceError() {
   const status = document.getElementById('preference-status');
   if (!status) return;
   status.hidden = true;
-  status.className = 'preference-status ui-notice';
+  status.className = 'ui-notice';
   status.setAttribute('role', 'status');
   status.replaceChildren();
 }
@@ -332,6 +332,7 @@ function showUserPreferenceError(error, retry = null, saveFailed = false) {
   userPreferenceError = error instanceof Error ? error : new Error('My Settings are unavailable.');
   const status = document.getElementById('preference-status');
   if (!status) return;
+  applicationNoticeStack();
   const retryable = typeof retry === 'function';
   const message = error?.code === 'preference_conflict' ?
     (error.reloadError ? 'My Settings changed in another session, but the current values could not be reloaded.' :
@@ -339,7 +340,7 @@ function showUserPreferenceError(error, retry = null, saveFailed = false) {
     (saveFailed ? 'My Settings could not be saved. Your previous values are still active.' :
       'My Settings are unavailable.');
   status.hidden = false;
-  status.className = 'preference-status ui-notice ui-notice-danger';
+  status.className = 'ui-notice ui-notice-danger ui-action-row';
   status.setAttribute('role', 'alert');
   const actions = node('span', 'preference-status-actions');
   if (retryable) {
@@ -359,6 +360,18 @@ function showUserPreferenceError(error, retry = null, saveFailed = false) {
   dismiss.addEventListener('click', clearUserPreferenceError);
   actions.append(dismiss);
   status.replaceChildren(node('span', 'preference-status-message', message), actions);
+}
+
+function applicationNoticeStack() {
+  let stack = document.getElementById('application-notices');
+  if (!stack) {
+    stack = node('div', 'preference-status preference-status-stack');
+    stack.id = 'application-notices';
+    const preferences = document.getElementById('preference-status');
+    preferences?.before(stack);
+    if (preferences) { preferences.classList.remove('preference-status'); stack.append(preferences); }
+  }
+  return stack;
 }
 
 async function jsonDocumentFetch(path, options = {}) {
@@ -415,6 +428,8 @@ function applyUserPreferenceSnapshot(snapshot) {
 }
 
 async function synchronizeUserPreferences() {
+  // Abort old account history requests as soon as the confirmed sign-in changes.
+  void guideController.synchronizeAccount();
   const identity = accessSession.authenticated ? accessSession.username : null;
   const snapshot = userPreferenceController.snapshot();
   if (snapshot.identity === identity && (identity === null || snapshot.loaded)) return snapshot;
@@ -35970,6 +35985,9 @@ const pageGuideButton = document.getElementById('page-guide-button');
 let guidePageReady = false;
 const guideController = createGuideController({
   ui: { node, openReadOnlyModal, mountAccessWireframe, guideSampleData },
+  fetchDocument: jsonDocumentFetch,
+  onHistoryError: (error, { kind, retry }) => showGuideHistoryError(kind, retry),
+  onHistorySaved: () => document.getElementById('guide-history-status')?.remove(),
   getContext: () => ({
     view: routeFoundation.requestedView(route),
     adminTab: route.get('tab') || 'health',
@@ -35993,6 +36011,27 @@ const guideController = createGuideController({
   preparePlayer: (options) => audioDock.prepareGuide(options),
   preparePage: preparePageGuideSample
 });
+
+function showGuideHistoryError(kind, retry) {
+  let status = document.getElementById('guide-history-status');
+  if (!status) {
+    status = node('div', 'ui-notice ui-notice-danger ui-action-row ui-action-row-start');
+    status.id = 'guide-history-status';
+    status.setAttribute('role', 'alert');
+    applicationNoticeStack().append(status);
+  }
+  const retryButton = node('button', 'ui-button ui-button-secondary', 'Retry');
+  retryButton.type = 'button';
+  retryButton.addEventListener('click', () => {
+    retryButton.disabled = true;
+    void retry().finally(() => { if (retryButton.isConnected) retryButton.disabled = false; });
+  });
+  status.replaceChildren(node('span', 'preference-status-message', kind === 'save' ?
+    'Your tour dismissal could not be saved to your account. VCE will retry.' :
+    'Tour history could not be loaded. You can still open guides with ?.'),
+  node('span', 'preference-status-actions'));
+  status.lastChild.append(retryButton);
+}
 
 function synchronizePageGuideButton() {
   if (pageGuideButton) pageGuideButton.hidden = !guideDesktopLayout.matches || !guidePageReady;

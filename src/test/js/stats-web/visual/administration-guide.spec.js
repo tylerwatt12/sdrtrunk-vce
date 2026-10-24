@@ -37,7 +37,8 @@ async function installAdministration(page, { theme = 'light', tab = 'health', re
     const url = new URL(request.url());
     if (!url.pathname.startsWith('/api/v1/')) return;
     effects.requests.push(`${request.method()} ${url.pathname}`);
-    if (!['GET', 'HEAD'].includes(request.method()) && url.pathname !== '/api/v1/live/multiplex/control')
+    if (!['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals') && url.pathname !== '/api/v1/live/multiplex/control')
       effects.writes.push(`${request.method()} ${url.pathname}`);
   });
   page.on('websocket', socket => effects.sockets.push(socket.url()));

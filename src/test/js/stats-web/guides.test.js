@@ -1290,6 +1290,17 @@ async function checkGuides(assetsRoot) {
     const navigations = [];
     const context = { view: 'channel-setup', account: 'alice', dismissalScope: 'install-1',
       authenticated: true, isDesktop: true, canPresent: true, canSetup: true, ...overrides.context };
+    const accountHistory = new Map();
+    const fetchDocument = async (_, options) => {
+      const key = JSON.stringify([context.account, context.dismissalScope]);
+      const dismissed = { ...(accountHistory.get(key) || {}) };
+      if (options.method === 'PUT') {
+        for (const [id, version] of Object.entries(JSON.parse(options.body).dismissed))
+          dismissed[id] = Math.max(dismissed[id] || 0, version);
+        accountHistory.set(key, dismissed);
+      }
+      return { ok: true, status: 200, json: async () => ({ data: { version: 1, dismissed } }) };
+    };
     const openGuide = (_, options) => {
       const presentation = { options, closed: false, ready: overrides.ready?.() ?? Promise.resolve(true),
         isOpen() { return !this.closed; }, close() { this.closed = true; } };
@@ -1298,14 +1309,16 @@ async function checkGuides(assetsRoot) {
     };
     const controller = createGuideController({ ui: {}, getContext: () => context, openGuide,
       storage: overrides.storage || { getItem: (key) => stored.get(key), setItem: (key, value) => stored.set(key, value) },
+      fetchDocument: overrides.fetchDocument || fetchDocument,
       navigate: (view) => { navigations.push(view); context.view = view; },
       consumeGuide: () => { context.guide = null; }, preparePage: overrides.preparePage, documentValue: null });
     const finish = () => { shown.at(-1).closed = true; shown.at(-1).options.onComplete(); };
     const dismiss = () => { shown.at(-1).closed = true; shown.at(-1).options.onDismiss(); };
-    return { controller, context, shown, stored, navigations, finish, dismiss };
+    return { controller, context, shown, stored, accountHistory, navigations, finish, dismiss };
   };
 
   const adminChapter = makeHarness({ context: { view: 'admin', adminTab: 'health' } });
+  adminChapter.stored.set('sdrtrunk-vce-guide:v1:alice:install-1:welcome:1', '1');
   await adminChapter.controller.openPage();
   const healthOverview = adminChapter.shown.at(-1);
   assert.equal(healthOverview.options.adminTab, 'health', 'Help starts with the current Administration section.');
@@ -1320,7 +1333,8 @@ async function checkGuides(assetsRoot) {
   assert.equal(recordingChapter.options.steps[0].id, 'overview', 'Back can return to the common chapter chooser.');
   assert.equal(adminChapter.context.adminTab, 'health', 'A sample chapter keeps the real route unchanged.');
   assert.equal(adminChapter.navigations.length, 0);
-  assert.equal(adminChapter.stored.size, 0, 'Changing chapters does not dismiss or complete Administration.');
+  assert.equal([...adminChapter.stored.keys()].some(key => /:admin:/.test(key)), false,
+    'Changing chapters does not dismiss or complete Administration.');
   const shownBeforeStaleChoice = adminChapter.shown.length;
   assert.equal(healthOverview.options.onChoice('computer'), false, 'A replaced overview cannot reopen another chapter.');
   assert.equal(adminChapter.shown.length, shownBeforeStaleChoice);
@@ -1658,7 +1672,9 @@ async function checkGuides(assetsRoot) {
   assert.equal(deferred.shown[0].closed, true, 'A modal resolving after the account changes is closed.');
   assert.equal(deferred.stored.size, 0, 'A stale presentation cannot dismiss the new account’s guide.');
   const routeDeferred = makeHarness({ ready: () => new Promise((resolve) => { resolveReady = resolve; }) });
+  await routeDeferred.controller.synchronizeAccount();
   const routePending = routeDeferred.controller.pageReady();
+  await Promise.resolve();
   routeDeferred.context.view = 'settings';
   resolveReady(true);
   assert.equal(await routePending, false);

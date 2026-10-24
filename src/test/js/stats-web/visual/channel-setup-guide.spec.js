@@ -219,7 +219,8 @@ for (const theme of ['light', 'dark']) {
     await page.keyboard.press('Escape');
     const writes = [], navigations = [];
     page.on('request', request => {
-      if (new URL(request.url()).pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method())) writes.push(request.url());
+      if (new URL(request.url()).pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method()) &&
+          !(request.method() === 'PUT' && new URL(request.url()).pathname === '/api/v1/me/tour-dismissals')) writes.push(request.url());
     });
     page.on('framenavigated', frame => { if (frame === page.mainFrame()) navigations.push(frame.url()); });
     await page.locator('#page-guide-button').click();
@@ -391,7 +392,8 @@ test('receiving sample keeps real filters and selection, ignores actions, and re
   const writes = [], sampleRequests = [];
   page.on('request', request => {
     const path = new URL(request.url()).pathname;
-    if (path.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method())) writes.push(path);
+    if (path.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && path === '/api/v1/me/tour-dismissals')) writes.push(path);
     if (path.includes('guide-sample-channel')) sampleRequests.push(path);
   });
   const { fixture, state } = await openChannels(page, { channels: [savedChannel] });

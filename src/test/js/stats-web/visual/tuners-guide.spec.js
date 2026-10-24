@@ -29,7 +29,8 @@ async function openTuners(page, { theme = 'light', replay = true, firstVisit = f
   page.on('request', request => {
     const url = new URL(request.url());
     if (url.pathname.startsWith('/api/v1/') && url.pathname !== '/api/v1/live/multiplex/control' &&
-        !['GET', 'HEAD'].includes(request.method())) {
+        !['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals')) {
       requests.writes.push(`${request.method()} ${url.pathname}`);
     }
     if (url.pathname === '/api/v1/live/multiplex/control') requests.liveControls.push(request.postDataJSON());

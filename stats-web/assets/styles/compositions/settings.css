@@ -840,6 +840,10 @@
   min-width: 0;
 }
 
+.preference-status-stack {
+  display: grid;
+}
+
 .preference-status-actions {
   flex: 0 0 auto;
   display: inline-flex;

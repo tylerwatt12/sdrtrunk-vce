@@ -29,9 +29,10 @@ async function openLive(page, { theme = 'light', replay = true, firstVisit = fal
   page.on('request', request => {
     const url = new URL(request.url());
     if (!url.pathname.startsWith('/api/v1/')) return;
-    if (!['GET', 'HEAD'].includes(request.method()) && url.pathname !== '/api/v1/live/multiplex/control')
+    if (!['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals') && url.pathname !== '/api/v1/live/multiplex/control')
       effects.writes.push(`${request.method()} ${url.pathname}`);
-    if (/guide-|sample-|tour-/.test(url.pathname + (request.postData() || '')))
+    if (url.pathname !== '/api/v1/me/tour-dismissals' && /guide-|sample-|tour-/.test(url.pathname + (request.postData() || '')))
       effects.samples.push(`${request.method()} ${url.pathname}`);
     if (/audio/.test(url.pathname)) effects.audio.push(url.pathname);
     if (url.pathname === '/api/v1/live/multiplex/control') effects.controls.push(request.postDataJSON());

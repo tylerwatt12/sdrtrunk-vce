@@ -67,7 +67,8 @@ async function openScanLists(page, { theme = 'light', replay = true, firstVisit 
   const requests = { writes: [], audio: [], samples: [], external: [] };
   page.on('request', request => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method())) {
+    if (url.pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals')) {
       requests.writes.push(`${request.method()} ${url.pathname}`);
     }
     if (/\/audio(?:$|\/)/.test(url.pathname)) requests.audio.push(url.pathname);

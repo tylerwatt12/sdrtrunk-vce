@@ -21,7 +21,8 @@ function observeEffects(page) {
   page.on('request', request => {
     const url = new URL(request.url());
     if (!url.pathname.startsWith('/api/v1/')) return;
-    if (!['GET', 'HEAD'].includes(request.method()) && url.pathname !== '/api/v1/live/multiplex/control')
+    if (!['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals') && url.pathname !== '/api/v1/live/multiplex/control')
       effects.writes.push(`${request.method()} ${url.pathname}`);
     if (/guide-scanner|scanner-guide|sample-scanner|tour-scanner|b00ba000|p25:bee00:(123|456)|v1-[rg]-bee00|\b950[12]\b/i
       .test(decodeURIComponent(url.pathname + url.search + (request.postData() || ''))))

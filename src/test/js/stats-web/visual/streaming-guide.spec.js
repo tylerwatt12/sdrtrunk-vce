@@ -22,7 +22,8 @@ async function openStreaming(page, { theme = 'light', replay = true, firstVisit 
   const requests = { writes: [], samplePaths: [], audio: [] };
   page.on('request', request => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method())) {
+    if (url.pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals')) {
       requests.writes.push(`${request.method()} ${url.pathname}`);
     }
     if (/guide-sample|sample-stream|example-stream/.test(url.pathname)) requests.samplePaths.push(url.pathname);

@@ -34,7 +34,8 @@ async function openRadioReference(page, { theme = 'light', replay = true, firstV
   const requests = { writes: [], samplePaths: [], external: [], audio: [] };
   page.on('request', request => {
     const url = new URL(request.url());
-    if (url.pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method())) {
+    if (url.pathname.startsWith('/api/v1/') && !['GET', 'HEAD'].includes(request.method()) &&
+        !(request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals')) {
       requests.writes.push(`${request.method()} ${url.pathname}`);
     }
     if (/guide-sample|example-county|sample-preview/.test(url.pathname)) requests.samplePaths.push(url.pathname);

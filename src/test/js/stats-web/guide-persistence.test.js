@@ -15,29 +15,34 @@ async function checkGuidePersistence(assetsRoot) {
   assert.equal(guideStorageKey('alice', null, 'welcome'), null);
   assert.equal(guideStorageKey('alice', '  ', 'welcome'), null);
 
-  const saved = new Map();
-  const storage = { getItem: (key) => saved.get(key), setItem: (key, value) => saved.set(key, value) };
-  const persistent = createGuideMemory(storage);
-  assert.equal(persistent.has(context, guide), false);
-  persistent.remember(context, guide);
-  assert.equal(createGuideMemory(storage).has(context, guide), true, 'The dismissal survives a fresh browser session.');
-  assert.equal(createGuideMemory(storage).has({ ...context, account: 'bob' }, guide), false);
-  assert.equal(createGuideMemory(storage).has({ ...context, dismissalScope: 'install-2' }, guide), false);
-  assert.equal(createGuideMemory(storage).has(context, { ...guide, version: 2 }), false);
-
+  const dismissed = {};
+  const fetchDocument = async (_, options) => {
+    if (options.method === 'PUT') Object.assign(dismissed, JSON.parse(options.body).dismissed);
+    return { ok: true, status: 200, json: async () => ({ data: { version: 1, dismissed: { ...dismissed } } }) };
+  };
   const blockedStorage = { getItem() { throw new Error('Blocked'); }, setItem() { throw new Error('Blocked'); } };
-  const memory = createGuideMemory(blockedStorage);
-  assert.equal(memory.has(context, guide), false);
-  memory.remember(context, guide);
-  assert.equal(memory.has(context, guide), true, 'Storage denial keeps a usable in-memory dismissal.');
-  assert.equal(memory.has({ ...context, dismissalScope: 'install-2' }, guide), false);
+  const authenticated = { ...context, authenticated: true };
+  const memory = createGuideMemory(blockedStorage, { definitions: [guide], fetchDocument });
+  await memory.synchronize(authenticated);
+  assert.equal(memory.has(authenticated, guide), false);
+  memory.remember(authenticated, guide);
+  await memory.retry(authenticated);
+  assert.equal(memory.has(authenticated, guide), true, 'Storage denial still permits account-backed dismissal.');
+  assert.equal(memory.has({ ...authenticated, dismissalScope: 'install-2' }, guide), false);
+  memory.destroy();
+
   const unknownScope = createGuideMemory({ getItem() { assert.fail('An unknown scope must not read persistent state.'); },
-    setItem() { assert.fail('An unknown scope must not write persistent state.'); } });
-  assert.equal(unknownScope.has({ account: 'alice' }, guide), false);
-  unknownScope.remember({ account: 'alice' }, guide);
-  assert.equal(unknownScope.has({ account: 'alice' }, guide), true);
-  assert.equal(unknownScope.has({ account: 'bob' }, guide), false);
-  console.log('Guide persistence, account/installation/version isolation, and blocked-storage fallback checks passed.');
+    setItem() { assert.fail('An unknown scope must not write persistent state.'); } }, {
+    definitions: [guide], fetchDocument() { assert.fail('An unknown or anonymous account cannot read account history.'); }
+  });
+  const unidentified = { account: 'alice', authenticated: true };
+  assert.equal(await unknownScope.synchronize(unidentified), false);
+  unknownScope.remember(unidentified, guide);
+  assert.equal(unknownScope.has(unidentified, guide), false);
+  assert.equal(await unknownScope.synchronize({ ...authenticated, authenticated: false }), false);
+  unknownScope.destroy();
+  await require('./guide-history.test.js').checkGuideHistory(assets);
+  console.log('Guide keys, account/installation/version isolation, and blocked-storage account persistence checks passed.');
 }
 module.exports = { checkGuidePersistence };
 if (require.main === module) checkGuidePersistence().catch((error) => { console.error(error); process.exitCode = 1; });
