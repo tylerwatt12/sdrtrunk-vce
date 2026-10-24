@@ -5,7 +5,7 @@ import { channelSetupSteps } from './pages/channel-setup.js?v=3';
 import { aliasesSteps } from './pages/aliases.js?v=3';
 import { radioReferenceSteps } from './pages/radioreference.js?v=3';
 import { streamingSteps } from './pages/streaming.js?v=4';
-import { tunersSteps } from './pages/tuners.js?v=4';
+import { tunersSteps } from './pages/tuners.js?v=5';
 import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=7';
 import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=3';
 import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=3';
@@ -64,7 +64,9 @@ const pageOverviewCopy = Object.freeze({
   streaming: ['Share your radio traffic',
     'Send received radio traffic to services such as Broadcastify, OpenMHz, and RadioResolve. Alias assignments choose which calls each destination receives.'],
   tuners: ['One receiver, several channels',
-    'Each tuner receives a window of spectrum. VCE creates receiving channels within its usable bandwidth as needed, including conventional channels, trunked control channels, and temporary voice channels. Center frequency positions that window.'],
+    'Each tuner receives a window of spectrum. VCE creates receiving channels within its usable bandwidth as needed, including conventional channels, trunked control channels, and temporary voice channels. Center frequency positions that window.',
+    'SDR models have different usable bandwidths. Adding tuners lets VCE cover more frequencies at once, helping prevent missed calls as voice traffic moves across the system.',
+    'This example follows one trunked system with two RTL-SDRs. Switch to one Airspy to see all the example frequencies fit inside its wider usable bandwidth.'],
   admin: ['Administration',
     'Administration controls how this receiver operates and how other people use it. Set what gets saved, how long it stays available, and who can view or listen.',
     'When reception or playback needs investigating, the status and diagnostic pages help you work out what happened.'],

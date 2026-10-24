@@ -1,112 +1,117 @@
-// Fictional receiving windows. This illustration owns only its animation and DOM;
-// the actual tuner page and receiver remain untouched throughout the overview.
+// Fictional receiving windows. Both hardware examples follow the same calls;
+// the actual tuner page, saved settings and receiver remain untouched.
 const freezeRows = rows => Object.freeze(rows.map(row => Object.freeze(row)));
-const templates = freezeRows([
-  { key: 'fire', name: 'Fire Dispatch', frequency: 856.4125, duration: 3, type: 'conventional' },
-  { key: 'regional', name: 'Regional Fire', frequency: 857.9125, duration: 3.5, type: 'voice' },
-  { key: 'sheriff', name: 'Sheriff', frequency: 856.9125, duration: 3.75, type: 'voice' },
-  { key: 'regional', name: 'Regional Fire', frequency: 857.9125, duration: 3.5, type: 'voice' },
-  { key: 'city-fire', name: 'City Fire', frequency: 861.5125, duration: 4.25, type: 'voice' },
-  { key: 'distant', name: 'Distant voice call', frequency: 868.1125, duration: 3, type: 'voice' },
-  { key: 'public-works', name: 'Public Works', frequency: 865.8125, duration: 2.75, type: 'voice' },
-  { key: 'ems', name: 'County EMS', frequency: 856.8125, duration: 3.25, type: 'voice' },
-  { key: 'city-police', name: 'City Police', frequency: 863.5125, duration: 4, type: 'voice' },
-  { key: 'county-tac', name: 'Sheriff Tactical', frequency: 857.1125, duration: 3.25, type: 'voice' },
-  { key: 'utilities', name: 'Utilities', frequency: 859.5125, duration: 2.5, type: 'voice' },
-  { key: 'city-ems', name: 'City EMS', frequency: 862.8125, duration: 4.25, type: 'voice' }
-]);
-const initialIds = ['fire', 'regional-missed', 'sheriff', 'regional-later', 'city-fire', 'distant-followed',
-  'public-works', 'ems', 'city-police', 'county-tac', 'utilities', 'city-ems'];
-const variedSlots = [0, 2, 4, 5, 6, 7, 8, 9, 10, 11];
-let namedLaterDistant = false;
-const calls = freezeRows(Array.from({ length: 80 }, (_, index) => {
-  const batch = Math.floor(index / templates.length), slot = index % templates.length;
-  // Vary ordering and lengths while leaving clear gaps between transmissions
-  // for receiver changes, including the receiving-window reset at the loop boundary.
-  const rotation = batch ? (batch * 7 + Math.floor(batch / 3)) % variedSlots.length : 0;
-  const sourceSlot = slot === 1 || slot === 3 ? slot :
-    variedSlots[(variedSlots.indexOf(slot) + rotation) % variedSlots.length];
-  const template = templates[sourceSlot], start = .75 + index * 4.5;
-  const variedDuration = template.key === 'regional' || !batch ? template.duration :
-    template.duration + ((index * 7 + batch) % 5 - 2) * .2;
-  const duration = Math.min(variedDuration, 4, 359.75 - start);
-  let id = batch ? `call-${index}-${template.key}` : initialIds[slot];
-  if (batch && template.key === 'distant' && !namedLaterDistant) { id = 'distant-later'; namedLaterDistant = true; }
-  return { id, name: template.name, frequency: template.frequency, start, end: start + duration, type: template.type };
-}));
-const rtl = Object.freeze({ name: 'RTL-SDR R820T2', sampleRate: 2.4, usableBandwidth: 2.352 });
+const rtl = Object.freeze({ name: 'RTL-SDR R820T2', sampleRate: 2.4, usableBandwidth: 2.352, centerGap: .005 });
+// Match VCE's Airspy 10 MHz receiving geometry: 90% usable, no center exclusion.
+const airspy = Object.freeze({ name: 'Airspy', sampleRate: 10, usableBandwidth: 9, centerGap: 0 });
 const primaryCenter = 856.1625, initialCenter = 860.6625, unlockAt = 13.5;
-const fitsWindow = (frequency, center) => {
+const duration = 360, history = 24, speed = 6;
+const groups = [
+  ['Regional Fire', 857.9125, 'Regional Fireground', 858.1125],
+  ['City Police', 859.5125, 'City Police Tactical', 859.8125],
+  ['City Fire', 861.5125, 'City EMS', 861.8125],
+  ['County Roads', 862.8125, 'Public Works', 863.1125]
+];
+const groupOrder = [0, 2, 0, 3, 1, 2, 3, 0, 1, 3];
+const traffic = [];
+const addCall = (id, name, frequency, start, length) => traffic.push({ id, name, frequency,
+  start, end: Math.min(start + length, duration - .25), type: 'voice' });
+// Several conversations can occupy one receiving window at once. Each frequency
+// has a clear interval between transmissions, while calls elsewhere overlap it.
+const local = [['Fire Dispatch', 856.4125], ['Sheriff', 856.9125],
+  ['Sheriff Tactical', 857.1125], ['County EMS', 855.4125]];
+for (let index = 0; index < 120; index += 1) {
+  const [name, frequency] = local[index % local.length];
+  addCall(index === 0 ? 'fire' : index === 1 ? 'sheriff' : `local-${index}`, name,
+    frequency, .5 + index * 3, 4.2 + (index * 7 % 6) * .35);
+}
+for (let index = 0; index < 40; index += 1) {
+  const slot = groupOrder[index % groupOrder.length], group = groups[slot];
+  const start = .75 + index * 9;
+  const id = index === 0 ? 'regional-missed' : index === 2 ? 'regional-later' :
+    index === 3 ? 'distant-followed' : index === 6 ? 'distant-later' : `voice-${index}`;
+  addCall(id, group[0], group[1], start, 5 + index % 4 * .4);
+  addCall(`nearby-${index}`, group[2], group[3], start + .65, 4.8 + index % 3 * .4);
+  const other = groups[(slot + 1) % groups.length], farther = groups[(slot + 2) % groups.length];
+  addCall(`competing-${index}`, other[0], other[1], start + 1.5, 3.6 + index % 4 * .35);
+  addCall(`elsewhere-${index}`, farther[0], farther[1], start + 2.75, 3.5 + index % 3 * .45);
+}
+const calls = freezeRows(traffic.sort((a, b) => a.start - b.start || a.frequency - b.frequency));
+const fitsWindow = (frequency, center, hardware = rtl) => {
   const lower = frequency - .00625, upper = frequency + .00625;
-  return lower >= center - rtl.usableBandwidth / 2 && upper <= center + rtl.usableBandwidth / 2 &&
-    !(lower < center + .005 && upper > center - .005);
+  return lower >= center - hardware.usableBandwidth / 2 && upper <= center + hardware.usableBandwidth / 2 &&
+    (!hardware.centerGap || !(lower < center + hardware.centerGap && upper > center - hardware.centerGap));
 };
 const retunes = [];
 let movingCenter = initialCenter;
+let receiving = [];
 for (const call of calls) {
-  if (call.start < unlockAt || fitsWindow(call.frequency, primaryCenter) || fitsWindow(call.frequency, movingCenter)) continue;
+  receiving = receiving.filter(active => active.end > call.start - .25);
+  if (fitsWindow(call.frequency, primaryCenter)) continue;
+  if (fitsWindow(call.frequency, movingCenter)) { receiving.push(call); continue; }
+  // Keep every received call in coverage until it ends. A competing call outside
+  // both windows is missed when the roaming tuner is already receiving traffic.
+  if (call.start < unlockAt || receiving.length) continue;
   const center = call.frequency === 857.9125 ? 858.1625 : call.frequency - .35;
-  const end = call.id === 'regional-later' ? 14 : call.start - .125;
-  retunes.push({ start: call.id === 'regional-later' ? unlockAt : end - .125,
-    end, from: movingCenter, to: center });
+  retunes.push({ start: call.start - .25, end: call.start - .125, from: movingCenter, to: center });
   movingCenter = center;
+  receiving.push(call);
 }
-export const TUNER_COVERAGE_MODEL = Object.freeze({
-  duration: 360, history: 24, speed: 6, arrivalInterval: 4.5, unlockAt,
+const shared = { duration, history, speed, unlockAt, rtl, airspy, calls,
+  frequencyMin: 854, frequencyMax: 864.4,
   maximumCallDuration: Math.max(...calls.map(call => call.end - call.start)),
-  primaryCenter, initialCenter, rtl,
-  receivers: freezeRows([{ name: 'RTL-SDR 1', sampleRate: rtl.sampleRate, usableBandwidth: rtl.usableBandwidth },
-    { name: 'RTL-SDR 2', sampleRate: rtl.sampleRate, usableBandwidth: rtl.usableBandwidth }]),
-  controls: freezeRows([{ name: 'County P25 control', frequency: 856.6625 }]),
-  retunes: freezeRows(retunes),
-  calls
+  controls: freezeRows([{ name: 'County P25 control', frequency: 856.6625 }]) };
+export const TUNER_COVERAGE_EXAMPLES = Object.freeze({
+  rtl: Object.freeze({ ...shared, primaryCenter, initialCenter, retunes: freezeRows(retunes),
+    receivers: freezeRows([{ ...rtl, name: 'RTL-SDR 1' }, { ...rtl, name: 'RTL-SDR 2' }]) }),
+  airspy: Object.freeze({ ...shared, primaryCenter: 859.1625, initialCenter: 859.1625,
+    retunes: Object.freeze([]), receivers: freezeRows([{ ...airspy, name: 'Airspy' }]) })
 });
+export const TUNER_COVERAGE_MODEL = TUNER_COVERAGE_EXAMPLES.rtl;
+const exampleModel = example => example === 'airspy' ? TUNER_COVERAGE_EXAMPLES.airspy : TUNER_COVERAGE_MODEL;
 
 export function coverageTimeAt(time) {
-  const duration = TUNER_COVERAGE_MODEL.duration;
   return ((time % duration) + duration) % duration;
 }
 
-export function coverageCenterAt(time, includeRetune = true) {
-  const model = TUNER_COVERAGE_MODEL;
-  const phase = coverageTimeAt(time);
-  // Receiver retunes are discrete. Keeping the change discrete avoids depicting
-  // a sweep that could receive channels between the two actual placements.
-  if (includeRetune) {
-    for (let index = model.retunes.length - 1; index >= 0; index -= 1) {
-      if (phase >= model.retunes[index].end) return model.retunes[index].to;
-    }
+export function coverageCenterAt(time, includeRetune = true, example = 'rtl') {
+  const model = exampleModel(example), phase = coverageTimeAt(time);
+  // Retuning is a discrete placement change, not a sweep through the frequencies.
+  if (includeRetune) for (let index = model.retunes.length - 1; index >= 0; index -= 1) {
+    if (phase >= model.retunes[index].end) return model.retunes[index].to;
   }
   return model.initialCenter;
 }
 
 export function coverageCallsAt(time) {
-  const model = TUNER_COVERAGE_MODEL;
-  const first = Math.ceil((time - model.history - model.maximumCallDuration - .75) / model.arrivalInterval);
-  const last = Math.floor((time - .75) / model.arrivalInterval);
   const visible = [];
-  for (let index = first; index <= last; index += 1) {
-    const cycle = Math.floor(index / model.calls.length);
-    const sourceIndex = ((index % model.calls.length) + model.calls.length) % model.calls.length;
-    const call = model.calls[sourceIndex], offset = cycle * model.duration;
-    if (call.end + offset >= time - model.history) visible.push({ ...call, sourceId: call.id,
-      cycle, start: call.start + offset, end: call.end + offset });
+  // The shared schedule contains overlapping arrivals at irregular intervals.
+  // Include complete intersecting transmissions from both sides of the loop.
+  const first = Math.floor((time - history - TUNER_COVERAGE_MODEL.maximumCallDuration) / duration);
+  for (let cycle = first; cycle <= Math.floor(time / duration); cycle += 1) {
+    const offset = cycle * duration;
+    for (const call of calls) {
+      if (call.start + offset > time) break;
+      if (call.end + offset >= time - history) visible.push({ ...call, sourceId: call.id,
+        cycle, start: call.start + offset, end: call.end + offset });
+    }
   }
   return visible;
 }
 
-export function coverageReceiverFor(call, includeRetune = true) {
-  const model = TUNER_COVERAGE_MODEL;
-  if (fitsWindow(call.frequency, model.primaryCenter)) return model.receivers[0].name;
-  // A later retune cannot recover the beginning of an earlier missed call.
-  // Also retain full coverage for the duration of an already received call.
-  if (!fitsWindow(call.frequency, coverageCenterAt(call.start, includeRetune))) return null;
+export function coverageReceiverFor(call, includeRetune = true, example = 'rtl') {
+  const model = exampleModel(example);
+  if (fitsWindow(call.frequency, model.primaryCenter, model.receivers[0])) return model.receivers[0].name;
+  if (model.receivers.length < 2 || !fitsWindow(call.frequency,
+    coverageCenterAt(call.start, includeRetune, example), model.receivers[1])) return null;
+  // Later retunes never change the outcome of earlier waterfall traces.
   if (includeRetune && Number.isFinite(call.end)) {
-    const firstCycle = Math.floor(call.start / model.duration), lastCycle = Math.floor(call.end / model.duration);
+    const firstCycle = Math.floor(call.start / duration), lastCycle = Math.floor(call.end / duration);
     for (let cycle = firstCycle; cycle <= lastCycle; cycle += 1) {
       for (const boundary of [0, ...model.retunes.map(retune => retune.end)]) {
-        const moment = cycle * model.duration + boundary;
-        if (moment > call.start && moment < call.end && !fitsWindow(call.frequency, coverageCenterAt(moment))) return null;
+        const moment = cycle * duration + boundary;
+        if (moment > call.start && moment < call.end && !fitsWindow(call.frequency,
+          coverageCenterAt(moment, true, example), model.receivers[1])) return null;
       }
     }
   }
@@ -114,7 +119,7 @@ export function coverageReceiverFor(call, includeRetune = true) {
 }
 
 export function createTunerCoverageDiagram({ document, idPrefix }) {
-  const model = TUNER_COVERAGE_MODEL;
+  let example = 'rtl', model = TUNER_COVERAGE_MODEL;
   const windowValue = document.defaultView;
   const node = (tag, className = '', value = '') => {
     const item = document.createElement(tag);
@@ -132,18 +137,20 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
   root.dataset.guideDiagram = 'tuner-coverage';
   const receivers = node('div', 'ui-setup-guide-coverage-receivers');
   const secondaryMode = node('span', '', 'Locked');
-  for (const [name, detail, mode, className] of [
-    [model.receivers[0].name, '2.4 MHz sampled · 2.352 MHz usable', node('span', '', 'Locked'), 'rtl'],
-    [model.receivers[1].name, '2.4 MHz sampled · 2.352 MHz usable', secondaryMode, 'secondary']
-  ]) {
-    const receiver = node('div', 'ui-setup-guide-coverage-receiver');
-    const identity = node('div', 'ui-setup-guide-coverage-identity');
-    const key = node('i', `ui-setup-guide-coverage-key ${className}`);
-    key.setAttribute('aria-hidden', 'true');
-    identity.append(key, node('strong', '', name), mode);
-    receiver.append(identity, node('span', 'ui-setup-guide-coverage-detail', detail));
-    receivers.append(receiver);
-  }
+  const renderReceivers = () => {
+    receivers.replaceChildren();
+    model.receivers.forEach((hardware, index) => {
+      const receiver = node('div', 'ui-setup-guide-coverage-receiver');
+      const identity = node('div', 'ui-setup-guide-coverage-identity');
+      const key = node('i', `ui-setup-guide-coverage-key ${index ? 'secondary' : 'rtl'}`);
+      key.setAttribute('aria-hidden', 'true');
+      identity.append(key, node('strong', '', hardware.name), index ? secondaryMode : node('span', '', 'Locked'));
+      receiver.append(identity, node('span', 'ui-setup-guide-coverage-detail',
+        `${hardware.sampleRate} MHz sampled · ${hardware.usableBandwidth} MHz usable`));
+      receivers.append(receiver);
+    });
+  };
+  renderReceivers();
   const scene = node('div', 'ui-setup-guide-coverage-scene');
   scene.dataset.coverageScene = '';
   const sceneTitle = node('strong');
@@ -152,8 +159,7 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
   const svg = svgNode('svg', { class: 'ui-setup-guide-coverage-chart', role: 'img',
     'aria-labelledby': `${idPrefix}-title`, 'aria-describedby': `${idPrefix}-description` });
   const title = svgNode('title', { id: `${idPrefix}-title` }, 'Calls moving through receiving windows over time');
-  const description = svgNode('desc', { id: `${idPrefix}-description` },
-    'Frequency increases left to right. New transmissions appear at the top and move down into history. Colored windows show usable bandwidth. Solid calls are received; dashed calls outside coverage are missed. RTL-SDR 1 holds the control channel while unlocked RTL-SDR 2 hops between voice frequencies after each call ends.');
+  const description = svgNode('desc', { id: `${idPrefix}-description` });
   const legend = node('div', 'ui-setup-guide-coverage-legend');
   for (const [kind, text] of [['received', 'Received'], ['missed', 'Missed'],
     ['control', 'Control channel'], ['edge', 'Excluded edges']]) {
@@ -163,7 +169,19 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
     entry.append(key, node('span', '', text));
     legend.append(entry);
   }
-  root.append(receivers, scene, svg, legend);
+  const choices = node('div', 'ui-setup-guide-coverage-examples');
+  const toggle = node('div', 'ui-segmented');
+  toggle.setAttribute('role', 'group');
+  toggle.setAttribute('aria-label', 'Example tuner hardware');
+  const exampleButtons = Object.entries({ rtl: '2× RTL-SDR', airspy: '1× Airspy' }).map(([id, label]) => {
+    const button = node('button', 'ui-segmented-option', label);
+    button.type = 'button';
+    button.setAttribute('aria-pressed', String(id === example));
+    toggle.append(button);
+    return { id, button };
+  });
+  choices.append(node('strong', '', 'Example:'), toggle);
+  root.append(receivers, scene, svg, legend, choices);
 
   const mount = ({ signal } = {}) => {
     // This instructional simulation autoplays even under reduced-motion preferences.
@@ -172,7 +190,8 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
     let lastScene = '', width = 960;
     const left = 44, right = 12, top = 36, plotHeight = 132, height = 207;
     const clipId = `${idPrefix}-clip`, edgeId = `${idPrefix}-edge`;
-    const x = frequency => left + (frequency - 854.2) / (869.2 - 854.2) * (width - left - right);
+    const x = frequency => left + (frequency - model.frequencyMin) /
+      (model.frequencyMax - model.frequencyMin) * (width - left - right);
     const y = moment => top + (time - moment) / model.history * plotHeight;
     const defs = svgNode('defs'), clip = svgNode('clipPath', { id: clipId });
     const clipRect = svgNode('rect', { x: left, y: top, height: plotHeight });
@@ -193,10 +212,13 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
     svg.replaceChildren(title, description, defs, chart, annotations);
     const activeCalls = new Map();
     const sceneAt = () => {
+      if (example === 'airspy') return ['One wider window covers this system',
+        'The control channel and all these simultaneous voice calls fit inside the Airspy’s usable bandwidth.'];
       const phase = coverageTimeAt(time);
       if (phase < 5.25) return ['One tuner holds the control channel', 'RTL-SDR 1 receives the control channel and other frequencies inside its usable window.'];
       if (phase < model.unlockAt) return ['Locked windows stay in place', 'Regional Fire is beyond both usable windows, so that call is missed.'];
-      return ['The second tuner follows voice calls', 'Unlocked RTL-SDR 2 hops to new voice frequencies after each call. RTL-SDR 1 keeps the control channel in coverage.'];
+      return ['Busy traffic spreads across the system',
+        'RTL-SDR 2 retunes when its calls finish. Simultaneous calls beyond both windows are missed.'];
     };
     const drawBand = (paths, centerAt, usableHalf, sampledHalf, moments) => {
       const points = moments.map(moment => [moment, centerAt(moment)]);
@@ -211,10 +233,11 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
       root.dataset.time = coverageTimeAt(time).toFixed(2);
       root.dataset.cycle = String(Math.floor(time / model.duration));
       root.dataset.playing = String(playing);
+      root.dataset.example = example;
       root.dataset.rtlCenter = String(model.primaryCenter);
       root.dataset.primaryCenter = String(model.primaryCenter);
-      root.dataset.secondaryCenter = String(coverageCenterAt(time));
-      root.dataset.secondaryLocked = String(coverageTimeAt(time) < model.unlockAt);
+      root.dataset.secondaryCenter = example === 'rtl' ? String(coverageCenterAt(time)) : '';
+      root.dataset.secondaryLocked = String(example === 'rtl' && coverageTimeAt(time) < model.unlockAt);
       secondaryMode.textContent = coverageTimeAt(time) < model.unlockAt ? 'Locked' : 'Unlocked';
       const nextScene = sceneAt();
       if (nextScene[0] !== lastScene) {
@@ -229,18 +252,23 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
         }
       }
       moments.sort((a, b) => b - a);
-      drawBand(rtlPaths, () => model.primaryCenter, model.rtl.usableBandwidth / 2, model.rtl.sampleRate / 2,
+      const primaryHardware = model.receivers[0];
+      drawBand(rtlPaths, () => model.primaryCenter, primaryHardware.usableBandwidth / 2, primaryHardware.sampleRate / 2,
         [time, time - model.history]);
-      drawBand(secondaryPaths, coverageCenterAt, model.rtl.usableBandwidth / 2, model.rtl.sampleRate / 2, moments);
+      if (example === 'rtl') drawBand(secondaryPaths, coverageCenterAt,
+        model.rtl.usableBandwidth / 2, model.rtl.sampleRate / 2, moments);
+      else secondaryPaths.forEach(path => path.setAttribute('d', ''));
+      rtlCaption.textContent = model.receivers[0].name;
+      secondaryCaption.textContent = model.receivers[1]?.name || '';
       rtlCaption.setAttribute('x', x(model.primaryCenter));
-      secondaryCaption.setAttribute('x', x(coverageCenterAt(time)));
+      secondaryCaption.setAttribute('x', x(coverageCenterAt(time, true, example)));
       const visible = coverageCallsAt(time), keys = new Set();
       for (const call of visible) {
         const key = `${call.cycle}:${call.id}`;
         keys.add(key);
         let trace = activeCalls.get(key);
         if (!trace) {
-          const receiver = coverageReceiverFor(call);
+          const receiver = coverageReceiverFor(call, true, example);
           trace = svgNode('line', { class: `coverage-call ${call.type} ${receiver ? 'received' : 'missed'}`,
             'data-call': call.id, 'data-received': String(Boolean(receiver)) });
           trace.append(svgNode('title', {}, `${call.name} · ${call.frequency.toFixed(4)} MHz · ${receiver ? `Received by ${receiver}` : 'Missed outside usable coverage'}`));
@@ -258,7 +286,7 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
       svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
       clipRect.setAttribute('width', width - left - right);
       const lines = [], labels = [];
-      for (const tick of width < 500 ? [855, 859, 863, 867] : [855, 857, 859, 861, 863, 865, 867]) {
+      for (const tick of width < 500 ? [855, 859, 863] : [855, 857, 859, 861, 863]) {
         lines.push(svgNode('line', { x1: x(tick), x2: x(tick), y1: top, y2: top + plotHeight, class: 'coverage-grid' }));
         labels.push(svgNode('text', { x: x(tick), y: top + plotHeight + 18, 'text-anchor': 'middle' }, tick));
       }
@@ -297,12 +325,36 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
       frame = windowValue.requestAnimationFrame(animate);
     };
     const visibility = () => { if (document.hidden) stop(); else start(); };
+    const describeExample = () => {
+      description.textContent = 'Frequency increases left to right. New transmissions appear at the top and move down into history. ' +
+        'Colored windows show usable bandwidth. Solid calls are received; dashed calls outside coverage are missed. ' +
+        (example === 'airspy' ? 'One Airspy receives every call shown within its wider window.' :
+          'RTL-SDR 1 holds the control channel while RTL-SDR 2 follows voice calls. Multiple calls inside either window can be received together.');
+    };
+    const selectExample = id => {
+      if (disposed || example === id) return;
+      example = id; model = exampleModel(id);
+      exampleButtons.forEach(({ id: option, button }) => button.setAttribute('aria-pressed', String(option === id)));
+      renderReceivers();
+      // Compare identical traffic at the current moment, including its history.
+      // No extra animation loop, timeline reset or saved receiver setting is used.
+      activeCalls.clear(); callTraces.replaceChildren(); lastScene = '';
+      describeExample();
+      render();
+    };
+    const choiceListeners = exampleButtons.map(({ id, button }) => {
+      const listener = () => selectExample(id);
+      button.addEventListener('click', listener);
+      return () => button.removeEventListener('click', listener);
+    });
+    describeExample();
     const cleanup = () => {
       if (disposed) return;
       disposed = true; playing = false; cancelFrame(); observer?.disconnect();
       document.removeEventListener('visibilitychange', visibility);
       windowValue.removeEventListener('pagehide', cleanup);
       signal?.removeEventListener('abort', cleanup);
+      choiceListeners.forEach(release => release());
       root.dataset.disposed = 'true'; root.dataset.playing = 'false';
     };
     document.addEventListener('visibilitychange', visibility);

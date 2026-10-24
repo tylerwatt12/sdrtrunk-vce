@@ -68,11 +68,19 @@ async function openTuners(page, { theme = 'light', replay = true, firstVisit = f
 async function expectOverview(page) {
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
   await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
+  await expect(guide(page).getByRole('heading', { name: 'One receiver, several channels', exact: true })).toBeVisible();
+  await expect(guide(page)).toContainText('SDR models have different usable bandwidths.');
+  await expect(guide(page)).toContainText('Adding tuners lets VCE cover more frequencies at once, helping prevent missed calls');
+  await expect(guide(page)).toContainText('This example follows one trunked system with two RTL-SDRs.');
   await expect(graph(page)).toBeVisible();
   await expect(graph(page).locator('.ui-setup-guide-coverage-identity strong')).toHaveText(['RTL-SDR 1', 'RTL-SDR 2']);
   await expect(graph(page).locator('.coverage-control')).toHaveCount(1);
-  await expect(graph(page)).not.toContainText('Airspy');
-  await expect(graph(page).locator('button, input, select, [data-coverage-time]')).toHaveCount(0);
+  await expect(graph(page)).toHaveAttribute('data-example', 'rtl');
+  const examples = graph(page).getByRole('group', { name: 'Example tuner hardware', exact: true });
+  await expect(examples.getByRole('button')).toHaveText(['2× RTL-SDR', '1× Airspy']);
+  await expect(examples.getByRole('button', { name: '2× RTL-SDR', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(examples.getByRole('button', { name: '1× Airspy', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  await expect(graph(page).locator('input, select, [data-coverage-time]')).toHaveCount(0);
   await expect(graph(page).locator('.ui-setup-guide-coverage-recent, .ui-setup-guide-coverage-note')).toHaveCount(0);
   await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample], .ui-setup-guide-layer')).toHaveCount(0);
 }
@@ -80,6 +88,15 @@ async function expectOverview(page) {
 async function startTour(page) {
   await expectOverview(page);
   await guide(page).getByRole('button', { name: 'Start tour', exact: true }).click();
+}
+
+async function freshCoveragePaint(page) {
+  const before = await graph(page).getAttribute('data-time');
+  for (let frame = 0; frame < 6; frame++) {
+    await page.clock.runFor(16);
+    if (await graph(page).getAttribute('data-time') !== before) return;
+  }
+  throw new Error('The playing coverage illustration did not paint a fresh animation frame.');
 }
 
 async function next(page, id) {
@@ -435,7 +452,7 @@ test('Tuners returns an expanded Recordings player after all sample receiver mod
 for (const { theme, width, height } of [
   { theme: 'light', width: 1280, height: 720 }, { theme: 'dark', width: 1440, height: 1000 }
 ]) {
-  test(`Tuners keeps one control channel on its locked RTL-SDR while the second hops often in ${theme}`, async ({ page }) => {
+  test(`Tuners compares two hopping RTL-SDRs with one wide Airspy window in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     await page.clock.install();
     const { fixture, requests } = await openTuners(page, { theme });
@@ -483,9 +500,100 @@ for (const { theme, width, height } of [
     expect(new Set(positions).size, 'The second RTL-SDR visits several parts of the band').toBeGreaterThanOrEqual(4);
     await expect(graph(page).locator('.coverage-control')).toHaveAttribute('x1', String(controlBefore.x));
     await expect(graph(page).locator('.ui-setup-guide-coverage-identity').first()).toContainText('Locked');
+    const examples = graph(page).getByRole('group', { name: 'Example tuner hardware', exact: true });
+    const rtlButton = examples.getByRole('button', { name: '2× RTL-SDR', exact: true });
+    const airspyButton = examples.getByRole('button', { name: '1× Airspy', exact: true });
+    await expectWithinViewport(examples, { width, height });
+    await expectWithinViewport(rtlButton, { width, height });
+    await expectWithinViewport(airspyButton, { width, height });
+    // Keep the comparison instant fixed while the actual keyboard actions run.
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now())));
+    await freshCoveragePaint(page);
+    const sharedBefore = await graph(page).evaluate(root => ({ time: root.dataset.time, cycle: root.dataset.cycle,
+      calls: [...root.querySelectorAll('[data-call]')].map(call => ({ id: call.dataset.call,
+        y1: call.getAttribute('y1'), y2: call.getAttribute('y2') })) }));
+    expect(await graph(page).locator('[data-received="false"]').count()).toBeGreaterThan(0);
+    await graph(page).evaluate(element => { window.tunersSharedExampleGraph = element; });
+    await rtlButton.focus();
+    await page.keyboard.press('Tab');
+    await expect(airspyButton).toBeFocused();
+    await page.keyboard.press('Space');
+    await expect(graph(page)).toHaveAttribute('data-example', 'airspy');
+    await expect(airspyButton).toHaveAttribute('aria-pressed', 'true');
+    await expect(rtlButton).toHaveAttribute('aria-pressed', 'false');
+    await expect(graph(page).locator('.ui-setup-guide-coverage-identity strong')).toHaveText([/Airspy/]);
+    await expect(graph(page).locator('[data-received="false"]')).toHaveCount(0);
+    expect(await graph(page).evaluate(root => ({ time: root.dataset.time, cycle: root.dataset.cycle,
+      calls: [...root.querySelectorAll('[data-call]')].map(call => ({ id: call.dataset.call,
+        y1: call.getAttribute('y1'), y2: call.getAttribute('y2') })) }))).toEqual(sharedBefore);
+    expect(await graph(page).evaluate(root => root === window.tunersSharedExampleGraph)).toBe(true);
+    const airspyCenter = await graph(page).getAttribute('data-primary-center');
+    await page.clock.runFor(1000);
+    await expect(graph(page)).toHaveAttribute('data-primary-center', airspyCenter);
+    await expect(graph(page).locator('[data-received="false"]')).toHaveCount(0);
+    const widths = await graph(page).locator('.coverage-control, .coverage-call').evaluateAll(elements =>
+      elements.map(element => Number.parseFloat(getComputedStyle(element).strokeWidth)));
+    expect(widths.length).toBeGreaterThan(10);
+    expect(new Set(widths)).toEqual(new Set([controlBefore.width]));
+    await expectWithinViewport(guide(page), { width, height });
+    await expectWithinViewport(graph(page), { width, height });
+    await screenshot(page, `tuners-one-airspy-shared-calls-${theme}`);
+    await freshCoveragePaint(page);
+    const beforeReturn = await graph(page).getAttribute('data-time');
+    await rtlButton.focus();
+    await page.keyboard.press('Enter');
+    await expect(graph(page)).toHaveAttribute('data-example', 'rtl');
+    await expect(graph(page)).toHaveAttribute('data-time', beforeReturn);
+    expect(await graph(page).locator('[data-received="false"]').count()).toBeGreaterThan(0);
     fs.mkdirSync(evidence, { recursive: true });
     fs.writeFileSync(path.join(evidence, `two-rtl-measurements-${theme}.json`), JSON.stringify({ jumps,
       positions: [...new Set(positions)], control: controlBefore, geometry }, null, 2));
+    await page.keyboard.press('Escape');
+    expectNoEffects(fixture, requests);
+  });
+}
+
+for (const height of [720, 900]) for (const theme of ['light', 'dark']) {
+  test(`Tuners hardware examples fit the ${height}-pixel overview in ${theme}`, async ({ page }) => {
+    const viewport = { width: 1280, height };
+    await page.setViewportSize(viewport);
+    await page.clock.install();
+    const { fixture, requests } = await openTuners(page, { theme });
+    await expectOverview(page);
+    const storage = await nonGuideStorage(page);
+    await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now())));
+    await page.clock.runFor(3400);
+    const examples = graph(page).getByRole('group', { name: 'Example tuner hardware', exact: true });
+    for (const example of ['rtl', 'airspy']) {
+      if (example === 'airspy') {
+        await examples.getByRole('button', { name: '1× Airspy', exact: true }).focus();
+        await page.keyboard.press('Space');
+      }
+      await expect(graph(page)).toHaveAttribute('data-example', example);
+      for (const region of [guide(page), graph(page), examples,
+        examples.getByRole('button', { name: '2× RTL-SDR', exact: true }),
+        examples.getByRole('button', { name: '1× Airspy', exact: true }),
+        guide(page).getByRole('button', { name: 'Start tour', exact: true }),
+        guide(page).getByRole('button', { name: 'Close guide', exact: true })])
+        await expectWithinViewport(region, viewport);
+      const clippedLabels = await graph(page).locator('svg').evaluate(svg => {
+        const chart = svg.getBoundingClientRect();
+        return [...svg.querySelectorAll('text')].filter(label => {
+          const box = label.getBoundingClientRect();
+          return box.width && (box.left < chart.left - 1 || box.right > chart.right + 1 ||
+            box.top < chart.top - 1 || box.bottom > chart.bottom + 1);
+        }).map(label => label.textContent);
+      });
+      expect(clippedLabels).toEqual([]);
+      await expect(graph(page).locator('[data-call]')).not.toHaveCount(0);
+      if (example === 'airspy') await expect(graph(page).locator('[data-received="false"]')).toHaveCount(0);
+      await screenshot(page, `tuners-overview-${example}-1280x${height}-${theme}`);
+    }
+    await page.clock.resume();
+    await page.keyboard.press('Escape');
+    expect(await nonGuideStorage(page)).toEqual(storage);
+    await page.locator('#page-guide-button').click();
+    await expectOverview(page);
     await page.keyboard.press('Escape');
     expectNoEffects(fixture, requests);
   });
@@ -499,15 +607,26 @@ test('the Tuners overview graph loops after a minute, preserves reception histor
   const storageBefore = await nonGuideStorage(page);
   await graph(page).evaluate(element => { window.tunersOriginalGraph = element; });
   await expect(graph(page)).toHaveAttribute('data-playing', 'true');
-  await page.clock.runFor(3400);
-  await expect(graph(page).locator('[data-call="regional-missed"]')).toHaveAttribute('data-received', 'false');
-  await expect(graph(page).locator('[data-call="regional-later"]')).toHaveAttribute('data-received', 'true');
-  expect(await graph(page).locator('[data-call]').count(), 'The receiving history contains several calls').toBeGreaterThanOrEqual(5);
+  const { TUNER_COVERAGE_MODEL: model, coverageReceiverFor } = await import(pathToFileURL(path.resolve(__dirname,
+    '../../../../../stats-web/assets/guides/tuner-coverage.js')).href);
+  const fits = (frequency, center) => Math.abs(frequency - center) + .00625 <= model.rtl.usableBandwidth / 2;
+  const historyCase = model.retunes.map(retune => ({ time: retune.end + .5,
+    received: model.calls.find(call => call.end < retune.end && call.end > retune.end - model.history + 4 &&
+      coverageReceiverFor(call) === 'RTL-SDR 2' && !fits(call.frequency, retune.to)),
+    missed: model.calls.find(call => call.start <= retune.end && call.end > retune.end - model.history + 4 &&
+      !coverageReceiverFor(call)) })).find(example => example.received && example.missed);
+  expect(historyCase, 'The example includes received history behind a later tuner hop').toBeTruthy();
+  await page.clock.runFor(historyCase.time / model.speed * 1000);
+  await expect(graph(page).locator(`[data-call="${historyCase.missed.id}"]`)).toHaveAttribute('data-received', 'false');
+  const receivedTrace = graph(page).locator(`[data-call="${historyCase.received.id}"]`);
+  await expect(receivedTrace).toHaveAttribute('data-received', 'true');
+  expect(await graph(page).locator('[data-call]').count(), 'The receiving history contains the busy overlapping calls').toBeGreaterThanOrEqual(10);
   await expect(graph(page).locator('svg')).toContainText('24s');
   await screenshot(page, 'tuners-overview-after-retune-light');
-  const traceBefore = Number(await graph(page).locator('[data-call="regional-later"]').getAttribute('y2'));
+  const traceBefore = Number(await receivedTrace.getAttribute('y2'));
   await page.clock.runFor(500);
-  const traceAfter = Number(await graph(page).locator('[data-call="regional-later"]').getAttribute('y2'));
+  const traceAfter = Number(await receivedTrace.getAttribute('y2'));
+  await expect(receivedTrace).toHaveAttribute('data-received', 'true');
   expect(traceAfter - traceBefore, 'The 24-second history scrolls at six simulated seconds per second').toBeGreaterThan(14);
   expect(traceAfter - traceBefore).toBeLessThan(19);
   const beforeLoop = Number(await graph(page).getAttribute('data-time'));
@@ -570,7 +689,6 @@ test('Tuners automatic graph starts under reduced motion and pauses and resumes 
   const traceStyles = await graph(page).locator('.coverage-control, .coverage-call').evaluateAll(elements =>
     elements.map(element => ({ classes: element.getAttribute('class'), width: Number.parseFloat(getComputedStyle(element).strokeWidth) })));
   expect(traceStyles.some(trace => trace.classes.includes('coverage-control'))).toBe(true);
-  expect(traceStyles.some(trace => trace.classes.includes('conventional'))).toBe(true);
   expect(traceStyles.some(trace => trace.classes.includes('voice'))).toBe(true);
   for (const trace of traceStyles) expect(trace.width, trace.classes).toBe(8);
   const legendWidths = await graph(page).locator('.ui-setup-guide-coverage-mark').evaluateAll(elements =>
@@ -599,6 +717,11 @@ test('Tuners automatic graph starts under reduced motion and pauses and resumes 
   const hiddenTime = Number(await graph(page).getAttribute('data-time'));
   await page.clock.runFor(5000);
   expect(Number(await graph(page).getAttribute('data-time'))).toBe(hiddenTime);
+  await graph(page).getByRole('button', { name: '1× Airspy', exact: true }).click();
+  await expect(graph(page)).toHaveAttribute('data-example', 'airspy');
+  await expect(graph(page)).toHaveAttribute('data-playing', 'false');
+  expect(Number(await graph(page).getAttribute('data-time'))).toBe(hiddenTime);
+  await graph(page).getByRole('button', { name: '2× RTL-SDR', exact: true }).click();
   await page.evaluate(() => {
     delete document.hidden;
     document.dispatchEvent(new Event('visibilitychange'));

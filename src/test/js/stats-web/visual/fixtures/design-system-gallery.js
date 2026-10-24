@@ -10,8 +10,8 @@ import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
-import { openSetupGuide } from '/assets/core/setup-guide.js?v=18';
-import { createGuideDefinition } from '/assets/guides/catalog.js?v=25';
+import { openSetupGuide } from '/assets/core/setup-guide.js?v=19';
+import { createGuideDefinition } from '/assets/guides/catalog.js?v=30';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=3';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from '/assets/features/remote-support.js?v=6';
@@ -726,7 +726,9 @@ if (view === 'setup-guide') {
   newChannel.dataset.guideTarget = 'channel-new';
   findSystems.dataset.guideTarget = 'channel-discover';
   const { openReadOnlyModal } = await createGalleryModalFoundation();
-  const definition = createGuideDefinition(parameters.get('diagram') === 'scan-lists' ? 'scan-lists' : 'channel-setup');
+  const diagram = parameters.get('diagram');
+  const definition = createGuideDefinition(diagram === 'scan-lists' ? 'scan-lists' :
+    diagram === 'tuner-coverage' ? 'tuners' : 'channel-setup');
   if (parameters.get('context') === '1') {
     const opening = definition.steps.find(step => step.id === 'new-channel');
     definition.steps = [{ ...opening, targets: () => [newChannel], contextTargets: () => [example] }];
