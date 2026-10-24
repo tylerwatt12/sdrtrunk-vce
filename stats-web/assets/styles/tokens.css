@@ -341,6 +341,7 @@
   --guide-mask-visible: #ffffff;
   --guide-mask-hidden: #000000;
   --guide-card-width: 470px;
+  --guide-compact-card-width: 260px;
   --guide-welcome-width: 540px;
   --guide-card-radius: 20px;
   --guide-card-padding: 28px;

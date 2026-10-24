@@ -69,11 +69,12 @@ class StatsWebFrequencyActionsUiContractTest
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String tuner = block(source, "function tunerSpectrumPanel(snapPresetDocument, panelOptions = {})");
-        String actions = block(source, "function openTunerFrequencyActions(selection)");
+        String actions = block(source, "function openTunerFrequencyActions(selection, options = {})");
         String lookup = block(source, "function openTunerRadioReferenceLookup(selectedHz)");
+        String directory = Files.readString(Path.of("stats-web", "assets", "features", "discovery-radioreference.js"));
         String results = block(source, "function radioReferenceResultView(");
         String settings = block(source, "async function renderAdminRadioReferenceSettings()");
-        String spectrumPage = block(source, "async function renderTunerSpectrum()");
+        String spectrumPage = block(source, "async function renderTunerSpectrum(workspaceOptions = {})");
         String pointerUp = block(tuner, "function onPlotPointerUp(event)");
         String pointerCancel = block(tuner, "function onPlotPointerCancel(event)");
 
@@ -96,10 +97,14 @@ class StatsWebFrequencyActionsUiContractTest
         assertTrue(actions.contains("stopListening();"));
         assertFalse(actions.contains("openReadOnlyModal("));
         assertTrue(lookup.contains("openReadOnlyModal('RadioReference lookup'"));
-        assertTrue(lookup.contains("requestJson('/api/v1/admin/radioreference'"));
+        assertTrue(lookup.contains("const request = (path, options = {}) => requestJson(path"));
+        assertTrue(lookup.contains("signal: detailController.signal"));
+        assertTrue(lookup.contains("await request('/api/v1/admin/radioreference')"));
         assertTrue(lookup.contains("/api/v1/admin/radioreference/frequencies?"));
         assertTrue(lookup.contains("configuration?.account?.state !== 'VALID_PREMIUM'"));
-        assertTrue(lookup.contains("href('radioreference')"));
+        assertTrue(lookup.contains("createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField"));
+        assertTrue(lookup.contains("uiActionButton, anchor, href, connectRadioReference }, request"));
+        assertTrue(directory.contains("anchor('Save a default lookup region', href('radioreference'))"));
         assertFalse(results.contains("'Freq Out'"));
         assertFalse(results.contains("'Freq In'"));
         assertTrue(results.contains("row.description"));

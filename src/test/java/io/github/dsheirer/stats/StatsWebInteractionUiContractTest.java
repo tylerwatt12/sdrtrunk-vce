@@ -1762,7 +1762,7 @@ class StatsWebInteractionUiContractTest
         String systems = function(source, "function liveChannelsSection(onSelectionChange)");
         String css = StatsWebStylesheetTestSupport.readAll();
 
-        String tunerPage = function(source, "async function renderTunerSpectrum()");
+        String tunerPage = function(source, "async function renderTunerSpectrum(workspaceOptions = {})");
         String html = readText(INDEX_HTML);
 
         assertFalse(live.contains("'Tuner Spectrum'"));
@@ -1782,12 +1782,15 @@ class StatsWebInteractionUiContractTest
         assertTrue(tunerPage.contains("Active channels keep the center frequency fixed. Switch to Setup mode to retune"));
         assertFalse(tunerPage.contains("iconButton('icon-power'"));
         assertFalse(tuner.contains("openReadOnlyModal('Tuner Spectrum'"));
-        assertTrue(tuner.contains("api('/api/v1/diagnostics/tuners')"));
-        assertTrue(tuner.contains("binaryFrameConnection('tuner_diagnostics'"));
+        assertTrue(tuner.contains("const spectrumApi = panelOptions.api || api"));
+        assertTrue(tuner.contains("spectrumApi('/api/v1/diagnostics/tuners')"));
+        assertTrue(tuner.contains("const connectSpectrum = panelOptions.connectionFactory || binaryFrameConnection"));
+        assertTrue(tuner.contains("connectSpectrum('tuner_diagnostics'"));
         assertTrue(tuner.contains("frame.type !== DIAGNOSTIC_FRAME_TYPES.TUNER_FFT"));
         assertTrue(tuner.contains("let pageFocused = document.hasFocus()"));
         assertTrue(tuner.contains("let pageSuspended = false"));
-        assertTrue(tuner.contains("const shouldRun = () => !disposed && !paused && !externallySuspended && pageFocused && !pageSuspended"));
+        assertTrue(tuner.contains("const shouldRun = () => !disposed && !paused && !externallySuspended && " +
+            "(guideMode || pageFocused) && !pageSuspended"));
         assertTrue(tuner.contains("!document.hidden && selectedTargetId()"));
         assertTrue(tuner.contains("const waterfallBuffer = document.createElement('canvas')"));
         assertTrue(tuner.contains("const firstBin ="));
@@ -1815,11 +1818,13 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("function tunerPersistentSpectrumProfile(value)"));
         assertTrue(source.contains("let tunerOperatorSpectrumProfile = 'efficient'"));
         assertTrue(tuner.contains("profileSelect.value = profileSelection ? (basicOperator ? " +
-            "tunerOperatorSpectrumProfile :"));
-        assertTrue(tuner.contains("tunerStoredChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE"));
+            "(guideMode ? 'balanced' : tunerOperatorSpectrumProfile) :"));
+        assertTrue(tuner.contains("const storedChoice = guideMode ? ((key, fallback) => fallback) : tunerStoredChoice"));
+        assertTrue(tuner.contains("const storeChoice = guideMode ? (() => {}) : storeTunerChoice"));
+        assertTrue(tuner.contains("storedChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE"));
         assertTrue(tuner.contains("'balanced', Object.keys(TUNER_SPECTRUM_PROFILES)"));
-        assertTrue(tuner.contains("if (basicOperator) tunerOperatorSpectrumProfile = spectrumProfile"));
-        assertTrue(tuner.contains("else storeTunerChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile)"));
+        assertTrue(tuner.contains("if (basicOperator && !guideMode) tunerOperatorSpectrumProfile = spectrumProfile"));
+        assertTrue(tuner.contains("else storeChoice(TUNER_SPECTRUM_PROFILE_PREFERENCE, spectrumProfile)"));
         assertTrue(tuner.contains("profileSelect.addEventListener('change', applySelectedProfile)"));
         assertTrue(tuner.contains("window.addEventListener('blur', onBlur)"));
         assertTrue(tuner.contains("window.addEventListener('focus', onFocus)"));
@@ -1879,10 +1884,11 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("event.key === 'ArrowLeft'"));
         assertTrue(tuner.contains("event.key === 'r' || event.key === 'R'"));
         assertTrue(tuner.contains("connectActiveChannels()"));
-        assertTrue(tuner.contains("if (basicOperator || !liveActivityAllowed || !shouldRun() || activeChannelSource) return"));
+        assertTrue(tuner.contains("if (basicOperator || !liveActivityAllowed || !shouldRun() || activeChannelSource ||"));
+        assertTrue(tuner.contains("(guideMode && typeof panelOptions.activityFeed !== 'function')) return"));
         assertTrue(tuner.contains("flagLegend.hidden = !liveActivityAllowed"));
         assertTrue(tuner.contains("'Channel markers require Live access.'"));
-        assertTrue(tuner.contains("subscribeLiveChannelActivity({"));
+        assertTrue(tuner.contains("(guideMode ? panelOptions.activityFeed : subscribeLiveChannelActivity)({"));
         assertTrue(systems.contains("subscribeLiveChannelActivity({"));
         assertTrue(activity.contains("liveConnection('channel_activity', parameters, false)"));
         assertTrue(activity.contains("const parameters = { subscription_id: liveChannelActivitySubscriptionId }"));
@@ -1898,7 +1904,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("add('Channel', activityValues(rows, (row) => row.channel_name || row.tableChannelName))"));
         assertFalse(tuner.contains("`${row.tableChannelName} · Control`"));
         assertTrue(tuner.contains("const snapToggle = optionToggle(!basicOperator &&"));
-        assertTrue(tuner.contains("tunerStoredBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true)"));
+        assertTrue(tuner.contains("const storedBoolean = guideMode ? ((key, fallback) => fallback) : tunerStoredBoolean"));
+        assertTrue(tuner.contains("const storeBoolean = guideMode ? (() => {}) : storeTunerBoolean"));
+        assertTrue(tuner.contains("storedBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, true)"));
         assertTrue(tuner.contains("const snapInput = snapToggle.input"));
         assertTrue(tuner.contains("'tuner-spectrum-floor'"));
         assertTrue(tuner.contains("'tuner-spectrum-ceiling'"));
@@ -1914,25 +1922,25 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("(value - displayFloor) / (dbCeiling - displayFloor)"));
         assertTrue(tuner.contains("TUNER_WATERFALL_SPEED_PREFERENCE, waterfallSpeed"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_SNAP_PREFERENCE, true"));
-        assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, snapInput.checked)"));
+        assertTrue(tuner.contains("storeBoolean(TUNER_SPECTRUM_SNAP_PREFERENCE, snapInput.checked)"));
         assertTrue(tuner.contains("'Snap frequency'"));
         assertTrue(tuner.contains(
-            "const smoothToggle = optionToggle(tunerStoredBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, true)"));
+            "const smoothToggle = optionToggle(storedBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, true)"));
         assertTrue(tuner.contains("const smoothInput = smoothToggle.input"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_SMOOTH_PREFERENCE, true"));
-        assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, smoothInput.checked)"));
+        assertTrue(tuner.contains("storeBoolean(TUNER_SPECTRUM_SMOOTH_PREFERENCE, smoothInput.checked)"));
         assertTrue(tuner.contains("'Smooth FFT'"));
         assertFalse(tuner.contains("Highlight channels on waterfall when hovered"));
         assertTrue(tuner.contains("'Idle channel markers'"));
         assertTrue(tuner.contains("TUNER_SPECTRUM_IDLE_PREFERENCE, false"));
-        assertTrue(tuner.contains("storeTunerBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked)"));
+        assertTrue(tuner.contains("storeBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked)"));
         assertTrue(tuner.contains("settingsCard('Display', '', autoRangeToggle.control, rangeControl"));
         assertTrue(tuner.contains("floorInput.disabled = ceilingInput.disabled = autoRangeInput.checked"));
         assertTrue(tuner.contains("settingsCard('FFT', '', smoothControl"));
         assertTrue(tuner.contains("...(!basicOperator ? [idleChannelsControl] : [])"));
         assertTrue(tuner.contains("settingsCard('Waterfall', '', speedControl)"));
-        assertTrue(tuner.contains("storeTunerChoice('session-target', targetSelect.value)"));
-        assertTrue(tuner.contains("tunerStoredChoice('session-target', targets[0].id"));
+        assertTrue(tuner.contains("storeChoice('session-target', targetSelect.value)"));
+        assertTrue(tuner.contains("storedChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("const options = node('details', 'tuner-spectrum-options')"));
         assertTrue(tuner.contains("settingsCardGrid(displayOptions, fftOptions, waterfallOptions"));
         assertTrue(tuner.contains("...(!basicOperator ? [profilePanel] : [])"));

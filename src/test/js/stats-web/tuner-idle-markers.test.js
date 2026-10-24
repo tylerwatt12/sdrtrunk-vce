@@ -430,7 +430,7 @@ test('full receiver window drag tunes during movement and flushes release while 
 });
 
 test('Tuners and Spectrum pages instantiate the same spectrum renderer', () => {
-  const spectrumPage = functionSource('async function renderTunerSpectrum()');
+  const spectrumPage = functionSource('async function renderTunerSpectrum(workspaceOptions = {})');
   const tunersPage = functionSource('async function renderTuners(options = {})');
   assert.match(spectrumPage, /tunerSpectrumPanel\(snapPresetDocument\)/);
   assert.match(tunersPage, /tunerSpectrumPanel\(snapPresetDocument,\s*\{/);

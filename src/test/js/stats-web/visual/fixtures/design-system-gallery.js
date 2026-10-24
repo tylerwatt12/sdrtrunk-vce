@@ -10,8 +10,8 @@ import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
-import { openSetupGuide } from '/assets/core/setup-guide.js?v=12';
-import { createGuideDefinition } from '/assets/guides/catalog.js?v=16';
+import { openSetupGuide } from '/assets/core/setup-guide.js?v=13';
+import { createGuideDefinition } from '/assets/guides/catalog.js?v=17';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=3';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from '/assets/features/remote-support.js?v=6';
@@ -727,6 +727,10 @@ if (view === 'setup-guide') {
   findSystems.dataset.guideTarget = 'channel-discover';
   const { openReadOnlyModal } = await createGalleryModalFoundation();
   const definition = createGuideDefinition(parameters.get('diagram') === 'scan-lists' ? 'scan-lists' : 'channel-setup');
+  if (parameters.get('compact') === '1') {
+    const activity = createGuideDefinition('tuner-spectrum').steps.find(step => step.id === 'activity');
+    definition.steps = [{ ...activity, samples: [], prepare: undefined, targets: () => [creationActions] }];
+  }
   const introduction = openSetupGuide({ node, openReadOnlyModal }, definition);
   await introduction.ready;
   example.dataset.ready = 'true';

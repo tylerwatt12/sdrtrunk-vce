@@ -12,8 +12,8 @@ async function main() {
   const { discoveryRadioReferenceResult, createDiscoveryTalkgroupAvailability, importDiscoveryAliases } =
     await import(pathToFileURL(path.join(assets, 'features/discovery-radioreference.js')).href);
   const app = fs.readFileSync(path.join(assets, 'app.js'), 'utf8');
-  const spectrum = app.slice(app.indexOf('async function renderTunerSpectrum()'), app.indexOf('function radioDirectory',
-    app.indexOf('async function renderTunerSpectrum()')));
+  const spectrum = app.slice(app.indexOf('async function renderTunerSpectrum(workspaceOptions = {})'), app.indexOf('function radioDirectory',
+    app.indexOf('async function renderTunerSpectrum(workspaceOptions = {})')));
   assert.doesNotMatch(spectrum, /openSpectrumSearchWizard|Find Trunked Systems|searchOwner|searchActive/);
   assert.match(app.slice(app.indexOf('async function renderModernChannelCatalog')), /Find Trunked Systems/);
 

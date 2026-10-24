@@ -52,13 +52,20 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
     assert.ok(overview.title && overview.paragraphs.length, 'Each overview explains its page’s purpose.');
-    assert.equal(overview.samples, undefined, 'An overview leaves real page data in place.');
-    assert.equal(overview.prepare, undefined, 'An overview opens no menus, dialogs, or player panels.');
+    if (id === 'tuner-spectrum') {
+      assert.equal(overview.samplePresentation, true,
+        'Hardware-free Spectrum explicitly opts into a sample overview while keeping controls unhighlighted.');
+      assert.deepEqual(overview.samples, [{ id: 'tuner-spectrum-workspace', value: { section: 'overview' } }]);
+      assert.equal(typeof overview.prepare, 'function');
+    } else {
+      assert.equal(overview.samples, undefined, 'Other overviews leave real page data in place.');
+      assert.equal(overview.prepare, undefined, 'Other overviews open no menus, dialogs, or player panels.');
+    }
     assert.equal(overview.targets, undefined, 'An overview is a centered concept introduction.');
     assert.equal(guide.steps.filter(step => step.overview).length, 1);
     if (!guide.authored) {
@@ -75,6 +82,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('radioreference').version, 3);
   assert.equal(createGuideDefinition('streaming').version, 3);
   assert.equal(createGuideDefinition('tuners').version, 3);
+  assert.equal(createGuideDefinition('tuner-spectrum').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -797,6 +805,49 @@ async function checkGuides(assetsRoot) {
     'The catalog retains its current selection while the player is introduced.');
   scanListData.rows[0].name = 'Changed sample';
   assert.equal(getScanListsGuideData().rows[0].name, 'Fire Dispatch', 'Each step receives independent sample records.');
+  await require('./spectrum-guide-data.test.js').checkSpectrumGuideData(assets);
+
+  const spectrumTour = createGuideDefinition('tuner-spectrum', {
+    documentValue: targetDocument,
+    preparePlayer: () => { prepared.push('spectrum-player'); return () => released.push('spectrum-player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const spectrumSections = ['overview', 'receiver', 'activity', 'select-signal', 'listen', 'lookup',
+    'add-channel', 'modes', 'display-options'];
+  assert.deepEqual(spectrumTour.steps.map(step => step.id), spectrumSections,
+    'Spectrum remains an overview plus eight branch entry points.');
+  assert.equal(spectrumTour.steps[0].targets, undefined);
+  for (const step of spectrumTour.steps) {
+    if (!step.overview) assert.deepEqual(targetNames(step), [`bs-${step.id}`]);
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), ['spectrum-player', ['tuner-spectrum', step.id, context]],
+      'The hardware-free sample and minimized player use the same owned preparation lifecycle.');
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'spectrum-player']);
+  }
+  assert.equal(spectrumTour.steps.at(-1).nextLabel, 'Finish');
+  const restrictedSpectrum = createGuideDefinition('tuner-spectrum', { canAccess: () => false });
+  assert.deepEqual(restrictedSpectrum.steps.map(step => step.id),
+    ['overview', 'receiver', 'activity', 'select-signal', 'modes', 'display-options'],
+    'Restricted accounts are not taught audio, RadioReference or channel actions they cannot use.');
+  const failedSpectrum = createGuideDefinition('tuner-spectrum', {
+    preparePlayer: () => () => released.push('spectrum-player'),
+    preparePage: () => { throw new Error('Spectrum sample preparation failed'); }
+  });
+  await assert.rejects(failedSpectrum.steps[0].prepare({}), /Spectrum sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['spectrum-player'], 'A failed overview sample releases its player state.');
+  const failedSpectrumCleanup = createGuideDefinition('tuner-spectrum', {
+    preparePlayer: () => () => released.push('spectrum-player'),
+    preparePage: () => () => { throw new Error('Spectrum cleanup failed'); }
+  });
+  const failRelease = await failedSpectrumCleanup.steps[1].prepare({});
+  assert.throws(failRelease, /Spectrum cleanup failed/);
+  assert.deepEqual(released.splice(0), ['spectrum-player'], 'Player restoration survives a sample cleanup failure.');
+
   const makeHarness = (overrides = {}) => {
     const stored = new Map();
     const shown = [];
@@ -859,6 +910,15 @@ async function checkGuides(assetsRoot) {
   assert.equal(await restrictedRadioReference.controller.pageReady(), false);
   assert.equal(restrictedRadioReference.shown.length, 0,
     'A requested RadioReference tour preserves the production route’s access restrictions.');
+
+  const firstSpectrumVisit = makeHarness({ context: { view: 'tuner-spectrum' }, storage: {
+    getItem: key => key.endsWith(':welcome:1') || key.endsWith(':tuner-spectrum:2') ? '1' : null,
+    setItem() {}
+  } });
+  await firstSpectrumVisit.controller.pageReady();
+  assert.equal(firstSpectrumVisit.shown.at(-1).options.id, 'tuner-spectrum');
+  assert.equal(firstSpectrumVisit.shown.at(-1).options.version, 3,
+    'The earlier Spectrum placeholder does not suppress its authored hardware-free tour.');
 
   const firstStreamingVisit = makeHarness({ context: { view: 'streaming', canAccess: () => false }, storage: {
     getItem: key => /:welcome:1$|:streaming:[12]$/.test(key) ? '1' : null,

@@ -236,6 +236,16 @@ body.modal-open {
   pointer-events: auto;
 }
 
+.read-only-modal.ui-setup-guide--compact {
+  --guide-card-width: var(--guide-compact-card-width);
+  --guide-card-padding: var(--space-4);
+}
+
+.ui-setup-guide--compact .ui-setup-guide-footer {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .read-only-modal.ui-setup-guide--illustrated {
   width: min(var(--guide-welcome-width), calc(100vw - var(--guide-viewport-gap) * 2));
 }

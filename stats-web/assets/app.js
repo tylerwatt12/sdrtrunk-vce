@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=18';
+import { createGuideController } from './guides/controller.js?v=19';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -7869,6 +7869,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
   if (context.signal.aborted) return () => {};
   const renderContext = captureRenderContext();
   const originalNodes = [...content.childNodes];
+  const originalPageTitle = pageTitleController.state.pageTitle;
+  const originalSpectrum = view === 'tuner-spectrum' ?
+    content.querySelector('.spectrum-browse-workspace')?.spectrumBrowseController : null;
   const scrollState = [content, document.scrollingElement, ...content.querySelectorAll('*')]
     .filter(element => element && (element === content || element === document.scrollingElement ||
       element.scrollTop || element.scrollLeft))
@@ -7901,6 +7904,8 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     });
     if (renderIsCurrent(renderContext)) {
       safely(() => content.replaceChildren(...originalNodes));
+      safely(() => pageTitleController.update({ pageTitle: originalPageTitle }));
+      safely(() => { void originalSpectrum?.setSuspended(false); });
       scrollState.forEach(([element, top, left]) => safely(() => {
         element.scrollTop = top;
         element.scrollLeft = left;
@@ -7911,9 +7916,14 @@ async function prepareWorkspaceGuideSample(view, section, context) {
   };
   context.signal.addEventListener('abort', restore, { once: true });
   try {
+    if (originalSpectrum) await originalSpectrum.setSuspended(true);
+    if (closed || !context.isCurrent()) { restore(); return restore; }
     const streaming = view === 'streaming';
     const tuners = view === 'tuners';
-    const [feature, presentation] = await Promise.all(tuners ? [
+    const spectrum = view === 'tuner-spectrum';
+    const [feature, presentation] = await Promise.all(spectrum ? [
+      Promise.resolve(null), import('./guides/spectrum-presentation.js?v=1')
+    ] : tuners ? [
       Promise.resolve(null), import('./guides/tuners-presentation.js?v=1')
     ] : streaming ? [
       import('./features/streaming.js?v=14'), import('./guides/streaming-presentation.js?v=1')
@@ -7921,8 +7931,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       import('./features/radioreference-import.js?v=33'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
-    const sample = (tuners ? presentation.createTunersGuideData : streaming ?
+    const sample = (spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
       presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal });
+    if (spectrum) releases.push(() => sample.dispose());
     if (streaming && typeof sample.requestOperationalPreference !== 'function') {
       throw new Error('The Streaming guide settings could not be prepared.');
     }
@@ -7947,7 +7958,45 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     };
     let protectedRoots;
     let routingHost = null;
-    if (tuners) {
+    if (spectrum) {
+      const pageRoots = [];
+      const sampleApi = async (...args) => {
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        const value = await sample.api(...args);
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        return value;
+      };
+      const sampleConnection = (...args) => {
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        const connection = sample.connectionFactory(...args);
+        sampleConnections.add(connection);
+        return connection;
+      };
+      const sampleActivity = (...args) => {
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        const connection = sample.activityFeed(...args);
+        sampleConnections.add(connection);
+        return connection;
+      };
+      workspace = await renderTunerSpectrum({
+        guideMode: true, renderContext: { ...renderContext, signal: context.signal },
+        requestJson: sampleRequest, api: sampleApi, snapPresets: sample.snapPresets,
+        connectionFactory: sampleConnection, activityFeed: sampleActivity,
+        selectedTunerId: sample.selectedTunerId, selectedAnalogHz: sample.selectedAnalogHz,
+        mount: (...nodes) => {
+          if (!closed && context.isCurrent()) {
+            const roots = nodes.filter(node => node instanceof Element);
+            pageRoots.push(...roots);
+            roots.forEach(root => releases.push(guideSampleData.register('tuner-spectrum-workspace', () => {}, { root })));
+            content.replaceChildren(...nodes);
+          }
+        },
+        registerConnection: connection => sampleConnections.add(connection)
+      });
+      if (closed || !context.isCurrent()) { workspace?.dispose(); restore(); return restore; }
+      workspace.element.dataset.guideExample = 'tuner-spectrum';
+      protectedRoots = pageRoots;
+    } else if (tuners) {
       const pageRoots = [];
       if (typeof sample.api !== 'function' || typeof sample.connectionFactory !== 'function') {
         throw new Error('The Tuners guide receiver data could not be prepared.');
@@ -8042,7 +8091,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
 }
 
 async function preparePageGuideSample(view, section, context) {
-  if (['radioreference', 'streaming', 'tuners'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
+  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
@@ -16032,7 +16081,12 @@ function tunerFrequencyPopoverPlacement(anchorRect, panelRect) {
   };
 }
 
-function openTunerFrequencyActions(selection) {
+function openTunerFrequencyActions(selection, options = {}) {
+  const guideMode = options.guideMode === true;
+  if (guideMode && typeof options.requestJson !== 'function') {
+    throw new Error('Spectrum examples require isolated frequency actions.');
+  }
+  const requestFrequencyJson = options.requestJson || requestJson;
   const selectedHz = Number(selection?.frequencyHz);
   const rawHz = Number(selection?.rawFrequencyHz);
   if (!Number.isFinite(selectedHz) || selectedHz <= 0) return null;
@@ -16081,10 +16135,11 @@ function openTunerFrequencyActions(selection) {
   const message = node('div', 'tuner-frequency-action-message', inline ?
     'Checking whether this frequency can be added…' : '');
   message.setAttribute('role', 'status');
+  let eligibilityReady = Promise.resolve();
   if (selection.tunerId && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS)) {
     const query = new URLSearchParams({ tuner_id: selection.tunerId,
       frequency_hz: String(Math.round(selectedHz)) });
-    void requestJson(`/api/v1/admin/spectrum-discovery/eligibility?${query}`, {
+    eligibilityReady = requestFrequencyJson(`/api/v1/admin/spectrum-discovery/eligibility?${query}`, {
       csrf: false, page: false, signal: actionController.signal
     }).then((eligibility) => {
       if (!body.isConnected || actionController.signal.aborted) return;
@@ -16115,7 +16170,7 @@ function openTunerFrequencyActions(selection) {
     message.textContent = addSystem.title;
   }
   addSystem.addEventListener('click', () => {
-    if (addSystem.disabled) return;
+    if (guideMode || addSystem.disabled) return;
     stopListening();
     if (!inline) panel.hidePopover();
     openSpectrumDiscoveryWizard(selection);
@@ -16147,6 +16202,7 @@ function openTunerFrequencyActions(selection) {
     if (listenLabel) listenLabel.textContent = 'Listen in NBFM';
   };
   const startListening = async () => {
+    if (guideMode) return;
     stopListening();
     const epoch = audioEpoch;
     audioOptions.hidden = false;
@@ -16187,6 +16243,7 @@ function openTunerFrequencyActions(selection) {
   });
   bandwidth.addEventListener('change', () => { if (audioStream) void startListening(); });
   radioReference.addEventListener('click', () => {
+    if (guideMode) return;
     stopListening();
     if (!inline) panel.hidePopover();
     openTunerRadioReferenceLookup(selectedHz);
@@ -16228,7 +16285,7 @@ function openTunerFrequencyActions(selection) {
   if (inline) {
     panel.replaceChildren(body);
     panel.tunerFrequencyActionCleanup = cleanup;
-    return { element: body, close: cleanup };
+    return { element: body, close: cleanup, ready: eligibilityReady };
   }
   panel.setAttribute('popover', 'auto');
   panel.setAttribute('role', 'dialog');
@@ -16780,6 +16837,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   if (frequencyCursor) layout.append(cursorPopup);
 
   let disposed = false;
+  let resolveFirstGuideFrame;
+  const firstGuideFrame = guideMode ? new Promise(resolve => { resolveFirstGuideFrame = resolve; }) : null;
   let paused = false;
   let externallySuspended = false;
   let pageFocused = document.hasFocus();
@@ -16901,8 +16960,20 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       toolbar, selection: tunerSelection, status, actions: toolbarActions,
       resetZoom, options, optionsSummary, optionsPanel
     },
-    surfaces: { visualWindow, displayControls, readoutPanel },
-    refreshTargets,
+    surfaces: { visualWindow, displayControls, readoutPanel, spectrum: spectrum.canvas },
+    firstGuideFrame, refreshTargets,
+    prepareGuideFrequency(frequencyHz, { select = false } = {}) {
+      if (!guideMode) throw new Error('Spectrum example selection requires an isolated signal panel.');
+      if (!viewport || disposed) throw new Error('The example receiver window is unavailable.');
+      const ratio = (Number(frequencyHz) - viewport.startHz) / (viewport.endHz - viewport.startHz);
+      if (!(ratio >= 0 && ratio <= 1)) throw new Error('The example signal is outside this receiver window.');
+      showCursor(ratio, spectrum.canvas, 0.3);
+      if (select) {
+        const rect = spectrum.canvas.getBoundingClientRect();
+        openFrequencyActionsAtPointer({ currentTarget: spectrum.canvas,
+          clientX: rect.left + ratio * rect.width, clientY: rect.top + rect.height * 0.3 });
+      }
+    },
     async setSuspended(suspended) {
       externallySuspended = Boolean(suspended);
       if (externallySuspended) await sync();
@@ -16936,6 +17007,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     close: () => {
       if (disposed) return;
       disposed = true;
+      resolveFirstGuideFrame?.(false);
+      resolveFirstGuideFrame = null;
       cancelDrag();
       closeStreams();
       closeActiveChannels();
@@ -17652,6 +17725,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     if (analysisChanged) renderActiveChannels();
     if (hoverRatio !== null) updateCursor(hoverRatio);
     scheduleDraw();
+    resolveFirstGuideFrame?.(true);
+    resolveFirstGuideFrame = null;
   }
 
   function openDiagnosticStream() {
@@ -18182,8 +18257,9 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function connectActiveChannels() {
-    if (guideMode || basicOperator || !liveActivityAllowed || !shouldRun() || activeChannelSource) return;
-    const source = subscribeLiveChannelActivity({
+    if (basicOperator || !liveActivityAllowed || !shouldRun() || activeChannelSource ||
+        (guideMode && typeof panelOptions.activityFeed !== 'function')) return;
+    const source = (guideMode ? panelOptions.activityFeed : subscribeLiveChannelActivity)({
       snapshot: (snapshot) => {
         activeChannelTables.clear();
         (Array.isArray(snapshot?.tables) ? snapshot.tables : []).forEach((table) => {
@@ -18630,7 +18706,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     if (disposed) return;
     if (targetsRefreshPending) { targetsRefreshRequested = true; return; }
     targetsRefreshPending = true;
-    spectrumApi('/api/v1/diagnostics/tuners').then((response) => {
+    return spectrumApi('/api/v1/diagnostics/tuners').then((response) => {
     if (disposed) return;
     const targets = tunerDiagnosticTargets(response);
     targetsById.clear();
@@ -18678,7 +18754,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       }
     });
   }
-  refreshTargets();
+  controller.ready = refreshTargets();
   return controller;
 }
 
@@ -20103,12 +20179,20 @@ async function requestSpectrumSnapPresetDocument(path = '/api/v1/spectrum-snap-p
   return decodeSpectrumSnapPresetDocument(value);
 }
 
-async function renderTunerSpectrum() {
-  const renderContext = captureRenderContext();
-  const snapPresetDocument = await requestSpectrumSnapPresetDocument();
+async function renderTunerSpectrum(workspaceOptions = {}) {
+  const guideMode = workspaceOptions.guideMode === true;
+  if (guideMode && (typeof workspaceOptions.requestJson !== 'function' ||
+      typeof workspaceOptions.api !== 'function' || typeof workspaceOptions.connectionFactory !== 'function' ||
+      typeof workspaceOptions.activityFeed !== 'function' || !workspaceOptions.snapPresets)) {
+    throw new Error('Spectrum examples require isolated receiver, signal, and activity transports.');
+  }
+  const renderContext = workspaceOptions.renderContext || captureRenderContext();
+  const requestSpectrumJson = workspaceOptions.requestJson || requestJson;
+  const snapPresetDocument = guideMode ? workspaceOptions.snapPresets : await requestSpectrumSnapPresetDocument();
   if (!renderIsCurrent(renderContext)) return;
   const browseAllowed = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS);
   if (!browseAllowed) {
+    if (guideMode) throw new Error('Spectrum examples require tuner access.');
     const spectrum = tunerSpectrumPanel(snapPresetDocument);
     pageConnections.add(spectrum);
     beginPage(renderContext, pageHeader('Browse Spectrum',
@@ -20148,6 +20232,7 @@ async function renderTunerSpectrum() {
   retryBrowse.hidden = true;
   feedback.append(message, retryBrowse);
   const confirmTakeover = (tuner, purpose = 'browse') => {
+    if (guideMode) return Promise.resolve(false);
     const channelCount = purpose === 'search' ? Math.max(0, Number(tuner?.channel_count) || 0) :
       allocationGroupChannelCount(tuner);
     const needsStop = channelCount > 0 || /channel|serving/i.test(String(tuner?.reason || ''));
@@ -20293,7 +20378,7 @@ async function renderTunerSpectrum() {
       return;
     }
     try {
-      await requestJson(leasePath(previous.tuner.id), {
+      await requestSpectrumJson(leasePath(previous.tuner.id), {
         method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
       });
       if (lease?.lease_id === previous.lease_id) lease = null;
@@ -20312,6 +20397,7 @@ async function renderTunerSpectrum() {
     }
   };
   const takeOverSelectedTuner = async () => {
+    if (guideMode) return;
     const tuner = selectedInventoryTuner();
     if (!tuner || modeConfirming || disposed) return;
     const generation = operation;
@@ -20331,6 +20417,7 @@ async function renderTunerSpectrum() {
     }
   };
   const finishTakeover = async () => {
+    if (guideMode) return;
     const id = selectedTuner?.id;
     if (!id || lease?.takeover !== true) return;
     const generation = ++operation;
@@ -20370,6 +20457,7 @@ async function renderTunerSpectrum() {
     if (liveTune?.busy && liveTune.frequencyHz) centerControl.previewFrequency(liveTune.frequencyHz / 1_000_000);
   };
   const saveCenterSetting = async (setting, value, { live = false } = {}) => {
+    if (guideMode) return;
     if (!canEditCenter() || (!live && liveTune?.busy) || (setting.id === 'frequency_mhz' && !canTune())) {
       if (live) throw new Error('This receiver is no longer available to tune. Retry when it is ready.');
       return;
@@ -20390,11 +20478,11 @@ async function renderTunerSpectrum() {
       renderCenter();
     }
     try {
-      await requestJson(`/api/v1/admin/tuners/${encodeURIComponent(currentTuner.id)}/settings/${setting.id}`, {
+      await requestSpectrumJson(`/api/v1/admin/tuners/${encodeURIComponent(currentTuner.id)}/settings/${setting.id}`, {
         method: 'PUT', body: { value, lease_id: currentLease.lease_id }, page: false
       });
       if (!current()) return null;
-      const renewed = await requestJson(leasePath(currentTuner.id), {
+      const renewed = await requestSpectrumJson(leasePath(currentTuner.id), {
         method: 'POST', body: { lease_id: currentLease.lease_id }, page: false
       });
       if (!current()) return null;
@@ -20464,6 +20552,8 @@ async function renderTunerSpectrum() {
     }
   });
   const spectrum = tunerSpectrumPanel(snapPresetDocument, {
+    ...(guideMode ? { guideMode, api: workspaceOptions.api, connectionFactory: workspaceOptions.connectionFactory,
+      activityFeed: workspaceOptions.activityFeed } : {}),
     managedSelection: true,
     emptyState: () => {
       if (!tunerIsRecording(selectedTuner)) return null;
@@ -20475,7 +20565,8 @@ async function renderTunerSpectrum() {
     statusClassName: 'ui-pill-inline-dot spectrum-browse-status',
     onFrequencySelection: (selection) => {
       frequencyActionController?.close?.();
-      frequencyActionController = openTunerFrequencyActions({ ...selection, actionHost: frequencyRail });
+      frequencyActionController = openTunerFrequencyActions({ ...selection, actionHost: frequencyRail },
+        guideMode ? { guideMode, requestJson: requestSpectrumJson } : {});
       if (window.matchMedia('(max-width: 920px)').matches) window.requestAnimationFrame(() => {
         const bounds = frequencyRail.getBoundingClientRect();
         if (bounds.top < 0 || bounds.bottom > window.innerHeight) {
@@ -20532,7 +20623,7 @@ async function renderTunerSpectrum() {
     const existing = lease;
     const tuneRevision = liveTune.revision;
     try {
-      const renewed = await requestJson(leasePath(existing.tuner.id), {
+      const renewed = await requestSpectrumJson(leasePath(existing.tuner.id), {
         method: 'POST', body: { lease_id: existing.lease_id }, page: false
       });
       if (disposed || lease?.lease_id !== existing.lease_id) return;
@@ -20614,11 +20705,11 @@ async function renderTunerSpectrum() {
     try {
       await releaseLease(false);
       if (disposed || generation !== operation) return;
-      const acquired = await requestJson(leasePath(id), {
+      const acquired = await requestSpectrumJson(leasePath(id), {
         method: 'POST', body: takeover ? { takeover: true } : {}, page: false
       });
       if (disposed || generation !== operation) {
-        void requestJson(leasePath(id), { method: 'DELETE', body: { lease_id: acquired.lease_id },
+        void requestSpectrumJson(leasePath(id), { method: 'DELETE', body: { lease_id: acquired.lease_id },
           page: false }).catch(() => {});
         return;
       }
@@ -20626,7 +20717,7 @@ async function renderTunerSpectrum() {
       leaseRetrying = false;
       confirmSelectedTuner(acquired.tuner);
       select.value = id;
-      storeTunerChoice('session-target', selectedTuner.spectrum_target_id || id);
+      if (!guideMode) storeTunerChoice('session-target', selectedTuner.spectrum_target_id || id);
       spectrum.selectTarget(selectedTuner.spectrum_target_id || '');
       spectrum.refreshTargets();
       renderCenter();
@@ -20635,6 +20726,7 @@ async function renderTunerSpectrum() {
       leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
     } catch (error) {
       if (disposed || generation !== operation) return;
+      if (guideMode) throw error;
       if (lease?.lease_id) {
         select.value = selectedTuner?.id || '';
         spectrum.selectTarget(selectedTuner?.spectrum_target_id || '');
@@ -20656,7 +20748,7 @@ async function renderTunerSpectrum() {
   };
   const loadTuners = async (choose = true) => {
     try {
-      const inventory = await requestJson('/api/v1/admin/tuners', { csrf: false });
+      const inventory = await requestSpectrumJson('/api/v1/admin/tuners', { csrf: false });
       if (disposed) return;
       tuners = tunerInventoryRows(inventory).filter((tuner) =>
         !['ERROR', 'REMOVED', 'UNSUPPORTED'].includes(String(tuner.status).toUpperCase()));
@@ -20667,7 +20759,10 @@ async function renderTunerSpectrum() {
         return option;
       }));
       select.disabled = probeActive || !tuners.length;
-      if (!tuners.length) { setBrowseMessage('No tuners are available. Connect a tuner and reload.'); return; }
+      if (!tuners.length) {
+        if (guideMode) throw new Error('The example receiver could not be loaded.');
+        setBrowseMessage('No tuners are available. Connect a tuner and reload.'); return;
+      }
       if (!choose) {
         selectedTuner = tuners.find((tuner) => tuner.id === selectedId) || selectedTuner;
         select.value = selectedId || '';
@@ -20676,10 +20771,14 @@ async function renderTunerSpectrum() {
         spectrum.refreshTargets();
         return;
       }
+      const rememberedTarget = guideMode ? workspaceOptions.selectedTunerId : tunerSpectrumSessionTarget;
       const remembered = tuners.find((tuner) =>
-        tuner.id === tunerSpectrumSessionTarget || tuner.spectrum_target_id === tunerSpectrumSessionTarget);
+        tuner.id === rememberedTarget || tuner.spectrum_target_id === rememberedTarget);
       await chooseTuner(remembered?.id || tuners[0].id);
-    } catch (error) { if (!disposed) setBrowseMessage(error.message); }
+    } catch (error) {
+      if (guideMode && !disposed) throw error;
+      if (!disposed) setBrowseMessage(error.message);
+    }
   };
   select.addEventListener('change', () => void chooseTuner(select.value));
   const browseState = node('div', 'spectrum-browse-state');
@@ -20732,12 +20831,13 @@ async function renderTunerSpectrum() {
   compactOptions.addEventListener('change', syncOptionsLabel);
   renderContext.signal.addEventListener('abort', () =>
     compactOptions.removeEventListener('change', syncOptionsLabel), { once: true });
-  document.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || !options.open) return;
+  const closeOptionsOnEscape = event => {
+    if (event.key !== 'Escape' || !options.open || !content.contains(workspace)) return;
     event.preventDefault();
     options.open = false;
     optionsTrigger.focus();
-  }, { signal: renderContext.signal });
+  };
+  document.addEventListener('keydown', closeOptionsOnEscape, { signal: renderContext.signal });
   syncOptionsLabel();
   syncOptionsTriggers();
 
@@ -20756,7 +20856,10 @@ async function renderTunerSpectrum() {
   workspace.append(spectrum.controls.toolbar, main);
   const header = pageHeader('Browse Spectrum',
     'Browse live signals and add channels.');
-  if (!beginPage(renderContext, header, workspace)) {
+  if (guideMode) header.append(node('span', 'ui-pill ui-pill-neutral', 'Example signals'));
+  const mounted = workspaceOptions.mount ? (workspaceOptions.mount(header, workspace), renderIsCurrent(renderContext)) :
+    beginPage(renderContext, header, workspace);
+  if (!mounted) {
     spectrum.close();
     return;
   }
@@ -20769,11 +20872,42 @@ async function renderTunerSpectrum() {
     resetFrequencyRail();
     spectrum.close();
     void releaseLease();
+    compactOptions.removeEventListener('change', syncOptionsLabel);
+    document.removeEventListener('keydown', closeOptionsOnEscape);
     window.removeEventListener('pagehide', close);
   };
   window.addEventListener('pagehide', close);
-  pageConnections.add({ close });
-  void loadTuners();
+  const controller = {
+    element: workspace, dispose: close, close,
+    setSuspended: value => spectrum.setSuspended(value),
+    async prepareGuide(section, context = {}) {
+      if (!guideMode) throw new Error('Spectrum examples require an isolated workspace.');
+      if (disposed || context.signal?.aborted || context.isCurrent?.() === false) return;
+      if (section === 'select-signal') {
+        spectrum.prepareGuideFrequency(workspaceOptions.selectedAnalogHz);
+      } else if (['listen', 'lookup', 'add-channel', 'modes', 'display-options'].includes(section)) {
+        spectrum.prepareGuideFrequency(workspaceOptions.selectedAnalogHz, { select: true });
+        await frequencyActionController?.ready;
+        if (disposed || context.signal?.aborted || context.isCurrent?.() === false) return;
+      }
+      const targets = {
+        receiver: selectField, activity: spectrum.surfaces.visualWindow,
+        'select-signal': spectrum.surfaces.spectrum,
+        listen: frequencyRail.querySelector('[aria-label="Listen in NBFM"]'),
+        lookup: frequencyRail.querySelector('[aria-label="Look up on RadioReference"]'),
+        'add-channel': frequencyRail.querySelector('[aria-label="Add channel or system"]'),
+        modes: mode, 'display-options': optionsSummary
+      };
+      const target = targets[section];
+      if (target) target.dataset.guideTarget = `bs-${section}`;
+    }
+  };
+  workspace.spectrumBrowseController = controller;
+  if (workspaceOptions.registerConnection) workspaceOptions.registerConnection(controller);
+  else pageConnections.add(controller);
+  const ready = loadTuners();
+  if (guideMode) { await ready; await spectrum.ready; await spectrum.firstGuideFrame; }
+  return controller;
 }
 
 function radioSystemAssignmentLabel(row) {

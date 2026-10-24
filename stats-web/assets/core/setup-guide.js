@@ -388,10 +388,12 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     const signal = stepController.signal;
     const isCurrent = () => !closed && generation === stepGeneration && !signal.aborted;
     try {
-      // An overview explains the page before a tour changes its visible state.
-      // Even an accidentally supplied target or prepare hook stays inactive here.
-      sampleCleanup = !step.overview ? guideSampleData?.activate(step.samples || []) || null : null;
-      const prepared = !step.overview ? await step.prepare?.({ modal, registerLayer: (...args) => {
+      // Overviews have no spotlights. An explicit sample presentation may show
+      // the real page with fictional data even when hardware is unavailable.
+      // Ordinary overview hooks stay inactive unless this capability is chosen.
+      const preparePresentation = !step.overview || step.samplePresentation === true;
+      sampleCleanup = preparePresentation ? guideSampleData?.activate(step.samples || []) || null : null;
+      const prepared = preparePresentation ? await step.prepare?.({ modal, registerLayer: (...args) => {
         if (!isCurrent()) return () => {};
         return registerLayer(...args);
       }, signal, isCurrent }) : null;
@@ -404,6 +406,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       modal.dialog.dataset.guideId = options.id || 'setup-guide';
       modal.dialog.dataset.guideStep = step.id || String(index + 1);
       modal.dialog.classList.toggle('ui-setup-guide--illustrated', Boolean(step.illustration));
+      modal.dialog.classList.toggle('ui-setup-guide--compact', step.compact === true);
       copy.replaceChildren();
       const diagramOptions = { document, idPrefix: `${heading.id}-diagram-${generation}` };
       const dynamicDiagram = dynamicGuideDiagrams[step.diagram]?.(diagramOptions);
