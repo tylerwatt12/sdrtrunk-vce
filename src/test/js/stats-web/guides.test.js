@@ -52,14 +52,14 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner', 'recordings'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner', 'recordings', 'topics', 'map', 'network-visualizer'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
     assert.ok(overview.title && overview.paragraphs.length, 'Each overview explains its page’s purpose.');
-    if (['tuner-spectrum', 'live'].includes(id)) {
+    if (['tuner-spectrum', 'live', 'map', 'network-visualizer'].includes(id)) {
       assert.equal(overview.samplePresentation, true,
-        'Hardware-free Live and Spectrum explicitly opt into sample overviews while keeping controls unhighlighted.');
+        'Hardware-dependent listening pages explicitly opt into sample overviews while keeping controls unhighlighted.');
       assert.deepEqual(overview.samples, [{ id: `${id}-workspace`, value: { section: 'overview' } }]);
       assert.equal(typeof overview.prepare, 'function');
     } else {
@@ -87,6 +87,9 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('dashboard').version, 3);
   assert.equal(createGuideDefinition('scanner').version, 4);
   assert.equal(createGuideDefinition('recordings').version, 4);
+  assert.equal(createGuideDefinition('topics').version, 3);
+  assert.equal(createGuideDefinition('map').version, 3);
+  assert.equal(createGuideDefinition('network-visualizer').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -984,6 +987,146 @@ async function checkGuides(assetsRoot) {
   await assert.rejects(failedRecordings.steps[1].prepare({}), /Recordings sample preparation failed/);
   assert.deepEqual(released.splice(0), ['recordings-player']);
 
+  const topicsTour = createGuideDefinition('topics', {
+    documentValue: targetDocument,
+    preparePlayer: () => { prepared.push('topics-player'); return () => released.push('topics-player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  assert.deepEqual(topicsTour.steps.map(step => step.id), ['overview', 'read-alerts', 'recent-alerts', 'notifications'],
+    'Topics is a short orientation, showing the Read alerts action before its actual filtered panel.');
+  assert.deepEqual(topicsTour.steps[0].paragraphs, [
+    'Topics group alerts about radio activity and receiver conditions. Read recent alerts here, or subscribe to receive new ones.'
+  ]);
+  assert.equal(topicsTour.steps[0].prepare, undefined,
+    'The Topics concept overview leaves real topics, filters and device state intact.');
+  const topicsStop = id => topicsTour.steps.find(step => step.id === id);
+  for (const step of topicsTour.steps.slice(1)) {
+    assert.deepEqual(targetNames(step), [`topic-${step.id}`]);
+    assert.deepEqual(step.samples, [{ id: 'topics-workspace', value: { section: step.id } }]);
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), ['topics-player', ['topics', step.id, context]],
+      'Topics uses the central page/player preparation lifecycle and actual public alerts workspace.');
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'topics-player']);
+  }
+  assert.match(topicsStop('read-alerts').paragraphs.join(' '), /published to this topic/);
+  assert.match(topicsStop('recent-alerts').paragraphs.join(' '), /title.*details/);
+  assert.match(topicsStop('notifications').paragraphs.join(' '), /topics send you notifications/);
+  assert.equal(topicsTour.steps.at(-1).nextLabel, 'Finish',
+    'The short Topics orientation ends on its subscription opening control without opening a connection dialog.');
+  const { createTopicsGuideData } = await load('guides/topics-presentation.js');
+  const topicsData = createTopicsGuideData();
+  const localTopics = await topicsData.requestJson('/api/v1/alerts/topics');
+  assert.deepEqual(localTopics.topics.map(topic => topic.name), ['Fire activity', 'Receiver health']);
+  assert.equal(topicsData.guideDevice, null);
+  localTopics.topics[0].name = 'Changed outside the example';
+  assert.equal((await topicsData.requestJson('/api/v1/alerts/topics')).topics[0].name, 'Fire activity',
+    'Callers cannot mutate future sample topic responses.');
+  const fireHistory = await topicsData.requestJson('/api/v1/alerts/history?topic_id=guide-fire-activity&limit=1&offset=1');
+  assert.equal(fireHistory.total, 2);
+  assert.equal(fireHistory.items.length, 1);
+  assert.equal(fireHistory.items[0].topic_id, 'guide-fire-activity');
+  fireHistory.items[0].title = 'Changed outside the example';
+  assert.notEqual((await topicsData.requestJson('/api/v1/alerts/history?topic_id=guide-fire-activity&limit=1&offset=1')).items[0].title,
+    'Changed outside the example', 'History responses are isolated as well as topic documents.');
+  assert.equal((await topicsData.requestJson('/api/v1/alerts/history?topic_id=guide-receiver-health')).total, 1);
+  for (const [url, options] of [
+    ['/api/v1/alerts/topics', { method: 'POST' }],
+    ['/api/v1/alerts/subscriptions/me', {}],
+    ['https://other.invalid/api/v1/alerts/topics', {}],
+    ['/api/v1/alerts/history?topic_id=real-private-topic', {}],
+    ['/api/v1/alerts/history?offset=-1', {}],
+    ['/api/v1/alerts/history?limit=0', {}],
+    ['/api/v1/alerts/history?private=true', {}]
+  ]) await assert.rejects(topicsData.requestJson(url, options), Error,
+    'Sample transport rejects writes, real connections, external requests and unsupported selections.');
+  const parentAbort = new AbortController();
+  const cancelledTopics = createTopicsGuideData({ signal: parentAbort.signal, deviceConnected: true });
+  assert.equal(cancelledTopics.guideDevice.status, 'connected');
+  assert.equal(cancelledTopics.guideDevice.id, 'guide-notification-device',
+    'An existing connection is represented with fictional credentials rather than a stored device.');
+  parentAbort.abort();
+  await assert.rejects(cancelledTopics.requestJson('/api/v1/alerts/topics'), { name: 'AbortError' });
+  const requestAbort = new AbortController(); requestAbort.abort();
+  await assert.rejects(topicsData.requestJson('/api/v1/alerts/history', { signal: requestAbort.signal }), { name: 'AbortError' });
+
+  const failedTopics = createGuideDefinition('topics', {
+    preparePlayer: () => () => released.push('topics-player'),
+    preparePage: () => { throw new Error('Topics sample preparation failed'); }
+  });
+  await assert.rejects(failedTopics.steps[1].prepare({}), /Topics sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['topics-player']);
+
+  for (const [view, sections, prefix] of [
+    ['map', ['overview', 'explore', 'select-radio', 'history', 'follow'], 'map'],
+    ['network-visualizer', ['overview', 'shapes', 'manual-button', 'manual-camera', 'auto-camera'], 'p25']
+  ]) {
+    const tour = createGuideDefinition(view, {
+      documentValue: targetDocument,
+      preparePlayer: () => { prepared.push(`${view}-player`); return () => released.push(`${view}-player`); },
+      preparePage: async (page, section, context) => {
+        prepared.push([page, section, context]); return () => released.push(section);
+      }
+    });
+    assert.deepEqual(tour.steps.map(step => step.id), sections,
+      'Map and P25 keep their concise concept and four practical controls in central guides.');
+    for (const step of tour.steps) {
+      if (!step.overview) assert.deepEqual(targetNames(step), [`${prefix}-${step.id}`]);
+      assert.deepEqual(step.samples, [{ id: `${view}-workspace`, value: { section: step.id } }]);
+      const context = { registerLayer() {} };
+      const release = await step.prepare(context);
+      assert.deepEqual(prepared.splice(0), [`${view}-player`, [view, step.id, context]]);
+      release(); assert.deepEqual(released.splice(0), [step.id, `${view}-player`]);
+    }
+    assert.equal(tour.steps.at(-1).nextLabel, 'Finish');
+    if (view === 'map') assert.match(tour.steps[1].targets()[0].selector, /map-show-all/,
+      'The Map gesture lesson includes its actual Show all opening action.');
+  }
+  const { createMapGuideData } = await load('guides/map-presentation.js');
+  const mapData = createMapGuideData();
+  const positions = await mapData.fetchSnapshot();
+  assert.deepEqual(positions.entities.map(entity => entity.label), ['Engine 7', 'Patrol 12']);
+  assert.ok(positions.entities.every(entity => entity.positions.length === 5 && entity.serving_system.name === 'County P25'));
+  positions.entities[0].positions[0].latitude = 0;
+  assert.notEqual((await mapData.fetchSnapshot()).entities[0].positions[0].latitude, 0,
+    'The actual map receives cloned location reports without mutating future samples.');
+  assert.match(mapData.iconUrl('no-icon'), /^data:image\/png;base64,/,
+    'Example icons stay local rather than requesting a stored icon.');
+  mapData.dispose();
+  await assert.rejects(mapData.fetchSnapshot(), { name: 'AbortError' });
+  const mapAbort = new AbortController(); mapAbort.abort();
+  await assert.rejects(createMapGuideData({ signal: mapAbort.signal }).fetchSnapshot(), { name: 'AbortError' });
+
+  const { createNetworkVisualizerGuideData } = await load('guides/network-visualizer-presentation.js');
+  const p25Data = createNetworkVisualizerGuideData();
+  const seed = await p25Data.requestActivitySeed();
+  assert.equal(seed.affiliations.length, 6);
+  assert.equal(new Set(seed.affiliations.map(item => item.talkgroup_identity_key)).size, 4,
+    'P25 examples cover several talkgroups and radios inside the actual graph.');
+  seed.affiliations[0].radio_alias_name = 'Changed outside the example';
+  assert.notEqual((await p25Data.requestActivitySeed()).affiliations[0].radio_alias_name, 'Changed outside the example');
+  const visualHistory = await p25Data.requestActivity({ projection: 'p25_visualizer' });
+  assert.ok(visualHistory.rows.length >= 6);
+  assert.equal(visualHistory.has_more, false);
+  assert.ok(visualHistory.rows.some(row => row.action === 'CALL'));
+  await assert.rejects(p25Data.requestActivity({ projection: 'private-real-data' }));
+  await assert.rejects(p25Data.requestActivitySeed({ private: true }));
+  const boundaries = [];
+  const localStream = p25Data.openActivityStream({ boundary: value => boundaries.push(value), append() {}, delta() {} });
+  await new Promise(queueMicrotask);
+  assert.equal(boundaries.length, 1);
+  assert.match(boundaries[0].source_epoch, /^guide-/,
+    'The visualizer receives a local feed boundary instead of a receiver connection.');
+  localStream.close(); p25Data.dispose();
+  await assert.rejects(p25Data.requestActivitySeed(), { name: 'AbortError' });
+  assert.throws(() => p25Data.openActivityStream({}), { name: 'AbortError' });
+  const visualAbort = new AbortController(); visualAbort.abort();
+  await assert.rejects(createNetworkVisualizerGuideData({ signal: visualAbort.signal }).requestActivitySeed(), { name: 'AbortError' });
+
   const liveTour = createGuideDefinition('live', {
     documentValue: targetDocument,
     preparePlayer: () => { prepared.push('live-player'); return () => released.push('live-player'); },
@@ -1101,6 +1244,30 @@ async function checkGuides(assetsRoot) {
   assert.equal(pagePreparation[0][0], 'aliases', 'The controller forwards page preparation to authored guides.');
   assert.equal(pagePreparation[0][1], 'lists');
   pagePrepared.controller.destroy();
+
+  const firstTopicsVisit = makeHarness({ context: { view: 'topics' }, storage: {
+    getItem: key => /:welcome:1$|:topics:[12]$/.test(key) ? '1' : null, setItem() {}
+  } });
+  await firstTopicsVisit.controller.pageReady();
+  assert.equal(firstTopicsVisit.shown.at(-1).options.id, 'topics',
+    'Completing the old Topics placeholder cannot suppress its authored orientation.');
+  firstTopicsVisit.controller.destroy();
+  const completedTopics = makeHarness({ context: { view: 'topics' }, storage: {
+    getItem: key => /:welcome:1$|:topics:3$/.test(key) ? '1' : null, setItem() {}
+  } });
+  assert.equal(await completedTopics.controller.pageReady(), false);
+  assert.equal(await completedTopics.controller.openPage(), true, 'Help can replay a completed Topics tour.');
+  completedTopics.controller.destroy();
+  const replayTopics = makeHarness({ context: { view: 'dashboard', guide: 'topics' } });
+  await replayTopics.controller.pageReady();
+  assert.deepEqual(replayTopics.navigations, ['topics']);
+  await replayTopics.controller.pageReady();
+  assert.equal(replayTopics.shown.at(-1).options.id, 'topics');
+  assert.equal(replayTopics.context.guide, null);
+  replayTopics.controller.destroy();
+  const deniedTopics = makeHarness({ context: { view: 'topics', guide: 'topics', canView: view => view !== 'topics' } });
+  assert.equal(await deniedTopics.controller.pageReady(), false);
+  assert.equal(deniedTopics.shown.length, 0);
 
   const firstRadioReferenceVisit = makeHarness({ context: { view: 'radioreference' }, storage: {
     getItem: key => /:welcome:1$|:radioreference:[12]$/.test(key) ? '1' : null,

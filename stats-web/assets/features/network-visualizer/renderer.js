@@ -79,7 +79,7 @@ function createUnavailable(host, message, signal) {
     enterSystem: () => false, enterTalkgroup: () => false, showOverview: () => false, focus: () => false,
     home: () => false, focusAffiliation: () => false,
     moveManualCamera: () => false, enterFullscreen: async () => false, exitFullscreen: async () => false,
-    dispose });
+    setGuideSuspended: () => {}, dispose });
 }
 
 async function createP25Renderer(options = {}) {
@@ -131,6 +131,7 @@ async function createP25Renderer(options = {}) {
   let scene = null;
   let canvas = null;
   let disposed = false;
+  let guideSuspended = false;
   let frame = 0;
   let cameraFrame = 0;
   let resizeObserver = null;
@@ -446,7 +447,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function resize() {
-    if (!graph || disposed) return;
+    if (!graph || disposed || guideSuspended) return;
     const width = Math.max(1, Math.floor(host.clientWidth));
     const height = Math.max(1, Math.floor(host.clientHeight));
     graph.width(width).height(height);
@@ -490,7 +491,7 @@ async function createP25Renderer(options = {}) {
     if (!controls) return;
     controls.autoRotate = Boolean(mode === 'auto' && cameraPhase === 'roam' &&
       (scope.level === 'system' || scope.level === 'talkgroup') &&
-      !programmatic && performance.now() >= interactionUntil && !documentValue.hidden && !reducedMotion);
+      !programmatic && performance.now() >= interactionUntil && !documentValue.hidden && !guideSuspended && !reducedMotion);
     controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
   }
 
@@ -511,7 +512,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function tweenCamera(position, target, duration = 900) {
-    if (!graph || !controls || disposed) return false;
+    if (!graph || !controls || disposed || guideSuspended) return false;
     stopCamera();
     const camera = graph.camera();
     const from = cameraPose();
@@ -539,7 +540,7 @@ async function createP25Renderer(options = {}) {
     const startedAt = performance.now();
     const step = (at) => {
       cameraFrame = 0;
-      if (disposed || documentValue.hidden) return stopCamera();
+      if (disposed || documentValue.hidden || guideSuspended) return stopCamera();
       const progress = clamp((at - startedAt) / milliseconds, 0, 1);
       apply(progress);
       if (progress < 1) cameraFrame = requestAnimationFrame(step);
@@ -804,7 +805,7 @@ async function createP25Renderer(options = {}) {
 
   function animate(at) {
     frame = 0;
-    if (disposed) return;
+    if (disposed || guideSuspended) return;
     if (focusAmount !== focusTarget) {
       const progress = clamp((at - focusStartedAt) / FOCUS_FADE_MS, 0, 1);
       focusAmount = focusFrom + (focusTarget - focusFrom) * ease(progress);
@@ -849,7 +850,7 @@ async function createP25Renderer(options = {}) {
   };
   const onVisibility = () => {
     if (!graph) return;
-    if (documentValue.hidden) {
+    if (documentValue.hidden || guideSuspended) {
       stopCamera();
       clearAffiliationMoves();
       graph.pauseAnimation();
@@ -957,6 +958,22 @@ async function createP25Renderer(options = {}) {
     return true;
   }
 
+  function setGuideSuspended(value) {
+    if (disposed || guideSuspended === Boolean(value)) return;
+    guideSuspended = Boolean(value);
+    if (guideSuspended) {
+      stopCamera();
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+      graph?.pauseAnimation();
+    } else {
+      resize();
+      if (!documentValue.hidden) graph?.resumeAnimation();
+      frame = requestAnimationFrame(animate);
+    }
+    updateAutoRotate();
+  }
+
   function dispose() {
     if (disposed) return;
     disposed = true;
@@ -994,7 +1011,8 @@ async function createP25Renderer(options = {}) {
   frame = requestAnimationFrame(animate);
 
   return Object.freeze({ available: true, setData, setMode, setCameraPhase, enterSystem, enterTalkgroup,
-    showOverview, focus, focusAffiliation, home, moveManualCamera, enterFullscreen, exitFullscreen, dispose });
+    showOverview, focus, focusAffiliation, home, moveManualCamera, enterFullscreen, exitFullscreen,
+    setGuideSuspended, dispose });
 }
 
 export { calculateFocusBounds, enqueueAffiliationChange, createP25Renderer };

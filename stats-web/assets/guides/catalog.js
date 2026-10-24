@@ -11,12 +11,16 @@ import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=3';
 import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=3';
 import { scannerSteps } from './pages/scanner.js?v=4';
 import { recordingsSteps } from './pages/recordings.js?v=4';
+import { topicsSteps } from './pages/topics.js?v=1';
+import { mapSteps, mapOverviewPresentation } from './pages/map.js?v=1';
+import { networkVisualizerSteps, networkVisualizerOverviewPresentation } from './pages/network-visualizer.js?v=1';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
   'scan-lists': scanListsSteps, radioreference: radioReferenceSteps, streaming: streamingSteps, tuners: tunersSteps,
-  'tuner-spectrum': spectrumSteps, live: liveSteps, dashboard: mainSteps, scanner: scannerSteps, recordings: recordingsSteps });
+  'tuner-spectrum': spectrumSteps, live: liveSteps, dashboard: mainSteps, scanner: scannerSteps, recordings: recordingsSteps,
+  topics: topicsSteps, map: mapSteps, 'network-visualizer': networkVisualizerSteps });
 // Page concepts stay separate from the numbered controls that follow them.
 // Keep a purpose and practical radio use here even while a walkthrough is pending.
 const pageOverviewCopy = Object.freeze({
@@ -25,15 +29,15 @@ const pageOverviewCopy = Object.freeze({
   live: ['Follow your radio traffic',
     'Live shows what your channels are receiving as it happens. Follow calls, identify the radios and talkgroups involved, and investigate reception.',
     'Choose what you hear through Scan Lists in the player. Calls play after each transmission finishes.'],
-  topics: ['Follow the activity that matters to you',
-    'Subscribe to topics for alerts about selected radio activity or receiver conditions. Each topic brings related alerts together.'],
+  topics: ['Follow the activity that matters',
+    'Topics group alerts about radio activity and receiver conditions. Read recent alerts here, or subscribe to receive new ones.'],
   recordings: ['Find a conversation again',
     'Find and replay saved calls by time, talkgroup, channel, or radio. Search saved transcripts to find words spoken over the air.',
     'Calls saved with Managed Recordings are collected here.'],
   map: ['Put radio activity on the map',
-    'Follow reported locations and review recent location history to see where radio activity is taking place.'],
-  'network-visualizer': ['See how a P25 system is connected',
-    'Explore the sites and connections reported by a P25 system. Use the visualizer to understand its network and follow changes as they are heard.'],
+    'Map shows positions reported over the radio. Select a radio to review its recent movement.'],
+  'network-visualizer': ['Follow a whole radio system in 3D',
+    'Follow radio activity across an entire P25 system in 3D. See its talkgroups, radios, and their activity together.'],
   scanner: ['Listen to your Scan Lists',
     'Listen to calls from your selected Scan Lists and see who’s transmitting. Each call plays after the transmission ends.'],
   'tuner-spectrum': ['Find signals worth receiving',
@@ -72,7 +76,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 4, aliases: 5, 'scan-lists': 7, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5, live: 3, dashboard: 3, scanner: 4, recordings: 4 });
+const guideVersions = Object.freeze({ 'channel-setup': 4, aliases: 5, 'scan-lists': 7, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5, live: 3, dashboard: 3, scanner: 4, recordings: 4, topics: 3, map: 3, 'network-visualizer': 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -279,7 +283,9 @@ export function createGuideDefinition(id, { documentValue = globalThis.document,
   const template = pageGuideTemplates[id];
   if (!template) return null;
   if (authoredPages[id]) return { ...template, eyebrow: template.title,
-    steps: [{ ...template.overview, ...(id === 'tuner-spectrum' ?
+    steps: [{ ...template.overview, ...(id === 'map' ?
+      mapOverviewPresentation(preparePlayer, preparePage) : id === 'network-visualizer' ?
+      networkVisualizerOverviewPresentation(preparePlayer, preparePage) : id === 'tuner-spectrum' ?
       spectrumOverviewPresentation(preparePlayer, preparePage) : id === 'live' ?
         liveOverviewPresentation(preparePlayer, preparePage) : id === 'dashboard' ?
           { items: mainOverviewItems(canAccess) } : {}) }, ...authoredPages[id](documentValue, preparePlayer, preparePage, canView, canAccess)] };

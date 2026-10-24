@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=27';
+import { createGuideController } from './guides/controller.js?v=28';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -7875,6 +7875,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
   const originalSpectrum = view === 'tuner-spectrum' ?
     content.querySelector('.spectrum-browse-workspace')?.spectrumBrowseController : null;
   const originalScanner = view === 'scanner' ? content.querySelector('.scanner-page')?.scannerController : null;
+  const originalTopics = view === 'topics' ? content.querySelector('.alerts-workspace')?.alertsController : null;
+  const originalMap = view === 'map' ? content.querySelector('.listen-map-workspace')?.listenMapController : null;
+  const originalVisualizer = view === 'network-visualizer' ? content.querySelector('.network-visualizer-layout')?.p25VisualizerController : null;
   const scrollState = [content, document.scrollingElement, ...content.querySelectorAll('*')]
     .filter(element => element && (element === content || element === document.scrollingElement ||
       element.scrollTop || element.scrollLeft))
@@ -7884,6 +7887,8 @@ async function prepareWorkspaceGuideSample(view, section, context) {
   holding.inert = true;
   document.body.append(holding);
   originalScanner?.setGuideSuspended(true);
+  originalMap?.setGuideSuspended(true);
+  originalVisualizer?.setGuideSuspended(true);
   holding.attachShadow({ mode: 'closed' }).append(...originalNodes);
   const releases = [];
   const modals = [];
@@ -7911,6 +7916,8 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       safely(() => pageTitleController.update({ pageTitle: originalPageTitle }));
       safely(() => { void originalSpectrum?.setSuspended(false); });
       safely(() => originalScanner?.setGuideSuspended(false));
+      safely(() => originalMap?.setGuideSuspended(false));
+      safely(() => originalVisualizer?.setGuideSuspended(false));
       scrollState.forEach(([element, top, left]) => safely(() => {
         element.scrollTop = top;
         element.scrollLeft = left;
@@ -7929,7 +7936,16 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const live = view === 'live';
     const main = view === 'dashboard';
     const scanner = view === 'scanner';
-    const [feature, presentation] = await Promise.all(scanner ? [
+    const topics = view === 'topics';
+    const mapTour = view === 'map';
+    const visualizerTour = view === 'network-visualizer';
+    const [feature, presentation] = await Promise.all(mapTour ? [
+      import('./features/listen-map.js?v=13'), import('./guides/map-presentation.js?v=1')
+    ] : visualizerTour ? [
+      import('./features/network-visualizer/index.js?v=57'), import('./guides/network-visualizer-presentation.js?v=1')
+    ] : topics ? [
+      import('./features/alerts.js?v=21'), import('./guides/topics-presentation.js?v=1')
+    ] : scanner ? [
       Promise.resolve(null), import('./guides/scanner-presentation.js?v=1')
     ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
@@ -7945,9 +7961,10 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       import('./features/radioreference-import.js?v=33'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
-    const sample = (scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
-      presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal, section });
-    if (spectrum || live || main || scanner) releases.push(() => sample.dispose());
+    const sample = (mapTour ? presentation.createMapGuideData : visualizerTour ? presentation.createNetworkVisualizerGuideData : topics ? presentation.createTopicsGuideData : scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
+      presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal, section,
+      ...(topics ? { deviceConnected: originalTopics?.getGuideState().deviceConnected === true } : {}) });
+    if (spectrum || live || main || scanner || mapTour || visualizerTour) releases.push(() => sample.dispose());
     if (streaming && typeof sample.requestOperationalPreference !== 'function') {
       throw new Error('The Streaming guide settings could not be prepared.');
     }
@@ -7975,7 +7992,47 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     };
     let protectedRoots;
     let routingHost = null;
-    if (scanner) {
+    if (mapTour) {
+      workspace = feature.createListenMap({ node, iconGlyph, iconButton,
+        guideMode: true, signal: context.signal, fetchSnapshot: sample.fetchSnapshot,
+        iconUrl: sample.iconUrl, radioSystemLink: (_reference, label) => label });
+      workspace.element.dataset.guideExample = 'map';
+      const heading = pageHeader('Map', 'Follow receiver locations and inspect recent history');
+      heading.append(uiPill('Example data'));
+      content.replaceChildren(heading, workspace.element);
+      await workspace.ready;
+      if (closed || !context.isCurrent()) { restore(); return restore; }
+      protectedRoots = [workspace.element];
+    } else if (visualizerTour) {
+      workspace = feature.createP25Visualizer(p25VisualizerDependencies(
+        { ...renderContext, signal: context.signal }, {
+          guideMode: true, requestActivity: sample.requestActivity,
+          requestActivitySeed: sample.requestActivitySeed, openActivityStream: sample.openActivityStream,
+          loadEventSettings: sample.loadEventSettings, saveEventSettings: sample.saveEventSettings,
+          openReadOnlyModal: openSampleModal, systemHref: () => '',
+          messageTypeLabel: sample.messageTypeLabel, messageTypeDefinition: sample.messageTypeDefinition
+        }));
+      workspace.element.dataset.guideExample = 'network-visualizer';
+      content.replaceChildren(workspace.element);
+      const ready = await workspace.ready;
+      if (closed || !context.isCurrent()) { restore(); return restore; }
+      if (!ready) throw new Error('The P25 Visualizer example could not be prepared. Check that 3D rendering is available.');
+      protectedRoots = [workspace.element];
+    } else if (topics) {
+      workspace = feature.createAlertsWorkspace(alertsWorkspaceDependencies(
+        { ...renderContext, signal: context.signal }, 'public', {
+          guideMode: true, guideDevice: sample.guideDevice, requestJson: sampleRequest,
+          selectedTopic: '', selectedAlert: '', openReadOnlyModal: openSampleModal,
+          confirmAction: async () => false, onPushEnabledChanged: () => {}
+        }));
+      workspace.element.dataset.guideExample = 'topics';
+      const heading = pageHeader('Topics', 'Follow alerts published by this VCE installation');
+      heading.append(uiPill('Example data'));
+      content.replaceChildren(heading, workspace.element);
+      await workspace.ready;
+      if (closed || !context.isCurrent()) { restore(); return restore; }
+      protectedRoots = [workspace.element];
+    } else if (scanner) {
       const pageRoots = [];
       workspace = await renderScanner({ guideMode: true,
         renderContext: { ...renderContext, signal: context.signal }, player: sample.player,
@@ -8210,7 +8267,7 @@ async function preparePageGuideSample(view, section, context) {
       throw error;
     }
   }
-  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
+  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner', 'topics', 'map', 'network-visualizer'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
@@ -20643,12 +20700,8 @@ function saveP25VisualizerEventSettings(value) {
   }
 }
 
-async function renderP25Visualizer() {
-  const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=56');
-  const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
-  if (!renderIsCurrent(renderContext)) return;
-  const visualizer = visualizerModule.createP25Visualizer({
+function p25VisualizerDependencies(renderContext, overrides = {}) {
+  return {
     node,
     iconGlyph,
     iconButton,
@@ -20678,8 +20731,17 @@ async function renderP25Visualizer() {
     },
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
-    signal: renderContext.signal
-  });
+    signal: renderContext.signal,
+    ...overrides
+  };
+}
+
+async function renderP25Visualizer() {
+  const renderContext = captureRenderContext();
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=57');
+  const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
+  if (!renderIsCurrent(renderContext)) return;
+  const visualizer = visualizerModule.createP25Visualizer(p25VisualizerDependencies(renderContext));
   if (!renderIsCurrent(renderContext)) {
     visualizer.close();
     return;
@@ -31400,10 +31462,8 @@ async function renderAdminRemoteLinks(renderContext) {
   content.append(workspace.element);
 }
 
-async function alertsWorkspace(renderContext, view) {
-  const { createAlertsWorkspace } = await import('./features/alerts.js?v=20');
-  if (!renderIsCurrent(renderContext)) return;
-  return createAlertsWorkspace({
+function alertsWorkspaceDependencies(renderContext, view, overrides = {}) {
+  return {
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconButton, iconGlyph,
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal, confirmAction,
     createFormWorkflow, requestJson, apiPage, modalFooter: aliasModalFooter, href,
@@ -31416,8 +31476,15 @@ async function alertsWorkspace(renderContext, view) {
       if (id) route.set('topic', String(id));
       else route.delete('topic');
       window.history.replaceState({}, '', currentHref());
-    } : undefined
-  });
+    } : undefined,
+    ...overrides
+  };
+}
+
+async function alertsWorkspace(renderContext, view) {
+  const { createAlertsWorkspace } = await import('./features/alerts.js?v=21');
+  if (!renderIsCurrent(renderContext)) return;
+  return createAlertsWorkspace(alertsWorkspaceDependencies(renderContext, view));
 }
 
 async function renderPublicAlertTopics() {
@@ -31467,7 +31534,7 @@ async function renderAdminWebDiagnosticLog(renderContext) {
 
 async function renderListenMap() {
   const renderContext = captureRenderContext();
-  const { createListenMap } = await import('./features/listen-map.js?v=12');
+  const { createListenMap } = await import('./features/listen-map.js?v=13');
   if (!renderIsCurrent(renderContext)) return;
   const map = createListenMap({
     node, iconGlyph, iconButton, radioSystemLink,

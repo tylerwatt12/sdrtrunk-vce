@@ -177,7 +177,7 @@ function fitPoints(points, width, height) {
 }
 
 function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
-  radioSystemLink = (_reference, label) => label }) {
+  radioSystemLink = (_reference, label) => label, guideMode = false }) {
   const root = node('div', 'listen-map-workspace data-workspace');
   const toolbar = node('div', 'listen-map-toolbar ui-toolbar');
   const status = node('span', 'listen-map-status', 'Loading locations…');
@@ -292,6 +292,10 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   let zoom = 4;
   let initialized = false;
   let closed = false;
+  let suspended = false;
+  let generation = 0;
+  let resolveReady;
+  const ready = new Promise(resolve => { resolveReady = resolve; });
   let inFlight = false;
   let frame = 0;
   let drag = null;
@@ -335,7 +339,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
 
   function draw() {
     frame = 0;
-    if (closed || !viewport.isConnected) return;
+    if (closed || suspended || !viewport.isConnected) return;
     const { width, height } = dimensions();
     const current = new Set();
     for (const tile of visibleTiles(center, zoom, width, height)) {
@@ -380,6 +384,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
       marker.setAttribute('aria-label', `Select ${entity.label}`);
       marker.setAttribute('aria-pressed', String(entity.id === selectedId));
       marker.dataset.entityId = entity.id;
+      if (guideMode && entity.id === 'guide-map-patrol12') marker.dataset.guideTarget = 'map-select-radio';
       marker.title = entity.label;
       marker.style.left = `${point.x}px`;
       marker.style.top = `${point.y}px`;
@@ -399,7 +404,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   }
 
   function scheduleDraw() {
-    if (!frame && !closed) frame = window.requestAnimationFrame(draw);
+    if (!frame && !closed && !suspended) frame = window.requestAnimationFrame(draw);
   }
 
   function setFollowState(id = '') {
@@ -491,6 +496,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
       button.type = 'button';
       button.setAttribute('aria-pressed', String(entity.id === selectedId));
       button.dataset.entityId = entity.id;
+      if (guideMode && entity.id === 'guide-map-patrol12') button.dataset.guideTarget = 'map-select-radio';
       const icon = document.createElement('img');
       icon.alt = '';
       icon.loading = 'lazy';
@@ -621,12 +627,13 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   }
 
   async function poll() {
-    if (closed || inFlight || document.hidden) return;
+    if (closed || suspended || inFlight || document.hidden) return;
+    const currentGeneration = generation;
     inFlight = true;
     refresh.disabled = true;
     try {
       const next = normalizeSnapshot(await fetchSnapshot());
-      if (closed) return;
+      if (closed || suspended || currentGeneration !== generation) return;
       reconcileSnapshot(next);
       const entities = catalogEntities();
       if (!initialized && entities.length) {
@@ -638,10 +645,12 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
       renderSelection();
       scheduleDraw();
     } catch (error) {
-      if (!closed) status.textContent = error.message || 'Map locations are unavailable.';
+      if (!closed && !suspended && currentGeneration === generation) status.textContent = error.message || 'Map locations are unavailable.';
     } finally {
       inFlight = false;
       if (!closed) refresh.disabled = false;
+      resolveReady?.();
+      resolveReady = null;
     }
   }
 
@@ -719,13 +728,51 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   const resize = typeof ResizeObserver === 'function' ? new ResizeObserver(scheduleDraw) : null;
   resize?.observe(viewport);
   if (!resize) window.addEventListener('resize', scheduleDraw);
-  const onVisibility = () => { if (!document.hidden) void poll(); };
+  const onVisibility = () => { if (!document.hidden && !guideMode) void poll(); };
   document.addEventListener('visibilitychange', onVisibility);
-  const timer = window.setInterval(() => void poll(), 5000);
+  const timer = guideMode ? null : window.setInterval(() => void poll(), 5000);
   window.requestAnimationFrame(() => { scheduleDraw(); void poll(); });
 
-  return { element: root, close() {
+  const getGuideState = () => ({ selectedId, followingId, zoom, center: { ...center },
+    trailLength, guideMode, suspended, closed, entities: snapshot.entities.length });
+  const setGuideSuspended = (value) => {
+    if (closed || suspended === Boolean(value)) return;
+    suspended = Boolean(value);
+    generation += 1;
+    if (suspended && frame) { window.cancelAnimationFrame(frame); frame = 0; }
+    if (!suspended) { scheduleDraw(); if (!guideMode) void poll(); }
+  };
+  async function prepareGuide(section, context = {}) {
+    if (!guideMode) throw new Error('Map examples require an isolated workspace.');
+    if (!['overview', 'explore', 'select-radio', 'history', 'follow'].includes(section)) {
+      throw new Error('Unknown Map example section.');
+    }
+    await ready;
+    const current = () => !closed && !context.signal?.aborted && context.isCurrent?.() !== false;
+    if (!current()) return;
+    if (['history', 'follow'].includes(section)) {
+      const button = [...list.querySelectorAll('button')].find(candidate => candidate.dataset.entityId === 'guide-map-patrol12');
+      if (!button) throw new Error('The Map example needs the Patrol 12 track.');
+      button.click();
+    } else fit.click();
+    await new Promise(resolve => window.requestAnimationFrame(resolve));
+    if (!current()) return;
+    if (section === 'history') details.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    else if (section === 'follow') follow.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    else root.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+  }
+  if (guideMode) {
+    viewport.dataset.guideTarget = 'map-explore';
+    fit.dataset.guideTarget = 'map-show-all';
+    details.dataset.guideTarget = 'map-history';
+    follow.dataset.guideTarget = 'map-follow';
+  }
+  function close() {
+    if (closed) return;
     closed = true;
+    generation += 1;
+    resolveReady?.();
+    resolveReady = null;
     historyOverflow?.destroy();
     historyOverflow = null;
     window.clearInterval(timer);
@@ -734,7 +781,9 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
     if (!resize) window.removeEventListener('resize', scheduleDraw);
     document.removeEventListener('visibilitychange', onVisibility);
     tileNodes.clear();
-  } };
+  }
+  root.listenMapController = { getGuideState, setGuideSuspended };
+  return { element: root, ready, close, dispose: close, getGuideState, setGuideSuspended, prepareGuide };
 }
 
 export { project, unproject, visibleTiles, normalizeSnapshot, fitPoints, wrappedOffset,

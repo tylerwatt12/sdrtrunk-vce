@@ -19,7 +19,11 @@ export function createAlertsWorkspace(deps) {
     section, sectionActionHost, table, browsingWorkflows, openReadOnlyModal,
     confirmAction, createFormWorkflow, requestJson, apiPage, modalFooter, href,
     identityPicker, createId, signal, view = 'manage', selectedTopic = '', selectedAlert = '', onTopicSelected,
-    onPushEnabledChanged, canViewRadio = () => false, canViewRecordings = () => false } = deps;
+    onPushEnabledChanged, canViewRadio = () => false, canViewRecordings = () => false,
+    guideMode = false, guideDevice = null } = deps;
+  if (guideMode && (view !== 'public' || typeof requestJson !== 'function')) {
+    throw new Error('Topics examples require an isolated public workspace.');
+  }
   const host = node('div', 'alerts-workspace data-workspace');
   const feedback = node('div');
   feedback.setAttribute('role', 'status');
@@ -34,7 +38,7 @@ export function createAlertsWorkspace(deps) {
   let publicTopic = selectedTopic;
   let openedLinkedAlert = false;
   let linkedAlert = null;
-  let expandedAlertId = selectedAlert;
+  let expandedAlertId = guideMode ? '' : selectedAlert;
   let cleanupPublicHistory = null;
   let directConnection = { state: 'none' };
   let ruleTestBusy = false;
@@ -44,11 +48,13 @@ export function createAlertsWorkspace(deps) {
   let ruleState = 'all';
   let ruleOffset = 0;
   let refreshManagementRules = null;
+  let publicGuide = null;
+  let pendingPublicHistory = Promise.resolve();
   const aliasNames = new Map();
   const requestedAliases = new Set();
   const managementTableController = {};
-  let device = readAlertDevice(window.localStorage);
-  const originalManifest = document.querySelector('link[rel="manifest"]')?.getAttribute('href');
+  let device = guideMode ? (guideDevice ? { ...guideDevice } : null) : readAlertDevice(window.localStorage);
+  const originalManifest = guideMode ? null : document.querySelector('link[rel="manifest"]')?.getAttribute('href');
 
   function button(label, action, primary = false) {
     const control = node('button', `ui-button ui-button-${primary ? 'primary' : 'secondary'}`, label);
@@ -99,8 +105,10 @@ export function createAlertsWorkspace(deps) {
       button('Retry', () => void load()));
   }
   const read = path => requestJson(path, { csrf: false, signal });
-  const write = (path, method, value, extra = {}) => requestJson(path,
-    { method, body: value, signal, page: false, timeoutMs: 30000, ...extra });
+  const write = (path, method, value, extra = {}) => {
+    if (guideMode) return Promise.reject(new Error('Topics examples cannot change notification settings.'));
+    return requestJson(path, { method, body: value, signal, page: false, timeoutMs: 30000, ...extra });
+  };
   const authorize = () => ({ Authorization: `Bearer ${device.manage_token}` });
   const options = key => Array.isArray(snapshot?.options?.[key]) ? snapshot.options[key] : [];
   const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -109,11 +117,12 @@ export function createAlertsWorkspace(deps) {
   function link(label, target) {
     const control = node('a', 'ui-button ui-button-secondary', label);
     control.href = target;
+    if (guideMode) control.addEventListener('click', event => event.preventDefault());
     return control;
   }
   function paragraph(text) { return node('p', 'muted', text); }
   function notifyPushState(value) {
-    if (typeof value?.enabled === 'boolean') onPushEnabledChanged?.(value.enabled);
+    if (!guideMode && typeof value?.enabled === 'boolean') onPushEnabledChanged?.(value.enabled);
   }
   function renderDisabled() {
     body.replaceChildren(notice('Push notifications are disabled.'));
@@ -154,6 +163,7 @@ export function createAlertsWorkspace(deps) {
   }
 
   async function load() {
+    if (disposed || signal?.aborted) return;
     feedback.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Loading alerts…'));
     try {
       snapshot = await read(view === 'public' ? PUBLIC + '/topics' : ADMIN + (view === 'setup' ? '/config' : '/topics'));
@@ -168,7 +178,7 @@ export function createAlertsWorkspace(deps) {
       if (view === 'setup') renderSetup();
       else if (view === 'public') {
         if (snapshot.enabled === false) { renderDisabled(); return; }
-        if (snapshot.mode === 'direct') directConnection = await reconcileDirectSubscription(window, device,
+        if (!guideMode && snapshot.mode === 'direct') directConnection = await reconcileDirectSubscription(window, device,
           value => write(PUBLIC + '/subscriptions/me/refresh', 'POST', value, { headers: authorize(), csrf: false }));
         await renderPublic();
       }
@@ -1071,7 +1081,7 @@ export function createAlertsWorkspace(deps) {
   async function renderPublic() {
     cleanupPublicHistory?.();
     if (snapshot.enabled === false) { renderDisabled(); return; }
-    document.querySelector('link[rel="manifest"]')?.setAttribute('href', '/assets/alerts.webmanifest?v=1');
+    if (!guideMode) document.querySelector('link[rel="manifest"]')?.setAttribute('href', '/assets/alerts.webmanifest?v=1');
     const topics = visibleAlertTopics(snapshot.topics);
     if (publicTopic && !topics.some(topic => topic.id === publicTopic)) publicTopic = '';
     body.replaceChildren();
@@ -1079,17 +1089,28 @@ export function createAlertsWorkspace(deps) {
     const sidebar = node('div', 'alerts-public-sidebar');
     const introduction = node('header', 'ui-surface ui-section-body');
     const heading = node('div', 'ui-heading-group'); heading.append(node('h2', '', 'Follow alert topics'), paragraph('Read recent alerts and choose which topics notify this device. No account is needed.'));
-    introduction.append(heading, button(device ? 'Notification settings' : 'Subscribe', () => void openSubscription()));
+    const notifications = button(device ? 'Notification settings' : 'Subscribe', () => void openSubscription());
+    if (guideMode) notifications.dataset.guideTarget = 'topic-notifications';
+    introduction.append(heading, notifications);
     sidebar.append(introduction);
     if (directConnection.message) sidebar.append(notice(directConnection.message, 'warning'));
     const cards = node('div', 'alerts-public-topics');
+    let guideReadAlerts = null;
     for (const topic of topics) {
       const card = node('article', 'ui-surface alerts-topic-card');
       const identity = node('div', 'ui-heading-group');
       identity.append(node('h3', '', topic.name), paragraph(topic.description || 'Alerts published by this VCE installation.'));
       card.append(identity, uiStatus(topic.enabled ? 'Available' : 'Paused', 'neutral'));
       const subscribe = button('Subscribe', () => void openSubscription(topic.id), true); subscribe.disabled = !topic.enabled || !snapshot.push_enabled;
-      card.append(actionRow(button('Read alerts', () => { publicTopic = topic.id; publicOffset = 0; filter.control.value = topic.id; void loadHistory(); }), subscribe));
+      const readAlerts = button('Read alerts', () => {
+        publicTopic = topic.id; publicOffset = 0; filter.control.value = topic.id;
+        pendingPublicHistory = loadHistory();
+      });
+      if (guideMode && topic.id === 'guide-fire-activity') {
+        readAlerts.dataset.guideTarget = 'topic-read-alerts';
+        guideReadAlerts = readAlerts;
+      }
+      card.append(actionRow(readAlerts, subscribe));
       cards.append(card);
     }
     if (!topics.length) cards.append(notice('No topics are available to listeners yet.'));
@@ -1101,8 +1122,10 @@ export function createAlertsWorkspace(deps) {
     const timelineContent = node('div', 'alerts-form ui-section-body');
     timelineContent.append(filter.element, timeline);
     const timelinePanel = section('Recent alerts', timelineContent, button('Refresh', () => void loadHistory()));
+    if (guideMode) timelinePanel.dataset.guideTarget = 'topic-recent-alerts';
     layout.append(sidebar, timelinePanel);
     body.append(layout);
+    publicGuide = guideMode ? { readAlerts: guideReadAlerts } : null;
     let generation = 0;
     let historyClosed = false;
     const alertCards = new Map();
@@ -1118,6 +1141,7 @@ export function createAlertsWorkspace(deps) {
       metadata.append(node('span', 'ui-field-detail', topicName(event.topic_id)), timestamp);
       const title = node('h3', 'ui-record-title');
       const readAlert = button(event.title || 'VCE alert', () => {
+        if (guideMode) return;
         const expanded = readAlert.getAttribute('aria-expanded') !== 'true';
         expandedAlertId = expanded ? event.id : '';
         alertCards.forEach((other, id) => other.expand(expanded && id === event.id));
@@ -1209,8 +1233,9 @@ export function createAlertsWorkspace(deps) {
           timeline.replaceChildren(notice('Recent alerts could not be loaded. Try Refresh.', 'danger'));
       }
     }
-    await loadHistory();
-    if (selectedAlert && !openedLinkedAlert && !historyClosed) {
+    pendingPublicHistory = loadHistory();
+    await pendingPublicHistory;
+    if (!guideMode && selectedAlert && !openedLinkedAlert && !historyClosed) {
       openedLinkedAlert = true;
       if (alertCards.has(selectedAlert)) return;
       try {
@@ -1235,6 +1260,9 @@ export function createAlertsWorkspace(deps) {
   }
 
   async function openSubscription(initialTopic = '') {
+    // The tour ends at this opening control. Connecting notifications can touch
+    // browser storage, permissions and service workers, so it stays inert here.
+    if (guideMode || disposed) return;
     const form = node('form', 'alerts-form');
     const status = node('div');
     const connection = node('div');
@@ -1552,9 +1580,27 @@ export function createAlertsWorkspace(deps) {
     cleanupPublicHistory?.();
     managementTableController.widthObserver?.disconnect();
     clearTimeout(pollTimer);
-    if (view === 'public' && originalManifest != null) document.querySelector('link[rel="manifest"]')?.setAttribute('href', originalManifest);
+    publicGuide = null;
+    if (!guideMode && view === 'public' && originalManifest != null) document.querySelector('link[rel="manifest"]')?.setAttribute('href', originalManifest);
   }
   signal?.addEventListener('abort', close, { once: true });
+  if (signal?.aborted) close();
   const ready = load();
-  return { element: host, ready, close };
+  const getGuideState = () => ({ deviceConnected: Boolean(device) });
+  async function prepareGuide(section, context = {}) {
+    if (!guideMode) throw new Error('Topics examples require an isolated workspace.');
+    await ready;
+    const current = () => !disposed && !context.signal?.aborted && context.isCurrent?.() !== false;
+    if (!current()) return;
+    if (['recent-alerts', 'notifications'].includes(section)) {
+      if (!publicGuide?.readAlerts) throw new Error('The Topics example needs the Fire activity topic.');
+      publicGuide.readAlerts.click();
+      await pendingPublicHistory;
+    }
+    if (!current()) return;
+    host.querySelector(`[data-guide-target="topic-${section}"]`)
+      ?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+  }
+  host.alertsController = { getGuideState };
+  return { element: host, ready, close, dispose: close, getGuideState, prepareGuide };
 }

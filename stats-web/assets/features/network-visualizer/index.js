@@ -14,7 +14,7 @@ import {
 } from './history.js?v=19';
 import { createP25ActivityFeed } from './live.js?v=4';
 import { createP25CameraCoordinator } from './camera.js?v=4';
-import { createP25Renderer } from './renderer.js?v=8';
+import { createP25Renderer } from './renderer.js?v=9';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=6';
 import {
   P25_EVENT_SETTINGS,
@@ -47,6 +47,7 @@ function createP25Visualizer(dependencies = {}) {
   });
   const { node, iconGlyph, iconButton, requestActivity, requestActivitySeed, openReadOnlyModal, preferenceCheckbox,
     settingsCard, settingsCardGrid, modalFooter, loadEventSettings, saveEventSettings } = dependencies;
+  const guideMode = dependencies.guideMode === true;
   const layout = node('section', 'network-visualizer-layout');
   layout.setAttribute('aria-label', 'P25 Visualizer');
   const toolbar = node('div', 'network-visualizer-toolbar ui-surface');
@@ -67,6 +68,8 @@ function createP25Visualizer(dependencies = {}) {
   auto.setAttribute('aria-pressed', 'true');
   manual.setAttribute('aria-pressed', 'false');
   cameraControls.append(auto, manual);
+  auto.dataset.guideTarget = 'p25-auto-camera';
+  manual.dataset.guideTarget = 'p25-manual-button';
   const eventsToggle = textButton(node, 'Events');
   eventsToggle.setAttribute('aria-pressed', 'false');
   const scopes = node('div', 'network-visualizer-choice-group');
@@ -85,6 +88,7 @@ function createP25Visualizer(dependencies = {}) {
   const stage = node('div', 'network-visualizer-stage');
   stage.tabIndex = 0;
   stage.setAttribute('aria-label', 'Interactive recent P25 activity visualization');
+  stage.dataset.guideTarget = 'p25-manual-camera';
   const canvas = node('div', 'network-visualizer-canvas');
   const back = textButton(node, '← All systems',
     'ui-button ui-button-secondary network-visualizer-back');
@@ -109,6 +113,7 @@ function createP25Visualizer(dependencies = {}) {
   const legend = node('div', 'network-visualizer-legend');
   legend.setAttribute('role', 'group');
   legend.setAttribute('aria-label', 'Shape and line key');
+  legend.dataset.guideTarget = 'p25-shapes';
   for (const [label, path, attributes] of [
     ['System', 'M21 12a9 9 0 1 1-18 0a9 9 0 0 1 18 0ZM3 12h18M12 3c-4 4-4 14 0 18c4-4 4-14 0-18Z'],
     ['Talkgroup', 'm12 2 9 5v10l-9 5-9-5V7Zm0 10 9-5M12 12 3 7m9 5v10'],
@@ -165,6 +170,9 @@ function createP25Visualizer(dependencies = {}) {
   let animationFrame = 0;
   let lastAnimationAt = performance.now();
   let closed = false;
+  let guideSuspended = false;
+  let resolveGuideScene;
+  const guideSceneReady = new Promise(resolve => { resolveGuideScene = resolve; });
   let lastCameraPhase = 'roam';
   let eventsModal = null;
   const shortViewport = window.matchMedia('(max-height: 640px)');
@@ -173,7 +181,7 @@ function createP25Visualizer(dependencies = {}) {
     returnMs: 900 });
 
   function setStatus(label, tone = 'current') {
-    status.textContent = label;
+    status.textContent = guideMode ? `Example data · ${label}` : label;
     status.className = `badge ui-pill network-visualizer-status state-${tone}`;
   }
 
@@ -468,6 +476,7 @@ function createP25Visualizer(dependencies = {}) {
       renderGraph(!replace, result.affiliationChanges);
     }
     applyAttention(result.focusCandidates);
+    resolveGuideScene(true);
   }
 
   function acceptAffiliations(document, replace = false) {
@@ -571,7 +580,7 @@ function createP25Visualizer(dependencies = {}) {
 
   function animate(at) {
     animationFrame = 0;
-    if (closed) return;
+    if (closed || guideSuspended) return;
     if (!document.hidden) expireHistory();
     if (historySceneDirty && renderer) {
       historySceneDirty = false; updateScene({ focusCandidates: [], affiliationChanges: [] });
@@ -645,11 +654,13 @@ function createP25Visualizer(dependencies = {}) {
     if (closed) return renderer.dispose();
     renderer.setMode(mode);
     renderer.setCameraPhase(mode === 'auto' ? 'roam' : 'disabled');
+    renderer.setGuideSuspended(guideSuspended);
   }
 
   const close = () => {
     if (closed) return;
     closed = true;
+    resolveGuideScene(false);
     feed?.close();
     document.removeEventListener('visibilitychange', onVisibilityChanged);
     if (highlightTimer) window.clearTimeout(highlightTimer);
@@ -695,13 +706,41 @@ function createP25Visualizer(dependencies = {}) {
       if (!hasSnapshot) setEmpty('Recent P25 activity could not be loaded',
         error?.message || 'Reconnecting automatically. You can also select Refresh.', 'error');
     },
-    isHidden: () => document.hidden,
+    isHidden: () => document.hidden || guideSuspended,
     setTimeout: (callback, delay) => window.setTimeout(callback, delay),
     clearTimeout: (timer) => window.clearTimeout(timer)
   });
   document.addEventListener('visibilitychange', onVisibilityChanged);
 
-  return Object.freeze({ element: layout, close });
+  function setGuideSuspended(value) {
+    if (closed || guideSuspended === Boolean(value)) return;
+    guideSuspended = Boolean(value);
+    pressedKeys.clear();
+    renderer?.setGuideSuspended(guideSuspended);
+    if (guideSuspended) {
+      if (animationFrame) cancelAnimationFrame(animationFrame);
+      animationFrame = 0;
+    } else {
+      lastAnimationAt = performance.now();
+      animationFrame = requestAnimationFrame(animate);
+    }
+    feed?.visibilityChanged();
+  }
+
+  const ready = rendererReady.then(async () => {
+    if (closed || renderer?.available !== true) return false;
+    return guideMode ? Boolean(await guideSceneReady) && !closed : true;
+  });
+  async function prepareGuide(section) {
+    if (!guideMode || !await ready || closed) return false;
+    if (['manual-camera', 'auto-camera'].includes(section)) manual.click();
+    else if (mode !== 'auto') auto.click();
+    return true;
+  }
+  const controller = Object.freeze({ element: layout, close, dispose: close, ready,
+    prepareGuide, setGuideSuspended });
+  layout.p25VisualizerController = controller;
+  return controller;
 }
 
 export { createP25Visualizer };
