@@ -16726,8 +16726,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const optionsHeader = node('header', 'tuner-spectrum-options-header');
   optionsHeader.append(node('span', 'tuner-spectrum-options-kicker', 'Display'),
     node('strong', '', basicOperator ? 'Signal display' : 'Spectrum and waterfall'));
-  const optionGroups = settingsCardGrid(displayOptions, fftOptions, waterfallOptions,
-    ...(!basicOperator ? [profilePanel] : []));
+  const optionGroups = settingsCardGrid(...(!basicOperator ? [profilePanel] : []),
+    displayOptions, fftOptions, waterfallOptions);
   optionGroups.classList.add('tuner-spectrum-settings-grid');
   optionsPanel.append(optionsHeader, optionGroups);
   options.append(optionsSummary, optionsPanel);
@@ -20967,13 +20967,11 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       if (['display-settings', 'plot-settings', 'performance', 'display-close'].includes(section)) {
         options.open = true;
         syncOptionsTriggers();
-        if (['plot-settings', 'performance', 'display-close'].includes(section)) {
-          const firstGroup = section === 'plot-settings' ? spectrum.controls.optionGroups.fft :
-            spectrum.controls.optionGroups.performance;
-          const stickyHeader = optionsPanel.querySelector('.tuner-spectrum-options-header');
-          optionsPanel.scrollTop += firstGroup.getBoundingClientRect().top - optionsPanel.getBoundingClientRect().top -
-            (stickyHeader?.getBoundingClientRect().height || 0);
-        }
+        const firstGroup = section === 'display-settings' ? spectrum.controls.optionGroups.display :
+          section === 'plot-settings' ? spectrum.controls.optionGroups.fft : spectrum.controls.optionGroups.performance;
+        const stickyHeader = optionsPanel.querySelector('.tuner-spectrum-options-header');
+        optionsPanel.scrollTop += firstGroup.getBoundingClientRect().top - optionsPanel.getBoundingClientRect().top -
+          (stickyHeader?.getBoundingClientRect().height || 0);
       }
       const targets = {
         receiver: selectField, activity: spectrum.surfaces.visualWindow,
