@@ -31,6 +31,12 @@ const call = {
 };
 
 async function openRecordings(page, options = {}) {
+  // Exercise recording searches without covering their controls with onboarding.
+  await page.addInitScript(() => {
+    for (const [id, version] of [['welcome', 1], ['recordings', 3]]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:recordings-fixture-account:${id}:${version}`, '1');
+    }
+  });
   const state = { requests: [], unexpected: [], errorNext: false,
     calls: options.calls || [options.call || call] };
   const preferences = structuredClone(defaults);
@@ -41,6 +47,7 @@ async function openRecordings(page, options = {}) {
     if (key === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: 'admin', tier: 'admin', primary: true,
+        guide_dismissal_scope: 'recordings-fixture-account',
         capabilities: { recordings: true, 'admin-recordings': true, 'admin-settings': true,
           dashboard: true, radio: options.radio !== false } } } });
     } else if (key === '/api/v1/me/preferences') {

@@ -1,25 +1,11 @@
+import { pageGuidePresentation } from '../presentation.js?v=1';
+
 function targets(documentValue, name) {
   return () => [...(documentValue?.querySelectorAll(`[data-guide-target="lv-${name}"]`) || [])];
 }
 
-function presentation(section, preparePlayer, preparePage) {
-  return {
-    samples: [{ id: 'live-workspace', value: { section } }],
-    prepare: async context => {
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('live', section, context);
-        return () => { try { releasePage?.(); } finally { releasePlayer?.(); } };
-      } catch (error) {
-        releasePlayer?.();
-        throw error;
-      }
-    }
-  };
-}
-
 export function liveOverviewPresentation(preparePlayer, preparePage) {
-  return { samplePresentation: true, ...presentation('overview', preparePlayer, preparePage) };
+  return { samplePresentation: true, ...pageGuidePresentation('live', 'overview', preparePlayer, preparePage) };
 }
 
 export function liveSteps(documentValue, preparePlayer, preparePage) {
@@ -59,6 +45,6 @@ export function liveSteps(documentValue, preparePlayer, preparePage) {
   return steps.map((step, index) => ({ ...step, compact: step.id !== 'views',
     targets: targets(documentValue, step.id),
     nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...presentation(step.id, preparePlayer, preparePage)
+    ...pageGuidePresentation('live', step.id, preparePlayer, preparePage)
   }));
 }

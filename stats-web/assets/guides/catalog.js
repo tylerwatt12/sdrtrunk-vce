@@ -1,19 +1,21 @@
+import { pageGuidePresentation } from './presentation.js?v=1';
 import { definitions as routes } from '../core/routes.js?v=11';
 import { channelSetupSteps } from './pages/channel-setup.js?v=1';
-import { aliasesSteps } from './pages/aliases.js?v=1';
-import { radioReferenceSteps } from './pages/radioreference.js?v=1';
-import { streamingSteps } from './pages/streaming.js?v=2';
-import { tunersSteps } from './pages/tuners.js?v=2';
-import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=3';
-import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=1';
-import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=1';
-import { scannerSteps } from './pages/scanner.js?v=2';
+import { aliasesSteps } from './pages/aliases.js?v=2';
+import { radioReferenceSteps } from './pages/radioreference.js?v=2';
+import { streamingSteps } from './pages/streaming.js?v=3';
+import { tunersSteps } from './pages/tuners.js?v=3';
+import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=4';
+import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=2';
+import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=2';
+import { scannerSteps } from './pages/scanner.js?v=3';
+import { recordingsSteps } from './pages/recordings.js?v=2';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
   'scan-lists': scanListsSteps, radioreference: radioReferenceSteps, streaming: streamingSteps, tuners: tunersSteps,
-  'tuner-spectrum': spectrumSteps, live: liveSteps, dashboard: mainSteps, scanner: scannerSteps });
+  'tuner-spectrum': spectrumSteps, live: liveSteps, dashboard: mainSteps, scanner: scannerSteps, recordings: recordingsSteps });
 // Page concepts stay separate from the numbered controls that follow them.
 // Keep a purpose and practical radio use here even while a walkthrough is pending.
 const pageOverviewCopy = Object.freeze({
@@ -24,8 +26,9 @@ const pageOverviewCopy = Object.freeze({
     'Choose what you hear through Scan Lists in the player. Calls play after each transmission finishes.'],
   topics: ['Follow the activity that matters to you',
     'Subscribe to topics for alerts about selected radio activity or receiver conditions. Each topic brings related alerts together.'],
-  recordings: ['Return to a conversation',
-    'With Managed Recordings enabled, saved calls become a searchable listening library. Find traffic by its radio system, talkgroup, or time and replay the calls you need.'],
+  recordings: ['Find a conversation again',
+    'Find and replay saved calls by time, talkgroup, channel, or radio. Search saved transcripts to find words spoken over the air.',
+    'Calls saved with Managed Recordings are collected here.'],
   map: ['Put radio activity on the map',
     'Follow reported locations and review recent location history to see where radio activity is taking place.'],
   'network-visualizer': ['See how a P25 system is connected',
@@ -68,7 +71,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4, live: 3, dashboard: 3, scanner: 4 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4, live: 3, dashboard: 3, scanner: 4, recordings: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -251,17 +254,7 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
     return true;
   }).map((step, index, steps) => ({ ...step,
     nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    samples: [{ id: 'scan-lists-workspace', value: { section: step.id } }],
-    prepare: async (context) => {
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('scan-lists', step.id, context);
-        return () => { releasePage?.(); releasePlayer?.(); };
-      } catch (error) {
-        releasePlayer?.();
-        throw error;
-      }
-    }
+    ...pageGuidePresentation('scan-lists', step.id, preparePlayer, preparePage)
   }));
 }
 

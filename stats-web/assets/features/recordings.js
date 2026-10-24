@@ -4,6 +4,7 @@ import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { callAudioDetailGroups } from '../core/call-audio-details.js?v=7';
 import { createFormWorkflow } from '../core/form-workflows.js?v=6';
+import { createRecordingsGuideData, RECORDINGS_GUIDE_CALL_ID } from '../guides/recordings-data.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';
 const IDENTITIES = '/api/v1/recordings/identities';
@@ -528,6 +529,9 @@ export function createRecordingsFeature(deps) {
   let searchLoading = false;
   let searchSignal = null;
   let player = null;
+  let guideSuspended = false;
+  let pendingGuideLoad = null;
+  let activePageLoad = null;
 
   const makeNotice = (text, type = '') => {
     const notice = node('div', `ui-feedback${type ? ` ui-feedback-${type}` : ''}`, text);
@@ -697,7 +701,7 @@ export function createRecordingsFeature(deps) {
 
   function recordedPlayer() {
     if (player) return player;
-    const audio = new Audio();
+    const audio = deps.createAudioElement ? deps.createAudioElement() : new Audio();
     audio.preload = 'metadata';
     player = { audio, current: null, queue: [], history: [], mode: 'idle', continuation: null,
       loading: false, pendingStart: false, stopped: true, token: 0, detailsToken: 0, detailsLoading: false, detailsError: '', status: '' };
@@ -1330,6 +1334,7 @@ export function createRecordingsFeature(deps) {
       const heading = node('div', 'recordings-detail-heading');
       heading.append(node('h3', '', label(call)), node('span', '', dateTime(millis(call))));
       const tabs = node('nav', 'ui-segmented recordings-detail-tabs');
+      tabs.dataset.guideTarget = 'rec-details';
       tabs.setAttribute('role', 'tablist');
       tabs.setAttribute('aria-label', 'Call information');
       const definitions = [['overview', 'Overview'], ['transcript', 'Transcript'],
@@ -1417,6 +1422,7 @@ export function createRecordingsFeature(deps) {
     let actionIndex = 0;
     const run = perform => { let done = false; const next = () => { if (!done) { done = true; perform(); } }; if (modal.close(next)) next(); };
     const playback = node('div', 'recordings-call-menu-grid recordings-playback-grid');
+    playback.dataset.guideTarget = 'rec-playback';
     const actions = node('div', 'recordings-call-menu-grid');
     const explain = (control, title, description, icon) => {
       const copy = node('span', 'recordings-action-copy');
@@ -1493,6 +1499,7 @@ export function createRecordingsFeature(deps) {
       body.append(section);
     }
     modal = openReadOnlyModal('Call actions', body, { id: 'recordings-call-actions', className: 'recordings-actions-modal' });
+    return modal;
   }
 
   function callCard(row) {
@@ -1506,6 +1513,10 @@ export function createRecordingsFeature(deps) {
     const play = action('icon-play', '▶', `Play ${description}`, 'Play recording', () => playClicked(row), 'ui-button ui-icon-button recordings-card-play recordings-card-action');
     const detail = action('icon-info-circle', 'i', 'Call details', 'Call details', () => void openDetails(row), 'ui-button ui-icon-button recordings-card-action recordings-call-details');
     const info = action('icon-more', '…', `More actions for ${description}`, 'Call actions', () => openCallActions(row), 'ui-button ui-icon-button recordings-call-info recordings-card-action');
+    if (deps.guideMode && Number(row.id) === RECORDINGS_GUIDE_CALL_ID) {
+      detail.dataset.guideTarget = 'rec-details-button';
+      info.dataset.guideTarget = 'rec-actions-button';
+    }
     const head = node('div', 'recordings-call-head');
     const time = node('div', 'recordings-call-time'); time.title = dateTime(millis(row)); time.append(node('strong', '', timeOnly(millis(row))));
     const groupId = value(row, 'talkgroup_id', 'group_id');
@@ -1848,6 +1859,7 @@ export function createRecordingsFeature(deps) {
   }
 
   async function loadPage(page = 0, submission = null, browsing = {}) {
+    if (guideSuspended) { pendingGuideLoad = [page, submission, browsing]; return; }
     if (!pageHost) return;
     const reset = Boolean(submission || browsing.reset);
     if (reset) page = 0;
@@ -1860,6 +1872,7 @@ export function createRecordingsFeature(deps) {
     const requestedCursors = reset ? [null] : cursors.slice(0, page + 1);
     requestedCursors[page] = cursor;
     const request = ++searchRequest;
+    activePageLoad = [page, submission, browsing];
     const startedAt = performance.now();
     searchLoading = true;
     if (sortControl) sortControl.disabled = true;
@@ -1899,6 +1912,7 @@ export function createRecordingsFeature(deps) {
       resultStatus.replaceChildren(makeNotice(`${error.message || 'Calls could not be loaded. Try again.'}${currentResults.length ? ' Previous results are still shown.' : ''}`, 'error'));
     } finally {
       if (request === searchRequest) {
+        activePageLoad = null;
         searchLoading = false;
         if (sortControl) { sortControl.disabled = false; sortControl.value = appliedSort; }
         if (pageSizeControl) { pageSizeControl.disabled = false; pageSizeControl.value = String(pageSize); }
@@ -2279,6 +2293,7 @@ export function createRecordingsFeature(deps) {
     }
     const cancel = button(node, 'Cancel', () => modal.close(), 'recordings-secondary-action');
     const apply = button(node, ['targets', 'radios', 'systems', 'sites'].includes(topic) ? 'Use selection' : 'Use filters', null, 'recordings-primary-action'); apply.type = 'submit';
+    if (topic === 'targets') apply.dataset.guideTarget = 'rec-targets-apply';
     body.append(panels, status, modalFooter(cancel, apply));
     body.addEventListener('submit', event => {
       event.preventDefault(); commit();
@@ -2297,7 +2312,8 @@ export function createRecordingsFeature(deps) {
       returnFocusSelector: `#recordings-open-${topic}`,
       onClose: () => { disposed = true; generation++; abort?.abort(); clearTimeout(timer); } });
     if (!modal || modal.ready && !await modal.ready) return;
-    modal.focus(focus || cancel); void load();
+    modal.focus(focus || cancel); await load();
+    return modal;
   }
 
   function makeSearchForm() {
@@ -2306,6 +2322,7 @@ export function createRecordingsFeature(deps) {
     const fullText = textInput('Words or "exact phrase"'); fullText.id = 'recordings-input-transcript'; fullText.value = search.transcript; fullText.maxLength = 240;
     const textRange = select(node, [['recent', 'Past 24 hours'], ['time', 'Use Time filter']], 'Full text range'); textRange.value = search.text_range || 'recent';
     const textRangeField = field('Full text range', textRange); textRangeField.hidden = !search.transcript;
+    textRangeField.dataset.guideTarget = 'rec-transcript-range';
     const syntax = node('details', 'recordings-search-syntax'); syntax.append(node('summary', '', 'Search transcript text'), node('p', '', 'Use AND, OR, or quotes.'));
     const range = select(node, [['24h', 'Past 24 hours'], ['1h', 'Past hour'], ['today', 'Today'], ['7d', 'Past 7 days'], ['30d', 'Past 30 days'], ['10y', 'Past 10 years'], ['custom', 'Custom range']], 'Time range');
     range.value = search.range || '24h';
@@ -2340,6 +2357,7 @@ export function createRecordingsFeature(deps) {
     const system = pickerButton('systems', 'System', selectedSuggestions.get('system_key')?.label || search.system_key || 'All systems & channels', 'icon-trunked');
     const count = recordingIdentitySelections(search.talkgroups, 'talkgroup').length + recordingChannelSelections(search.channel_ids).length;
     const targets = pickerButton('targets', 'Talkgroups & channels', count ? `${count} selected · Browse hierarchy` : 'All talkgroups and channels', 'icon-identities');
+    targets.dataset.guideTarget = 'rec-targets-button';
     const paths = node('div', 'recordings-selection-paths');
     for (const item of recordingIdentitySelections(search.talkgroups, 'talkgroup').slice(0, 3)) paths.append(node('p', '', identityLabels.get(`talkgroup:${recordingIdentitySelectionKey(item)}`) || recordingSelectionText(item, 'talkgroup')));
     for (const id of recordingChannelSelections(search.channel_ids).slice(0, Math.max(0, 3 - paths.children.length))) paths.append(node('p', '', channelLabels.get(id) || `Channel ${id}`));
@@ -2352,13 +2370,18 @@ export function createRecordingsFeature(deps) {
     draftFeedback = node('p', 'recordings-draft-feedback'); draftFeedback.setAttribute('aria-live', 'polite');
     searchError = node('div', 'recordings-search-error'); searchError.setAttribute('role', 'alert');
     const submit = addGlyph(button(node, 'Search recordings', null, 'recordings-primary-action'), 'icon-search', 'recordings-control-icon'); submit.type = 'submit'; submit.disabled = searchLoading;
+    submit.dataset.guideTarget = 'rec-search';
     searchSubmit = submit;
     // Native form validation can prevent the submit event after a click.
     submit.addEventListener('click', acknowledgeSearchDraft);
     const clear = button(node, 'Clear filters', () => { Object.keys(search).forEach(key => { search[key] = ''; }); search.range = '24h'; selectedSuggestions.clear(); replaceSearchForm(); updateDraftFeedback(); }, 'recordings-text-action');
     const discard = button(node, 'Discard changes', () => { if (appliedSearch) Object.assign(search, appliedSearch); selectedSuggestions.clear(); appliedSuggestions.forEach((value, key) => selectedSuggestions.set(key, value)); replaceSearchForm(); updateDraftFeedback(); }, 'recordings-text-action'); discard.id = 'recordings-discard'; discard.hidden = true;
     actions.append(draftFeedback, searchError, submit, clear, discard);
-    sidebar.append(field('Full text', fullText), syntax, textRangeField, field('Time range', range), override, custom, high, system, targets, paths, radios, tones, more, actions);
+    const transcriptField = field('Full text', fullText);
+    transcriptField.dataset.guideTarget = 'rec-transcript-search';
+    const timeField = field('Time range', range);
+    timeField.dataset.guideTarget = 'rec-time-range';
+    sidebar.append(transcriptField, syntax, textRangeField, timeField, override, custom, high, system, targets, paths, radios, tones, more, actions);
     const browser = node('div', 'recordings-browser ui-surface'); browser.append(sidebar); form.append(browser);
     form.addEventListener('submit', event => { event.preventDefault(); submitSearch(); });
     updateDraftFeedback(); return form;
@@ -2366,7 +2389,7 @@ export function createRecordingsFeature(deps) {
 
   async function renderSearchPage() {
     const parameters = new URLSearchParams(globalThis.location?.search || '');
-    if (parameters.get('recording_filters') === '1') {
+    if (!deps.guideMode && parameters.get('recording_filters') === '1') {
       Object.keys(search).forEach(key => { search[key] = parameters.get(key) || ''; });
       search.high_interest = /^(?:1|true)$/i.test(search.high_interest) ? '1' : '';
       search.has_transcript = /^(?:1|true)$/i.test(search.has_transcript) ? 'true' : /^(?:0|false)$/i.test(search.has_transcript) ? 'false' : '';
@@ -2502,7 +2525,7 @@ export function createRecordingsFeature(deps) {
     appliedSearch = { ...search }; updateDraftFeedback();
     cursors = [null];
     currentPage = 0;
-    void loadPage(0);
+    await loadPage(0);
   }
 
   function adminLink(title, tab) {
@@ -2943,5 +2966,138 @@ export function createRecordingsFeature(deps) {
     }
   }
 
-  return { renderSearchPage, renderAdminRecordings, renderAdminTranscription, stopAudio, playback };
+  async function prepareGuideSection(name, context) {
+    const steps = new Set(['targets-button', 'targets', 'time-range', 'search', 'transcript-search', 'transcript-submit',
+      'details-button', 'details', 'details-close', 'actions-button', 'playback', 'player-button', 'click-mode']);
+    if (!steps.has(name)) throw new Error('Unknown Recordings guide section.');
+    const current = () => !context.signal.aborted && context.isCurrent();
+    const show = target => pageHost.querySelector(`[data-guide-target="rec-${target}"]`)
+      ?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    if (!current()) return;
+    if (name !== 'targets-button') {
+      const modal = await openFilterDialog('targets');
+      if (!current() || !modal) return;
+      // Stage real picker choices through its normal checkbox and submit handlers.
+      for (const label of ['Regional Fire', 'City Fire']) {
+        const choice = [...modal.dialog.querySelectorAll('.recordings-picker-choice')]
+          .find(choice => choice.querySelector('strong')?.textContent === label);
+        choice?.querySelector('input')?.click();
+      }
+      if (name === 'targets') return;
+      modal.dialog.querySelector('[data-guide-target="rec-targets-apply"]')?.click();
+    }
+    if (!current()) return;
+    if (['targets-button', 'time-range', 'search'].includes(name)) {
+      show(name === 'time-range' ? 'time-range' : name);
+      return;
+    }
+    Object.assign(search, recordingDiscoveryPeriod(search));
+    await loadPage(0, { filters: effectiveFilters(), search: { ...search }, suggestions: new Map(selectedSuggestions) });
+    if (!current()) return;
+    const transcript = pageHost.querySelector('#recordings-input-transcript');
+    transcript.value = '"arrived at staging"';
+    transcript.dispatchEvent(new Event('input', { bubbles: true }));
+    if (['transcript-search', 'transcript-submit'].includes(name)) {
+      show(name === 'transcript-submit' ? 'search' : 'transcript-search');
+      return;
+    }
+    Object.assign(search, recordingDiscoveryPeriod(search));
+    await loadPage(0, { filters: effectiveFilters(), search: { ...search }, suggestions: new Map(selectedSuggestions) });
+    if (!current()) return;
+    const call = currentResults.find(row => Number(row.id) === RECORDINGS_GUIDE_CALL_ID);
+    if (!call) throw new Error('The example call could not be found.');
+    if (['details', 'details-close'].includes(name)) await openDetails(call);
+    else if (['playback', 'player-button', 'click-mode'].includes(name)) {
+      const modal = openCallActions(call);
+      if (modal?.ready && !await modal.ready || !current()) return;
+      if (['player-button', 'click-mode'].includes(name)) {
+        modal?.dialog.querySelector('button[aria-label="Continue from here"]')?.click();
+        // The production player reads only the in-memory API and inert transport.
+        for (let turn = 0; turn < 20 && current(); turn++) {
+          const state = playbackState();
+          if (state.current && !state.loading && !state.detailsLoading && state.queue.length) break;
+          await Promise.resolve();
+        }
+      }
+    }
+    pageHost.querySelector(`[data-recording-id="${RECORDINGS_GUIDE_CALL_ID}"]`)
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+  }
+
+  async function prepareGuide(name, context = {}) {
+    if (!context.signal || typeof context.isCurrent !== 'function') throw new TypeError('A guide needs a presentation scope.');
+    if (context.signal.aborted || !context.isCurrent()) return () => {};
+    const renderContext = captureRenderContext();
+    const originalNodes = [...content.childNodes];
+    const scrolling = [content, document.scrollingElement, ...content.querySelectorAll('*')]
+      .filter(element => element && (element.scrollTop || element.scrollLeft))
+      .map(element => [element, element.scrollTop, element.scrollLeft]);
+    const holding = node('div');
+    holding.hidden = true; holding.inert = true;
+    document.body.append(holding);
+    // Retain the real page and its draft controls by identity, with no duplicate IDs.
+    holding.attachShadow({ mode: 'closed' }).append(...originalNodes);
+    guideSuspended = true;
+    if (searchLoading) pendingGuideLoad = activePageLoad || [currentPage, null, {}];
+    searchRequest++; searchSignal?.abort();
+    const host = node('div', 'recordings-guide-workspace');
+    host.dataset.guideExample = 'recordings';
+    const sample = createRecordingsGuideData({ signal: context.signal });
+    const modals = [];
+    let closed = false;
+    let feature;
+    const restore = () => {
+      if (closed) return;
+      closed = true;
+      context.signal.removeEventListener('abort', restore);
+      feature?.stopAudio();
+      sample.dispose();
+      modals.reverse().forEach(modal => modal.close());
+      guideSuspended = false;
+      const resumeLoad = pendingGuideLoad;
+      pendingGuideLoad = null;
+      if (renderIsCurrent(renderContext)) {
+        content.replaceChildren(...originalNodes);
+        scrolling.forEach(([element, top, left]) => { element.scrollTop = top; element.scrollLeft = left; });
+        if (resumeLoad) void loadPage(...resumeLoad);
+      }
+      holding.remove();
+    };
+    const sampleModal = (title, body, options = {}) => {
+      if (closed || !context.isCurrent()) return null;
+      const modal = openReadOnlyModal(title, body, { ...options, guideTarget: true });
+      if (modal) {
+        modals.push(modal);
+        if (title === 'Call details') modal.dialog.querySelector('.modal-close')?.setAttribute('data-guide-target', 'rec-details-close');
+        if (title === 'Talkgroups & channels') modal.dialog.querySelector('.modal-content')?.setAttribute('data-guide-target', 'rec-targets');
+      }
+      return modal;
+    };
+    feature = createRecordingsFeature({ ...deps, guideMode: true, content: host,
+      requestJson: sample.requestJson, createAudioElement: sample.createAudioElement,
+      openReadOnlyModal: sampleModal, closeReadOnlyModal: () => true,
+      stopLiveAudio: async () => {}, openCallRelations: null,
+      captureRenderContext: () => ({ signal: context.signal }),
+      renderIsCurrent: () => !closed && context.isCurrent(),
+      beginPage: (_render, header) => {
+        if (closed || !context.isCurrent()) return false;
+        const notice = makeNotice('Example data');
+        host.replaceChildren(header, notice);
+        return true;
+      }
+    });
+    restore.playback = feature.playback;
+    context.signal.addEventListener('abort', restore, { once: true });
+    try {
+      content.replaceChildren(host);
+      await feature.renderSearchPage();
+      if (!closed && context.isCurrent()) await feature.prepareGuideSection(name, context);
+      if (closed || !context.isCurrent()) { restore(); return restore; }
+      restore.roots = [host, ...modals.filter(modal => modal.dialog.isConnected).map(modal => modal.dialog)];
+      return restore;
+    } catch (error) { restore(); throw error; }
+  }
+
+  return { renderSearchPage, renderAdminRecordings, renderAdminTranscription, stopAudio, playback, prepareGuide,
+    ...(deps.guideMode ? { prepareGuideSection } : {}) };
 }

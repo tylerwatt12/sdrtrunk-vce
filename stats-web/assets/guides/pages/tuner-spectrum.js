@@ -1,25 +1,11 @@
+import { pageGuidePresentation } from '../presentation.js?v=1';
+
 function targets(documentValue, name) {
   return () => [...(documentValue?.querySelectorAll(`[data-guide-target="bs-${name}"]`) || [])];
 }
 
-function presentation(section, preparePlayer, preparePage) {
-  return {
-    samples: [{ id: 'tuner-spectrum-workspace', value: { section } }],
-    prepare: async context => {
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('tuner-spectrum', section, context);
-        return () => { try { releasePage?.(); } finally { releasePlayer?.(); } };
-      } catch (error) {
-        releasePlayer?.();
-        throw error;
-      }
-    }
-  };
-}
-
 export function spectrumOverviewPresentation(preparePlayer, preparePage) {
-  return { samplePresentation: true, ...presentation('overview', preparePlayer, preparePage) };
+  return { samplePresentation: true, ...pageGuidePresentation('tuner-spectrum', 'overview', preparePlayer, preparePage) };
 }
 
 export function spectrumSteps(documentValue, preparePlayer, preparePage, canView, canAccess) {
@@ -79,6 +65,6 @@ export function spectrumSteps(documentValue, preparePlayer, preparePage, canView
   return steps.map(({ capability, ...step }, index) => ({ ...step,
     targets: targets(documentValue, step.id),
     nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...presentation(step.id, preparePlayer, preparePage)
+    ...pageGuidePresentation('tuner-spectrum', step.id, preparePlayer, preparePage)
   }));
 }

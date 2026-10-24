@@ -52,7 +52,7 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner', 'recordings'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
@@ -86,6 +86,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('dashboard').version, 3);
   assert.equal(createGuideDefinition('scanner').version, 4);
+  assert.equal(createGuideDefinition('recordings').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -926,6 +927,51 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(released.splice(0), ['scanner-player'],
     'Even a failing sample cleanup restores the player.');
 
+  const recordingsTour = createGuideDefinition('recordings', {
+    documentValue: targetDocument,
+    preparePlayer: () => { prepared.push('recordings-player'); return () => released.push('recordings-player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const recordingsSections = ['overview', 'targets-button', 'targets', 'time-range', 'search', 'transcript-search',
+    'transcript-submit', 'details-button', 'details', 'details-close', 'actions-button', 'playback', 'player-button', 'click-mode'];
+  assert.deepEqual(recordingsTour.steps.map(step => step.id), recordingsSections);
+  assert.equal(recordingsTour.steps[0].prepare, undefined,
+    'Recordings begins with its concept while the actual library remains visible.');
+  const recordingsStop = id => recordingsTour.steps.find(step => step.id === id);
+  assert.match(recordingsStop('targets').paragraphs[0], /Use selection/);
+  assert.match(recordingsStop('transcript-search').paragraphs[0], /past 24 hours/);
+  assert.deepEqual(recordingsStop('details').items.map(item => item.label), ['Transcript', 'Identities', 'Technical']);
+  assert.deepEqual(recordingsStop('playback').items.map(item => item.label), ['Play once', 'Continue from here', 'Add to queue']);
+  assert.match(recordingsStop('playback').items[1].text, /newer calls matching your search in time order/);
+  for (const step of recordingsTour.steps.slice(1)) {
+    const names = step.id === 'transcript-search' ? ['transcript-search', 'transcript-range'] :
+      step.id === 'transcript-submit' ? ['search'] : [step.id];
+    assert.deepEqual(targetNames(step), names.map(name => `rec-${name}`));
+    assert.deepEqual(step.samples, [{ id: 'recordings-workspace', value: { section: step.id } }]);
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), ['recordings-player', ['recordings', step.id, context]]);
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'recordings-player']);
+  }
+  for (const [opener, destination] of [['targets-button', 'targets'], ['details-button', 'details'],
+    ['actions-button', 'playback'], ['player-button', 'click-mode']]) {
+    assert.equal(recordingsSections.indexOf(opener) + 1, recordingsSections.indexOf(destination),
+      'Each Recordings picker, dialog and player destination follows its dedicated actual opening control.');
+  }
+  assert.equal(recordingsSections.indexOf('details-close') + 1, recordingsSections.indexOf('actions-button'),
+    'Call details teaches its actual return control before the next lesson.');
+  assert.equal(recordingsTour.steps.at(-1).nextLabel, 'Finish');
+  const failedRecordings = createGuideDefinition('recordings', {
+    preparePlayer: () => () => released.push('recordings-player'),
+    preparePage: () => { throw new Error('Recordings sample preparation failed'); }
+  });
+  await assert.rejects(failedRecordings.steps[1].prepare({}), /Recordings sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['recordings-player']);
+
   const liveTour = createGuideDefinition('live', {
     documentValue: targetDocument,
     preparePlayer: () => { prepared.push('live-player'); return () => released.push('live-player'); },
@@ -1222,7 +1268,7 @@ async function checkGuides(assetsRoot) {
   dismissedWelcome.dismiss();
   await dismissedWelcome.controller.pageReady();
   assert.equal(dismissedWelcome.shown.length, 1, 'Dismissing welcome does not immediately launch another tour.');
-  dismissedWelcome.context.view = 'recordings';
+  dismissedWelcome.context.view = 'alerts';
   await dismissedWelcome.controller.pageReady();
   assert.equal(dismissedWelcome.shown.length, 1, 'Blank page templates do not interrupt users automatically.');
   await dismissedWelcome.controller.openPage();
@@ -1245,7 +1291,7 @@ async function checkGuides(assetsRoot) {
   await dismissedWelcome.controller.pageReady();
   assert.equal(dismissedWelcome.shown.length, afterAliasesCompletion,
     'Finishing the Aliases tour remembers completion without reopening another guide.');
-  dismissedWelcome.context.view = 'recordings';
+  dismissedWelcome.context.view = 'alerts';
   await dismissedWelcome.controller.pageReady();
   dismissedWelcome.context.view = 'aliases';
   await dismissedWelcome.controller.pageReady();

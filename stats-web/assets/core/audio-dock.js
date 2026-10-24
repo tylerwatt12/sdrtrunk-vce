@@ -32,6 +32,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   let latestLiveState = liveState;
   let guideScanListState = null;
   let recordingState = recordings.viewState();
+  let latestRecordingState = recordingState;
+  let guideRecordingState = null;
   let previousRecordingActive = false;
   let previousLiveActive = false;
   let boundLive = null;
@@ -457,6 +459,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const compact = node('div', 'audio-dock-compact');
   const now = node('div', 'audio-dock-now audio-dock-compact-now');
   const compactCopy = node('button', 'audio-dock-compact-copy');
+  compactCopy.dataset.guideTarget = 'rec-player-button';
   compactCopy.type = 'button'; compactCopy.setAttribute('aria-label', 'Expand player');
   compactCopy.addEventListener('click', () => setSize('full'));
   const compactWave = createSpectrum('audio-dock-mini-wave', true);
@@ -603,6 +606,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const clearQueue = textButton('Clear queue', () => source === 'recordings' ? recordings.clearQueue() : getLivePlayer()?.clearQueue());
   clearQueue.className = 'link-button ui-label'; queueFooter.append(clearQueue);
   const sidebarClickMode = clickModeField('audio-dock-click-mode');
+  sidebarClickMode.dataset.guideTarget = 'rec-click-mode';
   sidebar.append(queueHeading, sidebarList, inspector, queueFooter, sidebarClickMode); body.append(main, sidebar);
   presentation.append(header, compact, slim, body); dock.append(presentation);
   document.querySelector('.app-shell').append(dock, playbackFeedback);
@@ -965,7 +969,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   function updateAge() { age.textContent = relativeAge(current()); }
   function updateProgress() {
     if (dock.hidden || superCollapsed && !mobileLayout.matches || size === 'collapsed') return;
-    const snapshot = guideScanListState || (source === 'live' ? getLivePlayer()?.viewState() || liveState : recordings.viewState());
+    const snapshot = guideScanListState || guideRecordingState || (source === 'live' ? getLivePlayer()?.viewState() || liveState : recordings.viewState());
     const total = Math.max(0, Number(snapshot.duration) || 0), position = Math.max(0, Number(snapshot.currentTime) || 0);
     elapsed.textContent = compactElapsed.textContent = time(position); duration.textContent = compactDuration.textContent = time(total);
     progress.value = compactProgress.value = total ? Math.min(1, position / total) : 0;
@@ -1175,7 +1179,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const routeObserver = new MutationObserver(() => { cancelSizeGesture(); closeVolume(false); cancelPresentationMotion(); panelKey = ''; render(); });
   routeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-view'] });
   const unsubscribeRecordings = recordings.subscribeState(value => {
-    recordingState = value;
+    latestRecordingState = value;
+    recordingState = guideRecordingState || value;
     const queueOnly = !value.current && value.queue?.length && liveState.stopped !== false;
     const active = Boolean(value.playing || value.loading || queueOnly);
     if (!guidePresentation && active && !previousRecordingActive && access().recordings) { closeVolume(false); source = 'recordings'; panelKey = ''; }
@@ -1201,16 +1206,17 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   // Tours use the normal player renderers with a separate, read-only view of
   // sample lists. Real engine snapshots keep arriving while the guide is open.
   // No sample control may issue an engine command, including synthetic events.
-  const guideCommandEvents = ['click', 'dblclick', 'pointerdown', 'mousedown', 'keydown', 'input', 'change', 'submit'];
+  const guideCommandEvents = ['click', 'auxclick', 'dblclick', 'contextmenu', 'pointerdown', 'mousedown', 'keydown', 'input', 'change', 'submit'];
   const protectGuideCommands = (event) => {
-    if (!guideScanListState || event.type === 'keydown' && ['Tab', 'Escape'].includes(event.key)) return;
+    if ((!guideScanListState && !guideRecordingState) || event.type === 'keydown' && ['Tab', 'Escape'].includes(event.key)) return;
     event.preventDefault(); event.stopImmediatePropagation();
     if (['input', 'change'].includes(event.type)) { panelKey = ''; render(); }
   };
   [dock, volumePopover, restore].forEach(root => guideCommandEvents.forEach(type =>
     root.addEventListener(type, protectGuideCommands, true)));
-  function prepareGuide({ minimized = false, sampleScanLists = null, openSampleLists = true } = {}) {
-    const previous = { size, superCollapsed, source, panel, guidePresentation, guideScanListState,
+  function prepareGuide({ minimized = false, sampleScanLists = null, openSampleLists = true,
+    sampleRecordings = null, recordingsSize = 'minimal' } = {}) {
+    const previous = { size, superCollapsed, source, panel, guidePresentation, guideScanListState, guideRecordingState,
       contextInvoker, selectedQueueKey, focus: document.activeElement,
       scroll: [mainScroll.scrollTop, panelHost.scrollTop, sidebarList.scrollTop] };
     cancelSizeGesture(); closeVolume(false); cancelPresentationMotion();
@@ -1233,15 +1239,31 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       panel = openSampleLists ? 'listening' : null;
       contextInvoker = desktopLists.button;
     }
+    let unsubscribeSampleRecordings = () => {};
+    if (sampleRecordings && access().recordings) {
+      guideRecordingState = typeof sampleRecordings.viewState === 'function' ? sampleRecordings.viewState() : structuredClone(sampleRecordings);
+      recordingState = guideRecordingState;
+      source = 'recordings'; superCollapsed = false;
+      size = recordingsSize === 'full' ? 'full' : 'minimal';
+      panel = null; selectedQueueKey = null;
+      if (typeof sampleRecordings.subscribeState === 'function') {
+        unsubscribeSampleRecordings = sampleRecordings.subscribeState(value => {
+          guideRecordingState = value; recordingState = value;
+          panelKey = ''; sidebarKey = ''; render();
+        });
+      }
+    }
     panelKey = ''; sidebarKey = ''; render();
     let restored = false;
     return () => {
       if (restored) return;
       restored = true;
-      if (guideScanListState) { panelHost.replaceChildren(); renderedPanel = ''; }
-      ({ size, superCollapsed, source, panel, guidePresentation, guideScanListState,
+      unsubscribeSampleRecordings();
+      if (guideScanListState || guideRecordingState) { panelHost.replaceChildren(); renderedPanel = ''; }
+      ({ size, superCollapsed, source, panel, guidePresentation, guideScanListState, guideRecordingState,
         contextInvoker, selectedQueueKey } = previous);
       liveState = guideScanListState || latestLiveState;
+      recordingState = guideRecordingState || latestRecordingState;
       panelKey = ''; sidebarKey = ''; render();
       [mainScroll.scrollTop, panelHost.scrollTop, sidebarList.scrollTop] = previous.scroll;
       if (previous.focus?.isConnected && (dock.contains(previous.focus) || previous.focus === restore) &&

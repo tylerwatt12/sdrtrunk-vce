@@ -1,3 +1,5 @@
+import { pageGuidePresentation } from '../presentation.js?v=1';
+
 function targets(documentValue, ...names) {
   return () => names.flatMap(name => [...(documentValue?.querySelectorAll(
     `[data-guide-target="tn-${name}"]`) || [])]);
@@ -54,16 +56,6 @@ export function tunersSteps(documentValue, preparePlayer, preparePage) {
     targets: targets(documentValue, ...(step.id === 'disabled' ? ['disabled-mode', 'disabled-signal'] :
       step.id === 'live' ? ['live-mode', 'live-count'] : [step.id])),
     nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    samples: [{ id: 'tuners-workspace', value: { section: step.id } }],
-    prepare: async context => {
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('tuners', step.id, context);
-        return () => { try { releasePage?.(); } finally { releasePlayer?.(); } };
-      } catch (error) {
-        releasePlayer?.();
-        throw error;
-      }
-    }
+    ...pageGuidePresentation('tuners', step.id, preparePlayer, preparePage)
   }));
 }

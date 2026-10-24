@@ -1,31 +1,7 @@
+import { pageGuidePresentation } from '../presentation.js?v=1';
+
 function targets(documentValue, name) {
   return () => [...(documentValue?.querySelectorAll(`[data-guide-target="mn-${name}"]`) || [])];
-}
-
-function presentation(section, preparePlayer, preparePage) {
-  return {
-    samples: [{ id: 'dashboard-workspace', value: { section } }],
-    prepare: async context => {
-      // Minimizing the player can shorten the page and clamp its scroll position.
-      const windowValue = globalThis.window;
-      const scroll = windowValue ? { left: windowValue.scrollX, top: windowValue.scrollY,
-        href: windowValue.location.href } : null;
-      const restoreScroll = () => {
-        if (scroll && windowValue.location.href === scroll.href)
-          windowValue.scrollTo({ left: scroll.left, top: scroll.top, behavior: 'instant' });
-      };
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('dashboard', section, context);
-        return () => { try { releasePage?.(); } finally {
-          try { releasePlayer?.(); } finally { restoreScroll(); }
-        } };
-      } catch (error) {
-        try { releasePlayer?.(); } finally { restoreScroll(); }
-        throw error;
-      }
-    }
-  };
 }
 
 export function mainOverviewItems(canAccess) {
@@ -76,6 +52,6 @@ export function mainSteps(documentValue, preparePlayer, preparePage, canView, ca
     compact: !['systems', 'call-totals', 'call-history', 'identities', 'configured', 'unknown'].includes(step.id),
     targets: targets(documentValue, step.id),
     nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...presentation(step.id, preparePlayer, preparePage)
+    ...pageGuidePresentation('dashboard', step.id, preparePlayer, preparePage, { restoreScroll: true })
   }));
 }

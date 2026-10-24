@@ -148,6 +148,13 @@ async function stubRecordingAudio(page) {
 }
 
 async function openRecordings(page, options = {}) {
+  // These fixtures exercise an existing listener's recording workflows.
+  // First-visit onboarding is covered by recordings-guide.spec.js.
+  await page.addInitScript(() => {
+    for (const account of ['admin', 'anonymous']) for (const [id, version] of [['welcome', 1], ['recordings', 3]]) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:${account}:recordings-fixture-account:${id}:${version}`, '1');
+    }
+  });
   const state = {
     mode: options.mode || 'MANAGED', available: options.available !== false,
     hasCalls: options.hasCalls !== false, matchCalls: true, admin: options.admin !== false,
@@ -173,6 +180,7 @@ async function openRecordings(page, options = {}) {
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: state.admin,
         username: state.admin ? 'admin' : null, tier: state.admin ? 'admin' : 'public',
+        guide_dismissal_scope: 'recordings-fixture-account',
         primary: state.admin && state.primary, capabilities: { recordings: true,
           'admin-recordings': state.admin, 'admin-settings': state.admin, dashboard: true,
           radio: options.radio !== false } } } });

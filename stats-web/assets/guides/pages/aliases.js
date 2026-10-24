@@ -1,3 +1,5 @@
+import { pageGuidePresentation } from '../presentation.js?v=1';
+
 function targets(documentValue, ...names) {
   return () => names.flatMap(name => [...(documentValue?.querySelectorAll(
     `[data-guide-target="${name}"]`) || [])]);
@@ -70,16 +72,6 @@ export function aliasesSteps(documentValue, preparePlayer, preparePage) {
         'Export a report for analysis or a configuration file you can import again later.'], nextLabel: 'Finish' }
   ];
   return steps.map(step => ({ ...step,
-    samples: [{ id: 'aliases-workspace', value: { section: step.id } }],
-    prepare: async context => {
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('aliases', step.id, context);
-        return () => { releasePage?.(); releasePlayer?.(); };
-      } catch (error) {
-        releasePlayer?.();
-        throw error;
-      }
-    }
+    ...pageGuidePresentation('aliases', step.id, preparePlayer, preparePage)
   }));
 }

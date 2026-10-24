@@ -1,3 +1,5 @@
+import { pageGuidePresentation } from '../presentation.js?v=1';
+
 function targets(documentValue, ...names) {
   return () => names.flatMap(name => [...(documentValue?.querySelectorAll(
     `[data-guide-target="st-${name}"]`) || [])]);
@@ -55,16 +57,6 @@ export function streamingSteps(documentValue, preparePlayer, preparePage, canVie
   return steps.map((step, index) => ({ ...step,
     targets: targets(documentValue, ...(step.id === 'recovery' ? ['recovery-state', 'recovery-error'] : [step.id])),
     nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    samples: [{ id: 'streaming-workspace', value: { section: step.id } }],
-    prepare: async context => {
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('streaming', step.id, context);
-        return () => { try { releasePage?.(); } finally { releasePlayer?.(); } };
-      } catch (error) {
-        releasePlayer?.();
-        throw error;
-      }
-    }
+    ...pageGuidePresentation('streaming', step.id, preparePlayer, preparePage)
   }));
 }

@@ -62,6 +62,46 @@ async function mountDock(page) {
   });
 }
 
+test('recording examples use the actual player and restore incoming engine state without issuing commands', async ({ page }) => {
+  await mountDock(page);
+  await page.locator('.ui-audio-source-picker').selectOption('recordings');
+  await page.evaluate(() => {
+    window.dockGuide.events.commands.length = 0;
+    const sample = { current: { id: 9702, target_alias: 'Regional Fire', source_alias: 'Engine 7' },
+      stopped: false, playing: true, paused: false, currentTime: 2, duration: 12, volume: 0.75,
+      queue: [{ id: 9703, target_alias: 'Regional Fire', source_alias: 'Engine 8', duration_ms: 9000 }],
+      continuation: {}, clickMode: 'continue', canNext: true, canPrevious: false };
+    window.sampleSubscribers = 0;
+    const adapter = { viewState: () => sample, subscribeState(observer) {
+      window.sampleSubscribers++; observer(sample);
+      return () => { window.sampleSubscribers--; };
+    } };
+    window.dockGuide.prepare({ sampleScanLists: null, sampleRecordings: adapter, recordingsSize: 'full' });
+    window.dockGuide.emitRecording({ current: { id: 44, talkgroup_alias: 'Incoming saved call' }, playing: true });
+    window.dockGuide.emitLive({ current: { target_alias: 'Incoming live call' }, stopped: false });
+  });
+  const dock = page.locator('#audio-dock');
+  await expect(dock).toHaveAttribute('data-source', 'recordings');
+  await expect(dock).toHaveAttribute('data-state', 'full');
+  await expect(dock.locator('h2.audio-dock-title')).toHaveText('Regional Fire');
+  await expect(dock.locator('.audio-dock-queue-list')).toContainText('Engine 8');
+  await expect(dock.locator('#audio-dock-click-mode')).toHaveValue('continue');
+  await expect(dock.locator('.audio-dock-time').first()).toContainText('00:02');
+  await page.evaluate(() => {
+    document.querySelectorAll('#audio-dock button').forEach(button => button.click());
+    const mode = document.querySelector('#audio-dock-click-mode'); mode.value = 'once';
+    mode.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect(dock.locator('#audio-dock-click-mode')).toHaveValue('continue');
+  expect(await page.evaluate(() => window.dockGuide.events.commands)).toEqual([]);
+  await page.evaluate(() => { window.dockGuide.restore(); window.dockGuide.restore(); });
+  await expect(dock).toHaveAttribute('data-source', 'recordings');
+  await expect(dock).toHaveAttribute('data-state', 'minimal');
+  await expect(dock.locator('.audio-dock-compact-copy')).toContainText('Incoming saved call');
+  expect(await page.evaluate(() => window.sampleSubscribers)).toBe(0);
+  expect(await page.evaluate(() => window.dockGuide.events.commands)).toEqual([]);
+});
+
 test('guide uses the same Lists panel and choices as ordinary Live listening', async ({ page }) => {
   await mountDock(page);
   await page.locator('#audio-dock-source-context').click();

@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=25';
+import { createGuideController } from './guides/controller.js?v=26';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -36,13 +36,13 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=56';
+import { createRecordingsFeature } from './features/recordings.js?v=57';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=32';
+import { createAudioDock } from './core/audio-dock.js?v=33';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
@@ -8185,6 +8185,31 @@ async function prepareWorkspaceGuideSample(view, section, context) {
 }
 
 async function preparePageGuideSample(view, section, context) {
+  if (view === 'recordings') {
+    const releasePage = await recordingsFeature.prepareGuide(section, context);
+    let releasePlayer;
+    const releases = [];
+    try {
+      if (!context.signal.aborted && context.isCurrent()) {
+        for (const root of releasePage.roots || []) {
+          releases.push(guideSampleData.register('recordings-workspace', () => {}, { root }));
+        }
+      }
+      if (!context.signal.aborted && context.isCurrent() && ['player-button', 'click-mode'].includes(section)) {
+        releasePlayer = audioDock.prepareGuide({ sampleRecordings: releasePage.playback,
+          recordingsSize: section === 'click-mode' ? 'full' : 'minimal' });
+      }
+      const release = () => { try { releasePlayer?.(); } finally {
+        try { releases.splice(0).reverse().forEach(close => close()); } finally { releasePage(); }
+      } };
+      return release;
+    } catch (error) {
+      try { releasePlayer?.(); } finally {
+        try { releases.splice(0).reverse().forEach(close => close()); } finally { releasePage(); }
+      }
+      throw error;
+    }
+  }
   if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};

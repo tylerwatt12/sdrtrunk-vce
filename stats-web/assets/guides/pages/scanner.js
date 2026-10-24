@@ -1,30 +1,7 @@
+import { pageGuidePresentation } from '../presentation.js?v=1';
+
 function targets(documentValue, name) {
   return () => [...(documentValue?.querySelectorAll(`[data-guide-target="sc-${name}"]`) || [])];
-}
-
-function presentation(section, preparePlayer, preparePage) {
-  return {
-    samples: [{ id: 'scanner-workspace', value: { section } }],
-    prepare: async context => {
-      const windowValue = globalThis.window;
-      const scroll = windowValue ? { left: windowValue.scrollX, top: windowValue.scrollY,
-        href: windowValue.location.href } : null;
-      const restoreScroll = () => {
-        if (scroll && windowValue.location.href === scroll.href)
-          windowValue.scrollTo({ left: scroll.left, top: scroll.top, behavior: 'instant' });
-      };
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('scanner', section, context);
-        return () => { try { releasePage?.(); } finally {
-          try { releasePlayer?.(); } finally { restoreScroll(); }
-        } };
-      } catch (error) {
-        try { releasePlayer?.(); } finally { restoreScroll(); }
-        throw error;
-      }
-    }
-  };
 }
 
 export function scannerSteps(documentValue, preparePlayer, preparePage, canView, canAccess) {
@@ -68,6 +45,6 @@ export function scannerSteps(documentValue, preparePlayer, preparePage, canView,
     compact: !['call', 'playback', 'details'].includes(step.id),
     targets: targets(documentValue, step.id),
     nextLabel: index === steps.length - 1 ? 'Finish' : undefined,
-    ...presentation(step.id, preparePlayer, preparePage)
+    ...pageGuidePresentation('scanner', step.id, preparePlayer, preparePage, { restoreScroll: true })
   }));
 }

@@ -1,3 +1,5 @@
+import { pageGuidePresentation } from '../presentation.js?v=1';
+
 function targets(documentValue, ...names) {
   return () => names.flatMap(name => [...(documentValue?.querySelectorAll(
     `[data-guide-target="${name}"]`) || [])]);
@@ -53,16 +55,6 @@ export function radioReferenceSteps(documentValue, preparePlayer, preparePage) {
       paragraphs: ['Close this window to continue reviewing the system.'], nextLabel: 'Finish' }
   ];
   return steps.map(step => ({ ...step,
-    samples: [{ id: 'radioreference-workspace', value: { section: step.id } }],
-    prepare: async context => {
-      const releasePlayer = await preparePlayer?.({ minimized: true });
-      try {
-        const releasePage = await preparePage?.('radioreference', step.id, context);
-        return () => { try { releasePage?.(); } finally { releasePlayer?.(); } };
-      } catch (error) {
-        releasePlayer?.();
-        throw error;
-      }
-    }
+    ...pageGuidePresentation('radioreference', step.id, preparePlayer, preparePage)
   }));
 }
