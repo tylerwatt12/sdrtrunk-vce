@@ -2,7 +2,7 @@ import { systemIdentity } from '../core/system-labels.js?v=2';
 import { spectrumSearchProtocolLabel, spectrumSearchSystemName, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchGroupKey } from './spectrum-search-data.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=2';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases, createDiscoveryTalkgroupAvailability } from './discovery-radioreference.js?v=9';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, createDiscoveryRadioReferenceWait, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases, createDiscoveryTalkgroupAvailability } from './discovery-radioreference.js?v=10';
 
 export function openSpectrumSearchWizard(ui, context = {}) {
   const { node, openReadOnlyModal, requestJson, uiActionButton, iconButton, uiSelect, uiSelectFrame, uiPill,
@@ -49,6 +49,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   let aliasImportResult = null;
   let aliasImportSystemIds = new Set();
   let refreshReviewImportAction = null;
+  let refreshDirectoryWait = null;
   let receiverChooser = null;
   let reviewBindings = [];
   let reviewGroupBindings = [];
@@ -226,6 +227,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       disabled.forEach((wasDisabled, control) => { if (control.isConnected) control.disabled = wasDisabled; });
       disabled.clear();
     }
+    refreshDirectoryWait?.();
   };
   const disclosure = (label, ...children) => {
     const details = node('details', 'ui-section-disclosure ui-section-disclosure-flat spectrum-discovery-technical');
@@ -251,6 +253,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     reviewBindings = [];
     reviewGroupBindings = [];
     refreshReviewImportAction = null;
+    refreshDirectoryWait = null;
     resultBindings = null;
     steps.hidden = next === 'saved';
     const aliasStep = next === 'aliases' || next === 'importing';
@@ -287,7 +290,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       maximum_hz: Math.floor(center + width / 2) } : null;
   };
   const selectedCandidates = () => candidates().filter((candidate) => selected.has(candidate.candidate_id));
-  const pendingDirectory = () => candidates().some((candidate) => candidate.radio_reference?.state === 'pending');
+  const pendingDirectory = () => discoveryRadioReferencePending(candidates());
+  const pendingSelectedDirectory = (ids = [...selected]) => {
+    const wanted = new Set(ids);
+    const selectedGroups = new Set(candidates().filter((candidate) => wanted.has(candidate.candidate_id))
+      .map(spectrumSearchGroupKey));
+    // A sibling can supply a group's import target even when only another site is selected.
+    return discoveryRadioReferencePending(candidates().filter((candidate) =>
+      selectedGroups.has(spectrumSearchGroupKey(candidate))));
+  };
   const scheduleDirectoryPoll = () => {
     if (current() && liveJob() && job.phase === 'complete' && pendingDirectory()) {
       window.clearTimeout(pollTimer);
@@ -489,7 +500,14 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         if (current() && !busy && operation === generation && liveJob() && job === observed &&
             job.job_id === updated.job_id) {
           job = updated;
+          if (actions.querySelector('[data-directory-retry]')) {
+            actions.querySelector('[data-directory-retry]').remove();
+            clearFeedback();
+          }
           if (updated.phase !== 'complete' || updated.restart_required) drawJob();
+          else if (currentStep === 'review') refreshReviewDirectory();
+          else if (currentStep === 'results') refreshResultsDirectory();
+          else refreshDirectoryWait?.();
         }
       }
     } catch (cause) {
@@ -904,6 +922,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (!current() || operation !== generation || !liveJob() || job !== observed || busy) return;
       job = updated;
       clearFeedback();
+      actions.querySelector('[data-directory-retry]')?.remove();
       if (job.restart_required) drawJob();
       else if (directoryRefresh && updated.phase === 'complete' && currentStep === 'review') {
         refreshReviewDirectory();
@@ -912,6 +931,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         refreshResultsDirectory();
         scheduleDirectoryPoll();
       } else if (directoryRefresh && updated.phase === 'complete' && currentStep === 'aliases') {
+        refreshDirectoryWait?.();
         scheduleDirectoryPoll();
       } else if (directoryRefresh && updated.phase === 'complete' && pendingDirectory()) scheduleDirectoryPoll();
       else drawJob();
@@ -919,7 +939,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (!current() || operation !== generation || !liveJob() || job !== observed || busy) return;
       if (isExpired(cause)) { showExpired(); return; }
       if (directoryRefresh) {
-        error('Directory names could not be refreshed. You can continue with the on-air details.', cause);
+        error(pendingSelectedDirectory() ?
+          'RadioReference names could not be refreshed. Retry the lookup before adding the selected channels.' :
+          'RadioReference names could not be refreshed. Retry to check the remaining systems.', cause);
+        refreshDirectoryWait?.();
         if (!actions.querySelector('[data-directory-retry]')) {
           const retry = button('Retry directory lookup', () => { retry.remove(); void poll(); });
           retry.dataset.directoryRetry = 'true';
@@ -1116,12 +1139,16 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     toolbar.append(heading);
     const rows = [];
     const sections = [];
+    const directoryWait = createDiscoveryRadioReferenceWait(ui);
     const review = button('Review selected', showReview, true);
+    refreshDirectoryWait = () => {
+      directoryWait.update(pendingDirectory());
+      review.disabled = busy || selected.size === 0;
+    };
     const another = button('Search another band', () => void restart());
     actions.prepend(another);
     const updateSelection = () => {
       count.textContent = `${selected.size} selected`;
-      review.disabled = selected.size === 0;
       review.textContent = selected.size ? `Review ${selected.size} ${selected.size === 1 ? 'channel' : 'channels'}` :
         'Review selected';
       sections.forEach(({ groupCheck, members }) => {
@@ -1131,6 +1158,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         groupCheck.checked = available.length > 0 && chosen.length === available.length;
         groupCheck.indeterminate = chosen.length > 0 && chosen.length < available.length;
       });
+      refreshDirectoryWait?.();
     };
     const selectAll = button('Select all available', () => {
       rows.forEach(({ candidate, check }) => {
@@ -1233,7 +1261,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       list.append(section);
     });
     selectAll.disabled = rows.every(({ check }) => check.disabled);
-    stage.append(toolbar, found ? list : node('div', 'ui-empty-state',
+    stage.append(toolbar, directoryWait.element, found ? list : node('div', 'ui-empty-state',
       'No trunked control channels were identified. Try another band or a different receiver.'));
     resultOverflows.forEach((overflow) => overflow.refresh());
     updateSelection();
@@ -1378,7 +1406,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     });
 
     form.append(systemList);
-    stage.append(form);
+    const directoryWait = createDiscoveryRadioReferenceWait(ui);
+    stage.append(directoryWait.element, form);
     button('Back', showResults);
     const newAliasGroups = groupedCandidates(chosen).filter((entry) => entry.aliasGroup &&
       Number(groups.get(entry.aliasGroup.group_id)?.alias_list_id) === 0);
@@ -1394,7 +1423,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         systemName: systemLabel(representative), rrSystemId: [...directoryIds][0], matched: consistent };
     }).filter((target) => target.matched) : [];
     const add = button(importTargets().length ? 'Continue' : addLabel, async () => {
-      if (busy) return;
+      if (busy || pendingSelectedDirectory()) { refreshReviewImportAction?.(); return; }
       if (!form.checkValidity()) {
         form.querySelectorAll('input:invalid, select:invalid, textarea:invalid').forEach((control) => {
           const panel = control.closest('.spectrum-search-review-customize');
@@ -1420,15 +1449,29 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         finally { if (current()) { clearFeedback(); setBusy(false); } }
         if (!current()) return;
       }
+      if (pendingSelectedDirectory(ids)) { refreshReviewImportAction?.(); scheduleDirectoryPoll(); return; }
       aliasImportSystemIds = new Set(targets.map((target) => target.rrSystemId));
       if (!targets.length) { void save(ids); return; }
       show('aliases', 3, `Do you want to import talkgroups into your Alias ${targets.length === 1 ? 'List' : 'Lists'}?`);
       const choice = discoveryAliasImportChoice(ui, targets, wantsAliasImport);
-      stage.append(choice.element);
+      const aliasDirectoryWait = createDiscoveryRadioReferenceWait(ui);
+      stage.append(aliasDirectoryWait.element, choice.element);
       button('Back', () => { wantsAliasImport = choice.wantsImport(); showReview(); });
-      button(addLabel, () => { wantsAliasImport = choice.wantsImport(); void save(ids); }, true);
+      const addChannels = button(addLabel, () => {
+        if (busy || pendingSelectedDirectory(ids)) { refreshDirectoryWait?.(); return; }
+        wantsAliasImport = choice.wantsImport();
+        void save(ids);
+      }, true);
+      refreshDirectoryWait = () => aliasDirectoryWait.update(pendingSelectedDirectory(ids), addChannels, busy);
+      refreshDirectoryWait();
+      scheduleDirectoryPoll();
     }, true);
-    refreshReviewImportAction = () => { add.textContent = importTargets().length ? 'Continue' : addLabel; };
+    refreshReviewImportAction = () => {
+      add.textContent = importTargets().length ? 'Continue' : addLabel;
+      directoryWait.update(pendingSelectedDirectory(), add, busy || chosen.length === 0);
+    };
+    refreshDirectoryWait = refreshReviewImportAction;
+    refreshReviewImportAction();
     scheduleDirectoryPoll();
   };
   const payload = (ids) => ({ revision: job.revision,
@@ -1507,6 +1550,12 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const save = (ids) => trackReceiverUse(() => saveChannels(ids));
   const saveChannels = async (ids) => {
     if (job.restart_required) { showSaved(); return; }
+    if (pendingSelectedDirectory(ids)) {
+      if (currentStep !== 'review') showReview();
+      refreshReviewImportAction?.();
+      scheduleDirectoryPoll();
+      return;
+    }
     setBusy(true);
     let added = false;
     try {

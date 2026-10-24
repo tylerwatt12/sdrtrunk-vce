@@ -597,27 +597,136 @@ for (const catalog of ['empty', 'failed']) {
   });
 }
 
-test('pending directory updates preserve the displayed import choice and an explicit No', async ({ page }) => {
+const searchDirectoryNamesLoading = (page) => dialog(page).getByRole('status')
+  .filter({ hasText: /^Looking up RadioReference names…$/ });
+const searchAdvance = (page) => dialog(page).getByRole('button', {
+  name: /^(Continue|Add \d+ channels?)$/
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`search waits for all selected RadioReference names before offering imports and preserves No after Back in ${theme} at ${width}px`, async ({ page }) => {
+    await page.clock.install();
+    await page.setViewportSize({ width, height: 900 });
+    const fixture = { theme, ...ohioResultsFixture({ pendingMarcs: true }) };
+    fixture.customAliasGroups = fixture.customAliasGroups.map((group) => ({ ...group, alias_lists: [] }));
+    const state = await install(page, fixture);
+    await complete(page);
+    await expect(searchDirectoryNamesLoading(page)).toBeVisible();
+    await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+    await expect(dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true })).toBeEnabled();
+    await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
+    await expect(searchDirectoryNamesLoading(page)).toBeVisible();
+    await expect(searchDirectoryNamesLoading(page)).toBeInViewport();
+    await expect(searchAdvance(page)).toBeDisabled();
+    expect(await dialog(page).evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 && bounds.left >= 0 && bounds.right <= innerWidth;
+    })).toBe(true);
+    await dialog(page).screenshot({ path: test.info().outputPath(`loading-${theme}-${width}.png`) });
+    await searchAdvance(page).dispatchEvent('click');
+    await page.clock.fastForward(50);
+    expect(state.requests.filter(({ path }) => path.endsWith('/save') || path.includes('/systems/talkgroups'))).toHaveLength(0);
+    state.customCandidates = state.customCandidates.map((candidate) => candidate.radio_reference.state === 'pending' ?
+      { ...candidate, radio_reference: { state: 'matched', match: { rr_system_id: 123, system_name: ohioSystems.marcs } } } : candidate);
+    await page.clock.fastForward(800);
+    await expect(searchDirectoryNamesLoading(page)).toBeHidden();
+    await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+    await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(3);
+    const no = dialog(page).getByRole('radio', { name: importNo, exact: true });
+    await no.check();
+    await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(3);
+    await expect(no).toBeChecked();
+    await addChannels(page, 4);
+    await expect(dialog(page)).toContainText('4 channels added.');
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+  });
+}
+
+test('search waits for pending RadioReference names on an unselected sibling in the selected system', async ({ page }) => {
+  await page.clock.install();
+  const fixture = importSearchFixture();
+  fixture.customCandidates[1].radio_reference = { state: 'pending' };
+  const state = await install(page, fixture);
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await expect(searchDirectoryNamesLoading(page)).toBeVisible();
+  await expect(searchAdvance(page)).toBeDisabled();
+  state.customCandidates[1].radio_reference = { state: 'matched', match: {
+    rr_system_id: 123, system_name: ohioSystems.marcs, site_name: 'Lake County' } };
+  await page.clock.fastForward(800);
+  await expect(searchDirectoryNamesLoading(page)).toBeHidden();
+  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByRole('radio', { name: importYes, exact: true })).toBeVisible();
+  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(1);
+  await expect(dialog(page)).toContainText(ohioSystems.marcs);
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+});
+
+test('search leaves unrelated pending RadioReference groups out of the selected channel readiness', async ({ page }) => {
   await page.clock.install();
   const fixture = ohioResultsFixture({ pendingMarcs: true });
   fixture.customAliasGroups = fixture.customAliasGroups.map((group) => ({ ...group, alias_lists: [] }));
   const state = await install(page, fixture);
   await complete(page);
+  await expect(searchDirectoryNamesLoading(page)).toBeVisible();
+  await dialog(page).getByRole('checkbox', { name: 'Select Cleveland control', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await expect(searchDirectoryNamesLoading(page)).toBeHidden();
+  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByRole('radio', { name: importYes, exact: true })).toBeVisible();
+  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(1);
+  await addChannels(page, 1, importYes);
+  await expect(dialog(page)).toContainText('1 channel added.');
+  const saves = state.requests.filter(({ path }) => path.endsWith('/save'));
+  expect(saves).toHaveLength(1);
+  expect(saves[0].body.candidates.map(({ candidate_id }) => candidate_id)).toEqual(['cleveland-3']);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
+});
+
+for (const terminalState of ['no_match', 'unavailable']) {
+  test(`search unlocks adding after selected RadioReference names resolve to ${terminalState}`, async ({ page }) => {
+    await page.clock.install();
+    const state = await install(page, aliasNamingFixture());
+    await complete(page);
+    await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+    await expect(searchDirectoryNamesLoading(page)).toBeVisible();
+    await expect(searchAdvance(page)).toBeDisabled();
+    state.customCandidates[0].radio_reference = { state: terminalState };
+    await page.clock.fastForward(800);
+    await expect(searchDirectoryNamesLoading(page)).toBeHidden();
+    await expect(dialog(page).getByRole('button', { name: 'Add 1 channel', exact: true })).toBeEnabled();
+    await addChannels(page, 1);
+    await expect(dialog(page)).toContainText('1 channel added.');
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+    expect(state.requests.filter(({ path }) => path.includes('/systems/talkgroups') || path.endsWith('/aliases/import'))).toHaveLength(0);
+  });
+}
+
+test('search keeps adding protected after a RadioReference names poll fails and recovers on retry', async ({ page }) => {
+  await page.clock.install();
+  const state = await install(page, aliasNamingFixture());
+  await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  const no = dialog(page).getByRole('radio', { name: importNo, exact: true });
-  await no.check();
-  const previous = await no.elementHandle();
-  state.customCandidates = state.customCandidates.map((candidate) => candidate.radio_reference.state === 'pending' ?
-    { ...candidate, radio_reference: { state: 'matched', match: { rr_system_id: 123, system_name: ohioSystems.marcs } } } : candidate);
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  state.failPollOnce = true;
   await page.clock.fastForward(800);
-  await expect(no).toBeChecked();
-  expect(await no.evaluate((element, original) => element === original, previous)).toBe(true);
-  await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(3);
-  await expect(no).toBeChecked();
+  const retry = dialog(page).getByRole('button', { name: 'Retry directory lookup', exact: true });
+  await expect(retry).toBeEnabled();
+  await expect(searchDirectoryNamesLoading(page)).toBeVisible();
+  await expect(searchAdvance(page)).toBeDisabled();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+  resolveAliasNamingFixture(state, ohioSystems.marcs);
+  await retry.click();
+  await expect(searchDirectoryNamesLoading(page)).toBeHidden();
+  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
 });
 
 test('search offers and imports only systems with available talkgroups in a mixed result', async ({ page }) => {

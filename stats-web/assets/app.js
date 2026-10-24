@@ -39,7 +39,7 @@ import { openRadioReferenceConnect, radioReferencePremiumSignup } from './featur
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=58';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
-import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=9';
+import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=10';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
@@ -15652,6 +15652,7 @@ function openSpectrumDiscoveryWizard(selection) {
   let aliasImportResult = null;
   let aliasImportSystems = new Set();
   let restartRequired = false;
+  let directoryRefreshFailed = false;
   let probeNodes = null;
   let signalDetails = null;
   const path = '/api/v1/admin/spectrum-discovery';
@@ -15659,6 +15660,7 @@ function openSpectrumDiscoveryWizard(selection) {
     connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null },
     (url, options) => request(url, options), { signal: abort.signal });
   const availableTalkgroups = createDiscoveryTalkgroupAvailability((url, options) => request(url, options));
+  const directoryWait = createDiscoveryRadioReferenceWait({ node });
   const protocolLabels = { 'p25-phase1': 'P25 radio system', dmr: 'DMR trunked system', nxdn: 'NXDN trunked system' };
   const trunkedProtocol = (id = profile?.id) => ['p25-phase1', 'dmr', 'nxdn'].includes(id);
   const sessionFacts = () => spectrumSearchIdentityFacts({ protocol_id: profile?.id,
@@ -15742,7 +15744,9 @@ function openSpectrumDiscoveryWizard(selection) {
     if (!current()) throw new DOMException('Dialog dismissed', 'AbortError');
     return requestJson(url, { page: false, signal: abort.signal, ...options });
   };
-  const pendingDirectory = () => session?.radio_reference?.state === 'pending';
+  const pendingDirectory = () => discoveryRadioReferencePending([session]);
+  const refreshDirectoryWait = (action = null) => directoryWait.update(
+    session?.state === 'ready' && !session.saved && pendingDirectory(), action, modal.state.isBusy());
   const scheduleDirectoryPoll = () => {
     if (current() && session?.state === 'ready' && pendingDirectory()) {
       window.clearTimeout(pollTimer);
@@ -15750,6 +15754,7 @@ function openSpectrumDiscoveryWizard(selection) {
     }
   };
   const refreshSystemSummary = (binding) => {
+    refreshDirectoryWait();
     if (trunkedProtocol() && binding.heading && !binding.details) {
       binding.details = uiActionButton('Details', '', () => showSignalDetails(),
         'ui-button ui-button-secondary spectrum-discovery-details-action');
@@ -15845,8 +15850,13 @@ function openSpectrumDiscoveryWizard(selection) {
     const heading = node('h3', '', label);
     heading.tabIndex = -1;
     stage.replaceChildren(heading, message);
+    if (index === 1 || index === 2) {
+      stage.append(directoryWait.element);
+      refreshDirectoryWait();
+    }
     actions.replaceChildren();
     message.replaceChildren();
+    directoryRefreshFailed = false;
     heading.focus({ preventScroll: true });
   };
   const button = (label, action, primary = false) => {
@@ -15862,6 +15872,7 @@ function openSpectrumDiscoveryWizard(selection) {
     stage.querySelectorAll('button').forEach((control) => { control.disabled = value; });
     stage.querySelectorAll('input[type="radio"]').forEach((control) => { control.disabled = value || control.dataset.importUnavailable === 'true'; });
     stage.querySelectorAll('.spectrum-discovery-details-action').forEach((control) => { control.disabled = value; });
+    if (!value) reviewBinding?.refreshActions?.();
   };
   const showError = (error, copy = 'This step could not finish. Try again.') => {
     if (!current()) return;
@@ -16115,6 +16126,11 @@ function openSpectrumDiscoveryWizard(selection) {
       const updated = await request(sessionPath(), { csrf: false });
       if (!current() || generation !== operation || session?.session_id !== id) return;
       session = updated;
+      if (directoryRefreshFailed) {
+        directoryRefreshFailed = false;
+        message.replaceChildren();
+        actions.querySelector('[data-directory-retry]')?.remove();
+      }
       if (directoryRefresh && activeStep === 2 && updated.state === 'ready') {
         refreshReviewDirectory();
         scheduleDirectoryPoll();
@@ -16124,7 +16140,8 @@ function openSpectrumDiscoveryWizard(selection) {
     } catch (error) {
       if (!current() || generation !== operation || session?.session_id !== id) return;
       if (directoryRefresh && activeStep === 2 && error.code !== 'discovery_conflict' && !sessionNoLongerExists(error)) {
-        showError(error, 'Directory names could not be refreshed. You can continue with the on-air details.');
+        directoryRefreshFailed = true;
+        showError(error, 'RadioReference lookup could not be checked. Retry to continue.');
         if (!actions.querySelector('[data-directory-retry]')) {
           const retry = button('Retry directory lookup', () => { retry.remove(); void poll(); });
           retry.dataset.directoryRetry = 'true';
@@ -16295,6 +16312,7 @@ function openSpectrumDiscoveryWizard(selection) {
     });
     let add;
     const saveChannel = async () => {
+      if (modal.state.isBusy() || refreshDirectoryWait(add)) return;
       if (!valid(form)) return;
       busy(true);
       try {
@@ -16339,6 +16357,7 @@ function openSpectrumDiscoveryWizard(selection) {
       } finally { if (current()) busy(false); }
     };
     const addAction = async () => {
+      if (modal.state.isBusy() || refreshDirectoryWait(add)) return;
       if (!valid(form)) return;
       reviewDraft = read();
       if (canOfferAliasImport() && selected === 'new') {
@@ -16363,8 +16382,10 @@ function openSpectrumDiscoveryWizard(selection) {
     add = button(canOfferAliasImport() && selected === 'new' ? 'Continue' : 'Add and start listening', () => void addAction(), true);
     reviewBinding.refreshActions = () => {
       add.textContent = canOfferAliasImport() && selected === 'new' ? 'Continue' : 'Add and start listening';
+      refreshDirectoryWait(add);
     };
     aliases?.addEventListener('change', reviewBinding.refreshActions);
+    reviewBinding.refreshActions();
   };
   const runAliasImports = async () => {
     if (restartRequired) { showComplete(); return; }
@@ -25881,7 +25902,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=35');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=36');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,

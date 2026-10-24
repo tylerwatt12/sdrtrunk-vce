@@ -197,6 +197,27 @@ export function createDiscoveryRadioReferenceContext(ui, request, { signal, requ
 
 const renderedDirectoryResults = new WeakMap();
 
+export function discoveryRadioReferencePending(values = []) {
+  return values.some((value) => value?.radio_reference?.state === 'pending');
+}
+
+export function createDiscoveryRadioReferenceWait({ node }) {
+  const element = node('div');
+  const status = node('p', 'ui-feedback ui-feedback-loading', 'Looking up RadioReference names…');
+  status.setAttribute('role', 'status');
+  element.append(status);
+  element.hidden = true;
+  return {
+    element,
+    update(pending, action = null, disabled = false) {
+      element.hidden = !pending;
+      status.setAttribute('aria-busy', String(pending));
+      if (action) action.disabled = disabled || pending;
+      return pending;
+    }
+  };
+}
+
 export function discoveryRadioReferenceSystemUrl(value) {
   const result = value?.radio_reference;
   if (result?.state !== 'matched') return null;

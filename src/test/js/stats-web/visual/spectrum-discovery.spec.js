@@ -412,6 +412,93 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   });
 }
 
+const directoryNamesLoading = (page) => wizard(page).getByRole('status')
+  .filter({ hasText: /^Looking up RadioReference names…$/ });
+const discoveryAdvance = (page) => wizard(page).getByRole('button', {
+  name: /^(Continue|Add and start listening)$/
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`discovery waits for RadioReference names before adding and still offers talkgroup import in ${theme} at ${width}px`, async ({ page }) => {
+    await page.clock.install();
+    await page.setViewportSize({ width, height: 900 });
+    const matched = ohioDiscoveryFixture(theme);
+    const state = { ...matched, templateSystem: 'Decoded network', templateName: 'Decoded control',
+      defaultAliasName: 'Decoded network', directoryResult: { state: 'pending' } };
+    await install(page, state);
+    await begin(page);
+    await expect(directoryNamesLoading(page)).toBeVisible();
+    await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeEnabled();
+    await review(page);
+    await expect(directoryNamesLoading(page)).toBeVisible();
+    await expect(directoryNamesLoading(page)).toBeInViewport();
+    await wizard(page).getByLabel('Channel name', { exact: true }).fill('My control channel');
+    await expect(discoveryAdvance(page)).toBeDisabled();
+    expect(await wizard(page).evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return element.scrollWidth <= element.clientWidth + 1 && bounds.left >= 0 && bounds.right <= innerWidth;
+    })).toBe(true);
+    await wizard(page).screenshot({ path: test.info().outputPath(`loading-${theme}-${width}.png`) });
+    // A queued click must not bypass readiness even if the button has just become disabled.
+    await discoveryAdvance(page).dispatchEvent('click');
+    await page.clock.fastForward(50);
+    expect(state.requests.filter(({ path }) => path.endsWith('/save') || path.includes('/systems/talkgroups'))).toHaveLength(0);
+    state.templateSystem = matched.templateSystem;
+    state.defaultAliasName = matched.defaultAliasName;
+    state.directoryResult = matched.directoryResult;
+    await page.clock.fastForward(800);
+    await expect(directoryNamesLoading(page)).toBeHidden();
+    await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+    await expect(wizard(page).getByLabel('Channel name', { exact: true })).toHaveValue('My control channel');
+    await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toBeChecked();
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+    await addDiscovery(page, importYes);
+    await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
+  });
+}
+
+for (const terminalState of ['no_match', 'unavailable']) {
+  test(`discovery unlocks adding after RadioReference names resolve to ${terminalState}`, async ({ page }) => {
+    await page.clock.install();
+    const state = { directoryResult: { state: 'pending' } };
+    await install(page, state);
+    await begin(page);
+    await review(page);
+    await expect(directoryNamesLoading(page)).toBeVisible();
+    await expect(discoveryAdvance(page)).toBeDisabled();
+    state.directoryResult = { state: terminalState };
+    await page.clock.fastForward(800);
+    await expect(directoryNamesLoading(page)).toBeHidden();
+    await expect(wizard(page).getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
+    await addDiscovery(page);
+    await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+    expect(state.requests.filter(({ path }) => path.includes('/systems/talkgroups') || path.endsWith('/aliases/import'))).toHaveLength(0);
+  });
+}
+
+test('discovery keeps adding protected after a RadioReference names poll fails and recovers on retry', async ({ page }) => {
+  await page.clock.install();
+  const state = { ...ohioDiscoveryFixture('light'), directoryResult: { state: 'pending' } };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  state.failProbeStatusOnce = true;
+  await page.clock.fastForward(800);
+  const retry = wizard(page).getByRole('button', { name: 'Retry directory lookup', exact: true });
+  await expect(retry).toBeEnabled();
+  await expect(directoryNamesLoading(page)).toBeVisible();
+  await expect(discoveryAdvance(page)).toBeDisabled();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+  state.directoryResult = ohioDiscoveryFixture('light').directoryResult;
+  await retry.click();
+  await expect(directoryNamesLoading(page)).toBeHidden();
+  await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+});
+
 test('discovery Yes imports talkgroups after adding and retries an import failure without adding again', async ({ page }) => {
   const state = { ...ohioDiscoveryFixture('light'), failImportOnce: true };
   await install(page, state);
