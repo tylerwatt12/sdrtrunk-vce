@@ -663,6 +663,7 @@ async function main() {
   await require('./recordings-guide-data.test').checkRecordingsGuideData(path.resolve(core, '..'));
   await require('./administration-guide-data.test').checkAdministrationGuideData(path.resolve(core, '..'));
   await require('./guides.test').checkGuides(path.resolve(core, '..'));
+  await require('./guide-autostart.test').checkGuideAutostart(path.resolve(core, '..'));
   await require('./dashboard-data.test').checkDashboardData(appSource, functionBinding);
   require('./main-directory-quality.test').checkMainDirectoryQuality(appSource, functionBinding);
   await require('./dashboard-activity.test').checkDashboardActivity(appSource, functionBinding);
@@ -2136,9 +2137,10 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 11,
+    version: 12,
     appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: true },
+    guides: { automatic_page_guides: true },
     playback: {
       volume: 1, selected_scan_list_ids: [], target_grouping: true, target_burst_limit: 4
     },
@@ -2164,6 +2166,17 @@ async function main() {
     }).page_titles.prepend_playing_call, prependPlayingCall,
     'Saved page title choices must remain independent of the default');
   }
+  for (const automaticPageGuides of [true, false]) {
+    assert.equal(preferenceSchema.validate({ ...decodedDefaults,
+      guides: { automatic_page_guides: automaticPageGuides }
+    }).guides.automatic_page_guides, automaticPageGuides,
+    'The signed-in guide preference preserves an explicit opt-out or opt-in.');
+  }
+  for (const guides of [{}, { automatic_page_guides: 'false' }, { automatic_page_guides: 0 },
+    { automatic_page_guides: null }, { automatic_page_guides: true, extra: true }]) {
+    assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, guides }), /guides/);
+  }
+  assert.throws(() => preferenceSchema.validate({ ...decodedDefaults, version: 11 }), /version is unsupported/);
   for (const hue of [0, 215, 359, null]) {
     assert.equal(preferenceSchema.validate({ ...decodedDefaults,
       appearance: { theme: 'light', hue } }).appearance.hue, hue);

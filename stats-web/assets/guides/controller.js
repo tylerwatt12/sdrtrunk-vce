@@ -1,5 +1,5 @@
-import { openSetupGuide } from '../core/setup-guide.js?v=20';
-import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=31';
+import { openSetupGuide } from '../core/setup-guide.js?v=21';
+import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=32';
 import { createGuideMemory } from './persistence.js?v=2';
 
 const sessionKey = (context) => JSON.stringify([context.account || '', context.dismissalScope || '',
@@ -10,7 +10,7 @@ const visitKey = (context) => `${sessionKey(context)}:${context.view}${context.v
 // rendering/signing out starts. Tour state stays independent of page builders.
 export function createGuideController({ ui, getContext, navigate, consumeGuide, preparePlayer, preparePage,
   documentValue = globalThis.document, storage, fetchDocument, onHistoryError, onHistorySaved,
-  openGuide = openSetupGuide }) {
+  setAutomaticPageGuides, openGuide = openSetupGuide }) {
   const memory = createGuideMemory(storage, { fetchDocument, onError: onHistoryError, onSaved: onHistorySaved,
     definitions: [{ id: 'welcome', version: createGuideDefinition('welcome').version }, ...Object.values(pageGuideTemplates)] });
   let active = null;
@@ -21,9 +21,12 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
   let replayOnPage = null;
   let consumedRequest = null;
 
+  const automaticPagesAllowed = context => context.automaticPageGuides !== false && context.automaticPageGuides !== null;
+
   const definitionFor = (id, context, override = {}) => createGuideDefinition(id, { documentValue, preparePlayer, preparePage,
     canSetup: context.canSetup !== false, canView: context.canView, canReport: context.canReport,
-    canAccess: context.canAccess, adminTab: override.adminTab || context.adminTab });
+    canAccess: context.canAccess, adminTab: override.adminTab || context.adminTab,
+    automaticPageGuides: () => automaticPagesAllowed(getContext()) });
   const contextMatches = (context) => !destroyed && visitKey(getContext()) === visitKey(context);
   const eligible = (context, manual) => !destroyed && context.isDesktop === true &&
     (manual || context.authenticated === true) && context.canView?.(context.view) !== false;
@@ -57,6 +60,7 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
     if (record.definition.id !== 'welcome' || record.context.canSetup === false ||
         record.context.canView?.('channel-setup') === false) return;
     const context = getContext();
+    if (!automaticPagesAllowed(context)) return;
     if (context.view === 'channel-setup') {
       const page = definitionFor(context.view, context);
       if (record.manual || !memory.has(context, page)) void present(context.view, record.manual);
@@ -79,6 +83,14 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
     try {
       record.presentation = openGuide(ui, { ...definition,
         initialStep: override.skipOverview ? Math.max(0, definition.steps.findIndex(step => !step.overview)) : 0,
+        pageGuidePreference: id === 'welcome' && typeof setAutomaticPageGuides === 'function' ? {
+          read: () => contextMatches(context) ? getContext().automaticPageGuides : null,
+          async save(enabled) {
+            if (active !== record || !contextMatches(context)) throw new Error('The signed-in account changed.');
+            await setAutomaticPageGuides(enabled);
+            if (active !== record || !contextMatches(context)) throw new Error('The signed-in account changed.');
+          }
+        } : null,
         onChoice: choiceId => {
           if (id !== 'admin' || active !== record || !contextMatches(context)) return false;
           const latest = { ...getContext() };
@@ -155,6 +167,9 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
         active || suppressAutomatic || getContext().canPresent === false) return false;
     const welcome = definitionFor('welcome', context);
     if (!memory.has(context, welcome)) return present('welcome', false);
+    // Administration is always a deliberate Help/URL choice. The account choice
+    // only controls automatic page tours; it never marks their lessons complete.
+    if (context.view === 'admin' || !automaticPagesAllowed(getContext())) return false;
     const page = definitionFor(context.view, context);
     if (page?.authored && !memory.has(context, page)) return present(context.view, false);
     return Promise.resolve(false);

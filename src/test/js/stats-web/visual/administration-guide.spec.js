@@ -54,7 +54,7 @@ async function installAdministration(page, { theme = 'light', tab = 'health', re
   }
   await page.goto(`/app.html?view=admin&tab=${tab}${replay ? '&guide=admin' : ''}`);
   await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
-  if (replay || firstVisit) await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
+  if (replay) await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
   const initialRequestCount = effects.requests.length;
   return { fixture, effects, initialRequestCount };
 }
@@ -276,11 +276,9 @@ test('Administration guide choices follow the signed-in account permissions', as
   expectNoSampleEffects(state);
 });
 
-test('Administration first visit remembers one guide and Help starts the current section', async ({ page }) => {
+test('Administration stays manual on first visit and Help starts the current section', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   const state = await installAdministration(page, { firstVisit: true, replay: false });
-  await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
-  await page.keyboard.press('Escape');
   await expect(guide(page)).toHaveCount(0);
   await page.getByRole('navigation', { name: 'Administration sections', exact: true })
     .getByRole('link', { name: 'Computer & version', exact: true }).click();

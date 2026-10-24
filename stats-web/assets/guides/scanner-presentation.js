@@ -2,7 +2,7 @@
 // target selection, queue order, Hold, Avoid, Pause, Stop, and Replay behavior.
 // Only its receiver feed and audio transport are replaced with inert memory data.
 import { WebCallPlayer } from '../web-call-player.js?v=19';
-import { defaults, validate } from '../core/preference-schema.js?v=7';
+import { defaults, validate } from '../core/preference-schema.js?v=8';
 
 const COUNTY = 'p25:bee00:123';
 const CITY = 'p25:bee00:456';

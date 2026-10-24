@@ -477,6 +477,49 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
         });
         copy.append(items);
       }
+      const preference = step.pageGuidePreference && options.pageGuidePreference;
+      if (preference) {
+        const current = preference.read();
+        const choice = node('label', 'ui-choice-card ui-choice-card-with-icon');
+        const checkbox = node('input', 'ui-selection-check');
+        checkbox.type = 'checkbox';
+        checkbox.checked = current === false;
+        checkbox.disabled = typeof current !== 'boolean';
+        checkbox.setAttribute('aria-label', 'Skip guides on other pages');
+        const detail = node('span', 'ui-heading-group');
+        const help = node('small', 'ui-muted',
+          'Page guides use examples to explain receiving, aliases, Scan Lists, and playback. Open any guide later with the ? button in the header.');
+        help.id = `${heading.id}-guide-preference-help-${generation}`;
+        checkbox.setAttribute('aria-describedby', help.id);
+        detail.append(node('strong', '', 'Skip guides on other pages'), help);
+        choice.append(checkbox, detail);
+        const error = node('p', 'ui-notice ui-notice-danger');
+        error.setAttribute('role', 'alert');
+        error.hidden = !checkbox.disabled;
+        if (checkbox.disabled) error.textContent = 'Your guide preference could not be loaded. Reload this page to try again.';
+        checkbox.addEventListener('change', async () => {
+          if (preparing || !isCurrent()) return;
+          preparing = true; checkbox.disabled = back.disabled = next.disabled = true;
+          modal.dialog.setAttribute('aria-busy', 'true');
+          error.hidden = true;
+          try {
+            await preference.save(!checkbox.checked);
+          } catch {
+            if (isCurrent()) {
+              error.textContent = 'Your guide choice could not be saved. Try the checkbox again.';
+              error.hidden = false;
+            }
+          } finally {
+            if (isCurrent()) {
+              checkbox.checked = preference.read() === false;
+              preparing = false; checkbox.disabled = back.disabled = next.disabled = false;
+              modal.dialog.removeAttribute('aria-busy');
+              schedule();
+            }
+          }
+        }, { signal });
+        copy.append(choice, error);
+      }
       const choices = step.overview && typeof options.onChoice === 'function' ? step.choices || [] : [];
       modal.dialog.classList.toggle('ui-setup-guide--choices', choices.length > 0);
       if (choices.length) {

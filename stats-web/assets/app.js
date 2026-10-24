@@ -1,5 +1,5 @@
 import * as routeFoundation from './core/routes.js?v=11';
-import * as preferenceSchema from './core/preference-schema.js?v=7';
+import * as preferenceSchema from './core/preference-schema.js?v=8';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=34';
+import { createGuideController } from './guides/controller.js?v=35';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -430,7 +430,8 @@ function applyUserPreferenceSnapshot(snapshot) {
 async function synchronizeUserPreferences() {
   // Abort old account history requests as soon as the confirmed sign-in changes.
   void guideController.synchronizeAccount();
-  const identity = accessSession.authenticated ? accessSession.username : null;
+  const identity = accessSession.authenticated ?
+    JSON.stringify([accessSession.username, accessSession.guideDismissalScope || '']) : null;
   const snapshot = userPreferenceController.snapshot();
   if (snapshot.identity === identity && (identity === null || snapshot.loaded)) return snapshot;
   userPreferenceError = null;
@@ -8174,7 +8175,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : topics ? [
       import('./features/alerts.js?v=22'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
-      Promise.resolve(null), import('./guides/scanner-presentation.js?v=1')
+      Promise.resolve(null), import('./guides/scanner-presentation.js?v=2')
     ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
     ] : live ? [
@@ -35863,6 +35864,9 @@ const guideController = createGuideController({
   fetchDocument: jsonDocumentFetch,
   onHistoryError: (error, { kind, retry }) => showGuideHistoryError(kind, retry),
   onHistorySaved: () => document.getElementById('guide-history-status')?.remove(),
+  setAutomaticPageGuides: enabled => updateUserPreferences(preferences => {
+    preferences.guides.automatic_page_guides = enabled;
+  }, false),
   getContext: () => ({
     view: routeFoundation.requestedView(route),
     adminTab: route.get('tab') || 'health',
@@ -35870,6 +35874,8 @@ const guideController = createGuideController({
     account: accessSession.username,
     dismissalScope: accessSession.guideDismissalScope,
     authenticated: accessSession.authenticated,
+    automaticPageGuides: accessSession.authenticated && userPreferenceController.read().loaded ?
+      userPreferenceController.read().preferences.guides.automatic_page_guides : null,
     isDesktop: guideDesktopLayout.matches,
     canSetup: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS),
     canView: viewAllowed,

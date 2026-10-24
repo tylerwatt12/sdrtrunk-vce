@@ -109,7 +109,7 @@ function visibleControl(documentValue, selector) {
   return !control || (!control.hidden && !control.closest?.('[hidden]'));
 }
 
-function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport) {
+function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport, automaticPageGuides) {
   const allowed = (view) => typeof canView === 'function' ? canView(view) !== false :
     visibleControl(documentValue, `.primary-nav [data-view="${view}"]`);
   const canUsePlayer = allowed('scanner') || allowed('recordings');
@@ -124,7 +124,7 @@ function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport
   const itemViews = { Main: 'dashboard', Scanner: 'scanner', Recordings: 'recordings',
     Administration: 'admin', 'My Settings': 'settings' };
   const steps = [
-    { id: 'welcome', title: 'Welcome to sdrtrunk VCE', illustration: true,
+    { id: 'welcome', title: 'Welcome to sdrtrunk VCE', illustration: true, pageGuidePreference: true,
       paragraphs: ['Turn signals from your software-defined radio into conversations you can follow.',
         'Listen to radio traffic, see who’s transmitting, and explore activity across your radio systems.'] },
     { id: 'hardware', title: 'Explore the airwaves',
@@ -181,10 +181,11 @@ function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport
       ] },
     { id: 'theme', title: 'Make yourself comfortable',
       targets: targets(documentValue, '[data-guide-target="theme"]'),
-      paragraphs: ['Switch between light and dark themes whenever you like.', canSetup ?
-        'You’re ready to start receiving. Next, we’ll walk through adding your first channel.' :
-        'You’re ready to explore. Open a page’s guide whenever you need a hand.'],
-      nextLabel: canSetup ? 'Set up channels' : 'Finish' }
+      get paragraphs() { return ['Switch between light and dark themes whenever you like.',
+        canSetup && automaticPageGuides() ?
+          'You’re ready to start receiving. Next, we’ll walk through adding your first channel.' :
+          'You’re ready to explore. Open a page’s guide whenever you need a hand.']; },
+      get nextLabel() { return canSetup && automaticPageGuides() ? 'Set up channels' : 'Finish'; } }
   ];
   return steps.filter((step) => {
     if (step.id === 'player') return canUsePlayer;
@@ -280,10 +281,12 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
 }
 
 export function createGuideDefinition(id, { documentValue = globalThis.document, preparePlayer,
-  preparePage, canSetup = true, canView, canAccess, canReport, adminTab = 'computer' } = {}) {
+  preparePage, canSetup = true, canView, canAccess, canReport, adminTab = 'computer',
+  automaticPageGuides = () => true } = {}) {
   if (id === 'welcome') return { id, version: 1, authored: true, title: 'Welcome to sdrtrunk VCE',
     eyebrow: 'WELCOME GUIDE', steps: welcomeSteps(documentValue, preparePlayer,
-      canSetup && (typeof canView !== 'function' || canView('channel-setup') !== false), canView, canReport) };
+      canSetup && (typeof canView !== 'function' || canView('channel-setup') !== false), canView, canReport,
+      automaticPageGuides) };
   const template = pageGuideTemplates[id];
   if (!template) return null;
   if (id === 'admin') {

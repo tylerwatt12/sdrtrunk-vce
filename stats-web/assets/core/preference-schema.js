@@ -1,9 +1,10 @@
 'use strict';
 
   const defaults = Object.freeze({
-    version: 11,
+    version: 12,
     appearance: Object.freeze({ theme: 'light', hue: null }),
     page_titles: Object.freeze({ prepend_playing_call: true }),
+    guides: Object.freeze({ automatic_page_guides: true }),
     playback: Object.freeze({
       volume: 1,
       selected_scan_list_ids: Object.freeze([]),
@@ -125,11 +126,12 @@
   }
 
   function validate(value) {
-    exact(value, ['version', 'appearance', 'page_titles', 'playback', 'scanner', 'presentation', 'tuner',
+    exact(value, ['version', 'appearance', 'page_titles', 'guides', 'playback', 'scanner', 'presentation', 'tuner',
       'health_alerts', 'tables'], 'preferences');
-    if (value.version !== 11) throw invalid('The user preference version is unsupported.');
+    if (value.version !== 12) throw invalid('The user preference version is unsupported.');
     exact(value.appearance, ['theme', 'hue'], 'appearance');
     exact(value.page_titles, ['prepend_playing_call'], 'page_titles');
+    exact(value.guides, ['automatic_page_guides'], 'guides');
     exact(value.playback, ['volume', 'selected_scan_list_ids', 'target_grouping',
       'target_burst_limit'], 'playback');
     exact(value.scanner, ['detail_mode'], 'scanner');
@@ -156,11 +158,12 @@
     const ceiling = number(value.tuner.ceiling_db, -195, 0, 'tuner.ceiling_db', true);
     if (ceiling - floor < 5) throw invalid('The tuner display range is too small.');
     return {
-      version: 11,
+      version: 12,
       appearance: { theme: oneOf(value.appearance.theme, ['light', 'dark'], 'appearance.theme'),
         hue: value.appearance.hue === null ? null : number(value.appearance.hue, 0, 359, 'appearance.hue', true) },
       page_titles: { prepend_playing_call: bool(value.page_titles.prepend_playing_call,
         'page_titles.prepend_playing_call') },
+      guides: { automatic_page_guides: bool(value.guides.automatic_page_guides, 'guides.automatic_page_guides') },
       playback: {
         volume: number(value.playback.volume, 0, 1, 'playback.volume'),
         selected_scan_list_ids: scanListIds.slice(),

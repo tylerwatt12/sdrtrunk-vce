@@ -1471,9 +1471,10 @@ async function checkGuides(assetsRoot) {
   const firstAdminVisit = makeHarness({ context: { view: 'admin', adminTab: 'computer' }, storage: {
     getItem: key => /:welcome:1$|:admin:2$/.test(key) ? '1' : null, setItem() {}
   } });
-  await firstAdminVisit.controller.pageReady();
-  assert.equal(firstAdminVisit.shown.at(-1).options.id, 'admin',
-    'An earlier Administration placeholder does not suppress the authored overview.');
+  assert.equal(await firstAdminVisit.controller.pageReady(), false);
+  assert.equal(firstAdminVisit.shown.length, 0, 'Administration never opens its page guide automatically.');
+  await firstAdminVisit.controller.openPage();
+  assert.equal(firstAdminVisit.shown.at(-1).options.id, 'admin', 'Help still opens the Administration overview.');
   firstAdminVisit.controller.destroy();
   for (const request of ['admin', 'page']) {
     const adminUrl = makeHarness({ context: { view: 'admin', adminTab: 'protocol-p25', guide: request } });
