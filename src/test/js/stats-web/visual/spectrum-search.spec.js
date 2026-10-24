@@ -970,6 +970,8 @@ test('uses one widest idle receiver and acquires its own browse session when sea
   const modalAfter = await dialog(page).boundingBox();
   expect(modalAfter).toEqual(modalBefore);
   await expect(dialog(page).getByRole('group', { name: 'Bands', exact: true }).getByRole('checkbox')).toHaveCount(5);
+  await expect(bandsMenu(page).locator('.spectrum-search-band-option strong')).toHaveText([
+    '800 MHz', '700 MHz', 'UHF', 'VHF high', 'Custom range']);
   for (const label of bandLabels) await expect(bandCheckbox(page, label)).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(dialog(page)).toBeVisible();
@@ -1323,7 +1325,7 @@ test('band picker remains bounded and keyboard accessible on a narrow screen', a
   const modalBefore = await dialog(page).boundingBox();
   await bandsTrigger(page).focus();
   await bandsTrigger(page).press('ArrowDown');
-  await expect(bandCheckbox(page, bandLabels[0])).toBeFocused();
+  await expect(bandCheckbox(page, bandLabels[3])).toBeFocused();
   const modalAfter = await dialog(page).boundingBox();
   const menu = await bandsMenu(page).boundingBox();
   expect(modalAfter).toEqual(modalBefore);
@@ -1335,7 +1337,7 @@ test('band picker remains bounded and keyboard accessible on a narrow screen', a
   await expect(bandsMenu(page)).toBeHidden();
   await expect(bandsTrigger(page)).toBeFocused();
   await openBands(page);
-  await expect(bandCheckbox(page, bandLabels[2])).toBeFocused();
+  await expect(bandCheckbox(page, bandLabels[3])).toBeFocused();
   await bandsTrigger(page).focus();
   await dialog(page).getByLabel('Receiver', { exact: true }).focus();
   await expect(bandsMenu(page)).toBeHidden();
@@ -1423,7 +1425,7 @@ test('keyboard band choices combine presets with a custom range and preserve the
   const maximum = dialog(page).getByLabel('End frequency (MHz)');
   await bandsTrigger(page).focus();
   await bandsTrigger(page).press('ArrowDown');
-  await expect(bandCheckbox(page, bandLabels[0])).toBeFocused();
+  await expect(bandCheckbox(page, bandLabels[3])).toBeFocused();
   await bandCheckbox(page, bandLabels[3]).press('Space');
   await bandCheckbox(page, bandLabels[0]).press('Space');
   await custom.press('Space');

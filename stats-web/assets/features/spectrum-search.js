@@ -645,7 +645,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (findSignals) findSignals.disabled = Boolean(invalid.length) ||
         (!fixed && !presets.some((preset) => selectedBandIds.has(preset.id)) && custom.hidden);
     };
-    [...presets, { id: 'custom', label: 'Custom frequency range' }].forEach((preset) => {
+    const bandOrder = new Map(['800mhz', '700mhz', 'uhf', 'vhf-high'].map((id, index) => [id, index]));
+    const menuPresets = [...presets].sort((a, b) =>
+      (bandOrder.get(a.id) ?? bandOrder.size) - (bandOrder.get(b.id) ?? bandOrder.size));
+    [...menuPresets, { id: 'custom', label: 'Custom frequency range' }].forEach((preset) => {
       const choice = node('label', 'ui-choice-card spectrum-search-band-option');
       const check = node('input', 'ui-selection-check');
       check.type = 'checkbox';
