@@ -931,7 +931,10 @@ async function main() {
   assert.match(livePresentationSource, /apply\(preferences\.presentation\)/);
   assert.match(livePresentationSource, /renderAfterSave: !densityOnly/);
   const scannerPlaybackSource = functionBinding(appSource, 'openScannerSettings');
-  assert.match(scannerPlaybackSource, /openReadOnlyModal\('Scanner settings'/);
+  assert.match(scannerPlaybackSource, /const openModal = options\.openReadOnlyModal \|\| openReadOnlyModal/);
+  assert.match(scannerPlaybackSource, /openModal\('Scanner settings'/);
+  assert.match(scannerPlaybackSource, /const saveForm = options\.savePreferenceForm \|\| savePreferenceForm/);
+  assert.match(scannerPlaybackSource, /saveForm\(workflow, modal/);
   assert.match(scannerPlaybackSource, /preferences\.playback\.target_grouping =/);
   assert.match(scannerPlaybackSource, /preferences\.playback\.target_burst_limit =/);
   assert.match(scannerPlaybackSource, /preferences\.page_titles\.prepend_playing_call =/);
@@ -1688,7 +1691,7 @@ async function main() {
     site_id: 9 }), 'Metro · Site 9');
 
   const scannerCallRenderKey = vm.runInNewContext(
-    `(function(call, state, site) ${functionBinding(appSource, 'scannerCallRenderKey')})`, {
+    `(function(call, state, site, mode = scannerDetailMode) ${functionBinding(appSource, 'scannerCallRenderKey')})`, {
       scannerDetailMode: 'normal', scannerMatchedScanLists: () => '',
       sourceNameDisplayMode: () => 'talker_alias', scannerSourceAlias: () => ''
     });
@@ -1707,9 +1710,12 @@ async function main() {
     'Asynchronous channel metadata must invalidate captured scanner navigation handlers');
   assert.notEqual(channelA, channelB,
     'Changing channel identity must invalidate captured scanner navigation handlers');
+  assert.notEqual(scannerCallRenderKey(scannerCall, scannerState, null, 'normal'),
+    scannerCallRenderKey(scannerCall, scannerState, null, 'advanced'),
+    'A scoped disclosure mode invalidates the sample display without changing the normal global mode');
   const scannerRenderer = functionBinding(appSource, 'renderScanner');
   assert.ok(scannerRenderer.indexOf('currentChannel = null;') <
-    scannerRenderer.indexOf('renderScannerCall(display, state, currentChannel);'),
+    scannerRenderer.indexOf('paintCall(display, state, currentChannel);'),
   'A call transition must clear old channel metadata before rendering its navigation handlers');
   assert.match(appSource,
     /const SCANNER_DETAIL_LEVELS = Object\.freeze\(\{ simple: 0, normal: 1, advanced: 2, engineer: 3 \}\)/,
@@ -1735,9 +1741,11 @@ async function main() {
   assert.match(scannerRenderer, /ui-popover scanner-scan-lists/);
   assert.match(scannerRenderer, /bindAnchoredDropdown\(scanTrigger, scanPanel, renderContext\.signal\)/);
   assert.match(scannerRenderer, /scanner-coverage-action/);
-  assert.match(scannerRenderer, /page\.dataset\.scannerMode = scannerDetailMode/);
-  assert.match(scannerRenderer, /chassis\.dataset\.scannerMode = scannerDetailMode/);
-  assert.match(scannerRenderer, /display\.dataset\.scannerMode = scannerDetailMode/);
+  assert.match(scannerRenderer, /let detailMode = guideMode \? 'normal' : scannerDetailMode/,
+    'The real page retains its saved disclosure mode while guide data stays local');
+  assert.match(scannerRenderer, /page\.dataset\.scannerMode = detailMode/);
+  assert.match(scannerRenderer, /chassis\.dataset\.scannerMode = detailMode/);
+  assert.match(scannerRenderer, /display\.dataset\.scannerMode = detailMode/);
   assert.match(scannerRenderer, /modeSelect\.setAttribute\('aria-label', 'Scanner detail level'\)/,
     'Scanner detail dropdown must expose its accessible name');
   assert.match(scannerRenderer, /modeSelect\.value = mode/,
@@ -1774,14 +1782,14 @@ async function main() {
     'Every Scanner mode must keep the transmitting radio alias or fallback ID visible');
   assert.match(scannerCallRenderer, /detailLevel >= SCANNER_DETAIL_LEVELS\.normal[\s\S]*Target group[\s\S]*Source group/,
     'Normal Scanner mode must retain participant groups in the source row');
-  assert.match(functionBinding(appSource, 'scannerParticipant'), /scannerField\('Group', group, 1\)/,
+  assert.match(functionBinding(appSource, 'scannerParticipant'), /scannerField\('Group', group, 1, null, false, mode\)/,
     'Participant diagnostics must retain grouping');
   assert.match(functionBinding(appSource, 'scannerParticipant'),
     /scannerField\('ID', alias \? identifier : null, 2/,
     'Advanced Scanner mode must add raw identifiers without duplicating fallback identities');
   assert.match(scannerCallRenderer, /field\('Decoder', call\.decoder, 2/,
     'Advanced Scanner mode must add decoder diagnostics');
-  assert.match(scannerCallRenderer, /scannerDetailMode === 'engineer'[\s\S]*scannerCallQuality\(call\)/,
+  assert.match(scannerCallRenderer, /detailMode === 'engineer'[\s\S]*scannerCallQuality\(call\)/,
     'Engineer Scanner mode must retain raw call-quality diagnostics');
   assert.match(functionBinding(appSource, 'scannerField'),
     /value === null \|\| value === undefined \|\| String\(value\)\.trim\(\) === ''/,
@@ -1799,7 +1807,7 @@ async function main() {
   assert.match(scannerCallRenderer, /scanner-quality-value[\s\S]*scannerVoiceMeter\(call\)/,
     'The listening stage must pair numeric voice quality with its meter');
   assert.match(scannerCallRenderer,
-    /scannerDetailMode === 'normal'[\s\S]*ui-text-truncate[\s\S]*value\.title = value\.textContent/,
+    /detailMode === 'normal'[\s\S]*ui-text-truncate[\s\S]*value\.title = value\.textContent/,
     'Normal metadata truncation must preserve the full channel and scan-list text in a title');
   assert.match(scannerCallRenderer,
     /values\.forEach\(\(value\) => \{\s*value\.removeAttribute\('title'\)/,

@@ -1,0 +1,613 @@
+'use strict';
+
+const { expect, test } = require('@playwright/test');
+const fs = require('node:fs');
+const path = require('node:path');
+const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
+const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
+const { expectContrast } = require('./fixtures/contrast-audit.cjs');
+
+const guide = page => page.locator('.ui-setup-guide[data-guide-id="scanner"]');
+const steps = ['lists-button', 'lists', 'lists-close', 'call', 'queue', 'playback', 'hold', 'avoid',
+  'detail-level', 'details', 'settings-button', 'playback-order', 'settings-close', 'avoids-button', 'avoids', 'avoids-close'];
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:3';
+const evidence = process.env.SCANNER_GUIDE_EVIDENCE ||
+  path.resolve(__dirname, '../../../../../build/playwright-results/scanner-guide-evidence');
+const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
+  .filter(([key]) => !key.startsWith('sdrtrunk-vce-guide:'))));
+
+function observeEffects(page) {
+  const effects = { writes: [], samples: [], audio: [], feed: [], sockets: [] };
+  page.on('request', request => {
+    const url = new URL(request.url());
+    if (!url.pathname.startsWith('/api/v1/')) return;
+    if (!['GET', 'HEAD'].includes(request.method()) && url.pathname !== '/api/v1/live/multiplex/control')
+      effects.writes.push(`${request.method()} ${url.pathname}`);
+    if (/guide-scanner|scanner-guide|sample-scanner|tour-scanner|b00ba000|p25:bee00:(123|456)|v1-[rg]-bee00|\b950[12]\b/i
+      .test(decodeURIComponent(url.pathname + url.search + (request.postData() || ''))))
+      effects.samples.push(`${request.method()} ${url.pathname}`);
+    if (/\/audio(?:$|\/)/.test(url.pathname)) effects.audio.push(url.pathname);
+    if (url.pathname === '/api/v1/calls/feed') effects.feed.push(url.pathname);
+  });
+  page.on('websocket', socket => effects.sockets.push(socket.url()));
+  return effects;
+}
+
+async function openScanner(page, { theme = 'light', replay = true, firstVisit = false, denied = [] } = {}) {
+  const effects = observeEffects(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const fixture = await installSiteStyleApplication(page, theme, { revision: 1, tables: [] }, { guides: firstVisit });
+  await page.addInitScript(({ firstVisit, key }) => {
+    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1', '1');
+    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:2', '1');
+    if (!firstVisit) localStorage.setItem(key, '1');
+    window.scannerGuideAudioEvents = [];
+    for (const name of ['AudioContext', 'webkitAudioContext']) {
+      const Original = window[name];
+      if (Original) window[name] = new Proxy(Original, { construct(target, args) {
+        window.scannerGuideAudioEvents.push(name);
+        return Reflect.construct(target, args);
+      } });
+    }
+  }, { firstVisit, key: memoryKey });
+  if (denied.length) {
+    const file = path.resolve(__dirname, '../../../../../src/main/java/io/github/dsheirer/web/auth/WebCapability.java');
+    const capabilities = Object.fromEntries([...fs.readFileSync(file, 'utf8').matchAll(/^\s+[A-Z_]+\("([^"]+)",/gm)]
+      .map(([, id]) => [id, !denied.includes(id)]));
+    await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: {
+      configured: true, authenticated: true, username: 'fixture-admin', tier: 'admin', primary: true,
+      csrf_token: 'fixture-csrf', guide_dismissal_scope: 'account-1-100', capabilities
+    } } }));
+  }
+  await page.goto(`/app.html?view=scanner${replay ? '&guide=scanner' : ''}`);
+  await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
+  return { fixture, effects };
+}
+
+async function expectInViewport(locator) {
+  await expect.poll(async () => {
+    const box = await locator.boundingBox(), viewport = locator.page().viewportSize();
+    return box && box.x >= 0 && box.y >= 0 && box.x + box.width <= viewport.width + 1 &&
+      box.y + box.height <= viewport.height + 1 ? null : box;
+  }, { message: 'The actual control and guide remain fully visible' }).toBeNull();
+}
+
+async function expectOverview(page) {
+  await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
+  await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
+  await expect(guide(page).locator('h2')).not.toBeEmpty();
+  await expect(page.getByRole('heading', { name: 'Scanner', exact: true })).toBeVisible();
+  await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample], [data-guide-example]')).toHaveCount(0);
+  await expectInViewport(guide(page));
+}
+
+async function start(page) {
+  await expectOverview(page);
+  await guide(page).getByRole('button', { name: 'Start tour', exact: true }).click();
+  await expect(guide(page)).toHaveAttribute('data-guide-step', 'lists-button');
+}
+
+async function advance(page, id, available = steps) {
+  await guide(page).getByRole('button', { name: id === available.at(-1) ? 'Finish' : 'Next', exact: true }).click();
+}
+
+async function goTo(page, destination) {
+  const current = await guide(page).getAttribute('data-guide-step');
+  for (const id of steps.slice(Math.max(0, steps.indexOf(current)))) {
+    await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+    if (id === destination) return;
+    await advance(page, id);
+  }
+  throw new Error(`Unknown Scanner guide step: ${destination}`);
+}
+
+async function expectSpotlight(page, id) {
+  const targets = page.locator(`[data-guide-target="sc-${id}"]:visible`);
+  await expect(targets.first()).toBeVisible();
+  for (const target of await targets.all()) {
+    await expectInViewport(target);
+    await expect.poll(() => target.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const header = document.querySelector('.app-header')?.getBoundingClientRect();
+      const card = document.querySelector('.ui-setup-guide').getBoundingClientRect();
+      const highlights = [...document.querySelectorAll('.ui-setup-guide-highlight')].map(item => item.getBoundingClientRect());
+      const overlap = Math.min(rect.right, card.right) - Math.max(rect.left, card.left) > 1 &&
+        Math.min(rect.bottom, card.bottom) - Math.max(rect.top, card.top) > 1;
+      const covered = highlights.some(box => box.left <= rect.left + 1 && box.top <= rect.top + 1 &&
+        box.right >= rect.right - 1 && box.bottom >= rect.bottom - 1);
+      return (!header || rect.top >= header.bottom - 1) && !overlap && covered ? null :
+        { target: rect.toJSON(), headerBottom: header?.bottom, overlap, covered };
+    }), { message: `sc-${id} highlights the actual control below the header and clear of the guide` }).toBeNull();
+  }
+  await expectInViewport(guide(page));
+  await expect.poll(() => guide(page).evaluate(element => {
+    const header = document.querySelector('.app-header')?.getBoundingClientRect();
+    const back = [...element.querySelectorAll('button')].find(button => button.textContent.trim() === 'Back');
+    const next = [...element.querySelectorAll('button')].find(button => /^(Next|Finish)/.test(button.textContent.trim()));
+    const b = back?.getBoundingClientRect(), n = next?.getBoundingClientRect();
+    return (!header || element.getBoundingClientRect().top >= header.bottom - 1) && b && n &&
+      Math.abs(b.top - n.top) <= 1 && b.right <= n.left;
+  }), { message: 'The guide clears the header and keeps navigation side by side' }).toBe(true);
+}
+
+async function expectLessonState(page, id) {
+  const settings = page.locator('.read-only-modal.scanner-settings-modal');
+  const avoids = page.locator('.read-only-modal.scanner-list-modal');
+  const lists = page.locator('.scanner-scan-lists');
+  const listOpen = ['lists', 'lists-close'].includes(id);
+  await expect(page.locator('.scanner-scan-trigger')).toHaveAttribute('aria-expanded', String(listOpen));
+  if (listOpen) {
+    await expect(lists).toBeVisible();
+    await expect(lists.getByRole('checkbox', { name: 'Law Enforcement', exact: true })).toBeChecked();
+    await expect(lists.getByRole('checkbox', { name: 'Fire/EMS', exact: true })).toBeChecked();
+    await expect(page.locator('[data-guide-example="scanner"]')).toBeVisible();
+  } else await expect(lists).toBeHidden();
+  await expect(settings).toHaveCount(['playback-order', 'settings-close'].includes(id) ? 1 : 0);
+  await expect(avoids).toHaveCount(['avoids', 'avoids-close'].includes(id) ? 1 : 0);
+  if (['playback-order', 'settings-close'].includes(id)) {
+    await expect(settings).toBeVisible();
+    await expect(settings.getByRole('checkbox', { name: 'Group calls by playback target', exact: true })).toBeVisible();
+    await expect(settings.getByRole('spinbutton', { name: /^Calls before switching targets/ })).toBeVisible();
+    await expect(settings.getByRole('button', { name: 'Save Scanner Settings', exact: true })).toBeVisible();
+    await expect(page.locator('.scanner-call-title')).toHaveText('Regional Fire');
+  }
+  const afterAvoid = steps.indexOf(id) >= steps.indexOf('detail-level');
+  await expect(page.locator('.scanner-call-title')).toHaveText(afterAvoid ? 'Regional Fire' : 'Sheriff Dispatch');
+  if (id === 'call') {
+    await expect(page.locator('.scanner-source-row')).toContainText('Sheriff 214');
+    await expect(page.locator('.scanner-call-subtitle')).toContainText('County P25');
+    await expect(page.locator('.scanner-field-grid')).toContainText('Frequency');
+    const spectrum = page.getByRole('img', { name: 'Voice frequency spectrum', exact: true });
+    await expect(spectrum.locator(':scope > i')).toHaveCount(64);
+    const bars = await spectrum.locator(':scope > i').evaluateAll(elements => elements.map(element => element.style.height));
+    expect(new Set(bars).size).toBeGreaterThan(4);
+    // The application fixture freezes Date; advance its observation clock
+    // deterministically so the production spectrum receives a second frame.
+    await page.clock.setFixedTime(new Date((await page.evaluate(() => Date.now())) + 140));
+    await expect.poll(() => spectrum.locator(':scope > i').evaluateAll(elements => elements.map(element => element.style.height)))
+      .not.toEqual(bars);
+  }
+  if (id === 'queue') {
+    await expect(guide(page)).toContainText('When several calls arrive together, VCE reorders them in queue so you hear them in turn.');
+    const queue = page.locator('.scanner-up-next-list > li[title]');
+    await expect(queue).toHaveCount(4);
+    await expect(queue.nth(0)).toContainText('Regional Fire');
+    await expect(queue.nth(0)).toContainText('Engine 7');
+    await expect(queue.nth(1)).toContainText('Regional Fire');
+    await expect(queue.nth(1)).toContainText('Engine 8');
+    await expect(queue.nth(2)).toContainText(/Police Department|City Police/);
+    await expect(queue.nth(3)).toContainText('City Fire');
+  }
+  if (id === 'playback') {
+    for (const selector of ['#scanner-play', '#scanner-stop', '#scanner-replay']) await expect(page.locator(selector)).toBeEnabled();
+  }
+  if (id === 'hold') {
+    await expect(page.locator('#scanner-hold')).toHaveText('H');
+    await expect(page.locator('#scanner-hold')).toHaveAttribute('aria-pressed', 'false');
+    await expect(guide(page)).toContainText('H stands for Hold.');
+  }
+  if (id === 'avoid') await expect(page.locator('#scanner-avoid')).toBeEnabled();
+  if (id === 'detail-level') await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('normal');
+  if (steps.indexOf(id) >= steps.indexOf('details'))
+    await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('advanced');
+  if (id === 'details') {
+    await expect(page.locator('.scanner-participant-grid')).toContainText('Target');
+    await expect(page.locator('.scanner-participant-grid')).toContainText('Source');
+    await expect(page.locator('.scanner-display button.link-button, .scanner-display button.scanner-field-link').first()).toBeVisible();
+  }
+  if (id === 'settings-button') await expect(page.getByRole('button', { name: 'Scanner settings', exact: true })).toBeVisible();
+  if (id === 'avoids-button') await expect(page.locator('#scanner-avoid-list')).toHaveAttribute('aria-label', 'View 1 browser avoid(s)');
+  if (id === 'avoids') {
+    await expect(avoids).toBeVisible();
+    await expect(avoids).toContainText('Sheriff Dispatch');
+    await expect(avoids.getByRole('button', { name: 'Remove', exact: true })).toBeVisible();
+  }
+  if (id === 'avoids-close') {
+    await expect(avoids).toBeVisible();
+    await expect(avoids).toContainText('No browser avoids are active.');
+    await expect(avoids.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(0);
+    await expect(page.locator('#scanner-avoid-list')).toHaveAttribute('aria-label', 'View 0 browser avoid(s)');
+  }
+}
+
+async function expectIsolated(page, fixture, effects) {
+  expect(effects.writes).toEqual([]);
+  expect(effects.samples).toEqual([]);
+  expect(effects.audio).toEqual([]);
+  expect(effects.feed).toEqual([]);
+  expect(effects.sockets).toEqual([]);
+  expect(await page.evaluate(() => window.scannerGuideAudioEvents)).toEqual([]);
+  expect(fixture.pageErrors).toEqual([]);
+  expect(fixture.unexpected).toEqual([]);
+}
+
+async function screenshot(page, name) {
+  fs.mkdirSync(path.join(evidence, 'screens'), { recursive: true });
+  await page.screenshot({ path: path.join(evidence, 'screens', `${name}.png`) });
+}
+
+for (const { theme, width, height } of [
+  { theme: 'light', width: 1280, height: 720 }, { theme: 'dark', width: 1440, height: 1000 }
+]) {
+  test(`Scanner tours actual call, queue, lists, playback, settings and Avoids in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    const { fixture, effects } = await openScanner(page, { theme });
+    await expectOverview(page);
+    const storage = await nonGuideStorage(page), url = page.url();
+    await screenshot(page, `scanner-overview-${theme}`);
+    await start(page);
+    for (const [index, id] of steps.entries()) {
+      await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+      await expect(guide(page)).toContainText(`Step ${index + 1} of ${steps.length}`);
+      try { await expectSpotlight(page, id); }
+      catch (error) {
+        await screenshot(page, `scanner-failure-${id}-${theme}`);
+        fs.writeFileSync(path.join(evidence, `geometry-${id}-${theme}.json`), JSON.stringify(await page.evaluate(() => ({
+          scroll: [scrollX, scrollY], elements: ['.ui-setup-guide', '.app-header', '.scanner-scan-lists',
+            '.scanner-settings-modal', '.scanner-list-modal', '[data-guide-target]']
+            .flatMap(selector => [...document.querySelectorAll(selector)].map(element => ({
+              selector, target: element.dataset.guideTarget, box: element.getBoundingClientRect().toJSON()
+            })))
+        })), null, 2));
+        throw error;
+      }
+      await expectLessonState(page, id);
+      await expect(page).toHaveURL(url);
+      await screenshot(page, `scanner-${id}-${theme}`);
+      await advance(page, id);
+    }
+    await expect(page.locator('.ui-setup-guide, [data-guide-sample], [data-guide-example], .ui-setup-guide-highlight, .ui-setup-guide-layer')).toHaveCount(0);
+    await expect(page.locator('.scanner-display')).toHaveClass(/\bis-idle\b/);
+    await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('normal');
+    await expect(page).toHaveURL(url);
+    expect(await nonGuideStorage(page)).toEqual(storage);
+    await expectIsolated(page, fixture, effects);
+  });
+}
+
+for (const { stop, dismiss } of [
+  { stop: 'lists', dismiss: 'Close guide' }, { stop: 'playback-order', dismiss: 'Escape' },
+  { stop: 'avoids-close', dismiss: 'shade' }
+]) {
+  test(`Scanner restores original nodes, controls, player and storage after ${dismiss}`, async ({ page }) => {
+    const { fixture, effects } = await openScanner(page, { replay: false });
+    await page.evaluate(() => {
+      const content = document.getElementById('content');
+      window.scannerGuideOriginal = { nodes: [...content.childNodes], page: content.querySelector('.scanner-page'),
+        select: content.querySelector('#scanner-detail-mode'), popover: content.querySelector('.scanner-scan-lists') };
+    });
+    const storage = await nonGuideStorage(page), url = page.url(), title = await page.title();
+    const player = page.locator('#audio-dock');
+    const before = await player.evaluate(element => ({ source: element.dataset.source,
+      state: element.dataset.state, collapsed: element.dataset.superCollapsed }));
+    await page.locator('#page-guide-button').click();
+    await start(page);
+    await goTo(page, stop);
+    await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
+    await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(guide(page)).toHaveAttribute('data-guide-step', stop);
+    if (dismiss === 'Escape') await page.keyboard.press('Escape');
+    else if (dismiss === 'shade') await page.mouse.click(8, 500);
+    else await guide(page).getByRole('button', { name: dismiss, exact: true }).click();
+    await expect(guide(page)).toHaveCount(0);
+    expect(await page.locator('#content').evaluate(element => {
+      const original = window.scannerGuideOriginal;
+      return element.querySelector('.scanner-page') === original.page &&
+        element.querySelector('#scanner-detail-mode') === original.select &&
+        element.querySelector('.scanner-scan-lists') === original.popover &&
+        original.nodes.every((node, index) => element.childNodes[index] === node);
+    })).toBe(true);
+    await expect(page.locator('.scanner-display')).toHaveClass(/\bis-idle\b/);
+    await expect(page.locator('.scanner-scan-lists')).toBeHidden();
+    await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('normal');
+    expect(await nonGuideStorage(page)).toEqual(storage);
+    await expect(player).toHaveAttribute('data-source', before.source);
+    await expect(player).toHaveAttribute('data-state', before.state);
+    await expect(player).toHaveAttribute('data-super-collapsed', before.collapsed);
+    await expect(page).toHaveURL(url); await expect(page).toHaveTitle(title);
+    await expect(page.locator('#page-guide-button')).toBeFocused();
+    await expect(page.locator('[data-guide-sample], [data-guide-example], .ui-setup-guide-layer, .scanner-settings-modal, .scanner-list-modal')).toHaveCount(0);
+    await expectIsolated(page, fixture, effects);
+  });
+}
+
+test('Scanner sample controls cannot start audio, fetch calls, save settings, or navigate to example identities', async ({ page }) => {
+  const { fixture, effects } = await openScanner(page);
+  await start(page);
+  const storage = await nonGuideStorage(page), url = page.url();
+  let exercised = 0;
+  for (const id of steps) {
+    await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+    exercised += await page.evaluate(() => {
+      const roots = [...document.querySelectorAll('[data-guide-sample]')];
+      const controls = [...new Set(roots.flatMap(root => [...root.querySelectorAll('button, a, input, select, form, summary')]))];
+      for (const control of controls) {
+        control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        control.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        control.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        control.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        if (control.tagName === 'FORM') control.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      }
+      return controls.length;
+    });
+    await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+    await expect(page).toHaveURL(url);
+    await expectLessonState(page, id);
+    await advance(page, id);
+  }
+  expect(exercised).toBeGreaterThan(75);
+  expect(await nonGuideStorage(page)).toEqual(storage);
+  await expectIsolated(page, fixture, effects);
+});
+
+test('Scanner restores a paused original call, Engineer view, volume and original list popover after the tour', async ({ page }) => {
+  const effects = observeEffects(page), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.addInitScript(() => localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-listener:audio-fixture-account:scanner:3', '1'));
+  const fixture = await openAudioApp(page, { view: 'scanner', volume: .35 });
+  await page.locator('#scanner-play').click();
+  await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
+  await page.locator('#scanner-play').click();
+  await expect(page.locator('#scanner-play')).toHaveAttribute('aria-label', 'Resume browser call audio');
+  await page.getByRole('combobox', { name: 'Scanner detail level', exact: true }).selectOption('engineer');
+  await expect.poll(() => fixture.preferenceWrites.length).toBeGreaterThan(0);
+  await page.locator('.scanner-scan-trigger').click();
+  await expect(page.locator('.scanner-scan-lists')).toBeVisible();
+  await page.evaluate(() => {
+    const content = document.getElementById('content');
+    window.originalPausedScanner = { nodes: [...content.childNodes], page: content.querySelector('.scanner-page'),
+      mode: content.querySelector('#scanner-detail-mode'), popover: content.querySelector('.scanner-scan-lists') };
+    window.originalScannerPopoverEvents = [];
+    window.originalPausedScanner.popover.addEventListener('beforetoggle', event => window.originalScannerPopoverEvents.push({
+      oldState: event.oldState, newState: event.newState, guide: Boolean(document.querySelector('.ui-setup-guide')),
+      connected: event.target.isConnected, time: performance.now(), scroll: [scrollX, scrollY] }));
+  });
+  await page.evaluate(() => window.scrollTo({ top: 100, behavior: 'instant' }));
+  const originalScroll = await page.evaluate(() => [scrollX, scrollY]);
+  expect(originalScroll[1]).toBeGreaterThan(0);
+  const storage = await nonGuideStorage(page), writes = fixture.preferenceWrites.length;
+  const selectedLists = await page.locator('.scanner-scan-lists input[type=checkbox]').evaluateAll(inputs =>
+    inputs.map(input => [input.getAttribute('aria-label'), input.checked]));
+  const audioBefore = await page.evaluate(() => ({ contexts: window.audioTest.contexts.length,
+    sources: window.audioTest.liveSources.length, recordings: window.audioTest.recordings.length }));
+  await page.locator('#page-guide-button').evaluate(button => { button.focus({ preventScroll: true }); button.click(); });
+  await expectOverview(page);
+  const enteredPopoverOpen = await page.locator('.scanner-scan-lists').evaluate(element => element.matches(':popover-open'));
+  await start(page);
+  await goTo(page, 'playback-order');
+  await page.keyboard.press('Escape');
+  await expect(guide(page)).toHaveCount(0);
+  expect(await page.locator('#content').evaluate(element => {
+    const original = window.originalPausedScanner;
+    return element.querySelector('.scanner-page') === original.page &&
+      element.querySelector('#scanner-detail-mode') === original.mode &&
+      element.querySelector('.scanner-scan-lists') === original.popover &&
+      original.nodes.every((node, index) => element.childNodes[index] === node);
+  })).toBe(true);
+  await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
+  await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('engineer');
+  await expect(page.locator('#scanner-volume')).toHaveValue('0.35');
+  await expect(page.locator('#scanner-play')).toHaveAttribute('aria-label', 'Resume browser call audio');
+  try {
+    await expect.poll(() => page.locator('.scanner-scan-lists').evaluate(element => element.matches(':popover-open'))).toBe(enteredPopoverOpen);
+  } finally {
+    fs.mkdirSync(evidence, { recursive: true });
+    fs.writeFileSync(path.join(evidence, 'original-popover-restoration.json'), JSON.stringify(await page.evaluate(() => ({
+      events: window.originalScannerPopoverEvents, scroll: [scrollX, scrollY],
+      trigger: document.querySelector('.scanner-scan-trigger')?.getBoundingClientRect().toJSON(),
+      popoverOpen: document.querySelector('.scanner-scan-lists')?.matches(':popover-open')
+    })), null, 2));
+  }
+  expect(await page.locator('.scanner-scan-lists input[type=checkbox]').evaluateAll(inputs =>
+    inputs.map(input => [input.getAttribute('aria-label'), input.checked]))).toEqual(selectedLists);
+  expect(await page.evaluate(() => [scrollX, scrollY])).toEqual(originalScroll);
+  if (enteredPopoverOpen) {
+    await page.keyboard.press('Escape');
+    await expect(page.locator('.scanner-scan-lists')).toBeHidden();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await expect(page.locator('.scanner-scan-lists')).toBeHidden();
+  }
+  expect(await nonGuideStorage(page)).toEqual(storage);
+  expect(fixture.preferenceWrites.length).toBe(writes);
+  expect(await page.evaluate(() => ({ contexts: window.audioTest.contexts.length,
+    sources: window.audioTest.liveSources.length, recordings: window.audioTest.recordings.length }))).toEqual(audioBefore);
+  expect(effects.samples).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('Scanner Help preserves an existing dirty settings dialog', async ({ page }) => {
+  const { fixture, effects } = await openScanner(page, { replay: false });
+  await page.getByRole('button', { name: 'Scanner settings', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Scanner settings', exact: true });
+  const grouping = dialog.getByRole('checkbox', { name: 'Group calls by playback target', exact: true });
+  await dialog.getByRole('spinbutton', { name: /^Calls before switching targets/ }).fill('13');
+  await grouping.focus();
+  await grouping.press('Space');
+  const checked = await grouping.isChecked();
+  await dialog.evaluate(element => { window.originalScannerDirtyDialog = element; });
+  await page.locator('#page-guide-button').evaluate(button => button.click());
+  await expect(page.locator('.ui-setup-guide, [data-guide-sample], [data-guide-example]')).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => element === window.originalScannerDirtyDialog)).toBe(true);
+  expect(await grouping.isChecked()).toBe(checked);
+  await expect(dialog.getByRole('spinbutton', { name: /^Calls before switching targets/ })).toHaveValue('13');
+  await expectIsolated(page, fixture, effects);
+});
+
+test('Scanner authored version replaces its placeholder and replays from Help and named URL', async ({ page }) => {
+  const { fixture, effects } = await openScanner(page, { firstVisit: true, replay: false });
+  await expectOverview(page);
+  await page.keyboard.press('Escape');
+  expect(await page.evaluate(key => localStorage.getItem(key), memoryKey)).toBe('1');
+  await page.reload();
+  await expect(page.locator('#page-guide-button')).toBeVisible(); await expect(guide(page)).toHaveCount(0);
+  await page.locator('#page-guide-button').click(); await start(page); await page.keyboard.press('Escape');
+  await page.goto('/app.html?view=scanner&guide=scanner'); await expectOverview(page); await page.keyboard.press('Escape');
+  await expectIsolated(page, fixture, effects);
+});
+
+test('Scanner navigation and early cancellation release sample calls and dialogs', async ({ page }) => {
+  const { fixture, effects } = await openScanner(page, { replay: false });
+  await page.locator('#page-guide-button').click(); await expectOverview(page);
+  await guide(page).getByRole('button', { name: 'Start tour', exact: true }).evaluate(button => {
+    button.click(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  });
+  await expect(page.locator('.ui-setup-guide, [data-guide-sample], [data-guide-example]')).toHaveCount(0);
+  await page.locator('#page-guide-button').click(); await start(page); await goTo(page, 'avoids');
+  await page.locator('.primary-nav [data-view="dashboard"]').evaluate(link => link.click());
+  await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
+  await expect(page.locator('.ui-setup-guide, [data-guide-sample], [data-guide-example], .scanner-list-modal')).toHaveCount(0);
+  await page.locator('.primary-nav [data-view="scanner"]').evaluate(link => link.click());
+  await expect(page.locator('.scanner-display')).toHaveClass(/\bis-idle\b/);
+  await expectIsolated(page, fixture, effects);
+});
+
+test('Scanner omits identity drilldown lessons and links without Radio access', async ({ page }) => {
+  const { fixture, effects } = await openScanner(page, { denied: ['radio'] });
+  const available = steps.filter(id => id !== 'details');
+  await start(page);
+  for (const id of available) {
+    await expect(guide(page)).toHaveAttribute('data-guide-step', id); await expectSpotlight(page, id);
+    await expect(page.locator('.scanner-display button.link-button, .scanner-display button.scanner-field-link')).toHaveCount(0);
+    await advance(page, id, available);
+  }
+  await expect(guide(page)).toHaveCount(0);
+  await expectIsolated(page, fixture, effects);
+});
+
+test('Scanner audio denial cannot expose its page guide or sample calls', async ({ page }) => {
+  const { fixture, effects } = await openScanner(page, { denied: ['call-audio'], firstVisit: true });
+  await expect(page.locator('.ui-setup-guide, [data-guide-sample], [data-guide-example], .scanner-page')).toHaveCount(0);
+  expect(await page.evaluate(key => localStorage.getItem(key), memoryKey)).toBeNull();
+  await expectIsolated(page, fixture, effects);
+});
+
+test('phone visits keep the desktop Scanner tour closed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const { fixture, effects } = await openScanner(page, { firstVisit: true });
+  await expect(page.getByRole('heading', { name: 'Scanner', exact: true })).toBeVisible();
+  await expect(page.locator('.ui-setup-guide, [data-guide-sample], [data-guide-example]')).toHaveCount(0);
+  await expect(page.locator('#page-guide-button')).toBeHidden();
+  expect(await page.evaluate(key => localStorage.getItem(key), memoryKey)).toBeNull();
+  await expectIsolated(page, fixture, effects);
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`Scanner guide and actual queued call labels retain contrast across all 360 hues in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const { fixture, effects } = await openScanner(page, { theme });
+    await start(page);
+    await goTo(page, 'queue');
+    const result = await page.evaluate(async () => {
+      const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
+      const queue = document.querySelector('.scanner-up-next');
+      const samples = [...document.querySelectorAll('.ui-setup-guide h2, .ui-setup-guide p, .ui-setup-guide button, .ui-setup-guide-counter'),
+        ...queue.querySelectorAll('strong, .ui-muted, .ui-label')];
+      const original = [...document.querySelectorAll('.ui-setup-guide *, [data-guide-example="scanner"] *')]
+        .map(element => [element, element.style.transition]);
+      original.forEach(([element]) => { element.style.transition = 'none'; });
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+      const context = canvas.getContext('2d', { willReadFrequently: true }), colors = new Map();
+      const rgba = color => {
+        if (!colors.has(color)) {
+          context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+          colors.set(color, [...context.getImageData(0, 0, 1, 1).data]);
+        }
+        return colors.get(color);
+      };
+      const background = element => {
+        for (let owner = element; owner; owner = owner.parentElement) {
+          const css = getComputedStyle(owner), color = css.backgroundColor;
+          if (css.backgroundImage !== 'none' || css.filter !== 'none' || Number(css.opacity) !== 1)
+            throw new Error('Scanner text acquired non-solid paint requiring a fresh pixel review.');
+          if (rgba(color)[3] === 255) return color;
+          if (rgba(color)[3] !== 0) throw new Error('Scanner text needs a solid painted owner.');
+        }
+        throw new Error('Scanner text has no painted owner.');
+      };
+      const luminance = color => rgba(color).slice(0, 3).reduce((total, channel, index) => {
+        const value = channel / 255;
+        return total + (value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4) * [.2126, .7152, .0722][index];
+      }, 0);
+      const contrast = (front, back) => {
+        const values = [luminance(front), luminance(back)].sort((a, b) => b - a);
+        return (values[0] + .05) / (values[1] + .05);
+      };
+      let worstText = { ratio: Infinity }, checked = 0;
+      try {
+        for (let hue = 0; hue < 360; hue++) {
+          applyThemeHue(hue);
+          for (const sample of samples) {
+            const css = getComputedStyle(sample), foreground = sample instanceof SVGElement ? css.fill : css.color;
+            const behind = background(sample), ratio = contrast(foreground, behind); checked++;
+            if (ratio < worstText.ratio) worstText = { ratio, hue, text: sample.textContent.trim(), foreground, background: behind };
+          }
+        }
+      } finally {
+        applyThemeHue(null);
+        original.forEach(([element, transition]) => { element.style.transition = transition; });
+      }
+      return { samples: samples.length, checked, queuedCalls: queue.querySelectorAll('li[title]').length, worstText };
+    });
+    fs.mkdirSync(evidence, { recursive: true });
+    fs.writeFileSync(path.join(evidence, `palette-${theme}-360-hues.json`), `${JSON.stringify(result, null, 2)}\n`);
+    expect(result.queuedCalls).toBe(4);
+    expect(result.checked).toBe(result.samples * 360);
+    expect(result.worstText.ratio, JSON.stringify(result.worstText)).toBeGreaterThanOrEqual(4.5);
+    await page.keyboard.press('Escape');
+    await expectIsolated(page, fixture, effects);
+  });
+
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`Scanner populated guide, popover and dialogs retain readable paint in ${theme} and representative hues`, async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    const { fixture, effects } = await openScanner(page, { theme });
+    const summaries = [];
+    const audit = async (rootSelector, section) => {
+      await page.evaluate(rootSelector => {
+        window.scannerAuditInert = [...document.querySelectorAll('[inert]')];
+        window.scannerAuditInert.forEach(element => { element.inert = false; });
+        const backdrop = document.querySelector('.ui-setup-guide-backdrop');
+        window.scannerAuditBackdrop = [backdrop, backdrop.style.visibility];
+        if (rootSelector !== '.ui-setup-guide') backdrop.style.visibility = 'hidden';
+      }, rootSelector);
+      try {
+        for (const hue of [null, 0, 120, 240]) {
+          await page.evaluate(async value => { (await import('/assets/core/theme.js?v=2')).applyThemeHue(value); }, hue);
+          const result = await expectContrast(page, { rootSelector, reportName: `scanner-guide-${section}-${theme}-hue-${hue}` });
+          if (rootSelector === '.scanner-display') {
+            // The existing listening stage uses a gradient. Keep that known
+            // painter explicit instead of treating its text as measured paint.
+            expect(result.summary.text.checked).toBeGreaterThan(0);
+            expect(result.skipped.filter(item => item.kind === 'text' && item.reason === 'background-image-or-gradient' &&
+              item.reviewOwner === '.scanner-now-playing.ui-listening-stage-main').length).toBeGreaterThan(5);
+          } else expect(result.summary.text.checked).toBeGreaterThan(3);
+          summaries.push({ section, hue, summary: result.summary, reviewedPaint: result.skipped
+            .filter(item => item.status === 'needs-review').map(({ reason, paintOwner, reviewOwner, label }) =>
+              ({ reason, paintOwner, reviewOwner, label })) });
+          await screenshot(page, `scanner-${section}-${theme}-hue-${hue}`);
+        }
+      } finally {
+        await page.evaluate(async () => {
+          (await import('/assets/core/theme.js?v=2')).applyThemeHue(null);
+          window.scannerAuditInert.forEach(element => { element.inert = true; });
+          const [backdrop, visibility] = window.scannerAuditBackdrop; backdrop.style.visibility = visibility;
+          delete window.scannerAuditInert; delete window.scannerAuditBackdrop;
+        });
+      }
+    };
+    await expectOverview(page); await audit('.ui-setup-guide', 'overview');
+    await start(page); await goTo(page, 'lists'); await audit('.scanner-scan-lists', 'actual-lists');
+    await goTo(page, 'call'); await audit('.scanner-display', 'actual-call');
+    await goTo(page, 'queue'); await audit('.scanner-up-next', 'actual-queue');
+    await goTo(page, 'details'); await audit('.scanner-display', 'actual-advanced');
+    await goTo(page, 'playback-order'); await audit('.scanner-settings-modal', 'actual-settings');
+    await goTo(page, 'avoids'); await audit('.scanner-list-modal', 'actual-avoids');
+    await audit('.ui-setup-guide', 'avoids-guide');
+    fs.writeFileSync(path.join(evidence, `contrast-summary-${theme}.json`), `${JSON.stringify(summaries, null, 2)}\n`);
+    await page.keyboard.press('Escape'); await expectIsolated(page, fixture, effects);
+  });
+}

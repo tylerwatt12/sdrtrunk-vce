@@ -52,7 +52,7 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
@@ -85,6 +85,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('tuner-spectrum').version, 4);
   assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('dashboard').version, 3);
+  assert.equal(createGuideDefinition('scanner').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -810,6 +811,7 @@ async function checkGuides(assetsRoot) {
   await require('./spectrum-guide-data.test.js').checkSpectrumGuideData(assets);
   await require('./live-guide-data.test.js').checkLiveGuideData(assets);
   await require('./main-guide-data.test.js').checkMainGuideData(assets);
+  await require('./scanner-guide-data.test.js').checkScannerGuideData(assets);
 
   const mainTour = createGuideDefinition('dashboard', {
     documentValue: targetDocument,
@@ -852,6 +854,65 @@ async function checkGuides(assetsRoot) {
   });
   await assert.rejects(failedMain.steps[1].prepare({}), /Main sample preparation failed/);
   assert.deepEqual(released.splice(0), ['main-player']);
+
+  const scannerTour = createGuideDefinition('scanner', {
+    documentValue: targetDocument,
+    preparePlayer: () => { prepared.push('scanner-player'); return () => released.push('scanner-player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const scannerSections = ['overview', 'lists-button', 'lists', 'lists-close', 'call', 'queue',
+    'playback', 'hold', 'avoid', 'detail-level', 'details', 'settings-button', 'playback-order',
+    'settings-close', 'avoids-button', 'avoids', 'avoids-close'];
+  assert.deepEqual(scannerTour.steps.map(step => step.id), scannerSections);
+  assert.equal(scannerTour.steps[0].title, 'Follow the traffic');
+  assert.equal(scannerTour.steps[0].prepare, undefined,
+    'Scanner begins with its concept while the real listening state remains visible.');
+  const scannerStop = id => scannerTour.steps.find(step => step.id === id);
+  assert.deepEqual(scannerStop('queue').paragraphs,
+    ['When several calls arrive together, VCE reorders them in queue so you hear them in turn.']);
+  assert.match(scannerStop('hold').paragraphs[0], /^H stands for Hold\./);
+  assert.deepEqual(scannerStop('playback').items.map(item => item.label), ['Pause', 'Stop', 'Replay']);
+  for (const step of scannerTour.steps.slice(1)) {
+    assert.deepEqual(targetNames(step), [`sc-${step.id}`]);
+    assert.deepEqual(step.samples, [{ id: 'scanner-workspace', value: { section: step.id } }]);
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), ['scanner-player', ['scanner', step.id, context]]);
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'scanner-player']);
+  }
+  for (const [opener, destination] of [['lists-button', 'lists'], ['detail-level', 'details'],
+    ['settings-button', 'playback-order'], ['avoids-button', 'avoids']]) {
+    assert.equal(scannerSections.indexOf(opener) + 1, scannerSections.indexOf(destination),
+      'Scanner teaches each actual opening control before the destination it opens.');
+  }
+  for (const [returnStep, nextStep] of [['lists-close', 'call'], ['settings-close', 'avoids-button']]) {
+    assert.equal(scannerSections.indexOf(returnStep) + 1, scannerSections.indexOf(nextStep),
+      'An actual return control precedes the next Scanner workspace lesson.');
+  }
+  assert.equal(scannerTour.steps.at(-1).nextLabel, 'Finish');
+  assert.equal(scannerTour.steps.at(-1).id, 'avoids-close',
+    'The final dialog has a visible close-control lesson before completion.');
+  const restrictedScanner = createGuideDefinition('scanner', { canAccess: capability => capability !== 'radio' });
+  assert.deepEqual(restrictedScanner.steps.map(step => step.id), scannerSections.filter(id => id !== 'details'),
+    'The tour preserves listening access without offering restricted radio-detail navigation.');
+  const failedScanner = createGuideDefinition('scanner', {
+    preparePlayer: () => () => released.push('scanner-player'),
+    preparePage: () => { throw new Error('Scanner sample preparation failed'); }
+  });
+  await assert.rejects(failedScanner.steps[1].prepare({}), /Scanner sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['scanner-player']);
+  const failedScannerCleanup = createGuideDefinition('scanner', {
+    preparePlayer: () => () => released.push('scanner-player'),
+    preparePage: () => () => { throw new Error('Scanner page cleanup failed'); }
+  });
+  const releaseFailedScanner = await failedScannerCleanup.steps[1].prepare({});
+  assert.throws(releaseFailedScanner, /Scanner page cleanup failed/);
+  assert.deepEqual(released.splice(0), ['scanner-player'],
+    'Even a failing sample cleanup restores the player.');
 
   const liveTour = createGuideDefinition('live', {
     documentValue: targetDocument,
@@ -1022,6 +1083,29 @@ async function checkGuides(assetsRoot) {
   assert.equal(await deniedMain.controller.pageReady(), false);
   assert.equal(deniedMain.shown.length, 0);
   deniedMain.controller.destroy();
+
+  const firstScannerVisit = makeHarness({ context: { view: 'scanner' }, storage: {
+    getItem: key => /:welcome:1$|:scanner:[12]$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await firstScannerVisit.controller.pageReady();
+  assert.equal(firstScannerVisit.shown.at(-1).options.id, 'scanner');
+  assert.equal(firstScannerVisit.shown.at(-1).options.version, 3,
+    'The earlier Scanner placeholder does not suppress its authored tour.');
+  firstScannerVisit.finish();
+  firstScannerVisit.controller.destroy();
+  const completedScanner = makeHarness({ context: { view: 'scanner' }, storage: {
+    getItem: key => /:welcome:1$|:scanner:3$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  assert.equal(await completedScanner.controller.pageReady(), false);
+  assert.equal(await completedScanner.controller.openPage(), true,
+    'Help can replay a completed Scanner tour.');
+  completedScanner.controller.destroy();
+  const deniedScanner = makeHarness({ context: { view: 'scanner', guide: 'scanner', canView: view => view !== 'scanner' } });
+  assert.equal(await deniedScanner.controller.pageReady(), false);
+  assert.equal(deniedScanner.shown.length, 0);
+  deniedScanner.controller.destroy();
 
   const firstLiveVisit = makeHarness({ context: { view: 'live' }, storage: {
     getItem: key => /:welcome:1$|:live:[12]$/.test(key) ? '1' : null,

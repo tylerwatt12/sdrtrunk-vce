@@ -7,12 +7,13 @@ import { tunersSteps } from './pages/tuners.js?v=2';
 import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=3';
 import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=1';
 import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=1';
+import { scannerSteps } from './pages/scanner.js?v=1';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
   'scan-lists': scanListsSteps, radioreference: radioReferenceSteps, streaming: streamingSteps, tuners: tunersSteps,
-  'tuner-spectrum': spectrumSteps, live: liveSteps, dashboard: mainSteps });
+  'tuner-spectrum': spectrumSteps, live: liveSteps, dashboard: mainSteps, scanner: scannerSteps });
 // Page concepts stay separate from the numbered controls that follow them.
 // Keep a purpose and practical radio use here even while a walkthrough is pending.
 const pageOverviewCopy = Object.freeze({
@@ -29,8 +30,9 @@ const pageOverviewCopy = Object.freeze({
     'Follow reported locations and review recent location history to see where radio activity is taking place.'],
   'network-visualizer': ['See how a P25 system is connected',
     'Explore the sites and connections reported by a P25 system. Use the visualizer to understand its network and follow changes as they are heard.'],
-  scanner: ['Settle in and listen',
-    'Follow completed calls from your selected Scan Lists, with details about the call playing and the traffic waiting to be heard.'],
+  scanner: ['Follow the traffic',
+    'Scanner brings your selected Scan Lists together in one listening display. Follow who’s talking and choose which conversations to stay with.',
+    'VCE records each transmission first, then plays the completed call.'],
   'tuner-spectrum': ['Find signals worth receiving',
     'Explore your tuner’s receiving window, investigate signals, and add useful frequencies to your channels.'],
   'radio-system': ['Get to know a radio system',
@@ -67,7 +69,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4, live: 3, dashboard: 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4, live: 3, dashboard: 3, scanner: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));

@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=23';
+import { createGuideController } from './guides/controller.js?v=24';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -7872,6 +7872,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
   const originalPageTitle = pageTitleController.state.pageTitle;
   const originalSpectrum = view === 'tuner-spectrum' ?
     content.querySelector('.spectrum-browse-workspace')?.spectrumBrowseController : null;
+  const originalScanner = view === 'scanner' ? content.querySelector('.scanner-page')?.scannerController : null;
   const scrollState = [content, document.scrollingElement, ...content.querySelectorAll('*')]
     .filter(element => element && (element === content || element === document.scrollingElement ||
       element.scrollTop || element.scrollLeft))
@@ -7880,6 +7881,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
   holding.hidden = true;
   holding.inert = true;
   document.body.append(holding);
+  originalScanner?.setGuideSuspended(true);
   holding.attachShadow({ mode: 'closed' }).append(...originalNodes);
   const releases = [];
   const modals = [];
@@ -7906,6 +7908,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       safely(() => content.replaceChildren(...originalNodes));
       safely(() => pageTitleController.update({ pageTitle: originalPageTitle }));
       safely(() => { void originalSpectrum?.setSuspended(false); });
+      safely(() => originalScanner?.setGuideSuspended(false));
       scrollState.forEach(([element, top, left]) => safely(() => {
         element.scrollTop = top;
         element.scrollLeft = left;
@@ -7923,7 +7926,10 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const spectrum = view === 'tuner-spectrum';
     const live = view === 'live';
     const main = view === 'dashboard';
-    const [feature, presentation] = await Promise.all(main ? [
+    const scanner = view === 'scanner';
+    const [feature, presentation] = await Promise.all(scanner ? [
+      Promise.resolve(null), import('./guides/scanner-presentation.js?v=1')
+    ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
     ] : live ? [
       Promise.resolve(null), import('./guides/live-presentation.js?v=1')
@@ -7937,9 +7943,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       import('./features/radioreference-import.js?v=33'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
-    const sample = (main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
+    const sample = (scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
       presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal, section });
-    if (spectrum || live || main) releases.push(() => sample.dispose());
+    if (spectrum || live || main || scanner) releases.push(() => sample.dispose());
     if (streaming && typeof sample.requestOperationalPreference !== 'function') {
       throw new Error('The Streaming guide settings could not be prepared.');
     }
@@ -7952,7 +7958,10 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const openSampleModal = (title, body, options = {}) => {
       if (closed || context.signal.aborted || !context.isCurrent()) return null;
       const modal = openReadOnlyModal(title, body, { ...options, guideTarget: true });
-      if (modal) modals.push(modal);
+      if (modal) {
+        modals.push(modal);
+        if (view === 'scanner') releases.push(guideSampleData.register('scanner-workspace', () => {}, { root: modal.dialog }));
+      }
       return modal;
     };
     const closeSampleModal = () => [...modals].reverse()
@@ -7964,7 +7973,27 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     };
     let protectedRoots;
     let routingHost = null;
-    if (main) {
+    if (scanner) {
+      const pageRoots = [];
+      workspace = await renderScanner({ guideMode: true,
+        renderContext: { ...renderContext, signal: context.signal }, player: sample.player,
+        channelMetadata: sample.channelMetadata, readSnapshot: sample.readSnapshot,
+        openReadOnlyModal: openSampleModal,
+        savePreferenceForm: (workflow, modal, mutate, options) => workflow.save(async () => {
+          if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+          return sample.updatePreferences(mutate);
+        }, { saving: options.saving, onSuccess: () => modal.close() }),
+        mount: (...nodes) => {
+          if (closed || !context.isCurrent()) return;
+          const roots = nodes.filter(node => node instanceof Element);
+          pageRoots.push(...roots);
+          roots.forEach(root => releases.push(guideSampleData.register('scanner-workspace', () => {}, { root })));
+          content.replaceChildren(...nodes);
+        }
+      });
+      if (closed || !context.isCurrent()) { workspace?.dispose(); restore(); return restore; }
+      protectedRoots = pageRoots;
+    } else if (main) {
       const surface = node('div', 'dashboard-guide-workspace');
       surface.dataset.guideExample = 'dashboard';
       // Scope protection precedes mounting and every asynchronous sample request.
@@ -8154,7 +8183,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
 }
 
 async function preparePageGuideSample(view, section, context) {
-  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
+  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
@@ -11472,7 +11501,8 @@ function placePlaybackBar() {
   if (controlMenu) controlMenu.open = !navigationUsesDrawer();
 }
 
-function arrangeScannerPlayback(bar, player, signal) {
+function arrangeScannerPlayback(bar, player, signal, options = {}) {
+  const openAvoids = options.openAvoidList || openPlaybackAvoidList;
   const controls = node('div', 'scanner-playback-controls');
   controls.setAttribute('role', 'group');
   controls.setAttribute('aria-label', 'Playback controls');
@@ -11504,7 +11534,7 @@ function arrangeScannerPlayback(bar, player, signal) {
     if (!player.viewState().stopped) void player.togglePlayback();
   });
   const avoid = textAction('Avoid', 'scanner-avoid', () => player.avoidCurrent());
-  const avoids = textAction('Avoids', 'scanner-avoid-list', () => openPlaybackAvoidList(player));
+  const avoids = textAction('Avoids', 'scanner-avoid-list', () => openAvoids(player));
   const clear = textAction('Clear', 'scanner-clear-queue', () => player.clearQueue());
   secondary.append(stop, avoid, avoids, clear);
 
@@ -11564,6 +11594,7 @@ function arrangeScannerPlayback(bar, player, signal) {
   };
   const unsubscribe = player.subscribeState(draw);
   signal?.addEventListener('abort', unsubscribe, { once: true });
+  return { openAvoids: () => openAvoids(player), close: unsubscribe };
 }
 
 function initializePlaybackHeader() {
@@ -11810,12 +11841,12 @@ function scannerDuration(milliseconds) {
   return Number.isFinite(value) && value > 0 ? `${(value / 1000).toFixed(1)}s` : '';
 }
 
-function scannerDetailLevel() {
-  return SCANNER_DETAIL_LEVELS[scannerDetailMode] ?? SCANNER_DETAIL_LEVELS.normal;
+function scannerDetailLevel(mode = scannerDetailMode) {
+  return SCANNER_DETAIL_LEVELS[mode] ?? SCANNER_DETAIL_LEVELS.normal;
 }
 
-function scannerField(label, value, level, action, wide = false) {
-  if (level > scannerDetailLevel() || value === null || value === undefined || String(value).trim() === '') {
+function scannerField(label, value, level, action, wide = false, mode = scannerDetailMode) {
+  if (level > scannerDetailLevel(mode) || value === null || value === undefined || String(value).trim() === '') {
     return null;
   }
   const field = node('div', `ui-fact-row scanner-field${wide ? ' wide' : ''}`);
@@ -11834,17 +11865,17 @@ function scannerField(label, value, level, action, wide = false) {
   return field;
 }
 
-function scannerParticipant(title, alias, identifier, description, group, aliasAction, identifierAction) {
+function scannerParticipant(title, alias, identifier, description, group, aliasAction, identifierAction, mode = scannerDetailMode) {
   const participant = node('section', 'scanner-participant');
   participant.append(node('h3', 'ui-section-heading scanner-participant-heading', title));
   const fields = node('dl', 'ui-fact-list ui-fact-list-grid scanner-participant-fields');
   const primaryIdentity = alias || identifier;
   const visibleFields = [
     scannerField(alias ? (title === 'Source' ? 'Alias / Talker Alias' : 'Alias') : 'ID', primaryIdentity, 0,
-      alias ? aliasAction : identifierAction, true),
-    scannerField('Group', group, 1),
-    scannerField('ID', alias ? identifier : null, 2, identifierAction),
-    scannerField('Description', description, 2, null, true)
+      alias ? aliasAction : identifierAction, true, mode),
+    scannerField('Group', group, 1, null, false, mode),
+    scannerField('ID', alias ? identifier : null, 2, identifierAction, false, mode),
+    scannerField('Description', description, 2, null, true, mode)
   ].filter(Boolean);
   if (!visibleFields.length) return null;
   visibleFields.forEach((field) => fields.append(field));
@@ -11930,10 +11961,10 @@ function scannerCallQuality(call) {
   return quality;
 }
 
-function scannerCallRenderKey(call, state, site) {
-  if (!call) return `idle:${scannerDetailMode}:${state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening'}`;
+function scannerCallRenderKey(call, state, site, mode = scannerDetailMode) {
+  if (!call) return `idle:${mode}:${state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening'}`;
   return JSON.stringify([
-    scannerDetailMode, sourceNameDisplayMode(), scannerSourceAlias(call),
+    mode, sourceNameDisplayMode(), scannerSourceAlias(call),
     call.call_id || '', call.started_at_ms || '',
     call.source_id || '', call.source_canonical_identity || '', call.source_observed_working_id || '',
     call.target_id ?? '', call.target_canonical_identity || '', call.target_observed_working_id || '',
@@ -11943,17 +11974,19 @@ function scannerCallRenderKey(call, state, site) {
   ]);
 }
 
-function renderScannerCall(host, state, channelMetadata) {
+function renderScannerCall(host, state, channelMetadata, options = {}) {
+  const detailMode = options.detailMode || scannerDetailMode;
+  const navigate = options.navigate || scannerNavigate;
   const displayedCall = state.displayCall || state.current;
   const idle = !displayedCall;
   if (displayedCall) scannerCallTemplates.set(host, { call: displayedCall, channel: channelMetadata });
   const template = scannerCallTemplates.get(host);
   const call = displayedCall || template?.call || { target_alias: '—', source_alias: '—' };
   if (idle) channelMetadata = template?.channel || null;
-  const renderKey = scannerCallRenderKey(displayedCall, state, channelMetadata) +
+  const renderKey = scannerCallRenderKey(displayedCall, state, channelMetadata, detailMode) +
     (idle ? `:${Math.round(host.clientWidth)}` : '');
-  const detailLevel = scannerDetailLevel();
-  host.dataset.scannerMode = scannerDetailMode;
+  const detailLevel = scannerDetailLevel(detailMode);
+  host.dataset.scannerMode = detailMode;
   if (host.dataset.renderKey === renderKey && host.childNodes.length) {
     const wave = host.querySelector('.scanner-audio-wave');
     if (wave) {
@@ -11972,7 +12005,7 @@ function renderScannerCall(host, state, channelMetadata) {
   const copy = node('div', 'ui-heading-group');
   const analog = isAnalogChannel(channelMetadata || call);
   const systemName = systemLabels.systemLabel(call);
-  const open = (destination) => () => scannerNavigate(call, channelMetadata, destination);
+  const open = (destination) => () => navigate(call, channelMetadata, destination);
   const title = node('h2', 'scanner-call-title', scannerTargetLabel(call, channelMetadata));
   if (!idle && capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) {
     const titleAction = node('button', 'link-button ui-listening-title-action', title.textContent);
@@ -12011,7 +12044,7 @@ function renderScannerCall(host, state, channelMetadata) {
   const sourceAlias = scannerSourceAlias(call);
   const sourceId = radioIdentifierText(call, call.source_id, 'source');
   sourceFields.append(scannerField('Transmitting', sourceAlias || sourceId || '—', 0,
-    open(sourceAlias ? 'source-alias' : 'source'), true));
+    open(sourceAlias ? 'source-alias' : 'source'), true, detailMode));
   const groups = node('div', 'scanner-source-groups');
   if (detailLevel >= SCANNER_DETAIL_LEVELS.normal) {
     [['Target group', call.target_group], ['Source group', call.source_group]].forEach(([label, value]) => {
@@ -12025,17 +12058,17 @@ function renderScannerCall(host, state, channelMetadata) {
 
   const fields = node('dl', 'ui-fact-list ui-fact-list-grid scanner-field-grid');
   const field = (label, value, level, action, wide = false) =>
-    scannerField(label, idle && !template ? '—' : value, level, action, wide);
+    scannerField(label, idle && !template ? '—' : value, level, action, wide, detailMode);
   const participants = node('div', 'scanner-participant-grid');
   if (detailLevel >= SCANNER_DETAIL_LEVELS.advanced) {
     if (!analog) {
       const targetId = partyIdentifierText(call, call.target_id, 'target');
       const target = scannerParticipant('Target', call.target_alias, targetId, call.target_description,
-        call.target_group, open('target-alias'), open('target'));
+        call.target_group, open('target-alias'), open('target'), detailMode);
       if (target) participants.append(target);
     }
     const sourceDetails = scannerParticipant('Source', sourceAlias, sourceId, call.source_description,
-      call.source_group, open('source-alias'), open('source'));
+      call.source_group, open('source-alias'), open('source'), detailMode);
     if (sourceDetails) participants.append(sourceDetails);
   }
   const networkSiteIdentity = scannerNetworkSiteIdentity(call);
@@ -12054,7 +12087,7 @@ function renderScannerCall(host, state, channelMetadata) {
     field('Modulation', modulation ? `${modulation} · configured` : '', 2, open('decoder'))
   ].filter(Boolean).forEach((field) => fields.append(field));
 
-  if (scannerDetailMode === 'normal') {
+  if (detailMode === 'normal') {
     [...fields.children].filter(field => ['Channel', 'Scan Lists'].includes(field.querySelector('dt')?.textContent))
       .forEach(field => {
         const value = field.querySelector('.scanner-field-value, .scanner-field-link');
@@ -12066,7 +12099,7 @@ function renderScannerCall(host, state, channelMetadata) {
   }
 
   const engineer = node('dl', 'ui-fact-list ui-fact-list-grid scanner-engineer-grid');
-  if (scannerDetailMode === 'engineer') {
+  if (detailMode === 'engineer') {
     [
       ['Call ID', call.call_id], ['Protocol', call.protocol],
       ['Started', exactDateTime(call.started_at_ms)],
@@ -12083,7 +12116,7 @@ function renderScannerCall(host, state, channelMetadata) {
   if (participants.childNodes.length) host.append(participants);
   if (fields.childNodes.length) host.append(fields);
   if (engineer.childNodes.length) host.append(engineer);
-  if (scannerDetailMode === 'engineer') host.append(scannerCallQuality(call));
+  if (detailMode === 'engineer') host.append(scannerCallQuality(call));
 
   if (idle) {
     const height = host.getBoundingClientRect().height;
@@ -12110,9 +12143,11 @@ function renderScannerCall(host, state, channelMetadata) {
   }
 }
 
-function openPlaybackAvoidList(player = webCallPlayer) {
+function openPlaybackAvoidList(player = webCallPlayer, options = {}) {
   if (!player) return;
+  const openModal = options.openReadOnlyModal || openReadOnlyModal;
   const body = node('div', 'scanner-modal-list');
+  const removeAvoid = key => { player.removeAvoid(key); renderRows(); };
   const renderRows = () => {
     body.replaceChildren();
     const avoids = player.viewState().avoids;
@@ -12122,21 +12157,20 @@ function openPlaybackAvoidList(player = webCallPlayer) {
     }
     avoids.forEach((avoid) => {
       const row = node('div', 'scanner-modal-row');
+      row.dataset.avoidKey = avoid.key;
       const copy = node('div');
       copy.append(node('strong', '', avoid.label || 'Avoided target'));
       if (avoid.system_scope) copy.append(node('span', '', avoid.system_scope));
       const remove = node('button', 'ui-button ui-button-secondary', 'Remove');
       remove.type = 'button';
-      remove.addEventListener('click', () => {
-        player.removeAvoid(avoid.key);
-        renderRows();
-      });
+      remove.addEventListener('click', () => removeAvoid(avoid.key));
       row.append(copy, remove);
       body.append(row);
     });
   };
   renderRows();
-  openReadOnlyModal('Avoid List', body, { id: 'scanner-avoids', className: 'scanner-list-modal' });
+  const modal = openModal('Avoid List', body, { id: 'scanner-avoids', className: 'scanner-list-modal' });
+  return modal ? Object.assign(modal, { removeAvoid }) : null;
 }
 
 function scanListCoverageTree(coverage) {
@@ -12240,12 +12274,32 @@ function openPlaybackScanListCoverage(player = webCallPlayer, preferredId = null
   void load(initial);
 }
 
-function renderScanner() {
-  const renderContext = captureRenderContext();
-  const player = webCallPlayer;
-  setScannerDetailMode(scannerDetailMode);
+function renderScanner(options = {}) {
+  const guideMode = options.guideMode === true;
+  if (guideMode && (!options.player || typeof options.channelMetadata !== 'function' ||
+      typeof options.mount !== 'function' || typeof options.openReadOnlyModal !== 'function' ||
+      typeof options.readSnapshot !== 'function' || typeof options.savePreferenceForm !== 'function')) {
+    throw new Error('The Scanner tour could not be loaded. Try opening it again.');
+  }
+  const pageContext = options.renderContext || captureRenderContext();
+  const controller = guideMode ? new AbortController() : null;
+  const renderContext = guideMode ? { ...pageContext,
+    signal: AbortSignal.any([pageContext.signal, controller.signal].filter(Boolean)) } : pageContext;
+  const player = options.player || webCallPlayer;
+  const metadata = options.channelMetadata || scannerChannelMetadata;
+  let detailMode = guideMode ? 'normal' : scannerDetailMode;
+  if (!guideMode) setScannerDetailMode(detailMode);
+  const paintCall = (host, state, channel) => renderScannerCall(host, state, channel, {
+    detailMode, ...(guideMode ? { navigate: () => {} } : {})
+  });
+  let disposed = false;
+  let guideSuspended = false;
+  let restoreScanPanel = false;
+  let ageTimer = null;
+  let metadataReady = Promise.resolve();
+  let metadataFailure = null;
   const page = node('div', 'scanner-page');
-  page.dataset.scannerMode = scannerDetailMode;
+  page.dataset.scannerMode = detailMode;
   if (!player) {
     page.append(node('div', 'error', 'Browser call playback is unavailable.'));
     beginPage(renderContext, pageHeader('Scanner', 'Listen to completed calls from this receiver'), page);
@@ -12254,11 +12308,11 @@ function renderScanner() {
 
   const modeSelect = preferenceSelect('scanner-detail-mode', [
     ['simple', 'Simple'], ['normal', 'Normal'], ['advanced', 'Advanced'], ['engineer', 'Engineer']
-  ], scannerDetailMode);
+  ], detailMode);
   modeSelect.setAttribute('aria-label', 'Scanner detail level');
   const modeBar = uiSelectFrame(modeSelect, 'scanner-view-modes');
   const chassis = node('section', 'scanner-workspace scanner-console ui-surface ui-listening-stage');
-  chassis.dataset.scannerMode = scannerDetailMode;
+  chassis.dataset.scannerMode = detailMode;
   const statusBar = node('div', 'scanner-status-bar ui-listening-status');
   const statusCopy = node('div', 'scanner-status-copy');
   const playbackStatus = node('strong', 'ui-pill scanner-live-status', 'Ready');
@@ -12275,7 +12329,7 @@ function renderScanner() {
   nowPlaying.setAttribute('aria-label', 'Now playing');
   const displayShell = node('div', 'scanner-display-shell');
   const display = node('div', 'scanner-display ui-listening-hero');
-  display.dataset.scannerMode = scannerDetailMode;
+  display.dataset.scannerMode = detailMode;
   displayShell.append(display);
   nowPlaying.append(statusBar, displayShell);
   const upNext = node('aside', 'scanner-up-next ui-listening-queue');
@@ -12327,7 +12381,7 @@ function renderScanner() {
   coverage.addEventListener('click', () => {
     if (!capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) return;
     if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
-    openPlaybackScanListCoverage(player);
+    if (!guideMode) openPlaybackScanListCoverage(player);
   });
   scanHeading.append(scanCopy, coverage);
   const scanButtons = node('div', 'scanner-scan-buttons');
@@ -12337,11 +12391,15 @@ function renderScanner() {
   scanRetry.type = 'button';
   scanRetry.hidden = true;
   scanRetry.addEventListener('click', () => {
-    if (capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) void refreshPlaybackScanLists(true);
+    if (!guideMode && capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) void refreshPlaybackScanLists(true);
   });
   scanPanel.append(scanHeading, scanButtons, scanStatus, scanRetry);
   scanChooser.append(scanTrigger, scanPanel);
-  bindAnchoredDropdown(scanTrigger, scanPanel, renderContext.signal);
+  const releaseScanAnchor = bindAnchoredDropdown(scanTrigger, scanPanel, renderContext.signal);
+  if (!guideMode) scanPanel.addEventListener('beforetoggle', event => {
+    if (event.oldState === 'open' && event.newState === 'closed' &&
+        document.querySelector('.ui-setup-guide')) restoreScanPanel = true;
+  }, { signal: renderContext.signal });
 
   consoleMain.append(nowPlaying, upNext);
   chassis.append(playerHost, consoleMain);
@@ -12351,13 +12409,22 @@ function renderScanner() {
   const scannerSettings = iconButton('icon-live-presentation', 'Scanner settings',
     'ui-button ui-button-secondary ui-icon-button scanner-settings');
   scannerSettings.id = 'scanner-settings';
-  scannerSettings.addEventListener('click', () => void activateScannerSettings(scannerSettings));
+  const openSettings = () => guideMode ? openScannerSettings(`#${scannerSettings.id}`, options) :
+    activateScannerSettings(scannerSettings);
+  scannerSettings.addEventListener('click', () => void openSettings());
   headingActions.append(modeBar, scanChooser, scannerSettings);
   heading.append(headingActions);
   const host = node('div', 'scanner-page-host');
   host.append(page);
-  if (!beginPage(renderContext, heading, host)) return;
-  arrangeScannerPlayback(transport, player, renderContext.signal);
+  if (guideMode) {
+    page.dataset.guideExample = 'scanner';
+    heading.append(uiPill('Example data'));
+    options.mount(heading, host);
+  } else if (!beginPage(renderContext, heading, host)) return;
+  const playbackControls = arrangeScannerPlayback(transport, player, renderContext.signal, {
+    openAvoidList: currentPlayer => openPlaybackAvoidList(currentPlayer,
+      guideMode ? { openReadOnlyModal: options.openReadOnlyModal } : {})
+  });
 
   let latestState = player.viewState();
   let currentConfigurationId = '';
@@ -12395,6 +12462,7 @@ function renderScanner() {
     upNextList.scrollTop = scrollTop;
   };
   const renderDetailMode = (mode) => {
+    detailMode = mode;
     if (display.dataset.scannerMode !== mode) {
       const pageTop = page.getBoundingClientRect().top + window.scrollY;
       const bottomInset = parseFloat(getComputedStyle(content).paddingBottom) || 0;
@@ -12405,9 +12473,9 @@ function renderScanner() {
     chassis.dataset.scannerMode = mode;
     display.dataset.scannerMode = mode;
     modeSelect.value = mode;
-    renderScannerCall(display, latestState, currentChannel);
+    paintCall(display, latestState, currentChannel);
   };
-  scannerDetailModeRenderer = renderDetailMode;
+  if (!guideMode) scannerDetailModeRenderer = renderDetailMode;
   renderContext.signal?.addEventListener('abort', () => {
     if (scannerDetailModeRenderer === renderDetailMode) scannerDetailModeRenderer = null;
   }, { once: true });
@@ -12492,32 +12560,39 @@ function renderScanner() {
     playbackStatus.classList.toggle('ui-pill-success', !state.stopped && !state.paused);
     statusBar.dataset.state = state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening';
     updateAge();
-    renderScannerCall(display, state, currentChannel);
+    paintCall(display, state, currentChannel);
 
     renderScanButtons(state);
     renderUpNext(state);
 
     if (channelChanged) {
-      if (nextConfigurationId) void scannerChannelMetadata(nextConfigurationId).then((channel) => {
-        if (currentConfigurationId === nextConfigurationId && display.isConnected) {
+      if (nextConfigurationId) metadataReady = Promise.resolve(metadata(nextConfigurationId)).then((channel) => {
+        if (!disposed && renderIsCurrent(renderContext) && currentConfigurationId === nextConfigurationId && display.isConnected) {
           currentChannel = channel;
-          renderScannerCall(display, latestState, currentChannel);
+          paintCall(display, latestState, currentChannel);
         }
+      }).catch(error => {
+        if (error?.name !== 'AbortError') metadataFailure = error;
       });
     }
   };
   const unsubscribe = player.subscribeState(draw);
   renderContext.signal?.addEventListener('abort', unsubscribe, { once: true });
   const idleLayoutObserver = new ResizeObserver(() => {
-    if (display.classList.contains('is-idle')) renderScannerCall(display, latestState, currentChannel);
+    if (display.classList.contains('is-idle')) paintCall(display, latestState, currentChannel);
   });
   idleLayoutObserver.observe(display);
   renderContext.signal?.addEventListener('abort', () => idleLayoutObserver.disconnect(), { once: true });
   const spectrumLevels = new Float32Array(64);
   let spectrumFrame = null;
   const drawSpectrum = () => {
-    if (!renderIsCurrent(renderContext)) return;
-    const wave = display.querySelector('.scanner-audio-wave');
+    if (disposed || !renderIsCurrent(renderContext)) return;
+    if (restoreScanPanel && !guideSuspended && !guideMode && content.contains(page) &&
+        route.get('view') === 'scanner' && !document.querySelector('.ui-setup-guide')) {
+      restoreScanPanel = false;
+      if (!scanPanel.matches(':popover-open')) scanPanel.showPopover();
+    }
+    const wave = !guideSuspended && display.querySelector('.scanner-audio-wave');
     if (wave) {
       const playing = player.readAudioSpectrum(spectrumLevels, 8_000);
       wave.classList.toggle('paused', !playing);
@@ -12533,8 +12608,10 @@ function renderScanner() {
   renderContext.signal?.addEventListener('abort', () => {
     if (spectrumFrame !== null) window.cancelAnimationFrame(spectrumFrame);
   }, { once: true });
-  pageInterval(updateAge, 1_000);
+  if (guideMode) ageTimer = window.setInterval(updateAge, 1_000);
+  else pageInterval(updateAge, 1_000);
   modeSelect.addEventListener('change', () => {
+    if (guideMode) { renderDetailMode(modeSelect.value); return; }
     const selectedMode = setScannerDetailMode(modeSelect.value);
     const mutation = ++scannerDetailModeMutation;
     pendingScannerDetailMode = selectedMode;
@@ -12546,6 +12623,104 @@ function renderScanner() {
       setScannerDetailMode(savedPreferences?.scanner?.detail_mode || activeUserPreferences().scanner.detail_mode);
     });
   });
+  const workspace = {
+    element: page,
+    setGuideSuspended(value) {
+      if (guideMode || disposed) return;
+      guideSuspended = Boolean(value);
+      if (guideSuspended) {
+        restoreScanPanel ||= scanPanel.matches(':popover-open');
+        if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
+      }
+    },
+    async prepareGuide(section, context) {
+      if (!guideMode || disposed || context.signal.aborted || !context.isCurrent()) return;
+      if (['detail-level', 'details', 'settings-button', 'playback-order', 'settings-close',
+        'avoids-button', 'avoids', 'avoids-close'].includes(section)) {
+        await player.avoidCurrent();
+      }
+      if (['details', 'settings-button', 'playback-order', 'settings-close', 'avoids-button', 'avoids',
+        'avoids-close'].includes(section)) renderDetailMode('advanced');
+      await metadataReady;
+      if (metadataFailure) throw new Error('The Scanner tour could not be loaded. Try opening it again.');
+      await new Promise(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+      if (disposed || context.signal.aborted || !context.isCurrent()) return;
+      const releases = [];
+      let modal = null;
+      if (['lists', 'lists-close'].includes(section)) {
+        scanPanel.showPopover();
+        await new Promise(resolve => window.requestAnimationFrame(resolve));
+        if (disposed || context.signal.aborted || !context.isCurrent()) return;
+        releases.push(context.registerLayer(scanPanel, { anchor: scanTrigger }));
+      }
+      if (['playback-order', 'settings-close'].includes(section)) modal = await openSettings();
+      if (['avoids', 'avoids-close'].includes(section)) modal = playbackControls.openAvoids();
+      if (modal?.ready && !await modal.ready) return;
+      if (disposed || context.signal.aborted || !context.isCurrent()) { modal?.close(); return; }
+      if (section === 'avoids-close') {
+        const avoid = player.viewState().avoids[0];
+        if (avoid) modal.removeAvoid(avoid.key);
+      }
+      const mark = (element, id = section) => { if (element) element.dataset.guideTarget = `sc-${id}`; };
+      const targets = {
+        'lists-button': scanTrigger, lists: scanPanel, 'lists-close': scanTrigger,
+        queue: upNext, hold: transport.querySelector('#scanner-hold'), avoid: transport.querySelector('#scanner-avoid'),
+        'detail-level': modeSelect, 'settings-button': scannerSettings,
+        'playback-order': modal?.content.querySelector('.settings-card'),
+        'settings-close': modal?.dialog.querySelector('.modal-close'),
+        'avoids-button': transport.querySelector('#scanner-avoid-list'),
+        avoids: modal?.content.querySelector('.scanner-modal-row'),
+        'avoids-close': modal?.dialog.querySelector('.modal-close')
+      };
+      if (section === 'call') {
+        [display.querySelector('.scanner-call-intro .ui-heading-group'), display.querySelector('.scanner-source-fields')]
+          .forEach(element => mark(element));
+      } else if (section === 'playback') {
+        ['#scanner-play', '#scanner-stop', '#scanner-replay'].forEach(selector => mark(transport.querySelector(selector)));
+      } else if (section === 'details') {
+        display.querySelectorAll('.scanner-participant').forEach(element => mark(element));
+      } else mark(targets[section]);
+      const highlighted = [...document.querySelectorAll(`[data-guide-target="sc-${section}"]`)];
+      if (!highlighted.length) throw new Error('The Scanner tour could not be loaded. Try opening it again.');
+      if (!modal && !['lists', 'lists-close'].includes(section)) {
+        highlighted[0].scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+        const bounds = highlighted.map(element => element.getBoundingClientRect());
+        const top = Math.min(...bounds.map(value => value.top));
+        const bottom = Math.max(...bounds.map(value => value.bottom));
+        const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
+        const targetTop = headerBottom + 16;
+        const availableBottom = window.innerHeight - 24;
+        window.scrollBy({ top: bottom - top > availableBottom - targetTop ? bottom - availableBottom : top - targetTop,
+          behavior: 'instant' });
+        const positioned = highlighted.map(element => element.getBoundingClientRect());
+        if (Math.min(...positioned.map(value => value.top)) > targetTop + 2)
+          window.scrollBy({ top: Math.max(...positioned.map(value => value.bottom)) - availableBottom, behavior: 'instant' });
+      }
+      await new Promise(resolve => window.requestAnimationFrame(resolve));
+      return () => {
+        releases.reverse().forEach(release => release());
+        if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
+        modal?.close();
+      };
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      controller?.abort();
+      unsubscribe();
+      playbackControls.close();
+      idleLayoutObserver.disconnect();
+      releaseScanAnchor();
+      if (spectrumFrame !== null) window.cancelAnimationFrame(spectrumFrame);
+      if (ageTimer !== null) window.clearInterval(ageTimer);
+      scannerCallTemplates.delete(display);
+      if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
+      if (scannerDetailModeRenderer === renderDetailMode) scannerDetailModeRenderer = null;
+    }
+  };
+  page.scannerController = workspace;
+  renderContext.signal?.addEventListener('abort', () => workspace.dispose(), { once: true });
+  return workspace;
 }
 
 function pageParameters(extra = {}) {
@@ -30996,8 +31171,11 @@ async function activateScannerSettings(button) {
   if (snapshot.loaded) openScannerSettings(returnFocusSelector);
 }
 
-function openScannerSettings(returnFocusSelector = null) {
-  const snapshot = userPreferenceController.snapshot();
+function openScannerSettings(returnFocusSelector = null, options = {}) {
+  const readSnapshot = options.readSnapshot || (() => userPreferenceController.snapshot());
+  const openModal = options.openReadOnlyModal || openReadOnlyModal;
+  const saveForm = options.savePreferenceForm || savePreferenceForm;
+  const snapshot = readSnapshot();
   if (!snapshot.loaded) return;
   const current = snapshot.preferences;
   const form = node('form', 'admin-form scanner-settings-form');
@@ -31037,7 +31215,7 @@ function openScannerSettings(returnFocusSelector = null) {
   footer.append(message, actions);
   form.append(node('p', 'live-presentation-intro',
     'These choices affect only this signed-in user.'), settingsCardGrid(card, titleCard), footer);
-  const modal = openReadOnlyModal('Scanner settings', form, {
+  const modal = openModal('Scanner settings', form, {
     id: 'scanner-settings-modal', className: 'scanner-settings-modal', returnFocusSelector
   });
   if (!modal) return;
@@ -31049,12 +31227,13 @@ function openScannerSettings(returnFocusSelector = null) {
       target_burst_limit: Number(targetBurstLimit.value),
       prepend_playing_call: prependTitle.input.checked
     };
-    await savePreferenceForm(workflow, modal, (preferences) => {
+    await saveForm(workflow, modal, (preferences) => {
       preferences.playback.target_grouping = submitted.target_grouping;
       preferences.playback.target_burst_limit = submitted.target_burst_limit;
       preferences.page_titles.prepend_playing_call = submitted.prepend_playing_call;
     }, { identity: snapshot.identity, saving: 'Saving Scanner settings…', apply });
   });
+  return modal;
 }
 
 function openResetUserPreferences(returnFocusSelector = null) {
