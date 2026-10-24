@@ -7,8 +7,11 @@ const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs')
 const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="tuner-spectrum"]');
-const steps = ['receiver', 'activity', 'select-signal', 'listen', 'lookup', 'add-channel', 'modes', 'display-options'];
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:3';
+const steps = ['receiver', 'activity', 'measurements', 'zoom', 'pan', 'reset-zoom', 'channel-marker', 'channel-details',
+  'waterfall', 'waterfall-details', 'pause', 'select-signal', 'listen', 'lookup', 'add-channel', 'modes',
+  'display-options', 'display-settings', 'plot-settings', 'performance', 'display-close'];
+const compactSteps = new Set(['activity', 'zoom', 'pan', 'waterfall']);
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:4';
 const evidence = process.env.SPECTRUM_GUIDE_EVIDENCE ||
   path.resolve(__dirname, '../../../../../build/playwright-results/spectrum-guide-evidence');
 const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
@@ -37,6 +40,7 @@ async function openSpectrum(page, { theme = 'light', replay = true, firstVisit =
   await page.addInitScript(({ firstVisit, key }) => {
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1', '1');
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:2', '1');
+    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuner-spectrum:3', '1');
     if (!firstVisit) localStorage.setItem(key, '1');
   }, { firstVisit, key: memoryKey });
   if (noHardware) {
@@ -124,11 +128,90 @@ async function expectSpotlight(page, id) {
   }
 }
 
-async function expectBranchEntriesOnly(page) {
+async function expectBranchEntriesOnly(page, id) {
   await expect(page.locator('.read-only-modal:not(.ui-setup-guide), .spectrum-discovery-workspace')).toHaveCount(0);
-  await expect(page.locator('.tuner-spectrum-options[open], .primary-nav details[open]')).toHaveCount(0);
+  await expect(page.locator('.primary-nav details[open]')).toHaveCount(0);
+  await expect(page.locator('.tuner-spectrum-options[open]')).toHaveCount(
+    ['display-settings', 'plot-settings', 'performance', 'display-close'].includes(id) ? 1 : 0);
   await expect(page.getByRole('button', { name: 'Stop listening', exact: true })).toHaveCount(0);
   await expect(page.locator('.spectrum-browse-workspace [data-mode="live"]')).toHaveAttribute('aria-pressed', 'true');
+}
+
+async function expectLessonState(page, id) {
+  const popup = page.locator('.tuner-spectrum-cursor-popup:visible');
+  const reset = page.getByRole('button', { name: 'Reset zoom', exact: true });
+  if (['pan', 'reset-zoom'].includes(id)) {
+    await expect(reset).toBeEnabled();
+    await expect(page.locator('.tuner-spectrum-readouts')).toContainText('2.00×');
+  }
+  if (id === 'measurements') {
+    const measurements = page.locator('[data-guide-target="bs-measurements"]');
+    for (const label of ['Visible span', 'Zoom', 'Peak', 'Best SNR']) await expect(measurements).toContainText(label);
+    await expect(measurements.locator('summary[aria-label="More measurements"]')).toBeVisible();
+    await expect(page.locator('.tuner-spectrum-more-measurements[open]')).toHaveCount(0);
+  }
+  if (id === 'channel-marker') {
+    await expect(reset).toBeDisabled();
+    await expect(page.locator('[data-guide-target="bs-channel-marker"]')).toHaveClass(/\bstatus-call\b/);
+    await expect(popup).toHaveCount(0);
+  }
+  if (id === 'channel-details') {
+    await expect(popup).toBeVisible();
+    await expect(popup).toHaveAttribute('data-guide-target', 'bs-channel-details');
+    await expect(popup).toContainText('County P25');
+    await expect(popup).toContainText('North Site');
+    await expect(popup).toContainText('Sheriff Dispatch');
+    await expect(popup).toContainText('Sheriff 214');
+    await expect(popup).toContainText('Voice quality');
+    await expect(popup).toContainText('TGID');
+    await expect(popup.locator('.tuner-spectrum-cursor-field-label')).not.toHaveCount(0);
+  }
+  if (id === 'waterfall') {
+    await expect(page.locator('[data-guide-target="bs-waterfall"]')).toHaveAttribute('aria-label',
+      'Tuner spectrum history. Each row keeps the receiver window that created it. Gold dividers mark tuner retunes.');
+  }
+  if (id === 'waterfall-details') {
+    await expect(popup).toBeVisible();
+    await expect(popup).toHaveAttribute('data-guide-target', 'bs-waterfall-details');
+    await expect(popup).toContainText('History');
+    await expect(popup).toContainText('Retuned');
+    await expect(popup.locator('.tuner-spectrum-cursor-frequency')).toHaveText(/\d+\.\d{6} MHz/);
+    await expect(popup.locator('.tuner-spectrum-cursor-power')).toHaveText(/History · \d{1,2}:\d{2}:\d{2}/);
+  }
+  if (id === 'pause') {
+    await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Pause', exact: true })).toHaveAttribute('aria-pressed', 'false');
+  }
+  if (id === 'display-options') await expect(page.getByRole('button', { name: 'Display options', exact: true }))
+    .toHaveAttribute('aria-expanded', 'false');
+  if (['display-settings', 'plot-settings', 'performance', 'display-close'].includes(id)) {
+    await expect(page.getByRole('button', { name: 'Display options', exact: true })).toHaveAttribute('aria-expanded', 'true');
+    const panel = page.getByRole('group', { name: 'Tuner spectrum options', exact: true });
+    await expect(panel).toBeVisible();
+    const geometry = await panel.evaluate(element => ({
+      theme: document.documentElement.dataset.theme || 'light', panel: element.getBoundingClientRect().toJSON(),
+      clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, scrollTop: element.scrollTop,
+      cards: [...element.querySelectorAll('.settings-card')].map(card => ({
+        title: card.querySelector('h3')?.textContent, box: card.getBoundingClientRect().toJSON()
+      }))
+    }));
+    fs.mkdirSync(evidence, { recursive: true });
+    fs.writeFileSync(path.join(evidence, `panel-${id}-${geometry.theme}.json`), `${JSON.stringify(geometry, null, 2)}\n`);
+    const actualControls = id === 'display-settings' ? [
+      panel.getByRole('checkbox', { name: 'Snap frequency', exact: true }),
+      panel.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true })
+    ] : id === 'plot-settings' ? [
+      panel.getByRole('slider', { name: 'Waterfall speed', exact: true }),
+      panel.getByRole('checkbox', { name: 'Smooth FFT', exact: true })
+    ] : [panel.getByRole('combobox', { name: 'Profile', exact: true })];
+    const panelBox = await panel.boundingBox();
+    for (const control of actualControls) {
+      await expect(control).toBeVisible();
+      const box = await control.boundingBox();
+      expect(box.y).toBeGreaterThanOrEqual(panelBox.y);
+      expect(box.y + box.height).toBeLessThanOrEqual(panelBox.y + panelBox.height + 1);
+    }
+  }
 }
 
 function expectIsolated(fixture, effects) {
@@ -147,7 +230,7 @@ async function screenshot(page, name) {
 for (const { theme, width, height } of [
   { theme: 'light', width: 1280, height: 720 }, { theme: 'dark', width: 1440, height: 1000 }
 ]) {
-  test(`Browser Spectrum tours its eight real branch entry points with example signals in ${theme}`, async ({ page }) => {
+  test(`Browser Spectrum tours actual FFT, waterfall, channel details, and branch entries with example signals in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     const { fixture, effects } = await openSpectrum(page, { theme, noHardware: true });
     await expectOverview(page);
@@ -158,14 +241,30 @@ for (const { theme, width, height } of [
     for (const [index, id] of steps.entries()) {
       await expect(guide(page)).toHaveAttribute('data-guide-step', id);
       await expect(guide(page)).toContainText(`Step ${index + 1} of ${steps.length}`);
-      if (id === 'activity') {
+      if (compactSteps.has(id)) {
         await expect(guide(page)).toHaveClass(/\bui-setup-guide--compact\b/);
         await expect.poll(async () => Math.round((await guide(page).boundingBox()).width)).toBe(260);
       } else {
         await expect(guide(page)).not.toHaveClass(/\bui-setup-guide--compact\b/);
         await expect.poll(async () => Math.round((await guide(page).boundingBox()).width)).toBe(470);
       }
-      await expectSpotlight(page, id);
+      try { await expectSpotlight(page, id); }
+      catch (error) {
+        const geometry = await page.evaluate(() => {
+          const selectors = ['.tuner-spectrum-cursor-popup', '.tuner-spectrum-active-flag.status-call',
+            '.tuner-spectrum-layout', '.ui-setup-guide', '#content', '.app-header'];
+          return { scroll: [scrollX, scrollY], elements: selectors.map(selector => {
+            const element = document.querySelector(selector), box = element?.getBoundingClientRect();
+            return { selector, box: box?.toJSON(), style: element?.getAttribute('style'),
+              position: element && getComputedStyle(element).position,
+              scroll: element && [element.scrollLeft, element.scrollTop] };
+          }) };
+        });
+        fs.mkdirSync(evidence, { recursive: true });
+        fs.writeFileSync(path.join(evidence, `geometry-${id}-${theme}.json`), `${JSON.stringify(geometry, null, 2)}\n`);
+        await screenshot(page, `spectrum-failure-${id}-${theme}`);
+        throw error;
+      }
       await expectInViewport(guide(page), { width, height });
       await expectInViewport(guide(page).getByRole('button', { name: 'Close guide', exact: true }), { width, height });
       await expectInViewport(guide(page).getByRole('button', {
@@ -175,10 +274,12 @@ for (const { theme, width, height } of [
         const header = document.querySelector('.app-header')?.getBoundingClientRect();
         return !header || element.getBoundingClientRect().top >= header.bottom - 1;
       }), { message: 'The guide card clears the application header' }).toBe(true);
-      await expectBranchEntriesOnly(page);
-      if (['listen', 'lookup', 'add-channel'].includes(id)) {
+      await expectBranchEntriesOnly(page, id);
+      if (['listen', 'lookup', 'add-channel', 'modes', 'display-options', 'display-settings',
+        'plot-settings', 'performance', 'display-close'].includes(id)) {
         await expect(page.locator('.tuner-frequency-action-frequency')).toHaveText('856.412500 MHz');
       }
+      await expectLessonState(page, id);
       if (id === 'activity') {
         const activityTarget = page.locator('[data-guide-target="bs-activity"]');
         await expect(activityTarget).toHaveClass(/\btuner-spectrum-visual-window\b/);
@@ -226,8 +327,8 @@ for (const { theme, width, height } of [
 }
 
 for (const { stop, dismiss } of [
-  { stop: 'receiver', dismiss: 'Close guide' }, { stop: 'lookup', dismiss: 'Escape' },
-  { stop: 'display-options', dismiss: 'shade' }
+  { stop: 'receiver', dismiss: 'Close guide' }, { stop: 'channel-details', dismiss: 'Escape' },
+  { stop: 'display-settings', dismiss: 'shade' }
 ]) {
   test(`Browser Spectrum restores its original controls, selection, display draft, and player after ${dismiss}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
@@ -318,7 +419,7 @@ test('Browser Spectrum sample controls cannot start hardware, audio, lookup, cha
     });
     await expect(guide(page)).toHaveAttribute('data-guide-step', id);
     await expect(page).toHaveURL(routeBefore);
-    await expectBranchEntriesOnly(page);
+    await expectBranchEntriesOnly(page, id);
     await advance(page, id);
   }
   expect(exercised).toBeGreaterThan(50);
@@ -385,6 +486,20 @@ test('Browser Spectrum omits branch entry points for actions the account cannot 
   expectIsolated(fixture, effects);
 });
 
+test('Browser Spectrum hides channel-marker lessons without Live access and keeps instrument features available', async ({ page }) => {
+  const { fixture, effects } = await openSpectrum(page, { noHardware: true, denied: ['live'] });
+  await start(page);
+  for (const id of steps.filter(id => !['channel-marker', 'channel-details'].includes(id))) {
+    await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+    await expectSpotlight(page, id);
+    await expect(page.locator('.tuner-spectrum-active-flag')).toHaveCount(0);
+    await advance(page, id);
+  }
+  await expect(guide(page)).toHaveCount(0);
+  expect(effects.writes).toEqual([]);
+  expectIsolated(fixture, effects);
+});
+
 test('Browser Spectrum tuner access denial cannot open its guide, sample page, or receiver APIs', async ({ page }) => {
   const { fixture, effects } = await openSpectrum(page, { noHardware: true, firstVisit: true,
     denied: ['admin-tuners'] });
@@ -414,6 +529,32 @@ test('Browser Spectrum dismissal during example preparation cannot repaint stale
   expectIsolated(fixture, effects);
 });
 
+test('Browser Spectrum retains the explained retune observation while reading and resumes sample activity afterward', async ({ page }) => {
+  test.setTimeout(45000);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const { fixture, effects } = await openSpectrum(page, { noHardware: true });
+  await start(page);
+  await goTo(page, 'waterfall-details');
+  const popup = page.locator('.tuner-spectrum-cursor-popup:visible');
+  const waterfall = page.locator('.tuner-spectrum-waterfall canvas');
+  await expect(popup).toContainText('Retuned');
+  const originalObservation = await popup.textContent();
+  await screenshot(page, 'spectrum-retune-history-before-35s');
+  await page.waitForTimeout(35000);
+  await expect(popup).toHaveText(originalObservation);
+  await expectSpotlight(page, 'waterfall-details');
+  await screenshot(page, 'spectrum-retune-history-after-35s');
+  await advance(page, 'waterfall-details');
+  await expect(guide(page)).toHaveAttribute('data-guide-step', 'pause');
+  const resumedFrame = await waterfall.evaluate(canvas => canvas.toDataURL());
+  await expect.poll(() => waterfall.evaluate((canvas, original) => canvas.toDataURL() !== original, resumedFrame),
+    { message: 'The next lesson returns to normal sample waterfall activity' }).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('[data-guide-sample], .ui-setup-guide-layer, .ui-setup-guide-highlight')).toHaveCount(0);
+  expect(effects.writes).toEqual([]);
+  expectIsolated(fixture, effects);
+});
+
 
 for (const theme of ['light', 'dark']) {
   test(`Browser Spectrum guide and actual populated controls retain readable contrast in ${theme} and representative hues`, async ({ page }) => {
@@ -421,26 +562,43 @@ for (const theme of ['light', 'dark']) {
     const { fixture, effects } = await openSpectrum(page, { theme, noHardware: true });
     const measurements = [];
     const audit = async (rootSelector, section) => {
-      for (const hue of [null, 0, 120, 240]) {
-        await page.evaluate(async value => {
-          const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
-          applyThemeHue(value);
-        }, hue);
-        const result = await expectContrast(page, { rootSelector,
-          reportName: `spectrum-guide-${section}-${theme}-hue-${hue}` });
-        expect(result.summary.text.checked).toBeGreaterThan(3);
-        measurements.push({ section, hue, summary: result.summary });
-      }
-      await page.evaluate(async () => {
-        const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
-        applyThemeHue(null);
+      await page.evaluate(() => {
+        window.spectrumGuideAuditInert = [...document.querySelectorAll('[inert]')];
+        window.spectrumGuideAuditInert.forEach(element => { element.inert = false; });
       });
+      try {
+        for (const hue of [null, 0, 120, 240]) {
+          await page.evaluate(async value => {
+            const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
+            applyThemeHue(value);
+          }, hue);
+          const optionsPaint = rootSelector === '.tuner-spectrum-settings-grid';
+          const result = await expectContrast(page, { rootSelector,
+            reportName: `spectrum-guide-${section}-${theme}-hue-${hue}`,
+            ...(optionsPaint ? { reviewedPaintOwners: {
+              filter: ['.tuner-spectrum-options-header'],
+              'instrument-or-native-painted-internals': ['#tuner-waterfall-speed']
+            } } : {}) });
+          expect(result.summary.text.checked).toBeGreaterThan(3);
+          measurements.push({ section, hue, summary: result.summary });
+          if (optionsPaint) await screenshot(page, `spectrum-${section}-${theme}-hue-${hue}`);
+        }
+      } finally {
+        await page.evaluate(async () => {
+          const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
+          applyThemeHue(null);
+          window.spectrumGuideAuditInert.forEach(element => { element.inert = true; });
+          delete window.spectrumGuideAuditInert;
+        });
+      }
     };
     await expectOverview(page);
     await audit('.ui-setup-guide', 'overview');
     await start(page);
     await goTo(page, 'activity');
     await audit('.ui-setup-guide', 'compact-activity');
+    await goTo(page, 'channel-details');
+    await audit('.tuner-spectrum-cursor-popup', 'actual-channel-details');
     await goTo(page, 'listen');
     await page.mouse.move(0, 0);
     await page.evaluate(() => {
@@ -460,6 +618,17 @@ for (const theme of ['light', 'dark']) {
         delete window.spectrumGuideContrast;
       });
     }
+    await goTo(page, 'display-settings');
+    // The floating shell and filtered sticky header paint over the plots rather
+    // than their logical toolbar parent. Review those pixels in the captures;
+    // measure the normal settings cards, text and controls against their actual fill.
+    await audit('.tuner-spectrum-settings-grid', 'actual-display-options');
+    await audit('.ui-setup-guide', 'display-settings-guide');
+    await goTo(page, 'plot-settings');
+    await audit('.tuner-spectrum-settings-grid', 'actual-plot-settings');
+    await audit('.ui-setup-guide', 'plot-settings-guide');
+    await goTo(page, 'performance');
+    await audit('.ui-setup-guide', 'performance-guide');
     fs.mkdirSync(evidence, { recursive: true });
     fs.writeFileSync(path.join(evidence, `contrast-summary-${theme}.json`), `${JSON.stringify(measurements, null, 2)}\n`);
     await page.keyboard.press('Escape');

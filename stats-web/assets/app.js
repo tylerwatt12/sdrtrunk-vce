@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=19';
+import { createGuideController } from './guides/controller.js?v=20';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -7922,7 +7922,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const tuners = view === 'tuners';
     const spectrum = view === 'tuner-spectrum';
     const [feature, presentation] = await Promise.all(spectrum ? [
-      Promise.resolve(null), import('./guides/spectrum-presentation.js?v=1')
+      Promise.resolve(null), import('./guides/spectrum-presentation.js?v=2')
     ] : tuners ? [
       Promise.resolve(null), import('./guides/tuners-presentation.js?v=1')
     ] : streaming ? [
@@ -7932,7 +7932,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
     const sample = (spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
-      presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal });
+      presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal, section });
     if (spectrum) releases.push(() => sample.dispose());
     if (streaming && typeof sample.requestOperationalPreference !== 'function') {
       throw new Error('The Streaming guide settings could not be prepared.');
@@ -7983,6 +7983,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
         requestJson: sampleRequest, api: sampleApi, snapPresets: sample.snapPresets,
         connectionFactory: sampleConnection, activityFeed: sampleActivity,
         selectedTunerId: sample.selectedTunerId, selectedAnalogHz: sample.selectedAnalogHz,
+        selectedCarrierHz: sample.selectedCarrierHz,
         mount: (...nodes) => {
           if (!closed && context.isCurrent()) {
             const roots = nodes.filter(node => node instanceof Element);
@@ -16859,6 +16860,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   let hoverCanvas = null;
   let hoverYRatio = null;
   let hoverFlag = null;
+  let guideHistoryObservation = null;
   let drag = null;
   let suppressClick = false;
   let wheelZoomEvents = 0;
@@ -16958,10 +16960,55 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     element: layout,
     controls: {
       toolbar, selection: tunerSelection, status, actions: toolbarActions,
-      resetZoom, options, optionsSummary, optionsPanel
+      resetZoom, pause, options, optionsSummary, optionsPanel,
+      optionGroups: { display: displayOptions, fft: fftOptions, waterfall: waterfallOptions, performance: profilePanel }
     },
-    surfaces: { visualWindow, displayControls, readoutPanel, spectrum: spectrum.canvas },
+    surfaces: { visualWindow, displayControls, readoutPanel, spectrum: spectrum.canvas,
+      waterfall: waterfall.canvas, cursorPopup },
     firstGuideFrame, refreshTargets,
+    async prepareGuideViewport(mode, context = {}) {
+      if (!guideMode) throw new Error('Spectrum example views require an isolated signal panel.');
+      if (!viewport || disposed) throw new Error('The example receiver window is unavailable.');
+      hideCursor();
+      resetViewport();
+      if (mode === 'pan') {
+        zoomAt(0.64, 0.5);
+        panBy((fullViewport.endHz - fullViewport.startHz) * 0.08);
+      }
+      const deadline = performance.now() + 2500;
+      while (!disposed && !context.signal?.aborted && context.isCurrent?.() !== false &&
+          (refining || awaitingViewportState)) {
+        if (performance.now() > deadline) throw new Error('The example receiving view could not be prepared.');
+        await new Promise(resolve => window.setTimeout(resolve, 16));
+      }
+    },
+    prepareGuideActiveCarrier(frequencyHz, { showDetails = false } = {}) {
+      if (!guideMode) throw new Error('Spectrum example activity requires an isolated signal panel.');
+      if (!viewport || disposed) throw new Error('The example receiver window is unavailable.');
+      const carriers = activeCarriers(false);
+      const index = carriers.findIndex(carrier => carrier.frequencyHz === Number(frequencyHz));
+      const flag = spectrumActiveFlags.children[index];
+      if (index < 0 || !flag) throw new Error('The example channel activity is unavailable.');
+      if (showDetails) showActiveFlag(carriers[index], flag);
+      else hideCursor();
+      return flag;
+    },
+    prepareGuideWaterfall({ showDetails = false, frequencyHz } = {}) {
+      if (!guideMode) throw new Error('Spectrum example history requires an isolated signal panel.');
+      if (!viewport || disposed) throw new Error('The example receiver window is unavailable.');
+      ensureWaterfallBuffer();
+      const physicalRow = waterfallRetuneRows.findIndex(retune => retune !== null);
+      if (physicalRow < 0) throw new Error('The example retune history is unavailable.');
+      const displayRow = (physicalRow - newestWaterfallRow + waterfallBuffer.height) % waterfallBuffer.height;
+      const yRatio = (displayRow + 0.5) / waterfallBuffer.height;
+      const ratio = (Number(frequencyHz) - viewport.startHz) / (viewport.endHz - viewport.startHz);
+      if (!(ratio >= 0 && ratio <= 1)) throw new Error('The example history is outside this receiver window.');
+      if (showDetails) {
+        showCursor(ratio, waterfall.canvas, yRatio);
+        guideHistoryObservation = waterfallObservedAtRows[physicalRow];
+      } else hideCursor();
+      return waterfall.canvas;
+    },
     prepareGuideFrequency(frequencyHz, { select = false } = {}) {
       if (!guideMode) throw new Error('Spectrum example selection requires an isolated signal panel.');
       if (!viewport || disposed) throw new Error('The example receiver window is unavailable.');
@@ -17723,6 +17770,13 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     addWaterfallFrame();
     setReadouts();
     if (analysisChanged) renderActiveChannels();
+    if (guideMode && guideHistoryObservation !== null) {
+      const historyRow = waterfallObservedAtRows.indexOf(guideHistoryObservation);
+      if (historyRow >= 0) {
+        const displayRow = (historyRow - newestWaterfallRow + waterfallBuffer.height) % waterfallBuffer.height;
+        hoverYRatio = (displayRow + 0.5) / waterfallBuffer.height;
+      }
+    }
     if (hoverRatio !== null) updateCursor(hoverRatio);
     scheduleDraw();
     resolveFirstGuideFrame?.(true);
@@ -18069,6 +18123,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function showCursor(ratio, canvas, yRatio) {
+    guideHistoryObservation = null;
     hoverFlag = null;
     hoverRatio = ratio;
     hoverCanvas = canvas;
@@ -18077,7 +18132,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function positionCursorPopup(anchor = null) {
-    if (cursorPopup.hidden) return;
+    if (cursorPopup.hidden || guideMode && cursorPopup.classList.contains('ui-setup-guide-layer')) return;
     const layoutRect = layout.getBoundingClientRect();
     let pointerX;
     let pointerY;
@@ -18100,6 +18155,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   }
 
   function hideCursor() {
+    guideHistoryObservation = null;
     hoverFlag = null;
     hoverRatio = null;
     hoverCanvas = null;
@@ -20883,23 +20939,65 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     async prepareGuide(section, context = {}) {
       if (!guideMode) throw new Error('Spectrum examples require an isolated workspace.');
       if (disposed || context.signal?.aborted || context.isCurrent?.() === false) return;
-      if (section === 'select-signal') {
+      const releases = [];
+      let channelMarker = null;
+      if (['zoom', 'pan', 'reset-zoom'].includes(section)) {
+        await spectrum.prepareGuideViewport(section === 'zoom' ? 'full' : 'pan', context);
+        if (disposed || context.signal?.aborted || context.isCurrent?.() === false) return;
+      }
+      if (['zoom', 'select-signal'].includes(section)) {
         spectrum.prepareGuideFrequency(workspaceOptions.selectedAnalogHz);
-      } else if (['listen', 'lookup', 'add-channel', 'modes', 'display-options'].includes(section)) {
+      } else if (['listen', 'lookup', 'add-channel', 'modes', 'display-options',
+        'display-settings', 'plot-settings', 'performance', 'display-close'].includes(section)) {
         spectrum.prepareGuideFrequency(workspaceOptions.selectedAnalogHz, { select: true });
         await frequencyActionController?.ready;
         if (disposed || context.signal?.aborted || context.isCurrent?.() === false) return;
       }
+      if (['channel-marker', 'channel-details'].includes(section)) {
+        channelMarker = spectrum.prepareGuideActiveCarrier(workspaceOptions.selectedCarrierHz,
+          { showDetails: section === 'channel-details' });
+        if (section === 'channel-details' && context.registerLayer) {
+          releases.push(context.registerLayer(spectrum.surfaces.cursorPopup, { anchor: channelMarker }));
+        }
+      }
+      if (['waterfall', 'waterfall-details'].includes(section)) {
+        spectrum.prepareGuideWaterfall({ frequencyHz: workspaceOptions.selectedAnalogHz,
+          showDetails: section === 'waterfall-details' });
+      }
+      if (['display-settings', 'plot-settings', 'performance', 'display-close'].includes(section)) {
+        options.open = true;
+        syncOptionsTriggers();
+        if (['plot-settings', 'performance', 'display-close'].includes(section)) {
+          const firstGroup = section === 'plot-settings' ? spectrum.controls.optionGroups.fft :
+            spectrum.controls.optionGroups.performance;
+          const stickyHeader = optionsPanel.querySelector('.tuner-spectrum-options-header');
+          optionsPanel.scrollTop += firstGroup.getBoundingClientRect().top - optionsPanel.getBoundingClientRect().top -
+            (stickyHeader?.getBoundingClientRect().height || 0);
+        }
+      }
       const targets = {
         receiver: selectField, activity: spectrum.surfaces.visualWindow,
+        measurements: spectrum.surfaces.readoutPanel,
+        zoom: spectrum.surfaces.spectrum, pan: spectrum.surfaces.spectrum,
+        'reset-zoom': resetZoom, 'channel-marker': channelMarker,
+        'channel-details': spectrum.surfaces.cursorPopup,
+        waterfall: spectrum.surfaces.waterfall,
+        'waterfall-details': spectrum.surfaces.cursorPopup,
+        pause: spectrum.controls.pause,
         'select-signal': spectrum.surfaces.spectrum,
         listen: frequencyRail.querySelector('[aria-label="Listen in NBFM"]'),
         lookup: frequencyRail.querySelector('[aria-label="Look up on RadioReference"]'),
         'add-channel': frequencyRail.querySelector('[aria-label="Add channel or system"]'),
-        modes: mode, 'display-options': optionsSummary
+        modes: mode, 'display-options': optionsSummary,
+        'display-settings': spectrum.controls.optionGroups.display,
+        'plot-settings': [spectrum.controls.optionGroups.fft, spectrum.controls.optionGroups.waterfall],
+        performance: spectrum.controls.optionGroups.performance, 'display-close': optionsSummary
       };
       const target = targets[section];
-      if (target) target.dataset.guideTarget = `bs-${section}`;
+      (Array.isArray(target) ? target : [target]).filter(Boolean).forEach(element => {
+        element.dataset.guideTarget = `bs-${section}`;
+      });
+      return () => releases.reverse().forEach(release => release?.());
     }
   };
   workspace.spectrumBrowseController = controller;

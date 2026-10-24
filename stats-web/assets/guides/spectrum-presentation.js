@@ -8,6 +8,7 @@ const VOICE_HZ = 856912500;
 const SAMPLE_RATE_HZ = 2400000;
 const FRAME_INTERVAL_MS = 160;
 const HISTORY_FRAME_COUNT = 128;
+const HISTORICAL_CENTER_HZ = 855662500;
 const clone = value => structuredClone(value);
 
 function receiver(id, name, frequencyHz, channelCount) {
@@ -27,11 +28,14 @@ function receiver(id, name, frequencyHz, channelCount) {
     ] };
 }
 
-export function createSpectrumGuideData({ signal } = {}) {
+export function createSpectrumGuideData({ signal, section } = {}) {
   const requests = [], connections = new Set(), activitySources = new Set(), timers = new Set();
   const tuners = [receiver('guide-spectrum-rtl-1', 'RTL-SDR 1', 856162500, 1),
     receiver('guide-spectrum-rtl-2', 'RTL-SDR 2', 857162500, 0)];
   const startedAt = Date.now(), leases = new Map();
+  const seededTargets = new Set();
+  const retainVoice = ['channel-marker', 'channel-details'].includes(section);
+  const retainWaterfallHistory = section === 'waterfall-details';
   let disposed = false, nextLease = 0, frames = 0, snapshots = 0;
   const snapPresets = { revision: 1, countryCode: 'US', countryLabel: 'United States',
     countries: [{ code: 'US', label: 'United States' }], scopes: [
@@ -58,7 +62,7 @@ export function createSpectrumGuideData({ signal } = {}) {
   const signalState = (observedAt = Date.now()) => {
     const phase = (Math.floor((observedAt - startedAt) / 350) % 24 + 24) % 24;
     return { analog: phase < 9 || phase >= 17 && phase < 21,
-      voice: phase < 13 || phase >= 18 };
+      voice: retainVoice || phase < 13 || phase >= 18 };
   };
   const requestJson = async (path, options = {}) => {
     check(options.signal);
@@ -114,26 +118,40 @@ export function createSpectrumGuideData({ signal } = {}) {
       return tuner;
     };
     tunerFor(parameters);
-    const stateFrame = () => {
+    const viewportFor = (centerFrequencyHz) => {
+      const fullStartHz = centerFrequencyHz - SAMPLE_RATE_HZ / 2;
+      const requestedStartHz = Number(parameters.viewport_start_hz);
+      const requestedEndHz = Number(parameters.viewport_end_hz);
+      const requested = requestedStartHz > 0 && requestedEndHz > requestedStartHz;
+      const binWidthHz = SAMPLE_RATE_HZ / 2048;
+      const firstBin = requested ? Math.max(0, Math.min(2047,
+        Math.floor((requestedStartHz - fullStartHz) / binWidthHz))) : 0;
+      const endBin = requested ? Math.max(firstBin + 1, Math.min(2048,
+        Math.ceil((requestedEndHz - fullStartHz) / binWidthHz))) : 2048;
+      return { requested, requestedStartHz, requestedEndHz, firstBin,
+        sourceBinCount: endBin - firstBin,
+        startHz: fullStartHz + firstBin * binWidthHz,
+        endHz: fullStartHz + endBin * binWidthHz };
+    };
+    const stateFrame = (centerFrequencyHz = tunerFor(parameters).frequency_hz) => {
       if (closed || disposed || signal?.aborted) return;
       const tuner = tunerFor(parameters);
-      const requested = Number(parameters.viewport_start_hz) > 0 &&
-        Number(parameters.viewport_end_hz) > Number(parameters.viewport_start_hz);
+      const viewport = viewportFor(centerFrequencyHz);
       callbacks.onFrame({ type: 1, generation, sequence: ++sequence,
         payload: new TextEncoder().encode(JSON.stringify({ target_id: tuner.spectrum_target_id,
           stream_state: 'live', profile: parameters.profile || 'balanced',
-          center_frequency_hz: tuner.frequency_hz, sample_rate_hz: tuner.sample_rate_hz,
-          ...(requested ? { requested_start_hz: Number(parameters.viewport_start_hz),
-            requested_end_hz: Number(parameters.viewport_end_hz),
-            visible_start_hz: Number(parameters.viewport_start_hz),
-            visible_end_hz: Number(parameters.viewport_end_hz) } : {}) })) });
+          center_frequency_hz: centerFrequencyHz, sample_rate_hz: tuner.sample_rate_hz,
+          ...(viewport.requested ? { requested_start_hz: viewport.requestedStartHz,
+            requested_end_hz: viewport.requestedEndHz,
+            visible_start_hz: viewport.startHz, visible_end_hz: viewport.endHz } : {}) })) });
     };
-    const replay = (observedAtEpochMs = Date.now()) => {
+    const replay = (observedAtEpochMs = Date.now(), centerFrequencyHz = tunerFor(parameters).frequency_hz) => {
       if (closed || disposed || signal?.aborted) return;
-      const tuner = tunerFor(parameters), count = 2048, values = new Float32Array(count);
+      const viewport = viewportFor(centerFrequencyHz), count = viewport.sourceBinCount;
+      const values = new Float32Array(count);
       const burst = signalState(observedAtEpochMs);
       for (let index = 0; index < count; index++) {
-        const frequencyHz = tuner.frequency_hz - SAMPLE_RATE_HZ / 2 + index * SAMPLE_RATE_HZ / count;
+        const frequencyHz = viewport.startHz + index * SAMPLE_RATE_HZ / 2048;
         const peak = (center, strength, width) => strength * Math.exp(-Math.pow((frequencyHz - center) / width, 4));
         values[index] = -117 + 2.3 * Math.sin(index * 1.73 + sequence * 0.47) +
           1.6 * Math.cos(index * 0.61 - sequence * 0.31) + peak(CONTROL_HZ, 69, 5100) +
@@ -142,8 +160,8 @@ export function createSpectrumGuideData({ signal } = {}) {
       }
       frames += 1;
       callbacks.onFrame({ type: 4, generation, sequence: ++sequence, valueCount: count,
-        centerFrequencyHz: tuner.frequency_hz, sampleRateHz: SAMPLE_RATE_HZ, fftSize: count,
-        firstBin: 0, sourceBinCount: count, observedAtEpochMs, encodedAtEpochMs: Date.now(),
+        centerFrequencyHz, sampleRateHz: SAMPLE_RATE_HZ, fftSize: 2048,
+        firstBin: viewport.firstBin, sourceBinCount: count, observedAtEpochMs, encodedAtEpochMs: Date.now(),
         payload: new Uint8Array(values.buffer) });
     };
     const connection = { replay,
@@ -169,15 +187,26 @@ export function createSpectrumGuideData({ signal } = {}) {
     queueMicrotask(() => {
       if (closed || disposed || signal?.aborted) return;
       callbacks.onOpen?.();
-      stateFrame();
       // Feed genuine earlier observations through the normal waterfall renderer so
-      // a freshly opened tour already shows the pattern of completed transmissions.
+      // the actual history includes both completed transmissions and a tuner retune.
       const now = Date.now();
+      const tuner = tunerFor(parameters);
+      const seedRetune = !seededTargets.has(tuner.id) && !viewportFor(tuner.frequency_hz).requested;
+      seededTargets.add(tuner.id);
+      stateFrame(seedRetune ? HISTORICAL_CENTER_HZ : tuner.frequency_hz);
       for (let index = HISTORY_FRAME_COUNT; index > 0 && !closed && !disposed && !signal?.aborted; index--) {
-        replay(now - index * FRAME_INTERVAL_MS);
+        if (seedRetune && index === HISTORY_FRAME_COUNT / 2) {
+          generation += 1;
+          stateFrame();
+        }
+        replay(now - index * FRAME_INTERVAL_MS,
+          seedRetune && index > HISTORY_FRAME_COUNT / 2 ? HISTORICAL_CENTER_HZ : tuner.frequency_hz);
       }
       replay();
-      if (!closed && !disposed && !signal?.aborted) timer = schedule(replay, FRAME_INTERVAL_MS);
+      // Preserve the real captured history while this lesson is being read.
+      // Explicit viewport updates still receive their normal state and FFT reply.
+      if (!retainWaterfallHistory && !closed && !disposed && !signal?.aborted)
+        timer = schedule(replay, FRAME_INTERVAL_MS);
     });
     return connection;
   };
@@ -227,7 +256,7 @@ export function createSpectrumGuideData({ signal } = {}) {
   signal?.addEventListener('abort', dispose, { once: true });
   if (signal?.aborted) dispose();
   return { requestJson, api, connectionFactory, activityFeed, snapPresets, requests, dispose,
-    selectedTunerId: tuners[0].id, selectedAnalogHz: ANALOG_HZ,
+    selectedTunerId: tuners[0].id, selectedAnalogHz: ANALOG_HZ, selectedCarrierHz: VOICE_HZ,
     stats: () => ({ disposed, connections: connections.size, activityFeeds: activitySources.size,
       timers: timers.size, leases: leases.size, frames, snapshots }) };
 }

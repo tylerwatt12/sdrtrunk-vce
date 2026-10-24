@@ -4,7 +4,7 @@ import { aliasesSteps } from './pages/aliases.js?v=1';
 import { radioReferenceSteps } from './pages/radioreference.js?v=1';
 import { streamingSteps } from './pages/streaming.js?v=2';
 import { tunersSteps } from './pages/tuners.js?v=2';
-import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=1';
+import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=2';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
@@ -63,7 +63,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));

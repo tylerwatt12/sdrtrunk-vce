@@ -138,7 +138,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     if (!element?.isConnected || closed) return () => {};
     if (layers.has(element)) return layers.get(element);
     const attributes = new Map(['popover', 'hidden', 'inert'].map(name => [name, element.getAttribute(name)]));
-    const geometry = new Map(['left', 'top', 'maxHeight', 'display'].map(name => [name, element.style[name]]));
+    const geometry = new Map(['position', 'left', 'top', 'maxHeight', 'display'].map(name => [name, element.style[name]]));
     const rectangle = element.getBoundingClientRect();
     const display = getComputedStyle(element).display;
     if (element.matches(':popover-open')) element.hidePopover();
@@ -147,6 +147,9 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     element.inert = true;
     element.classList.add('ui-setup-guide-layer');
     element.style.display = display === 'none' ? 'block' : display;
+    // Absolute instrument cursors use local coordinates until the guide owns
+    // their floating layer. Preserve their appearance while anchoring in viewport space.
+    if (getComputedStyle(element).position === 'absolute') element.style.position = 'fixed';
     element.style.left = `${rectangle.left}px`;
     element.style.top = `${rectangle.top}px`;
     if (anchor?.isConnected) {
@@ -286,7 +289,9 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       highlights.append(hitRegion);
     });
 
-    modal.dialog.style.maxHeight = `${Math.max(0, height - gutter * 2)}px`;
+    const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
+    const topGutter = bounds.length ? Math.max(gutter, headerBottom + gap / 2) : gutter;
+    modal.dialog.style.maxHeight = `${Math.max(0, height - topGutter - gutter)}px`;
     const panel = modal.dialog.getBoundingClientRect();
     let left = (width - panel.width) / 2;
     let top = (height - panel.height) / 2;
@@ -301,8 +306,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
         const rectangle = targetDialog.getBoundingClientRect();
         anchor = { left: rectangle.left, top: rectangle.top, right: rectangle.right, bottom: rectangle.bottom };
       }
-      const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
-      const sideTop = Math.max(gutter, anchor.top, headerBottom ? headerBottom + gap / 2 : 0);
+      const sideTop = Math.max(topGutter, anchor.top);
       const candidates = [
         { left: anchor.right + gap, top: sideTop },
         { left: anchor.left, top: anchor.bottom + gap },
@@ -314,15 +318,15 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       const obstacles = targetDialog?.isConnected ? [anchor] : bounds;
       const horizontal = [gutter, width - gutter - panel.width,
         ...obstacles.flatMap(rect => [rect.left, rect.right + gap, rect.left - panel.width - gap])];
-      const vertical = [Math.max(gutter, headerBottom + gap / 2), height - gutter - panel.height,
+      const vertical = [topGutter, height - gutter - panel.height,
         ...obstacles.flatMap(rect => [rect.top, rect.bottom + gap, rect.top - panel.height - gap])];
       horizontal.forEach(left => vertical.forEach(top => candidates.push({ left, top })));
-      const overflow = candidate => Math.max(0, gutter - candidate.left) + Math.max(0, gutter - candidate.top) +
+      const overflow = candidate => Math.max(0, gutter - candidate.left) + Math.max(0, topGutter - candidate.top) +
         Math.max(0, candidate.left + panel.width + gutter - width) +
         Math.max(0, candidate.top + panel.height + gutter - height);
       const position = candidate => ({
         left: Math.max(gutter, Math.min(candidate.left, width - gutter - panel.width)),
-        top: Math.max(gutter, Math.min(candidate.top, height - gutter - panel.height))
+        top: Math.max(topGutter, Math.min(candidate.top, height - gutter - panel.height))
       });
       const overlap = candidate => {
         const placed = position(candidate);
@@ -344,7 +348,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       }
     }
     left = Math.max(gutter, Math.min(left, width - gutter - panel.width));
-    top = Math.max(gutter, Math.min(top, height - gutter - panel.height));
+    top = Math.max(topGutter, Math.min(top, height - gutter - panel.height));
     modal.dialog.style.left = `${left}px`;
     modal.dialog.style.top = `${top}px`;
     pointer.hidden = true;

@@ -33,7 +33,8 @@ async function panelHarness({ auto = true } = {}) {
   let clock = 0;
   const context = vm.createContext({
     automaticDisplayRange, target: 'first', selectedTargetId: () => context.target,
-    panelOptions: {}, resolveFirstGuideFrame: null, drag: null, basicOperator: false,
+    panelOptions: {}, resolveFirstGuideFrame: null, guideMode: false, guideHistoryObservation: null,
+    drag: null, basicOperator: false,
     autoRangeInput: { checked: auto },
     floorInput: {}, ceilingInput: {}, rangeControl: { setAttribute: () => {} }, rangeHelp: {}, rangeValue: {},
     rangeSlider: { style: { setProperty: () => {} } },

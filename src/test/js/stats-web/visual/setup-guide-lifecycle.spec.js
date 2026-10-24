@@ -101,6 +101,37 @@ test('closing a pending guide restores its real popover and cleans late preparat
   await expect(page.locator('.ui-setup-guide')).toHaveCount(0);
 });
 
+test('shared guide anchors an instrument cursor in viewport space and restores its local positioning', async ({ page }) => {
+  await installGuideHarness(page);
+  await page.evaluate(() => {
+    const harness = window.guideHarness;
+    const instrument = harness.node('div');
+    instrument.style.cssText = 'position:fixed;left:330px;top:170px;width:300px;height:180px';
+    const anchor = harness.node('button', 'ui-button', 'Channel marker');
+    const cursor = harness.node('div', 'ui-popover', 'Actual instrument detail');
+    cursor.style.cssText = 'position:absolute;left:30px;top:40px;width:200px;height:60px';
+    instrument.append(anchor, cursor);
+    document.body.append(instrument);
+    harness.panel = cursor;
+    harness.originalRectangle = cursor.getBoundingClientRect().toJSON();
+    harness.presentation = harness.open([{ id: 'cursor', title: 'Channel details', targets: () => [cursor],
+      prepare: ({ registerLayer }) => registerLayer(cursor, { anchor }) }]);
+  });
+  await expect(page.locator('.ui-setup-guide[data-guide-step="cursor"]')).toBeVisible();
+  expect(await page.evaluate(() => {
+    const harness = window.guideHarness;
+    const rectangle = harness.panel.getBoundingClientRect();
+    return { left: rectangle.left, top: rectangle.top,
+      expectedLeft: harness.originalRectangle.left, expectedTop: harness.originalRectangle.top };
+  })).toEqual({ left: 360, top: 210, expectedLeft: 360, expectedTop: 210 });
+  await page.evaluate(() => window.guideHarness.presentation.close());
+  expect(await page.evaluate(() => {
+    const { panel, errors } = window.guideHarness;
+    return { position: panel.style.position, left: panel.style.left, top: panel.style.top,
+      registered: panel.classList.contains('ui-setup-guide-layer'), inert: panel.inert, errors };
+  })).toEqual({ position: 'absolute', left: '30px', top: '40px', registered: false, inert: false, errors: [] });
+});
+
 for (const theme of ['light', 'dark']) {
   test(`page overview precedes numbered steps without changing page state in ${theme}`, async ({ page }) => {
     await installGuideHarness(page);

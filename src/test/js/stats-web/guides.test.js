@@ -82,7 +82,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('radioreference').version, 3);
   assert.equal(createGuideDefinition('streaming').version, 3);
   assert.equal(createGuideDefinition('tuners').version, 3);
-  assert.equal(createGuideDefinition('tuner-spectrum').version, 3);
+  assert.equal(createGuideDefinition('tuner-spectrum').version, 4);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -815,10 +815,11 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const spectrumSections = ['overview', 'receiver', 'activity', 'select-signal', 'listen', 'lookup',
-    'add-channel', 'modes', 'display-options'];
+  const spectrumSections = ['overview', 'receiver', 'activity', 'measurements', 'zoom', 'pan', 'reset-zoom',
+    'channel-marker', 'channel-details', 'waterfall', 'waterfall-details', 'pause', 'select-signal',
+    'listen', 'lookup', 'add-channel', 'modes', 'display-options', 'display-settings', 'plot-settings', 'performance', 'display-close'];
   assert.deepEqual(spectrumTour.steps.map(step => step.id), spectrumSections,
-    'Spectrum remains an overview plus eight branch entry points.');
+    'Spectrum teaches actual instrument interactions while keeping service branches at entry points.');
   assert.equal(spectrumTour.steps[0].targets, undefined);
   for (const step of spectrumTour.steps) {
     if (!step.overview) assert.deepEqual(targetNames(step), [`bs-${step.id}`]);
@@ -829,10 +830,22 @@ async function checkGuides(assetsRoot) {
     release();
     assert.deepEqual(released.splice(0), [step.id, 'spectrum-player']);
   }
+  const spectrumStop = id => spectrumTour.steps.find(step => step.id === id);
+  for (const [opener, destination] of [['zoom', 'pan'], ['channel-marker', 'channel-details'],
+    ['waterfall', 'waterfall-details'], ['display-options', 'display-settings'],
+    ['display-settings', 'plot-settings'], ['plot-settings', 'performance'], ['performance', 'display-close']]) {
+    assert.equal(spectrumTour.steps.indexOf(spectrumStop(opener)) + 1,
+      spectrumTour.steps.indexOf(spectrumStop(destination)),
+      'Every instrument detail destination and return follows its visible actual entry point.');
+  }
+  assert.ok(spectrumStop('zoom').paragraphs.join(' ').includes('mouse wheel'));
+  assert.ok(spectrumStop('pan').paragraphs.join(' ').includes('click and drag'));
+  assert.ok(spectrumStop('modes').paragraphs.join(' ').includes('full view'));
   assert.equal(spectrumTour.steps.at(-1).nextLabel, 'Finish');
   const restrictedSpectrum = createGuideDefinition('tuner-spectrum', { canAccess: () => false });
   assert.deepEqual(restrictedSpectrum.steps.map(step => step.id),
-    ['overview', 'receiver', 'activity', 'select-signal', 'modes', 'display-options'],
+    ['overview', 'receiver', 'activity', 'measurements', 'zoom', 'pan', 'reset-zoom', 'waterfall', 'waterfall-details',
+      'pause', 'select-signal', 'modes', 'display-options', 'display-settings', 'plot-settings', 'performance', 'display-close'],
     'Restricted accounts are not taught audio, RadioReference or channel actions they cannot use.');
   const failedSpectrum = createGuideDefinition('tuner-spectrum', {
     preparePlayer: () => () => released.push('spectrum-player'),
@@ -912,13 +925,13 @@ async function checkGuides(assetsRoot) {
     'A requested RadioReference tour preserves the production route’s access restrictions.');
 
   const firstSpectrumVisit = makeHarness({ context: { view: 'tuner-spectrum' }, storage: {
-    getItem: key => key.endsWith(':welcome:1') || key.endsWith(':tuner-spectrum:2') ? '1' : null,
+    getItem: key => key.endsWith(':welcome:1') || key.endsWith(':tuner-spectrum:3') ? '1' : null,
     setItem() {}
   } });
   await firstSpectrumVisit.controller.pageReady();
   assert.equal(firstSpectrumVisit.shown.at(-1).options.id, 'tuner-spectrum');
-  assert.equal(firstSpectrumVisit.shown.at(-1).options.version, 3,
-    'The earlier Spectrum placeholder does not suppress its authored hardware-free tour.');
+  assert.equal(firstSpectrumVisit.shown.at(-1).options.version, 4,
+    'The earlier short Spectrum tour does not suppress its revised interaction walkthrough.');
 
   const firstStreamingVisit = makeHarness({ context: { view: 'streaming', canAccess: () => false }, storage: {
     getItem: key => /:welcome:1$|:streaming:[12]$/.test(key) ? '1' : null,

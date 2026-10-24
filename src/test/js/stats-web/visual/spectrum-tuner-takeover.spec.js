@@ -72,7 +72,7 @@ function searchSnapshot() {
 
 async function install(page, options = {}) {
   await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['tuners', 3], ['tuner-spectrum', 3]]) {
+    for (const [id, version] of [['welcome', 1], ['tuners', 3], ['tuner-spectrum', 4]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:spectrum-takeover-tests:${id}:${version}`, '1');
     }
   });
