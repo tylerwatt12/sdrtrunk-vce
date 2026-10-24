@@ -44,25 +44,6 @@ public record WebCertificateIdentity(String commonName, List<String> subjectAlte
         return create(discoverComputerName(), WebNetworkAddressDiscovery.discover());
     }
 
-    /**
-     * Stable minimum identity that an existing automatic certificate must cover before it can be reused. Additional
-     * discovered IPv4 addresses are included when a certificate is generated, but a newly appearing secondary VPN
-     * address does not silently rotate an otherwise usable certificate.
-     */
-    public List<String> requiredSubjectAlternativeNames()
-    {
-        LinkedHashSet<String> required = new LinkedHashSet<>();
-        required.add(commonName);
-        required.add("localhost");
-        required.add("127.0.0.1");
-        if(!networkAddresses.isEmpty())
-        {
-            required.add(withoutIpv6Scope(networkAddresses.getFirst().hostAddress()));
-        }
-
-        return List.copyOf(required);
-    }
-
     static WebCertificateIdentity create(String computerName,
                                          List<WebNetworkAddressDiscovery.DiscoveredAddress> addresses)
     {

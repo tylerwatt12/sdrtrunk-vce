@@ -1100,6 +1100,75 @@ class StatsWebServerServiceLifecycleTest
     }
 
     @Test
+    void preservesAutomaticCertificateWithDifferentNamesAtStartupAndMaintenance() throws Exception
+    {
+        Path assets = mTemporaryDirectory.resolve("stable-automatic-certificate-assets");
+        Files.createDirectories(assets);
+        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>test</title>");
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        var maintenance = StatsWebServerService.class.getDeclaredMethod("maintainAutomaticCertificate");
+        maintenance.setAccessible(true);
+        var listener = StatsWebServerService.class.getDeclaredField("mListener");
+        listener.setAccessible(true);
+
+        try
+        {
+            for(boolean networkAccess: List.of(false, true))
+            {
+                Path dataRoot = mTemporaryDirectory.resolve("stable-automatic-certificate-" + networkAccess);
+                Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+                Files.createDirectories(database.getParent());
+                SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+                WebTlsMaterialService tls = new WebTlsMaterialService(dataRoot);
+                TlsMaterial existing = tls.generateSelfSigned("old.receiver.test",
+                    List.of("old.receiver.test", "127.0.0.1"));
+                assertFalse(existing.coversHost("localhost"),
+                    "Existing material must differ from the automatically discovered names");
+                TestApplicationPreference applicationPreference =
+                    new TestApplicationPreference(0, networkAccess, true, true);
+                TestUserPreferences preferences = new TestUserPreferences(applicationPreference,
+                    new TestDirectoryPreference(dataRoot));
+
+                try(StatsWebServerService service = StatsWebTestRuntime.start(preferences))
+                {
+                    WebServerRuntimeState state = service.getRuntimeState();
+                    assertTrue(state.running(), state.statusMessage());
+                    assertTrue(state.https());
+                    assertEquals(networkAccess, state.anyIpEnabled());
+                    assertEquals(WebCertificateMode.AUTOMATIC,
+                        applicationPreference.getStatsWebServerCertificateMode());
+                    assertEquals(existing.leafSha256Fingerprint(), state.certificateFingerprint());
+                    assertHttpsIndex(existing, state.port());
+                    Object activeListener = listener.get(service);
+                    assertNotNull(activeListener);
+
+                    maintenance.invoke(service);
+
+                    assertSame(activeListener, listener.get(service),
+                        "A valid automatic certificate must not restart the listener for different names");
+                    assertEquals(existing.leafSha256Fingerprint(),
+                        tls.validateInstalledMaterial().leafSha256Fingerprint());
+                    assertEquals(existing.leafSha256Fingerprint(),
+                        service.getRuntimeState().certificateFingerprint());
+                    assertHttpsIndex(existing, service.getRuntimeState().port());
+                }
+            }
+        }
+        finally
+        {
+            if(previousAssetOverride == null)
+            {
+                System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            }
+            else
+            {
+                System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
+            }
+        }
+    }
+
+    @Test
     void preservesExistingCertificateWhenOlderProfileHasNoCertificateMode() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("existing-certificate-data");

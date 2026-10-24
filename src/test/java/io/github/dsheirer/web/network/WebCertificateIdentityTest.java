@@ -25,8 +25,6 @@ class WebCertificateIdentityTest
         assertEquals("receiver.local", identity.commonName());
         assertEquals(List.of("receiver.local", "localhost", "127.0.0.1", "192.168.1.24"),
             identity.subjectAlternativeNames());
-        assertEquals(List.of("receiver.local", "localhost", "127.0.0.1", "192.168.1.24"),
-            identity.requiredSubjectAlternativeNames());
         assertEquals(List.of("192.168.1.24"),
             identity.networkAddresses().stream().map(
                 WebNetworkAddressDiscovery.DiscoveredAddress::hostAddress).toList());

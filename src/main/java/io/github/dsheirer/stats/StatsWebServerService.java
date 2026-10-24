@@ -381,8 +381,8 @@ public class StatsWebServerService implements AutoCloseable
     }
 
     /**
-     * Periodically replaces an automatic certificate before it expires or when the preferred network identity has
-     * changed.  A listener reload failure leaves the previous in-memory TLS listener active; a fingerprint mismatch
+     * Periodically replaces an automatic certificate before it expires.
+     * A listener reload failure leaves the previous in-memory TLS listener active; a fingerprint mismatch
      * causes the next maintenance pass to retry activation of the installed material.
      */
     private synchronized void maintainAutomaticCertificate()
@@ -397,19 +397,15 @@ public class StatsWebServerService implements AutoCloseable
         try
         {
             TlsMaterial material = mTlsMaterialService.validateInstalledMaterial();
-            WebCertificateIdentity identity = WebCertificateIdentity.discover();
-            boolean identityChanged = identity.requiredSubjectAlternativeNames().stream()
-                .anyMatch(name -> !material.coversHost(name));
             boolean installedMaterialIsInactive =
                 !material.leafSha256Fingerprint().equals(mRuntimeState.certificateFingerprint());
 
-            if(identityChanged || installedMaterialIsInactive ||
-                WebListener.requiresRenewal(material, Instant.now()))
+            if(installedMaterialIsInactive || WebListener.requiresRenewal(material, Instant.now()))
             {
                 reconcileListener(true);
             }
         }
-        catch(IOException | GeneralSecurityException | TlsMaterialException | RuntimeException exception)
+        catch(GeneralSecurityException | TlsMaterialException | RuntimeException exception)
         {
             // Reconciliation regenerates invalid/missing automatic material and retains the old listener on failure.
             reconcileListener(true);

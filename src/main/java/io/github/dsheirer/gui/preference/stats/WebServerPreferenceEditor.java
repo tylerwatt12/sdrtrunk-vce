@@ -532,8 +532,6 @@ public class WebServerPreferenceEditor extends HBox
 
     private boolean ensureNetworkTlsMaterial()
     {
-        refreshCertificateIdentity();
-
         try
         {
             WebCertificateMode mode = effectiveCertificateMode();
@@ -554,19 +552,15 @@ public class WebServerPreferenceEditor extends HBox
             try
             {
                 mInstalledTlsMaterial = getTlsMaterialService().validateInstalledMaterial();
-
-                if(mCertificateIdentity.requiredSubjectAlternativeNames().stream()
-                    .allMatch(mInstalledTlsMaterial::coversHost))
-                {
-                    refreshCertificateStatus();
-                    return true;
-                }
+                refreshCertificateStatus();
+                return true;
             }
             catch(Exception exception)
             {
                 mLog.debug("No reusable automatic HTTPS certificate is installed");
             }
 
+            refreshCertificateIdentity();
             mInstalledTlsMaterial = getTlsMaterialService().generateSelfSigned(mCertificateIdentity.commonName(),
                 mCertificateIdentity.subjectAlternativeNames());
             mApplicationPreference.setStatsWebServerCertificateMode(WebCertificateMode.AUTOMATIC);

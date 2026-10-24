@@ -171,30 +171,18 @@ public final class WebListener implements AutoCloseable
 
         if(preference.getStatsWebServerCertificateMode() == WebCertificateMode.AUTOMATIC)
         {
-            WebCertificateIdentity identity = WebCertificateIdentity.discover();
-
             try
             {
                 material = tlsMaterial.validateInstalledMaterial();
-                boolean coversCurrentIdentity = true;
-
-                for(String name: identity.requiredSubjectAlternativeNames())
-                {
-                    if(!material.coversHost(name))
-                    {
-                        coversCurrentIdentity = false;
-                        break;
-                    }
-                }
-
-                if(!coversCurrentIdentity || requiresRenewal(material, Instant.now()))
-                {
-                    material = tlsMaterial.generateSelfSigned(identity.commonName(),
-                        identity.subjectAlternativeNames());
-                }
             }
             catch(TlsMaterialException exception)
             {
+                material = null;
+            }
+
+            if(material == null || requiresRenewal(material, Instant.now()))
+            {
+                WebCertificateIdentity identity = WebCertificateIdentity.discover();
                 material = tlsMaterial.generateSelfSigned(identity.commonName(),
                     identity.subjectAlternativeNames());
             }
