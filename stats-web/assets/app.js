@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=22';
+import { createGuideController } from './guides/controller.js?v=23';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -1850,9 +1850,9 @@ function navigateTo(target, options = {}) {
   }, options);
 }
 
-function currentHref(overrides = {}) {
-  const parameters = new URLSearchParams(route);
-  if (route.get('view') === 'aliases' && !Object.prototype.hasOwnProperty.call(overrides, 'alias')) {
+function currentHref(overrides = {}, sourceParameters = route) {
+  const parameters = new URLSearchParams(sourceParameters);
+  if (sourceParameters.get('view') === 'aliases' && !Object.prototype.hasOwnProperty.call(overrides, 'alias')) {
     parameters.delete('alias');
   }
   Object.entries(overrides).forEach(([key, value]) => {
@@ -2600,13 +2600,11 @@ async function requestServiceStatus() {
   }
 }
 
-function detailedHistoryAvailable() {
-  const logging = statsLoggingState();
+function detailedHistoryAvailable(logging = statsLoggingState()) {
   return !logging.available || logging.historyActive || logging.historyRetained;
 }
 
-function detailedHistoryNotice() {
-  const logging = statsLoggingState();
+function detailedHistoryNotice(logging = statsLoggingState()) {
   if (!logging.available) {
     return node('div', 'ui-notice ui-notice-danger ui-notice-spaced ui-inset-notice',
       'Saved activity status could not be checked. Previously saved activity may still be available.');
@@ -3145,6 +3143,7 @@ function cleanupTableLayoutMenu(controller) {
 }
 
 function table(rows, columns, emptyText = 'No rows', options = {}) {
+  const parameters = options.parameters || route;
   const tableType = tableLayouts.tableId(options.type);
   if (!(options.layoutMenuHost instanceof Node)) {
     throw new Error(`Table ${tableType} requires an owning title or action host`);
@@ -3340,8 +3339,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   };
 
   const updateSortIndicators = () => {
-    const effectiveServerSort = route.get('sort') || options.defaultSort;
-    const effectiveServerDirection = route.get('direction') || options.defaultDirection || 'desc';
+    const effectiveServerSort = parameters.get('sort') || options.defaultSort;
+    const effectiveServerDirection = parameters.get('direction') || options.defaultDirection || 'desc';
     headers.forEach((header, index) => {
       const column = columns[index];
       let direction = 'none';
@@ -3363,10 +3362,10 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     if (typeof column.renderHeader === 'function') {
       header.append(valueNode(column.renderHeader({ column, tableType, controller: tableController })));
     } else if (serverSortable) {
-      const currentSort = route.get('sort') || options.defaultSort;
-      const currentDirection = route.get('direction') || options.defaultDirection || 'desc';
+      const currentSort = parameters.get('sort') || options.defaultSort;
+      const currentDirection = parameters.get('direction') || options.defaultDirection || 'desc';
       const direction = currentSort === column.sort && currentDirection === 'desc' ? 'asc' : 'desc';
-      header.append(anchor(column.label, currentHref({ sort: column.sort, direction, offset: null }),
+      header.append(anchor(column.label, currentHref({ sort: column.sort, direction, offset: null }, parameters),
         'table-sort-control'));
     } else if (!options.serverSort && options.sortable !== false) {
       const control = node('button', 'table-sort-control', column.label);
@@ -3729,7 +3728,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
 function tableSection(title, rows, columns, emptyText = 'No rows', options = {}, trailing = null,
   action = null) {
   const actions = sectionActionHost(action);
-  const child = fragment(table(rows, columns, emptyText, { ...options, layoutMenuHost: actions,
+  const child = fragment((options.table || table)(rows, columns, emptyText, { ...options, layoutMenuHost: actions,
     overflowLabel: options.overflowLabel || (typeof title === 'string' ? title : title?.textContent) }), trailing);
   return section(title, child, actions);
 }
@@ -3842,30 +3841,31 @@ function searchBar(placeholder = 'Search') {
   return form;
 }
 
-function pager(page, position = 'bottom', itemLabel = 'Rows') {
+function pager(page, position = 'bottom', itemLabel = 'Rows', parameters = route) {
   const { offset, limit } = page;
   return browsingWorkflows.createBrowsingPager({ node, className: `pager-${position}`,
     ariaLabel: `${position === 'top' ? 'Top' : 'Bottom'} table pagination`,
     countText: browsingWorkflows.pageRangeText({ offset, visible: page.rows.length,
       total: page.total_count, label: itemLabel, format: number }),
-    previous: { enabled: offset > 0, href: currentHref({ offset: Math.max(0, offset - limit) }) },
-    next: { enabled: page.has_more, href: currentHref({ offset: page.next_offset }) }
+    previous: { enabled: offset > 0, href: currentHref({ offset: Math.max(0, offset - limit) }, parameters) },
+    next: { enabled: page.has_more, href: currentHref({ offset: page.next_offset }, parameters) }
   });
 }
 
 function pagedTableContent(page, columns, tableType, options = {}) {
   const itemLabel = options.itemLabel || 'Rows';
   const result = fragment();
-  if (options.topPager) result.append(pager(page, 'top', itemLabel));
-  result.append(table(page.rows, columns, options.emptyText || 'No rows', {
+  if (options.topPager) result.append(pager(page, 'top', itemLabel, options.parameters));
+  result.append((options.table || table)(page.rows, columns, options.emptyText || 'No rows', {
     type: tableType,
     serverSort: true,
     defaultSort: SERVER_TABLE_DEFAULT_SORTS[tableType] ||
       SERVER_TABLE_DEFAULT_SORTS[String(tableType).split('.')[0]],
     defaultDirection: 'desc',
+    parameters: options.parameters,
     ...(options.tableOptions || {})
   }));
-  result.append(pager(page, 'bottom', itemLabel));
+  result.append(pager(page, 'bottom', itemLabel, options.parameters));
   return result;
 }
 
@@ -7922,7 +7922,10 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const tuners = view === 'tuners';
     const spectrum = view === 'tuner-spectrum';
     const live = view === 'live';
-    const [feature, presentation] = await Promise.all(live ? [
+    const main = view === 'dashboard';
+    const [feature, presentation] = await Promise.all(main ? [
+      Promise.resolve(null), import('./guides/main-presentation.js?v=1')
+    ] : live ? [
       Promise.resolve(null), import('./guides/live-presentation.js?v=1')
     ] : spectrum ? [
       Promise.resolve(null), import('./guides/spectrum-presentation.js?v=2')
@@ -7934,9 +7937,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       import('./features/radioreference-import.js?v=33'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
-    const sample = (live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
+    const sample = (main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
       presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal, section });
-    if (spectrum || live) releases.push(() => sample.dispose());
+    if (spectrum || live || main) releases.push(() => sample.dispose());
     if (streaming && typeof sample.requestOperationalPreference !== 'function') {
       throw new Error('The Streaming guide settings could not be prepared.');
     }
@@ -7961,7 +7964,39 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     };
     let protectedRoots;
     let routingHost = null;
-    if (live) {
+    if (main) {
+      const surface = node('div', 'dashboard-guide-workspace');
+      surface.dataset.guideExample = 'dashboard';
+      // Scope protection precedes mounting and every asynchronous sample request.
+      releases.push(guideSampleData.register('dashboard-workspace', () => {}, { root: surface }));
+      releases.push(() => disconnectPageObserversWithin(surface));
+      content.replaceChildren(surface);
+      const request = name => async (...args) => {
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        const value = await sample[name](...args);
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        return value;
+      };
+      const tab = ['systems', 'reception', 'calls-tab'].includes(section) ? 'health' :
+        ['call-totals', 'call-history', 'identities', 'activity-tab'].includes(section) ? 'calls' :
+        ['event-type', 'activity-radios', 'inventory-tab'].includes(section) ? 'activity' : 'inventory';
+      const parameters = new URLSearchParams({ view: 'dashboard', tab });
+      if (['configured', 'unknown-tab', 'unknown'].includes(section)) {
+        parameters.set('alias_list_id', String(sample.selectedListId));
+      }
+      if (section === 'unknown') parameters.set('identity_tab', 'unassigned');
+      const messageCatalog = createMessageTypeCatalog();
+      messageCatalog.replace(sample.messageTypes);
+      workspace = await renderDashboard({ guideMode: true,
+        renderContext: { ...renderContext, signal: context.signal }, target: surface, tab, parameters,
+        api: request('api'), apiPage: request('apiPage'), table: sampleTable, messageCatalog,
+        historyState: { available: true, historyActive: true, historyRetained: true,
+          summaryConfigured: true, historyConfigured: true },
+        selectedSystemKey: sample.selectedSystemKey, selectedAction: sample.selectedAction
+      });
+      if (closed || !context.isCurrent()) { workspace?.dispose(); restore(); return restore; }
+      protectedRoots = [surface];
+    } else if (live) {
       const pageRoots = [];
       const guardedConnection = name => (...args) => {
         if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
@@ -8119,7 +8154,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
 }
 
 async function preparePageGuideSample(view, section, context) {
-  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
+  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
@@ -8784,7 +8819,7 @@ function callSourceLink(row) {
   return label;
 }
 
-function activityMetricGuide(includeCallMetrics = false) {
+function activityMetricGuide(includeCallMetrics = false, catalog = activityMessageTypes) {
   const details = node('details', 'ui-explainer');
   details.append(node('summary', '', 'Activity types and protocols'));
   const reference = node('table', 'ui-data-table ui-data-table-quiet');
@@ -8797,7 +8832,7 @@ function activityMetricGuide(includeCallMetrics = false) {
   const head = node('thead');
   head.append(heading);
   const body = node('tbody');
-  const entries = activityDefinitions().map((definition) => [definition.label, definition.meaning,
+  const entries = catalog.definitions('ACTION').map((definition) => [definition.label, definition.meaning,
     ['p25', 'dmr', 'nxdn'].filter((protocol) => definition[protocol])
       .map((protocol) => protocol.toUpperCase()).join(' · ') || '—']);
   if (includeCallMetrics) entries.unshift(...CALL_METRIC_GUIDE);
@@ -12801,15 +12836,15 @@ function dashboardSummarySection(title, values, history = null) {
   return block;
 }
 
-function dashboardActivityActionConfiguration(action) {
+function dashboardActivityActionConfiguration(action, catalog = activityMessageTypes) {
   const normalized = String(action || '').trim().toUpperCase();
-  return { action: normalized, label: activityOptionLabel(normalized) || 'Unknown',
+  return { action: normalized, label: catalog.label('ACTION', normalized) || 'Unknown',
     color: activityActionColor(normalized) };
 }
 
-function dashboardActivityActionRows(response) {
+function dashboardActivityActionRows(response, catalog = activityMessageTypes) {
   return (response?.rows || []).map((row) => {
-    const configuration = dashboardActivityActionConfiguration(row.action);
+    const configuration = dashboardActivityActionConfiguration(row.action, catalog);
     return {
       ...row,
       ...configuration,
@@ -12819,8 +12854,8 @@ function dashboardActivityActionRows(response) {
     .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label));
 }
 
-function dashboardActivityMix(response, selectedAction, onSelect) {
-  const actions = dashboardActivityActionRows(response);
+function dashboardActivityMix(response, selectedAction, onSelect, catalog = activityMessageTypes) {
+  const actions = dashboardActivityActionRows(response, catalog);
   if (!actions.length) return node('div', 'empty', 'No radio activity was saved for this time range.');
   const summedTotal = actions.reduce((sum, row) => sum + row.count, 0);
   const total = summedTotal;
@@ -12896,6 +12931,7 @@ function dashboardActivityMix(response, selectedAction, onSelect) {
   chart.append(svg);
   wrapper.append(chart, legend);
   updateSelection(actions.some((row) => row.action === selectedAction) ? selectedAction : '', false);
+  wrapper.selectActivity = action => updateSelection(action);
   return wrapper;
 }
 
@@ -12936,8 +12972,15 @@ function dashboardActivityRadioNote(page) {
     `${number(page.unknown_source_observation_count)} do not.`);
 }
 
-async function renderDashboardActivity(renderContext) {
-  const messageTypes = loadActivityMessageTypes();
+async function renderDashboardActivity(renderContext, options = {}) {
+  const target = options.target || content;
+  const requestApi = options.api || api;
+  const requestPage = options.apiPage || apiPage;
+  const makeTable = options.table || table;
+  const catalog = options.messageCatalog || activityMessageTypes;
+  const historyAvailable = () => detailedHistoryAvailable(options.historyState);
+  const historyNoticeForPage = () => detailedHistoryNotice(options.historyState);
+  const messageTypes = options.messageCatalog ? Promise.resolve() : loadActivityMessageTypes();
   let selectedRange = '24h';
   let selectedAction = '';
   let selectedActionLabel = '';
@@ -12964,7 +13007,7 @@ async function renderDashboardActivity(renderContext) {
     await loadSummary(buttons);
   });
   toolbar.append(rangeControl.controls);
-  content.append(toolbar, host);
+  target.append(toolbar, host);
 
   const nextRequest = (previous) => {
     previous?.controller.abort();
@@ -12992,8 +13035,8 @@ async function renderDashboardActivity(renderContext) {
     radioTitle.textContent = 'Source radios';
     radioStatus.textContent = '';
     radioStatus.hidden = true;
-    const historyNotice = detailedHistoryNotice();
-    if (!detailedHistoryAvailable()) {
+    const historyNotice = historyNoticeForPage();
+    if (!historyAvailable()) {
       radioHost.setAttribute('aria-busy', 'false');
       cleanupTableLayoutMenu(radioTableController);
       radioHost.replaceChildren(historyNotice);
@@ -13010,11 +13053,11 @@ async function renderDashboardActivity(renderContext) {
     selectedOffset = Math.max(0, Number(offset) || 0);
     const sequence = ++radioSequence;
     const action = selectedAction;
-    const actionLabel = selectedActionLabel || activityOptionLabel(action);
+    const actionLabel = selectedActionLabel || catalog.label('ACTION', action);
     radioTitle.textContent = `${actionLabel} · Source radios`;
     radioStatus.hidden = false;
-    const historyNotice = detailedHistoryNotice();
-    if (!detailedHistoryAvailable()) {
+    const historyNotice = historyNoticeForPage();
+    if (!historyAvailable()) {
       radioStatus.textContent = 'Saved event details are unavailable.';
       radioHost.setAttribute('aria-busy', 'false');
       cleanupTableLayoutMenu(radioTableController);
@@ -13041,7 +13084,7 @@ async function renderDashboardActivity(renderContext) {
     cleanupTableLayoutMenu(radioTableController);
     radioHost.replaceChildren(node('div', 'loading', 'Loading source radios…'));
     try {
-      const page = await apiPage('/api/v1/activity/radios', {
+      const page = await requestPage('/api/v1/activity/radios', {
         range: selectedRange, action, limit: 100, offset: selectedOffset
       }, { signal: request.controller.signal });
       if (sequence !== radioSequence || action !== selectedAction ||
@@ -13055,7 +13098,7 @@ async function renderDashboardActivity(renderContext) {
         (nextOffset) => void loadRadios(nextOffset, true));
       if (historyNotice) result.append(historyNotice);
       result.append(dashboardActivityRadioNote(page),
-        table(page.rows, dashboardActivityRadioColumns,
+        makeTable(page.rows, dashboardActivityRadioColumns,
           `No source radios were identified in saved ${actionLabel.toLowerCase()} events.`,
           {
             type: 'dashboard-activity-radios', sortable: false,
@@ -13067,7 +13110,7 @@ async function renderDashboardActivity(renderContext) {
     } catch (error) {
       if (error?.name === 'AbortError' || sequence !== radioSequence ||
           !renderIsCurrent(renderContext) || !host.isConnected) return;
-      if (error?.status === 401 || error?.status === 403) {
+      if (!options.guideMode && (error?.status === 401 || error?.status === 403)) {
         await refreshAccessSession(false);
         if (sequence === radioSequence && renderIsCurrent(renderContext) && host.isConnected) await render();
         return;
@@ -13090,12 +13133,13 @@ async function renderDashboardActivity(renderContext) {
 
   const renderSummary = (response) => {
     const mixBody = node('div', 'dashboard-activity-mix-body');
-    mixBody.append(dashboardActivityMix(response, selectedAction, (row) => {
+    const activityMix = dashboardActivityMix(response, selectedAction, (row) => {
       selectedAction = row.action;
       selectedActionLabel = row.label;
       selectedOffset = 0;
       void loadRadios(0);
-    }), node('p', 'ui-section-note',
+    }, catalog);
+    mixBody.append(activityMix, node('p', 'ui-section-note',
       'A call or radio can produce several signaling events.'));
     const mix = section(`Activity types · ${dashboardActivityRangeLabel(selectedRange)}`, mixBody);
     const radioBody = node('div', 'dashboard-activity-radio-body');
@@ -13106,7 +13150,7 @@ async function renderDashboardActivity(renderContext) {
     radioTitleActions = sectionActionHost();
     const radios = section('Source radios', radioBody, radioTitleActions);
     radioTitle = radios.querySelector('.section-title').firstChild;
-    host.replaceChildren(mix, radios, activityMetricGuide());
+    host.replaceChildren(mix, radios, activityMetricGuide(false, catalog));
     showRadioPrompt();
   };
 
@@ -13125,7 +13169,7 @@ async function renderDashboardActivity(renderContext) {
     host.replaceChildren(node('div', 'loading', 'Loading radio activity…'));
     try {
       const [response] = await Promise.all([
-        api('/api/v1/activity/actions', { range: selectedRange },
+        requestApi('/api/v1/activity/actions', { range: selectedRange },
           { signal: request.controller.signal }), messageTypes
       ]);
       if (sequence !== summarySequence || !renderIsCurrent(renderContext) || !host.isConnected) return;
@@ -13133,7 +13177,7 @@ async function renderDashboardActivity(renderContext) {
     } catch (error) {
       if (error?.name === 'AbortError' || sequence !== summarySequence ||
           !renderIsCurrent(renderContext) || !host.isConnected) return;
-      if (error?.status === 401 || error?.status === 403) {
+      if (!options.guideMode && (error?.status === 401 || error?.status === 403)) {
         await refreshAccessSession(false);
         if (sequence === summarySequence && renderIsCurrent(renderContext) && host.isConnected) await render();
         return;
@@ -13151,6 +13195,25 @@ async function renderDashboardActivity(renderContext) {
   };
 
   await loadSummary();
+  return {
+    element: host,
+    async selectGuideActivity(action) {
+      if (!options.guideMode) return;
+      const legend = host.querySelector('.dashboard-activity-layout');
+      if (!legend?.selectActivity) throw new Error('The Main tour could not be loaded. Try opening it again.');
+      legend.selectActivity(action);
+      while (radioRequest && !renderContext.signal?.aborted) {
+        await new Promise(resolve => window.setTimeout(resolve, 16));
+      }
+    },
+    close() {
+      summarySequence += 1;
+      radioSequence += 1;
+      [summaryRequest, radioRequest].forEach(request => { request?.controller.abort(); request?.unlink(); });
+      cleanupTableLayoutMenu(radioTableController);
+      radioTableController.widthObserver?.disconnect();
+    }
+  };
 }
 
 const groupIdentityColumns = [
@@ -13207,8 +13270,8 @@ function radioTableType(baseType, columns, system) {
   return tableLayouts.tableId(`${baseType}.${variant}`);
 }
 
-async function loadMainDashboard() {
-  const snapshot = await api('/api/v1/dashboard/main');
+async function loadMainDashboard(requestApi = api) {
+  const snapshot = await requestApi('/api/v1/dashboard/main');
   if (!Array.isArray(snapshot?.quality?.current) || capabilityAllowed(ACCESS_CAPABILITIES.RADIO) &&
       (!Array.isArray(snapshot?.directory?.systems) || !Array.isArray(snapshot?.directory?.channels) ||
         !snapshot.directory.systems.every((system) => Array.isArray(system.children)))) {
@@ -13217,12 +13280,82 @@ async function loadMainDashboard() {
   return snapshot;
 }
 
-async function renderDashboard() {
-  const renderContext = captureRenderContext();
+async function renderDashboard(options = {}) {
+  const guideMode = options.guideMode === true;
+  if (guideMode && (typeof options.api !== 'function' || typeof options.apiPage !== 'function' ||
+      typeof options.table !== 'function' || !options.target || !options.messageCatalog || !options.historyState)) {
+    throw new Error('The Main tour could not be loaded. Try opening it again.');
+  }
+  const renderContext = options.renderContext || captureRenderContext();
+  const target = options.target || content;
+  const requestApi = options.api || api;
+  let activityWorkspace = null;
+  let inventoryWorkspace = null;
+  let disposed = false;
+  const workspace = {
+    element: target,
+    async prepareGuide(section, context) {
+      if (!guideMode || disposed || context.signal.aborted || !context.isCurrent()) return;
+      if (['activity-radios', 'inventory-tab'].includes(section)) {
+        await activityWorkspace?.selectGuideActivity(options.selectedAction);
+      }
+      await new Promise(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+      if (disposed || context.signal.aborted || !context.isCurrent()) return;
+      const county = target.querySelector(`[data-directory-card-key="trunked:${CSS.escape(options.selectedSystemKey)}"]`);
+      const tabLink = id => navigation.querySelector(`a[href*="tab=${id}"]`);
+      const targets = {
+        systems: county, 'calls-tab': tabLink('calls'), 'call-totals': target.querySelector('.dashboard-summary-section'),
+        'call-history': target.querySelector('.dashboard-call-activity-chart-host .count-time-chart-svg'),
+        identities: target.querySelector('.dashboard-identity-split'), 'activity-tab': tabLink('activity'),
+        'event-type': target.querySelector('.dashboard-activity-legend-button[data-action="EMERGENCY"]'),
+        'activity-radios': target.querySelector('.dashboard-activity-radio-result'),
+        'inventory-tab': tabLink('inventory'), 'alias-list': target.querySelector('.alias-coverage-toolbar select'),
+        configured: target.querySelector('.alias-coverage-table-section .ui-table-wrap'),
+        'unknown-tab': [...target.querySelectorAll('.alias-coverage-table-header .ui-segmented-option')]
+          .find(button => button.textContent.includes('Unknown aliases')),
+        unknown: target.querySelector('.alias-coverage-table-section .ui-table-wrap')
+      };
+      if (section === 'reception') {
+        const readings = [...(county?.querySelectorAll('[data-directory-field="signal"], [data-directory-field="decode"]') || [])];
+        if (!readings.length) throw new Error('The Main tour could not be loaded. Try opening it again.');
+        readings.forEach(element => { element.dataset.guideTarget = 'mn-reception'; });
+      } else {
+        if (!targets[section]) throw new Error('The Main tour could not be loaded. Try opening it again.');
+        targets[section].dataset.guideTarget = `mn-${section}`;
+      }
+      const highlighted = [...target.querySelectorAll(`[data-guide-target="mn-${section}"]`)];
+      const first = highlighted[0];
+      if (first) {
+        first.scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+        const rectangles = highlighted.map(element => element.getBoundingClientRect());
+        const top = Math.min(...rectangles.map(bounds => bounds.top));
+        const bottom = Math.max(...rectangles.map(bounds => bounds.bottom));
+        const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
+        const availableBottom = window.innerHeight - 24;
+        const targetTop = headerBottom + 16;
+        const shift = bottom - top > availableBottom - targetTop ? bottom - availableBottom : top - targetTop;
+        if (shift) window.scrollBy({ top: shift, behavior: 'instant' });
+        const positioned = highlighted.map(element => element.getBoundingClientRect());
+        // Near the page end, align the target at the bottom to reserve room above.
+        if (Math.min(...positioned.map(bounds => bounds.top)) > targetTop + 2) {
+          window.scrollBy({ top: Math.max(...positioned.map(bounds => bounds.bottom)) - availableBottom,
+            behavior: 'instant' });
+        }
+        await new Promise(resolve => window.requestAnimationFrame(resolve));
+      }
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      activityWorkspace?.close();
+      inventoryWorkspace?.close();
+      if (guideMode) disconnectPageObserversWithin(target);
+    }
+  };
   // Preserve links to the former directory perspective after promoting inventory.
-  const requestedTab = route.get('directory_view') === 'coverage' ? 'inventory' : route.get('tab') || 'health';
+  const requestedTab = guideMode ? options.tab : route.get('directory_view') === 'coverage' ? 'inventory' : route.get('tab') || 'health';
   const tab = ['health', 'calls', 'activity', 'inventory'].includes(requestedTab) ? requestedTab : 'health';
-  const dashboard = tab === 'calls' ? await api('/api/v1/dashboard') : {};
+  const dashboard = tab === 'calls' ? await requestApi('/api/v1/dashboard', {}, guideMode ? { signal: renderContext.signal } : {}) : {};
   const callActivity = dashboard.call_activity || {};
   const callTotals = callActivity.totals || {};
   const descriptions = {
@@ -13241,44 +13374,50 @@ async function renderDashboard() {
   ], tab);
   navigation.classList.add('ui-page-nav-tabs');
   navigation.setAttribute('aria-label', 'Main sections');
-  if (!beginPage(renderContext, pageHeader('Main'), navigation,
-    ...(tab === 'inventory' ? [] : [node('p', 'ui-page-description', descriptions[tab])]))) return;
+  const pageNodes = [pageHeader('Main'), navigation,
+    ...(tab === 'inventory' ? [] : [node('p', 'ui-page-description', descriptions[tab])])];
+  if (guideMode) {
+    if (!renderIsCurrent(renderContext)) return workspace;
+    target.replaceChildren(...pageNodes);
+    target.querySelector('.page-header')?.append(uiPill('Example data'));
+  } else if (!beginPage(renderContext, ...pageNodes)) return;
 
   if (tab === 'inventory') {
-    if (capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) await renderAliasCoverageDirectory(renderContext, true);
-    else content.append(node('p', 'ui-feedback ui-feedback-error', 'Alias inventory is not available with your access.'));
-    return;
+    if (capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) inventoryWorkspace = await renderAliasCoverageDirectory(renderContext, true, options);
+    else target.append(node('p', 'ui-feedback ui-feedback-error', 'Alias inventory is not available with your access.'));
+    return workspace;
   }
 
   if (tab === 'health') {
     const loading = node('div', 'ui-feedback ui-feedback-loading', 'Loading systems and channels…');
-    content.append(loading);
-    const snapshot = await loadMainDashboard();
+    target.append(loading);
+    const snapshot = await loadMainDashboard(requestApi);
     if (!renderIsCurrent(renderContext)) return;
     loading.remove();
-    const directory = renderNestedRadioDirectory(renderContext, snapshot.directory, snapshot.quality.current);
+    const visibleDirectory = guideMode && !capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? undefined : snapshot.directory;
+    const directory = renderNestedRadioDirectory(renderContext, visibleDirectory, snapshot.quality.current, options);
     if (!renderIsCurrent(renderContext)) return;
     let refreshing = false;
-    pageInterval(async () => {
+    if (!guideMode) pageInterval(async () => {
       if (refreshing || !renderIsCurrent(renderContext)) return;
       refreshing = true;
       try {
-        const updated = await loadMainDashboard();
+        const updated = await loadMainDashboard(requestApi);
         if (!renderIsCurrent(renderContext)) return;
         directory.update(updated.directory, updated.quality.current);
       } catch (error) {
         if (renderIsCurrent(renderContext)) directory.failed(error);
       } finally { refreshing = false; }
     }, 5_000);
-    return;
+    return workspace;
   }
 
   if (tab === 'activity') {
-    await renderDashboardActivity(renderContext);
-    return;
+    activityWorkspace = await renderDashboardActivity(renderContext, options);
+    return workspace;
   }
 
-  content.append(dashboardSummarySection('Calls across all systems and channels · 24h', [
+  target.append(dashboardSummarySection('Calls across all systems and channels · 24h', [
     [dashboardMetricLabel(callActivity, 'logical_call_count', 'Calls'),
       callTotals.logical_call_count, dashboardMetricDisplay(callActivity, 'logical_call_count')],
     [dashboardMetricLabel(callActivity, 'recorded_logical_call_count', 'Recorded'),
@@ -13288,18 +13427,19 @@ async function renderDashboard() {
       callTotals.stream_submitted_logical_call_count,
       dashboardMetricDisplay(callActivity, 'stream_submitted_logical_call_count')]
   ], callActivity));
-  content.append(section('Call history · 24h', dashboardCallActivityChart(callActivity)));
+  target.append(section('Call history · 24h', dashboardCallActivityChart(callActivity)));
   const sourceRows = Array.isArray(dashboard.source_activity_24h) ? dashboard.source_activity_24h :
     dashboard.source_activity_24h?.rows || [];
-  content.append(tableSection('Calls by Conventional Channel · Last 24h', sourceRows,
-    dashboardCallSourceColumns, 'No call activity recorded', { type: 'dashboard-call-sources' }));
+  target.append(tableSection('Calls by Conventional Channel · Last 24h', sourceRows,
+    dashboardCallSourceColumns, 'No call activity recorded', { type: 'dashboard-call-sources', table: options.table }));
   const destinations = tableSection('Top Destinations · Last 24h', dashboard.top_destinations || [],
     dashboardIdentityColumns('Destination'), 'No call destinations recorded',
-    { type: 'dashboard-destinations' });
+    { type: 'dashboard-destinations', table: options.table });
   const sources = tableSection('Top Sources · Last 24h', dashboard.top_sources || [],
-    dashboardIdentityColumns('Source'), 'No call sources recorded', { type: 'dashboard-sources' });
-  content.append(node('div', 'dashboard-identity-split'));
-  content.lastChild.append(destinations, sources);
+    dashboardIdentityColumns('Source'), 'No call sources recorded', { type: 'dashboard-sources', table: options.table });
+  target.append(node('div', 'dashboard-identity-split'));
+  target.lastChild.append(destinations, sources);
+  return workspace;
 }
 
 const LIVE_DETAIL_SELECTION_KINDS = Object.freeze({ CONTROL: 'CONTROL', EXACT: 'EXACT', CONVENTIONAL: 'CONVENTIONAL' });
@@ -25198,8 +25338,9 @@ function radioDirectoryQualityOnly(currentQuality) {
   return { systems: [...systems.values()], channels: [] };
 }
 
-function renderNestedRadioDirectory(renderContext, directory, currentQuality = []) {
-  if (route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, true);
+function renderNestedRadioDirectory(renderContext, directory, currentQuality = [], options = {}) {
+  const target = options.target || content;
+  if (!options.guideMode && route.get('directory_view') === 'coverage') return renderAliasCoverageDirectory(renderContext, true);
   const wrapper = node('div', 'channel-admin-catalog radio-directory-local ui-catalog data-workspace');
   wrapper.dataset.uiDensity = 'comfortable';
   const toolbar = node('div', 'channel-admin-toolbar ui-catalog-toolbar');
@@ -25219,7 +25360,7 @@ function renderNestedRadioDirectory(renderContext, directory, currentQuality = [
   ], activeView, (value) => { activeView = value; draw(); });
   filters.setAttribute('aria-label', 'Filter radio directory');
   const exportLink = exportCsvLink('channels');
-  const refresh = uiActionButton('', 'icon-refresh', () => render(),
+  const refresh = uiActionButton('', 'icon-refresh', () => { if (!options.guideMode) void render(); },
     'ui-button ui-button-secondary ui-icon-button');
   refresh.title = 'Refresh radio directory';
   refresh.setAttribute('aria-label', refresh.title);
@@ -25265,7 +25406,7 @@ function renderNestedRadioDirectory(renderContext, directory, currentQuality = [
   wrapper.append(toolbar, feedback, directoryHost);
   draw();
 
-  content.append(radioDirectoryEmbeddedPanel('systems', wrapper));
+  target.append(radioDirectoryEmbeddedPanel('systems', wrapper));
   return {
     update(updated, quality) {
       if (!renderIsCurrent(renderContext)) return;
@@ -27242,10 +27383,10 @@ function aliasCoverageUnassignedColumns(analog = false) {
   return columns;
 }
 
-function aliasCoverageSearch(placeholder, onNavigate) {
+function aliasCoverageSearch(placeholder, onNavigate, parameters = route) {
   const form = node('form', 'alias-coverage-search');
   form.method = 'get';
-  for (const [key, value] of route.entries()) {
+  for (const [key, value] of parameters.entries()) {
     if (key === 'q' || key === 'offset') continue;
     const hidden = node('input');
     hidden.type = 'hidden';
@@ -27258,7 +27399,7 @@ function aliasCoverageSearch(placeholder, onNavigate) {
   const input = node('input', 'ui-input');
   input.type = 'search';
   input.name = 'q';
-  input.value = route.get('q') || '';
+  input.value = parameters.get('q') || '';
   input.placeholder = placeholder;
   input.setAttribute('aria-label', placeholder);
   field.append(input);
@@ -27267,9 +27408,9 @@ function aliasCoverageSearch(placeholder, onNavigate) {
   form.append(field, submit);
   form.addEventListener('submit', (event) => {
     event.preventDefault();
-    onNavigate(currentHref({ q: input.value.trim() || null, offset: null }));
+    onNavigate(currentHref({ q: input.value.trim() || null, offset: null }, parameters));
   });
-  if (route.get('q')) form.append(anchor('Clear', currentHref({ q: null, offset: null }),
+  if (parameters.get('q')) form.append(anchor('Clear', currentHref({ q: null, offset: null }, parameters),
     'ui-button ui-button-secondary'));
   return form;
 }
@@ -27338,13 +27479,15 @@ function aliasCoverageScope(overview) {
   return scope;
 }
 
-async function loadAliasCoverageModel(parameters, previous = null, signal = null) {
+async function loadAliasCoverageModel(parameters, previous = null, signal = null, dependencies = {}) {
+  const requestApi = dependencies.api || api;
+  const requestPage = dependencies.apiPage || apiPage;
   const selectedRange = parameters.get('range') || '24h';
   const activeTab = parameters.get('identity_tab') === 'unassigned' ? 'unassigned' : 'configured';
   const aliasStatus = ['recent', 'zero_calls', 'never_heard'].includes(parameters.get('alias_status')) ?
     parameters.get('alias_status') : 'all';
   const options = { signal };
-  const availableLists = previous?.lists || await apiPage('/api/v1/identities/lists', { limit: 500 }, options);
+  const availableLists = previous?.lists || await requestPage('/api/v1/identities/lists', { limit: 500 }, options);
   const lists = availableLists;
   const requested = parameters.get('alias_list_id');
   const selected = lists.rows.find((row) => String(row.alias_list_id) === requested);
@@ -27359,19 +27502,21 @@ async function loadAliasCoverageModel(parameters, previous = null, signal = null
     offset: parameters.get('offset') || 0, sort: parameters.get('sort') || 'logical_call_count',
     direction: parameters.get('direction') || 'desc' };
   const [overviewResult, aliases, unassigned] = await Promise.all([
-    api(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/overview`,
+    requestApi(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/overview`,
       { range: selectedRange }, options),
-    activeTab === 'configured' ? apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/aliases`,
+    activeTab === 'configured' ? requestPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/aliases`,
       { ...common, type: parameters.get('type') }, options) : Promise.resolve(emptyPage),
     activeTab === 'unassigned' ?
-      apiPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/unassigned`,
+      requestPage(`/api/v1/identities/lists/${encodeURIComponent(selectedListId)}/unassigned`,
         unassignedParameters, options) : Promise.resolve(null)
   ]);
   return { lists, selectedListId, overview: overviewResult, aliases, unassigned,
     selectedRange, activeTab, aliasStatus };
 }
 
-async function renderAliasCoverageDirectory(renderContext, embedded = false) {
+async function renderAliasCoverageDirectory(renderContext, embedded = false, dependencies = {}) {
+  const target = dependencies.target || content;
+  const parameters = dependencies.parameters || route;
   const directory = createAsyncSection('Alias inventory', {
     bare: true,
     loadingMessage: 'Loading Alias Lists…',
@@ -27379,7 +27524,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   });
   directory.host.classList.add('alias-coverage-loader');
   if (embedded) {
-    content.append(radioDirectoryEmbeddedPanel('coverage', directory.element));
+    target.append(radioDirectoryEmbeddedPanel('coverage', directory.element));
   } else if (!beginPage(renderContext, pageHeader('Radio Directory',
     'Browse aliases in a list, their activity, and the channels using them'),
     radioDirectoryPerspectiveControl('coverage'), directory.element)) return;
@@ -27387,11 +27532,15 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   let selectedModel = null;
   let updateSequence = 0;
   let updateController = null;
-  const navigateCoverage = (target, options = {}) => routeFoundation.navigate(window, target, (nextRoute) => {
-    route = nextRoute;
-    void refreshCoverage(nextRoute, options);
-  });
+  const navigateCoverage = (target, options = {}) => {
+    if (dependencies.guideMode) return;
+    return routeFoundation.navigate(window, target, (nextRoute) => {
+      route = nextRoute;
+      void refreshCoverage(nextRoute, options);
+    });
+  };
   const present = (model) => {
+    const parameters = dependencies.parameters || route;
     const { lists, selectedListId, overview, aliases, unassigned,
       selectedRange, activeTab, aliasStatus } = model;
     const wrapper = node('div', 'alias-coverage ui-catalog data-workspace');
@@ -27457,7 +27606,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     const tableToolbar = node('div', 'alias-coverage-table-toolbar');
     tableToolbar.append(aliasCoverageSearch(activeTab === 'unassigned' ?
       analog ? 'Search assigned numbers or channels' : 'Search unknown aliases' :
-      'Search configured aliases', navigateCoverage));
+      'Search configured aliases', navigateCoverage, parameters));
     if (activeTab === 'configured') {
       const status = uiSegmentedControl([
         { value: 'all', label: 'All' }, { value: 'recent', label: 'Recently heard' },
@@ -27469,20 +27618,20 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
       const kind = uiSegmentedControl([
         { value: 'all', label: 'All' }, { value: 'talkgroup', label: analog ? 'Assigned numbers' : 'Talkgroups' },
         ...(!analog ? [{ value: 'radio', label: 'Radios' }] : []), { value: 'other', label: 'Other' }
-      ], route.get('type') || 'all', (value) => navigateCoverage(currentHref({ type: value === 'all' ? null : value,
+      ], parameters.get('type') || 'all', (value) => navigateCoverage(currentHref({ type: value === 'all' ? null : value,
         offset: null })));
       kind.setAttribute('aria-label', 'Alias type');
       tableToolbar.append(status, kind);
     }
     tableSection.append(tableHeader, tableToolbar, activeTab === 'unassigned' ?
       pagedTableContent(unassigned, aliasCoverageUnassignedColumns(analog), 'alias-coverage-unassigned-v1', {
-        itemLabel: analog ? 'Assignments' : 'Observations', emptyText: analog ?
+        table: dependencies.table, parameters, itemLabel: analog ? 'Assignments' : 'Observations', emptyText: analog ?
           'Every heard assignment has a matching alias in this Alias List' :
           'Every observed identity is assigned in this Alias List',
         tableOptions: { defaultSort: 'logical_call_count', defaultDirection: 'desc',
           layoutMenuHost: tableActions } }) :
       pagedTableContent(aliases, aliasCoverageAliasesColumns(analog), 'alias-coverage-configured-v1', {
-        itemLabel: 'Aliases', emptyText: 'No configured aliases match these filters',
+        table: dependencies.table, parameters, itemLabel: 'Aliases', emptyText: 'No configured aliases match these filters',
         tableOptions: { defaultSort: aliasStatus === 'recent' ? 'last_evidence' : 'name',
           defaultDirection: aliasStatus === 'recent' ? 'desc' : 'asc', layoutMenuHost: tableActions } }));
 
@@ -27517,7 +27666,7 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
     tableSection?.setAttribute('aria-busy', 'true');
     directory.host.querySelector('.alias-coverage-refresh-error')?.remove();
     try {
-      const model = await loadAliasCoverageModel(parameters, selectedModel, updateController.signal);
+      const model = await loadAliasCoverageModel(parameters, selectedModel, updateController.signal, dependencies);
       if (sequence !== updateSequence || !renderIsCurrent(renderContext) || !directory.host.isConnected) return;
       directory.host.replaceChildren(present(model));
       selectedModel = model;
@@ -27542,8 +27691,10 @@ async function renderAliasCoverageDirectory(renderContext, embedded = false) {
   renderContext.signal?.addEventListener('abort', () => {
     updateController?.abort();
   }, { once: true });
-  await directory.load(() => loadAliasCoverageModel(new URLSearchParams(route), null, renderContext.signal),
+  await directory.load(() => loadAliasCoverageModel(new URLSearchParams(parameters), null, renderContext.signal, dependencies),
     (model) => { selectedModel = model; return present(model); }, renderContext);
+  return { element: directory.element,
+    close() { updateSequence += 1; updateController?.abort(); } };
 }
 
 function channelTabItems(channel) {

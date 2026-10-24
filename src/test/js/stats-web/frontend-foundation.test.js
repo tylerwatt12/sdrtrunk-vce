@@ -316,11 +316,11 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
   vm.createContext(context);
   for (const signature of [
     'radioSystemApiPath(radioSystemKey, child = "")',
-    'groupIdentityApiPath(radioSystemKey, identityKey, child = "")', 'currentHref(overrides = {})',
+    'groupIdentityApiPath(radioSystemKey, identityKey, child = "")', 'currentHref(overrides = {}, sourceParameters = route)',
     'pageParameters(extra = {})', 'entityPageTitle(kind, label, fallback = "")',
     'section(title, child, action = null)', 'sectionActionHost(action = null)',
     'replaceAsyncContent(host, rendered)', 'asyncSectionFailure(error, fallbackMessage, retry)',
-    'createAsyncSection(title, options = {})', 'pager(page, position = "bottom", itemLabel = "Rows")',
+    'createAsyncSection(title, options = {})', 'pager(page, position = "bottom", itemLabel = "Rows", parameters = route)',
     'pagedTableContent(page, columns, tableType, options = {})', 'radioTableType(baseType, columns, system)'
   ]) {
     const name = signature.slice(0, signature.indexOf('('));
@@ -469,8 +469,8 @@ async function checkAliasCoverageOnDemandUnassigned(aliasFamily) {
   };
   vm.createContext(context);
   for (const signature of ['aliasCoverageSummaryCards(totals, unassigned, analog = false)',
-    'async loadAliasCoverageModel(parameters, previous = null, signal = null)',
-    'async renderAliasCoverageDirectory(renderContext, embedded = false)']) {
+    'async loadAliasCoverageModel(parameters, previous = null, signal = null, dependencies = {})',
+    'async renderAliasCoverageDirectory(renderContext, embedded = false, dependencies = {})']) {
     const [asyncPrefix, declaration] = signature.startsWith('async ') ? ['async ', signature.slice(6)] : ['', signature];
     const name = declaration.slice(0, declaration.indexOf('('));
     vm.runInContext(`${asyncPrefix}function ${declaration} ${functionBinding(appSource, name)}`, context);
@@ -1304,8 +1304,10 @@ async function main() {
   assert.match(functionBinding(appSource, 'dashboardActivityMix'),
     /ui-button ui-button-secondary activity-series-button dashboard-activity-legend-button/);
   const dashboardActivity = functionBinding(appSource, 'renderDashboardActivity');
-  assert.match(dashboardActivity, /api\('\/api\/v1\/activity\/actions'/);
-  assert.match(dashboardActivity, /apiPage\('\/api\/v1\/activity\/radios'/,
+  assert.match(dashboardActivity, /const requestApi = options\.api \|\| api/);
+  assert.match(dashboardActivity, /const requestPage = options\.apiPage \|\| apiPage/);
+  assert.match(dashboardActivity, /requestApi\('\/api\/v1\/activity\/actions'/);
+  assert.match(dashboardActivity, /requestPage\('\/api\/v1\/activity\/radios'/,
     'Selecting an activity type restores its paged source-radio drilldown.');
   assert.match(dashboardActivity, /cleanupTableLayoutMenu\(radioTableController\)/);
   const tunerSpectrumPanel = functionBinding(appSource, 'tunerSpectrumPanel');
@@ -1369,7 +1371,7 @@ async function main() {
     { alias_list_id: 5, family: 'NXDN' }
   ] };
   const loadAliasCoverageModel = vm.runInNewContext(
-    `(async function loadAliasCoverageModel(parameters, previous = null, signal = null) ${
+    `(async function loadAliasCoverageModel(parameters, previous = null, signal = null, dependencies = {}) ${
       functionBinding(appSource, 'loadAliasCoverageModel')})`, {
       apiPage: async (path, parameters) => {
         coverageRequests.push(path);
@@ -1584,8 +1586,9 @@ async function main() {
   assert.match(tunerAllocationRenderer, /recordList: true/);
   assert.match(tunerAllocationRenderer, /sortable: false/);
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
-  // Live panes inject the same production table builder for isolated examples.
-  const tableCalls = [...functionCalls(appSource, 'table'), ...functionCalls(appSource, 'makeTable')];
+  // Audit direct calls and the production table factories used by isolated examples.
+  const tableAuditSource = appSource.replace(/\(options\.table \|\| table\)(?=\()/g, 'makeTable');
+  const tableCalls = [...functionCalls(tableAuditSource, 'table'), ...functionCalls(tableAuditSource, 'makeTable')];
   assert.equal(tableCalls.length, 22, 'Every application table call must be audited');
   const rrGuidePreparation = functionBinding(appSource, 'prepareWorkspaceGuideSample');
   assert.match(rrGuidePreparation, /return table\(rows, columns, emptyText, \{ \.\.\.options, controller, presentation: true \}\)/,

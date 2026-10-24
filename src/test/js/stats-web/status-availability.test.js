@@ -58,8 +58,8 @@ vm.runInContext(`
   ${functionSource('async function requestServiceStatus()')}
   ${functionSource('function statsLoggingState()')}
   ${functionSource('function p25VisualizerMenuAvailable()')}
-  ${functionSource('function detailedHistoryAvailable()')}
-  ${functionSource('function detailedHistoryNotice()')}
+  ${functionSource('function detailedHistoryAvailable(')}
+  ${functionSource('function detailedHistoryNotice(')}
   ${functionSource('function databaseLoggingNotice(view)')}
   globalThis.statusState = () => ({
     value: serviceStatus,

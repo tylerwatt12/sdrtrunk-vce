@@ -12,7 +12,7 @@ async function checkDashboardData(appSource, functionBinding) {
     ACCESS_CAPABILITIES: { RADIO: 'radio' }, capabilityAllowed: () => true,
     api: async (path) => { requests.push(path); return next; }
   });
-  vm.runInContext(`async function loadMainDashboard() ${functionBinding(appSource, 'loadMainDashboard')}`, context);
+  vm.runInContext(`async function loadMainDashboard(requestApi = api) ${functionBinding(appSource, 'loadMainDashboard')}`, context);
   assert.strictEqual(await context.loadMainDashboard(), main);
   assert.deepEqual(requests, ['/api/v1/dashboard/main']);
   for (const invalid of [null, {}, { quality: { current: [] }, directory: { systems: [{}], channels: [] } }]) {
@@ -58,7 +58,7 @@ async function checkDashboardData(appSource, functionBinding) {
     pageInterval: (refresh, interval) => { assert.equal(interval, 5_000); callback = refresh; },
     renderDashboardActivity: async () => {}
   });
-  vm.runInContext(`async function renderDashboard() ${functionBinding(appSource, 'renderDashboard')}`, page);
+  vm.runInContext(`async function renderDashboard(options = {}) ${functionBinding(appSource, 'renderDashboard')}`, page);
   await page.renderDashboard();
   assert.equal(loads, 1);
   assert.deepEqual(dataRequests, [], 'Main does not load the call-statistics dashboard.');

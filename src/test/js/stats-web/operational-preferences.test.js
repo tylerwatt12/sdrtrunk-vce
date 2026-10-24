@@ -115,7 +115,7 @@ async function main() {
   'The new groups must preserve the existing endpoint capabilities.');
 
   assert.match(application, /active === 'operations'\) await renderAdminOperationalPreferences/);
-  assert.match(functionSource('function detailedHistoryNotice()'),
+  assert.match(functionSource('function detailedHistoryNotice('),
     /anchor\('Activity settings', href\('admin', \{ tab: 'activity' \}\)\)/);
   assert.doesNotMatch(application, /Stats & Web > Stats Server/);
 

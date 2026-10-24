@@ -60,6 +60,7 @@ async function checkDashboardActivity(source, functionBinding) {
   const context = vm.createContext({
     node, content, AbortController, DASHBOARD_ACTIVITY_RANGES: [['6h', '6h'], ['24h', '24h'], ['7d', '7d']],
     number: value => String(value), activityOptionLabel: value => ({ GRANT: 'Calls', AFFILIATE: 'Affiliations' }[value]),
+    activityMessageTypes: { label: (_kind, value) => ({ GRANT: 'Calls', AFFILIATE: 'Affiliations' }[value]) },
     activityActionColor: () => '#123456', ACCESS_CAPABILITIES: { RADIO: 'radio' },
     capabilityAllowed: () => access, detailedHistoryAvailable: () => history,
     detailedHistoryNotice: () => history ? null : node('p', '', 'Saved event details are unavailable.'),
@@ -125,15 +126,15 @@ async function checkDashboardActivity(source, functionBinding) {
       }
     }
   });
-  for (const [name, parameters] of Object.entries({ dashboardActivityActionConfiguration: 'action',
-    dashboardActivityActionRows: 'response', dashboardActivityMix: 'response, selectedAction, onSelect',
+  for (const [name, parameters] of Object.entries({ dashboardActivityActionConfiguration: 'action, catalog = activityMessageTypes',
+    dashboardActivityActionRows: 'response, catalog = activityMessageTypes', dashboardActivityMix: 'response, selectedAction, onSelect, catalog = activityMessageTypes',
     dashboardActivityRadio: 'row', dashboardActivityRangeLabel: 'range',
     dashboardActivityRadioPager: 'page, onOffset', dashboardActivityRadioNote: 'page' })) {
     vm.runInContext(`function ${name}(${parameters}) ${functionBinding(source, name)}`, context);
   }
   vm.runInContext(source.slice(source.indexOf('const dashboardActivityRadioColumns = ['),
     source.indexOf('\n];', source.indexOf('const dashboardActivityRadioColumns = [')) + 3), context);
-  vm.runInContext(`async function renderDashboardActivity(renderContext) ${functionBinding(source, 'renderDashboardActivity')}`, context);
+  vm.runInContext(`async function renderDashboardActivity(renderContext, options = {}) ${functionBinding(source, 'renderDashboardActivity')}`, context);
   const select = async action => {
     content.querySelectorAll('[data-action]').find(element => element.tag === 'button' && element.dataset.action === action)
       .events.click();

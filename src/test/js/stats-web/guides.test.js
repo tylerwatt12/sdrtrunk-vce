@@ -52,7 +52,7 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
@@ -84,6 +84,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('tuners').version, 3);
   assert.equal(createGuideDefinition('tuner-spectrum').version, 4);
   assert.equal(createGuideDefinition('live').version, 3);
+  assert.equal(createGuideDefinition('dashboard').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -808,6 +809,49 @@ async function checkGuides(assetsRoot) {
   assert.equal(getScanListsGuideData().rows[0].name, 'Fire Dispatch', 'Each step receives independent sample records.');
   await require('./spectrum-guide-data.test.js').checkSpectrumGuideData(assets);
   await require('./live-guide-data.test.js').checkLiveGuideData(assets);
+  await require('./main-guide-data.test.js').checkMainGuideData(assets);
+
+  const mainTour = createGuideDefinition('dashboard', {
+    documentValue: targetDocument,
+    preparePlayer: () => { prepared.push('main-player'); return () => released.push('main-player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const mainSections = ['overview', 'systems', 'reception', 'calls-tab', 'call-totals', 'call-history',
+    'identities', 'activity-tab', 'event-type', 'activity-radios', 'inventory-tab', 'alias-list',
+    'configured', 'unknown-tab', 'unknown'];
+  assert.deepEqual(mainTour.steps.map(step => step.id), mainSections);
+  assert.equal(mainTour.steps[0].items.length, 4, 'Main introduces its four real sections before numbered stops.');
+  assert.equal(mainTour.steps[0].prepare, undefined, 'Main’s concept overview keeps the original page visible.');
+  for (const step of mainTour.steps.slice(1)) {
+    assert.deepEqual(targetNames(step), [`mn-${step.id}`]);
+    assert.deepEqual(step.samples, [{ id: 'dashboard-workspace', value: { section: step.id } }]);
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), ['main-player', ['dashboard', step.id, context]]);
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'main-player']);
+  }
+  for (const [opener, destination] of [['calls-tab', 'call-totals'], ['activity-tab', 'event-type'],
+    ['event-type', 'activity-radios'], ['inventory-tab', 'alias-list'], ['alias-list', 'configured'],
+    ['unknown-tab', 'unknown']]) {
+    assert.equal(mainSections.indexOf(opener) + 1, mainSections.indexOf(destination),
+      'Every Main tab, event and Alias List destination follows its dedicated real opening control.');
+  }
+  assert.equal(mainTour.steps.at(-1).nextLabel, 'Finish');
+  const restrictedMain = createGuideDefinition('dashboard', { canAccess: capability => capability !== 'radio' });
+  assert.deepEqual(restrictedMain.steps.map(step => step.id),
+    ['overview', 'systems', 'reception', 'calls-tab', 'call-totals', 'call-history']);
+  assert.equal(restrictedMain.steps.at(-1).nextLabel, 'Finish');
+  assert.equal(restrictedMain.steps[0].items.some(item => item.label === 'Alias Inventory'), false);
+  const failedMain = createGuideDefinition('dashboard', {
+    preparePlayer: () => () => released.push('main-player'),
+    preparePage: () => { throw new Error('Main sample preparation failed'); }
+  });
+  await assert.rejects(failedMain.steps[1].prepare({}), /Main sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['main-player']);
 
   const liveTour = createGuideDefinition('live', {
     documentValue: targetDocument,
@@ -958,6 +1002,27 @@ async function checkGuides(assetsRoot) {
   assert.equal(restrictedRadioReference.shown.length, 0,
     'A requested RadioReference tour preserves the production route’s access restrictions.');
 
+  const firstMainVisit = makeHarness({ context: { view: 'dashboard' }, storage: {
+    getItem: key => /:welcome:1$|:dashboard:[12]$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await firstMainVisit.controller.pageReady();
+  assert.equal(firstMainVisit.shown.at(-1).options.id, 'dashboard');
+  assert.equal(firstMainVisit.shown.at(-1).options.version, 3,
+    'The earlier Main placeholder does not suppress its authored tour.');
+  firstMainVisit.finish();
+  firstMainVisit.controller.destroy();
+  const completedMain = makeHarness({ context: { view: 'dashboard' }, storage: {
+    getItem: key => /:welcome:1$|:dashboard:3$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  assert.equal(await completedMain.controller.pageReady(), false);
+  completedMain.controller.destroy();
+  const deniedMain = makeHarness({ context: { view: 'dashboard', guide: 'dashboard', canView: view => view !== 'dashboard' } });
+  assert.equal(await deniedMain.controller.pageReady(), false);
+  assert.equal(deniedMain.shown.length, 0);
+  deniedMain.controller.destroy();
+
   const firstLiveVisit = makeHarness({ context: { view: 'live' }, storage: {
     getItem: key => /:welcome:1$|:live:[12]$/.test(key) ? '1' : null,
     setItem() {}
@@ -1061,7 +1126,7 @@ async function checkGuides(assetsRoot) {
   dismissedWelcome.dismiss();
   await dismissedWelcome.controller.pageReady();
   assert.equal(dismissedWelcome.shown.length, 1, 'Dismissing welcome does not immediately launch another tour.');
-  dismissedWelcome.context.view = 'dashboard';
+  dismissedWelcome.context.view = 'recordings';
   await dismissedWelcome.controller.pageReady();
   assert.equal(dismissedWelcome.shown.length, 1, 'Blank page templates do not interrupt users automatically.');
   await dismissedWelcome.controller.openPage();
@@ -1084,7 +1149,7 @@ async function checkGuides(assetsRoot) {
   await dismissedWelcome.controller.pageReady();
   assert.equal(dismissedWelcome.shown.length, afterAliasesCompletion,
     'Finishing the Aliases tour remembers completion without reopening another guide.');
-  dismissedWelcome.context.view = 'dashboard';
+  dismissedWelcome.context.view = 'recordings';
   await dismissedWelcome.controller.pageReady();
   dismissedWelcome.context.view = 'aliases';
   await dismissedWelcome.controller.pageReady();

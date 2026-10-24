@@ -6,17 +6,18 @@ import { streamingSteps } from './pages/streaming.js?v=2';
 import { tunersSteps } from './pages/tuners.js?v=2';
 import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=3';
 import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=1';
+import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=1';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
   'scan-lists': scanListsSteps, radioreference: radioReferenceSteps, streaming: streamingSteps, tuners: tunersSteps,
-  'tuner-spectrum': spectrumSteps, live: liveSteps });
+  'tuner-spectrum': spectrumSteps, live: liveSteps, dashboard: mainSteps });
 // Page concepts stay separate from the numbered controls that follow them.
 // Keep a purpose and practical radio use here even while a walkthrough is pending.
 const pageOverviewCopy = Object.freeze({
-  dashboard: ['Follow your radio systems',
-    'See activity across your radio systems and use the statistics to find busy talkgroups, active radios, and changes over time.'],
+  dashboard: ['Know what you’re receiving',
+    'Main brings together reception quality and the traffic VCE has heard.'],
   live: ['Follow your radio traffic',
     'Live shows what your channels are receiving as it happens. Follow calls, identify the radios and talkgroups involved, and investigate reception.',
     'Choose what you hear through Scan Lists in the player. Calls play after each transmission finishes.'],
@@ -66,7 +67,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4, live: 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4, live: 3, dashboard: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -273,7 +274,8 @@ export function createGuideDefinition(id, { documentValue = globalThis.document,
   if (authoredPages[id]) return { ...template, eyebrow: template.title,
     steps: [{ ...template.overview, ...(id === 'tuner-spectrum' ?
       spectrumOverviewPresentation(preparePlayer, preparePage) : id === 'live' ?
-        liveOverviewPresentation(preparePlayer, preparePage) : {}) }, ...authoredPages[id](documentValue, preparePlayer, preparePage, canView, canAccess)] };
+        liveOverviewPresentation(preparePlayer, preparePage) : id === 'dashboard' ?
+          { items: mainOverviewItems(canAccess) } : {}) }, ...authoredPages[id](documentValue, preparePlayer, preparePage, canView, canAccess)] };
   return { ...template, eyebrow: template.title, steps: [
     { ...template.overview, nextLabel: 'Continue' },
     { id: 'coming-soon', title: 'Guide coming soon', paragraphs: [

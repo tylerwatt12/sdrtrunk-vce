@@ -86,7 +86,7 @@ test('initial status makes one request and leaves recovery to the next confirmed
     api: async () => { calls++; throw new Error('Timed out'); } };
   vm.createContext(value);
   const start = source.indexOf('async function requestServiceStatus()');
-  vm.runInContext(source.slice(start, source.indexOf('\nfunction detailedHistoryAvailable()', start)), value);
+  vm.runInContext(source.slice(start, source.indexOf('\nfunction detailedHistoryAvailable(', start)), value);
   await assert.rejects(value.requestServiceStatus(), /Timed out/);
   assert.equal(calls, 1); assert.equal(failures, 1);
 });
