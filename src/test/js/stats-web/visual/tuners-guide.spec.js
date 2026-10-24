@@ -68,6 +68,7 @@ async function expectOverview(page) {
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
   await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
   await expect(graph(page)).toBeVisible();
+  await expect(graph(page).locator('button, input, select, [data-coverage-time]')).toHaveCount(0);
   await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample], .ui-setup-guide-layer')).toHaveCount(0);
 }
 
@@ -111,12 +112,14 @@ async function expectSpotlight(page, id) {
     }), { message: `${id} remains below the sticky application header` }).toBeNull();
     await expect.poll(() => target.evaluate(element => {
       const rect = element.getBoundingClientRect();
-      return [...document.querySelectorAll('.ui-setup-guide-highlight')].some(highlight => {
+      const highlights = [...document.querySelectorAll('.ui-setup-guide-highlight')].map(highlight => {
         const box = highlight.getBoundingClientRect();
-        return box.left <= rect.left + 1 && box.top <= rect.top + 1 &&
-          box.right >= rect.right - 1 && box.bottom >= rect.bottom - 1;
+        return { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
       });
-    }), { message: `${id} highlights its actual production control` }).toBe(true);
+      return highlights.some(box => box.left <= rect.left + 1 && box.top <= rect.top + 1 &&
+        box.right >= rect.right - 1 && box.bottom >= rect.bottom - 1) ? null :
+        { target: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }, highlights };
+    }), { message: `${id} highlights its actual production control` }).toBeNull();
     await expect.poll(() => target.evaluate(element => {
       const rect = element.getBoundingClientRect();
       const card = document.querySelector('.ui-setup-guide').getBoundingClientRect();
@@ -182,6 +185,33 @@ for (const { theme, width, height } of [
       await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
       await expect(guide(page)).toContainText(`Step ${index + 1} of ${steps.length}`);
       for (const id of step.targets) await expectSpotlight(page, id);
+      if (theme === 'light' && step.id === 'modes') {
+        const target = page.locator('[data-guide-target="tn-modes"]');
+        const originalBounds = await target.boundingBox();
+        const originalPadding = await page.locator('#content').evaluate(element => ({
+          value: element.style.getPropertyValue('padding-top'),
+          priority: element.style.getPropertyPriority('padding-top'),
+          computed: Number.parseFloat(getComputedStyle(element).paddingTop)
+        }));
+        try {
+          await page.locator('#content').evaluate((element, padding) => {
+            element.style.setProperty('padding-top', `${padding.computed + 24}px`);
+          }, originalPadding);
+          await expect.poll(async () => (await target.boundingBox()).y - originalBounds.y,
+            { message: 'Page reflow moves the actual mode control without resizing it' }).toBeGreaterThan(23);
+          const movedBounds = await target.boundingBox();
+          expect(movedBounds.width).toBeCloseTo(originalBounds.width, 2);
+          expect(movedBounds.height).toBeCloseTo(originalBounds.height, 2);
+          await expectSpotlight(page, 'tn-modes');
+        } finally {
+          await page.locator('#content').evaluate((element, padding) => {
+            if (padding.value) element.style.setProperty('padding-top', padding.value, padding.priority);
+            else element.style.removeProperty('padding-top');
+          }, originalPadding);
+        }
+        await expect.poll(async () => Math.abs((await target.boundingBox()).y - originalBounds.y)).toBeLessThan(1);
+        await expectSpotlight(page, 'tn-modes');
+      }
       await expectWithinViewport(guide(page), { width, height });
       await expectWithinViewport(guide(page).getByRole('button', { name: 'Close guide', exact: true }), { width, height });
       await expectWithinViewport(guide(page).getByRole('button', {
@@ -196,6 +226,11 @@ for (const { theme, width, height } of [
       } else await expect(page.locator('.read-only-modal:not(.ui-setup-guide)')).toHaveCount(0);
       if (step.id === 'frequency-limits-button') await expect(page.locator('.tuners-common-details')).not.toHaveAttribute('open');
       if (step.id === 'frequency-limits') await expect(page.locator('.tuners-common-details')).toHaveAttribute('open');
+      if (step.id === 'center-frequency') {
+        await expect(guide(page)).toContainText('Click the upper half of a digit to increase it, or the lower half to decrease it.');
+        await expect(guide(page)).toContainText('To type a frequency, hover over the first digit you want to replace, enter the new digits, and press Enter.');
+        await expect(page.locator('.tuners-center-frequency')).toHaveAttribute('tabindex', '0');
+      }
       if (['receiving-window', 'center-frequency', 'lock-center', 'gain', 'frequency-correction', 'frequency-limits'].includes(step.id)) {
         await expect(page.locator('[data-mode="setup"]')).toHaveAttribute('aria-pressed', 'true');
         await expect(page.locator('select[data-tuner-setting="sample_rate"]')).toBeEnabled();
@@ -392,7 +427,7 @@ test('Tuners returns an expanded Recordings player after all sample receiver mod
   expectNoEffects(fixture, requests);
 });
 
-test('the Tuners overview graph stays isolated, finishes its two passes, and releases animation on Start and Back', async ({ page }) => {
+test('the Tuners overview graph loops after a minute, preserves reception history, and releases animation on Start and Back', async ({ page }) => {
   await page.clock.install();
   const { fixture, requests } = await openTuners(page, { reducedMotion: false });
   await expectOverview(page);
@@ -400,17 +435,30 @@ test('the Tuners overview graph stays isolated, finishes its two passes, and rel
   const storageBefore = await nonGuideStorage(page);
   await graph(page).evaluate(element => { window.tunersOriginalGraph = element; });
   await expect(graph(page)).toHaveAttribute('data-playing', 'true');
-  await page.clock.runFor(10500);
+  await page.clock.runFor(3400);
   await expect(graph(page).locator('[data-call="regional-missed"]')).toHaveAttribute('data-received', 'false');
   await expect(graph(page).locator('[data-call="regional-later"]')).toHaveAttribute('data-received', 'true');
+  expect(await graph(page).locator('[data-call]').count(), 'The receiving history contains several calls').toBeGreaterThanOrEqual(5);
+  await expect(graph(page).locator('svg')).toContainText('24s');
   await screenshot(page, 'tuners-overview-after-retune-light');
-  await page.clock.runFor(4000);
-  await expect(graph(page)).toHaveAttribute('data-playing', 'false');
-  expect(Number(await graph(page).getAttribute('data-time'))).toBeGreaterThanOrEqual(26);
+  const traceBefore = Number(await graph(page).locator('[data-call="regional-later"]').getAttribute('y2'));
+  await page.clock.runFor(500);
+  const traceAfter = Number(await graph(page).locator('[data-call="regional-later"]').getAttribute('y2'));
+  expect(traceAfter - traceBefore, 'The 24-second history scrolls at six simulated seconds per second').toBeGreaterThan(14);
+  expect(traceAfter - traceBefore).toBeLessThan(19);
+  const beforeLoop = Number(await graph(page).getAttribute('data-time'));
+  await page.clock.fastForward(61000);
+  await page.clock.runFor(80);
+  await expect(graph(page)).toHaveAttribute('data-playing', 'true');
+  await expect(graph(page)).toHaveAttribute('data-cycle', '1');
+  const afterLoop = Number(await graph(page).getAttribute('data-time'));
+  expect(afterLoop).toBeGreaterThanOrEqual(0);
+  expect(afterLoop).toBeLessThan(360);
+  expect(Math.abs(afterLoop - (beforeLoop + 61 * 6 - 360))).toBeLessThan(1);
+  expect(await graph(page).locator('[data-call]').count()).toBeGreaterThanOrEqual(5);
+  await screenshot(page, 'tuners-overview-after-one-minute-light');
   expect(await page.locator('#content').evaluate(element => window.tunersOverviewOriginal
     .every((node, index) => element.childNodes[index] === node))).toBe(true);
-  await graph(page).locator('[data-coverage-replay]').click();
-  await expect(graph(page)).toHaveAttribute('data-playing', 'true');
   await startTour(page);
   expect(await page.evaluate(() => ({ disposed: window.tunersOriginalGraph.dataset.disposed,
     playing: window.tunersOriginalGraph.dataset.playing }))).toEqual({ disposed: 'true', playing: 'false' });
@@ -434,7 +482,7 @@ for (const dismiss of ['Close guide', 'Escape', 'shade', 'navigation']) {
     await graph(page).evaluate(element => { window.tunersDismissedGraph = element; });
     if (dismiss === 'Close guide') await guide(page).getByRole('button', { name: dismiss, exact: true }).click();
     else if (dismiss === 'Escape') {
-      await graph(page).locator('[data-coverage-play]').focus();
+      await guide(page).getByRole('button', { name: 'Start tour', exact: true }).focus();
       await page.keyboard.press('Escape');
     } else if (dismiss === 'shade') await page.mouse.click(8, 500);
     else await page.locator('.primary-nav [data-view="dashboard"]').evaluate(link => link.click());
@@ -447,15 +495,41 @@ for (const dismiss of ['Close guide', 'Escape', 'shade', 'navigation']) {
   });
 }
 
-test('Tuners reduced motion keeps the overview static until the operator starts playback', async ({ page }) => {
+test('Tuners automatic graph respects reduced motion and pauses and resumes with page visibility', async ({ page }) => {
+  await page.clock.install();
   const { fixture, requests } = await openTuners(page);
   await expectOverview(page);
   await expect(graph(page)).toHaveAttribute('data-playing', 'false');
   expect(Number(await graph(page).getAttribute('data-time'))).toBe(0);
-  await graph(page).locator('[data-coverage-play]').click();
+  await page.clock.runFor(1000);
+  expect(Number(await graph(page).getAttribute('data-time'))).toBe(0);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await expect(graph(page)).toHaveAttribute('data-playing', 'true');
-  await graph(page).locator('[data-coverage-play]').click();
+  await page.clock.runFor(1000);
+  const visibleTime = Number(await graph(page).getAttribute('data-time'));
+  expect(visibleTime).toBeGreaterThan(4);
+  await page.evaluate(() => {
+    Object.defineProperty(document, 'hidden', { configurable: true, value: true });
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
   await expect(graph(page)).toHaveAttribute('data-playing', 'false');
+  const hiddenTime = Number(await graph(page).getAttribute('data-time'));
+  await page.clock.runFor(5000);
+  expect(Number(await graph(page).getAttribute('data-time'))).toBe(hiddenTime);
+  await page.evaluate(() => {
+    delete document.hidden;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await expect(graph(page)).toHaveAttribute('data-playing', 'true');
+  await page.clock.runFor(1000);
+  const resumedTime = Number(await graph(page).getAttribute('data-time'));
+  expect(resumedTime - hiddenTime, 'Hidden time does not jump the animation forward').toBeGreaterThan(4);
+  expect(resumedTime - hiddenTime).toBeLessThan(8);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(graph(page)).toHaveAttribute('data-playing', 'false');
+  const staticTime = Number(await graph(page).getAttribute('data-time'));
+  await page.clock.runFor(1000);
+  expect(Number(await graph(page).getAttribute('data-time'))).toBe(staticTime);
   await page.keyboard.press('Escape');
   expectNoEffects(fixture, requests);
 });

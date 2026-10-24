@@ -3,6 +3,41 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
+function coverageDiagramHarness() {
+  const frames = new Map(), nodes = [], observers = [];
+  const events = () => {
+    const listeners = new Map();
+    return { listeners,
+      addEventListener(type, callback) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(callback); },
+      removeEventListener(type, callback) { listeners.get(type)?.delete(callback); },
+      emit(type) { [...(listeners.get(type) || [])].forEach(callback => callback()); }
+    };
+  };
+  const element = tag => {
+    const item = { tag, children: [], dataset: {}, attributes: {}, ...events(),
+      append(...children) { children.forEach(child => { child.remove?.(); child.parentNode = item; item.children.push(child); }); },
+      replaceChildren(...children) { item.children.forEach(child => { child.parentNode = null; }); item.children = []; item.append(...children); },
+      setAttribute(name, value) { item.attributes[name] = String(value); },
+      remove() { if (item.parentNode) item.parentNode.children = item.parentNode.children.filter(child => child !== item); item.parentNode = null; },
+      getBoundingClientRect: () => ({ width: 960, height: 207 }) };
+    nodes.push(item); return item;
+  };
+  let nextFrame = 0;
+  const motion = { matches: false, ...events() };
+  const windowValue = { ...events(), matchMedia: () => motion,
+    requestAnimationFrame(callback) { frames.set(++nextFrame, callback); return nextFrame; },
+    cancelAnimationFrame(id) { frames.delete(id); },
+    ResizeObserver: class {
+      constructor(callback) { this.callback = callback; observers.push(this); }
+      observe() { this.observing = true; }
+      disconnect() { this.observing = false; }
+    } };
+  const document = { hidden: false, defaultView: windowValue, ...events(),
+    createElement: element, createElementNS: (namespace, tag) => element(tag) };
+  return { document, windowValue, motion, nodes, frames, observers,
+    flush(timestamp) { const queued = [...frames.values()]; frames.clear(); queued.forEach(callback => callback(timestamp)); } };
+}
+
 async function checkGuides(assetsRoot) {
   const assets = path.resolve(assetsRoot || process.argv[2] || 'stats-web/assets');
   const load = (relative) => import(pathToFileURL(path.join(assets, relative)).href);
@@ -440,12 +475,32 @@ async function checkGuides(assetsRoot) {
   const releaseFailedTuner = await failedTunerCleanup.steps[1].prepare({});
   assert.throws(releaseFailedTuner, /Tuner cleanup failed/);
   assert.deepEqual(released.splice(0), ['player']);
-  const { TUNER_COVERAGE_MODEL: coverageModel, coverageCenterAt, coverageReceiverFor } =
+  const { TUNER_COVERAGE_MODEL: coverageModel, coverageCenterAt, coverageReceiverFor, coverageTimeAt,
+    coverageCallsAt, createTunerCoverageDiagram } =
     await load('guides/tuner-coverage.js');
   assert.deepEqual([coverageModel.rtl.sampleRate, coverageModel.rtl.usableBandwidth,
     coverageModel.airspy.sampleRate, coverageModel.airspy.usableBandwidth], [2.4, 2.352, 10, 9]);
-  assert.equal(coverageModel.duration / coverageModel.speed, 13,
-    'The finite overview takes thirteen seconds of wall time at twice the simulated speed.');
+  assert.equal(coverageModel.duration / coverageModel.speed, 60,
+    'The overview runs for one minute before repeating.');
+  assert.ok(coverageModel.history / coverageModel.speed <= 4,
+    'Twenty-four seconds of waterfall history scroll through at least three times faster than before.');
+  assert.equal(new Set(coverageModel.calls.map(call => call.id)).size, coverageModel.calls.length);
+  for (const call of coverageModel.calls) {
+    assert.ok([call.frequency, call.start, call.end].every(Number.isFinite) && call.end > call.start);
+    assert.ok(call.start >= 0 && call.start < coverageModel.duration);
+  }
+  for (let time = coverageModel.history; time <= coverageModel.duration; time += coverageModel.history) {
+    const arrivals = coverageModel.calls.filter(call => call.start >= time - coverageModel.history && call.start < time);
+    assert.ok(arrivals.length >= 2, 'Each faster-scrolling history window continues to show radio traffic.');
+  }
+  for (const time of [-24, -.25, 0, 14, 155, coverageModel.duration - .25]) {
+    assert.equal(coverageTimeAt(time + coverageModel.duration), coverageTimeAt(time));
+    assert.equal(coverageCenterAt(time + coverageModel.duration), coverageCenterAt(time),
+      'Receiving-window placement repeats continuously across the loop boundary.');
+    assert.equal(coverageCenterAt(time, false), coverageModel.initialCenter);
+  }
+  assert.equal(coverageTimeAt(coverageModel.duration), 0);
+  assert.equal(coverageTimeAt(-.25), coverageModel.duration - .25);
   const coverageCall = id => coverageModel.calls.find(call => call.id === id);
   assert.equal(coverageReceiverFor(coverageCall('regional-missed')), null);
   assert.equal(coverageReceiverFor(coverageCall('regional-later')), 'RTL-SDR');
@@ -453,18 +508,97 @@ async function checkGuides(assetsRoot) {
   assert.equal(coverageReceiverFor(coverageCall('distant-later')), null);
   assert.equal(coverageReceiverFor(coverageCall('regional-missed')), null,
     'The earlier missed transmission stays missed after a later transmission fits the shifted window.');
-  const shifted = coverageCenterAt(coverageModel.duration);
-  for (const frequency of [coverageModel.controls[0].frequency, coverageCall('fire').frequency]) {
-    assert.ok(frequency - .00625 >= shifted - coverageModel.rtl.usableBandwidth / 2 &&
-      frequency + .00625 <= shifted + coverageModel.rtl.usableBandwidth / 2,
-    'Retuning retains the existing control and conventional receiving channels.');
+  const rtlCovers = (frequency, center) => frequency - .00625 >= center - coverageModel.rtl.usableBandwidth / 2 &&
+    frequency + .00625 <= center + coverageModel.rtl.usableBandwidth / 2 &&
+    !(frequency - .00625 < center + .005 && frequency + .00625 > center - .005);
+  assert.ok(coverageModel.retunes.length >= 4, 'Long playback includes occasional placements in both directions.');
+  for (const retune of coverageModel.retunes) {
+    assert.ok([retune.start, retune.end, retune.from, retune.to].every(Number.isFinite));
+    assert.ok(retune.end > retune.start && retune.start >= 0 && retune.end <= coverageModel.duration);
+    assert.equal(coverageCenterAt(retune.start), retune.from);
+    assert.equal(coverageCenterAt(retune.end), retune.to);
+    const activeCalls = coverageModel.calls.filter(call => call.start < retune.end && call.end > retune.end &&
+      coverageReceiverFor(call) === 'RTL-SDR');
+    for (const frequency of [coverageModel.controls[0].frequency, coverageCall('fire').frequency,
+      ...activeCalls.map(call => call.frequency)]) {
+      assert.ok(rtlCovers(frequency, retune.from) && rtlCovers(frequency, retune.to),
+        'A center change keeps full control, conventional, and currently received voice channels inside usable bandwidth.');
+    }
   }
+  const retainedHistory = coverageModel.retunes.filter(retune => retune.to === coverageModel.initialCenter)
+    .map(returnPlacement => ({ returnPlacement, earlierReceived: coverageModel.calls.find(call =>
+      call.frequency === coverageCall('regional-later').frequency && call.end < returnPlacement.end &&
+      call.end > returnPlacement.end - coverageModel.history && coverageReceiverFor(call) === 'RTL-SDR') }))
+    .find(example => example.earlierReceived);
+  assert.ok(retainedHistory, 'A received call remains in visible history when the RTL-SDR returns to its earlier center.');
+  const { returnPlacement, earlierReceived } = retainedHistory;
+  assert.equal(rtlCovers(earlierReceived.frequency, coverageCenterAt(returnPlacement.end)), false);
+  assert.equal(coverageReceiverFor(earlierReceived), 'RTL-SDR',
+    'A later center change preserves the reception outcome of calls already in the waterfall.');
   const lowerEdge = coverageModel.initialCenter - coverageModel.rtl.usableBandwidth / 2;
   assert.equal(coverageReceiverFor({ frequency: lowerEdge + .001, start: 0 }), null,
     'The whole channel must fit inside usable bandwidth, including its width near an edge.');
   assert.equal(coverageReceiverFor({ frequency: coverageModel.initialCenter, start: 0 }), null,
     'The RTL-SDR center notch stays excluded just as it does for actual channel placement.');
-  assert.equal(coverageCenterAt(coverageModel.duration, false), coverageModel.initialCenter);
+  const precedingHistory = coverageCallsAt(0);
+  assert.ok(precedingHistory.length >= 2 && precedingHistory.some(call => call.start < 0),
+    'The first displayed history window retains transmissions from the preceding loop.');
+  assert.deepEqual(coverageCallsAt(coverageModel.duration).map(call => call.sourceId),
+    precedingHistory.map(call => call.sourceId), 'The loop boundary keeps a populated waterfall.');
+  for (const elapsed of [0, 14, 155, coverageModel.duration - .1, coverageModel.duration + 2]) {
+    for (const call of coverageCallsAt(elapsed)) {
+      assert.ok(call.start <= elapsed && call.end >= elapsed - coverageModel.history,
+        'Visible traces belong to the current history interval.');
+      const original = coverageModel.calls.find(candidate => candidate.id === call.sourceId);
+      assert.ok(original);
+      assert.equal(coverageReceiverFor(call), coverageReceiverFor(original),
+        'Carrying a transmission across the loop boundary retains its received or missed outcome.');
+    }
+  }
+  const animation = coverageDiagramHarness();
+  const coverageDiagram = createTunerCoverageDiagram({ document: animation.document, idPrefix: 'coverage-contract' });
+  const diagramAbort = new AbortController();
+  const closeDiagram = coverageDiagram.mount({ signal: diagramAbort.signal });
+  assert.equal(animation.nodes.some(node => ['button', 'input'].includes(node.tag)), false,
+    'The overview animation runs automatically without adding operating controls.');
+  assert.equal(animation.frames.size, 1);
+  animation.flush(0); animation.flush(100);
+  animation.flush(60100);
+  assert.equal(coverageDiagram.element.dataset.cycle, '1');
+  assert.equal(coverageDiagram.element.dataset.playing, 'true');
+  assert.equal(animation.frames.size, 1, 'The overview continues animating after its one-minute boundary.');
+  assert.equal(animation.nodes.filter(node => node.attributes['data-call'] && node.parentNode).length,
+    coverageCallsAt(coverageModel.duration + coverageModel.speed / 10).length,
+    'Looping retains only the transmissions in the currently displayed history.');
+  const beforeHidden = Number(coverageDiagram.element.dataset.time);
+  assert.ok(beforeHidden > 0);
+  animation.document.hidden = true; animation.document.emit('visibilitychange');
+  assert.equal(animation.frames.size, 0, 'A hidden overview releases its animation frame.');
+  animation.document.hidden = false; animation.document.emit('visibilitychange');
+  assert.equal(animation.frames.size, 1, 'Returning to the visible overview resumes its animation.');
+  animation.flush(200000);
+  assert.equal(Number(coverageDiagram.element.dataset.time), beforeHidden,
+    'Time spent in a hidden tab does not fast-forward the diagram.');
+  animation.flush(200100);
+  assert.ok(Number(coverageDiagram.element.dataset.time) > beforeHidden);
+  animation.motion.matches = true; animation.motion.emit('change');
+  assert.equal(animation.frames.size, 0, 'Reduced motion stops automatic movement.');
+  animation.motion.matches = false; animation.motion.emit('change');
+  assert.equal(animation.frames.size, 1);
+  const lateFrame = [...animation.frames.values()][0];
+  const beforeDismissal = coverageDiagram.element.dataset.time;
+  diagramAbort.abort(); closeDiagram();
+  assert.equal(animation.frames.size, 0);
+  lateFrame(300000);
+  assert.equal(coverageDiagram.element.dataset.time, beforeDismissal,
+    'A frame already queued before dismissal cannot update the removed overview.');
+  assert.ok(animation.observers.every(observer => !observer.observing));
+  for (const owner of [animation.document, animation.windowValue, animation.motion]) {
+    assert.ok([...owner.listeners.values()].every(listeners => listeners.size === 0),
+      'Dismissal releases visibility, motion, and page lifecycle listeners.');
+    owner.emit('visibilitychange'); owner.emit('change');
+  }
+  assert.equal(animation.frames.size, 0, 'A dismissed overview cannot restart from a later lifecycle event.');
   const { createTunersGuideData } = await load('guides/tuners-presentation.js');
   const tunerExamples = createTunersGuideData();
   const tunerApi = '/api/v1/admin/tuners';

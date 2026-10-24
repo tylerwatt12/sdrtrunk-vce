@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=15';
+import { createGuideController } from './guides/controller.js?v=16';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -32154,7 +32154,8 @@ async function renderTuners(options = {}) {
       window.scrollBy({ top: top - headerBottom - 12, behavior: 'instant' });
     }
     else targets.forEach(target => target.scrollIntoView({
-      block: section === 'lock-center' ? 'end' : 'center', inline: 'nearest', behavior: 'instant'
+      block: ['center-frequency', 'lock-center'].includes(section) ? 'end' : 'center',
+      inline: 'nearest', behavior: 'instant'
     }));
   }
   return { element: workspace, prepareGuide, dispose, close: dispose };

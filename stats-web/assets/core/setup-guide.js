@@ -1,7 +1,7 @@
 // Shared page guidance: the modal foundation owns focus, dismissal and replacement.
 // Steps only describe copy, existing targets and temporary presentation work.
 import { createGuideDiagram } from '../guides/diagrams.js?v=1';
-import { createTunerCoverageDiagram } from '../guides/tuner-coverage.js?v=1';
+import { createTunerCoverageDiagram } from '../guides/tuner-coverage.js?v=2';
 
 const dynamicGuideDiagrams = Object.freeze({ 'tuner-coverage': createTunerCoverageDiagram });
 
@@ -454,6 +454,9 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
       if (typeof ResizeObserver !== 'undefined') {
         observer ||= new ResizeObserver(schedule);
         observer.observe(modal.dialog);
+        // Page reflow can move a target without changing the target's size.
+        const pageContent = document.getElementById('content');
+        if (pageContent) observer.observe(pageContent, { box: 'border-box' });
         targets().forEach(target => observer.observe(target));
       }
       options.onStepChange?.(index, step);

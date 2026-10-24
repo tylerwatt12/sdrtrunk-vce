@@ -1,31 +1,79 @@
 // Fictional receiving windows. This illustration owns only its animation and DOM;
 // the actual tuner page and receiver remain untouched throughout the overview.
 const freezeRows = rows => Object.freeze(rows.map(row => Object.freeze(row)));
+const templates = freezeRows([
+  { key: 'fire', name: 'Fire Dispatch', frequency: 856.6125, duration: 3, type: 'conventional' },
+  { key: 'regional', name: 'Regional Fire', frequency: 857.9125, duration: 3.5, type: 'voice' },
+  { key: 'sheriff', name: 'Sheriff', frequency: 856.9125, duration: 3.75, type: 'voice' },
+  { key: 'regional', name: 'Regional Fire', frequency: 857.9125, duration: 3.5, type: 'voice' },
+  { key: 'city-fire', name: 'City Fire', frequency: 861.5125, duration: 4.25, type: 'voice' },
+  { key: 'distant', name: 'Distant voice call', frequency: 868.1125, duration: 3, type: 'voice' },
+  { key: 'public-works', name: 'Public Works', frequency: 865.8125, duration: 2.75, type: 'conventional' },
+  { key: 'ems', name: 'County EMS', frequency: 856.7625, duration: 3.25, type: 'voice' },
+  { key: 'city-police', name: 'City Police', frequency: 863.5125, duration: 4, type: 'voice' },
+  { key: 'county-tac', name: 'Sheriff Tactical', frequency: 857.1125, duration: 3.25, type: 'voice' },
+  { key: 'utilities', name: 'Utilities', frequency: 859.5125, duration: 2.5, type: 'conventional' },
+  { key: 'city-ems', name: 'City EMS', frequency: 862.8125, duration: 4.25, type: 'voice' }
+]);
+const initialIds = ['fire', 'regional-missed', 'sheriff', 'regional-later', 'city-fire', 'distant-missed',
+  'public-works', 'ems', 'city-police', 'county-tac', 'utilities', 'city-ems'];
+const variedSlots = [0, 2, 4, 5, 6, 7, 8, 9, 10, 11];
+let namedLaterDistant = false;
+const calls = freezeRows(Array.from({ length: 80 }, (_, index) => {
+  const batch = Math.floor(index / templates.length), slot = index % templates.length;
+  // Keep the outer-edge calls in safe gaps around the receiving-window moves.
+  // Vary other ordering and lengths throughout the one-minute illustration.
+  const rotation = batch ? (batch * 7 + Math.floor(batch / 3)) % variedSlots.length : 0;
+  const sourceSlot = slot === 1 || slot === 3 ? slot :
+    variedSlots[(variedSlots.indexOf(slot) + rotation) % variedSlots.length];
+  const template = templates[sourceSlot], start = .75 + index * 4.5;
+  const duration = template.key === 'regional' || !batch ? template.duration :
+    template.duration + ((index * 7 + batch) % 5 - 2) * .2;
+  let id = batch ? `call-${index}-${template.key}` : initialIds[slot];
+  if (batch && template.key === 'distant' && !namedLaterDistant) { id = 'distant-later'; namedLaterDistant = true; }
+  return { id, name: template.name, frequency: template.frequency, start, end: start + duration, type: template.type };
+}));
 export const TUNER_COVERAGE_MODEL = Object.freeze({
-  duration: 26, history: 24, speed: 2,
+  duration: 360, history: 24, speed: 6, arrivalInterval: 4.5, retuneCycle: 180,
+  maximumCallDuration: Math.max(...calls.map(call => call.end - call.start)),
   initialCenter: 856.1625, shiftedCenter: 857.1625,
   rtl: Object.freeze({ name: 'RTL-SDR R820T2', sampleRate: 2.4, usableBandwidth: 2.352 }),
   airspy: Object.freeze({ name: 'Airspy R2', center: 862.6625, sampleRate: 10, usableBandwidth: 9 }),
   controls: freezeRows([{ name: 'County P25 control', frequency: 856.3625 },
     { name: 'City P25 control', frequency: 862.3125 }]),
-  calls: freezeRows([
-    { id: 'fire', name: 'Fire Dispatch', frequency: 856.6125, start: -1, end: 2.5, type: 'conventional' },
-    { id: 'sheriff', name: 'Sheriff', frequency: 856.9125, start: 1, end: 5.2, type: 'voice' },
-    { id: 'city-fire', name: 'City Fire', frequency: 861.5125, start: 3.5, end: 7.5, type: 'voice' },
-    { id: 'regional-missed', name: 'Regional Fire', frequency: 857.9125, start: 7, end: 10.6, type: 'voice' },
-    { id: 'public-works', name: 'Public Works', frequency: 865.8125, start: 9, end: 12, type: 'conventional' },
-    { id: 'distant-missed', name: 'Distant voice call', frequency: 868.1125, start: 10.5, end: 13.5, type: 'voice' },
-    { id: 'regional-later', name: 'Regional Fire', frequency: 857.9125, start: 14, end: 18.5, type: 'voice' },
-    { id: 'ems', name: 'County EMS', frequency: 856.7625, start: 16, end: 19.2, type: 'voice' },
-    { id: 'city-police', name: 'City Police', frequency: 863.5125, start: 18.5, end: 22.5, type: 'voice' },
-    { id: 'distant-later', name: 'Distant voice call', frequency: 868.1125, start: 21, end: 24, type: 'voice' }
-  ])
+  retunes: freezeRows(Array.from({ length: 2 }, (_, cycle) => [
+    { start: cycle * 180 + 13.5, end: cycle * 180 + 14, from: 856.1625, to: 857.1625 },
+    { start: cycle * 180 + 154.5, end: cycle * 180 + 155, from: 857.1625, to: 856.1625 }
+  ]).flat()),
+  calls
 });
+
+export function coverageTimeAt(time) {
+  const duration = TUNER_COVERAGE_MODEL.duration;
+  return ((time % duration) + duration) % duration;
+}
 
 export function coverageCenterAt(time, includeRetune = true) {
   const model = TUNER_COVERAGE_MODEL;
-  return model.initialCenter + (includeRetune ? model.shiftedCenter - model.initialCenter : 0) *
-    Math.max(0, Math.min(1, (time - 13.5) / .5));
+  const phase = ((time % model.retuneCycle) + model.retuneCycle) % model.retuneCycle;
+  // Receiver retunes are discrete. Keeping the change discrete also avoids
+  // depicting an invented sweep of its center notch through existing channels.
+  return includeRetune && phase >= 14 && phase < 155 ? model.shiftedCenter : model.initialCenter;
+}
+
+export function coverageCallsAt(time) {
+  const model = TUNER_COVERAGE_MODEL;
+  const first = Math.ceil((time - model.history - model.maximumCallDuration - .75) / model.arrivalInterval);
+  const last = Math.floor((time - .75) / model.arrivalInterval);
+  const visible = [];
+  for (let index = first; index <= last; index += 1) {
+    const cycle = Math.floor(index / model.calls.length);
+    const sourceIndex = ((index % model.calls.length) + model.calls.length) % model.calls.length;
+    const call = model.calls[sourceIndex], offset = cycle * model.duration;
+    if (call.end + offset >= time - model.history) visible.push({ ...call, sourceId: call.id,
+      cycle, start: call.start + offset, end: call.end + offset });
+  }
+  return visible;
 }
 
 export function coverageReceiverFor(call, includeRetune = true) {
@@ -58,20 +106,6 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
   };
   const root = node('div', 'ui-setup-guide-coverage');
   root.dataset.guideDiagram = 'tuner-coverage';
-  const controls = node('div', 'ui-setup-guide-coverage-controls');
-  const play = node('button', 'ui-button ui-button-secondary', 'Pause');
-  const replay = node('button', 'ui-button ui-button-secondary', 'Replay');
-  play.type = replay.type = 'button';
-  play.dataset.coveragePlay = replay.dataset.coverageReplay = '';
-  const retuneLabel = node('label', 'ui-setup-guide-coverage-retune');
-  const retune = node('input', 'ui-selection-check');
-  retune.type = 'checkbox';
-  retune.checked = true;
-  retune.dataset.coverageRetune = '';
-  retuneLabel.append(retune, node('span', '', 'Include an unlocked RTL-SDR example'));
-  const elapsed = node('span', 'ui-setup-guide-coverage-time');
-  elapsed.dataset.coverageTime = '';
-  controls.append(play, replay, retuneLabel, elapsed);
   const receivers = node('div', 'ui-setup-guide-coverage-receivers');
   const rtlMode = node('span', '', 'Locked');
   for (const [name, detail, mode, className] of [
@@ -88,7 +122,6 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
   }
   const scene = node('div', 'ui-setup-guide-coverage-scene');
   scene.dataset.coverageScene = '';
-  scene.setAttribute('aria-live', 'polite');
   const sceneTitle = node('strong');
   const sceneCopy = node('span');
   scene.append(sceneTitle, sceneCopy);
@@ -110,97 +143,129 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
   recent.setAttribute('aria-label', 'Latest transmission');
   const note = node('p', 'ui-setup-guide-coverage-note',
     'Received calls can play through your selected Scan Lists after the transmission ends.');
-  root.append(controls, receivers, scene, svg, legend, recent, note);
+  root.append(receivers, scene, svg, legend, recent, note);
 
   const mount = ({ signal } = {}) => {
     const reduced = windowValue.matchMedia('(prefers-reduced-motion: reduce)');
-    let time = 0, includeRetune = true, playing = !reduced.matches && !document.hidden;
-    let frame = null, lastFrame = null, lastPaint = null, disposed = false;
+    let time = 0, playing = !reduced.matches && !document.hidden;
+    let frame = null, lastFrame = null, lastPaint = null, disposed = false, observer = null;
     let lastScene = '', lastRecent = '', width = 960;
     const left = 44, right = 12, top = 36, plotHeight = 132, height = 207;
     const clipId = `${idPrefix}-clip`, edgeId = `${idPrefix}-edge`;
     const x = frequency => left + (frequency - 854.2) / (868.8 - 854.2) * (width - left - right);
-    const y = transmissionTime => top + (time - transmissionTime) / model.history * plotHeight;
+    const y = moment => top + (time - moment) / model.history * plotHeight;
+    const defs = svgNode('defs'), clip = svgNode('clipPath', { id: clipId });
+    const clipRect = svgNode('rect', { x: left, y: top, height: plotHeight });
+    clip.append(clipRect);
+    const edge = svgNode('pattern', { id: edgeId, width: 6, height: 6, patternUnits: 'userSpaceOnUse' });
+    edge.append(svgNode('path', { d: 'M-1 1L1-1M0 6L6 0M5 7L7 5', class: 'coverage-edge-line' }));
+    defs.append(clip, edge);
+    const chart = svgNode('g', { 'clip-path': `url(#${clipId})` });
+    const bands = svgNode('g'), grid = svgNode('g'), controlTraces = svgNode('g'), callTraces = svgNode('g');
+    const bandPaths = name => [svgNode('path', { fill: `url(#${edgeId})` }),
+      svgNode('path', { fill: `url(#${edgeId})` }), svgNode('path', { class: `coverage-band-${name}` })];
+    const rtlPaths = bandPaths('rtl'), airspyPaths = bandPaths('airspy');
+    bands.append(...rtlPaths, ...airspyPaths);
+    chart.append(bands, grid, controlTraces, callTraces);
+    const annotations = svgNode('g');
+    const rtlCaption = svgNode('text', { y: 22, 'text-anchor': 'middle' }, 'RTL-SDR');
+    const airspyCaption = svgNode('text', { y: 22, 'text-anchor': 'middle' }, 'Airspy');
+    svg.replaceChildren(title, description, defs, chart, annotations);
+    const activeCalls = new Map();
     const sceneAt = () => {
-      if (time < 6.5) return ['Several channels share each window', 'Control channels stay present while conventional and voice calls arrive.'];
-      if (time < 13) return ['A call falls outside usable coverage', 'Regional Fire begins beyond both usable receiving windows, so its audio is missed.'];
-      if (!includeRetune) return ['Locked windows stay in place', 'The later Regional Fire call also falls outside coverage.'];
-      if (time < 14) return ['The RTL-SDR is unlocked', 'Its window can move when existing channels and the new frequency fit together.'];
-      if (time < 20.5) return ['A later call fits after retuning', 'Regional Fire now fits alongside the RTL-SDR’s existing control and conventional channels.'];
-      return ['Each call needs usable coverage', 'Distant voice calls remain outside both windows. Earlier missed calls stay missed in the history.'];
+      const phase = ((time % model.retuneCycle) + model.retuneCycle) % model.retuneCycle;
+      if (phase < 5.25) return ['Several channels share each window', 'Control channels stay present while conventional and voice calls arrive.'];
+      if (phase < 13.5) return ['A call falls outside usable coverage', 'Regional Fire lies beyond both usable receiving windows, so its audio is missed.'];
+      if (phase < 14) return ['The RTL-SDR is unlocked', 'Its window can move when existing channels and the new frequency fit together.'];
+      if (phase < 40) return ['Retuning changes which calls fit', 'The shifted RTL-SDR window covers Regional Fire alongside its existing control and conventional channels.'];
+      if (phase < 154.5) return ['Each call needs usable coverage', 'Distant voice calls remain outside both windows. Earlier missed calls stay missed in the history.'];
+      if (phase < 155) return ['The receiving window returns', 'The existing channels fit in both positions.'];
+      return ['Locked windows stay in place', 'Calls outside these usable receiving windows are missed.'];
     };
-    const band = (target, centerAt, usableHalf, sampledHalf, className) => {
-      const points = [];
-      for (let moment = time; moment > time - model.history; moment -= .25) points.push([moment, centerAt(moment)]);
-      points.push([time - model.history, centerAt(time - model.history)]);
+    const drawBand = (paths, centerAt, usableHalf, sampledHalf, moments) => {
+      const points = moments.map(moment => [moment, centerAt(moment)]);
       const path = (start, end) => `M${points.map(([moment, center]) => `${x(center + start)},${y(moment)}`).join('L')}` +
         `L${[...points].reverse().map(([moment, center]) => `${x(center + end)},${y(moment)}`).join('L')}Z`;
-      target.append(svgNode('path', { d: path(-sampledHalf, -usableHalf), fill: `url(#${edgeId})` }),
-        svgNode('path', { d: path(usableHalf, sampledHalf), fill: `url(#${edgeId})` }),
-        svgNode('path', { d: path(-usableHalf, usableHalf), class: className }));
+      paths[0].setAttribute('d', path(-sampledHalf, -usableHalf));
+      paths[1].setAttribute('d', path(usableHalf, sampledHalf));
+      paths[2].setAttribute('d', path(-usableHalf, usableHalf));
     };
     const render = () => {
       if (disposed) return;
-      root.dataset.time = time.toFixed(2);
+      root.dataset.time = coverageTimeAt(time).toFixed(2);
+      root.dataset.cycle = String(Math.floor(time / model.duration));
       root.dataset.playing = String(playing);
-      root.dataset.rtlCenter = String(coverageCenterAt(time, includeRetune));
-      play.textContent = playing ? 'Pause' : time >= model.duration ? 'Play again' : 'Play';
-      elapsed.textContent = `${Math.floor(time)} / ${model.duration} s`;
-      rtlMode.textContent = includeRetune && time >= 13 ? 'Unlocked' : 'Locked';
+      root.dataset.rtlCenter = String(coverageCenterAt(time));
+      const phase = ((time % model.retuneCycle) + model.retuneCycle) % model.retuneCycle;
+      rtlMode.textContent = phase >= 13.5 && phase < 155 ? 'Unlocked' : 'Locked';
       const nextScene = sceneAt();
       if (nextScene[0] !== lastScene) {
         [sceneTitle.textContent, sceneCopy.textContent] = nextScene;
         lastScene = nextScene[0];
       }
+      const moments = [time, time - model.history];
+      for (let cycle = Math.floor((time - model.history) / model.retuneCycle); cycle <= Math.floor(time / model.retuneCycle); cycle += 1) {
+        for (const offset of [14, 155]) {
+          const boundary = cycle * model.retuneCycle + offset;
+          if (boundary <= time && boundary > time - model.history) moments.push(boundary, boundary - .000001);
+        }
+      }
+      moments.sort((a, b) => b - a);
+      drawBand(rtlPaths, coverageCenterAt, model.rtl.usableBandwidth / 2, model.rtl.sampleRate / 2, moments);
+      rtlCaption.setAttribute('x', x(coverageCenterAt(time)));
+      const visible = coverageCallsAt(time), keys = new Set();
+      for (const call of visible) {
+        const key = `${call.cycle}:${call.id}`;
+        keys.add(key);
+        let trace = activeCalls.get(key);
+        if (!trace) {
+          const receiver = coverageReceiverFor(call);
+          trace = svgNode('line', { class: `coverage-call ${call.type} ${receiver ? 'received' : 'missed'}`,
+            'data-call': call.id, 'data-received': String(Boolean(receiver)) });
+          trace.append(svgNode('title', {}, `${call.name} · ${call.frequency.toFixed(4)} MHz · ${receiver ? `Received by ${receiver}` : 'Missed outside usable coverage'}`));
+          activeCalls.set(key, trace);
+          callTraces.append(trace);
+        }
+        trace.setAttribute('x1', x(call.frequency)); trace.setAttribute('x2', x(call.frequency));
+        trace.setAttribute('y1', y(Math.min(call.end, time))); trace.setAttribute('y2', y(call.start));
+      }
+      activeCalls.forEach((trace, key) => { if (!keys.has(key)) { trace.remove(); activeCalls.delete(key); } });
+      const latest = visible.at(-1), recentKey = latest && `${latest.cycle}:${latest.id}`;
+      if (latest && recentKey !== lastRecent) {
+        const receiver = coverageReceiverFor(latest);
+        recent.textContent = `${latest.name} · ${latest.frequency.toFixed(4)} MHz · ${receiver ? `Received by ${receiver}` : 'Missed outside usable coverage'}`;
+        recent.dataset.received = String(Boolean(receiver));
+        lastRecent = recentKey;
+      }
+    };
+    const resize = () => {
+      if (disposed) return;
+      width = Math.max(300, Math.round(root.getBoundingClientRect().width) || 960);
       svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-      const defs = svgNode('defs');
-      const clip = svgNode('clipPath', { id: clipId });
-      clip.append(svgNode('rect', { x: left, y: top, width: width - left - right, height: plotHeight }));
-      const edge = svgNode('pattern', { id: edgeId, width: 6, height: 6, patternUnits: 'userSpaceOnUse' });
-      edge.append(svgNode('path', { d: 'M-1 1L1-1M0 6L6 0M5 7L7 5', class: 'coverage-edge-line' }));
-      defs.append(clip, edge);
-      const chart = svgNode('g', { 'clip-path': `url(#${clipId})` });
-      band(chart, moment => coverageCenterAt(moment, includeRetune), model.rtl.usableBandwidth / 2,
-        model.rtl.sampleRate / 2, 'coverage-band-rtl');
-      band(chart, () => model.airspy.center, model.airspy.usableBandwidth / 2,
-        model.airspy.sampleRate / 2, 'coverage-band-airspy');
-      const annotations = [];
+      clipRect.setAttribute('width', width - left - right);
+      const lines = [], labels = [];
       for (const tick of width < 500 ? [855, 859, 863, 867] : [855, 857, 859, 861, 863, 865, 867]) {
-        chart.append(svgNode('line', { x1: x(tick), x2: x(tick), y1: top, y2: top + plotHeight, class: 'coverage-grid' }));
-        annotations.push(svgNode('text', { x: x(tick), y: top + plotHeight + 18, 'text-anchor': 'middle' }, tick));
+        lines.push(svgNode('line', { x1: x(tick), x2: x(tick), y1: top, y2: top + plotHeight, class: 'coverage-grid' }));
+        labels.push(svgNode('text', { x: x(tick), y: top + plotHeight + 18, 'text-anchor': 'middle' }, tick));
       }
       for (const age of [0, 6, 12, 18, 24]) {
         const position = top + age / model.history * plotHeight;
-        chart.append(svgNode('line', { x1: left, x2: width - right, y1: position, y2: position, class: 'coverage-grid' }));
-        annotations.push(svgNode('text', { x: left - 7, y: position + 4, 'text-anchor': 'end' }, age ? `${age}s` : 'Now'));
+        lines.push(svgNode('line', { x1: left, x2: width - right, y1: position, y2: position, class: 'coverage-grid' }));
+        labels.push(svgNode('text', { x: left - 7, y: position + 4, 'text-anchor': 'end' }, age ? `${age}s` : 'Now'));
       }
-      annotations.push(svgNode('text', { x: (left + width - right) / 2, y: height - 2,
-        'text-anchor': 'middle' }, 'Frequency (MHz)'),
-      svgNode('text', { x: x(coverageCenterAt(time, includeRetune)), y: 22, 'text-anchor': 'middle' }, 'RTL-SDR'),
-      svgNode('text', { x: x(model.airspy.center), y: 22, 'text-anchor': 'middle' }, 'Airspy'));
-      model.controls.forEach(control => {
+      labels.push(svgNode('text', { x: (left + width - right) / 2, y: height - 2,
+        'text-anchor': 'middle' }, 'Frequency (MHz)'), rtlCaption, airspyCaption);
+      airspyCaption.setAttribute('x', x(model.airspy.center));
+      grid.replaceChildren(...lines); annotations.replaceChildren(...labels);
+      controlTraces.replaceChildren(...model.controls.map(control => {
         const trace = svgNode('line', { x1: x(control.frequency), x2: x(control.frequency), y1: top,
           y2: top + plotHeight, class: 'coverage-control', 'data-control': control.name });
         trace.append(svgNode('title', {}, `${control.name} · ${control.frequency.toFixed(4)} MHz`));
-        chart.append(trace);
-      });
-      model.calls.forEach(call => {
-        if (time < call.start || call.end < time - model.history) return;
-        const receiver = coverageReceiverFor(call, includeRetune);
-        const trace = svgNode('line', { x1: x(call.frequency), x2: x(call.frequency), y1: y(Math.min(call.end, time)),
-          y2: y(call.start), class: `coverage-call ${call.type} ${receiver ? 'received' : 'missed'}`,
-          'data-call': call.id, 'data-received': String(Boolean(receiver)) });
-        trace.append(svgNode('title', {}, `${call.name} · ${call.frequency.toFixed(4)} MHz · ${receiver ? `Received by ${receiver}` : 'Missed outside usable coverage'}`));
-        chart.append(trace);
-      });
-      svg.replaceChildren(title, description, defs, chart, ...annotations);
-      const latest = model.calls.filter(call => call.start <= time).at(-1);
-      if (latest && latest.id !== lastRecent) {
-        const receiver = coverageReceiverFor(latest, includeRetune);
-        recent.textContent = `${latest.name} · ${latest.frequency.toFixed(4)} MHz · ${receiver ? `Received by ${receiver}` : 'Missed outside usable coverage'}`;
-        recent.dataset.received = String(Boolean(receiver));
-        lastRecent = latest.id;
-      }
+        return trace;
+      }));
+      drawBand(airspyPaths, () => model.airspy.center, model.airspy.usableBandwidth / 2,
+        model.airspy.sampleRate / 2, [time, time - model.history]);
+      render();
     };
     const cancelFrame = () => {
       if (frame !== null) windowValue.cancelAnimationFrame(frame);
@@ -210,54 +275,32 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
     const animate = timestamp => {
       frame = null;
       if (disposed || !playing) return;
-      if (lastFrame !== null) time = Math.min(model.duration, time + (timestamp - lastFrame) / 1000 * model.speed);
+      if (lastFrame !== null) time += Math.max(0, timestamp - lastFrame) / 1000 * model.speed;
       lastFrame = timestamp;
-      if (time >= model.duration) { stop(); return; }
       if (lastPaint === null || timestamp - lastPaint >= 40) { render(); lastPaint = timestamp; }
       frame = windowValue.requestAnimationFrame(animate);
     };
     const start = () => {
-      if (disposed || document.hidden) return;
-      cancelFrame();
-      if (time >= model.duration) time = 0;
-      playing = true;
-      render();
+      if (disposed || signal?.aborted || document.hidden || reduced.matches) return;
+      cancelFrame(); playing = true; render();
       frame = windowValue.requestAnimationFrame(animate);
     };
-    const toggle = () => { if (playing) stop(); else start(); };
-    const reset = () => { stop(); time = 0; lastScene = lastRecent = ''; start(); };
-    const changeRetune = () => { includeRetune = retune.checked; reset(); };
-    const visibility = () => { if (document.hidden) stop(); };
-    const motion = () => { if (reduced.matches) stop(); };
-    const resize = () => { width = Math.max(300, Math.round(root.getBoundingClientRect().width) || 960); render(); };
+    const visibility = () => { if (document.hidden) stop(); else start(); };
+    const motion = () => { if (reduced.matches) stop(); else start(); };
     const cleanup = () => {
       if (disposed) return;
-      disposed = true;
-      playing = false;
-      cancelFrame();
-      observer?.disconnect();
-      play.removeEventListener('click', toggle);
-      replay.removeEventListener('click', reset);
-      retune.removeEventListener('change', changeRetune);
+      disposed = true; playing = false; cancelFrame(); observer?.disconnect();
       document.removeEventListener('visibilitychange', visibility);
       windowValue.removeEventListener('pagehide', cleanup);
       reduced.removeEventListener('change', motion);
       signal?.removeEventListener('abort', cleanup);
-      root.dataset.disposed = 'true';
-      root.dataset.playing = 'false';
+      root.dataset.disposed = 'true'; root.dataset.playing = 'false';
     };
-    let observer = null;
-    play.addEventListener('click', toggle);
-    replay.addEventListener('click', reset);
-    retune.addEventListener('change', changeRetune);
     document.addEventListener('visibilitychange', visibility);
     windowValue.addEventListener('pagehide', cleanup);
     reduced.addEventListener('change', motion);
     signal?.addEventListener('abort', cleanup, { once: true });
-    if (windowValue.ResizeObserver) {
-      observer = new windowValue.ResizeObserver(resize);
-      observer.observe(root);
-    }
+    if (windowValue.ResizeObserver) { observer = new windowValue.ResizeObserver(resize); observer.observe(root); }
     resize();
     if (signal?.aborted) cleanup();
     else if (playing) frame = windowValue.requestAnimationFrame(animate);

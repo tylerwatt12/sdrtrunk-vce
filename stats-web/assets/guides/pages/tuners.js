@@ -17,7 +17,10 @@ export function tunersSteps(documentValue, preparePlayer, preparePage) {
     { id: 'receiving-window', title: 'Choose the receiving window',
       paragraphs: ['Sample rate sets the width of spectrum the tuner receives. Usable bandwidth is the portion VCE can use for receiving channels.'] },
     { id: 'center-frequency', title: 'Position your coverage',
-      paragraphs: ['Center frequency positions the receiving window over the frequencies you want to receive.'] },
+      paragraphs: [
+        'Center frequency positions the receiving window over the frequencies you want to receive.',
+        'Click the upper half of a digit to increase it, or the lower half to decrease it. To type a frequency, hover over the first digit you want to replace, enter the new digits, and press Enter.'
+      ] },
     { id: 'lock-center', title: 'Keep your receiving window in place', paragraphs: [
       'Lock center holds the receiving window in place and disables retuning. Every frequency assigned to that tuner, including trunked voice channels, must fit fully inside its usable bandwidth.',
       'For permanent setups, locking a well-positioned window helps provide stable, consistent coverage. Many SDRs lose sensitivity near the edges, so keep your important frequencies comfortably inside the usable area.'
