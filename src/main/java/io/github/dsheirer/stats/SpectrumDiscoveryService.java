@@ -7,6 +7,7 @@ import io.github.dsheirer.channel.ChannelDefinitionCodec;
 import io.github.dsheirer.channel.ChannelProtocolRegistry;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.service.radioreference.RadioReferenceChannelNames;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
@@ -83,8 +84,8 @@ public final class SpectrumDiscoveryService implements AutoCloseable
     {
         expire();
         if(mWizard != null) throw new IllegalStateException("Another channel discovery is already in progress");
-        if(!Set.of("p25-phase1", "dmr", "nxdn", "am", "nbfm").contains(protocolId))
-            throw new IllegalArgumentException("Choose P25 Phase 1, DMR, NXDN, AM, or NBFM");
+        if(!Set.of("auto", "p25-phase1", "dmr", "nxdn", "am", "nbfm").contains(protocolId))
+            throw new IllegalArgumentException("Choose automatic trunked detection or a supported radio type");
         Eligibility eligible = eligibility(tunerId, frequencyHz);
         if(!eligible.eligible()) throw new IllegalStateException(eligible.reason());
         DiscoveredTuner discovered = requireTuner(tunerId);
@@ -96,10 +97,21 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         wizard.stateId = stateId;
         try
         {
-            if("p25-phase1".equals(protocolId)) wizard.probe = mProbe.open(targetId, frequencyHz);
+            if("auto".equals(protocolId))
+            {
+                // Both protocol families borrow one reservation, exactly as in the band search. Independent
+                // holdForProbe calls would contend with each other on the same receiver.
+                wizard.hold = mSettings.holdForProbe(tuner);
+                wizard.autoP25Probe = new P25DiscoveryProbe(mDiagnostics, wizard.hold);
+                wizard.autoDigitalProbe = new DigitalTrunkedDiscoveryProbe(mDiagnostics, wizard.hold);
+                wizard.probe = wizard.autoP25Probe.open(targetId, frequencyHz);
+                wizard.digitalProbe = wizard.autoDigitalProbe.open(targetId, frequencyHz, "auto");
+            }
+            else if("p25-phase1".equals(protocolId)) wizard.probe = mProbe.open(targetId, frequencyHz);
             else if(Set.of("dmr","nxdn").contains(protocolId)) wizard.digitalProbe = mDigitalProbe.open(targetId,frequencyHz,protocolId);
             else wizard.hold = mSettings.holdForProbe(tuner);
             mWizard = wizard;
+            if(wizard.automatic) beginAutomaticCheck(wizard);
             return snapshot(wizard);
         }
         catch(RuntimeException exception)
@@ -107,6 +119,44 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             wizard.close();
             throw exception;
         }
+    }
+
+    private void beginAutomaticCheck(Wizard wizard)
+    {
+        wizard.detectionWorker = new Thread(() ->
+        {
+            try
+            {
+                var result = TrunkedSignalDetector.check(wizard.probe::status, wizard.digitalProbe::status,
+                    () -> wizard.closed);
+                synchronized(this)
+                {
+                    if(wizard.closed || mWizard != wizard) return;
+                    wizard.detection = result;
+                    if(result.evidence() == null) wizard.close();
+                    else
+                    {
+                        wizard.protocolId = result.evidence().protocolId();
+                        // Keep the confirmed probe valid through save; the other family no longer needs samples.
+                        if("p25-phase1".equals(wizard.protocolId)) wizard.digitalProbe.close();
+                        else wizard.probe.close();
+                    }
+                }
+            }
+            catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+            catch(RuntimeException exception)
+            {
+                synchronized(this)
+                {
+                    if(wizard.closed || mWizard != wizard) return;
+                    wizard.detectionFailure = "The receiver could not check this signal. Try again.";
+                    wizard.close();
+                }
+            }
+        }, "spectrum-trunked-check");
+        wizard.detectionWorker.setDaemon(true);
+        wizard.detectionWorker.setPriority(Thread.MIN_PRIORITY);
+        wizard.detectionWorker.start();
     }
 
     public synchronized Snapshot status(String id)
@@ -242,23 +292,34 @@ public final class SpectrumDiscoveryService implements AutoCloseable
 
     private Snapshot snapshot(Wizard wizard)
     {
-        P25DiscoveryProbe.Status probe = wizard.probe != null ? wizard.probe.status() : null;
-        var digital = wizard.digitalProbe != null ? wizard.digitalProbe.status() : null;
+        var detection = wizard.detection;
+        P25DiscoveryProbe.Status probe = detection != null ? detection.p25() :
+            wizard.probe != null ? wizard.probe.status() : null;
+        var digital = detection != null ? detection.digital() :
+            wizard.digitalProbe != null ? wizard.digitalProbe.status() : null;
         String state = wizard.saved != null ? wizard.running ? "running" : "saved" :
+            wizard.automatic ? wizard.detectionFailure != null ? "failed" : detection == null ? "identifying" :
+                detection.evidence() != null ? "ready" : "inconclusive" :
             probe != null ? "running".equals(probe.state()) ? "identifying" : probe.state() :
             digital != null ? "running".equals(digital.state()) ? "identifying" : digital.state() : "ready";
-        String reason = probe != null ? probe.reason() : digital != null ? digital.reason() : null;
+        String reason = wizard.automatic ? wizard.detectionFailure != null ? wizard.detectionFailure :
+            detection == null ? "Checking P25, DMR, and NXDN trunked control channels…" :
+                detection.evidence() == null ? "No supported trunked control channel was found. Choose a setup method and try again." : null :
+            probe != null ? probe.reason() : digital != null ? digital.reason() : null;
         if("ready".equals(state) && wizard.evidence == null)
         {
-            wizard.evidence = probe != null ? TrunkedDiscoveryEvidence.p25(probe,System.currentTimeMillis()) : digital != null ? digital.evidence() : null;
+            wizard.evidence = detection != null ? detection.evidence() :
+                probe != null ? TrunkedDiscoveryEvidence.p25(probe,System.currentTimeMillis()) : digital != null ? digital.evidence() : null;
             if(wizard.evidence != null) resolveDirectory(wizard);
         }
-        if(wizard.saved == null && (!wizard.current() || wizard.hold != null && !wizard.hold.valid() ||
-            wizard.probe != null && "ready".equals(state) && !wizard.probe.valid() ||
-            wizard.digitalProbe != null && "ready".equals(state) && !wizard.digitalProbe.valid()))
+        if(wizard.saved == null && Set.of("identifying", "ready").contains(state) &&
+            (!wizard.current() || wizard.hold != null && !wizard.hold.valid() ||
+            wizard.probe != null && "ready".equals(state) && "p25-phase1".equals(wizard.protocolId) && !wizard.probe.valid() ||
+            wizard.digitalProbe != null && "ready".equals(state) && Set.of("dmr", "nxdn").contains(wizard.protocolId) && !wizard.digitalProbe.valid()))
         {
             state = "failed";
             reason = "The tuner changed; identify this frequency again";
+            if(wizard.automatic) wizard.detectionFailure = reason;
             wizard.close();
         }
         ChannelAdministrationService.DiscoveryReview review = "ready".equals(state) ?
@@ -282,8 +343,10 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         String system = match.systemName() != null && !match.systemName().isBlank() ?
             match.systemName() : template.system();
         String site = match.siteName() != null && !match.siteName().isBlank() ? match.siteName() : template.site();
+        long frequency = template.source().preferredFrequencyHz() != null ? template.source().preferredFrequencyHz() :
+            template.source().frequenciesHz().stream().findFirst().orElse(0L);
         template = new ChannelDefinition(null, template.protocolId(), system, site,
-            site != null && !site.isBlank() ? site : template.name(), null, template.aliasListId(), template.source(),
+            RadioReferenceChannelNames.trunked(system, site, frequency).name(), null, template.aliasListId(), template.source(),
             template.settings(), template.frequencyMap(), template.eventLogs(), template.recorders(),
             template.auxiliaryDecoders(), template.observed());
         return new ChannelAdministrationService.DiscoveryReview(review.revision(), template, review.aliasLists(),
@@ -356,7 +419,8 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         final String tunerId;
         final String targetId;
         final long frequencyHz;
-        final String protocolId;
+        String protocolId;
+        final boolean automatic;
         final Tuner tuner;
         final long centerHz;
         final double sampleRate;
@@ -367,7 +431,12 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         DigitalTrunkedDiscoveryProbe.Session digitalProbe;
         TrunkedDiscoveryEvidence evidence;
         Integer stateId;
-        boolean closed;
+        volatile boolean closed;
+        P25DiscoveryProbe autoP25Probe;
+        DigitalTrunkedDiscoveryProbe autoDigitalProbe;
+        Thread detectionWorker;
+        TrunkedSignalDetector.Result detection;
+        String detectionFailure;
         io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.manual();
         TunerSettingsService.ProbeHold hold;
         ChannelAdministrationService.DiscoveryCreated saved;
@@ -378,6 +447,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         {
             this.tunerId = tunerId; this.targetId = targetId; this.frequencyHz = frequencyHz;
             this.protocolId = protocolId; this.browseLeaseId = browseLeaseId; this.tuner = tuner;
+            automatic = "auto".equals(protocolId);
             centerHz = tuner.getTunerController().getFrequency();
             sampleRate = tuner.getTunerController().getSampleRate();
         }
@@ -389,8 +459,11 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         @Override public void close()
         {
             closed = true;
+            if(detectionWorker != null) detectionWorker.interrupt();
             if(probe != null) probe.close();
             if(digitalProbe != null) digitalProbe.close();
+            if(autoP25Probe != null) autoP25Probe.close();
+            if(autoDigitalProbe != null) autoDigitalProbe.close();
             if(hold != null) { hold.close(); hold = null; }
         }
     }

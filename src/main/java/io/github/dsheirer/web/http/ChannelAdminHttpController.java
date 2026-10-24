@@ -198,7 +198,8 @@ public final class ChannelAdminHttpController
             }
             case "POST" -> {
                 ChannelWriteRequest request = readJson(exchange, ChannelWriteRequest.class);
-                ChannelAdministrationService.MutationResult result = mService.create(request.definition(null));
+                ChannelAdministrationService.MutationResult result = mService.create(request.definition(null),
+                    Boolean.TRUE.equals(request.rejectExistingFrequency()));
                 if(result.configurationIds().size() == 1)
                     exchange.getResponseHeaders().set("Location", PATH + "/" + result.configurationIds().get(0));
                 sendData(exchange, 201, result);
@@ -429,7 +430,7 @@ public final class ChannelAdminHttpController
                                        Map<String,Object> settings, List<FrequencyMapRequest> frequencyMap,
                                        List<String> eventLogs, List<String> recorders,
                                        List<String> auxiliaryDecoders, String editRevision,
-                                       ChannelDefinition original, Boolean allowRestart)
+                                       ChannelDefinition original, Boolean allowRestart, Boolean rejectExistingFrequency)
     {
         private ChannelDefinition definition(String configurationId)
         {

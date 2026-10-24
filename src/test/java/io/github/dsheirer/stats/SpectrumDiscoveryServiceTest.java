@@ -46,6 +46,7 @@ class SpectrumDiscoveryServiceTest
                 new RadioReferenceDiscoveryResolver.Result("matched", "Matched", match, "radioreference"));
             assertEquals("Metropolitan Emergency Communications Network", resolved.template().system());
             assertEquals("North", resolved.template().site());
+            assertEquals("Metropolitan Emergency Communications Network · North", resolved.template().name());
             assertEquals("Metropolitan Emergency Communications Network", resolved.defaultNewAliasListName());
             assertEquals(23, resolved.template().aliasListId());
             assertEquals(23L, resolved.suggestedAliasListId());
@@ -67,6 +68,7 @@ class SpectrumDiscoveryServiceTest
             new RadioReferenceDiscoveryResolver.Result("matched", "Matched", match, "radioreference"));
         assertEquals("County Public Safety", resolved.template().system());
         assertEquals("North", resolved.template().site());
+        assertEquals("County Public Safety · North", resolved.template().name());
         assertEquals("County Public Safety", resolved.defaultNewAliasListName());
     }
 

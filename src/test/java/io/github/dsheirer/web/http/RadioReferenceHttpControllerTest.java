@@ -141,6 +141,79 @@ class RadioReferenceHttpControllerTest
     }
 
     @Test
+    void draftNamingRouteRequiresAnAuthoritativeRecordAndReturnsNamesWithoutCreatingAChannel() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("draft-naming-http-data");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null, new AliasModel(), null);
+        manager.init();
+        var channels = ChannelAdministrationServiceTestSupport.create(manager);
+        FakeSettings settings = new FakeSettings();
+        settings.storeLocation(1, 10, 100);
+        FakeGateway gateway = new FakeGateway();
+        gateway.namingFrequencyResults = List.of(new FrequencyResult(155.25, 0, "WXYZ", "County Dispatch", "Dispatch",
+            "123.0 PL", "", "", "", "FMN", "", List.of(), 501, 0, 0, 100));
+        try(RadioReferenceDirectoryService service = new RadioReferenceDirectoryService((user, password) -> gateway))
+        {
+            RadioReferenceHttpController controller = new RadioReferenceHttpController(service, settings,
+                RadioReferenceImportServiceTestSupport.create(service, manager, channels));
+            HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            server.createContext(RadioReferenceHttpController.PATH, controller::handle);
+            server.start();
+            try
+            {
+                URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+                HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+                data(send(client, jsonRequest(origin, "/session").PUT(HttpRequest.BodyPublishers.ofString(
+                    "{\"user_name\":\"test-user\",\"password\":\"test-password\",\"remember\":false}"))));
+                Map<String,Object> draft = Map.of("protocol_id", "nbfm", "system", "My system", "site", "My site",
+                    "name", "My channel", "source", Map.of("frequencies_hz", List.of(155_250_000L)),
+                    "settings", Map.of("bandwidth", "BW_12_5", "ctcss_frequency_hz", 0));
+                String body = OBJECT_MAPPER.writeValueAsString(Map.of("channel", draft));
+                JsonNode choices = data(send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))));
+                assertEquals("choose_record", choices.path("state").asText());
+                assertEquals(1, choices.path("candidates").size());
+                assertTrue(choices.at("/candidates/0/context").asText().contains("Dispatch"));
+                String selectedBody = OBJECT_MAPPER.writeValueAsString(Map.of("channel", draft,
+                    "lookup_id", choices.path("lookup_id").asText(), "candidate_id",
+                    choices.at("/candidates/0/candidate_id").asText()));
+                JsonNode selected = data(send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString(selectedBody))));
+                assertEquals("matched", selected.path("state").asText());
+                assertEquals("Franklin", selected.at("/names/system").asText());
+                assertEquals("Dispatch", selected.at("/names/site").asText());
+                assertEquals("County Dispatch", selected.at("/names/name").asText());
+                assertTrue(channels.catalog().channels().isEmpty());
+                assertEquals(400, send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                        "channel", draft, "lookup_id", choices.path("lookup_id").asText(),
+                        "candidate_id", "forged", "name", "Forged name"))))).statusCode());
+                // A remembered list is independent of bookmarking and is a suggestion on both response stages.
+                settings.savePreferredAliasList(2001, 12L);
+                gateway.namingFrequencyResults = null;
+                Map<String,Object> trunkedDraft = Map.of("protocol_id", "p25-phase1", "name", "Draft",
+                    "source", Map.of("frequencies_hz", List.of(853_162_500L)), "settings", Map.of("modulation", "C4FM"));
+                JsonNode trunked = data(send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of("channel", trunkedDraft))))));
+                assertEquals(12, trunked.at("/candidates/0/preferred_alias_list_id").asInt());
+                JsonNode trunkedSelected = data(send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of("channel", trunkedDraft,
+                        "lookup_id", trunked.path("lookup_id").asText(), "candidate_id",
+                        trunked.at("/candidates/0/candidate_id").asText()))))));
+                assertEquals(12, trunkedSelected.path("preferred_alias_list_id").asInt());
+                assertEquals("State P25 · Franklin Simulcast", trunkedSelected.at("/names/name").asText());
+            }
+            finally { server.stop(0); }
+        }
+        finally
+        {
+            manager.flushConfiguration();
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
     void catalogRoutesReuseSourcePerSystemRefreshExplicitlyAndDiscardFailedReplacementSessions() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("catalog-http-data");
@@ -566,6 +639,7 @@ class RadioReferenceHttpControllerTest
         private final Map<Integer,AtomicInteger> siteReads = new ConcurrentHashMap<>();
         private final Map<Integer,AtomicInteger> talkgroupReads = new ConcurrentHashMap<>();
         private volatile String alphaTag = "Dispatch";
+        private List<FrequencyResult> namingFrequencyResults;
 
         @Override
         public Map<Integer,String> systemTypes()
@@ -610,6 +684,7 @@ class RadioReferenceHttpControllerTest
         @Override
         public List<FrequencyResult> searchStateFrequencies(int stateId, double frequencyMHz)
         {
+            if(namingFrequencyResults != null) return namingFrequencyResults;
             return List.of(new FrequencyResult(853.1625, 808.1625, "",
                 "State P25 Site 012 Franklin Simulcast", "",
                 "34C", "", "", "", "4", "", List.of("Law Dispatch"), 0, 2001, 0, 100));

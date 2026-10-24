@@ -226,6 +226,36 @@ class SpectrumSearchCheckTest
         p25.assertConsumed();
     }
 
+    @Test
+    void sharedDetectorReturnsTheConfirmedProtocolAndBothFinalSnapshotsForSingleFrequencyReview() throws Exception
+    {
+        for(String protocol : List.of("dmr", "nxdn"))
+        {
+            var runningP25 = runningP25(100);
+            var confirmed = digitalEvidence(protocol, 87);
+            var readyDigital = digital("ready", 2_500, 0, confirmed);
+            var detected = TrunkedSignalDetector.check(() -> runningP25, () -> readyDigital, () -> false);
+
+            assertSame(confirmed, detected.evidence());
+            assertEquals(protocol, detected.evidence().protocolId());
+            assertSame(runningP25, detected.p25());
+            assertSame(readyDigital, detected.digital());
+            assertNull(detected.strengthDbfs());
+        }
+    }
+
+    @Test
+    void sharedDetectorPreservesFinalAmbiguousSnapshotsWithoutChoosingAProtocol() throws Exception
+    {
+        var p25 = readyP25(2_500, "C4FM", 90);
+        var digital = digital("ready", 2_500, 0, digitalEvidence("dmr", 90));
+        var result = TrunkedSignalDetector.check(() -> p25, () -> digital, () -> false);
+
+        assertNull(result.evidence());
+        assertSame(p25, result.p25());
+        assertSame(digital, result.digital());
+    }
+
     private static void assertEmpty(SpectrumSearchService.ProbeResult result)
     {
         assertNull(result.evidence());

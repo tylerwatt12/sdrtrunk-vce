@@ -34,6 +34,8 @@ import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.stats.TrunkedDiscoveryEvidence;
 import io.github.dsheirer.source.config.SourceConfigRemote;
+import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore;
 import io.github.dsheirer.service.radioreference.RadioSystemNameCatalog;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
@@ -299,10 +301,32 @@ public final class ChannelAdministrationService
 
     public MutationResult create(ChannelDefinition definition)
     {
+        return create(definition, false);
+    }
+
+    /** Spectrum handoffs may reject an already saved local frequency within the same creation transaction. */
+    public MutationResult create(ChannelDefinition definition, boolean rejectExistingFrequency)
+    {
         return admitted(() -> mutate(() -> {}, false, channels ->
         {
             AliasListDefinition aliasList = requireAliasList(definition.aliasListId());
             Channel created = mCodec.toChannel(definition, aliasList, null);
+            if(rejectExistingFrequency && (created.getSourceConfiguration() instanceof SourceConfigTuner ||
+                created.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency))
+            {
+                Set<Long> requestedFrequencies = new HashSet<>(definition.source().frequenciesHz());
+                for(Channel existing: channels)
+                {
+                    if(!(existing.getSourceConfiguration() instanceof SourceConfigTuner) &&
+                        !(existing.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency)) continue;
+                    for(long frequency: mCodec.fromChannel(existing).source().frequenciesHz())
+                    {
+                        if(requestedFrequencies.contains(frequency))
+                            throw new IllegalStateException(String.format(java.util.Locale.ROOT,
+                                "A channel already uses %.6f MHz.", frequency / 1_000_000.0));
+                    }
+                }
+            }
             channels.add(created);
             requireUniqueRadioResolveIds(channels);
             requireUniqueRemoteSource(created, channels);
@@ -366,7 +390,7 @@ public final class ChannelAdministrationService
                 settings.put("learn_announced_control_channels", true);
             }
             ChannelDefinition template = new ChannelDefinition(null, protocolId, system, site,
-                identity != null ? site : String.format(java.util.Locale.ROOT, "%s %.6f MHz", profile.label(),
+                identity != null ? io.github.dsheirer.service.radioreference.RadioReferenceChannelNames.trunked(system, site, frequencyHz).name() : String.format(java.util.Locale.ROOT, "%s %.6f MHz", profile.label(),
                     frequencyHz / 1_000_000.0), null, suggested != null ? suggested : 0,
                 new ChannelDefinition.Source(List.of(frequencyHz), null, null,
                     identity != null ? frequencyHz : null, preferredTuner, null), settings,
@@ -409,7 +433,8 @@ public final class ChannelAdministrationService
                 system = discoverySystemName(evidence.identity().radioSystemKey(), evidence.systemName());
             String site = knownTrunkedChannels(evidence, true, mConfigurationManager.getChannelModel().getChannels()).stream().map(Channel::getSite)
                 .filter(value -> value != null && !value.isBlank()).findFirst().orElse(evidence.siteName());
-            ChannelDefinition template = new ChannelDefinition(null, protocolId, system, site, site, null,
+            ChannelDefinition template = new ChannelDefinition(null, protocolId, system, site,
+                io.github.dsheirer.service.radioreference.RadioReferenceChannelNames.trunked(system, site, frequencyHz).name(), null,
                 suggested != null ? suggested : 0,
                 new ChannelDefinition.Source(List.of(frequencyHz), null, null, frequencyHz, preferredTuner, null),
                 discoveryTrunkedSettings(profile, Map.of(), evidence), evidence.frequencyMap(),

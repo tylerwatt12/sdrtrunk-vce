@@ -35,6 +35,8 @@ class SpectrumChannelCreationTest
             var identity = new P25SiteIdentity(0xBEE00, 0x123, 1, 2);
             long revision = fixture.channels.currentRevision();
             var review = fixture.channels.discoveryReview("p25-phase1", 851_012_500, "Tuner", identity, "C4FM");
+            assertEquals(review.template().system() + " · " + review.template().site(), review.template().name(),
+                "On-air-only discovery uses the same channel name as directory-enriched discovery");
             assertEquals("Example County / Example Regional Network", review.template().system());
             assertEquals(review.template().system(), review.defaultNewAliasListName());
             assertEquals("Site 01-02", review.template().site(), "A system-name catalog supplies no site name");

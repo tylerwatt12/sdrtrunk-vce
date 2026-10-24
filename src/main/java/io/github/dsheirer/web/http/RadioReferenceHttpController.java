@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationService;
+import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference.Bookmark;
 import io.github.dsheirer.preference.radioreference.RadioReferencePreference.PreferredAliasList;
@@ -308,10 +309,16 @@ public final class RadioReferenceHttpController
                 requireNoQuery(exchange);
                 ensureStoredSession();
                 EnrichmentPreviewRequest request = read(exchange, EnrichmentPreviewRequest.class);
-                if(request.revision() == null || request.revision() < 0)
+                if(request.configurationId() != null && (request.revision() == null || request.revision() < 0))
                     throw new RequestException(400, "invalid_request", "revision is required");
-                ApiHttpResponse.sendData(exchange, 200, requireImport().previewChannelEnrichment(
-                    request.configurationId(), request.revision(), mSettings.stateId() > 0 ? mSettings.stateId() : null));
+                Integer stateId = request.stateId() != null ? requiredPositive(request.stateId(), "state_id") :
+                    mSettings.stateId() > 0 ? mSettings.stateId() : null;
+                var preview = requireImport().previewChannelNames(request.configurationId(), request.revision(),
+                    request.channel(), stateId, request.lookupId(), request.candidateId());
+                Map<Integer,Long> preferences = new LinkedHashMap<>();
+                mSettings.preferredAliasLists().stream().filter(value -> value.preferredAliasListId() != null)
+                    .forEach(value -> preferences.put(value.systemId(), value.preferredAliasListId()));
+                ApiHttpResponse.sendData(exchange, 200, preview.withPreferredAliasLists(preferences));
             }
             else if((PATH + "/channels/enrichment/apply").equals(path))
             {
@@ -1181,7 +1188,8 @@ public final class RadioReferenceHttpController
     {
     }
 
-    private record EnrichmentPreviewRequest(String configurationId, Long revision) {}
+    private record EnrichmentPreviewRequest(String configurationId, Long revision, ChannelDefinition channel,
+        Integer stateId, String lookupId, String candidateId) {}
     private record EnrichmentApplyRequest(String previewId, Boolean replaceName) {}
 
     private record RawTalkgroupPage(List<RemoteTalkgroup> items, int offset, Integer nextOffset,

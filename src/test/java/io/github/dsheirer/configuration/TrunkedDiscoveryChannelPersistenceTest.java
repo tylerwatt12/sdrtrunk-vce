@@ -48,6 +48,7 @@ class TrunkedDiscoveryChannelPersistenceTest
                 var review = fixture.channels.discoveryTrunkedReview(protocol, 450_000_000, "Tuner", proof);
                 assertEquals(List.of(proof.identity().radioSystemKey()), requestedKeys);
                 assertEquals("Example regional network", review.template().system());
+                assertEquals(review.template().system() + " · " + review.template().site(), review.template().name());
                 assertEquals("Example regional network", review.defaultNewAliasListName());
                 assertEquals(proof.frequencyMap(), review.template().frequencyMap());
                 String rawLabel = proof.systemName();

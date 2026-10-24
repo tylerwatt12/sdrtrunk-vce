@@ -5,6 +5,7 @@ import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.service.radioreference.RadioReferenceChannelNames;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
@@ -39,7 +40,6 @@ public final class SpectrumSearchService implements AutoCloseable
     static final long MAX_SCAN_MS = 900_000;
     static final long RESULT_AGE_MS = 900_000;
     static final long IDLE_MS = 60_000;
-    static final long NO_CONTROL_EVIDENCE_MS = 8_000;
     private final Object mLock = new Object();
     private final Channels mChannels;
     private final HardwareFactory mHardware;
@@ -752,38 +752,12 @@ public final class SpectrumSearchService implements AutoCloseable
         }
     }
 
-    /** Poll only on the search worker; decoder callbacks and their confirmation requirements remain independent. */
+    /** Shared with the single-frequency wizard; retain this adapter for the search coordinator's test seam. */
     static ProbeResult checkTrunked(Supplier<P25DiscoveryProbe.Status> p25,
         Supplier<DigitalTrunkedDiscoveryProbe.Status> digital, BooleanSupplier cancelled) throws InterruptedException
     {
-        boolean needsFullCheck = false;
-        while(!cancelled.getAsBoolean())
-        {
-            var p25Status = p25.get();
-            var p25Evidence = TrunkedDiscoveryEvidence.p25(p25Status, System.currentTimeMillis());
-            var digitalStatus = digital.get();
-            var digitalEvidence = digitalStatus != null && "ready".equals(digitalStatus.state()) ? digitalStatus.evidence() : null;
-            if(p25Evidence != null && digitalEvidence != null) return new ProbeResult(null,null);
-            if(p25Evidence != null) return new ProbeResult(p25Evidence,p25Status.signal() != null ? p25Status.signal().meanPowerDbfs() : null);
-            if(digitalEvidence != null) return new ProbeResult(digitalEvidence,null);
-            if(!"running".equals(p25Status.state()) && (digitalStatus == null || !"running".equals(digitalStatus.state()))) return new ProbeResult(null,null);
-
-            // Keep the longer allowance once any mode has decoded control data. Buffer loss can reset that
-            // evidence between status publications, so an interrupted sample stream also gets the full check.
-            needsFullCheck |= p25Status.droppedBuffers() > 0 ||
-                p25Status.c4fm() != null && p25Status.c4fm().validControlMessages() > 0 ||
-                p25Status.cqpsk() != null && p25Status.cqpsk().validControlMessages() > 0 ||
-                digitalStatus != null && (digitalStatus.droppedBuffers() > 0 ||
-                    digitalStatus.modes().stream().anyMatch(mode -> mode.validControlMessages() > 0));
-            if(!needsFullCheck &&
-                (!"running".equals(p25Status.state()) || p25Status.elapsedMs() >= NO_CONTROL_EVIDENCE_MS &&
-                    p25Status.c4fm() != null && p25Status.cqpsk() != null) &&
-                (digitalStatus == null || !"running".equals(digitalStatus.state()) ||
-                    digitalStatus.elapsedMs() >= NO_CONTROL_EVIDENCE_MS && !digitalStatus.modes().isEmpty()))
-                return new ProbeResult(null,null);
-            Thread.sleep(25);
-        }
-        throw new InterruptedException();
+        var result = TrunkedSignalDetector.check(p25, digital, cancelled);
+        return new ProbeResult(result.evidence(), result.strengthDbfs());
     }
     private static List<Row> selected(Job job, List<String> ids)
     {
@@ -924,7 +898,7 @@ public final class SpectrumSearchService implements AutoCloseable
         String groupId() { return evidence.groupId(); }
         String systemName() { return friendlySystem != null && !friendlySystem.isBlank() ? friendlySystem : evidence.systemName(); }
         String siteName() { return friendlySite != null && !friendlySite.isBlank() ? friendlySite : evidence.siteName(); }
-        String name() { return systemName() + " · " + siteName(); }
+        String name() { return RadioReferenceChannelNames.trunked(systemName(), siteName(), frequency).name(); }
     }
     private static final class SearchLimitException extends RuntimeException
     { SearchLimitException(String message) { super(message); } }

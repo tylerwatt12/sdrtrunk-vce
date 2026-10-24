@@ -56,6 +56,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -634,6 +635,287 @@ class RadioReferenceImportServiceTest
     }
 
     @Test
+    void conventionalDraftNamesRequireRecordChoiceAndUseDescriptionWithoutImportingDecoderSettings() throws Exception
+    {
+        for(String protocol: List.of("am", "nbfm", "p25-conventional", "dmr", "nxdn"))
+        {
+            try(Fixture fixture = new Fixture(mTemporaryFolder))
+            {
+                String mode = switch(protocol) { case "am" -> "AM"; case "nbfm" -> "FMN";
+                    case "p25-conventional" -> "P25"; case "dmr" -> "DMR"; default -> "NXDN48"; };
+                fixture.directory.frequencyMatches = List.of(namingMatch(154_100_000L, mode, "Fire Dispatch", "Fire", null));
+                fixture.directory.namingDetails = new RadioReferenceDirectoryService.FrequencyDetails(mode,
+                    "Public Safety", "Fire", null);
+                ChannelDefinition draft = namingDraft(fixture, protocol, true, 154_100_000L);
+                long revision = fixture.channels.currentRevision();
+                var choices = fixture.importer.previewChannelNames(null, null, draft, 10, null, null);
+                assertEquals("choose_record", choices.state(), "Even a sole unverified record needs explicit selection");
+                assertEquals(1, choices.candidates().size());
+                assertNull(choices.previewId());
+                var selected = fixture.importer.previewChannelNames(null, null, draft, 10, choices.lookupId(),
+                    choices.candidates().getFirst().candidateId());
+                assertEquals("matched", selected.state());
+                assertEquals("County · Fire Agency", selected.names().system());
+                assertEquals("Fire", selected.names().site());
+                assertEquals("Fire Dispatch", selected.names().name());
+                assertEquals(revision, fixture.channels.currentRevision(), "Looking up names must not create or change a channel");
+                assertTrue(fixture.channels.catalog().channels().isEmpty());
+                assertThrows(IllegalArgumentException.class, () -> fixture.importer.applyChannelEnrichment(
+                    selected.previewId(), true), "Draft names apply only to the editor");
+                assertThrows(IllegalArgumentException.class, () -> fixture.importer.previewChannelNames(null, null,
+                    draft, 10, choices.lookupId(), "browser-forged-record"));
+            }
+        }
+    }
+
+    @Test
+    void savedConventionalNamesChooseAmongExactCompatibleRecordsAndPreserveLocalConfiguration() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            ChannelDefinition draft = namingDraft(fixture, "nbfm", true, 154_100_000L);
+            String id = fixture.channels.create(draft).configurationIds().getFirst();
+            ChannelDefinition before = fixture.channels.get(id).channel();
+            fixture.directory.frequencyMatches = List.of(
+                namingMatch(154_100_000L, "FMN", "Fire Dispatch", "Fire", null),
+                namingMatch(154_100_000L, "FMN", "Medical Dispatch", "EMS", null),
+                namingMatch(154_100_000L, "DMR", "Wrong protocol", "DMR", null),
+                namingMatch(155_100_000L, "FMN", "Wrong frequency", "Other", null));
+            fixture.directory.namingDetails = new RadioReferenceDirectoryService.FrequencyDetails("FMN", "Safety", "Dispatch", null);
+            long revision = fixture.channels.currentRevision();
+            var choices = fixture.importer.previewChannelNames(id, revision, null, 10, null, null);
+            assertEquals(2, choices.candidates().size(), "Wrong frequency and protocol must be excluded");
+            var selected = fixture.importer.previewChannelNames(id, revision, null, 10, choices.lookupId(),
+                choices.candidates().stream().filter(value -> value.name().equals("Medical Dispatch"))
+                    .findFirst().orElseThrow().candidateId());
+            fixture.importer.applyChannelEnrichment(selected.previewId(), true);
+            ChannelDefinition after = fixture.channels.get(id).channel();
+            assertEquals("Medical Dispatch", after.name());
+            assertEquals("County · Fire Agency", after.system());
+            assertEquals("Dispatch", after.site());
+            assertEquals(before.source(), after.source());
+            assertEquals(before.settings(), after.settings());
+            assertEquals(before.aliasListId(), after.aliasListId());
+            assertEquals(before.frequencyMap(), after.frequencyMap());
+            assertEquals(before.recorders(), after.recorders());
+            assertEquals(before.radioResolveId(), after.radioResolveId());
+            assertThrows(ChannelAdministrationService.StaleRevisionException.class, () ->
+                fixture.importer.previewChannelNames(id, revision, null, 10, choices.lookupId(),
+                    choices.candidates().getFirst().candidateId()));
+        }
+    }
+
+    @Test
+    void manualTrunkedNamesUseExplicitDirectoryRecordWithoutCreatingObservedIdentity() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            ChannelDefinition plain = namingDraft(fixture, "p25-phase1", false, 851_100_000L);
+            ChannelDefinition draft = new ChannelDefinition(null, plain.protocolId(), plain.system(), plain.site(), plain.name(),
+                plain.radioResolveId(), plain.aliasListId(), plain.source(), plain.settings(), plain.frequencyMap(),
+                plain.eventLogs(), plain.recorders(), plain.auxiliaryDecoders(), new ChannelDefinition.Observed(List.of(),
+                    Map.of("wacn", 0xBEE00, "system", 0x123, "rfss", 1, "site", 1)));
+            fixture.directory.frequencyMatches = List.of(namingMatch(851_100_000L, "P25", "County P25", "", 10));
+            var choices = fixture.importer.previewChannelNames(null, null, draft, 10, null, null);
+            assertEquals("choose_record", choices.state());
+            assertEquals(10, choices.candidates().getFirst().rrSystemId());
+            var selected = fixture.importer.previewChannelNames(null, null, draft, 10, choices.lookupId(),
+                choices.candidates().getFirst().candidateId());
+            assertEquals("County P25 · Central Simulcast", selected.names().name());
+            assertNull(selected.identity());
+            assertEquals(0, fixture.directory.enrichmentReads, "Browser observed fields are not receiver proof");
+            var preferred = selected.withPreferredAliasLists(Map.of(10, 77L));
+            assertEquals(77L, preferred.preferredAliasListId());
+            assertEquals(77L, preferred.candidates().getFirst().preferredAliasListId());
+            fixture.importer.clearSessionData();
+            assertThrows(RadioReferenceImportService.PreviewNotFoundException.class, () ->
+                fixture.importer.previewChannelNames(null, null, draft, 10, choices.lookupId(),
+                    choices.candidates().getFirst().candidateId()));
+        }
+    }
+
+    @Test
+    void verifiedLookupComparesAgainstTheDraftEvenWhenSavedNamesAlreadyMatch() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            String id = enrichmentChannel(fixture, "p25-phase1", false);
+            var initial = fixture.importer.previewChannelEnrichment(id, fixture.channels.currentRevision(), null);
+            fixture.importer.applyChannelEnrichment(initial.previewId(), true);
+            ChannelDefinition saved = fixture.channels.get(id).channel();
+            ChannelDefinition draft = new ChannelDefinition(id, saved.protocolId(), "Draft system", "Draft site", "Draft name",
+                saved.radioResolveId(), saved.aliasListId(), saved.source(), saved.settings(), saved.frequencyMap(),
+                saved.eventLogs(), saved.recorders(), saved.auxiliaryDecoders(), saved.observed());
+            var preview = fixture.importer.previewChannelNames(id, fixture.channels.currentRevision(), draft, null, null, null);
+            assertEquals("matched", preview.state());
+            assertEquals("County P25 · Central Simulcast", preview.names().name());
+            assertEquals("Draft name", preview.changes().stream().filter(change -> change.field().equals("name"))
+                .findFirst().orElseThrow().before());
+            assertEquals(saved, fixture.channels.get(id).channel(), "The reviewed names must remain only a draft");
+        }
+    }
+
+    @Test
+    void ambiguousVerifiedP25NamesOfferOnlyMatchingIdentityRecordsAndRequireAChoice() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            String id = enrichmentChannel(fixture, "p25-phase1", false);
+            ChannelDefinition saved = fixture.channels.get(id).channel();
+            var channels = List.of(channel(851_100_000L, "d", true, false));
+            fixture.directory.sites = List.of(site("First name", "C4FM", channels),
+                new TrunkedSiteDetails(21, 10, 1, "Second name", 1, 0, 1, "321", 0, "C4FM", false, channels),
+                new TrunkedSiteDetails(22, 10, 2, "Wrong identity", 1, 0, 2, "321", 0, "C4FM", false, channels));
+            fixture.directory.frequencyMatches = List.of(namingMatch(851_100_000L, "P25", "County P25", "", 10));
+            var choices = fixture.importer.previewChannelNames(id, fixture.channels.currentRevision(), saved, 10, null, null);
+            assertEquals("choose_record", choices.state());
+            assertEquals(List.of("County P25 · First name", "County P25 · Second name"),
+                choices.candidates().stream().map(RadioReferenceImportService.EnrichmentCandidate::name).toList());
+            assertNull(choices.previewId());
+            var selected = fixture.importer.previewChannelNames(id, fixture.channels.currentRevision(), saved, 10,
+                choices.lookupId(), choices.candidates().get(1).candidateId());
+            assertEquals(new P25SiteIdentity(0xBEE00, 0x123, 1, 1), selected.identity());
+            assertEquals("County P25 · Second name", selected.names().name());
+            fixture.importer.applyChannelEnrichment(selected.previewId(), true);
+            assertEquals("County P25 · Second name", fixture.channels.get(id).channel().name());
+            assertEquals(saved.settings(), fixture.channels.get(id).channel().settings());
+        }
+    }
+
+    @Test
+    void nxdnNamingSelectionAndLegacyApplyRemainBoundToTheLookedUpTransmissionMode() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            ChannelDefinition original = namingDraft(fixture, "nxdn", true, 154_100_000L);
+            fixture.directory.frequencyMatches = List.of(namingMatch(154_100_000L, "NXDN48", "Dispatch", "Fire", null));
+            var choices = fixture.importer.previewChannelNames(null, null, original, 10, null, null);
+            Map<String,Object> alteredSettings = new HashMap<>(original.settings());
+            alteredSettings.put("transmission_mode", "M9600");
+            ChannelDefinition altered = copy(original, original.source(), alteredSettings, original.recorders());
+            assertThrows(IllegalStateException.class, () -> fixture.importer.previewChannelNames(null, null, altered,
+                10, choices.lookupId(), choices.candidates().getFirst().candidateId()));
+            String id = fixture.channels.create(original).configurationIds().getFirst();
+            ChannelDefinition saved = fixture.channels.get(id).channel();
+            ChannelDefinition savedAltered = copy(saved, saved.source(), alteredSettings, saved.recorders());
+            fixture.directory.frequencyMatches = List.of(namingMatch(154_100_000L, "NXDN96", "Other rate", "Other", null));
+            var differentRateChoices = fixture.importer.previewChannelNames(id, fixture.channels.currentRevision(), savedAltered,
+                10, null, null);
+            var differentRate = fixture.importer.previewChannelNames(id, fixture.channels.currentRevision(), savedAltered,
+                10, differentRateChoices.lookupId(), differentRateChoices.candidates().getFirst().candidateId());
+            assertThrows(IllegalStateException.class, () -> fixture.importer.applyChannelEnrichment(differentRate.previewId(), true));
+            assertEquals(saved, fixture.channels.get(id).channel());
+        }
+    }
+
+    @Test
+    void namingLookupSharesOneDeadlineAcrossDetailsAndNeverReturnsPartialChoices() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            var nanoTime = new java.util.concurrent.atomic.AtomicLong();
+            var importer = new RadioReferenceImportService(fixture.directory, fixture.channels, fixture.aliases,
+                Clock.fixed(Instant.parse("2026-09-22T12:00:00Z"), ZoneOffset.UTC), Duration.ofMinutes(5), nanoTime::get);
+            fixture.directory.frequencyMatches = List.of(
+                namingMatch(154_100_000L, "FMN", "First record", "Fire", null),
+                namingMatch(154_100_000L, "FM", "Second record", "EMS", null));
+            fixture.directory.duringNamingDetail = () -> nanoTime.addAndGet(Duration.ofSeconds(15).toNanos());
+            var timeout = assertThrows(RadioReferenceDirectoryException.class, () -> importer.previewChannelNames(
+                null, null, namingDraft(fixture, "nbfm", true, 154_100_000L), 10, null, null));
+            assertEquals(RadioReferenceDirectoryException.Code.TIMEOUT, timeout.code());
+            assertEquals(List.of(Duration.ofSeconds(25), Duration.ofSeconds(10)), fixture.directory.namingBudgets,
+                "The second request gets only the remaining budget, not another complete deadline");
+            assertTrue(fixture.channels.catalog().channels().isEmpty());
+            fixture.directory.duringNamingDetail = null;
+            var retried = importer.previewChannelNames(null, null, namingDraft(fixture, "nbfm", true, 154_100_000L),
+                10, null, null);
+            assertEquals("choose_record", retried.state());
+            assertEquals(2, retried.candidates().size(), "Only a fully completed lookup can offer record choices");
+        }
+    }
+
+    @Test
+    void remoteRoutesMayShareFrequenciesWithLocalChannelsAndOtherRemoteRoutes() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            fixture.channels.create(namingDraft(fixture, "nbfm", true, 154_100_000L), true);
+            String sender = java.util.UUID.randomUUID().toString();
+            String firstFeed = java.util.UUID.randomUUID().toString();
+            fixture.channels.create(remoteNamingDraft(fixture, 154_100_000L, sender, firstFeed), true);
+            fixture.channels.create(remoteNamingDraft(fixture, 154_100_000L, sender,
+                java.util.UUID.randomUUID().toString()), true);
+            fixture.channels.create(remoteNamingDraft(fixture, 154_200_000L,
+                java.util.UUID.randomUUID().toString(), java.util.UUID.randomUUID().toString()), true);
+            fixture.channels.create(namingDraft(fixture, "nbfm", true, 154_200_000L), true);
+            assertEquals(5, fixture.channels.catalog().channels().size());
+            var duplicate = assertThrows(IllegalArgumentException.class, () -> fixture.channels.create(
+                remoteNamingDraft(fixture, 154_300_000L, sender, firstFeed), true));
+            assertTrue(duplicate.getMessage().contains("already configured for this sender and feed"));
+            assertEquals(5, fixture.channels.catalog().channels().size());
+        }
+    }
+
+    private static ChannelDefinition remoteNamingDraft(Fixture fixture, long frequency, String sender, String feed)
+    {
+        ChannelDefinition draft = namingDraft(fixture, "p25-phase1", false, frequency);
+        return copy(draft, new ChannelDefinition.Source(List.of(frequency), null, null, null, null, null,
+            "REMOTE", sender, feed), draft.settings(), draft.recorders());
+    }
+
+    @Test
+    void scopedCreateRejectsFrequencyAlreadyUsedByAnotherSavedChannelWithoutChangingEitherChannel() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            ChannelDefinition first = namingDraft(fixture, "nbfm", true, 154_100_000L);
+            String id = fixture.channels.create(first).configurationIds().getFirst();
+            long revision = fixture.channels.currentRevision();
+            var conflict = assertThrows(IllegalStateException.class, () -> fixture.channels.create(
+                namingDraft(fixture, "am", true, 154_100_000L), true));
+            assertEquals("A channel already uses 154.100000 MHz.", conflict.getMessage());
+            assertEquals(revision, fixture.channels.currentRevision());
+            assertEquals(1, fixture.channels.catalog().channels().size());
+            assertEquals("My channel", fixture.channels.get(id).channel().name());
+            fixture.channels.create(namingDraft(fixture, "nbfm", true, 154_200_000L));
+            assertEquals(2, fixture.channels.catalog().channels().size());
+        }
+    }
+
+    @Test
+    void normalChannelCreationStillAllowsSeparateLocalDefinitionsOnTheSameFrequency() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            fixture.channels.create(namingDraft(fixture, "nbfm", true, 154_100_000L));
+            fixture.channels.create(namingDraft(fixture, "am", true, 154_100_000L));
+            assertEquals(2, fixture.channels.catalog().channels().size());
+        }
+    }
+
+    private static ChannelDefinition namingDraft(Fixture fixture, String protocol, boolean conventional, long frequency)
+    {
+        ChannelDefinition template = fixture.channels.template(protocol);
+        Map<String,Object> settings = new HashMap<>(template.settings());
+        if(protocol.equals("dmr") || protocol.equals("nxdn"))
+            settings.put("channel_mode", conventional ? "CONVENTIONAL" : "TRUNKED");
+        return new ChannelDefinition(null, protocol, "My system", "My site", "My channel", null,
+            template.aliasListId(), new ChannelDefinition.Source(List.of(frequency), null, null, null, null, null),
+            settings, template.frequencyMap(), template.eventLogs(), template.recorders(), template.auxiliaryDecoders(),
+            ChannelDefinition.Observed.EMPTY);
+    }
+
+    private static RadioReferenceDirectoryService.FrequencyMatch namingMatch(long frequency, String mode,
+        String description, String alpha, Integer systemId)
+    {
+        return new RadioReferenceDirectoryService.FrequencyMatch(frequency / 1_000_000.0, null, "123.0 PL", "WTEST",
+            description, alpha, "", "", mode, mode, "", "", "", "", List.of(), systemId == null ?
+            RadioReferenceDirectoryService.MatchType.CONVENTIONAL : RadioReferenceDirectoryService.MatchType.TRUNKED,
+            "", 10, "State", 100, "County", 1000, "Fire Agency", 70, systemId, "", null, null, "",
+            systemId == null ? "https://www.radioreference.com/db/subcat/70" : "https://www.radioreference.com/db/sid/" + systemId);
+    }
+
+    @Test
     void conventionalPreviewImportsOneRowWithTheFactoryAliasList() throws Exception
     {
         try(Fixture fixture = new Fixture(mTemporaryFolder))
@@ -645,6 +927,7 @@ class RadioReferenceImportServiceTest
                     null));
             assertEquals(RadioReferenceImportService.ChannelAction.CREATE, preview.action());
             assertEquals("nbfm", preview.channel().protocolId());
+            assertEquals("County dispatch", preview.channel().name());
             assertEquals("Default Analog", fixture.channels.options().aliasLists().stream()
                 .filter(list -> list.id() == preview.channel().aliasListId()).findFirst().orElseThrow().name());
             assertEquals(List.of(154_100_000L), preview.channel().source().frequenciesHz());
@@ -1225,6 +1508,26 @@ class RadioReferenceImportServiceTest
         private final List<RemoteTalkgroupCategory> categories = new ArrayList<>(
             List.of(new RemoteTalkgroupCategory(50, 10, "Public Safety")));
         private List<ConventionalFrequency> conventional = List.of();
+        private List<RadioReferenceDirectoryService.FrequencyMatch> frequencyMatches = List.of();
+        private RadioReferenceDirectoryService.FrequencyDetails namingDetails;
+        private Runnable duringNamingDetail;
+        private final List<Duration> namingBudgets = new ArrayList<>();
+        @Override public RadioReferenceDirectoryService.FrequencyDetails frequencyDetails(long frequencyHz,
+            Integer systemId, int siteNumber, int subCategoryId, int agencyId, int countyId, String rawMode,
+            Duration remainingBudget)
+        {
+            namingBudgets.add(remainingBudget);
+            if(duringNamingDetail != null) duringNamingDetail.run();
+            return frequencyDetails(frequencyHz, systemId, siteNumber, subCategoryId, agencyId, countyId, rawMode);
+        }
+        @Override public BoundedPage<RadioReferenceDirectoryService.FrequencyMatch> searchStateFrequencies(int stateId,
+            long frequencyHz, int offset, int limit)
+        { return new BoundedPage<>(frequencyMatches, 0, null, frequencyMatches.size()); }
+        @Override public RadioReferenceDirectoryService.FrequencyDetails frequencyDetails(long frequencyHz,
+            Integer systemId, int siteNumber, int subCategoryId, int agencyId, int countyId, String rawMode)
+        { return namingDetails != null ? new RadioReferenceDirectoryService.FrequencyDetails(rawMode,
+            namingDetails.category(), namingDetails.subCategory(), null) :
+            new RadioReferenceDirectoryService.FrequencyDetails(rawMode, "", "", null); }
         private List<TrunkedSiteDetails> sites;
         private int siteCatalogReads;
         private int catalogReads;

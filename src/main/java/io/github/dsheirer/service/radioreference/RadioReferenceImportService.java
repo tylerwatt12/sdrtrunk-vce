@@ -43,6 +43,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -65,6 +66,7 @@ public final class RadioReferenceImportService
     private static final int MAXIMUM_PENDING_PREVIEWS = 16;
     private static final int MAXIMUM_TALKGROUP_CATALOGS = 16;
     private static final int MAXIMUM_TALKGROUP_PREVIEW_ROWS = 500;
+    private static final long NAMING_LOOKUP_NANOS = Duration.ofSeconds(25).toNanos();
 
     private final DirectoryAccess mDirectory;
     private final ChannelAdministrationService mChannels;
@@ -72,9 +74,11 @@ public final class RadioReferenceImportService
     private final AliasImportService mAliasImporter;
     private final Clock mClock;
     private final long mPreviewLifetimeMillis;
+    private final LongSupplier mNamingNanoTime;
     private final Map<String,PendingChannel> mPendingChannels = new HashMap<>();
     private final Map<String,PendingTalkgroups> mPendingTalkgroups = new HashMap<>();
     private final Map<String,PendingEnrichment> mPendingEnrichments = new HashMap<>();
+    private final Map<String,PendingNameLookup> mPendingNameLookups = new HashMap<>();
     private final Map<String,RemoteCatalog> mTalkgroupCatalogs = new LinkedHashMap<>();
     private final Map<Integer,RemoteCatalog> mSystemTalkgroupCatalogs = new LinkedHashMap<>();
     private final Map<Integer,TrunkedSystemDetails> mSystemDetails = new LinkedHashMap<>();
@@ -93,7 +97,12 @@ public final class RadioReferenceImportService
 
     RadioReferenceImportService(DirectoryAccess directory, ChannelAdministrationService channels,
                                 AliasAdministrationService aliases, Clock clock, Duration previewLifetime)
+    { this(directory, channels, aliases, clock, previewLifetime, System::nanoTime); }
+
+    RadioReferenceImportService(DirectoryAccess directory, ChannelAdministrationService channels,
+        AliasAdministrationService aliases, Clock clock, Duration previewLifetime, LongSupplier namingNanoTime)
     {
+        mNamingNanoTime = Objects.requireNonNull(namingNanoTime);
         mDirectory = Objects.requireNonNull(directory);
         mChannels = Objects.requireNonNull(channels);
         mAliases = Objects.requireNonNull(aliases);
@@ -135,7 +144,7 @@ public final class RadioReferenceImportService
         long maximum = allFrequencies.stream().mapToLong(Long::longValue).max().orElseThrow();
         String systemName = fallback(request.systemName(), system.name());
         String siteName = fallback(request.siteName(), site.name());
-        String channelName = fallback(request.channelName(), "Control");
+        String channelName = fallback(request.channelName(), RadioReferenceChannelNames.trunked(systemName, siteName, frequencies.getFirst()).name());
         LocalChannelSnapshot local = localSnapshot();
         long requestedAliasListId = requireCompatibleAliasList(request.aliasListId(), decoder.protocolId(),
             local.options());
@@ -185,8 +194,7 @@ public final class RadioReferenceImportService
         ChannelDefinition template = mChannels.template(protocolId);
         Map<String,Object> settings = new LinkedHashMap<>(template.settings());
         applyConventionalSettings(protocolId, frequency.mode(), settings);
-        String name = fallback(request.channelName(), firstNonBlank(frequency.alphaTag(), frequency.description(),
-            Long.toString(frequency.downlinkHz())));
+        String name = fallback(request.channelName(), RadioReferenceChannelNames.conventionalChannelName(frequency.description(), frequency.alphaTag(), frequency.downlinkHz()));
         ChannelDefinition created = new ChannelDefinition(null, protocolId, textOrNull(request.systemName()),
             textOrNull(request.siteName()), name, null, aliasListId,
             new ChannelDefinition.Source(List.of(frequency.downlinkHz()), null, null, null, null, null), settings,
@@ -223,7 +231,257 @@ public final class RadioReferenceImportService
             result.configurationIds().getFirst());
     }
 
-    /** Looks up names for one existing P25 trunked channel; the browser supplies no identity or proposed values. */
+    /** Names-only lookup for saved channels and unsaved editor drafts. Record choices remain server-owned. */
+    public EnrichmentPreview previewChannelNames(String configurationId, Long expectedRevision,
+        ChannelDefinition draft, Integer stateId, String lookupId, String candidateId)
+        throws RadioReferenceDirectoryException
+    {
+        ChannelAdministrationService.Entry entry = null;
+        if(configurationId != null && !configurationId.isBlank())
+        {
+            entry = mChannels.get(configurationId);
+            if(expectedRevision == null) throw new IllegalArgumentException("Channel revision is required");
+            requireSameRevision(expectedRevision, entry.revision());
+        }
+        if(draft == null && entry == null) throw new IllegalArgumentException("Choose a channel to look up");
+        ChannelDefinition channel = draft != null ? draft : entry.channel();
+        ChannelProtocolRegistry.Profile profile = mChannels.protocolRegistry().require(channel.protocolId());
+        boolean conventional = profile.channelKind() == io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.CONVENTIONAL ||
+            "CONVENTIONAL".equals(channel.settings().getOrDefault("channel_mode", profile.defaultSettings().get("channel_mode")));
+        long frequency = namingFrequency(channel);
+        long revision = entry != null ? entry.revision() : mChannels.currentRevision();
+        boolean running = entry != null && entry.processingState() == ChannelAdministrationService.ProcessingState.RUNNING;
+        String savedId = entry != null ? entry.channel().configurationId() : null;
+        requireCatalogSession();
+        long generation;
+        synchronized(this) { generation = mSessionGeneration; }
+        long directoryGeneration = mDirectory.sessionGeneration();
+        if(lookupId != null && !lookupId.isBlank())
+        {
+            PendingNameLookup lookup;
+            synchronized(this)
+            {
+                cleanupExpired(mClock.millis());
+                lookup = mPendingNameLookups.get(lookupId);
+                if(lookup == null || lookup.generation() != generation || lookup.directoryGeneration() != directoryGeneration)
+                    throw new PreviewNotFoundException();
+            }
+            if(!Objects.equals(savedId, lookup.configurationId()) || revision != lookup.revision() ||
+                !sameNamingSource(channel, lookup.channel()))
+                throw new IllegalStateException("The channel changed; look up RadioReference names again");
+            EnrichmentCandidate selected = lookup.candidates().stream()
+                .filter(candidate -> Objects.equals(candidate.candidateId(), candidateId)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Choose a RadioReference record from this lookup"));
+            synchronized(this)
+            {
+                requireCurrentNamesSession(generation, directoryGeneration);
+                return storeNamesPreview(channel, savedId, revision, running,
+                    new RadioReferenceChannelNames(selected.system(), selected.site(), selected.name()), selected.sourceUrl(), null,
+                    lookupId, lookup.candidates(), lookup.identity(), generation, directoryGeneration).withSystemId(selected.rrSystemId());
+            }
+        }
+        if(candidateId != null) throw new IllegalArgumentException("Look up RadioReference records before choosing one");
+        // Only saved receiver identity can verify a match. Draft observed fields are never identity proof.
+        P25SiteIdentity requiredIdentity = null;
+        if(entry != null && p25Trunked(entry.channel()) && enrichmentIdentity(entry.channel()) != null &&
+            sameNamingSource(channel, entry.channel()))
+        {
+            EnrichmentPreview verified = previewChannelEnrichment(savedId, revision, stateId);
+            if("ambiguous".equals(verified.state()))
+            {
+                // Offer only records that independently match the same trusted identity; the user chooses the label.
+                requiredIdentity = enrichmentIdentity(entry.channel());
+            }
+            else
+            {
+                if(draft == null || !("matched".equals(verified.state()) || "no_changes".equals(verified.state())))
+                    return verified;
+                synchronized(this)
+                {
+                    requireCurrentNamesSession(generation, directoryGeneration);
+                    if(verified.previewId() != null && mPendingEnrichments.remove(verified.previewId()) == null)
+                        throw new PreviewNotFoundException();
+                    return storeNamesPreview(channel, savedId, revision, running, verified.names(), verified.systemUrl(),
+                        verified.siteUrl(), null, List.of(), enrichmentIdentity(entry.channel()), generation, directoryGeneration)
+                        .withSystemId(verified.rrSystemId());
+                }
+            }
+        }
+        if(stateId == null || stateId <= 0)
+            return namesResult(savedId, revision, running, "location_required",
+                "Choose a state or province in RadioReference settings, then look up this channel again.", null, List.of());
+        RadioReferenceDiscoveryResolver.Identity requiredDirectoryIdentity = requiredIdentity != null ?
+            new RadioReferenceDiscoveryResolver.Identity(channel.protocolId(), "", frequency, requiredIdentity.wacn(),
+                requiredIdentity.system(), requiredIdentity.rfss(), requiredIdentity.site(), null, null) : null;
+        long namingDeadline = mNamingNanoTime.getAsLong() + NAMING_LOOKUP_NANOS;
+        var page = mDirectory.searchStateFrequencies(stateId, frequency, 0, 32, namingBudget(namingDeadline));
+        namingBudget(namingDeadline);
+        if(page.totalItems() > 32)
+            return namesResult(savedId, revision, running, "ambiguous",
+                "Too many RadioReference records use this frequency. Open RadioReference to choose a record.", null, List.of());
+        Map<String,EnrichmentCandidate> candidates = new LinkedHashMap<>();
+        Map<Integer,TrunkedSystemDetails> systems = new HashMap<>();
+        Map<Integer,List<TrunkedSiteDetails>> sites = new HashMap<>();
+        Map<String,RadioReferenceDirectoryService.FrequencyDetails> conventionalDetails = new HashMap<>();
+        for(var row: page.items())
+        {
+            if(Math.round(row.outputMhz() * 1_000_000.0) != frequency) continue;
+            if(row.matchType() == RadioReferenceDirectoryService.MatchType.CONVENTIONAL)
+            {
+                if(!conventional) continue;
+                String detailKey = row.subCategoryId() + ":" + row.agencyId() + ":" + row.countyId() + ":" + row.modeCode();
+                var details = conventionalDetails.get(detailKey);
+                if(details == null)
+                {
+                    details = mDirectory.frequencyDetails(frequency, null, 0, row.subCategoryId(), row.agencyId(),
+                        row.countyId(), row.modeCode(), namingBudget(namingDeadline));
+                    namingBudget(namingDeadline);
+                    conventionalDetails.put(detailKey, details);
+                }
+                String mode = firstNonBlank(details.modeName(), row.modeName(), row.modeCode());
+                String remoteProtocol;
+                try { remoteProtocol = conventionalProtocol(mode); }
+                catch(IllegalArgumentException unsupported) { continue; }
+                if(!channel.protocolId().equals(remoteProtocol) || remoteProtocol.equals("nxdn") &&
+                    !Objects.equals(channel.settings().getOrDefault("transmission_mode", "M4800"),
+                        normalized(mode).contains("96") ? "M9600" : "M4800")) continue;
+                var suggested = RadioReferenceChannelNames.conventional(row.countyName(), row.agencyName(), row.stateName(),
+                    details.category(), details.subCategory(), row.description(), row.alphaTag(), frequency);
+                String system = suggested.system();
+                String site = suggested.site();
+                String name = suggested.name();
+                String context = java.util.stream.Stream.of(row.countyName(), row.agencyName(), details.category(),
+                    details.subCategory(), row.alphaTag(), mode, row.tone(), row.callsign()).filter(value -> value != null && !value.isBlank())
+                    .distinct().collect(java.util.stream.Collectors.joining(" · "));
+                String key = "conventional:" + row.subCategoryId() + ':' + system + ':' + site + ':' + name;
+                candidates.putIfAbsent(key, new EnrichmentCandidate(UUID.randomUUID().toString(), system, site, name,
+                    remoteProtocol, frequency, context, row.radioReferenceUrl(), null, null));
+            }
+            else if(row.systemId() != null && row.systemId() > 0)
+            {
+                int systemId = row.systemId();
+                TrunkedSystemDetails system = systems.get(systemId);
+                if(system == null)
+                {
+                    system = mDirectory.trunkedSystemDetails(systemId, namingBudget(namingDeadline));
+                    namingBudget(namingDeadline);
+                    systems.put(systemId, system);
+                }
+                boolean remoteConventional = normalized(system.flavor()).contains("conventional networked");
+                if(conventional != remoteConventional) continue;
+                List<TrunkedSiteDetails> siteRows = sites.get(systemId);
+                if(siteRows == null)
+                {
+                    siteRows = mDirectory.allTrunkedSites(systemId, namingBudget(namingDeadline));
+                    namingBudget(namingDeadline);
+                    sites.put(systemId, siteRows);
+                }
+                for(var site: siteRows)
+                {
+                    if(site.channels().stream().noneMatch(value -> value.frequencyHz() == frequency) ||
+                        row.siteNumber() != null && row.siteNumber() != site.number()) continue;
+                    if(requiredDirectoryIdentity != null && !RadioReferenceDiscoveryResolver.match(requiredDirectoryIdentity,
+                        List.of(new RadioReferenceDirectoryService.DiscoverySystem(system, List.of(site)))).matched()) continue;
+                    DecoderPlan decoder = siteDecoder(system, site);
+                    if(!decoder.supported() || !channel.protocolId().equals(decoder.protocolId()) ||
+                        decoder.protocolId().equals("nxdn") && !Objects.equals(channel.settings().getOrDefault(
+                            "transmission_mode", "M4800"), nxdnTransmissionMode(system.flavor()))) continue;
+                    String systemName = text(system.name());
+                    String siteName = text(site.name());
+                    String name = RadioReferenceChannelNames.trunked(systemName, siteName, frequency).name();
+                    String key = "trunked:" + systemId + ':' + site.id();
+                    candidates.putIfAbsent(key, new EnrichmentCandidate(UUID.randomUUID().toString(), systemName,
+                        siteName, name, decoder.protocolId(), frequency, firstNonBlank(row.countyName(), row.stateName()),
+                        "https://www.radioreference.com/db/site/" + site.id(), systemId, null));
+                }
+            }
+        }
+        synchronized(this)
+        {
+            namingBudget(namingDeadline);
+            requireCurrentNamesSession(generation, directoryGeneration);
+            if(entry != null) requireSameRevision(revision, mChannels.get(savedId).revision());
+            if(candidates.isEmpty()) return namesResult(savedId, revision, running, "no_match",
+                "No RadioReference record matches this frequency and radio type in the selected region.", null, List.of());
+            cleanupExpired(mClock.millis());
+            requirePreviewCapacity();
+            String id = UUID.randomUUID().toString();
+            var choices = List.copyOf(candidates.values());
+            mPendingNameLookups.put(id, new PendingNameLookup(savedId, revision, channel, choices, requiredIdentity,
+                generation, directoryGeneration, mClock.millis() + mPreviewLifetimeMillis));
+            return namesResult(savedId, revision, running, "choose_record",
+                "Choose the RadioReference record to use for this channel.", id, choices);
+        }
+    }
+
+    /** One total budget includes state search, queue waits, and every detail request; never return partial choices. */
+    private Duration namingBudget(long deadline) throws RadioReferenceDirectoryException
+    {
+        long remaining = deadline - mNamingNanoTime.getAsLong();
+        if(remaining <= 0) throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.TIMEOUT);
+        return Duration.ofNanos(remaining);
+    }
+
+    private synchronized void requireCurrentNamesSession(long generation, long directoryGeneration)
+        throws RadioReferenceDirectoryException
+    {
+        requireCatalogSession();
+        if(generation != mSessionGeneration || directoryGeneration != mDirectory.sessionGeneration())
+            throw new PreviewNotFoundException();
+    }
+
+    private static long namingFrequency(ChannelDefinition channel)
+    {
+        if(channel.source().frequenciesHz().isEmpty() || channel.source().frequenciesHz().size() > 256)
+            throw new IllegalArgumentException("Enter a frequency before looking up RadioReference names");
+        Long preferred = channel.source().preferredFrequencyHz();
+        Long frequency = preferred != null && channel.source().frequenciesHz().contains(preferred) ? preferred :
+            channel.source().frequenciesHz().getFirst();
+        if(frequency == null || frequency <= 0 || frequency > 100_000_000_000L)
+            throw new IllegalArgumentException("Enter a valid frequency before looking up RadioReference names");
+        return frequency;
+    }
+
+    private static boolean sameNamingSource(ChannelDefinition first, ChannelDefinition second)
+    {
+        return first.protocolId().equals(second.protocolId()) && first.source().equals(second.source()) &&
+            Objects.equals(first.settings().get("channel_mode"), second.settings().get("channel_mode")) &&
+            Objects.equals(first.settings().get("transmission_mode"), second.settings().get("transmission_mode"));
+    }
+
+    private EnrichmentPreview storeNamesPreview(ChannelDefinition channel, String configurationId, long revision,
+        boolean running, RadioReferenceChannelNames names, String systemUrl, String siteUrl, String lookupId,
+        List<EnrichmentCandidate> candidates, P25SiteIdentity identity, long generation, long directoryGeneration)
+    {
+        String system = enrichmentName(names.system(), channel.system());
+        String site = enrichmentName(names.site(), channel.site());
+        String name = enrichmentName(names.name(), channel.name());
+        List<EnrichmentChange> changes = new ArrayList<>();
+        addEnrichmentChange(changes, "system", channel.system(), system);
+        addEnrichmentChange(changes, "site", channel.site(), site);
+        addEnrichmentChange(changes, "name", channel.name(), name);
+        String previewId = null;
+        if(!changes.isEmpty())
+        {
+            cleanupExpired(mClock.millis());
+            requirePreviewCapacity();
+            previewId = UUID.randomUUID().toString();
+            mPendingEnrichments.put(previewId, new PendingEnrichment(revision, configurationId, identity, system,
+                site, name, channel, generation, directoryGeneration, mClock.millis() + mPreviewLifetimeMillis));
+        }
+        return new EnrichmentPreview(previewId, changes.isEmpty() ? "no_changes" : "matched",
+            changes.isEmpty() ? "This channel already has the available RadioReference names." : "Review the names before saving.",
+            configurationId, revision, changes, systemUrl, siteUrl, running, identity, lookupId, candidates,
+            new RadioReferenceChannelNames(system, site, name));
+    }
+
+    private static EnrichmentPreview namesResult(String configurationId, long revision, boolean running,
+        String state, String reason, String lookupId, List<EnrichmentCandidate> candidates)
+    {
+        return new EnrichmentPreview(null, state, reason, configurationId, revision, List.of(), null, null,
+            running, null, lookupId, candidates, null);
+    }
+
     public EnrichmentPreview previewChannelEnrichment(String configurationId, long expectedRevision, Integer stateId)
         throws RadioReferenceDirectoryException
     {
@@ -276,7 +534,7 @@ public final class RadioReferenceImportService
             String name = channel.name();
             if(!text(match.systemName()).isEmpty() && !text(match.siteName()).isEmpty())
             {
-                String proposed = text(match.systemName()) + " · " + text(match.siteName());
+                String proposed = RadioReferenceChannelNames.trunked(match.systemName(), match.siteName(), frequency).name();
                 if(proposed.length() <= 256) name = proposed;
             }
             List<EnrichmentChange> changes = new ArrayList<>();
@@ -285,15 +543,15 @@ public final class RadioReferenceImportService
             addEnrichmentChange(changes, "name", channel.name(), name);
             if(changes.isEmpty())
                 return enrichmentResult(entry, null, "no_changes", "This channel already has the available RadioReference names.",
-                    changes, match.url(), match.siteUrl(), identity);
+                    changes, match.url(), match.siteUrl(), identity).withSystemId(match.rrSystemId());
             long now = mClock.millis();
             cleanupExpired(now);
             requirePreviewCapacity();
             String previewId = UUID.randomUUID().toString();
             mPendingEnrichments.put(previewId, new PendingEnrichment(entry.revision(), configurationId, identity,
-                system, site, name, generation, directoryGeneration, now + mPreviewLifetimeMillis));
+                system, site, name, channel, generation, directoryGeneration, now + mPreviewLifetimeMillis));
             return enrichmentResult(entry, previewId, "matched", "Review the names before saving.", changes,
-                match.url(), match.siteUrl(), identity);
+                match.url(), match.siteUrl(), identity).withSystemId(match.rrSystemId());
         }
     }
 
@@ -306,10 +564,14 @@ public final class RadioReferenceImportService
         PendingEnrichment pending = mPendingEnrichments.remove(requirePreviewId(previewId));
         if(pending == null || pending.generation() != mSessionGeneration ||
             pending.directoryGeneration() != mDirectory.sessionGeneration()) throw new PreviewNotFoundException();
-        ChannelAdministrationService.Entry entry = mChannels.p25EnrichmentSnapshot(pending.configurationId()).entry();
+        if(pending.configurationId() == null)
+            throw new IllegalArgumentException("Apply these names in the channel editor before saving");
+        ChannelAdministrationService.Entry entry = pending.identity() != null ?
+            mChannels.p25EnrichmentSnapshot(pending.configurationId()).entry() : mChannels.get(pending.configurationId());
         requireSameRevision(pending.revision(), entry.revision());
         ChannelDefinition current = entry.channel();
-        if(!p25Trunked(current) || !pending.identity().equals(enrichmentIdentity(current)))
+        if(!sameNamingSource(current, pending.channel()) || pending.identity() != null &&
+            (!p25Trunked(current) || !pending.identity().equals(enrichmentIdentity(current))))
             throw new IllegalStateException("The channel identity changed; look up RadioReference names again");
         String name = replaceName ? pending.name() : current.name();
         if(Objects.equals(current.system(), pending.system()) && Objects.equals(current.site(), pending.site()) &&
@@ -318,8 +580,9 @@ public final class RadioReferenceImportService
             pending.system(), pending.site(), name, current.radioResolveId(), current.aliasListId(), current.source(),
             current.settings(), current.frequencyMap(), current.eventLogs(), current.recorders(),
             current.auxiliaryDecoders(), current.observed());
-        ChannelAdministrationService.MutationResult mutation = mChannels.updateP25Names(pending.configurationId(),
-            replacement, entry.revision(), pending.identity());
+        ChannelAdministrationService.MutationResult mutation = pending.identity() != null ?
+            mChannels.updateP25Names(pending.configurationId(), replacement, entry.revision(), pending.identity()) :
+            mChannels.update(pending.configurationId(), replacement, entry.revision());
         return new EnrichmentResult(pending.configurationId(), mutation.revision());
     }
 
@@ -362,9 +625,20 @@ public final class RadioReferenceImportService
         String state, String reason, List<EnrichmentChange> changes, String systemUrl, String siteUrl,
         P25SiteIdentity identity)
     {
+        RadioReferenceChannelNames names = new RadioReferenceChannelNames(entry.channel().system(), entry.channel().site(), entry.channel().name());
+        for(var change: changes)
+        {
+            names = switch(change.field())
+            {
+                case "system" -> new RadioReferenceChannelNames(change.after(), names.site(), names.name());
+                case "site" -> new RadioReferenceChannelNames(names.system(), change.after(), names.name());
+                case "name" -> new RadioReferenceChannelNames(names.system(), names.site(), change.after());
+                default -> names;
+            };
+        }
         return new EnrichmentPreview(previewId, state, reason, entry.channel().configurationId(), entry.revision(),
             changes, systemUrl, siteUrl, entry.processingState() == ChannelAdministrationService.ProcessingState.RUNNING,
-            identity);
+            identity, null, List.of(), names);
     }
 
     /** Returns one RadioReference talkgroup page annotated against one exact destination Alias List. */
@@ -458,6 +732,7 @@ public final class RadioReferenceImportService
         mPendingTalkgroups.clear();
         mPendingChannels.clear();
         mPendingEnrichments.clear();
+        mPendingNameLookups.clear();
     }
 
     /** Builds one revision-bound Alias import plan for selected talkgroups or the whole system. */
@@ -1211,11 +1486,12 @@ public final class RadioReferenceImportService
         mPendingChannels.values().removeIf(plan -> plan.expiresAtEpochMs() <= now);
         mPendingTalkgroups.values().removeIf(plan -> plan.expiresAtEpochMs() <= now);
         mPendingEnrichments.values().removeIf(plan -> plan.expiresAtEpochMs() <= now);
+        mPendingNameLookups.values().removeIf(plan -> plan.expiresAtEpochMs() <= now);
     }
 
     private void requirePreviewCapacity()
     {
-        if(mPendingChannels.size() + mPendingTalkgroups.size() + mPendingEnrichments.size() >= MAXIMUM_PENDING_PREVIEWS)
+        if(mPendingChannels.size() + mPendingTalkgroups.size() + mPendingEnrichments.size() + mPendingNameLookups.size() >= MAXIMUM_PENDING_PREVIEWS)
         {
             throw new IllegalStateException("Too many RadioReference previews are awaiting confirmation");
         }
@@ -1387,11 +1663,41 @@ public final class RadioReferenceImportService
     }
 
     public record EnrichmentChange(String field, String before, String after) {}
+    public record EnrichmentCandidate(String candidateId, String system, String site, String name, String protocolId,
+        long frequencyHz, String context, String sourceUrl, Integer rrSystemId, Long preferredAliasListId) {}
     public record EnrichmentPreview(String previewId, String state, String reason, String configurationId, long revision,
                                     List<EnrichmentChange> changes, String systemUrl, String siteUrl, boolean running,
-                                    P25SiteIdentity identity)
+                                    P25SiteIdentity identity, String lookupId, List<EnrichmentCandidate> candidates,
+                                    RadioReferenceChannelNames names, Integer rrSystemId, Long preferredAliasListId)
     {
-        public EnrichmentPreview { changes = List.copyOf(changes); }
+        public EnrichmentPreview
+        {
+            changes = List.copyOf(changes);
+            candidates = List.copyOf(candidates != null ? candidates : List.of());
+        }
+        public EnrichmentPreview(String previewId, String state, String reason, String configurationId, long revision,
+            List<EnrichmentChange> changes, String systemUrl, String siteUrl, boolean running, P25SiteIdentity identity)
+        { this(previewId, state, reason, configurationId, revision, changes, systemUrl, siteUrl, running, identity,
+            null, List.of(), null, null, null); }
+        public EnrichmentPreview(String previewId, String state, String reason, String configurationId, long revision,
+            List<EnrichmentChange> changes, String systemUrl, String siteUrl, boolean running, P25SiteIdentity identity,
+            String lookupId, List<EnrichmentCandidate> candidates, RadioReferenceChannelNames names)
+        { this(previewId, state, reason, configurationId, revision, changes, systemUrl, siteUrl, running, identity,
+            lookupId, candidates, names, null, null); }
+        public EnrichmentPreview withSystemId(Integer systemId)
+        {
+            return new EnrichmentPreview(previewId, state, reason, configurationId, revision, changes, systemUrl,
+                siteUrl, running, identity, lookupId, candidates, names, systemId, preferredAliasListId);
+        }
+        public EnrichmentPreview withPreferredAliasLists(Map<Integer,Long> preferences)
+        {
+            return new EnrichmentPreview(previewId, state, reason, configurationId, revision, changes, systemUrl,
+                siteUrl, running, identity, lookupId, candidates.stream().map(candidate -> new EnrichmentCandidate(
+                    candidate.candidateId(), candidate.system(), candidate.site(), candidate.name(), candidate.protocolId(),
+                    candidate.frequencyHz(), candidate.context(), candidate.sourceUrl(), candidate.rrSystemId(),
+                    candidate.rrSystemId() != null ? preferences.get(candidate.rrSystemId()) : null)).toList(), names,
+                rrSystemId, rrSystemId != null ? preferences.get(rrSystemId) : null);
+        }
     }
     public record EnrichmentResult(String configurationId, long revision) {}
 
@@ -1478,6 +1784,24 @@ public final class RadioReferenceImportService
 
     interface DirectoryAccess
     {
+        default BoundedPage<RadioReferenceDirectoryService.FrequencyMatch> searchStateFrequencies(int stateId,
+            long frequencyHz, int offset, int limit) throws RadioReferenceDirectoryException
+        { return new BoundedPage<>(List.of(), offset, null, 0); }
+        default RadioReferenceDirectoryService.FrequencyDetails frequencyDetails(long frequencyHz, Integer systemId,
+            int siteNumber, int subCategoryId, int agencyId, int countyId, String rawMode)
+            throws RadioReferenceDirectoryException
+        { return new RadioReferenceDirectoryService.FrequencyDetails(rawMode, "", "", null); }
+        default BoundedPage<RadioReferenceDirectoryService.FrequencyMatch> searchStateFrequencies(int stateId,
+            long frequencyHz, int offset, int limit, Duration remainingBudget) throws RadioReferenceDirectoryException
+        { return searchStateFrequencies(stateId, frequencyHz, offset, limit); }
+        default RadioReferenceDirectoryService.FrequencyDetails frequencyDetails(long frequencyHz, Integer systemId,
+            int siteNumber, int subCategoryId, int agencyId, int countyId, String rawMode, Duration remainingBudget)
+            throws RadioReferenceDirectoryException
+        { return frequencyDetails(frequencyHz, systemId, siteNumber, subCategoryId, agencyId, countyId, rawMode); }
+        default TrunkedSystemDetails trunkedSystemDetails(int systemId, Duration remainingBudget)
+            throws RadioReferenceDirectoryException { return trunkedSystemDetails(systemId); }
+        default List<TrunkedSiteDetails> allTrunkedSites(int systemId, Duration remainingBudget)
+            throws RadioReferenceDirectoryException { return allTrunkedSites(systemId); }
         default void requireCatalogSession() throws RadioReferenceDirectoryException {}
         default long sessionGeneration() { return 0; }
         default RadioReferenceDiscoveryResolver.Result resolveP25Identity(Integer stateId,
@@ -1506,6 +1830,25 @@ public final class RadioReferenceImportService
             Objects.requireNonNull(service);
         }
 
+        @Override public BoundedPage<RadioReferenceDirectoryService.FrequencyMatch> searchStateFrequencies(int stateId,
+            long frequencyHz, int offset, int limit) throws RadioReferenceDirectoryException
+        { return service.searchStateFrequencies(stateId, frequencyHz, offset, limit); }
+        @Override public RadioReferenceDirectoryService.FrequencyDetails frequencyDetails(long frequencyHz,
+            Integer systemId, int siteNumber, int subCategoryId, int agencyId, int countyId, String rawMode)
+            throws RadioReferenceDirectoryException
+        { return service.frequencyDetails(frequencyHz, systemId, siteNumber, subCategoryId, agencyId, countyId, rawMode); }
+        @Override public BoundedPage<RadioReferenceDirectoryService.FrequencyMatch> searchStateFrequencies(int stateId,
+            long frequencyHz, int offset, int limit, Duration remainingBudget) throws RadioReferenceDirectoryException
+        { return service.searchStateFrequencies(stateId, frequencyHz, offset, limit, remainingBudget); }
+        @Override public RadioReferenceDirectoryService.FrequencyDetails frequencyDetails(long frequencyHz,
+            Integer systemId, int siteNumber, int subCategoryId, int agencyId, int countyId, String rawMode,
+            Duration remainingBudget) throws RadioReferenceDirectoryException
+        { return service.frequencyDetails(frequencyHz, systemId, siteNumber, subCategoryId, agencyId, countyId, rawMode,
+            remainingBudget); }
+        @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId, Duration remainingBudget)
+            throws RadioReferenceDirectoryException { return service.trunkedSystemDetails(systemId, remainingBudget); }
+        @Override public List<TrunkedSiteDetails> allTrunkedSites(int systemId, Duration remainingBudget)
+            throws RadioReferenceDirectoryException { return service.allTrunkedSites(systemId, remainingBudget); }
         @Override public long sessionGeneration() { return service.sessionGeneration(); }
 
         @Override public void requireCatalogSession() throws RadioReferenceDirectoryException
@@ -1554,8 +1897,11 @@ public final class RadioReferenceImportService
     private record PendingChannel(long revision, ChannelAction action, String existingConfigurationId,
                                   ChannelDefinition channel, long expiresAtEpochMs) {}
     private record PendingEnrichment(long revision, String configurationId, P25SiteIdentity identity, String system,
-                                      String site, String name, long generation, long directoryGeneration,
-                                      long expiresAtEpochMs) {}
+                                      String site, String name, ChannelDefinition channel, long generation,
+                                      long directoryGeneration, long expiresAtEpochMs) {}
+    private record PendingNameLookup(String configurationId, long revision, ChannelDefinition channel,
+        List<EnrichmentCandidate> candidates, P25SiteIdentity identity, long generation, long directoryGeneration,
+        long expiresAtEpochMs) {}
     private record PendingTalkgroups(AliasImportService.Plan plan, AliasImportService.Preview preview,
                                      long expiresAtEpochMs) {}
 }

@@ -273,6 +273,20 @@ class ChannelAdminHttpControllerTest
             assertTrue(remoteRows.get(1).path("remote_origin").path("remote").asBoolean());
             assertFalse(catalogWithRemote.body().contains(senderId));
             assertFalse(catalogWithRemote.body().contains(feedId));
+
+            ObjectNode spectrumCreate = (ObjectNode)MAPPER.readTree(create);
+            spectrumCreate.put("reject_existing_frequency", true);
+            HttpResponse<String> rejectedSpectrumDuplicate = sendJson(client,
+                origin.resolve(ChannelAdminHttpController.PATH), "POST", spectrumCreate.toString());
+            assertEquals(409, rejectedSpectrumDuplicate.statusCode(), rejectedSpectrumDuplicate.body());
+            assertTrue(rejectedSpectrumDuplicate.body().contains("A channel already uses 155.010000 MHz."));
+            assertEquals(2, channels.catalog().channels().size());
+
+            HttpResponse<String> normalCoChannel = sendJson(client,
+                origin.resolve(ChannelAdminHttpController.PATH), "POST", create);
+            assertEquals(201, normalCoChannel.statusCode(), normalCoChannel.body());
+            assertEquals(3, channels.catalog().channels().size(),
+                "Ordinary Channel Manager requests retain their existing co-channel behavior");
         }
         finally
         {

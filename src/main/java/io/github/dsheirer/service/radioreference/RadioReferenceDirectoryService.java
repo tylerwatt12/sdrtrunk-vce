@@ -507,6 +507,10 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     public BoundedPage<FrequencyMatch> searchStateFrequencies(int stateId, long frequencyHz, int offset, int limit)
         throws RadioReferenceDirectoryException
+    { return searchStateFrequencies(stateId, frequencyHz, offset, limit, Duration.ofNanos(mRequestDeadlineNanos)); }
+
+    public BoundedPage<FrequencyMatch> searchStateFrequencies(int stateId, long frequencyHz, int offset, int limit,
+        Duration remainingBudget) throws RadioReferenceDirectoryException
     {
         validateId(stateId);
         validatePage(offset, limit);
@@ -518,7 +522,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         FrequencySnapshot snapshot = invokePremium(gateway -> new FrequencySnapshot(
             verifiedState(gateway.state(stateId), stateId),
-            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0)));
+            gateway.searchStateFrequencies(stateId, frequencyHz / 1_000_000.0)),
+            Math.min(positiveNanos(remainingBudget, "remainingBudget"), mRequestDeadlineNanos));
         List<RadioReferenceGateway.FrequencyResult> source = snapshot.results() != null ? snapshot.results() : List.of();
         long enrichmentItems = (long)snapshot.state().counties().size() + snapshot.state().agencies().size() +
             snapshot.state().systems().size();
@@ -902,6 +907,11 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public FrequencyDetails frequencyDetails(long frequencyHz, Integer systemId, int siteNumber, int subCategoryId,
                                              int agencyId, int countyId, String rawMode)
         throws RadioReferenceDirectoryException
+    { return frequencyDetails(frequencyHz, systemId, siteNumber, subCategoryId, agencyId, countyId, rawMode,
+        DEFAULT_DETAIL_REQUEST_DEADLINE); }
+
+    public FrequencyDetails frequencyDetails(long frequencyHz, Integer systemId, int siteNumber, int subCategoryId,
+        int agencyId, int countyId, String rawMode, Duration remainingBudget) throws RadioReferenceDirectoryException
     {
         if(frequencyHz <= 0 || frequencyHz > 100_000_000_000L || (systemId != null && systemId <= 0) ||
             siteNumber < 0 || subCategoryId < 0 || agencyId < 0 || countyId < 0 ||
@@ -911,7 +921,8 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         }
 
         FrequencyDetailSnapshot snapshot = invokePremiumDetail(gateway -> frequencyDetailSnapshot(gateway, systemId,
-            subCategoryId, agencyId, countyId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+            subCategoryId, agencyId, countyId), Math.min(positiveNanos(remainingBudget, "remainingBudget"),
+                DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos()));
         Map<Integer,String> modes = new LinkedHashMap<>();
         snapshot.modes().stream().filter(Objects::nonNull)
             .forEach(mode -> modes.putIfAbsent(mode.id(), text(mode.name())));
@@ -932,10 +943,15 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     /** Loads one trunked-system description for a preview/import workflow. */
     public RadioReferenceGateway.TrunkedSystemDetails trunkedSystemDetails(int systemId)
         throws RadioReferenceDirectoryException
+    { return trunkedSystemDetails(systemId, DEFAULT_DETAIL_REQUEST_DEADLINE); }
+
+    public RadioReferenceGateway.TrunkedSystemDetails trunkedSystemDetails(int systemId, Duration remainingBudget)
+        throws RadioReferenceDirectoryException
     {
         validateId(systemId);
         RadioReferenceGateway.TrunkedSystemDetails details = invokePremiumDetail(
-            gateway -> gateway.trunkedSystemDetails(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+            gateway -> gateway.trunkedSystemDetails(systemId), Math.min(positiveNanos(remainingBudget, "remainingBudget"),
+                DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos()));
 
         if(details == null || details.id() != systemId)
         {
@@ -956,10 +972,15 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     /** Loads the complete bounded site catalog once for in-browser filtering and paging. */
     public List<RadioReferenceGateway.TrunkedSiteDetails> allTrunkedSites(int systemId)
         throws RadioReferenceDirectoryException
+    { return allTrunkedSites(systemId, DEFAULT_DETAIL_REQUEST_DEADLINE); }
+
+    public List<RadioReferenceGateway.TrunkedSiteDetails> allTrunkedSites(int systemId, Duration remainingBudget)
+        throws RadioReferenceDirectoryException
     {
         validateId(systemId);
         List<RadioReferenceGateway.TrunkedSiteDetails> source = invokePremiumDetail(
-            gateway -> gateway.trunkedSiteDetails(systemId), DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos());
+            gateway -> gateway.trunkedSiteDetails(systemId), Math.min(positiveNanos(remainingBudget, "remainingBudget"),
+                DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos()));
         enforceImportBound(source == null ? 0 : source.size());
 
         if(source != null)
