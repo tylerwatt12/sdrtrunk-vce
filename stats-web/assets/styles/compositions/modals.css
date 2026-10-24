@@ -242,8 +242,7 @@ body.modal-open {
 }
 
 .ui-setup-guide--compact .ui-setup-guide-footer {
-  flex-direction: column;
-  align-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .read-only-modal.ui-setup-guide--illustrated {
@@ -435,11 +434,17 @@ body.modal-open {
 .ui-setup-guide-item > strong { font-weight: var(--font-weight-control); }
 
 .ui-setup-guide-footer {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-4);
   padding: var(--space-4) var(--guide-card-padding);
+}
+
+.ui-setup-guide-actions {
+  grid-column: -2 / -1;
+  flex-wrap: nowrap;
+  justify-self: end;
 }
 
 .ui-setup-guide-progress {
@@ -526,5 +531,6 @@ body.modal-open {
     scroll-padding-bottom: calc(var(--control-height-comfortable) * 2 + var(--space-3) * 2 + var(--space-2) + var(--space-4));
   }
   .ui-modal-footer > .ui-modal-footer-spacer { display: none; }
+  .ui-setup-guide-footer { grid-template-columns: minmax(0, 1fr); }
   .read-only-modal .settings-form-footer .ui-action-row > .ui-button { width: 100%; }
 }

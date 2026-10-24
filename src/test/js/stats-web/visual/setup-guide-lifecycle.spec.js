@@ -257,6 +257,122 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 1440, height: 100
   });
 }
 
+for (const viewport of [
+  { width: 1280, height: 720 },
+  { width: 1440, height: 1000 },
+  { width: 390, height: 844 }
+]) {
+  for (const theme of ['light', 'dark']) {
+    test(`all authored guide counts keep Back and Next together at ${viewport.width} in ${theme}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await installGuideHarness(page);
+      const layouts = await page.evaluate(async theme => {
+        document.documentElement.dataset.theme = theme;
+        const { createGuideDefinition, pageGuideTemplates } = await import('/assets/guides/catalog.js');
+        const ids = ['welcome', ...Object.values(pageGuideTemplates).filter(value => value.authored).map(value => value.id)];
+        const harness = window.guideHarness;
+        const results = [];
+        const ready = async () => {
+          // The production engine awaits each preparation, even when this footer-only
+          // harness leaves the real page's sample-data preparation out of the fixture.
+          for (let attempt = 0; attempt < 10; attempt += 1) {
+            await Promise.resolve();
+            if (!document.querySelector('.ui-setup-guide[aria-busy="true"]')) return;
+          }
+          throw new Error('The guide did not finish preparing its footer');
+        };
+        const rectangle = element => {
+          const { left, top, right, bottom, width, height } = element.getBoundingClientRect();
+          return { left, top, right, bottom, width, height };
+        };
+        for (const id of ids) {
+          const definition = createGuideDefinition(id, { documentValue: document, canView: () => true, canAccess: () => true });
+          const numberedCount = definition.steps.filter(step => !step.overview).length;
+          for (const variant of ['standard', 'compact']) {
+            // Counts, text, and action labels come from every authored guide. Only
+            // the compact count case is forced, using Spectrum's Next/Finish
+            // labels. Wide concepts and Welcome's illustration remain their
+            // authored production compositions in the standard cases.
+            const steps = definition.steps.map(({ id, title, paragraphs, items, hint, nextLabel, overview, illustration, diagram }, index) => ({
+              id, title, paragraphs, items, hint, overview,
+              nextLabel: variant === 'compact' && !overview ? (index === definition.steps.length - 1 ? 'Finish' : undefined) : nextLabel,
+              illustration: variant === 'standard' && illustration,
+              diagram: variant === 'standard' ? diagram : undefined,
+              compact: variant === 'compact'
+            }));
+            harness.presentation = harness.open(steps);
+            await ready();
+            // An overview has a single action. Inspect the first numbered footer
+            // that offers Back, and the final footer's actual completion label.
+            const positions = ['opening', 'first', 'last'];
+            for (const position of positions) {
+              if (position === 'first') {
+                harness.presentation.next();
+                await ready();
+              }
+              if (position === 'last') {
+                for (let index = 2; index < steps.length; index += 1) {
+                  harness.presentation.next();
+                  await ready();
+                }
+              }
+              const guide = document.querySelector('.ui-setup-guide');
+              const footer = guide.querySelector('.ui-setup-guide-footer');
+              const progress = guide.querySelector('.ui-setup-guide-progress');
+              const actions = footer.querySelector('.ui-action-row');
+              const [back, next] = actions.querySelectorAll('button');
+              const dots = [...guide.querySelectorAll('.ui-setup-guide-dot')];
+              results.push({ id, variant, position, numberedCount,
+                counter: guide.querySelector('.ui-setup-guide-counter').textContent,
+                nextLabel: next.textContent.trim(), backHidden: back.hidden, dotsHidden: guide.querySelector('.ui-setup-guide-dots').hidden,
+                guide: rectangle(guide), footer: rectangle(footer), progress: rectangle(progress),
+                actions: rectangle(actions), back: rectangle(back), next: rectangle(next),
+                dots: dots.map(rectangle), footerPaddingRight: parseFloat(getComputedStyle(footer).paddingRight),
+                footerScrollWidth: footer.scrollWidth, footerClientWidth: footer.clientWidth });
+            }
+            harness.presentation.close();
+          }
+        }
+        return { results, errors: harness.errors, ids };
+      }, theme);
+      expect(layouts.ids).toEqual(expect.arrayContaining([
+        'welcome', 'channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum'
+      ]));
+      expect(layouts.errors).toEqual([]);
+      for (const layout of layouts.results) {
+        const detail = `${layout.id}/${layout.variant}/${layout.position} (${layout.counter}, ${layout.nextLabel})`;
+        expect(layout.backHidden, detail).toBe(layout.position === 'opening');
+        if (!layout.backHidden) {
+          expect(Math.abs(layout.back.top - layout.next.top), detail).toBeLessThan(1);
+          expect(layout.next.left, detail).toBeGreaterThanOrEqual(layout.back.right + 1);
+        }
+        expect(layout.footerScrollWidth, detail).toBeLessThanOrEqual(layout.footerClientWidth + 1);
+        expect(Math.abs(layout.actions.right - (layout.footer.right - layout.footerPaddingRight)), detail).toBeLessThan(1);
+        for (const box of [layout.footer, layout.progress, layout.actions, ...(!layout.backHidden ? [layout.back] : []), layout.next,
+          ...(!layout.dotsHidden ? layout.dots : [])]) {
+          expect(box.left, detail).toBeGreaterThanOrEqual(layout.guide.left - 1);
+          expect(box.right, detail).toBeLessThanOrEqual(layout.guide.right + 1);
+          expect(box.top, detail).toBeGreaterThanOrEqual(layout.guide.top - 1);
+          expect(box.bottom, detail).toBeLessThanOrEqual(layout.guide.bottom + 1);
+        }
+        expect(layout.guide.left, detail).toBeGreaterThanOrEqual(0);
+        expect(layout.guide.right, detail).toBeLessThanOrEqual(viewport.width);
+        expect(layout.guide.top, detail).toBeGreaterThanOrEqual(0);
+        expect(layout.guide.bottom, detail).toBeLessThanOrEqual(viewport.height);
+        const overlapWidth = Math.max(0, Math.min(layout.progress.right, layout.actions.right) - Math.max(layout.progress.left, layout.actions.left));
+        const overlapHeight = Math.max(0, Math.min(layout.progress.bottom, layout.actions.bottom) - Math.max(layout.progress.top, layout.actions.top));
+        expect(overlapWidth * overlapHeight, detail).toBeLessThan(1);
+        expect(layout.dots, detail).toHaveLength(layout.numberedCount);
+        for (const dot of layout.dotsHidden ? [] : layout.dots) {
+          expect(dot.width, detail).toBeGreaterThan(0);
+          expect(dot.height, detail).toBeGreaterThan(0);
+        }
+        if (layout.position === 'last') expect(layout.counter, detail).toBe(`Step ${layout.numberedCount} of ${layout.numberedCount}`);
+      }
+    });
+  }
+}
+
 test('central diagrams scope SVG references for simultaneous renderings and ignore unknown artwork', async ({ page }) => {
   await installGuideHarness(page);
   const result = await page.evaluate(async () => {

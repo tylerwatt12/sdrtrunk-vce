@@ -4,7 +4,7 @@ import { aliasesSteps } from './pages/aliases.js?v=1';
 import { radioReferenceSteps } from './pages/radioreference.js?v=1';
 import { streamingSteps } from './pages/streaming.js?v=2';
 import { tunersSteps } from './pages/tuners.js?v=2';
-import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=2';
+import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=3';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.

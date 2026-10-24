@@ -21,7 +21,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
   dots.setAttribute('aria-hidden', 'true');
   numberedSteps.forEach(() => dots.append(node('span', 'ui-setup-guide-dot')));
   progress.append(counter, dots);
-  const actions = node('div', 'ui-action-row');
+  const actions = node('div', 'ui-action-row ui-setup-guide-actions');
   const back = node('button', 'ui-button ui-button-secondary', 'Back');
   const next = node('button', 'ui-button ui-button-primary', 'Next');
   back.type = next.type = 'button';
