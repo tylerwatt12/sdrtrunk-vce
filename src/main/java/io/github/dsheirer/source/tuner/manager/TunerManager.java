@@ -242,64 +242,39 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         mStopping = false;
         mLog.info("Discovering tuners ...");
 
-        boolean libUsbAvailable = false;
-
         try
         {
-            int api = LibUsb.getApiVersion();
-            libUsbAvailable = true;
-            mLog.info("LibUsb API Version: " + ((api >> 24) & 0xFF) + "." + ((api >> 16) & 0xFF) + "." + (api & 0xFFFF));
-            mLog.info("LibUsb Version: " + LibUsb.getVersion());
+            startUsbTuners();
         }
-        catch(Exception e)
+        catch(Exception | LinkageError e)
         {
-            final String os = System.getProperty("os.name").toLowerCase();
-            final String version = System.getProperty("os.version");
-
-            //Special handling for MacOS Tahoe version 26 issue with LibUsb.
-            if(os != null && os.startsWith("macos") && version != null && version.startsWith("26"))
-            {
-                mLog.warn("Unable to load libusb library for communication with USB tuner(s)");
-                mLog.warn("Mac OS Tahoe [" + os + "] version [" + version + "] detected.  There is an issue");
-                mLog.warn("with libusb for this OS version.  You might consider manually installing the latest");
-                mLog.warn("version of the libusb library.  In a terminal window type:");
-                mLog.warn("");
-                mLog.warn("\t\tbrew install libusb --HEAD");
-                mLog.warn("");
-            }
-            else
-            {
-                mLog.error("Error while loading libusb for os [" + os + "] version [" + version + "]", e);
-            }
+            //A previous setup probe can leave LibUsb erroneous, causing NoClassDefFoundError on this attempt.
+            mLog.error("Unable to start USB tuner discovery. Continuing with other tuner types.", e);
         }
 
-        if(libUsbAvailable)
-        {
-            try
-            {
-                int status = LibUsb.init(mLibUsbApplicationContext);
-
-                if(status == LibUsb.SUCCESS)
-                {
-                    mLibUsbInitialized = true;
-                    discoverUSBTuners();
-                }
-            }
-            catch(Exception e)
-            {
-                mLog.error("Error initializing LibUsb and usb4java library", e);
-            }
-
-            if(mLibUsbInitialized)
-            {
-                mHotplugEventSupport.start();
-            }
-
-            discoverSdrPlayTuners();
-        }
-
+        discoverSdrPlayTuners();
         discoverRecordingTuners();
+    }
 
+    /** Starts only the USB backend so a missing native dependency cannot prevent application startup. */
+    void startUsbTuners()
+    {
+        int api = LibUsb.getApiVersion();
+        mLog.info("LibUsb API Version: " + ((api >> 24) & 0xFF) + "." + ((api >> 16) & 0xFF) + "." + (api & 0xFFFF));
+        mLog.info("LibUsb Version: " + LibUsb.getVersion());
+
+        int status = LibUsb.init(mLibUsbApplicationContext);
+
+        if(status == LibUsb.SUCCESS)
+        {
+            mLibUsbInitialized = true;
+            discoverUSBTuners();
+            mHotplugEventSupport.start();
+        }
+        else
+        {
+            mLog.error("Unable to initialize USB tuner discovery: {} ({})", LibUsb.errorName(status), status);
+        }
     }
 
     /**
@@ -590,7 +565,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     /**
      * Discover SDRPlay RSP tuners
      */
-    private void discoverSdrPlayTuners()
+    void discoverSdrPlayTuners()
     {
         RspDuoSelectionMode duoSelectionMode = mUserPreferences.getTunerPreference().getRspDuoTunerMode();
 

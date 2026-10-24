@@ -1,9 +1,12 @@
-"""Isolated, hardware-free contracts for release smoke target and SQLite checks."""
+"""Isolated, hardware-free contracts for release smoke USB, target and SQLite checks."""
 from contextlib import closing
 import importlib.util
 import inspect
+import os
 from pathlib import Path
+import shutil
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -155,6 +158,145 @@ class SmokeRuntimeTest(unittest.TestCase):
                 with self.assertRaises(failure):
                     SMOKE.check_database_after_stop(path, 45)
                 pause.assert_not_called()
+
+    def test_mac_arm_probes_actual_and_modern_payload_in_separate_jvms_without_mutating_launcher_options(self):
+        options = ["-Djava.awt.headless=true", "-Duser.home=isolated home"]
+        java = Path("package/bin/java")
+        for architecture in ("arm64", "aarch64"):
+            with self.subTest(architecture=architecture), mock.patch.object(SMOKE.os.sys, "platform", "darwin"), \
+                 mock.patch.object(SMOKE.platform, "machine", return_value=architecture), \
+                 mock.patch.object(SMOKE, "run") as run:
+                SMOKE.check_usb_runtimes(java, options, "helper:package/lib/*",
+                                         cwd=self.root, env={}, evidence=self.root)
+            self.assertEqual(2, run.call_count)
+            normal, modern = run.call_args_list
+            self.assertEqual([str(java), *options, "-cp", "helper:package/lib/*", "SmokeUsb"],
+                             normal.args[0])
+            self.assertEqual([str(java), *options, "-Dos.version=26", "-cp", "helper:package/lib/*", "SmokeUsb"],
+                             modern.args[0])
+            self.assertEqual(self.root / "usb.log", normal.kwargs["log"])
+            self.assertEqual(self.root / "usb-macos26.log", modern.kwargs["log"])
+            self.assertEqual(["-Djava.awt.headless=true", "-Duser.home=isolated home"], options)
+
+    def test_other_platforms_only_probe_their_actual_native_runtime(self):
+        for system, architecture in (("darwin", "x86_64"), ("linux", "aarch64"), ("win32", "ARM64")):
+            with self.subTest(system=system, architecture=architecture), \
+                 mock.patch.object(SMOKE.os.sys, "platform", system), \
+                 mock.patch.object(SMOKE.platform, "machine", return_value=architecture), \
+                 mock.patch.object(SMOKE, "run") as run:
+                SMOKE.check_usb_runtimes(Path("package/bin/java"), [], "helper:package/lib/*",
+                                         cwd=self.root, env={}, evidence=self.root)
+            run.assert_called_once()
+            self.assertNotIn("-Dos.version=26", run.call_args.args[0])
+
+    def test_failed_modern_payload_fails_smoke_and_identifies_its_evidence(self):
+        with mock.patch.object(SMOKE.os.sys, "platform", "darwin"), \
+             mock.patch.object(SMOKE.platform, "machine", return_value="arm64"), \
+             mock.patch.object(SMOKE, "run", side_effect=[None, subprocess.CalledProcessError(1, "java")]) as run:
+            with self.assertRaisesRegex(RuntimeError, "see usb-macos26.log"):
+                SMOKE.check_usb_runtimes(Path("package/bin/java"), [], "helper:package/lib/*",
+                                         cwd=self.root, env={}, evidence=self.root)
+        self.assertEqual(2, run.call_count)
+
+
+@unittest.skipUnless(shutil.which("java") and shutil.which("javac"), "JDK 25 is required for USB probe tests")
+class SmokeUsbTest(unittest.TestCase):
+    """Compile the real probe against a fake JNI API; these tests never load USB natives."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temporary = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.temporary.cleanup)
+        cls.root = Path(cls.temporary.name)
+        cls.classes = cls.root / "classes"
+        api = cls.root / "org" / "usb4java"
+        api.mkdir(parents=True)
+        for name in ("Context", "DeviceList"):
+            (api / f"{name}.java").write_text(
+                f"package org.usb4java; public class {name} {{}}", encoding="utf-8")
+        (api / "LibUsb.java").write_text("""
+package org.usb4java;
+public class LibUsb {
+    public static final int SUCCESS = 0;
+    static {
+        if(Boolean.getBoolean("probe.failLinkage")) {
+            throw new UnsatisfiedLinkError("missing native dependency");
+        }
+    }
+    public static int init(Context context) {
+        System.out.println("init");
+        return Integer.getInteger("probe.initResult", 0);
+    }
+    public static int getDeviceList(Context context, DeviceList devices) {
+        System.out.println("enumerate");
+        if(Boolean.getBoolean("probe.failEnumerationLinkage")) {
+            throw new UnsatisfiedLinkError("missing enumeration symbol");
+        }
+        return Integer.getInteger("probe.deviceCount", 0);
+    }
+    public static void freeDeviceList(DeviceList devices, boolean unref) {
+        System.out.println("free " + unref);
+    }
+    public static void exit(Context context) {
+        System.out.println("exit");
+    }
+}
+""", encoding="utf-8")
+        cls.java = Path(shutil.which("java"))
+        subprocess.run([shutil.which("javac"), "--release", "25", "-d", str(cls.classes),
+                        *map(str, api.glob("*.java")), str(Path(__file__).with_name("SmokeUsb.java"))],
+                       check=True, capture_output=True, text=True, timeout=30)
+
+    def probe(self, **properties):
+        log = self.root / "usb.log"
+        environment = os.environ.copy()
+        for option in ("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"):
+            environment.pop(option, None)
+        SMOKE.check_usb_runtime(self.java, [f"-Dprobe.{key}={value}" for key, value in properties.items()],
+                                str(self.classes), cwd=self.root, env=environment, log=log)
+        return log.read_text(encoding="utf-8")
+
+    def test_empty_and_nonempty_device_lists_succeed_and_release_references(self):
+        for count in (0, 3):
+            with self.subTest(count=count):
+                output = self.probe(deviceCount=count)
+                self.assertEqual(["init", "enumerate", "free true", "exit", "USB native runtime ready"],
+                                 output.splitlines())
+
+    def test_failed_initialization_does_not_enumerate_or_exit_an_uninitialized_context(self):
+        with self.assertRaisesRegex(RuntimeError, "Packaged USB native runtime failed") as failure:
+            self.probe(initResult=-99)
+        self.assertIsInstance(failure.exception.__cause__, subprocess.CalledProcessError)
+        output = (self.root / "usb.log").read_text(encoding="utf-8")
+        self.assertIn("USB native initialization failed: -99", output)
+        self.assertNotIn("enumerate", output)
+        self.assertNotIn("exit\n", output)
+        self.assertNotIn("USB native runtime ready", output)
+
+    def test_enumeration_errors_exit_initialized_context_and_fail_the_package(self):
+        for properties, message in (({"deviceCount": -1}, "USB device enumeration failed: -1"),
+                                    ({"failEnumerationLinkage": "true"}, "missing enumeration symbol")):
+            with self.subTest(properties=properties), self.assertRaisesRegex(RuntimeError, "see usb.log"):
+                self.probe(**properties)
+            output = (self.root / "usb.log").read_text(encoding="utf-8")
+            self.assertIn("init\nenumerate\nexit\n", output)
+            self.assertIn(message, output)
+            self.assertNotIn("free true", output)
+            self.assertNotIn("USB native runtime ready", output)
+
+    def test_native_linkage_error_fails_the_package_before_profile_or_web_readiness(self):
+        with self.assertRaisesRegex(RuntimeError, "Packaged USB native runtime failed"):
+            self.probe(failLinkage="true")
+        output = (self.root / "usb.log").read_text(encoding="utf-8")
+        self.assertIn("UnsatisfiedLinkError: missing native dependency", output)
+        self.assertNotIn("USB native runtime ready", output)
+
+    def test_hung_native_initialization_is_a_bounded_package_failure(self):
+        timeout = subprocess.TimeoutExpired("java", 120)
+        with mock.patch.object(SMOKE, "run", side_effect=timeout), \
+             self.assertRaisesRegex(RuntimeError, "Packaged USB native runtime failed") as failure:
+            self.probe()
+        self.assertIs(timeout, failure.exception.__cause__)
 
 
 if __name__ == "__main__":

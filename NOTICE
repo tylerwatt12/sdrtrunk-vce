@@ -21,6 +21,10 @@ Source lineage:
 Third-party libraries and tools included with or used by this program remain copyright their respective authors and
 are distributed under their respective licenses.
 
+The macOS ARM release links the modern usb4java native library with libusb 1.0.30 (LGPL-2.1-or-later).
+Its license, complete source archives, JNI object archive and relinking instructions are included under
+legal/native-usb. The libusb4java JNI wrapper is MIT licensed.
+
 The Network Visualizer includes a locally bundled build of 3d-force-graph, Three.js, d3-force-3d, and their browser
 dependencies. Their copyright notices and license terms are provided in
 stats-web/assets/vendor/network-visualizer-vendor.LICENSES.txt.

@@ -315,6 +315,8 @@ function verifyImmutableRadioSystemCatalogWiring() {
     /name: radio-system-catalog-\$\{\{ github\.run_id \}\}/);
   assert.match(step('Build and verify all six packages'),
     /-PradioSystemCatalogFile="\$\{\{ runner\.temp \}\}\/radio-system-catalog\/dsdplus\.networks"/);
+  assert.match(job('package'), /runs-on: macos-15/,
+    'Packaging must build the pinned macOS ARM native library on its native toolchain.');
   assert.doesNotMatch(job('publish'), /fetch_dsdplus_networks|prepareRadioSystemCatalog|runtimeZipAll/,
     'Publication must promote the tested bytes without fetching or rebuilding a catalog.');
   const reusable = fs.readFileSync(path.join(path.dirname(process.argv[2] || '.github/workflows/nightly.yml'),
@@ -325,7 +327,32 @@ function verifyImmutableRadioSystemCatalogWiring() {
     'Ordinary CI must use the committed synthetic fixture instead of depending on the public wiki.');
 }
 
+function verifyCandidateChecksumProducer() {
+  const root = path.join(temporary, 'package-job');
+  const image = path.join(root, 'build', 'image');
+  const catalog = path.join(root, 'radio-system-catalog');
+  fs.mkdirSync(image, { recursive: true });
+  fs.mkdirSync(catalog, { recursive: true });
+  fs.writeFileSync(path.join(catalog, 'dsdplus.networks'), 'synthetic catalog');
+  for (const platform of platforms) fs.writeFileSync(path.join(image, `vce-${platform}-100.zip`), platform);
+  const source = literal(step('Record the exact candidate and file checksums'), '        run: |\n', 10);
+  //Use the selected Python even on Macs whose system python3 predates hashlib.file_digest.
+  const script = source.replace("python3 - <<'PY'", '"$PYTHON_BINARY" - <<\'PY\'');
+  const result = spawnSync(bash, ['-e', '-c', script], { cwd: root, encoding: 'utf8', timeout: 10_000,
+    env: { ...process.env, PYTHON_BINARY: python, RUNNER_TEMP: root, UPDATE_BUILD: '100',
+      GITHUB_SHA: sha, GITHUB_REF: 'refs/heads/main' } });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const lines = fs.readFileSync(path.join(image, 'SHA256SUMS'), 'utf8').trim().split('\n');
+  assert.equal(lines.length, platforms.length + 3);
+  for (const line of lines) {
+    const [digest, name] = line.split('  ');
+    assert.equal(digest, createHash('sha256').update(fs.readFileSync(path.join(image, name))).digest('hex'));
+  }
+}
+
 async function main() {
+  verifyCandidateChecksumProducer();
   assert.deepEqual(await evaluate(fixture()), { 'artifact-id': 501 });
   for (const id of ['-1', '0', 'NaN', '9007199254740992']) {
     const state = fixture(); state.id = id;

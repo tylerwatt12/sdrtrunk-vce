@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise a release ZIP's bundled Java, SQLite, migrator, launcher and web assets.
+"""Exercise a release ZIP's bundled Java, USB, SQLite, migrator, launcher and web assets.
 
 Run on the archive's native OS/CPU, with JDK 25 available for the small profile helper.
 All writes and the receiver process stay inside the supplied empty work directory.
@@ -11,6 +11,7 @@ import gzip
 import hashlib
 import json
 import os
+import platform
 import re
 from pathlib import Path
 import secrets
@@ -30,6 +31,26 @@ def run(command, *, cwd, env, log):
     with log.open("wb") as output:
         subprocess.run(command, cwd=cwd, env=env, stdout=output, stderr=subprocess.STDOUT,
                        timeout=120, check=True)
+
+
+def check_usb_runtime(java, options, classpath, *, cwd, env, log):
+    # This deliberately initializes JNI and enumerates devices. Resource-presence checks and a
+    # working web server cannot prove that the packaged native library's dependencies resolve.
+    # The probe never opens a device and accepts an empty device list on hosted runners.
+    try:
+        run([str(java), *options, "-cp", classpath, "SmokeUsb"], cwd=cwd, env=env, log=log)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"Packaged USB native runtime failed; see {log.name}") from error
+
+
+def check_usb_runtimes(java, options, classpath, *, cwd, env, evidence):
+    check_usb_runtime(java, options, classpath, cwd=cwd, env=env, log=evidence / "usb.log")
+    if os.sys.platform == "darwin" and platform.machine().lower() in ("arm64", "aarch64"):
+        # usb4java selects a different ARM payload after macOS 15. CI's macos-15 runner
+        # must exercise that payload too, in a fresh JVM so JNI cannot remain loaded.
+        # This override applies only to the standalone probe, never the receiver.
+        check_usb_runtime(java, [*options, "-Dos.version=26"], classpath, cwd=cwd, env=env,
+                          log=evidence / "usb-macos26.log")
 
 
 def extract(archive, destination):
@@ -165,8 +186,6 @@ def main():
     temporary = work / "isolated temp"
     temporary.mkdir()
     password = work / "temporary-password.txt"
-    password.write_text(secrets.token_urlsafe(32), encoding="utf-8")
-    password.chmod(0o600)
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         port = listener.getsockname()[1]
@@ -181,12 +200,17 @@ def main():
     if javac is None:
         raise RuntimeError("JDK 25 javac is required for the profile helper")
     run([javac, "--release", "25", "-cp", classpath, "-d", str(classes),
-         str(Path(__file__).with_name("SmokeProfile.java"))],
+         str(Path(__file__).with_name("SmokeProfile.java")),
+         str(Path(__file__).with_name("SmokeUsb.java"))],
         cwd=work, env=env, log=evidence / "helper-compile.log")
     options = ["-Djava.awt.headless=true", f"-Duser.home={home}", f"-Djava.io.tmpdir={temporary}",
                f"-Dsdrtrunk.vce.data.root={profile}"]
+    check_usb_runtimes(java, options, str(classes) + os.pathsep + classpath,
+                       cwd=installation, env=env, evidence=evidence)
     target_metadata = evidence / "target-format.txt"
     try:
+        password.write_text(secrets.token_urlsafe(32), encoding="utf-8")
+        password.chmod(0o600)
         run([str(java), *options, "-cp", str(classes) + os.pathsep + classpath,
              "SmokeProfile", str(password), str(port), str(target_metadata)],
             cwd=installation, env=env, log=evidence / "profile.log")
@@ -253,7 +277,7 @@ def main():
     check_database_after_stop(database, target_format)
     with archive.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()
-    print(f"PASS: {archive.name}: bundled Java, fresh format {target_format} profile, format 20-to-{target_format} migration, native launcher and web assets")
+    print(f"PASS: {archive.name}: bundled Java and USB discovery, fresh format {target_format} profile, format 20-to-{target_format} migration, native launcher and web assets")
     print(f"SHA256: {digest}")
 
 

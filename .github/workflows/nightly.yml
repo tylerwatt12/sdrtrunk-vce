@@ -90,7 +90,8 @@ jobs:
     name: Package candidate
     if: ${{ inputs.mode == 'prepare' }}
     needs: [validate, ci]
-    runs-on: ubuntu-latest
+    #Build the pinned macOS ARM USB library locally; the JRE archives are still packaged for all six targets.
+    runs-on: macos-15
     timeout-minutes: 45
     env:
       UPDATE_BUILD: ${{ github.run_id }}
@@ -142,8 +143,15 @@ jobs:
               'runtime': '25.0.1', 'channel': 'nightly',
               'radio_system_catalog_sha256': hashlib.sha256(catalog.read_bytes()).hexdigest()
           }, indent=2) + '\n', encoding='utf-8')
+          image = pathlib.Path('build/image')
+          files = sorted(image.glob('vce-*.zip')) + [image / name for name in
+              ('build_info.txt', 'update.properties', 'candidate.json')]
+          checksums = []
+          for path in files:
+              with path.open('rb') as source:
+                  checksums.append(f'{hashlib.file_digest(source, "sha256").hexdigest()}  {path.name}\n')
+          (image / 'SHA256SUMS').write_text(''.join(checksums), encoding='utf-8')
           PY
-          (cd build/image && sha256sum vce-*.zip build_info.txt update.properties candidate.json > SHA256SUMS)
       - name: Save candidate files without publishing
         uses: actions/upload-artifact@v7
         with:
