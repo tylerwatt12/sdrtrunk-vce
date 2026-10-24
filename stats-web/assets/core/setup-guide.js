@@ -209,6 +209,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
     const radius = numericToken('--guide-spotlight-radius', 12);
     const coachWidth = modal.dialog.getBoundingClientRect().width;
     modal.state.guideTargets?.forEach(target => {
+      if (target.guideTargetPlacement === 'center') return;
       const available = Math.max(coachWidth, width - gutter * 2 - coachWidth - gap - padding * 2);
       target.backdrop.style.setProperty('--guide-target-reserved-width', `${coachWidth + gap + padding * 2}px`);
       target.dialog.style.maxWidth = `${Math.min(width - gutter * 2, available)}px`;

@@ -24,8 +24,10 @@ async function installGuideHarness(page) {
       dialog.append(header, content);
       backdrop.append(dialog);
       document.body.append(backdrop);
+      const state = { backdrop, guideTargets: new Set() };
+      window.guideHarness.modal = { dialog, state };
       return {
-        dialog, ready: Promise.resolve(true), state: { backdrop, guideTargets: new Set() },
+        dialog, ready: Promise.resolve(true), state,
         setTitle(value) { heading.textContent = value; },
         focus(element) { element.focus(); },
         close() { options.cleanup(); backdrop.remove(); return true; }
@@ -393,4 +395,53 @@ test('central diagrams scope SVG references for simultaneous renderings and igno
   expect(result.unique).toBe(result.count);
   expect(result.referencesExist).toBe(true);
   expect(result.unknown).toBeNull();
+});
+
+
+test('only opted-in guide dialogs keep their centered production geometry', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await installGuideHarness(page);
+  await page.evaluate(() => {
+    const harness = window.guideHarness;
+    const step = placement => ({ id: placement, compact: true, title: 'Actual dialog controls',
+      paragraphs: ['Inspect the existing controls.'], targets: () => [harness.targetButton],
+      prepare() {
+        const backdrop = harness.node('div', 'modal-backdrop ui-setup-guide-underlay');
+        if (placement === 'center') backdrop.classList.add('ui-setup-guide-underlay-centered');
+        const dialog = harness.node('section', 'read-only-modal modal-size-small');
+        const header = harness.node('header', 'modal-header');
+        header.append(harness.node('h2', '', 'Original dialog'));
+        const body = harness.node('div', 'modal-content');
+        harness.targetButton = harness.node('button', 'ui-button ui-button-secondary', 'Actual opening control');
+        body.append(harness.targetButton);
+        dialog.append(header, body); backdrop.append(dialog); backdrop.inert = true;
+        harness.modal.state.backdrop.before(backdrop);
+        backdrop.dataset.testGuideTarget = placement;
+        const target = { dialog, backdrop, guideTargetPlacement: placement === 'center' ? 'center' : null };
+        harness.modal.state.guideTargets.add(target);
+        return () => { harness.modal.state.guideTargets.delete(target); backdrop.remove(); };
+      }
+    });
+    harness.presentation = harness.open([step('default'), step('center')]);
+  });
+  const coach = page.locator('.ui-setup-guide');
+  const target = page.locator('[data-test-guide-target] .read-only-modal');
+  await expect(coach).toHaveAttribute('data-guide-step', 'default');
+  await expect.poll(() => target.evaluate(element => element.style.maxWidth)).not.toBe('');
+  expect((await target.boundingBox()).x).toBeCloseTo(24, 0);
+  expect(await target.locator('..').evaluate(element => element.style.getPropertyValue('--guide-target-reserved-width'))).not.toBe('');
+  await coach.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(coach).toHaveAttribute('data-guide-step', 'center');
+  const box = await target.boundingBox();
+  expect(box.width).toBeCloseTo(540, 0);
+  expect(box.x + box.width / 2).toBeCloseTo(640, 0);
+  expect(box.y + box.height / 2).toBeCloseTo(360, 0);
+  expect(await target.evaluate(element => element.style.maxWidth)).toBe('');
+  expect(await target.locator('..').evaluate(element => element.style.getPropertyValue('--guide-target-reserved-width'))).toBe('');
+  const popup = await coach.boundingBox();
+  expect(Math.min(box.x + box.width, popup.x + popup.width) <= Math.max(box.x, popup.x) + 1 ||
+    Math.min(box.y + box.height, popup.y + popup.height) <= Math.max(box.y, popup.y) + 1).toBe(true);
+  await page.evaluate(() => window.guideHarness.presentation.close());
+  await expect(page.locator('[data-test-guide-target], .ui-setup-guide')).toHaveCount(0);
+  expect(await page.evaluate(() => window.guideHarness.errors)).toEqual([]);
 });

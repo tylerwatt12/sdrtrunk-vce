@@ -85,7 +85,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('tuner-spectrum').version, 4);
   assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('dashboard').version, 3);
-  assert.equal(createGuideDefinition('scanner').version, 3);
+  assert.equal(createGuideDefinition('scanner').version, 4);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -863,17 +863,27 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const scannerSections = ['overview', 'lists-button', 'lists', 'lists-close', 'call', 'queue',
+  const scannerSections = ['overview', 'lists-button', 'lists', 'call', 'queue',
     'playback', 'hold', 'avoid', 'detail-level', 'details', 'settings-button', 'playback-order',
     'settings-close', 'avoids-button', 'avoids', 'avoids-close'];
   assert.deepEqual(scannerTour.steps.map(step => step.id), scannerSections);
-  assert.equal(scannerTour.steps[0].title, 'Follow the traffic');
+  assert.equal(scannerTour.steps[0].title, 'Listen to your Scan Lists');
   assert.equal(scannerTour.steps[0].prepare, undefined,
     'Scanner begins with its concept while the real listening state remains visible.');
   const scannerStop = id => scannerTour.steps.find(step => step.id === id);
   assert.deepEqual(scannerStop('queue').paragraphs,
     ['When several calls arrive together, VCE reorders them in queue so you hear them in turn.']);
-  assert.match(scannerStop('hold').paragraphs[0], /^H stands for Hold\./);
+  assert.equal(scannerStop('hold').title, 'Hold');
+  assert.match(scannerStop('hold').paragraphs[0], /^Select Hold to hear only/);
+  assert.doesNotMatch(scannerStop('hold').paragraphs[0], /\bH\b/);
+  assert.equal(scannerStop('lists').title, 'Choose what you hear');
+  assert.doesNotMatch(scannerStop('lists').paragraphs.join(' '), /Law Enforcement|County Sheriff|Fire\/EMS/,
+    'The Scan Lists explanation works with any real names and does not present examples as fixed groups.');
+  assert.equal(scannerStop('playback').items[0].text, 'Pause audio while calls continue to queue.');
+  assert.equal(scannerStop('settings-button').paragraphs[0],
+    'Open Scanner settings for playback order and page title options.');
+  assert.equal(scannerStop('playback-order').compact, true,
+    'The shorter playback-order lesson leaves room beside the centered settings dialog.');
   assert.deepEqual(scannerStop('playback').items.map(item => item.label), ['Pause', 'Stop', 'Replay']);
   for (const step of scannerTour.steps.slice(1)) {
     assert.deepEqual(targetNames(step), [`sc-${step.id}`]);
@@ -889,7 +899,9 @@ async function checkGuides(assetsRoot) {
     assert.equal(scannerSections.indexOf(opener) + 1, scannerSections.indexOf(destination),
       'Scanner teaches each actual opening control before the destination it opens.');
   }
-  for (const [returnStep, nextStep] of [['lists-close', 'call'], ['settings-close', 'avoids-button']]) {
+  assert.equal(scannerSections.indexOf('lists') + 1, scannerSections.indexOf('call'),
+    'The Scan Lists popover closes when advancing without a redundant return stop.');
+  for (const [returnStep, nextStep] of [['settings-close', 'avoids-button']]) {
     assert.equal(scannerSections.indexOf(returnStep) + 1, scannerSections.indexOf(nextStep),
       'An actual return control precedes the next Scanner workspace lesson.');
   }
@@ -1085,17 +1097,17 @@ async function checkGuides(assetsRoot) {
   deniedMain.controller.destroy();
 
   const firstScannerVisit = makeHarness({ context: { view: 'scanner' }, storage: {
-    getItem: key => /:welcome:1$|:scanner:[12]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scanner:[123]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await firstScannerVisit.controller.pageReady();
   assert.equal(firstScannerVisit.shown.at(-1).options.id, 'scanner');
-  assert.equal(firstScannerVisit.shown.at(-1).options.version, 3,
-    'The earlier Scanner placeholder does not suppress its authored tour.');
+  assert.equal(firstScannerVisit.shown.at(-1).options.version, 4,
+    'Earlier Scanner tour versions do not suppress the revised walkthrough.');
   firstScannerVisit.finish();
   firstScannerVisit.controller.destroy();
   const completedScanner = makeHarness({ context: { view: 'scanner' }, storage: {
-    getItem: key => /:welcome:1$|:scanner:3$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scanner:4$/.test(key) ? '1' : null,
     setItem() {}
   } });
   assert.equal(await completedScanner.controller.pageReady(), false);

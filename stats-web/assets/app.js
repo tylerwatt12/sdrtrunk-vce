@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=24';
+import { createGuideController } from './guides/controller.js?v=25';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -2406,6 +2406,7 @@ function openReadOnlyModal(title, body, options = {}) {
   modalState = {
     backdrop, dialog, parent, keydown, returnFocusElement, returnFocusSelector: options.returnFocusSelector || null,
     isGuide: Boolean(options.isGuide), guideTargets: new Set(), guideOwner,
+    guideTargetPlacement: options.guideTargetPlacement === 'center' ? 'center' : null,
     get closed() { return closed; },
     isDirty: () => dirty,
     discardMessage: () => discardMessage,
@@ -2433,6 +2434,7 @@ function openReadOnlyModal(title, body, options = {}) {
         return;
       }
       backdrop.classList.add('ui-setup-guide-underlay');
+      if (modalState.guideTargetPlacement === 'center') backdrop.classList.add('ui-setup-guide-underlay-centered');
       backdrop.inert = true;
       dialog.setAttribute('aria-modal', 'false');
       guideOwner.guideTargets.add(modalState);
@@ -12647,7 +12649,7 @@ function renderScanner(options = {}) {
       if (disposed || context.signal.aborted || !context.isCurrent()) return;
       const releases = [];
       let modal = null;
-      if (['lists', 'lists-close'].includes(section)) {
+      if (section === 'lists') {
         scanPanel.showPopover();
         await new Promise(resolve => window.requestAnimationFrame(resolve));
         if (disposed || context.signal.aborted || !context.isCurrent()) return;
@@ -12663,7 +12665,7 @@ function renderScanner(options = {}) {
       }
       const mark = (element, id = section) => { if (element) element.dataset.guideTarget = `sc-${id}`; };
       const targets = {
-        'lists-button': scanTrigger, lists: scanPanel, 'lists-close': scanTrigger,
+        'lists-button': scanTrigger, lists: scanPanel,
         queue: upNext, hold: transport.querySelector('#scanner-hold'), avoid: transport.querySelector('#scanner-avoid'),
         'detail-level': modeSelect, 'settings-button': scannerSettings,
         'playback-order': modal?.content.querySelector('.settings-card'),
@@ -12682,7 +12684,7 @@ function renderScanner(options = {}) {
       } else mark(targets[section]);
       const highlighted = [...document.querySelectorAll(`[data-guide-target="sc-${section}"]`)];
       if (!highlighted.length) throw new Error('The Scanner tour could not be loaded. Try opening it again.');
-      if (!modal && !['lists', 'lists-close'].includes(section)) {
+      if (!modal && section !== 'lists') {
         highlighted[0].scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
         const bounds = highlighted.map(element => element.getBoundingClientRect());
         const top = Math.min(...bounds.map(value => value.top));
@@ -31183,10 +31185,9 @@ function openScannerSettings(returnFocusSelector = null, options = {}) {
   message.setAttribute('role', 'status');
   const targetGrouping = preferenceCheckbox('target-grouping', 'Group calls by playback target',
     current.playback.target_grouping,
-    'When calls are waiting, keep calls for the same playback target together before switching to a different target.');
+    'Keep queued calls on the same talkgroup or channel together.');
   const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
-    current.page_titles.prepend_playing_call,
-    'The Scanner title always shows the audible target. Turn this on to add it to other pages too.');
+    current.page_titles.prepend_playing_call);
   const targetBurstLimit = node('input');
   targetBurstLimit.type = 'number';
   targetBurstLimit.name = 'target-burst-limit';
@@ -31201,12 +31202,9 @@ function openScannerSettings(returnFocusSelector = null, options = {}) {
   };
   const fields = node('div', 'settings-field-grid');
   fields.append(formField('Calls before switching targets', targetBurstLimit,
-    'Play 1–20 waiting calls for the current playback target before another target gets a turn.'));
-  const card = settingsCard('Playback order',
-    'These choices affect only calls that have already built up in this browser queue.',
-    targetGrouping.control, fields);
-  const titleCard = settingsCard('Page titles',
-    'Choose whether Scanner playback also appears in the title of other pages.', prependTitle.control);
+    'Play 1–20 queued calls before switching targets.'));
+  const card = settingsCard('Playback order', '', targetGrouping.control, fields);
+  const titleCard = settingsCard('Page titles', '', prependTitle.control);
   const save = node('button', 'ui-button ui-button-primary', 'Save Scanner Settings');
   save.type = 'submit';
   const actions = node('div', 'admin-form-actions');
@@ -31216,7 +31214,8 @@ function openScannerSettings(returnFocusSelector = null, options = {}) {
   form.append(node('p', 'live-presentation-intro',
     'These choices affect only this signed-in user.'), settingsCardGrid(card, titleCard), footer);
   const modal = openModal('Scanner settings', form, {
-    id: 'scanner-settings-modal', className: 'scanner-settings-modal', returnFocusSelector
+    id: 'scanner-settings-modal', className: 'scanner-settings-modal modal-size-small',
+    returnFocusSelector, guideTargetPlacement: 'center'
   });
   if (!modal) return;
   const workflow = createFormWorkflow({ form, submit: save, feedback: message, modal });

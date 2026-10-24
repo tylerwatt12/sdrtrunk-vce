@@ -173,6 +173,11 @@ body.modal-open {
   background: transparent;
 }
 
+.modal-backdrop.ui-setup-guide-underlay-centered {
+  justify-items: center;
+  padding: var(--modal-viewport-gap);
+}
+
 .ui-setup-guide-layer {
   z-index: 99;
   display: block;

@@ -7,7 +7,7 @@ import { tunersSteps } from './pages/tuners.js?v=2';
 import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=3';
 import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=1';
 import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=1';
-import { scannerSteps } from './pages/scanner.js?v=1';
+import { scannerSteps } from './pages/scanner.js?v=2';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
@@ -30,9 +30,8 @@ const pageOverviewCopy = Object.freeze({
     'Follow reported locations and review recent location history to see where radio activity is taking place.'],
   'network-visualizer': ['See how a P25 system is connected',
     'Explore the sites and connections reported by a P25 system. Use the visualizer to understand its network and follow changes as they are heard.'],
-  scanner: ['Follow the traffic',
-    'Scanner brings your selected Scan Lists together in one listening display. Follow who’s talking and choose which conversations to stay with.',
-    'VCE records each transmission first, then plays the completed call.'],
+  scanner: ['Listen to your Scan Lists',
+    'Listen to calls from your selected Scan Lists and see who’s transmitting. Each call plays after the transmission ends.'],
   'tuner-spectrum': ['Find signals worth receiving',
     'Explore your tuner’s receiving window, investigate signals, and add useful frequencies to your channels.'],
   'radio-system': ['Get to know a radio system',
@@ -69,7 +68,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4, live: 3, dashboard: 3, scanner: 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 3, aliases: 5, 'scan-lists': 6, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 4, live: 3, dashboard: 3, scanner: 4 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));

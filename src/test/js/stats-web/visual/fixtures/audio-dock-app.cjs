@@ -92,7 +92,7 @@ async function openAudioApp(page, options = {}) {
   // Audio fixtures inspect an existing listener's controls; onboarding would
   // otherwise cover the native source picker on desktop.
   await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['channel-setup', 3], ['aliases', 5], ['scan-lists', 6], ['radioreference', 3], ['streaming', 3], ['tuners', 3], ['scanner', 3]]) {
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 3], ['aliases', 5], ['scan-lists', 6], ['radioreference', 3], ['streaming', 3], ['tuners', 3], ['scanner', 4]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-listener:audio-fixture-account:${id}:${version}`, '1');
     }
   });
