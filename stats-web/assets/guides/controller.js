@@ -1,10 +1,10 @@
-import { openSetupGuide } from '../core/setup-guide.js?v=17';
-import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=26';
+import { openSetupGuide } from '../core/setup-guide.js?v=18';
+import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=27';
 import { createGuideMemory } from './persistence.js?v=1';
 
 const sessionKey = (context) => JSON.stringify([context.account || '', context.dismissalScope || '',
   context.authenticated === true]);
-const visitKey = (context) => `${sessionKey(context)}:${context.view}`;
+const visitKey = (context) => `${sessionKey(context)}:${context.view}${context.view === 'admin' ? ':' + (context.adminTab || 'computer') : ''}`;
 
 // The application calls pageReady after a successful route render and close when
 // rendering/signing out starts. Tour state stays independent of page builders.
@@ -19,8 +19,9 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
   let replayOnPage = null;
   let consumedRequest = null;
 
-  const definitionFor = (id, context) => createGuideDefinition(id, { documentValue, preparePlayer, preparePage,
-    canSetup: context.canSetup !== false, canView: context.canView, canReport: context.canReport, canAccess: context.canAccess });
+  const definitionFor = (id, context, override = {}) => createGuideDefinition(id, { documentValue, preparePlayer, preparePage,
+    canSetup: context.canSetup !== false, canView: context.canView, canReport: context.canReport,
+    canAccess: context.canAccess, adminTab: override.adminTab || context.adminTab });
   const contextMatches = (context) => !destroyed && visitKey(getContext()) === visitKey(context);
   const eligible = (context, manual) => !destroyed && context.isDesktop === true &&
     (manual || context.authenticated === true) && context.canView?.(context.view) !== false;
@@ -62,18 +63,27 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
     }
   }
 
-  function present(id, manual) {
+  function present(id, manual, override = {}) {
     const context = { ...getContext() };
     updateVisit(context);
     const ownsPresentation = active && (active.pending || active.presentation?.isOpen());
     if (!eligible(context, manual) || (!ownsPresentation && context.canPresent === false)) return Promise.resolve(false);
-    const definition = definitionFor(id, context);
+    const definition = definitionFor(id, context, override);
     if (!definition) return Promise.resolve(false);
     clearActive();
     const record = { context, definition, manual, generation, presentation: null, pending: true };
     active = record;
     try {
       record.presentation = openGuide(ui, { ...definition,
+        initialStep: override.skipOverview ? Math.max(0, definition.steps.findIndex(step => !step.overview)) : 0,
+        onChoice: choiceId => {
+          if (id !== 'admin' || active !== record || !contextMatches(context)) return false;
+          const latest = { ...getContext() };
+          const choices = definitionFor(id, latest)?.steps.filter(step => step.overview)
+            .flatMap(step => step.choices || []) || [];
+          if (!choices.some(choice => choice.id === choiceId)) return false;
+          return present(id, true, { adminTab: choiceId, skipOverview: true });
+        },
         onDismiss: () => {
           if (active !== record || !contextMatches(context)) return;
           memory.remember(context, definition);

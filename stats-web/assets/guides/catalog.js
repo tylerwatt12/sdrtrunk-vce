@@ -14,13 +14,14 @@ import { recordingsSteps } from './pages/recordings.js?v=4';
 import { topicsSteps } from './pages/topics.js?v=1';
 import { mapSteps, mapOverviewPresentation } from './pages/map.js?v=1';
 import { networkVisualizerSteps, networkVisualizerOverviewPresentation } from './pages/network-visualizer.js?v=1';
+import { adminSteps, administrationChoices, selectedAdministrationSection } from './pages/admin.js?v=1';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.
 const authoredPages = Object.freeze({ 'channel-setup': channelSetupSteps, aliases: aliasesSteps,
   'scan-lists': scanListsSteps, radioreference: radioReferenceSteps, streaming: streamingSteps, tuners: tunersSteps,
   'tuner-spectrum': spectrumSteps, live: liveSteps, dashboard: mainSteps, scanner: scannerSteps, recordings: recordingsSteps,
-  topics: topicsSteps, map: mapSteps, 'network-visualizer': networkVisualizerSteps });
+  topics: topicsSteps, map: mapSteps, 'network-visualizer': networkVisualizerSteps, admin: adminSteps });
 // Page concepts stay separate from the numbered controls that follow them.
 // Keep a purpose and practical radio use here even while a walkthrough is pending.
 const pageOverviewCopy = Object.freeze({
@@ -64,8 +65,9 @@ const pageOverviewCopy = Object.freeze({
     'Send received radio traffic to services such as Broadcastify, OpenMHz, and RadioResolve. Alias assignments choose which calls each destination receives.'],
   tuners: ['One receiver, several channels',
     'Each tuner receives a window of spectrum. VCE creates receiving channels within its usable bandwidth as needed, including conventional channels, trunked control channels, and temporary voice channels. Center frequency positions that window.'],
-  admin: ['Look after this VCE installation',
-    'Control the receiver and the services shared by everyone using it. Check receiver health and manage access as your installation grows.'],
+  admin: ['Administration',
+    'Administration controls how this receiver operates and how other people use it. Set what gets saved, how long it stays available, and who can view or listen.',
+    'When reception or playback needs investigating, the status and diagnostic pages help you work out what happened.'],
   settings: ['Make VCE comfortable for you',
     'Choose the display and listening preferences used with your sign-in. Your preferences follow you when you return.'],
   credits: ['The people and projects behind VCE',
@@ -76,7 +78,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 4, aliases: 5, 'scan-lists': 7, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5, live: 3, dashboard: 3, scanner: 4, recordings: 4, topics: 3, map: 3, 'network-visualizer': 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 4, aliases: 5, 'scan-lists': 7, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5, live: 3, dashboard: 3, scanner: 4, recordings: 4, topics: 3, map: 3, 'network-visualizer': 3, admin: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -276,12 +278,18 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
 }
 
 export function createGuideDefinition(id, { documentValue = globalThis.document, preparePlayer,
-  preparePage, canSetup = true, canView, canAccess, canReport } = {}) {
+  preparePage, canSetup = true, canView, canAccess, canReport, adminTab = 'computer' } = {}) {
   if (id === 'welcome') return { id, version: 1, authored: true, title: 'Welcome to sdrtrunk VCE',
     eyebrow: 'WELCOME GUIDE', steps: welcomeSteps(documentValue, preparePlayer,
       canSetup && (typeof canView !== 'function' || canView('channel-setup') !== false), canView, canReport) };
   const template = pageGuideTemplates[id];
   if (!template) return null;
+  if (id === 'admin') {
+    const chapter = selectedAdministrationSection(adminTab, canAccess);
+    return { ...template, eyebrow: chapter?.label || template.title, adminTab: chapter?.id || null,
+      steps: [{ ...template.overview, choices: administrationChoices(canAccess), selectedChoice: chapter?.id || null },
+        ...adminSteps(documentValue, preparePlayer, preparePage, { adminTab: chapter?.id, canAccess })] };
+  }
   if (authoredPages[id]) return { ...template, eyebrow: template.title,
     steps: [{ ...template.overview, ...(id === 'map' ?
       mapOverviewPresentation(preparePlayer, preparePage) : id === 'network-visualizer' ?

@@ -97,7 +97,7 @@ async function main() {
   assert.deepEqual(plain(groups.map((group) => group.label)), ['Status & support', 'Decisions engine',
     'Audio & recordings', 'Alerts', 'Activity & storage', 'Receiver configuration', 'Web interface']);
   assert.deepEqual(plain(groups.map((group) => group.items.map((item) => item.id))), [
-    ['health', 'application-log', 'web-diagnostic-log', 'support', 'remote-support'], ['call-matching', 'tuner-allocation'], ['recordings', 'audio-quality', 'transcription'],
+    ['computer', 'health', 'application-log', 'web-diagnostic-log', 'support', 'remote-support'], ['call-matching', 'tuner-allocation'], ['recordings', 'audio-quality', 'transcription'],
     ['push-setup'],
     ['activity', 'retained-statistics'], ['remote-links', 'protocol-p25'], ['display', 'users', 'access']
   ]);
@@ -111,7 +111,7 @@ async function main() {
   allowedCapabilities.delete('ADMIN_SETTINGS');
   allowedCapabilities.delete('ADMIN_RECORDINGS');
   assert.deepEqual(plain(navigationContext.adminSettingsGroups().flatMap((group) =>
-    group.items.map((item) => item.id))), ['health', 'users', 'access'],
+    group.items.map((item) => item.id))), ['computer', 'health', 'users', 'access'],
   'The new groups must preserve the existing endpoint capabilities.');
 
   assert.match(application, /active === 'operations'\) await renderAdminOperationalPreferences/);

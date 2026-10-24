@@ -13,7 +13,7 @@ const settingsCss = fs.readFileSync(path.resolve(assets, 'styles/compositions/se
 
 assert.match(html, /id="support-report-indicator"[^>]+receiver-health-indicator receiver-health-neutral icon-button[^>]+view=admin&amp;tab=support/);
 assert.match(html, /id="icon-bug"/);
-assert.match(application, /function renderAdminSupportReport\(\)/);
+assert.match(application, /function renderAdminSupportReport\(/);
 assert.match(application, /admin-form settings-page-form support-report-form/);
 assert.match(application, /settingsCard\('Issue details'/);
 assert.match(application, /settingsCard\('Problem details'/);

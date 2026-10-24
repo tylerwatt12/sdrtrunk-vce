@@ -17,7 +17,7 @@
 @import url("./styles/compositions/app-chrome.css?v=22") layer(compositions);
 @import url("./styles/compositions/audio-dock.css?v=23") layer(compositions);
 @import url("./styles/compositions/charts.css?v=10") layer(compositions);
-@import url("./styles/compositions/modals.css?v=25") layer(compositions);
+@import url("./styles/compositions/modals.css?v=26") layer(compositions);
 @import url("./styles/compositions/settings.css?v=16") layer(compositions);
 @import url("./styles/features/access-landing.css?v=2") layer(features);
 @import url("./styles/features/about.css?v=2") layer(features);

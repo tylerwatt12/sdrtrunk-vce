@@ -1826,7 +1826,7 @@ for (const [name, theme, viewport] of [
   });
 }
 
-test('receiver health computer details copy success and failure', async ({ page }) => {
+test('computer page details copy success and failure', async ({ page }) => {
   await page.addInitScript(() => {
     window.computerCopyText = '';
     window.computerCopyDenied = false;
@@ -1835,10 +1835,9 @@ test('receiver health computer details copy success and failure', async ({ page 
       window.computerCopyText = text;
     } } });
   });
-  await page.goto('/design-system.html?theme=light&view=health');
-  await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
+  await page.goto('/design-system.html?theme=light&view=computer');
   const computer = page.locator('[data-receiver-health-section="computer"]');
-  await computer.getByRole('button', { name: 'Computer & version', exact: true }).click();
+  await expect(computer.locator('.receiver-health-section-body')).toBeVisible();
   await computer.getByRole('button', { name: 'Copy details', exact: true }).click();
   await expect(computer.getByRole('status')).toHaveText('Computer and version details copied.');
   expect(await page.evaluate(() => window.computerCopyText)).toContain('Installed RAM: 32.0 GiB');

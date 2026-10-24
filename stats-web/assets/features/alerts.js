@@ -21,8 +21,8 @@ export function createAlertsWorkspace(deps) {
     identityPicker, createId, signal, view = 'manage', selectedTopic = '', selectedAlert = '', onTopicSelected,
     onPushEnabledChanged, canViewRadio = () => false, canViewRecordings = () => false,
     guideMode = false, guideDevice = null } = deps;
-  if (guideMode && (view !== 'public' || typeof requestJson !== 'function')) {
-    throw new Error('Topics examples require an isolated public workspace.');
+  if (guideMode && (!['public', 'setup'].includes(view) || typeof requestJson !== 'function')) {
+    throw new Error('Alert examples require an isolated public or setup workspace.');
   }
   const host = node('div', 'alerts-workspace data-workspace');
   const feedback = node('div');

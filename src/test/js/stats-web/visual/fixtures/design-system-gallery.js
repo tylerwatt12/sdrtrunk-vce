@@ -10,7 +10,7 @@ import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
-import { openSetupGuide } from '/assets/core/setup-guide.js?v=17';
+import { openSetupGuide } from '/assets/core/setup-guide.js?v=18';
 import { createGuideDefinition } from '/assets/guides/catalog.js?v=25';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=3';
@@ -426,7 +426,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['awaiting-apply', 'control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
+const view = ['awaiting-apply', 'control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'computer', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'focused-settings', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'comparison-table',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -1032,7 +1032,8 @@ function initializeCompactRecords() {
 initializeCompactRecords();
 
 async function initializeReceiverHealth() {
-  const host = document.querySelector('[data-visual-receiver-health]');
+  const computerMode = view === 'computer';
+  const host = document.querySelector(computerMode ? '[data-visual-computer]' : '[data-visual-receiver-health]');
   if (!host) return;
   const node = (tag, className = '', text) => {
     const element = document.createElement(tag);
@@ -1068,6 +1069,7 @@ async function initializeReceiverHealth() {
     source.indexOf('async function renderAdminHealth('));
   const healthFunctions = [...pageSource.matchAll(/^function (\w+)\(/gm)].map(match => match[1]);
   const sharedFunctions = ['receiverHealthSeverity', 'receiverHealthCount', 'normalizeReceiverHealthSnapshot',
+    'currentReceiverHealthPageController', 'withReceiverHealthPageController',
     'receiverHealthAccountAlertSummary', 'keyValues', 'metricCard', 'metrics', 'uiActionButton',
     'uiPill', 'uiStatus', 'valueNode', 'section', 'sectionActionHost', 'adminStatusBytes', 'adminDatabaseDisplay',
     'receiverHealthSavedActivitySection', 'livePickerNavigationIndex', 'exactDateTime', 'dateTime', 'elapsedLabel'];
@@ -1111,7 +1113,7 @@ async function initializeReceiverHealth() {
       scope: index < 8 ? 'County Dispatch · Primary site' : 'North Dispatch · West site',
       resolved_at_ms: now - (index + 1) * 60_000 })), measurements };
   const receiverHealthController = { authorized: () => true, pageHost: host, healthView: 'overview',
-    openHealthSections: new Set(['current', 'active', 'host-overview', 'resolved', 'saved-activity']),
+    openHealthSections: new Set(['current', 'active', 'host-overview', 'resolved', 'saved-activity', 'computer']),
     expandedResolvedIncidents: new Set(), resolvedSort: 'recent', resolvedPage: 0,
     computerCopyState: '', computerCopyBusy: false, refresh: async () => receiverHealthController.updatePage() };
   const environment = {
@@ -1137,9 +1139,10 @@ async function initializeReceiverHealth() {
     const { ${Object.keys(environment).join(', ')} } = environment;
     const RECEIVER_HEALTH_RESOLVED_PAGE_SIZE = 5;
     const RECEIVER_HEALTH_GC_BAR_MAXIMUM_MILLISECONDS = 1000;
+    let receiverHealthPageController = null;
     let receiverHealthSectionSequence = 0;
     ${[...sharedFunctions, ...healthFunctions].map(functionSource).join('\n')}
-    return snapshot => renderReceiverHealthPage(host, normalizeReceiverHealthSnapshot(snapshot), false, '');
+    return snapshot => ${computerMode ? 'renderReceiverComputerPage' : 'renderReceiverHealthPage'}(host, normalizeReceiverHealthSnapshot(snapshot), false, '');
   `)({ ...environment, host });
   receiverHealthController.updatePage = () => render(snapshot);
   receiverHealthController.updatePage();
@@ -1150,7 +1153,7 @@ void initializeReceiverHealth();
   const navigation = workspace.querySelector('[data-visual-admin-navigation]');
   const picker = workspace.querySelector('[data-visual-admin-picker]');
   const groups = [
-    ['Status & support', [['health', 'Receiver status', 'health'],
+    ['Status & support', [['computer', 'Computer & version', 'display'], ['health', 'Receiver status', 'health'],
       ['application-log', 'Application log', 'activity'],
       ['support', 'Report a problem', 'bug']]],
     ['Decisions engine', [['matching', 'Call matching', 'call-matching'], ['allocation', 'Tuner allocation', 'tuner']]],

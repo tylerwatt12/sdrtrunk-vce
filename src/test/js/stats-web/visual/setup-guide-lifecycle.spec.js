@@ -30,7 +30,7 @@ async function installGuideHarness(page) {
         dialog, ready: Promise.resolve(true), state,
         setTitle(value) { heading.textContent = value; },
         focus(element) { element.focus(); },
-        close() { options.cleanup(); backdrop.remove(); return true; }
+        close() { options.cleanup(); backdrop.remove(); options.onDismiss?.(); return true; }
       };
     };
     window.guideHarness.open = (steps, ui = {}, options = {}) => openSetupGuide({ node, openReadOnlyModal, ...ui }, {
@@ -443,5 +443,82 @@ test('only opted-in guide dialogs keep their centered production geometry', asyn
     Math.min(box.y + box.height, popup.y + popup.height) <= Math.max(box.y, popup.y) + 1).toBe(true);
   await page.evaluate(() => window.guideHarness.presentation.close());
   await expect(page.locator('[data-test-guide-target], .ui-setup-guide')).toHaveCount(0);
+  expect(await page.evaluate(() => window.guideHarness.errors)).toEqual([]);
+});
+
+for (const theme of ['light', 'dark']) {
+  test(`overview chapter choices use shared buttons and close before selecting in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await installGuideHarness(page);
+    await page.evaluate(async theme => {
+      document.documentElement.dataset.theme = theme;
+      const harness = window.guideHarness;
+      const { createGuideDefinition } = await import('/assets/guides/catalog.js');
+      const definition = createGuideDefinition('admin', { adminTab: 'health' });
+      harness.choices = [];
+      harness.dismissals = 0;
+      harness.presentation = harness.open(definition.steps, {}, {
+        onChoice: id => harness.choices.push({ id, closed: !harness.presentation.isOpen() }),
+        onDismiss: () => { harness.dismissals += 1; }
+      });
+    }, theme);
+    const guide = page.locator('.ui-setup-guide');
+    await expect(guide).toHaveClass(/ui-setup-guide--choices/);
+    await expect(guide.locator('[data-guide-choice]')).toHaveCount(19);
+    await expect(guide.locator('.ui-setup-guide-choice-group')).toHaveCount(7);
+    await expect(guide.getByRole('button', { name: 'Receiver status', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('.ui-setup-guide-highlight')).toHaveCount(0);
+    await expect(guide.getByRole('button', { name: 'Start tour', exact: true })).toBeInViewport();
+    const size = await guide.boundingBox();
+    expect(size.width).toBeGreaterThan(800);
+    expect(size.height).toBeLessThanOrEqual(672);
+    const choice = guide.getByRole('button', { name: 'Page access', exact: true });
+    await choice.scrollIntoViewIfNeeded();
+    await expect(choice).toBeVisible();
+    await choice.focus();
+    await page.keyboard.press('Enter');
+    await expect(guide).toHaveCount(0);
+    expect(await page.evaluate(() => ({ choices: window.guideHarness.choices,
+      dismissals: window.guideHarness.dismissals, errors: window.guideHarness.errors })))
+      .toEqual({ choices: [{ id: 'access', closed: true }], dismissals: 0, errors: [] });
+  });
+}
+
+test('chapter chooser releases its wide scrollable layout before the opening lesson', async ({ page }) => {
+  await installGuideHarness(page);
+  await page.evaluate(async () => {
+    const harness = window.guideHarness;
+    const { createGuideDefinition } = await import('/assets/guides/catalog.js');
+    harness.presentation = harness.open(createGuideDefinition('admin', { adminTab: 'computer' }).steps,
+      {}, { onChoice() {} });
+  });
+  const guide = page.locator('.ui-setup-guide');
+  await expect(guide).toHaveClass(/ui-setup-guide--choices/);
+  await guide.getByRole('button', { name: 'Start tour', exact: true }).click();
+  await expect(guide).toHaveAttribute('data-guide-step', 'computer-open');
+  await expect(guide).not.toHaveClass(/ui-setup-guide--choices/);
+  await expect(guide.locator('[data-guide-choice]')).toHaveCount(0);
+  const size = await guide.boundingBox();
+  expect(size.width).toBeLessThan(500);
+  await page.evaluate(() => window.guideHarness.presentation.close());
+  expect(await page.evaluate(() => window.guideHarness.errors)).toEqual([]);
+});
+
+
+test('a chosen chapter starts at its opener and Back returns to the common overview', async ({ page }) => {
+  await installGuideHarness(page);
+  await page.evaluate(async () => {
+    const harness = window.guideHarness;
+    const { createGuideDefinition } = await import('/assets/guides/catalog.js');
+    harness.presentation = harness.open(createGuideDefinition('admin', { adminTab: 'recordings' }).steps,
+      {}, { initialStep: 1, onChoice() {} });
+  });
+  const guide = page.locator('.ui-setup-guide');
+  await expect(guide).toHaveAttribute('data-guide-step', 'recordings-open');
+  await expect(guide.locator('.ui-setup-guide-counter')).toHaveText('Step 1 of 3');
+  await guide.getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(guide).toHaveAttribute('data-guide-step', 'overview');
+  await expect(guide.locator('[data-guide-choice]')).toHaveCount(19);
+  await page.evaluate(() => window.guideHarness.presentation.close());
   expect(await page.evaluate(() => window.guideHarness.errors)).toEqual([]);
 });

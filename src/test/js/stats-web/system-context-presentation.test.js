@@ -47,7 +47,7 @@ const functions = [
   'function identifierNumber(value)', 'function spectrumDiscoverySystemName(session, draft = null)',
   'function p25OverrideIdentityRow(profile, knownSystems = [])',
   'function p25OverrideDisplayName(profile, knownSystems = [])',
-  "async function requestP25BandplanOverrides(method = 'GET', profiles = null)",
+  "async function requestP25BandplanOverrides(method = 'GET', profiles = null, fetchDocument = jsonDocumentFetch)",
   "function receiverHealthText(value, fallback = '—')", 'function receiverHealthScope(row)',
   'function callMatchingIdentity(alias, value, fallback)', 'function callMatchingSourceValue(identity)',
   'function callMatchingIdentitySystem(identity, destination = true)',

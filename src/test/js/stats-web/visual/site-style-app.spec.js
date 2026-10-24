@@ -36,6 +36,7 @@ const routes = [
   ['credits', 'view=credits', '.credits-copy', 'SDRTrunk']
 ];
 const administration = [
+  ['computer', '.receiver-computer-page', 'Synthetic workstation'],
   ['health', '.receiver-health-overview', 'Receiver status'],
   ['application-log', '.application-log-workspace', 'County receiver started'],
   ['web-diagnostic-log', '.web-diagnostic-log-workspace', 'Web server log'],
@@ -72,15 +73,15 @@ const additionalCases = [
     '.alias-coverage-table-section', 'Fire Dispatch', openAliasChannelScope],
   ['dashboard-inventory-unassigned', 'view=dashboard&tab=inventory&alias_list_id=1&identity_tab=unassigned',
     '.alias-coverage-table-section', '1301', openAliasChannelScope],
-  ['admin-health-diagnostics', 'view=admin&tab=health', '.receiver-health-diagnostics', 'Computer & version',
+  ['admin-health-diagnostics', 'view=admin&tab=health', '.receiver-health-diagnostics', 'Receiver diagnostics',
     async (page) => {
       await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
       const toggles = page.locator('.receiver-health-diagnostics .receiver-health-section-toggle');
-      await expect(toggles).toHaveCount(4);
+      await expect(toggles).toHaveCount(3);
       for (const toggle of await toggles.all()) {
         if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
       }
-      await expect(page.locator('.receiver-health-diagnostics')).toContainText('Synthetic workstation');
+      await expect(page.locator('.receiver-health-diagnostics')).not.toContainText('Synthetic workstation');
     }]
 ];
 const cases = [...routes, ...administration, ...additionalCases];

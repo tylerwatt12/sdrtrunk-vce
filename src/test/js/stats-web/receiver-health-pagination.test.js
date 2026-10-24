@@ -186,7 +186,10 @@ context.navigator = { clipboard: { async writeText(value) {
 } } };
 context.receiverHealthController = { authorized: () => authorized, pageHost: {},
   computerCopyBusy: false, computerCopyState: '', updatePage() {} };
+context.receiverHealthPageController = null;
 vm.runInContext(`
+  ${functionSource('function currentReceiverHealthPageController()')}
+  ${functionSource('function withReceiverHealthPageController(controller, renderPage)')}
   ${functionSource('function receiverHealthComputerOverview(snapshot)')}
   globalThis.computerOverview = receiverHealthComputerOverview;
 `, context);
@@ -212,4 +215,26 @@ async function verifyComputerCopy() {
   assert.equal(context.receiverHealthController.computerCopyState, '', 'Unauthorized sessions cannot copy host details.');
 }
 
-verifyComputerCopy().catch((error) => { throw error; });
+async function verifyControllerIsolation() {
+  authorized = true;
+  denyCopy = false;
+  const realController = context.receiverHealthController;
+  realController.computerCopyState = 'real-page-state';
+  const guideController = { ...realController, pageHost: {}, computerCopyState: '', computerCopyBusy: false };
+  const guideOverview = context.withReceiverHealthPageController(guideController,
+    () => context.computerOverview({ computer: normalizedComputer }));
+  assert.equal(context.currentReceiverHealthPageController(), realController,
+    'Synchronous page rendering must restore the real controller before callbacks run.');
+  await guideOverview.action.click();
+  assert.equal(guideController.computerCopyState, 'success',
+    'A sample page callback must retain its own controller after rendering finishes.');
+  assert.equal(realController.computerCopyState, 'real-page-state',
+    'Sample page copy feedback must not change the real page state.');
+  assert.throws(() => context.withReceiverHealthPageController(guideController, () => {
+    throw new Error('render failed');
+  }), /render failed/);
+  assert.equal(context.currentReceiverHealthPageController(), realController,
+    'A failed render must also release its controller context.');
+}
+
+verifyComputerCopy().then(verifyControllerIsolation).catch((error) => { throw error; });

@@ -4,7 +4,7 @@
 const galleryViews = [
   'mobile-table', 'gallery', 'workflows', 'qr-code', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal',
   'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters',
-  'health-alert-modal', 'focus', 'settings', 'health', 'status-primitives', 'p25', 'admin-access',
+  'health-alert-modal', 'focus', 'settings', 'health', 'computer', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'focused-settings', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls',
   'dashboard-activity', 'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'radio-directory-coverage',
   'radio-directory-panel', 'admin-scan-lists', 'scanner', 'tuner-spectrum', 'tuners', 'aliases', 'alerts',

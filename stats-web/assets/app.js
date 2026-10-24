@@ -16,7 +16,8 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=28';
+import { createGuideController } from './guides/controller.js?v=29';
+import { adminSectionForStep } from './guides/pages/admin.js?v=1';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -2528,9 +2529,9 @@ function confirmAction(message, options = {}) {
   });
 }
 
-function statsLoggingState() {
-  const current = serviceStatus?.stats_logging;
-  const database = serviceStatus?.database || {};
+function statsLoggingState(snapshot = serviceStatus) {
+  const current = snapshot?.stats_logging;
+  const database = snapshot?.database || {};
   const logger = new Map((database.logger || []).map((row) => [row.key, row.value]));
   const persistedLastWrite = Number(logger.get('last_successful_write_ms') || 0);
   if (current) {
@@ -2547,7 +2548,7 @@ function statsLoggingState() {
       lastError: current.last_error || ''
     };
   }
-  if (serviceStatus) {
+  if (snapshot) {
     const summary = Boolean(database.stats_logging_enabled);
     const history = Boolean(database.detailed_history_enabled);
     return { available: true, summaryConfigured: summary, historyConfigured: history,
@@ -7836,6 +7837,242 @@ async function renderScanListMembers(main, scanListCatalog, scanList, renderCont
 }
 
 
+// Guide pages own their resources explicitly so dismissal cannot cancel work
+// scheduled by the real page while its original nodes are held aside.
+function createAdministrationGuideResources(signal) {
+  const timers = new Map();
+  const connections = new Set();
+  let closed = false;
+  const active = () => !closed && !signal.aborted;
+  return {
+    interval(callback, interval) {
+      if (!active()) return null;
+      const timer = window.setInterval(() => {
+        if (active() && !document.hidden) Promise.resolve(callback()).catch(() => {});
+      }, interval);
+      timers.set(timer, 'interval');
+      return timer;
+    },
+    timeout(callback, delay) {
+      if (!active()) return null;
+      const timer = window.setTimeout(() => {
+        timers.delete(timer);
+        if (active()) callback();
+      }, delay);
+      timers.set(timer, 'timeout');
+      return timer;
+    },
+    registerConnection(connection) {
+      if (active()) connections.add(connection);
+      else connection.close();
+      return connection;
+    },
+    close() {
+      if (closed) return [];
+      closed = true;
+      const failures = [];
+      timers.forEach((kind, timer) => {
+        try {
+          if (kind === 'interval') window.clearInterval(timer);
+          else window.clearTimeout(timer);
+        } catch (error) { failures.push(error); }
+      });
+      timers.clear();
+      connections.forEach(connection => {
+        try { connection.close(); } catch (error) { failures.push(error); }
+      });
+      connections.clear();
+      return failures;
+    }
+  };
+}
+
+// Administration renderers capture their request source for their own lifetime.
+// Real pages and background status work never borrow the guide's documents.
+function administrationRequestDependencies(renderContext) {
+  const sample = renderContext?.guideData;
+  const documentFetch = sample?.fetchDocument || jsonDocumentFetch;
+  const request = sample?.requestJson || requestJson;
+  const sampleApi = (path, parameters = {}, options = {}) => {
+    const query = new URLSearchParams();
+    Object.entries(parameters).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && value !== '') query.set(snakeCaseKey(key), String(value));
+    });
+    return request(`${path}${query.size ? `?${query}` : ''}`, { csrf: false, ...options });
+  };
+  return {
+    requestJson: request,
+    jsonDocumentFetch: documentFetch,
+    api: sample ? sampleApi : api,
+    apiPage: sample ? async (path, parameters, options) =>
+      pageLifecycle.decodeOffsetPage(await sampleApi(path, parameters, options), path) : apiPage,
+    table: renderContext?.guideTable || table,
+    pageInterval: renderContext?.guideResources?.interval || pageInterval,
+    pageTimeout: renderContext?.guideResources?.timeout || pageTimeout,
+    registerConnection: renderContext?.guideResources?.registerConnection || (connection => {
+      pageConnections.add(connection);
+      return connection;
+    }),
+    requestPreference: (method = 'GET', field = '', value, revision = '') =>
+      requestOperationalPreference(method, field, value, revision, documentFetch),
+    requestReceiver: (method = 'GET', settings = null, revision = null) =>
+      requestReceiverSettings(method, settings, revision, documentFetch),
+    requestSpectrum: (path, method = 'GET', countryCode = null, revision = null) =>
+      requestSpectrumSnapPresetDocument(path, method, countryCode, revision, documentFetch),
+    requestBandplans: (method = 'GET', profiles = null) =>
+      requestP25BandplanOverrides(method, profiles, documentFetch)
+  };
+}
+
+function markAdministrationGuideNavigation(root) {
+  const marked = [];
+  root.querySelectorAll('.admin-settings-tree a').forEach(link => {
+    const tab = new URL(link.href, window.location.href).searchParams.get('tab');
+    if (!tab) return;
+    marked.push([link, link.getAttribute('data-guide-target')]);
+    link.dataset.guideTarget = `admin-nav-${tab}`;
+  });
+  return () => marked.forEach(([link, previous]) => {
+    if (previous === null) link.removeAttribute('data-guide-target');
+    else link.setAttribute('data-guide-target', previous);
+  });
+}
+
+async function prepareAdministrationGuideSample(section, context) {
+  const tab = adminSectionForStep(section);
+  if (!tab || context.signal.aborted) return () => {};
+  const allowed = adminSettingsLeaves(adminSettingsGroups()).some(item => item.id === tab);
+  if (!allowed) throw new Error('The Administration section is unavailable.');
+  if (section.endsWith('-open')) {
+    const unmark = markAdministrationGuideNavigation(content);
+    const navigation = content.querySelector('.admin-settings-tree');
+    const unprotect = navigation ? guideSampleData.register('admin-workspace', () => {}, { root: navigation }) : null;
+    content.querySelector(`[data-guide-target="admin-nav-${tab}"]`)
+      ?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    return () => { try { unprotect?.(); } finally { unmark(); } };
+  }
+
+  const parent = captureRenderContext();
+  const { createAdministrationGuideData, ADMINISTRATION_GUIDE_IDS } =
+    await import('./guides/administration-data.js?v=1');
+  if (context.signal.aborted || !context.isCurrent() || !renderIsCurrent(parent)) return () => {};
+  const controller = new AbortController();
+  const resources = createAdministrationGuideResources(controller.signal);
+  const sample = createAdministrationGuideData({ signal: controller.signal });
+  const originalNodes = [...content.childNodes];
+  const originalTitle = pageTitleController.state.pageTitle;
+  const scroll = [content, document.scrollingElement, ...content.querySelectorAll('*')]
+    .filter(element => element && (element === content || element === document.scrollingElement || element.scrollTop || element.scrollLeft))
+    .map(element => [element, element.scrollTop, element.scrollLeft]);
+  const holding = node('div');
+  holding.hidden = true;
+  holding.inert = true;
+  document.body.append(holding);
+  holding.attachShadow({ mode: 'closed' }).append(...originalNodes);
+  const tables = new Set();
+  const unprotect = guideSampleData.register('admin-workspace', () => {}, { root: content });
+  let recordingWorkspace;
+  let closed = false;
+  const restore = () => {
+    if (closed) return;
+    closed = true;
+    context.signal.removeEventListener('abort', restore);
+    const failures = [];
+    const safely = action => { try { action(); } catch (error) { failures.push(error); } };
+    safely(() => controller.abort());
+    safely(() => sample.dispose());
+    safely(() => unprotect());
+    safely(() => recordingWorkspace?.stopAudio());
+    failures.push(...resources.close());
+    tables.forEach(tableController => {
+      safely(() => cleanupTableLayoutMenu(tableController));
+      safely(() => tableController.widthObserver?.disconnect());
+    });
+    if (renderIsCurrent(parent)) {
+      safely(() => content.replaceChildren(...originalNodes));
+      safely(() => pageTitleController.update({ pageTitle: originalTitle }));
+      scroll.forEach(([element, top, left]) => safely(() => { element.scrollTop = top; element.scrollLeft = left; }));
+    }
+    safely(() => holding.remove());
+    if (failures.length) console.error('Unable to finish cleaning up an Administration guide example.', failures[0]);
+  };
+  context.signal.addEventListener('abort', restore, { once: true });
+  try {
+    const health = new ReceiverHealthController();
+    health.guideMode = true;
+    health.guideTab = tab;
+    health.guideStatus = sample.getStatus();
+    health.snapshot = normalizeReceiverHealthSnapshot(sample.getReceiverHealth());
+    health.updateIndicator = () => {};
+    const channelPicker = tab === 'tuner-allocation' &&
+      ['tuner-allocation-channel', 'tuner-allocation-catalog'].includes(section);
+    const renderContext = { ...parent, signal: controller.signal, guideData: sample, guideResources: resources,
+      guideHealthController: health, guideChannelId: channelPicker ? '' : ADMINISTRATION_GUIDE_IDS.countyChannel,
+      guideTable: (rows, columns, emptyText, options = {}) => {
+        if (closed) throw new DOMException('The Administration example was closed.', 'AbortError');
+        const tableController = options.controller || {};
+        tables.add(tableController);
+        return table(rows, columns, emptyText, { ...options, controller: tableController, presentation: true });
+      } };
+    recordingWorkspace = createRecordingsFeature(recordingsFeatureDependencies({
+      guideMode: true, requestJson: sample.requestJson,
+      captureRenderContext: () => renderContext, stopLiveAudio: async () => {}
+    }));
+    renderContext.guideRecordings = recordingWorkspace;
+    await renderAdmin({ tab, renderContext });
+    // Production modules may begin their initial read while mounting. Their
+    // local documents settle without contacting a receiver or service.
+    for (let attempt = 0; attempt < 20 && !closed; attempt++) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      if (!content.querySelector('.loading, .ui-feedback-loading, [aria-busy="true"]')) break;
+    }
+    if (closed || !context.isCurrent()) { restore(); return restore; }
+    const shell = content.querySelector('.admin-settings-shell');
+    if (!shell) throw new Error('The Administration example could not be displayed.');
+    shell.querySelector('.ui-settings-title-row')?.append(uiPill('Example data'));
+    markAdministrationGuideNavigation(shell);
+    const selectors = {
+      computer: '.receiver-computer-page', health: '.receiver-health-overview',
+      'application-log': '.application-log-workspace', 'web-diagnostic-log': '.web-diagnostic-log-workspace',
+      support: '.support-report-form', 'remote-support': '[data-remote-support]',
+      'call-matching': '.call-matching-workspace', 'tuner-allocation': '.tuner-allocation-workspace',
+      recordings: '.recordings-mode-choices', 'audio-quality': '.operational-preference-card',
+      transcription: '.recordings-admin', 'push-setup': '.alerts-workspace',
+      activity: '.operational-preference-card', 'retained-statistics': '.retained-statistics-page',
+      'remote-links': '.remote-links-page', 'protocol-p25': '.p25-overrides-workspace',
+      display: '.receiver-settings', users: '.admin-account-grid', access: '.admin-access-gate'
+    };
+    const target = shell.querySelector(selectors[tab]);
+    if (!target) throw new Error('The Administration example panel is unavailable.');
+    const panel = target.closest('.ui-settings-panel') || target;
+    panel.dataset.guideTarget = `admin-${tab}-panel`;
+    if (tab === 'tuner-allocation') {
+      const channel = shell.querySelector(`[data-allocation-channel-id="${ADMINISTRATION_GUIDE_IDS.countyChannel}"]`);
+      if (channel) channel.dataset.guideTarget = 'admin-tuner-allocation-channel';
+      const back = shell.querySelector('.tuner-allocation-back');
+      if (back) back.dataset.guideTarget = 'admin-tuner-allocation-back';
+    }
+    if (tab === 'recordings') {
+      const retention = [...shell.querySelectorAll('.ui-section, .settings-card')]
+        .find(panel => panel.querySelector(':scope > .ui-section-title')?.textContent.trim() === 'Managed call retention');
+      const input = retention?.querySelector('input[type="number"]');
+      if (!input) throw new Error('The managed retention example is unavailable.');
+      input.closest('.ui-field')?.setAttribute('data-guide-target', 'admin-recordings-retention');
+      if (!shell.querySelector('[data-guide-target="admin-recordings-retention"]')) retention.dataset.guideTarget = 'admin-recordings-retention';
+    } else if (tab === 'activity') {
+      const retention = shell.querySelector('[data-preference="stats_logging_retention_days"]');
+      if (!retention) throw new Error('The activity retention example is unavailable.');
+      retention.dataset.guideTarget = 'admin-activity-retention';
+    }
+    const focusName = section === 'tuner-allocation-channel' ? 'admin-tuner-allocation-channel' :
+      section === 'tuner-allocation-back' ? 'admin-tuner-allocation-back' :
+      section.endsWith('-retention') ? `admin-${tab}-retention` : `admin-${tab}-panel`;
+    const focus = shell.querySelector(`[data-guide-target="${focusName}"]`);
+    focus?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+    return restore;
+  } catch (error) { restore(); throw error; }
+}
+
 async function prepareChannelGuideSample(section, context) {
   if (context.signal.aborted) return () => {};
   const releases = [];
@@ -7944,7 +8181,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : visualizerTour ? [
       import('./features/network-visualizer/index.js?v=58'), import('./guides/network-visualizer-presentation.js?v=1')
     ] : topics ? [
-      import('./features/alerts.js?v=21'), import('./guides/topics-presentation.js?v=1')
+      import('./features/alerts.js?v=22'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
       Promise.resolve(null), import('./guides/scanner-presentation.js?v=1')
     ] : main ? [
@@ -8242,6 +8479,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
 }
 
 async function preparePageGuideSample(view, section, context) {
+  if (view === 'admin') return prepareAdministrationGuideSample(section, context);
   if (view === 'recordings') {
     const releasePage = await recordingsFeature.prepareGuide(section, context);
     let releasePlayer;
@@ -10170,6 +10408,7 @@ class ReceiverHealthController {
     this.lastError = '';
     this.requestController = null;
     this.pageHost = null;
+    this.pageKind = 'health';
     this.resolvedSort = 'recent';
     this.resolvedPage = 0;
     this.healthView = 'overview';
@@ -10248,7 +10487,7 @@ class ReceiverHealthController {
     }
   }
 
-  bindPage(host) {
+  bindPage(host, kind = 'health') {
     if (this.pageHost !== host) {
       this.resolvedPage = 0;
       this.healthView = 'overview';
@@ -10256,12 +10495,16 @@ class ReceiverHealthController {
       this.openHealthSections = new Set(['host-overview', 'current', 'saved-activity', 'active']);
     }
     this.pageHost = host;
+    this.pageKind = kind;
+    if (kind === 'computer') this.openHealthSections.add('computer');
     this.updatePage();
   }
 
   updatePage() {
     if (!this.desktopEnabled() || !this.pageHost?.isConnected) return;
-    renderReceiverHealthPage(this.pageHost, this.snapshot, this.stale, this.lastError);
+    const renderPage = this.pageKind === 'computer' ? renderReceiverComputerPage : renderReceiverHealthPage;
+    withReceiverHealthPageController(this, () =>
+      renderPage(this.pageHost, this.snapshot, this.stale, this.lastError));
   }
 
   updateIndicator() {
@@ -10334,6 +10577,21 @@ class ReceiverHealthController {
 }
 
 const receiverHealthController = new ReceiverHealthController();
+let receiverHealthPageController = null;
+
+function currentReceiverHealthPageController() {
+  return receiverHealthPageController || receiverHealthController;
+}
+
+function withReceiverHealthPageController(controller, renderPage) {
+  const previous = receiverHealthPageController;
+  receiverHealthPageController = controller;
+  try {
+    return renderPage();
+  } finally {
+    receiverHealthPageController = previous;
+  }
+}
 
 const liveConnections = new Set();
 const pageConnections = new Set();
@@ -20751,7 +21009,7 @@ async function renderP25Visualizer() {
 }
 
 async function requestSpectrumSnapPresetDocument(path = '/api/v1/spectrum-snap-presets', method = 'GET',
-    countryCode = null, revision = null) {
+    countryCode = null, revision = null, fetchDocument = jsonDocumentFetch) {
   const headers = { Accept: 'application/json' };
   const options = { method, headers };
   if (method === 'PUT') {
@@ -20760,7 +21018,7 @@ async function requestSpectrumSnapPresetDocument(path = '/api/v1/spectrum-snap-p
     headers['If-Match'] = `"${revision}"`;
     options.body = JSON.stringify({ country_code: countryCode });
   }
-  const response = await jsonDocumentFetch(path, options);
+  const response = await fetchDocument(path, options);
   let value = null;
   try { value = await response.json(); } catch (_) { }
   if (!response.ok) {
@@ -28403,6 +28661,7 @@ function adminUserCard(account, statusHost) {
 }
 
 async function renderAdminUsers(renderContext = captureRenderContext()) {
+  const { requestJson } = administrationRequestDependencies(renderContext);
   const response = await requestJson('/api/v1/admin/users', { csrf: false });
   if (!renderIsCurrent(renderContext)) return;
   const users = (Array.isArray(response) ? response : response?.users || []).map(adminUserRecord)
@@ -28535,6 +28794,7 @@ function adminAccessRows(policies, statusHost, compactFixed = false) {
 }
 
 async function renderAdminAccess(renderContext = captureRenderContext()) {
+  const { requestJson } = administrationRequestDependencies(renderContext);
   const response = await requestJson('/api/v1/admin/access', { csrf: false });
   if (!renderIsCurrent(renderContext)) return;
   const displayOrder = ['dashboard', 'live', 'radio', 'call-audio', 'csv-export', 'credits',
@@ -29489,7 +29749,8 @@ async function renderAdminRadioReferenceSettings() {
   }
 }
 
-async function renderAdminSpectrumSnapSettings(target = content) {
+async function renderAdminSpectrumSnapSettings(target = content, renderContext = captureRenderContext()) {
+  const { requestSpectrum: requestSpectrumSnapPresetDocument } = administrationRequestDependencies(renderContext);
   const body = node('div', 'admin-section-body spectrum-snap-settings');
   const form = node('form', 'admin-form settings-page-form ui-settings-form');
   const country = node('select');
@@ -29564,7 +29825,8 @@ function decodeReceiverSettingsEnvelope(value) {
   };
 }
 
-async function requestReceiverSettings(method = 'GET', settings = null, revision = null) {
+async function requestReceiverSettings(method = 'GET', settings = null, revision = null,
+    fetchDocument = jsonDocumentFetch) {
   const headers = { Accept: 'application/json' };
   const options = { method, headers };
   if (method === 'PUT') {
@@ -29573,7 +29835,7 @@ async function requestReceiverSettings(method = 'GET', settings = null, revision
     headers['If-Match'] = `"${revision}"`;
     options.body = JSON.stringify(settings);
   }
-  const response = await jsonDocumentFetch('/api/v1/admin/receiver-settings', options);
+  const response = await fetchDocument('/api/v1/admin/receiver-settings', options);
   let documentValue = null;
   try {
     documentValue = await response.json();
@@ -29591,7 +29853,8 @@ async function requestReceiverSettings(method = 'GET', settings = null, revision
   return decodeReceiverSettingsEnvelope(documentValue);
 }
 
-async function renderAdminReceiverBehaviorSettings(target = content) {
+async function renderAdminReceiverBehaviorSettings(target = content, renderContext = captureRenderContext()) {
+  const { requestReceiver: requestReceiverSettings } = administrationRequestDependencies(renderContext);
   const body = node('div', 'admin-section-body receiver-settings');
   const form = node('form', 'admin-form settings-page-form ui-settings-form receiver-settings-form');
   const grantAge = node('input');
@@ -29674,7 +29937,8 @@ function decodeOperationalPreferencesEnvelope(value) {
   return value;
 }
 
-async function requestOperationalPreference(method = 'GET', field = '', value = undefined, revision = '') {
+async function requestOperationalPreference(method = 'GET', field = '', value = undefined, revision = '',
+    fetchDocument = jsonDocumentFetch) {
   const path = `/api/v1/admin/operational-preferences${field ? `/${field}` : ''}`;
   const headers = { Accept: 'application/json' };
   const options = { method, headers };
@@ -29684,7 +29948,7 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
     headers['If-Match'] = `"${revision}"`;
     options.body = JSON.stringify({ value });
   }
-  const response = await jsonDocumentFetch(path, options);
+  const response = await fetchDocument(path, options);
   let documentValue = null;
   try { documentValue = await response.json(); } catch (_) { }
   if (!response.ok) {
@@ -29700,7 +29964,7 @@ async function requestOperationalPreference(method = 'GET', field = '', value = 
 }
 
 async function renderAdminOperationalPreferences(renderContext = captureRenderContext(), options = {}) {
-  const requestPreference = options.requestPreference || requestOperationalPreference;
+  const requestPreference = options.requestPreference || administrationRequestDependencies(renderContext).requestPreference;
   const body = node('div', 'admin-section-body');
   const status = node('div', 'admin-form-message', 'Loading settings…');
   status.setAttribute('role', 'status');
@@ -30070,7 +30334,7 @@ function p25OverrideProfilesFromForm(list) {
   });
 }
 
-async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
+async function requestP25BandplanOverrides(method = 'GET', profiles = null, fetchDocument = jsonDocumentFetch) {
   const headers = { Accept: 'application/json' };
   const options = { method, headers };
   if (method === 'PUT') {
@@ -30078,7 +30342,7 @@ async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
     options.body = JSON.stringify({ profiles: profiles.map(({ wacn, system, rfss, site, bands }) =>
       ({ wacn, system, rfss, site, bands })) });
   }
-  const response = await jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides', options);
+  const response = await fetchDocument('/api/v1/admin/p25-bandplan-overrides', options);
   let documentValue = null;
   try { documentValue = await response.json(); } catch (_) { }
   if (!response.ok) {
@@ -30091,8 +30355,8 @@ async function requestP25BandplanOverrides(method = 'GET', profiles = null) {
   return documentValue;
 }
 
-async function renderAdminP25BandplanOverrides() {
-  const renderContext = captureRenderContext();
+async function renderAdminP25BandplanOverrides(renderContext = captureRenderContext()) {
+  const { requestBandplans: requestP25BandplanOverrides } = administrationRequestDependencies(renderContext);
   const body = node('form', 'admin-section-body p25-overrides-workspace ui-form-workflow-inset');
   const intro = node('p', 'p25-overrides-intro muted',
     'Site overrides take priority over system overrides.');
@@ -30469,14 +30733,16 @@ function receiverHealthResolvedPage(incidents, sort, requestedPage) {
 }
 
 function receiverHealthPruneExpandedResolvedIncidents(incidents) {
+  const healthController = currentReceiverHealthPageController();
   const current = new Set(incidents.flatMap((incident) => [incident, ...(incident.occurrences || [])])
     .map(receiverHealthResolvedIncidentKey));
-  receiverHealthController.expandedResolvedIncidents.forEach((key) => {
-    if (!current.has(key)) receiverHealthController.expandedResolvedIncidents.delete(key);
+  healthController.expandedResolvedIncidents.forEach((key) => {
+    if (!current.has(key)) healthController.expandedResolvedIncidents.delete(key);
   });
 }
 
 function receiverHealthIncidentList(incidents, resolved = false) {
+  const healthController = currentReceiverHealthPageController();
   if (!incidents.length) {
     const empty = node('div', 'ui-feedback receiver-health-empty');
     empty.append(resolved ? 'No resolved issues yet.' :
@@ -30488,9 +30754,9 @@ function receiverHealthIncidentList(incidents, resolved = false) {
     if (!resolved) return receiverHealthIncident(incident);
     const key = receiverHealthResolvedIncidentKey(incident);
     const card = receiverHealthIncident(incident, true,
-      receiverHealthController.expandedResolvedIncidents.has(key), (open) => {
-        if (open) receiverHealthController.expandedResolvedIncidents.add(key);
-        else receiverHealthController.expandedResolvedIncidents.delete(key);
+      healthController.expandedResolvedIncidents.has(key), (open) => {
+        if (open) healthController.expandedResolvedIncidents.add(key);
+        else healthController.expandedResolvedIncidents.delete(key);
       });
     if (incident.occurrences?.length > 1) {
       const occurrences = receiverHealthIncidentList(incident.occurrences, true);
@@ -30517,10 +30783,11 @@ function receiverHealthResolvedPager(page, onPage) {
 }
 
 function receiverHealthResolvedSection(incidents) {
+  const healthController = currentReceiverHealthPageController();
   const groups = receiverHealthResolvedGroups(incidents);
   receiverHealthPruneExpandedResolvedIncidents(groups);
   if (!incidents.length) {
-    receiverHealthController.resolvedPage = 0;
+    healthController.resolvedPage = 0;
     return section('Issue history', receiverHealthIncidentList([], true));
   }
   const body = node('div');
@@ -30530,25 +30797,27 @@ function receiverHealthResolvedSection(incidents) {
   [['recent', 'Most recently resolved'], ['type', 'Issue type (A–Z)']].forEach(([value, label]) => {
     const option = node('option', '', label);
     option.value = value;
-    option.selected = receiverHealthController.resolvedSort === value;
+    option.selected = healthController.resolvedSort === value;
     sort.append(option);
   });
   const control = node('label', 'receiver-health-resolved-sort');
   control.append(node('span', '', 'Sort'), sort);
   const draw = (focusPager = false) => {
-    const page = receiverHealthResolvedPage(groups, receiverHealthController.resolvedSort,
-      receiverHealthController.resolvedPage);
-    receiverHealthController.resolvedPage = page.page;
+    const page = receiverHealthResolvedPage(groups, healthController.resolvedSort,
+      healthController.resolvedPage);
+    healthController.resolvedPage = page.page;
     const paginator = receiverHealthResolvedPager(page, (nextPage) => {
-      receiverHealthController.resolvedPage = nextPage;
+      healthController.resolvedPage = nextPage;
       draw(true);
     });
-    body.replaceChildren(receiverHealthIncidentList(page.rows, true), paginator);
+    const incidentList = withReceiverHealthPageController(healthController, () =>
+      receiverHealthIncidentList(page.rows, true));
+    body.replaceChildren(incidentList, paginator);
     if (focusPager) paginator.focus();
   };
   sort.addEventListener('change', () => {
-    receiverHealthController.resolvedSort = sort.value === 'type' ? 'type' : 'recent';
-    receiverHealthController.resolvedPage = 0;
+    healthController.resolvedSort = sort.value === 'type' ? 'type' : 'recent';
+    healthController.resolvedPage = 0;
     draw();
   });
   draw();
@@ -30564,6 +30833,7 @@ function receiverHealthResolvedSection(incidents) {
 let receiverHealthSectionSequence = 0;
 
 function receiverHealthSection(key, title, child, action = null, summary = '', status = null) {
+  const healthController = currentReceiverHealthPageController();
   const wrapper = node('section', 'section ui-section ui-section-collapsible receiver-health-section');
   wrapper.dataset.receiverHealthSection = key;
   const titleBar = node('div', 'section-title ui-section-title');
@@ -30585,11 +30855,11 @@ function receiverHealthSection(key, title, child, action = null, summary = '', s
     body.hidden = !expanded;
     wrapper.classList.toggle('collapsed', !expanded);
   };
-  applyExpanded(receiverHealthController.openHealthSections.has(key));
+  applyExpanded(healthController.openHealthSections.has(key));
   toggle.addEventListener('click', () => {
     const expanded = body.hidden;
-    if (expanded) receiverHealthController.openHealthSections.add(key);
-    else receiverHealthController.openHealthSections.delete(key);
+    if (expanded) healthController.openHealthSections.add(key);
+    else healthController.openHealthSections.delete(key);
     applyExpanded(expanded);
   });
 
@@ -30699,17 +30969,18 @@ function receiverHealthComputerFacts(computer) {
 }
 
 function receiverHealthComputerOverview(snapshot) {
+  const healthController = currentReceiverHealthPageController();
   const entries = receiverHealthComputerFacts(snapshot.computer);
   const facts = keyValues(entries);
   facts.classList.add('ui-facts-embedded');
   const body = node('div');
   body.append(facts);
   const copy = uiActionButton('Copy details', 'icon-copy', async () => {
-    if (!receiverHealthController.authorized() || receiverHealthController.computerCopyBusy) return;
-    const host = receiverHealthController.pageHost;
-    receiverHealthController.computerCopyState = '';
-    receiverHealthController.computerCopyBusy = true;
-    receiverHealthController.updatePage();
+    if (!healthController.authorized() || healthController.computerCopyBusy) return;
+    const host = healthController.pageHost;
+    healthController.computerCopyState = '';
+    healthController.computerCopyBusy = true;
+    healthController.updatePage();
     let state;
     try {
       await navigator.clipboard.writeText(entries.map(([label, value]) => `${label}: ${value}`).join('\n'));
@@ -30717,16 +30988,16 @@ function receiverHealthComputerOverview(snapshot) {
     } catch (_) {
       state = 'error';
     } finally {
-      receiverHealthController.computerCopyBusy = false;
-      if (receiverHealthController.authorized() && receiverHealthController.pageHost === host) {
-        receiverHealthController.computerCopyState = state;
-        receiverHealthController.updatePage();
+      healthController.computerCopyBusy = false;
+      if (healthController.authorized() && healthController.pageHost === host) {
+        healthController.computerCopyState = state;
+        healthController.updatePage();
       }
     }
   }, 'ui-button ui-button-secondary');
   copy.dataset.receiverHealthFocus = 'computer-copy';
-  copy.disabled = receiverHealthController.computerCopyBusy;
-  const state = receiverHealthController.computerCopyState;
+  copy.disabled = healthController.computerCopyBusy;
+  const state = healthController.computerCopyState;
   if (state) {
     const feedback = node('p', `ui-feedback ui-feedback-${state}`, state === 'success' ?
       'Computer and version details copied.' : 'The browser could not copy these details. Try again or select the text to copy it.');
@@ -30782,13 +31053,24 @@ function receiverHealthMeasurementGroup(group, index) {
 }
 
 function receiverHealthRefreshButton() {
+  const healthController = currentReceiverHealthPageController();
   const refresh = node('button', 'ui-button ui-button-secondary', 'Refresh');
   refresh.type = 'button';
   refresh.dataset.receiverHealthFocus = 'refresh';
   refresh.addEventListener('click', async () => {
+    const host = healthController.pageHost;
+    const restoreFocus = document.activeElement === refresh;
     refresh.disabled = true;
-    await Promise.all([receiverHealthController.refresh(), loadStatus(true)]);
-    if (refresh.isConnected) refresh.disabled = false;
+    try {
+      await Promise.all([healthController.guideMode ? healthController.updatePage() : healthController.refresh(),
+        healthController === receiverHealthController ? loadStatus(true) : Promise.resolve()]);
+    } finally {
+      if (refresh.isConnected) refresh.disabled = false;
+      if (restoreFocus && healthController.pageHost === host && host?.isConnected &&
+          (document.activeElement === document.body || document.activeElement === refresh)) {
+        host.querySelector('[data-receiver-health-focus="refresh"]')?.focus({ preventScroll: true });
+      }
+    }
   });
   return refresh;
 }
@@ -30833,14 +31115,15 @@ function receiverHealthRelativeTime(value) {
 }
 
 function receiverHealthViewButton(label, view, sectionKey = '') {
+  const healthController = currentReceiverHealthPageController();
   const button = node('button', 'ui-button ui-button-link', label);
   button.type = 'button';
   button.dataset.receiverHealthFocus = `view-link:${view}:${sectionKey || label}`;
   button.addEventListener('click', () => {
-    receiverHealthController.healthView = view;
-    if (sectionKey) receiverHealthController.openHealthSections.add(sectionKey);
-    receiverHealthController.updatePage();
-    const host = receiverHealthController.pageHost;
+    healthController.healthView = view;
+    if (sectionKey) healthController.openHealthSections.add(sectionKey);
+    healthController.updatePage();
+    const host = healthController.pageHost;
     const target = sectionKey ? [...host.querySelectorAll('[data-receiver-health-focus]')]
       .find((element) => element.dataset.receiverHealthFocus === `section:${sectionKey}`) :
       host.querySelector(`#receiver-health-tab-${view}`);
@@ -30904,8 +31187,7 @@ function receiverHealthOverview(snapshot, stale, lastError) {
     overview.append(recent);
   }
   const links = node('div', 'receiver-health-support-links');
-  links.append(receiverHealthViewButton('Computer & version', 'diagnostics', 'computer'),
-    receiverHealthViewButton('Saved activity', 'diagnostics', 'saved-activity'),
+  links.append(receiverHealthViewButton('Saved activity', 'diagnostics', 'saved-activity'),
     receiverHealthAccountSettingNotice(snapshot));
   overview.append(links);
   return overview;
@@ -30925,15 +31207,16 @@ function receiverHealthDiagnostics(snapshot) {
     groups.append(receiverHealthSection('measurements', 'Detailed measurements', node('div', 'ui-feedback receiver-health-empty',
       'No measurements available.')));
   }
-  diagnostics.append(heading, groups, receiverHealthComputerOverview(snapshot), receiverHealthSavedActivitySection());
+  diagnostics.append(heading, groups, receiverHealthSavedActivitySection());
   return diagnostics;
 }
 
 function renderReceiverHealthPage(host, snapshot, stale, lastError) {
+  const healthController = currentReceiverHealthPageController();
   const focusedControl = receiverHealthFocusedControl(host);
   host.replaceChildren();
   const views = [['overview', 'Overview'], ['history', 'Issue history'], ['diagnostics', 'Diagnostics']];
-  if (!views.some(([key]) => key === receiverHealthController.healthView)) receiverHealthController.healthView = 'overview';
+  if (!views.some(([key]) => key === healthController.healthView)) healthController.healthView = 'overview';
   const navigation = node('div', 'receiver-health-navigation');
   const tabs = node('div', 'ui-page-nav ui-segmented ui-page-nav-tabs receiver-health-tabs');
   tabs.setAttribute('role', 'tablist');
@@ -30941,7 +31224,7 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   navigation.append(tabs, receiverHealthRefreshButton());
   host.append(navigation);
   views.forEach(([key, label]) => {
-    const active = key === receiverHealthController.healthView;
+    const active = key === healthController.healthView;
     const tab = node('button', `ui-segmented-option${active ? ' active' : ''}`, label);
     tab.type = 'button';
     tab.id = `receiver-health-tab-${key}`;
@@ -30952,15 +31235,15 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
     tab.setAttribute('aria-controls', `receiver-health-panel-${key}`);
     tab.tabIndex = active ? 0 : -1;
     tab.addEventListener('click', () => {
-      receiverHealthController.healthView = key;
-      receiverHealthController.updatePage();
+      healthController.healthView = key;
+      healthController.updatePage();
     });
     tab.addEventListener('keydown', (event) => {
       const index = livePickerNavigationIndex(event.key, views.findIndex(([id]) => id === key), views.length);
       if (index === null) return;
       event.preventDefault();
-      receiverHealthController.healthView = views[index][0];
-      receiverHealthController.updatePage();
+      healthController.healthView = views[index][0];
+      healthController.updatePage();
       host.querySelector(`#receiver-health-tab-${views[index][0]}`)?.focus();
     });
     tabs.append(tab);
@@ -30989,11 +31272,40 @@ function renderReceiverHealthPage(host, snapshot, stale, lastError) {
   receiverHealthRestoreFocus(host, focusedControl);
 }
 
-async function renderAdminHealth() {
+function renderReceiverComputerPage(host, snapshot, stale) {
+  const focusedControl = receiverHealthFocusedControl(host);
+  const navigation = node('div', 'receiver-health-navigation');
+  navigation.append(receiverHealthRefreshButton());
+  host.replaceChildren(navigation);
+  if (!snapshot) {
+    const feedback = node('div', stale ? 'ui-notice ui-notice-warning' :
+      'ui-feedback ui-feedback-loading receiver-health-loading-message', stale ?
+        'Computer details are unavailable right now. Select Refresh to try again.' :
+        'Loading computer details…');
+    feedback.setAttribute('role', 'status');
+    host.append(feedback);
+  } else {
+    if (stale) host.append(node('div', 'ui-notice ui-notice-warning',
+      'Live status is delayed. Showing the last computer details received.'));
+    host.append(receiverHealthComputerOverview(snapshot));
+  }
+  receiverHealthRestoreFocus(host, focusedControl);
+}
+
+async function renderAdminComputer(renderContext = captureRenderContext()) {
+  const host = node('div', 'ui-settings-page receiver-computer-page');
+  content.append(host);
+  const controller = renderContext.guideHealthController || receiverHealthController;
+  controller.bindPage(host, 'computer');
+  if (!renderContext.guideHealthController) void controller.refresh();
+}
+
+async function renderAdminHealth(renderContext = captureRenderContext()) {
   const host = node('div', 'ui-settings-page receiver-health-page');
   content.append(host);
-  receiverHealthController.bindPage(host);
-  void receiverHealthController.refresh();
+  const controller = renderContext.guideHealthController || receiverHealthController;
+  controller.bindPage(host);
+  if (!renderContext.guideHealthController) void controller.refresh();
 }
 
 function preferenceCheckbox(name, label, checked, detail = '') {
@@ -31451,6 +31763,7 @@ async function renderStreaming() {
 }
 
 async function renderAdminRemoteLinks(renderContext) {
+  const { requestJson } = administrationRequestDependencies(renderContext);
   const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=20');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createRemoteLinksWorkspace({
@@ -31481,10 +31794,10 @@ function alertsWorkspaceDependencies(renderContext, view, overrides = {}) {
   };
 }
 
-async function alertsWorkspace(renderContext, view) {
-  const { createAlertsWorkspace } = await import('./features/alerts.js?v=21');
+async function alertsWorkspace(renderContext, view, overrides = {}) {
+  const { createAlertsWorkspace } = await import('./features/alerts.js?v=22');
   if (!renderIsCurrent(renderContext)) return;
-  return createAlertsWorkspace(alertsWorkspaceDependencies(renderContext, view));
+  return createAlertsWorkspace(alertsWorkspaceDependencies(renderContext, view, overrides));
 }
 
 async function renderPublicAlertTopics() {
@@ -31511,6 +31824,7 @@ async function renderAlertManagement() {
 }
 
 async function renderAdminApplicationLog(renderContext) {
+  const { api, registerConnection } = administrationRequestDependencies(renderContext);
   const { createApplicationLogWorkspace } = await import('./core/application-log.js?v=5');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createApplicationLogWorkspace({
@@ -31518,10 +31832,11 @@ async function renderAdminApplicationLog(renderContext) {
     api, signal: renderContext.signal
   });
   content.append(workspace.element);
-  pageConnections.add(workspace);
+  registerConnection(workspace);
 }
 
 async function renderAdminWebDiagnosticLog(renderContext) {
+  const { api, requestJson, registerConnection } = administrationRequestDependencies(renderContext);
   const { createWebDiagnosticLogWorkspace } = await import('./features/web-diagnostic-log.js?v=4');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createWebDiagnosticLogWorkspace({
@@ -31529,7 +31844,7 @@ async function renderAdminWebDiagnosticLog(renderContext) {
     uiStatus, iconButton, setIconButton, uiActionButton, api, requestJson, signal: renderContext.signal
   });
   content.append(workspace.element);
-  pageConnections.add(workspace);
+  registerConnection(workspace);
 }
 
 async function renderListenMap() {
@@ -32951,9 +33266,12 @@ async function renderTuners(options = {}) {
 }
 
 function receiverHealthSavedActivitySection() {
-  const activityPage = route.get('view') === 'admin' && route.get('tab') === 'activity';
-  const database = serviceStatus?.database;
-  const logging = statsLoggingState();
+  const healthController = currentReceiverHealthPageController();
+  const activityPage = healthController.guideMode ? healthController.guideTab === 'activity' :
+    route.get('view') === 'admin' && route.get('tab') === 'activity';
+  const status = healthController.guideStatus || serviceStatus;
+  const database = status?.database;
+  const logging = statsLoggingState(status);
   const loggingState = logging.available && logging.state ? semanticLabel(logging.state) : 'Unknown';
   const failed = loggingState === 'Failed';
   const summaryState = !logging.available ? 'Unknown' : logging.summaryActive ? 'On' :
@@ -33093,8 +33411,8 @@ function supportReportSelect(entries) {
   return select;
 }
 
-function renderAdminSupportReport() {
-  const renderContext = captureRenderContext();
+function renderAdminSupportReport(renderContext = captureRenderContext()) {
+  const { api, requestJson, pageTimeout } = administrationRequestDependencies(renderContext);
   pageTitleController.update({ pageTitle: 'Report a problem' });
   const body = node('div', 'admin-section-body support-report-settings');
   const form = node('form', 'admin-form settings-page-form support-report-form ui-settings-form-plain');
@@ -33383,6 +33701,7 @@ function renderAdminSupportReport() {
 }
 
 async function renderAdminRemoteSupport(host, renderContext, options = {}) {
+  const { jsonDocumentFetch, pageInterval } = administrationRequestDependencies(renderContext);
   const workspace = createRemoteSupportWorkspace({ node, iconGlyph, formField, uiSelectFrame, metricCard, uiActionButton,
     fetchDocument: jsonDocumentFetch, signal: renderContext.signal, isCurrent: () => renderIsCurrent(renderContext),
     ...options });
@@ -33753,6 +34072,7 @@ function callMatchingComparison(decision, signal) {
 }
 
 async function renderAdminCallMatching(renderContext = captureRenderContext()) {
+  const { api, table, pageInterval, pageTimeout } = administrationRequestDependencies(renderContext);
   pageTitleController.update({ pageTitle: 'Call matching' });
   const workspace = node('div', 'ui-settings-page call-matching-workspace');
   const status = node('div', 'call-matching-live-status');
@@ -34479,7 +34799,7 @@ function tunerAllocationMapLegend(hasUnscoped = false) {
   return legend;
 }
 
-function tunerAllocationSiteMap(site, snapshot, state, openTuner) {
+function tunerAllocationSiteMap(site, snapshot, state, openTuner, tableBuilder = table) {
   const coverage = uiStatus(Number(site.knownFrequencyCount) > 0 ?
     `${number(site.coveredFrequencyCount)} / ${number(site.knownFrequencyCount)} in windows` : 'No known frequencies',
     Number(site.coveredFrequencyCount) < Number(site.knownFrequencyCount) ? 'warning' : 'neutral');
@@ -34572,7 +34892,7 @@ function tunerAllocationSiteMap(site, snapshot, state, openTuner) {
   if (!state.knownDisclosure) {
     const actions = sectionActionHost();
     state.frequencyController = {};
-    const frequencies = table(site.frequencies || [], [
+    const frequencies = tableBuilder(site.frequencies || [], [
       { id: 'frequency', label: 'Frequency · MHz', render: (item) => frequency(item.frequencyHz) },
       { id: 'use', label: 'Use', render: tunerAllocationFrequencyUse },
       { id: 'window', label: 'In window of', render: (item) => {
@@ -34642,9 +34962,13 @@ function tunerAllocationDecisionDetails(decision) {
 }
 
 async function renderAdminTunerAllocation(renderContext = captureRenderContext()) {
+  const { api, requestJson, table, pageInterval } = administrationRequestDependencies(renderContext);
+  const pickerState = renderContext.guideData ? { query: '', status: 'running', protocol: '', page: 0,
+    scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null, account: null } : tunerAllocationPickerState;
+  const readChannelConfiguration = renderContext.guideData ? requestJson : requestChannelConfigurationJson;
   const account = accessSession.authenticated ? accessSession.username : 'anonymous';
-  if (tunerAllocationPickerState.account !== account) {
-    Object.assign(tunerAllocationPickerState, { query: '', status: 'running', protocol: '', page: 0,
+  if (pickerState.account !== account) {
+    Object.assign(pickerState, { query: '', status: 'running', protocol: '', page: 0,
       scrollX: 0, scrollY: 0, focusId: null,
       restore: false, channel: null, account });
   }
@@ -34655,22 +34979,22 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   content.append(workspace);
   let channels;
   try {
-    channels = tunerAllocationCatalogChannels(await requestChannelConfigurationJson('/api/v1/channel-catalog', {
+    channels = tunerAllocationCatalogChannels(await readChannelConfiguration('/api/v1/channel-catalog', {
       csrf: false, signal: renderContext.signal
     }));
   } catch (error) {
     if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
     if (error?.status === 401 || error?.status === 403) {
-      Object.assign(tunerAllocationPickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+      Object.assign(pickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
       throw error;
     }
     catalogHost.replaceChildren(asyncSectionFailure(null, 'Channels could not be loaded. Reload or try again.', () => render()));
     return;
   }
   if (!renderIsCurrent(renderContext) || !workspace.isConnected) return;
-  const selectedChannelId = route.get('allocation_channel') || '';
+  const selectedChannelId = renderContext.guideData ? renderContext.guideChannelId || '' : route.get('allocation_channel') || '';
   const selectedChannel = channels.find((channel) => String(channel.configuration_id) === selectedChannelId) ||
-    (String(tunerAllocationPickerState.channel?.configuration_id || '') === selectedChannelId ? tunerAllocationPickerState.channel : null);
+    (String(pickerState.channel?.configuration_id || '') === selectedChannelId ? pickerState.channel : null);
   const back = setIconButton(anchor('', currentHref({ allocation_channel: null }),
     'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact tuner-allocation-back'),
   'icon-chevron-left', 'Back to channels');
@@ -34683,7 +35007,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
         !renderIsCurrent(renderContext) || !workspace.isConnected) return;
     catalogRefreshInFlight = true;
     try {
-      const replacement = tunerAllocationCatalogChannels(await requestChannelConfigurationJson('/api/v1/channel-catalog', {
+      const replacement = tunerAllocationCatalogChannels(await readChannelConfiguration('/api/v1/channel-catalog', {
         csrf: false, signal: renderContext.signal
       }));
       if (!renderIsCurrent(renderContext) || document.hidden || !workspace.isConnected) return;
@@ -34696,7 +35020,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       if (error?.name === 'AbortError' || !renderIsCurrent(renderContext)) return;
       if (error?.status === 401 || error?.status === 403) {
         catalogRefreshStopped = true;
-        Object.assign(tunerAllocationPickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+        Object.assign(pickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
         workspace.replaceChildren(node('div', 'error', 'You no longer have access to tuner allocation.'));
         void render();
       }
@@ -34709,15 +35033,15 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     search.type = 'search';
     search.placeholder = 'Find a channel';
     search.setAttribute('aria-label', 'Search channels, systems, protocols, or frequencies');
-    search.value = tunerAllocationPickerState.query;
+    search.value = pickerState.query;
     searchWrap.append(iconGlyph('icon-search'), search);
     const protocol = node('select', 'ui-select');
     protocol.setAttribute('aria-label', 'Protocol');
     const statuses = [['running', 'Running'], ['stopped', 'Stopped'], ['all', 'All']];
     const statusFilter = uiSegmentedControl(statuses.map(([value, label]) => ({ value, label })),
-      tunerAllocationPickerState.status, (value) => {
-        tunerAllocationPickerState.status = value;
-        tunerAllocationPickerState.page = 0;
+      pickerState.status, (value) => {
+        pickerState.status = value;
+        pickerState.page = 0;
         drawCatalog();
       });
     statusFilter.setAttribute('aria-label', 'Channel status');
@@ -34727,20 +35051,20 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     const pager = browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Channel pages' });
     pager.querySelector('.ui-browse-pager-count').setAttribute('role', 'status');
     const selectChannel = (channel) => {
-      Object.assign(tunerAllocationPickerState, { query: search.value, scrollX: window.scrollX,
+      Object.assign(pickerState, { query: search.value, scrollX: window.scrollX,
         scrollY: window.scrollY, focusId: String(channel.configuration_id), restore: true, channel });
       navigateTo(currentHref({ allocation_channel: channel.configuration_id }));
     };
     drawCatalog = () => {
       const focusedId = picker.contains(document.activeElement) ? document.activeElement.dataset.configurationId : null;
-      tunerAllocationPickerState.query = search.value;
+      pickerState.query = search.value;
       const groups = new Map(channels.map((channel) => {
         const group = channelProtocolGroup(channel);
         return [group.key, group.label];
       }));
       // Preserve an active protocol if its last channel disappears during a refresh.
-      if (tunerAllocationPickerState.protocol && !groups.has(tunerAllocationPickerState.protocol)) {
-        groups.set(tunerAllocationPickerState.protocol, protocol.selectedOptions[0]?.textContent || 'Selected protocol');
+      if (pickerState.protocol && !groups.has(pickerState.protocol)) {
+        groups.set(pickerState.protocol, protocol.selectedOptions[0]?.textContent || 'Selected protocol');
       }
       const options = [['', 'All protocols'], ...groups];
       if (JSON.stringify(options) !== protocol.dataset.options) {
@@ -34751,9 +35075,9 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
         }));
         protocol.dataset.options = JSON.stringify(options);
       }
-      protocol.value = tunerAllocationPickerState.protocol;
-      const result = tunerAllocationCatalogPage(channels, tunerAllocationPickerState);
-      tunerAllocationPickerState.page = result.page;
+      protocol.value = pickerState.protocol;
+      const result = tunerAllocationCatalogPage(channels, pickerState);
+      pickerState.page = result.page;
       statuses.forEach(([value, label]) => {
         statusFilter.querySelector(`[data-value="${value}"]`).textContent = `${label} (${number(result.counts[value])})`;
       });
@@ -34798,7 +35122,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
         'No channels match these filters.' : 'No local tuner channels are configured.'));
       picker.replaceChildren(replacement);
       const turnPage = (page) => {
-        tunerAllocationPickerState.page = page;
+        pickerState.page = page;
         drawCatalog();
       };
       pager.update({ countText: `${browsingWorkflows.pageRangeText({ offset: result.offset, visible: result.rows.length,
@@ -34808,23 +35132,23 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
       if (focusedId) picker.querySelector(`[data-configuration-id="${CSS.escape(focusedId)}"]`)?.focus({ preventScroll: true });
     };
     search.addEventListener('input', () => {
-      tunerAllocationPickerState.page = 0;
+      pickerState.page = 0;
       drawCatalog();
     });
     protocol.addEventListener('change', () => {
-      tunerAllocationPickerState.protocol = protocol.value;
-      tunerAllocationPickerState.page = 0;
+      pickerState.protocol = protocol.value;
+      pickerState.page = 0;
       drawCatalog();
     });
     drawCatalog();
     catalogHost.replaceChildren(toolbar, statusFilter, picker, pager);
-    if (tunerAllocationPickerState.restore) {
+    if (pickerState.restore) {
       requestAnimationFrame(() => {
         if (!renderIsCurrent(renderContext) || !workspace.isConnected) return;
-        const choice = picker.querySelector(`[data-configuration-id="${CSS.escape(tunerAllocationPickerState.focusId || '')}"]`);
+        const choice = picker.querySelector(`[data-configuration-id="${CSS.escape(pickerState.focusId || '')}"]`);
         (choice || search).focus({ preventScroll: true });
-        window.scrollTo(tunerAllocationPickerState.scrollX, tunerAllocationPickerState.scrollY);
-        tunerAllocationPickerState.restore = false;
+        window.scrollTo(pickerState.scrollX, pickerState.scrollY);
+        pickerState.restore = false;
       });
     }
     pageInterval(refreshCatalog, 5_000);
@@ -34834,8 +35158,8 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     catalogHost.replaceChildren(back, node('p', 'ui-section-note', 'This channel is no longer available. Choose another channel.'));
     return;
   }
-  tunerAllocationPickerState.channel = selectedChannel;
-  tunerAllocationPickerState.restore = true;
+  pickerState.channel = selectedChannel;
+  pickerState.restore = true;
   const selectedContext = node('section', 'ui-record-card tuner-allocation-selected-channel');
   selectedContext.dataset.configurationId = selectedChannelId;
   const selectedHeader = node('div', 'ui-record-card-header');
@@ -34847,7 +35171,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     const saved = channels.find((channel) => String(channel.configuration_id) === selectedChannelId);
     if (saved) {
       lastSavedChannel = saved;
-      tunerAllocationPickerState.channel = saved;
+      pickerState.channel = saved;
     }
     const signature = JSON.stringify([lastSavedChannel, Boolean(saved), capabilityAllowed(ACCESS_CAPABILITIES.RADIO)]);
     if (signature === channelSignature) return;
@@ -34961,7 +35285,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     const state = mapStates.get(coverageSiteId) || { highlight: null };
     mapStates.set(coverageSiteId, state);
     if (!(site.frequencies || []).some((item) => !item.covered && Number(item.frequencyHz) === state.highlight)) state.highlight = null;
-    const replacement = tunerAllocationSiteMap(site, latest, state, openTuner);
+    const replacement = tunerAllocationSiteMap(site, latest, state, openTuner, table);
     replacement.querySelectorAll('details').forEach((item) => { item.open = openKeys.has(item.dataset.allocationDisclosure); });
     coveragePanel.replaceChildren(replacement);
     replacement.drawPlots();
@@ -35110,7 +35434,7 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
         clearMapStates();
         historyController.replaceRows([]);
         historyPager.replaceChildren();
-        Object.assign(tunerAllocationPickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
+        Object.assign(pickerState, { query: '', status: 'running', protocol: '', page: 0, scrollX: 0, scrollY: 0, focusId: null, restore: false, channel: null });
         catalogRefreshStopped = true;
         catalogHost.replaceChildren();
         failure.replaceChildren(node('div', 'error', 'You no longer have access to tuner allocation.'));
@@ -35162,6 +35486,8 @@ function adminSettingsGroups() {
   const allowed = (capability) => capabilityAllowed(capability);
   return [
     { label: 'Status & support', items: [
+      { id: 'computer', label: 'Computer & version', icon: 'display', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH,
+        description: 'View computer details and the VCE version running on this receiver.' },
       { id: 'health', label: 'Receiver status', icon: 'health', capability: ACCESS_CAPABILITIES.RECEIVER_HEALTH,
         description: 'Receiver health and issues that need attention.' },
       { id: 'application-log', label: 'Application log', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -35237,6 +35563,7 @@ function adminSettingsLeaves(groups) {
 }
 
 function refreshReceiverHealthSavedActivityStatus() {
+  if (content.querySelector('[data-guide-example="admin"]')) return;
   const current = document.getElementById('receiver-health-saved-activity');
   if (!current) return;
   const focusedControl = receiverHealthFocusedControl(current);
@@ -35245,13 +35572,15 @@ function refreshReceiverHealthSavedActivityStatus() {
   receiverHealthRestoreFocus(replacement, focusedControl);
 }
 
-async function renderAdmin() {
-  const renderContext = captureRenderContext();
+async function renderAdmin(options = {}) {
+  const renderContext = options.renderContext || captureRenderContext();
+  const { requestJson, table, jsonDocumentFetch, registerConnection } = administrationRequestDependencies(renderContext);
+  const recordingWorkspace = renderContext.guideRecordings || recordingsFeature;
   const groups = adminSettingsGroups();
   const availableTabs = adminSettingsLeaves(groups);
   if (!availableTabs.length) throw Object.assign(new Error('Administrator access is unavailable.'),
     { status: 403 });
-  const requested = route.get('tab') || 'health';
+  const requested = options.tab || route.get('tab') || 'health';
   const normalized = ['live-timing', 'spectrum'].includes(requested) ? 'display' : requested;
   const legacy = normalized === 'operations' && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ?
     { id: 'operations', label: 'Call output & activity',
@@ -35259,29 +35588,31 @@ async function renderAdmin() {
   const active = legacy ? legacy.id : availableTabs.some((item) => item.id === normalized) ? normalized : availableTabs[0].id;
   const current = legacy || availableTabs.find((item) => item.id === active);
   const group = groups.find((item) => item.items.some((leaf) => leaf.id === active)) || { label: 'Audio & recordings' };
-  if (active !== requested) {
+  if (active !== requested && !renderContext.guideData) {
     route.set('tab', active);
     window.history.replaceState({}, '', currentHref());
   }
   const shell = node('div', 'admin-settings-shell ui-settings-workspace');
+  if (renderContext.guideData) shell.dataset.guideExample = 'admin';
   const body = node('div', 'admin-settings-content ui-settings-page');
   body.append(adminSettingsHeader(current, group));
   shell.append(adminSettingsTree(groups, active), body);
   if (!beginPage(renderContext, shell)) return;
   pageTitleController.update({ pageTitle: current.label });
-  if (active === 'health') await renderAdminHealth();
+  if (active === 'computer') await renderAdminComputer(renderContext);
+  else if (active === 'health') await renderAdminHealth(renderContext);
   else if (active === 'call-matching') await renderAdminCallMatching(renderContext);
   else if (active === 'tuner-allocation') await renderAdminTunerAllocation(renderContext);
   else if (active === 'application-log') await renderAdminApplicationLog(renderContext);
   else if (active === 'web-diagnostic-log') await renderAdminWebDiagnosticLog(renderContext);
-  else if (active === 'support') renderAdminSupportReport();
+  else if (active === 'support') renderAdminSupportReport(renderContext);
   else if (active === 'remote-support') await renderAdminRemoteSupport(body, renderContext);
   else if (active === 'display') {
     const display = node('div', 'admin-display-settings');
     content.append(display);
     await Promise.all([
-      renderAdminReceiverBehaviorSettings(display),
-      renderAdminSpectrumSnapSettings(display)
+      renderAdminReceiverBehaviorSettings(display, renderContext),
+      renderAdminSpectrumSnapSettings(display, renderContext)
     ]);
     if (renderIsCurrent(renderContext)) {
       const personal = node('p', 'ui-notice');
@@ -35292,10 +35623,12 @@ async function renderAdmin() {
   }
   else if (active === 'remote-links') await renderAdminRemoteLinks(renderContext);
   else if (active === 'push-setup') {
-    const workspace = await alertsWorkspace(renderContext, 'setup');
+    const workspace = await alertsWorkspace(renderContext, 'setup', renderContext.guideData ? {
+      guideMode: true, requestJson, onPushEnabledChanged: () => {}
+    } : {});
     if (!workspace) return;
     content.append(workspace.element);
-    pageConnections.add(workspace);
+    registerConnection(workspace);
   }
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'audio-quality') {
@@ -35326,7 +35659,10 @@ async function renderAdmin() {
       const actions = node('div', 'ui-action-row');
       actions.append(anchor('Review saved data', href('admin', { tab: 'retained-statistics' }),
         'ui-button ui-button-secondary'));
-      content.append(actions, receiverHealthSavedActivitySection());
+      const savedActivity = renderContext.guideHealthController ?
+        withReceiverHealthPageController(renderContext.guideHealthController, receiverHealthSavedActivitySection) :
+        receiverHealthSavedActivitySection();
+      content.append(actions, savedActivity);
     }
   }
   else if (active === 'recordings') {
@@ -35335,11 +35671,11 @@ async function renderAdmin() {
       await renderAdminOperationalPreferences(renderContext, {
         target: classicFormatHost, fields: ['audio_record_format'], title: 'Classic recording format'
       }) : null;
-    if (renderIsCurrent(renderContext)) await recordingsFeature.renderAdminRecordings({ classicFormatPanel });
+    if (renderIsCurrent(renderContext)) await recordingWorkspace.renderAdminRecordings({ classicFormatPanel });
   }
-  else if (active === 'transcription') await recordingsFeature.renderAdminTranscription();
+  else if (active === 'transcription') await recordingWorkspace.renderAdminTranscription();
   else if (active === 'retained-statistics') {
-    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=11');
+    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=12');
     if (!renderIsCurrent(renderContext)) return;
     content.append(createRetainedStatisticsWorkspace({
       node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost, browsingWorkflows,
@@ -35358,12 +35694,12 @@ async function renderAdmin() {
           Number.isInteger(aliasId) && aliasId > 0 ? `Alias ${aliasId}` : '']
           .filter(Boolean).join(' · '), target);
       },
-      signal: activeRenderController?.signal
+      signal: renderContext.signal, guideMode: Boolean(renderContext.guideData)
     }));
   }
   else if (active === 'protocol-p25') {
     pageTitleController.update({ pageTitle: 'P25 band plans' });
-    await renderAdminP25BandplanOverrides();
+    await renderAdminP25BandplanOverrides(renderContext);
   }
   else if (active === 'access') await renderAdminAccess(renderContext);
   else await renderAdminUsers(renderContext);
@@ -35591,7 +35927,8 @@ applicationRoutes = routeFoundation.createRegistry({
   credits: renderCredits
 }, routeDefinitionAllowed);
 
-const recordingsFeature = createRecordingsFeature({
+function recordingsFeatureDependencies(overrides = {}) {
+  return {
   node, iconButton, iconGlyph, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
   openCallRelations,
   modalFooter: aliasModalFooter,
@@ -35602,8 +35939,11 @@ const recordingsFeature = createRecordingsFeature({
     capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_RECORDINGS),
   stopLiveAudio: async () => {
     if (webCallPlayer && !webCallPlayer.stopped) await webCallPlayer.togglePlayback();
-  }
-});
+  },
+  ...overrides
+  };
+}
+const recordingsFeature = createRecordingsFeature(recordingsFeatureDependencies());
 
 async function openCallRelations(kind, id) {
   const renderContext = captureRenderContext();
@@ -35656,6 +35996,7 @@ const guideController = createGuideController({
   ui: { node, openReadOnlyModal, mountAccessWireframe, guideSampleData },
   getContext: () => ({
     view: routeFoundation.requestedView(route),
+    adminTab: route.get('tab') || 'health',
     guide: route.get('guide'),
     account: accessSession.username,
     dismissalScope: accessSession.guideDismissalScope,

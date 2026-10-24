@@ -29,7 +29,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
   footer.append(progress, actions);
   body.append(copy, footer);
 
-  let index = 0;
+  let index = Number.isInteger(options.initialStep) ? Math.max(0, Math.min(options.initialStep, steps.length - 1)) : 0;
   let closed = false;
   let programmaticClose = false;
   let pendingClose = null;
@@ -476,6 +476,41 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
           items.append(item);
         });
         copy.append(items);
+      }
+      const choices = step.overview && typeof options.onChoice === 'function' ? step.choices || [] : [];
+      modal.dialog.classList.toggle('ui-setup-guide--choices', choices.length > 0);
+      if (choices.length) {
+        const groups = new Map();
+        choices.forEach(choice => {
+          const groupName = choice.group || 'Sections';
+          if (!groups.has(groupName)) groups.set(groupName, []);
+          groups.get(groupName).push(choice);
+        });
+        const chooser = node('div', 'ui-setup-guide-choices');
+        groups.forEach((entries, groupName) => {
+          const group = node('section', 'ui-setup-guide-choice-group');
+          group.setAttribute('aria-label', groupName);
+          group.append(node('h3', 'ui-section-heading', groupName));
+          const controls = node('div', 'ui-action-row ui-action-row-start');
+          entries.forEach(choice => {
+            const control = node('button', 'ui-button ui-button-secondary', choice.label);
+            control.type = 'button';
+            control.dataset.guideChoice = choice.id;
+            if (choice.description) {
+              control.title = choice.description;
+              control.setAttribute('aria-description', choice.description);
+            }
+            control.setAttribute('aria-pressed', String(choice.id === step.selectedChoice));
+            control.addEventListener('click', () => {
+              if (preparing || !isCurrent()) return;
+              close(() => options.onChoice(choice.id));
+            });
+            controls.append(control);
+          });
+          group.append(controls);
+          chooser.append(group);
+        });
+        copy.append(chooser);
       }
       if (step.hint) copy.append(node('p', 'ui-setup-guide-hint', step.hint));
       if (step.illustration) {

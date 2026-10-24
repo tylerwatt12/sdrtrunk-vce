@@ -49,6 +49,7 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
     for (const id of ['welcome', 'channel-setup']) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:account-1-100:${id}:${id === 'channel-setup' ? 4 : 1}`, '1');
     }
+    localStorage.setItem('sdrtrunk-vce-guide:v1:admin:account-1-100:admin:3', '1');
   });
   let operational = operationalDocument();
   let receiver = { revision: 4, settings: { traffic_grant_age_out_milliseconds: 2000 } };
@@ -268,11 +269,11 @@ test('desktop administration navigation includes every grouped page and its icon
   await openAdmin(page);
   const navigation = page.getByRole('navigation', { name: 'Administration sections' });
   const links = navigation.getByRole('link');
-  await expect(links).toHaveText(['Receiver status', 'Application log', 'Web server log', 'Report a problem', 'Remote Support',
+  await expect(links).toHaveText(['Computer & version', 'Receiver status', 'Application log', 'Web server log', 'Report a problem', 'Remote Support',
     'Call matching', 'Tuner allocation', 'Recording settings', 'Audio quality', 'Transcription',
     'Push setup', 'Activity settings', 'Saved data cleanup',
     'Remote Links', 'P25 band plans', 'Display settings', 'Web accounts', 'Page access']);
-  await expect(links.locator('svg')).toHaveCount(18);
+  await expect(links.locator('svg')).toHaveCount(19);
   await expect(links.locator('svg:not([aria-hidden="true"])')).toHaveCount(0);
   for (const label of ['Status & support', 'Decisions engine', 'Audio & recordings', 'Alerts', 'Activity & storage',
     'Receiver configuration', 'Web interface']) {
@@ -618,6 +619,90 @@ test('page access preserves all nineteen backend policies and every tier option'
     if (!policy.configurable || policy.id.startsWith('admin-')) await expect(select).toBeDisabled();
     else await expect(select).toBeEnabled();
   }
+});
+
+test('computer and version has its own first navigation entry, live details, and copy feedback', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.computerCopyText = '';
+    window.computerCopyDenied = false;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { async writeText(text) {
+      if (window.computerCopyDenied) throw new Error('Clipboard denied');
+      window.computerCopyText = text;
+    } } });
+  });
+  const options = { healthDocument: { computer: { application: 'VCE', version: '0.6.2-test',
+    operating_system: 'Example OS', cpu_model: 'Example receiver processor',
+    processors_available: 8, installed_memory_bytes: 32 * 1073741824,
+    jvm_memory_limit_bytes: 2 * 1073741824, application_uptime_ms: 60_000,
+    hostname: 'private-host-must-not-appear' } } };
+  const app = await openAdmin(page, 'computer', [], options);
+  const navigation = page.getByRole('navigation', { name: 'Administration sections' });
+  await expect(navigation.getByRole('link').first()).toHaveText('Computer & version');
+  await expect(page.getByRole('heading', { level: 1, name: 'Computer & version', exact: true })).toBeVisible();
+  const details = page.locator('.receiver-computer-page');
+  await expect(details.locator('.receiver-health-section-body')).toBeVisible();
+  await expect(details).toContainText('Example receiver processor');
+  await expect(details).toContainText('32.0 GiB');
+  await expect(details).not.toContainText('private-host-must-not-appear');
+  await details.getByRole('button', { name: 'Copy details', exact: true }).click();
+  await expect(details.getByRole('status')).toHaveText('Computer and version details copied.');
+  expect(await page.evaluate(() => window.computerCopyText)).toContain('Version: 0.6.2-test');
+  expect(await page.evaluate(() => window.computerCopyText)).not.toContain('private-host-must-not-appear');
+  await page.evaluate(() => { window.computerCopyDenied = true; });
+  await details.getByRole('button', { name: 'Copy details', exact: true }).click();
+  await expect(details.getByRole('status')).toHaveText(
+    'The browser could not copy these details. Try again or select the text to copy it.');
+  options.healthDocument.computer.version = '0.6.2-refreshed';
+  await details.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(details).toContainText('0.6.2-refreshed');
+  await expect(details.getByRole('button', { name: 'Refresh', exact: true })).toBeFocused();
+  options.healthError = true;
+  await details.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(details.locator(':scope > .ui-notice')).toHaveText(
+    'Live status is delayed. Showing the last computer details received.');
+  await expect(details).toContainText('0.6.2-refreshed');
+  options.healthError = false;
+  await navigation.getByRole('link', { name: 'Receiver status', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('.receiver-health-overview').getByRole('button', { name: 'Computer & version', exact: true }))
+    .toHaveCount(0);
+  await page.getByRole('tab', { name: 'Diagnostics', exact: true }).click();
+  await expect(page.locator('[data-receiver-health-section="computer"]')).toHaveCount(0);
+  await navigation.getByRole('link', { name: 'Computer & version', exact: true }).click();
+  await expect(details.locator('.receiver-health-section-body')).toBeVisible();
+  await expect(details.getByRole('status')).toHaveCount(0);
+  expect(app.requests.filter(path => path === '/api/v1/receiver-health').length).toBeGreaterThanOrEqual(3);
+});
+
+test('a completed computer copy does not put feedback on a page opened afterward', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () =>
+      new Promise(resolve => { window.finishComputerCopy = resolve; }) } });
+  });
+  await openAdmin(page, 'computer', [], { healthDocument: { computer: { version: 'copy-test' } } });
+  await page.getByRole('button', { name: 'Copy details', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Copy details', exact: true })).toBeDisabled();
+  const navigation = page.getByRole('navigation', { name: 'Administration sections' });
+  await navigation.getByRole('link', { name: 'Receiver status', exact: true }).click();
+  await page.evaluate(() => window.finishComputerCopy());
+  await expect(page.locator('.receiver-health-overview')).toBeVisible();
+  await expect(page.getByText('Computer and version details copied.', { exact: true })).toHaveCount(0);
+  await navigation.getByRole('link', { name: 'Computer & version', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Copy details', exact: true })).toBeEnabled();
+  await expect(page.locator('.receiver-computer-page').getByRole('status')).toHaveCount(0);
+});
+
+test('computer details follow receiver status access and Receiver status remains the default page', async ({ page }) => {
+  await openAdmin(page, null, ['admin-settings', 'admin-recordings'], { view: 'admin' });
+  await expect(page.getByRole('heading', { level: 1, name: 'Receiver status', exact: true })).toBeVisible();
+  await page.getByRole('navigation', { name: 'Administration sections' })
+    .getByRole('link', { name: 'Computer & version', exact: true }).click();
+  await expect(page.locator('.receiver-computer-page')).toBeVisible();
+  const app = await openAdmin(page, 'computer', ['receiver-health']);
+  await expect(page.getByRole('navigation', { name: 'Administration sections' })
+    .getByRole('link', { name: 'Computer & version', exact: true })).toHaveCount(0);
+  await expect(page.locator('.receiver-computer-page')).toHaveCount(0);
+  expect(app.requests).not.toContain('/api/v1/receiver-health');
 });
 
 test('receiver status opens a focused healthy overview and supports keyboard tabs', async ({ page }) => {

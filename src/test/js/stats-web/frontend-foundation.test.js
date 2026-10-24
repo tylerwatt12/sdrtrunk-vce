@@ -661,6 +661,7 @@ async function main() {
   await require('./guide-presentation.test').checkGuidePresentation(path.resolve(core, '..'));
   await require('./guide-context.test').checkGuideContext(path.resolve(core, '..'));
   await require('./recordings-guide-data.test').checkRecordingsGuideData(path.resolve(core, '..'));
+  await require('./administration-guide-data.test').checkAdministrationGuideData(path.resolve(core, '..'));
   await require('./guides.test').checkGuides(path.resolve(core, '..'));
   await require('./dashboard-data.test').checkDashboardData(appSource, functionBinding);
   require('./main-directory-quality.test').checkMainDirectoryQuality(appSource, functionBinding);
@@ -1516,7 +1517,7 @@ async function main() {
   const receiverSettingsRequests = [];
   const receiverSettingsResponses = [];
   const requestReceiverSettings = vm.runInNewContext(
-    `(async function(method = 'GET', settings = null, revision = null) ${
+    `(async function(method = 'GET', settings = null, revision = null, fetchDocument = jsonDocumentFetch) ${
       functionBinding(appSource, 'requestReceiverSettings')})`, {
       decodeReceiverSettingsEnvelope: decodeReceiverSettings,
       jsonDocumentFetch: async (url, options) => {
@@ -1586,7 +1587,7 @@ async function main() {
   assert.match(callMatchingRenderer, /callMatchingHistoryPage\(latest\.duplicates, historyPage\)/);
   assert.match(callMatchingRenderer, /callMatchingHistoryPager\(page, \(nextPage\) =>/);
   const tunerAllocationRenderer = functionBinding(appSource, 'renderAdminTunerAllocation');
-  assert.match(tunerAllocationRenderer, /tunerAllocationSiteMap\(site, latest, state, openTuner\)/);
+  assert.match(tunerAllocationRenderer, /tunerAllocationSiteMap\(site, latest, state, openTuner, table\)/);
   assert.match(functionBinding(appSource, 'tunerAllocationSiteMap'), /type: 'tuner-allocation-frequencies'/);
   assert.match(tunerAllocationRenderer, /type: 'tuner-allocation-decisions'/);
   assert.match(tunerAllocationRenderer, /recordList: true/);

@@ -148,7 +148,7 @@ function retainedSystemIdentityFacts(row, source = null) {
 export function createRetainedStatisticsWorkspace(deps) {
   const { node, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost,
     table, openReadOnlyModal, modalFooter, metrics, requestJson, formatNumber, formatDateTime,
-    renderItem, renderSource, renderAliasList, renderAlias, browsingWorkflows, signal } = deps;
+    renderItem, renderSource, renderAliasList, renderAlias, browsingWorkflows, signal, guideMode = false } = deps;
   const host = node('div', 'retained-statistics-page data-workspace');
   const pickerBody = node('div', 'retained-statistics-picker-body');
   const sourceBlock = node('div', 'retained-statistics-source-block');
@@ -1103,6 +1103,7 @@ export function createRetainedStatisticsWorkspace(deps) {
   }
 
   function rememberJob() {
+    if (guideMode) return;
     try {
       if (state.job?.job_id && state.job.state !== 'succeeded') {
         window.sessionStorage.setItem(JOB_STORAGE_KEY, state.job.job_id);
@@ -1270,6 +1271,7 @@ export function createRetainedStatisticsWorkspace(deps) {
   }
 
   async function recoverJob() {
+    if (guideMode) return;
     let id;
     try { id = window.sessionStorage.getItem(JOB_STORAGE_KEY); } catch { return; }
     if (!id) return;

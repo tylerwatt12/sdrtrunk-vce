@@ -258,20 +258,20 @@ body.modal-open {
   width: min(var(--guide-diagram-card-width), calc(100vw - var(--guide-viewport-gap) * 2));
 }
 
-.ui-setup-guide--diagram .modal-content {
+.ui-setup-guide:is(.ui-setup-guide--diagram, .ui-setup-guide--choices) .modal-content {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   overflow: hidden;
 }
 
-.ui-setup-guide--diagram .ui-setup-guide-surface {
+.ui-setup-guide:is(.ui-setup-guide--diagram, .ui-setup-guide--choices) .ui-setup-guide-surface {
   display: flex;
   min-height: 0;
   flex-direction: column;
 }
 
-.ui-setup-guide--diagram .ui-setup-guide-copy {
+.ui-setup-guide:is(.ui-setup-guide--diagram, .ui-setup-guide--choices) .ui-setup-guide-copy {
   display: flex;
   min-height: 0;
   flex-direction: column;
@@ -279,7 +279,28 @@ body.modal-open {
   overscroll-behavior: contain;
 }
 
-.ui-setup-guide--diagram .ui-setup-guide-footer { flex: 0 0 auto; }
+.ui-setup-guide:is(.ui-setup-guide--diagram, .ui-setup-guide--choices) .ui-setup-guide-footer { flex: 0 0 auto; }
+
+.read-only-modal.ui-setup-guide--choices {
+  width: min(var(--modal-size-large), calc(100vw - var(--guide-viewport-gap) * 2));
+}
+
+.ui-setup-guide-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+}
+
+.ui-setup-guide-choice-group {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: var(--space-2);
+}
+
+@media (max-width: 600px) {
+  .ui-setup-guide-choices { grid-template-columns: minmax(0, 1fr); }
+}
 
 .ui-setup-guide-diagram {
   min-width: 0;

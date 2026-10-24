@@ -52,7 +52,7 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner', 'recordings', 'topics', 'map', 'network-visualizer'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner', 'recordings', 'topics', 'map', 'network-visualizer', 'admin'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
@@ -90,11 +90,79 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('topics').version, 3);
   assert.equal(createGuideDefinition('map').version, 3);
   assert.equal(createGuideDefinition('network-visualizer').version, 3);
+  assert.equal(createGuideDefinition('admin').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
   const targetNames = (step) => step.targets().map(({ selector }) => /data-guide-target="([^"]+)"/.exec(selector)[1]);
   const targetDocument = { querySelectorAll: selector => [{ selector }] };
+  const { administrationSections, adminSectionForStep } = await load('guides/pages/admin.js');
+  assert.equal(administrationSections.length, 19);
+  assert.equal(administrationSections[0].id, 'computer', 'Computer and version leads Status & support.');
+  const adminOverview = createGuideDefinition('admin').steps[0];
+  assert.equal(adminOverview.choices.length, 19, 'The common Administration overview offers every section.');
+  assert.equal(adminOverview.choices[0].label, 'Computer & version');
+  for (const chapter of administrationSections) {
+    const guide = createGuideDefinition('admin', { documentValue: targetDocument, adminTab: chapter.id,
+      preparePlayer: options => { prepared.push(['player', options]); return () => released.push('player'); },
+      preparePage: async (view, section, context) => {
+        prepared.push([view, section, context]); return () => released.push(section);
+      } });
+    const expected = ['overview', `${chapter.id}-open`,
+      ...(chapter.id === 'tuner-allocation' ? ['tuner-allocation-channel'] : []), `${chapter.id}-purpose`,
+      ...(['recordings', 'activity'].includes(chapter.id) ? [`${chapter.id}-retention`] : []),
+      ...(chapter.id === 'tuner-allocation' ? ['tuner-allocation-back', 'tuner-allocation-catalog'] : [])];
+    assert.equal(guide.adminTab, chapter.id);
+    assert.deepEqual(guide.steps.map(step => step.id), expected,
+      'Each Administration chapter stays brief and shows the sidebar action before its destination.');
+    assert.deepEqual(targetNames(guide.steps[1]), [`admin-nav-${chapter.id}`]);
+    const purpose = guide.steps.find(step => step.id === `${chapter.id}-purpose`);
+    assert.deepEqual(targetNames(purpose), [`admin-${chapter.id}-panel`]);
+    assert.ok(guide.steps[1].contextTargets, 'The opening action keeps its sidebar group visible.');
+    assert.ok(purpose.contextTargets, 'The purpose lesson exposes its whole actual panel.');
+    assert.equal(guide.steps.at(-1).nextLabel, 'Finish');
+    for (const step of guide.steps.slice(1)) {
+      assert.equal(adminSectionForStep(step.id), chapter.id,
+        'The production sample presenter can resolve each section from its stable step identity.');
+      assert.deepEqual(step.samples, [{ id: 'admin-workspace', value: { section: step.id } }]);
+      const context = { registerLayer() {} };
+      const release = await step.prepare(context);
+      assert.deepEqual(prepared.splice(0), [['player', { minimized: true }], ['admin', step.id, context]]);
+      release();
+      assert.deepEqual(released.splice(0), [step.id, 'player']);
+    }
+  }
+  for (const [tab, phrase] of [['recordings', /deleted automatically/], ['activity', /deletes history beyond the new limit/]]) {
+    const guide = createGuideDefinition('admin', { documentValue: targetDocument, adminTab: tab });
+    const retention = guide.steps.at(-1);
+    assert.deepEqual(targetNames(retention), [`admin-${tab}-retention`]);
+    assert.match(retention.paragraphs.join(' '), phrase, 'Retention explains the consequence for existing saved history.');
+  }
+  const recordingAdmin = createGuideDefinition('admin', { adminTab: 'computer',
+    canAccess: capability => capability === 'admin-recordings' });
+  assert.equal(recordingAdmin.adminTab, 'recordings', 'A section outside the role falls back to an allowed chapter.');
+  assert.deepEqual(recordingAdmin.steps[0].choices.map(choice => choice.id), ['recordings', 'transcription']);
+  assert.equal(adminSectionForStep('not-an-admin-stop'), null);
+  for (const tab of ['audio-quality', 'access']) {
+    const relatedPanel = { id: `${tab}-related-panel` };
+    const primaryPanel = { id: `${tab}-primary-panel`,
+      closest: selector => selector === '.admin-settings-content' ? {
+        querySelectorAll: selector => selector === '.ui-settings-panel' ? [primaryPanel, relatedPanel] : []
+      } : null };
+    const guide = createGuideDefinition('admin', { adminTab: tab, documentValue: {
+      querySelectorAll: selector => selector === `[data-guide-target="admin-${tab}-panel"]` ? [primaryPanel] : []
+    } });
+    const purpose = guide.steps.find(step => step.id === `${tab}-purpose`);
+    assert.deepEqual(purpose.targets(), [primaryPanel], 'The important panel retains its precise outline.');
+    assert.deepEqual(purpose.contextTargets(), [primaryPanel, relatedPanel],
+      'A page-wide purpose explains related production panels with all of their context visible.');
+  }
+  const allocationTour = createGuideDefinition('admin', { documentValue: targetDocument, adminTab: 'tuner-allocation' });
+  for (const [id, target] of [['tuner-allocation-channel', 'admin-tuner-allocation-channel'],
+    ['tuner-allocation-back', 'admin-tuner-allocation-back'], ['tuner-allocation-catalog', 'admin-tuner-allocation-panel']]) {
+    assert.deepEqual(targetNames(allocationTour.steps.find(step => step.id === id)), [target],
+      'Tuner allocation shows channel selection and the actual return action before their resulting views.');
+  }
   const channelTour = createGuideDefinition('channel-setup', {
     documentValue: targetDocument,
     preparePlayer: () => { throw new Error('The page sample owns its player presentation.'); },
@@ -1233,6 +1301,70 @@ async function checkGuides(assetsRoot) {
     const dismiss = () => { shown.at(-1).closed = true; shown.at(-1).options.onDismiss(); };
     return { controller, context, shown, stored, navigations, finish, dismiss };
   };
+
+  const adminChapter = makeHarness({ context: { view: 'admin', adminTab: 'health' } });
+  await adminChapter.controller.openPage();
+  const healthOverview = adminChapter.shown.at(-1);
+  assert.equal(healthOverview.options.adminTab, 'health', 'Help starts with the current Administration section.');
+  assert.equal(healthOverview.options.eyebrow, 'Receiver status');
+  assert.equal(healthOverview.options.steps[0].selectedChoice, 'health');
+  assert.equal(await healthOverview.options.onChoice('recordings'), true);
+  const recordingChapter = adminChapter.shown.at(-1);
+  assert.equal(healthOverview.closed, true);
+  assert.equal(recordingChapter.options.adminTab, 'recordings');
+  assert.equal(recordingChapter.options.steps[recordingChapter.options.initialStep].id, 'recordings-open',
+    'Choosing a chapter starts at its actual sidebar opening action.');
+  assert.equal(recordingChapter.options.steps[0].id, 'overview', 'Back can return to the common chapter chooser.');
+  assert.equal(adminChapter.context.adminTab, 'health', 'A sample chapter keeps the real route unchanged.');
+  assert.equal(adminChapter.navigations.length, 0);
+  assert.equal(adminChapter.stored.size, 0, 'Changing chapters does not dismiss or complete Administration.');
+  const shownBeforeStaleChoice = adminChapter.shown.length;
+  assert.equal(healthOverview.options.onChoice('computer'), false, 'A replaced overview cannot reopen another chapter.');
+  assert.equal(adminChapter.shown.length, shownBeforeStaleChoice);
+  adminChapter.finish();
+  assert.ok([...adminChapter.stored.keys()].some(key => /:admin:3$/.test(key)),
+    'Completing a chapter records one shared Administration guide version.');
+  const adminMemoryKey = [...adminChapter.stored.keys()].find(key => /:admin:3$/.test(key));
+  adminChapter.stored.set(adminMemoryKey.replace(/:admin:3$/, ':welcome:1'), '1');
+  adminChapter.context.adminTab = 'activity';
+  assert.equal(await adminChapter.controller.pageReady(), false,
+    'Moving to another real Administration section does not trigger another automatic tour.');
+  await adminChapter.controller.openPage();
+  const activityPresentation = adminChapter.shown.at(-1);
+  assert.equal(activityPresentation.options.adminTab, 'activity');
+  assert.equal(activityPresentation.options.steps[0].id, 'overview');
+  adminChapter.context.adminTab = 'computer';
+  assert.equal(await adminChapter.controller.pageReady(), false);
+  assert.equal(activityPresentation.closed, true, 'Real section navigation closes a stale active chapter.');
+  adminChapter.controller.destroy();
+
+  let allowedAdminCapabilities = new Set(['admin-recordings', 'admin-settings']);
+  const limitedAdmin = makeHarness({ context: { view: 'admin', adminTab: 'recordings',
+    canAccess: capability => allowedAdminCapabilities.has(capability) } });
+  await limitedAdmin.controller.openPage();
+  const limitedOverview = limitedAdmin.shown.at(-1);
+  assert.equal(limitedOverview.options.onChoice('users'), false, 'Unavailable chapters cannot be selected.');
+  allowedAdminCapabilities = new Set(['admin-recordings']);
+  assert.equal(limitedOverview.options.onChoice('computer'), false,
+    'A chapter becoming unavailable after the overview opened stays protected.');
+  assert.equal(limitedAdmin.shown.length, 1);
+  limitedAdmin.controller.destroy();
+
+  const firstAdminVisit = makeHarness({ context: { view: 'admin', adminTab: 'computer' }, storage: {
+    getItem: key => /:welcome:1$|:admin:2$/.test(key) ? '1' : null, setItem() {}
+  } });
+  await firstAdminVisit.controller.pageReady();
+  assert.equal(firstAdminVisit.shown.at(-1).options.id, 'admin',
+    'An earlier Administration placeholder does not suppress the authored overview.');
+  firstAdminVisit.controller.destroy();
+  for (const request of ['admin', 'page']) {
+    const adminUrl = makeHarness({ context: { view: 'admin', adminTab: 'protocol-p25', guide: request } });
+    await adminUrl.controller.pageReady();
+    assert.equal(adminUrl.shown.at(-1).options.adminTab, 'protocol-p25',
+      'Named and current-page URL replay use the selected Administration section.');
+    assert.equal(adminUrl.context.guide, null);
+    adminUrl.controller.destroy();
+  }
 
   const pagePreparation = [];
   const pagePrepared = makeHarness({ context: { view: 'aliases' },

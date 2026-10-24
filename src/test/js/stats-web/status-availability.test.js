@@ -56,7 +56,7 @@ vm.runInContext(`
   ${functionSource('function clearServiceStatus()')}
   ${functionSource('function serviceStatusWarningRequired()')}
   ${functionSource('async function requestServiceStatus()')}
-  ${functionSource('function statsLoggingState()')}
+  ${functionSource('function statsLoggingState(')}
   ${functionSource('function p25VisualizerMenuAvailable()')}
   ${functionSource('function detailedHistoryAvailable(')}
   ${functionSource('function detailedHistoryNotice(')}
@@ -106,6 +106,11 @@ async function main() {
 
   const cached = { stats_logging: { summary_active: true }, generation: 1 };
   context.acceptStatus(cached);
+  assert.equal(context.statsLoggingState({ stats_logging: { summary_active: false } }).summaryActive, false,
+    'A sample status can be read without replacing live receiver status.');
+  assert.equal(context.statsLoggingState().summaryActive, true,
+    'Reading sample status must leave the real receiver status unchanged.');
+  assert.strictEqual(context.statusState().value, cached);
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     responses.push(new Error(`refresh ${attempt}`));
     await assert.rejects(context.requestStatus(), new RegExp(`refresh ${attempt}`));
