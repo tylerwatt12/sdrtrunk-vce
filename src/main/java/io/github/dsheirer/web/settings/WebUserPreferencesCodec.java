@@ -31,7 +31,8 @@ public final class WebUserPreferencesCodec
         .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
         .registerModule(new SimpleModule().addDeserializer(WebUserPreferences.Appearance.class,
-            new AppearanceDeserializer()));
+            new AppearanceDeserializer()).addDeserializer(WebUserPreferences.Guides.class,
+            new GuidesDeserializer()));
 
     private WebUserPreferencesCodec()
     {
@@ -79,6 +80,25 @@ public final class WebUserPreferencesCodec
             throw new IOException("Web user preferences exceed the storage bound");
         }
         return json;
+    }
+
+    /** A saved tour choice must be an explicit JSON boolean, without scalar coercion or extra fields. */
+    private static final class GuidesDeserializer extends StdDeserializer<WebUserPreferences.Guides>
+    {
+        private GuidesDeserializer() { super(WebUserPreferences.Guides.class); }
+
+        @Override
+        public WebUserPreferences.Guides deserialize(JsonParser parser, DeserializationContext context)
+            throws IOException
+        {
+            JsonNode guides = context.readTree(parser);
+            if(!guides.isObject() || guides.size() != 1 || !guides.has("automatic_page_guides") ||
+                !guides.get("automatic_page_guides").isBoolean())
+            {
+                throw JsonMappingException.from(parser, "guides must contain exactly automatic_page_guides as a boolean");
+            }
+            return new WebUserPreferences.Guides(guides.get("automatic_page_guides").booleanValue());
+        }
     }
 
     /** Only the optional hue may be null; every appearance field must still be present and correctly typed. */

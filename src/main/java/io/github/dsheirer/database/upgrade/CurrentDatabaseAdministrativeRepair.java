@@ -88,6 +88,12 @@ final class CurrentDatabaseAdministrativeRepair
 
     static Inspection repair(Connection connection, boolean legacySetup) throws SQLException
     {
+        return repair(connection, legacySetup, false);
+    }
+
+    static Inspection repair(Connection connection, boolean legacySetup, boolean preserveValidAccountTimestamps)
+        throws SQLException
+    {
         Inspection before = inspect(connection, legacySetup);
         if(!before.requiresRepair())
         {
@@ -104,7 +110,7 @@ final class CurrentDatabaseAdministrativeRepair
         {
             SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
         }
-        repairWebState(connection, before.web(), now, preferenceDocumentVersion(connection));
+        repairWebState(connection, before.web(), now, preferenceDocumentVersion(connection), preserveValidAccountTimestamps);
         if(before.defaultedAdminSetupMarker() > 0)
         {
             writeMetadata(connection, INITIAL_ADMIN_SETUP_KEY,
@@ -207,7 +213,7 @@ final class CurrentDatabaseAdministrativeRepair
     private static int preferenceDocumentVersion(Connection connection) throws SQLException
     {
         int databaseVersion = DatabaseFormatCatalog.inspectForMigration(connection).version();
-        return databaseVersion <= 30 ? 7 : databaseVersion <= 34 ? 8 : databaseVersion == 35 ? 9 : databaseVersion <= 42 ? 10 :
+        return databaseVersion <= 30 ? 7 : databaseVersion <= 34 ? 8 : databaseVersion == 35 ? 9 : databaseVersion <= 42 ? 10 : databaseVersion <= 61 ? 11 :
             WebUserPreferences.CURRENT_VERSION;
     }
 
@@ -663,7 +669,7 @@ final class CurrentDatabaseAdministrativeRepair
     }
 
     private static void repairWebState(Connection connection, WebInspection inspection, long now,
-                                       int preferenceDocumentVersion)
+                                       int preferenceDocumentVersion, boolean preserveValidAccountTimestamps)
         throws SQLException
     {
         if(inspection.resetWebAccounts() > 0)
@@ -708,6 +714,7 @@ final class CurrentDatabaseAdministrativeRepair
                 case 8 -> Format31WebUserPreferencesCodec.defaults();
                 case 9 -> Format35WebUserPreferencesCodec.defaults();
                 case 10 -> Format36WebUserPreferencesCodec.defaults();
+                case 11 -> Format43WebUserPreferencesCodec.defaults();
                 default -> WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
             };
         }
@@ -717,12 +724,14 @@ final class CurrentDatabaseAdministrativeRepair
         }
         try(PreparedStatement update = connection.prepareStatement("""
             UPDATE web_user
-            SET preferences_json=?, preferences_revision=?, updated_at_ms=?,
+            SET preferences_json=?, preferences_revision=?,
+                updated_at_ms=CASE WHEN %s AND typeof(updated_at_ms)='integer' AND updated_at_ms>0
+                    THEN updated_at_ms ELSE ? END,
                 auth_revision=coalesce(?, auth_revision),
                 password_changed_at_ms=coalesce(?, password_changed_at_ms),
                 created_at_ms=coalesce(?, created_at_ms)
             WHERE rowid=?
-            """))
+            """.formatted(preserveValidAccountTimestamps ? "1" : "0")))
         {
             for(Map.Entry<Long,PreferenceRepair> entry: inspection.preferenceRepairs().entrySet())
             {

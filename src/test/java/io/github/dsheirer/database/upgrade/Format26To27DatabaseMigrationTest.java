@@ -291,11 +291,11 @@ class Format26To27DatabaseMigrationTest
         {
             return new AccountSnapshot(id, username, replacement, primaryAdmin, credentialVersion,
                 passwordAlgorithm, passwordIterations, passwordDerivedKeyBits, passwordChangedAtMs, authRevision,
-                Format43WebUserPreferencesCodec.migrateFromFormat42(
+                Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(
                     Format36WebUserPreferencesCodec.migrateFromFormat35(
                         Format35WebUserPreferencesCodec.migrateFromFormat34(
-                            Format23WebUserPreferencesCodec.migrateToFormat31(preferencesJson)))),
-                preferencesRevision + 4,
+                            Format23WebUserPreferencesCodec.migrateToFormat31(preferencesJson))))).json(),
+                preferencesRevision + 5,
                 createdAtMs, migratedUpdatedAtMs);
         }
     }

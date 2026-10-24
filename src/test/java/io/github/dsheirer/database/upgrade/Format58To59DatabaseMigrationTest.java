@@ -48,7 +48,7 @@ class Format58To59DatabaseMigrationTest
             assertTrue(count(connection, "topic_alert_message") > 0);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(List.of("format-58-to-59", "format-59-to-60", "format-60-to-61"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-58-to-59", "format-59-to-60", "format-60-to-61", "format-61-to-62"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
             assertEquals(0, count(connection, "web_user_tour_dismissal"));
@@ -175,6 +175,8 @@ class Format58To59DatabaseMigrationTest
                         if(java.util.Set.of("stun_count", "revive_count", "kill_count", "radio_inhibit_count",
                             "radio_uninhibit_count", "remote_monitor_count", "authenticate_count", "cancel_call_count",
                             "radio_detach_count", "protect_count", "vote_now_count").contains(column)) continue;
+                        // Later preference conversion is checked by Format61To62DatabaseMigrationTest.
+                        if(table.equals("web_user") && List.of("preferences_json", "preferences_revision").contains(column)) continue;
                         Object value = rows.getObject(i);
                         row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                     }

@@ -116,7 +116,7 @@ class Format14To15DatabaseMigrationTest
 
             assertEquals(Set.of("id", "configuration_id", "channel_kind", "sort_order", "system_name",
                 "site_name", "name", "alias_list_id", "radioresolve_id", "auto_start", "auto_start_order",
-                "decoder_type", "address_domain_code", "primary_frequency_hz", "config_json"), columns(connection,
+                "decoder_type", "address_domain_code", "primary_frequency_hz", "config_json", "analog_activity_reset_ms"), columns(connection,
                 "configuration_channel"));
             assertEquals("Migration Mixed Case", scalar(connection, """
                 SELECT list.name FROM configuration_channel channel
@@ -2547,13 +2547,13 @@ class Format14To15DatabaseMigrationTest
         {
             Preference prior = entry.getValue();
             Preference current = after.get(entry.getKey());
-            assertEquals(Format43WebUserPreferencesCodec.migrateFromFormat42(
+            assertEquals(Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(
                 Format36WebUserPreferencesCodec.migrateFromFormat35(
                     Format35WebUserPreferencesCodec.migrateFromFormat34(
                         Format23WebUserPreferencesCodec.migrateToFormat31(
                             Format22WebUserPreferencesCodec.migrateToFormat23(
-                                Format14WebUserPreferencesCodec.migrate(prior.json())))))), current.json());
-            assertEquals(prior.revision() + 6, current.revision());
+                                Format14WebUserPreferencesCodec.migrate(prior.json()))))))).json(), current.json());
+            assertEquals(prior.revision() + 7, current.revision());
             assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
         }
     }
@@ -2576,7 +2576,9 @@ class Format14To15DatabaseMigrationTest
     private static void assertApplicationSettingsMigrated(Map<String,ApplicationSetting> before,
                                                           Map<String,ApplicationSetting> after) throws Exception
     {
-        assertEquals(before.keySet(), after.keySet());
+        Set<String> expectedKeys = new java.util.HashSet<>(before.keySet());
+        expectedKeys.addAll(Set.of("remote.links", "alert.configuration", "audio.paging_tones"));
+        assertEquals(expectedKeys, after.keySet());
         for(Map.Entry<String,ApplicationSetting> entry: before.entrySet())
         {
             ApplicationSetting expected = entry.getValue();

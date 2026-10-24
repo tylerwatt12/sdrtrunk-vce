@@ -18,13 +18,43 @@ import org.junit.jupiter.api.Test;
 class WebUserPreferencesCodecTest
 {
     private static final String DEFAULT_JSON = """
-        {"version":11,"appearance":{"theme":"light","hue":null},"page_titles":{"prepend_playing_call":true},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false,"source_name_display":"talker_alias","live_channel_sort":"order_appeared","live_row_density":"normal"},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"tables":{}}""";
+        {"version":12,"appearance":{"theme":"light","hue":null},"page_titles":{"prepend_playing_call":true},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false,"source_name_display":"talker_alias","live_channel_sort":"order_appeared","live_row_density":"normal"},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced"},"health_alerts":{"disabled_codes":[]},"guides":{"automatic_page_guides":true},"tables":{}}""";
 
     @Test
-    void defaultsHaveTheExactVersionElevenSnakeCaseWireShape() throws Exception
+    void defaultsHaveTheExactVersionTwelveSnakeCaseWireShape() throws Exception
     {
         assertEquals(DEFAULT_JSON, WebUserPreferencesCodec.encode(WebUserPreferences.defaults()));
         assertEquals(WebUserPreferences.defaults(), WebUserPreferencesCodec.decode(DEFAULT_JSON));
+    }
+
+    @Test
+    void automaticPageGuidesRoundTripAsAnExplicitBoolean() throws Exception
+    {
+        assertTrue(WebUserPreferences.defaults().guides().automaticPageGuides());
+        for(boolean automatic: List.of(false, true))
+        {
+            String json = DEFAULT_JSON.replace("\"automatic_page_guides\":true", "\"automatic_page_guides\":" + automatic);
+            assertEquals(automatic, WebUserPreferencesCodec.decode(json).guides().automaticPageGuides());
+            assertEquals(json, WebUserPreferencesCodec.encode(WebUserPreferencesCodec.decode(json)));
+            assertEquals(WebUserPreferencesCodec.decode(json), WebUserPreferencesCodec.decode(
+                json.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        }
+        for(String invalid: List.of("null", "0", "1", "\"true\"", "[]", "{}"))
+        {
+            assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
+                "\"automatic_page_guides\":true", "\"automatic_page_guides\":" + invalid)));
+        }
+        for(String invalidSection: List.of("null", "{}", "[]", "true",
+            "{\"automatic_page_guides\":true,\"unknown\":false}",
+            "{\"automatic_page_guides\":true,\"automatic_page_guides\":false}"))
+        {
+            assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
+                "{\"automatic_page_guides\":true}", invalidSection)));
+        }
+        assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
+            ",\"guides\":{\"automatic_page_guides\":true}", "")));
+        assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
+            "\"version\":12", "\"version\":11")));
     }
 
     @Test
@@ -69,7 +99,7 @@ class WebUserPreferencesCodecTest
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
             DEFAULT_JSON.replace("\"appearance\":{\"theme\":\"light\",\"hue\":null}", "\"appearance\":null")));
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
-            DEFAULT_JSON.replace("\"version\":11", "\"version\":7")));
+            DEFAULT_JSON.replace("\"version\":12", "\"version\":7")));
     }
 
     @Test
@@ -149,7 +179,7 @@ class WebUserPreferencesCodecTest
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
             "\"live_row_density\":\"normal\"", "\"live_row_density\":\"normal\",\"live_row_density\":\"dense\"")));
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
-            "\"version\":11", "\"version\":10")));
+            "\"version\":12", "\"version\":10")));
     }
 
     @Test
@@ -161,7 +191,7 @@ class WebUserPreferencesCodecTest
             List.of("talkgroup"), List.of("p25-phase1"));
         WebUserPreferences withTable = new WebUserPreferences(defaults.version(), defaults.appearance(),
             defaults.pageTitles(), defaults.playback(), defaults.scanner(), defaults.presentation(),
-            defaults.tuner(), defaults.healthAlerts(), Map.of("scanner.calls", valid));
+            defaults.tuner(), defaults.healthAlerts(), defaults.guides(), Map.of("scanner.calls", valid));
         assertEquals(withTable, WebUserPreferencesCodec.decode(WebUserPreferencesCodec.encode(withTable)));
         String encodedTable = WebUserPreferencesCodec.encode(withTable);
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
@@ -190,7 +220,7 @@ class WebUserPreferencesCodecTest
             1.0, List.of(), true, 21));
         assertThrows(IllegalArgumentException.class, () -> new WebUserPreferences(defaults.version(),
             defaults.appearance(), defaults.pageTitles(), defaults.playback(), defaults.scanner(),
-            defaults.presentation(), defaults.tuner(), defaults.healthAlerts(), Map.of("Invalid Table", valid)));
+            defaults.presentation(), defaults.tuner(), defaults.healthAlerts(), defaults.guides(), Map.of("Invalid Table", valid)));
     }
 
     @Test
@@ -231,8 +261,8 @@ class WebUserPreferencesCodecTest
     void rejectsUnknownDuplicateAndNonIntegerFields()
     {
         assertThrows(java.io.IOException.class,
-            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":11",
-                "\"version\":11,\"unknown\":true")));
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":12",
+                "\"version\":12,\"unknown\":true")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"theme\":\"light\"",
                 "\"theme\":\"light\",\"theme\":\"dark\"")));
@@ -240,7 +270,7 @@ class WebUserPreferencesCodecTest
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"live_detail_row_limit\":200",
                 "\"live_detail_row_limit\":200.5")));
         assertThrows(java.io.IOException.class,
-            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":11", "\"version\":3")));
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":12", "\"version\":3")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
                 ",\"target_grouping\":true", "")));

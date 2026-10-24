@@ -80,7 +80,7 @@ class Format34To35DatabaseMigrationTest
                 Preference prior = entry.getValue();
                 Preference current = after.get(entry.getKey());
                 assertEquals(migrateToCurrent(prior.json()), current.json());
-                assertEquals(prior.revision() + 3, current.revision());
+                assertEquals(prior.revision() + 4, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
                 assertTrue("talker_alias".equals(WebUserPreferencesCodec.decode(current.json()).presentation().sourceNameDisplay()));
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
@@ -110,7 +110,7 @@ class Format34To35DatabaseMigrationTest
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
-                assertEquals(change.startsWith("preferences_json=") ? Format43WebUserPreferencesCodec.defaults() :
+                assertEquals(change.startsWith("preferences_json=") ? Format62WebUserPreferencesCodec.defaults() :
                     migrateToCurrent(selected), preferences(statement).get(3L).json());
                 assertEquals(migrateToCurrent(sibling),
                     preferences(statement).get(2L).json());
@@ -157,7 +157,7 @@ class Format34To35DatabaseMigrationTest
                     Preference current = preferences(statement).get(entry.getKey());
                     assertEquals(migrateToCurrent(entry.getValue().json()),
                         current.json());
-                    assertEquals(entry.getValue().revision() + 3, current.revision());
+                    assertEquals(entry.getValue().revision() + 4, current.revision());
                 }
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
@@ -214,7 +214,8 @@ class Format34To35DatabaseMigrationTest
             assertEquals(1, reset.affectedRows());
             ObjectMapper mapper = new ObjectMapper();
             ObjectNode expected = (ObjectNode)mapper.readTree(source);
-            expected.put("version", 11);
+            expected.put("version", 12);
+            expected.putObject("guides").put("automatic_page_guides", true);
             ((ObjectNode)expected.get("presentation")).put("live_row_density", "normal");
             ((ObjectNode)expected.get("presentation")).put("live_channel_sort", "order_appeared");
             ((ObjectNode)expected.get("presentation")).put("source_name_display", "talker_alias");
@@ -273,14 +274,16 @@ class Format34To35DatabaseMigrationTest
 
     private static String migrateToCurrent(String json) throws IOException
     {
-        return Format43WebUserPreferencesCodec.migrateFromFormat42(
+        return Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(
             Format36WebUserPreferencesCodec.migrateFromFormat35(
-                Format35WebUserPreferencesCodec.migrateFromFormat34(json)));
+                Format35WebUserPreferencesCodec.migrateFromFormat34(json)))).json();
     }
 
     private static Connection open(Path database) throws Exception
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        connection.setAutoCommit(false);
+        return connection;
     }
 
     private static Map<Long,Preference> preferences(Statement statement) throws Exception

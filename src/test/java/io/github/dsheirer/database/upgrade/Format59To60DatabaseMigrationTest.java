@@ -58,7 +58,7 @@ class Format59To60DatabaseMigrationTest
             Map<String,List<String>> columns = columns(connection);
             Map<String,List<String>> before = snapshot(connection, columns);
             connection.setAutoCommit(false);
-            assertEquals(List.of("format-59-to-60", "format-60-to-61"), DatabaseMigrationChain.migrate(connection).steps().stream()
+            assertEquals(List.of("format-59-to-60", "format-60-to-61", "format-61-to-62"), DatabaseMigrationChain.migrate(connection).steps().stream()
                 .map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(before, snapshot(connection, columns));
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
@@ -226,7 +226,13 @@ class Format59To60DatabaseMigrationTest
                     if(table.getKey().equals("database_metadata") && DatabaseFormatCatalog.FORMAT_VERSION_KEY.equals(rows.getString(1))) continue;
                     List<String> row = new ArrayList<>();
                     for(int i=1; i<=table.getValue().size(); i++)
-                    { Object value=rows.getObject(i); row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value)); }
+                    {
+                        // Later preference conversion is checked by Format61To62DatabaseMigrationTest.
+                        if(table.getKey().equals("web_user") && List.of("preferences_json", "preferences_revision")
+                            .contains(table.getValue().get(i-1))) continue;
+                        Object value=rows.getObject(i);
+                        row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
+                    }
                     values.add(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
                         .digest(row.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8))));
                 }

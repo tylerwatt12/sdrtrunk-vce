@@ -84,7 +84,7 @@ class Format35To36DatabaseMigrationTest
                 Preference prior = entry.getValue();
                 Preference current = after.get(entry.getKey());
                 assertEquals(migrateToCurrent(prior.json()), current.json());
-                assertEquals(prior.revision() + 2, current.revision());
+                assertEquals(prior.revision() + 3, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
                 boolean activeOnly = new ObjectMapper().readTree(prior.json()).path("presentation")
                     .path("show_only_active_trunked_channels").booleanValue();
@@ -120,7 +120,7 @@ class Format35To36DatabaseMigrationTest
                 DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
                 assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
-                assertEquals(change.startsWith("preferences_json=") ? Format43WebUserPreferencesCodec.defaults() :
+                assertEquals(change.startsWith("preferences_json=") ? Format62WebUserPreferencesCodec.defaults() :
                     migrateToCurrent(selected), preferences(statement).get(3L).json());
                 assertEquals(migrateToCurrent(sibling),
                     preferences(statement).get(2L).json());
@@ -167,7 +167,7 @@ class Format35To36DatabaseMigrationTest
                     Preference current = preferences(statement).get(entry.getKey());
                     assertEquals(migrateToCurrent(entry.getValue().json()),
                         current.json());
-                    assertEquals(entry.getValue().revision() + 2, current.revision());
+                    assertEquals(entry.getValue().revision() + 3, current.revision());
                 }
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
@@ -221,7 +221,8 @@ class Format35To36DatabaseMigrationTest
             assertEquals(1, reset.affectedRows());
             ObjectMapper mapper = new ObjectMapper();
             ObjectNode expected = (ObjectNode)mapper.readTree(source);
-            expected.put("version", 11);
+            expected.put("version", 12);
+            expected.putObject("guides").put("automatic_page_guides", true);
             ((ObjectNode)expected.get("presentation")).put("live_row_density", "normal");
             ((ObjectNode)expected.get("presentation")).put("live_channel_sort", "order_appeared");
             ObjectNode tables = (ObjectNode)expected.get("tables");
@@ -279,13 +280,15 @@ class Format35To36DatabaseMigrationTest
 
     private static String migrateToCurrent(String json) throws IOException
     {
-        return Format43WebUserPreferencesCodec.migrateFromFormat42(
-            Format36WebUserPreferencesCodec.migrateFromFormat35(json));
+        return Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(
+            Format36WebUserPreferencesCodec.migrateFromFormat35(json))).json();
     }
 
     private static Connection open(Path database) throws Exception
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        connection.setAutoCommit(false);
+        return connection;
     }
 
     private static Map<Long,Preference> preferences(Statement statement) throws Exception

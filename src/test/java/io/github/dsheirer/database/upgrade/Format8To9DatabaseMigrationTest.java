@@ -68,7 +68,8 @@ class Format8To9DatabaseMigrationTest
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=11
+                WHERE json_extract(preferences_json, '$.version')=12
+                  AND json_extract(preferences_json, '$.guides.automatic_page_guides')=1
                   AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
                   AND json_extract(preferences_json,
                       '$.presentation.show_only_active_trunked_channels')=0
@@ -76,7 +77,7 @@ class Format8To9DatabaseMigrationTest
                       '$.presentation.retain_last_call_on_idle_rows')=1
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
-                  AND preferences_revision=11
+                  AND preferences_revision=12
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
@@ -267,6 +268,7 @@ class Format8To9DatabaseMigrationTest
                     '$.presentation.source_name_display',
                     '$.presentation.live_channel_sort',
                     '$.presentation.live_row_density',
+                    '$.guides',
                     '$.playback.target_grouping',
                     '$.playback.target_burst_limit') AS row_value
                 FROM web_user ORDER BY id)
@@ -310,6 +312,7 @@ class Format8To9DatabaseMigrationTest
         {
             statement.execute("PRAGMA foreign_keys=OFF");
         }
+        connection.setAutoCommit(false);
         return connection;
     }
 

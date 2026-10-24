@@ -4,7 +4,7 @@ package io.github.dsheirer.database.upgrade;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 
-/** Populated format-61 fixture has independent tour versions for two retained accounts. */
+/** Frozen populated format-61 fixture has independent tour versions for two retained accounts. */
 public final class Format61TestDatabase
 {
     private Format61TestDatabase() {}
@@ -21,7 +21,8 @@ public final class Format61TestDatabase
                 "SELECT id,'admin',3 FROM web_user WHERE primary_admin=1");
             DatabaseFormatCatalog.stamp(connection, 61);
             connection.commit();
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 61)
+                throw new IllegalStateException("The frozen format-61 fixture changed");
         }
         return database;
     }

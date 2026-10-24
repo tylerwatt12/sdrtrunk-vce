@@ -137,9 +137,10 @@ class DatabaseFormatCatalogTest
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
                 assertEquals("0", scalar(connection, """
-                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>11
+                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>12
                         OR json_extract(preferences_json, '$.presentation.live_row_density') IS NOT 'normal'
-                    """), "Every registered fixture receives the current personal Live density default");
+                        OR json_extract(preferences_json, '$.guides.automatic_page_guides') IS NOT 1
+                    """), "Every registered fixture receives current personal density and automatic-guide defaults");
             }
             SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         }

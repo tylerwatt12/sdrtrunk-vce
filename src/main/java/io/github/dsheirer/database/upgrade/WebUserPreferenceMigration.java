@@ -31,6 +31,9 @@ abstract class WebUserPreferenceMigration implements DatabaseMigrationStep
     protected abstract String preservationDetail();
     protected abstract String layoutDetail();
 
+    /** New conversions can preserve account bookkeeping without changing historical step behavior. */
+    protected boolean preserveAccountTimestamps() { return false; }
+
     protected record Converted(String json, long resetLayouts) {}
 
     @Override
@@ -75,16 +78,23 @@ abstract class WebUserPreferenceMigration implements DatabaseMigrationStep
         List<DatabaseMigrationEffect> repairs = selectedSourceStep ? repair(connection) : List.of();
         UserInspection inspection = selectedSourceStep ? inspect(connection) : initial;
         long updatedAt = Math.max(1, System.currentTimeMillis());
-        try(var statement = connection.prepareStatement("""
-            UPDATE web_user SET preferences_json=?, preferences_revision=?, updated_at_ms=? WHERE id=?
-            """))
+        try(var statement = connection.prepareStatement(preserveAccountTimestamps() ?
+            "UPDATE web_user SET preferences_json=?, preferences_revision=? WHERE id=?" :
+            "UPDATE web_user SET preferences_json=?, preferences_revision=?, updated_at_ms=? WHERE id=?"))
         {
             for(UserUpdate update: inspection.updates())
             {
                 statement.setString(1, update.json());
                 statement.setLong(2, update.revision());
-                statement.setLong(3, updatedAt);
-                statement.setLong(4, update.id());
+                if(preserveAccountTimestamps())
+                {
+                    statement.setLong(3, update.id());
+                }
+                else
+                {
+                    statement.setLong(3, updatedAt);
+                    statement.setLong(4, update.id());
+                }
                 if(statement.executeUpdate() != 1)
                 {
                     throw new SQLException("Web user changed during " + id());
@@ -173,11 +183,11 @@ abstract class WebUserPreferenceMigration implements DatabaseMigrationStep
             CurrentDatabaseBestEffortRepair.inspect(connection), CurrentDatabaseDerivedStateRepair.inspect(connection));
     }
 
-    private static List<DatabaseMigrationEffect> repair(Connection connection) throws SQLException
+    private List<DatabaseMigrationEffect> repair(Connection connection) throws SQLException
     {
         CurrentDatabaseBestEffortRepair.requireOnlyRepairableForeignKeys(connection);
         return repairEffects(ApplicationDatabaseMigrator.repairCurrentPortablePreferences(connection),
-            CurrentDatabaseAdministrativeRepair.repair(connection, false),
+            CurrentDatabaseAdministrativeRepair.repair(connection, false, preserveAccountTimestamps()),
             CurrentDatabaseBestEffortRepair.repair(connection), CurrentDatabaseDerivedStateRepair.repair(connection));
     }
 

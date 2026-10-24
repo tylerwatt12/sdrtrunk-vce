@@ -85,7 +85,8 @@ class WebUserPreferencesHttpControllerTest
             assertEquals("light", initial.at("/preferences/appearance/theme").textValue());
             assertTrue(initial.at("/preferences/appearance/hue").isNull());
             assertTrue(initial.at("/preferences/playback/selected_scan_list_ids").isArray());
-            assertEquals(11, initial.at("/preferences/version").intValue());
+            assertEquals(12, initial.at("/preferences/version").intValue());
+            assertTrue(initial.at("/preferences/guides/automatic_page_guides").booleanValue());
             assertEquals("normal", initial.at("/preferences/presentation/live_row_density").textValue());
 
             JsonNode replacement = initial.path("preferences").deepCopy();
@@ -96,6 +97,8 @@ class WebUserPreferencesHttpControllerTest
                 .put("source_name_display", "both");
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("presentation"))
                 .put("live_row_density", "dense");
+            ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("guides"))
+                .put("automatic_page_guides", false);
             String replacementJson = MAPPER.writeValueAsString(replacement);
 
             assertEquals(403, send(client, request(origin)
@@ -109,6 +112,7 @@ class WebUserPreferencesHttpControllerTest
             assertEquals(200, updatedResponse.statusCode(), updatedResponse.body());
             JsonNode updated = MAPPER.readTree(updatedResponse.body());
             assertEquals(2, updated.path("revision").longValue());
+            assertFalse(updated.at("/preferences/guides/automatic_page_guides").booleanValue());
             assertTrue(updated.at("/preferences/page_titles/prepend_playing_call").booleanValue());
             assertEquals(215, updated.at("/preferences/appearance/hue").intValue());
             assertEquals("both", updated.at("/preferences/presentation/source_name_display").textValue());
@@ -144,6 +148,21 @@ class WebUserPreferencesHttpControllerTest
             HttpResponse<String> reloaded = send(client, request(origin).header("Cookie", login.cookie()).GET());
             assertEquals(200, reloaded.statusCode());
             assertEquals("dense", MAPPER.readTree(reloaded.body()).at("/preferences/presentation/live_row_density").textValue());
+
+            HttpClient anotherBrowser = HttpClient.newHttpClient();
+            Login anotherLogin = login(anotherBrowser, origin);
+            HttpResponse<String> shared = send(anotherBrowser, request(origin).header("Cookie", anotherLogin.cookie()).GET());
+            assertEquals(200, shared.statusCode());
+            assertFalse(MAPPER.readTree(shared.body()).at("/preferences/guides/automatic_page_guides").booleanValue());
+            var otherAccount = accessService.createUser("listener", "separate-account-password".toCharArray());
+            assertTrue(new WebUserPreferencesService(database).get(otherAccount).preferences().guides().automaticPageGuides());
+            for(String invalid: java.util.List.of("null", "1", "\"false\"", "{}"))
+            {
+                assertEquals(422, send(client, mutation(origin, login).header("If-Match", "\"2\"")
+                    .PUT(HttpRequest.BodyPublishers.ofString(replacementJson.replace(
+                        "\"automatic_page_guides\":false", "\"automatic_page_guides\":" + invalid)))).statusCode());
+            }
+            assertEquals(2, new WebUserPreferencesService(database).get(accessService.primaryAdmin().orElseThrow()).revision());
 
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("appearance")).putNull("hue");
             HttpResponse<String> restored = send(client, mutation(origin, login).header("If-Match", "\"2\"")

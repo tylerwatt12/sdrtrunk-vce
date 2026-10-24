@@ -19,9 +19,9 @@ import java.util.regex.Pattern;
  */
 public record WebUserPreferences(int version, Appearance appearance, PageTitles pageTitles, Playback playback,
                                  Scanner scanner, Presentation presentation, Tuner tuner,
-                                 HealthAlerts healthAlerts, Map<String,TableLayout> tables)
+                                 HealthAlerts healthAlerts, Guides guides, Map<String,TableLayout> tables)
 {
-    public static final int CURRENT_VERSION = 11;
+    public static final int CURRENT_VERSION = 12;
     public static final int MINIMUM_APPEARANCE_HUE = 0;
     public static final int MAXIMUM_APPEARANCE_HUE = 359;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
@@ -52,6 +52,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         Objects.requireNonNull(presentation, "presentation is required");
         Objects.requireNonNull(tuner, "tuner is required");
         Objects.requireNonNull(healthAlerts, "health_alerts is required");
+        Objects.requireNonNull(guides, "guides is required");
         Objects.requireNonNull(tables, "tables is required");
 
         if(tables.size() > MAXIMUM_TABLES)
@@ -81,8 +82,11 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
                 decodeQualityDisplayMode, liveDetailRowLimit, true, false, false, "talker_alias", "order_appeared", "normal"),
-            new Tuner(-140, 0, 1, true, true, false, false, "balanced"), new HealthAlerts(List.of()), Map.of());
+            new Tuner(-140, 0, 1, true, true, false, false, "balanced"), new HealthAlerts(List.of()),
+            new Guides(true), Map.of());
     }
+
+    public record Guides(boolean automaticPageGuides) {}
 
     public record Appearance(String theme, Integer hue)
     {

@@ -86,7 +86,7 @@ class Format42To43DatabaseMigrationTest
                 Preference prior = entry.getValue();
                 Preference current = after.get(entry.getKey());
                 assertEquals(expectedPreferences(prior.json()), new ObjectMapper().readTree(current.json()));
-                assertEquals(prior.revision() + 1, current.revision());
+                assertEquals(prior.revision() + 2, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
                 assertEquals("normal", WebUserPreferencesCodec.decode(current.json()).presentation().liveRowDensity());
                 assertEquals(new ObjectMapper().readTree(prior.json()).path("presentation")
@@ -121,11 +121,11 @@ class Format42To43DatabaseMigrationTest
                 assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
                 Preference changed = preferences(statement).get(3L);
-                assertEquals(change.startsWith("preferences_json=") ? new ObjectMapper().readTree(Format43WebUserPreferencesCodec.defaults()) :
+                assertEquals(change.startsWith("preferences_json=") ? new ObjectMapper().readTree(Format62WebUserPreferencesCodec.defaults()) :
                     expectedPreferences(selected), new ObjectMapper().readTree(changed.json()));
-                assertEquals(change.equals("preferences_revision=9223372036854775805") ? 1 :
-                    change.startsWith("preferences_revision=") ? 2 : selectedRevision + 2, changed.revision());
-                assertEquals(Format43WebUserPreferencesCodec.migrateFromFormat42(sibling),
+                assertEquals(change.equals("preferences_revision=9223372036854775805") ? 2 :
+                    change.startsWith("preferences_revision=") ? 3 : selectedRevision + 3, changed.revision());
+                assertEquals(Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(sibling)).json(),
                     preferences(statement).get(2L).json());
                 for(Map.Entry<Long,byte[]> credential: credentials.entrySet())
                 {
@@ -169,7 +169,7 @@ class Format42To43DatabaseMigrationTest
                 {
                     Preference current = preferences(statement).get(entry.getKey());
                     assertEquals(expectedPreferences(entry.getValue().json()), new ObjectMapper().readTree(current.json()));
-                    assertEquals(entry.getValue().revision() + 1, current.revision());
+                    assertEquals(entry.getValue().revision() + 2, current.revision());
                 }
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
@@ -226,7 +226,8 @@ class Format42To43DatabaseMigrationTest
             assertEquals(1, reset.affectedRows());
             ObjectMapper mapper = new ObjectMapper();
             ObjectNode expected = (ObjectNode)mapper.readTree(source);
-            expected.put("version", 11);
+            expected.put("version", 12);
+            expected.putObject("guides").put("automatic_page_guides", true);
             ((ObjectNode)expected.get("presentation")).put("live_row_density", "normal");
             ObjectNode tables = (ObjectNode)expected.get("tables");
             String last = null;
@@ -236,8 +237,8 @@ class Format42To43DatabaseMigrationTest
             assertTrue(preferences(statement).get(3L).json().length() <= WebUserPreferences.MAXIMUM_JSON_BYTES);
             for(Map.Entry<Long,Preference> entry: before.entrySet())
             {
-                if(entry.getKey() != 3L) assertEquals(Format43WebUserPreferencesCodec.migrateFromFormat42(
-                    entry.getValue().json()), preferences(statement).get(entry.getKey()).json());
+                if(entry.getKey() != 3L) assertEquals(Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(
+                    entry.getValue().json())).json(), preferences(statement).get(entry.getKey()).json());
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
             }
@@ -249,7 +250,8 @@ class Format42To43DatabaseMigrationTest
     private static ObjectNode expectedPreferences(String source) throws Exception
     {
         ObjectNode expected = (ObjectNode)new ObjectMapper().readTree(source);
-        expected.put("version", 11);
+        expected.put("version", 12);
+            expected.putObject("guides").put("automatic_page_guides", true);
         ((ObjectNode)expected.get("presentation")).put("live_row_density", "normal");
         return expected;
     }
@@ -291,7 +293,9 @@ class Format42To43DatabaseMigrationTest
 
     private static Connection open(Path database) throws Exception
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        connection.setAutoCommit(false);
+        return connection;
     }
 
     private static Map<Long,Preference> preferences(Statement statement) throws Exception

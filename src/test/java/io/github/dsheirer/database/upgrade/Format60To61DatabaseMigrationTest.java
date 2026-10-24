@@ -49,7 +49,7 @@ class Format60To61DatabaseMigrationTest
             var before = snapshot(connection, null);
             assertTrue(before.get("web_user").size() >= 2, "The frozen prior fixture contains usable distinct accounts.");
             connection.setAutoCommit(false);
-            assertEquals(List.of("format-60-to-61"), DatabaseMigrationChain.migrate(connection).steps().stream()
+            assertEquals(List.of("format-60-to-61", "format-61-to-62"), DatabaseMigrationChain.migrate(connection).steps().stream()
                 .map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(before, snapshot(connection, before.keySet()));
             assertEquals(0, count(connection, "SELECT count(*) FROM web_user_tour_dismissal"));
@@ -58,7 +58,7 @@ class Format60To61DatabaseMigrationTest
             assertEquals(before, snapshot(connection, null));
             DatabaseMigrationChain.migrate(connection); connection.commit();
             assertEquals(before, snapshot(connection, before.keySet()));
-            assertEquals(61, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
             try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA foreign_key_check"))
             { assertFalse(rows.next()); }
@@ -69,7 +69,7 @@ class Format60To61DatabaseMigrationTest
         byte[] upgraded = Files.readAllBytes(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         assertArrayEquals(upgraded, Files.readAllBytes(database));
-        Path populated = Format61TestDatabase.create(directory.resolve("current.sqlite"));
+        Path populated = Format62TestDatabase.create(directory.resolve("current.sqlite"));
         try(var connection = open(populated))
         {
             assertTrue(count(connection, "SELECT count(*) FROM web_user_tour_dismissal") >= 3);
@@ -79,7 +79,7 @@ class Format60To61DatabaseMigrationTest
 
     @Test void offlineAccountRepairRemovesOnlyTheDeletedAccountsTourHistory() throws Exception
     {
-        Path database = Format61TestDatabase.create(directory.resolve("account-repair.sqlite"));
+        Path database = Format62TestDatabase.create(directory.resolve("account-repair.sqlite"));
         try(var connection = open(database); var statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=OFF");
@@ -122,6 +122,9 @@ class Format60To61DatabaseMigrationTest
                         List<String> fields = new ArrayList<>();
                         for(int i=1; i<=rows.getMetaData().getColumnCount(); i++)
                         {
+                            // Format 62 deliberately converts these two fields; its dedicated test verifies their exact contents.
+                            if(table.equals("web_user") && List.of("preferences_json", "preferences_revision")
+                                .contains(rows.getMetaData().getColumnName(i))) continue;
                             Object value = rows.getObject(i);
                             fields.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                         }
