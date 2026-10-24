@@ -1,5 +1,9 @@
 package io.github.dsheirer.alerts.delivery;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -16,6 +20,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.slf4j.LoggerFactory;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PushDeliveryServiceTest
@@ -240,10 +245,44 @@ class PushDeliveryServiceTest
         }
     }
 
+    @Test void relayRecoveryRequiresTheWholeStatusUpdatesAndPreferencesCheckToSucceed() throws Exception
+    {
+        Logger logger = (Logger)LoggerFactory.getLogger(PushDeliveryService.class);
+        Level previousLevel = logger.getLevel();
+        ListAppender<ILoggingEvent> messages = new ListAppender<>();
+        messages.start(); logger.addAppender(messages); logger.setLevel(Level.DEBUG);
+        try(Fixture f = new Fixture(directory.resolve("relay-recovery.sqlite")))
+        {
+            f.push.deliverRelayBatch(f.publish());
+            f.push.updateDevice(f.tokenB, List.of());
+            f.registrationStatusCode.set(503);
+            f.push.relayTick();
+            assertEquals(1, messages.list.size());
+            assertEquals("RadioResolve status and queued preferences will be checked again (failures: GatewayException=1)", messages.list.getLast().getFormattedMessage());
+
+            f.registrationStatusCode.set(200); f.updatesStatusCode.set(503);
+            f.push.relayTick();
+            assertEquals(1, messages.list.size(), "A successful status request must not announce recovery before updates succeed");
+            f.updatesStatusCode.set(200); f.alertStatus.set(503); f.push.relayTick();
+            assertEquals(1, messages.list.size(), "Successful status and updates requests must not announce recovery before queued preferences succeed");
+            f.alertStatus.set(202); f.push.relayTick();
+            assertEquals(2, messages.list.size());
+            assertEquals("RadioResolve status and queued preferences recovered (failures: GatewayException=3)", messages.list.getLast().getFormattedMessage());
+            f.push.relayTick();
+            assertEquals(2, messages.list.size());
+            assertTrue(messages.list.stream().allMatch(event -> event.getLevel() == Level.DEBUG && event.getThrowableProxy() == null));
+        }
+        finally
+        {
+            logger.detachAppender(messages); logger.setLevel(previousLevel); messages.stop();
+        }
+    }
+
     private static final class Fixture implements AutoCloseable
     {
         final TopicAlertService service; final PushDeliveryService push; final HttpServer server;
         final List<JsonNode> requests = new ArrayList<>(); final AtomicInteger alertStatus = new AtomicInteger(202), httpCalls = new AtomicInteger();
+        final AtomicInteger registrationStatusCode = new AtomicInteger(200), updatesStatusCode = new AtomicInteger(200);
         final String tokenA = PublicAccessVerifier.token(), tokenB = PublicAccessVerifier.token();
         JsonNode registrationRequest;
         JsonNode updates = JSON.valueToTree(Map.of("cursor", "0", "updates", List.of()));
@@ -268,12 +307,12 @@ class PushDeliveryServiceTest
                     response = Map.of("alert_id", "remote-alert", "status", "queued");
                 }
                 else if(exchange.getRequestURI().getPath().equals("/senders")) { registrationRequest = JSON.readTree(exchange.getRequestBody()); response = Map.of("sender_id", "sender-fixture", "status", "approved"); }
-                else if(exchange.getRequestURI().getPath().equals("/senders/me")) response = Map.of("sender_id", "sender-fixture", "status", "approved");
+                else if(exchange.getRequestURI().getPath().equals("/senders/me")) { status = registrationStatusCode.get(); response = Map.of("sender_id", "sender-fixture", "status", "approved"); }
                 else if(exchange.getRequestURI().getPath().equals("/enrollments")) response = Map.of(
                     "id", "f".repeat(32), "expires_at_ms", System.currentTimeMillis() + 900_000,
                     "enrollment_url", "https://radioresolve.com/vce-push/enroll.php?code=synthetic-session.synthetic-code",
                     "code", "synthetic-code");
-                else response = updates;
+                else { status = updatesStatusCode.get(); response = updates; }
                 byte[] body = JSON.writeValueAsBytes(response); exchange.sendResponseHeaders(status, body.length);
                 exchange.getResponseBody().write(body); exchange.close();
             }); server.start();

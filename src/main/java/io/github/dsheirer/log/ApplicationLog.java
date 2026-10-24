@@ -34,6 +34,7 @@ import io.github.dsheirer.preference.PreferenceType;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.util.MemoryUsageLogger;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Path;
 import java.util.Enumeration;
@@ -217,11 +218,12 @@ public class ApplicationLog
         return null;
     }
 
-    private static Attributes readManifestAttributes(URL url) {
-        try {
-            Manifest manifest = new Manifest(url.openStream());
+    static Attributes readManifestAttributes(URL url) {
+        try(InputStream input = url.openStream()) {
+            Manifest manifest = new Manifest(input);
             Attributes atts = manifest.getMainAttributes();
-            return atts.containsValue("sdrtrunk-vce project") ? atts : null;
+            String title = atts.getValue(Attributes.Name.IMPLEMENTATION_TITLE);
+            return "VCE project".equals(title) || "sdrtrunk-vce project".equals(title) ? atts : null;
         }
         catch(IOException e) {
             return null;

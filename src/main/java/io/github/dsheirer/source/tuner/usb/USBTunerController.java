@@ -76,6 +76,7 @@ public abstract class USBTunerController extends TunerController
     private final UsbNativeBufferIngress mNativeBufferIngress;
     private AtomicBoolean mStreaming = new AtomicBoolean();
     private AtomicBoolean mStopping = new AtomicBoolean();
+    private boolean mStreamingStopPending;
     private volatile boolean mRunning = false;
 
     /**
@@ -153,6 +154,11 @@ public abstract class USBTunerController extends TunerController
     int submitUsbTransfer(Transfer transfer)
     {
         return LibUsb.submitTransfer(transfer);
+    }
+
+    int cancelUsbTransfer(Transfer transfer)
+    {
+        return LibUsb.cancelTransfer(transfer);
     }
 
     /**
@@ -426,7 +432,14 @@ public abstract class USBTunerController extends TunerController
 
         synchronized(this)
         {
-            if(mStreaming.compareAndSet(false, true))
+            //A timed-out stop can leave an event thread or native-owned transfers behind.  Finish that stop before
+            //enabling callbacks or submitting the same transfer pool for another streaming session.
+            if(mStreamingStopPending && !stopStreaming())
+            {
+                errorMessage = "Unable to restart USB sample streaming - previous stream has not stopped. " +
+                    "Restart the receiver if this continues.";
+            }
+            else if(mStreaming.compareAndSet(false, true))
             {
                 try
                 {
@@ -486,8 +499,9 @@ public abstract class USBTunerController extends TunerController
         mTransferManager.setAutoResubmitTransfers(false);
         mNativeBufferIngress.stop();
 
-        if(wasStreaming || mEventProcessor.isRunning() || mTransferManager.hasActiveTransfers())
+        if(wasStreaming || mStreamingStopPending || mEventProcessor.isRunning() || mTransferManager.hasActiveTransfers())
         {
+            mStreamingStopPending = true;
             //Stop event processing thread to put all submitted tranfers in a stable state - blocks until stopped
             if(!mEventProcessor.stop())
             {
@@ -506,6 +520,7 @@ public abstract class USBTunerController extends TunerController
             }
 
             streamingCleanup();
+            mStreamingStopPending = false;
         }
 
         return !mTransferManager.hasActiveTransfers();
@@ -1320,7 +1335,7 @@ public abstract class USBTunerController extends TunerController
         {
             for(Transfer transfer: mLedger.getActiveTransfers())
             {
-                LibUsb.cancelTransfer(transfer);
+                cancelUsbTransfer(transfer);
             }
         }
 

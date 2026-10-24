@@ -14,10 +14,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -31,6 +34,7 @@ public final class PushDeliveryService implements AutoCloseable
     private final RadioResolvePushClient mGateway;
     private final DirectWebPushSender mDirect = new DirectWebPushSender();
     private final PublicAccessVerifier mVerifier;
+    private final RelayRetryLog mRelayRetryLog = new RelayRetryLog(System::nanoTime, LOG::debug);
     private final ScheduledExecutorService mWorker = Executors.newSingleThreadScheduledExecutor(task -> {
         Thread thread = new Thread(task, "topic push delivery"); thread.setDaemon(true); return thread;
     });
@@ -298,9 +302,54 @@ public final class PushDeliveryService implements AutoCloseable
         {
             refreshRegistration(); pollUpdates();
             if("approved".equals(mCredentials.get().registrationStatus())) reconcileQueuedRelay();
+            mRelayRetryLog.succeeded();
         }
         catch(InterruptedException ignored) { Thread.currentThread().interrupt(); }
-        catch(Exception exception) { LOG.debug("RadioResolve status and queued preferences will be checked again ({})", exception.getClass().getSimpleName()); }
+        catch(Exception exception) { mRelayRetryLog.failed(exception); }
+    }
+
+    /** Failure counts belong to one retry episode on the existing relay worker; exception details stay private. */
+    static final class RelayRetryLog
+    {
+        private static final long SUMMARY_INTERVAL_NANOS = TimeUnit.MINUTES.toNanos(5);
+        private final LongSupplier mNanoTime;
+        private final Consumer<String> mLog;
+        private final Map<String,Long> mFailures = new TreeMap<>();
+        private long mLastLogNanos;
+
+        RelayRetryLog(LongSupplier nanoTime, Consumer<String> log)
+        {
+            mNanoTime = nanoTime; mLog = log;
+        }
+
+        void failed(Exception exception)
+        {
+            long now = mNanoTime.getAsLong();
+            String type = exception.getClass().getSimpleName();
+            boolean firstFailure = mFailures.isEmpty();
+            boolean newType = !mFailures.containsKey(type);
+            mFailures.merge(type, 1L, Long::sum);
+            if(firstFailure || newType || now - mLastLogNanos >= SUMMARY_INTERVAL_NANOS)
+            {
+                mLog.accept("RadioResolve status and queued preferences" +
+                    (firstFailure || newType ? " will be checked again" : " are still retrying") +
+                    " (failures: " + counts() + ")");
+                mLastLogNanos = now;
+            }
+        }
+
+        void succeeded()
+        {
+            if(mFailures.isEmpty()) return;
+            mLog.accept("RadioResolve status and queued preferences recovered (failures: " + counts() + ")");
+            mFailures.clear();
+        }
+
+        private String counts()
+        {
+            return mFailures.entrySet().stream().map(entry -> entry.getKey() + "=" + entry.getValue())
+                .collect(java.util.stream.Collectors.joining(", "));
+        }
     }
 
     void deliverRelayBatch(AlertDelivery first) throws Exception

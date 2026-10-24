@@ -38,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import org.junit.jupiter.api.Test;
 import org.usb4java.LibUsb;
@@ -359,6 +360,138 @@ class USBTunerControllerLifecycleTest
         }
     }
 
+    @Test
+    void listenerRestartRecoversAfterTimedOutEventThreadExits() throws Exception
+    {
+        StreamingLifecycleController lifecycle = new StreamingLifecycleController(true);
+        TestController controller = lifecycle;
+        Listener<INativeBuffer> listener = buffer -> {};
+
+        try
+        {
+            controller.addBufferListener(listener);
+            assertTrue(lifecycle.mBlockedHandlerEntered.await(1, TimeUnit.SECONDS));
+            Thread firstThread = lifecycle.mEventThreads.getFirst();
+            controller.removeBufferListener(listener);
+            assertTrue(firstThread.isAlive(), "the first stop must time out while the native handler is blocked");
+            assertFalse(streaming(controller).get());
+
+            lifecycle.mReleaseHandler.countDown();
+            firstThread.join(1_000);
+            assertFalse(firstThread.isAlive());
+            controller.addBufferListener(listener);
+
+            assertEquals(2, lifecycle.mEventThreads.size());
+            assertNotEquals(firstThread, lifecycle.mEventThreads.getLast());
+            assertTrue(lifecycle.mEventThreads.getLast().isAlive());
+            assertEquals(2, controller.mSubmitCalls.get());
+            assertEquals(1, lifecycle.mCancelCalls.get());
+            assertEquals(1, controller.mStreamingCleanupCalls.get());
+            assertTrue(streaming(controller).get());
+            assertTrue(controller.hasBufferListeners());
+            assertEquals(List.of("submit", "cancel", "returned", "submit"), lifecycle.mLifecycleOrdering);
+        }
+        finally
+        {
+            closeTestStream(lifecycle, listener);
+        }
+    }
+
+    @Test
+    void listenerRestartRefusesWhilePreviousEventThreadStillOwnsTransfers() throws Exception
+    {
+        MonitorCheckingErrorListener errorListener = new MonitorCheckingErrorListener();
+        StreamingLifecycleController lifecycle = new StreamingLifecycleController(true, errorListener);
+        TestController controller = lifecycle;
+        errorListener.mController.set(controller);
+        Listener<INativeBuffer> listener = buffer -> {};
+
+        try
+        {
+            controller.addBufferListener(listener);
+            assertTrue(lifecycle.mBlockedHandlerEntered.await(1, TimeUnit.SECONDS));
+            controller.removeBufferListener(listener);
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+
+            try
+            {
+                executor.submit(() -> controller.addBufferListener(listener)).get(2, TimeUnit.SECONDS);
+            }
+            finally
+            {
+                executor.shutdownNow();
+            }
+
+            assertTrue(errorListener.mNotified.await(1, TimeUnit.SECONDS));
+            assertFalse(errorListener.mMonitorWaitTimedOut.get());
+            assertEquals(1, controller.mSubmitCalls.get(), "unsafe restart must not resubmit the old transfer pool");
+            assertEquals(0, lifecycle.mCancelCalls.get(), "cancellation must wait for the event owner to stop");
+            assertEquals(1, lifecycle.mEventThreads.size());
+            assertTrue(lifecycle.mEventThreads.getFirst().isAlive());
+            assertFalse(streaming(controller).get());
+            assertFalse(controller.getUsbTransferHealthSnapshot().streaming());
+            assertEquals(List.of("submit"), lifecycle.mLifecycleOrdering);
+        }
+        finally
+        {
+            closeTestStream(lifecycle, listener);
+        }
+    }
+
+    @Test
+    void listenerRestartDrainsTransfersRetainedByPreviousDrainTimeout() throws Exception
+    {
+        StreamingLifecycleController lifecycle = new StreamingLifecycleController(false);
+        TestController controller = lifecycle;
+        Listener<INativeBuffer> listener = buffer -> {};
+        lifecycle.mReturnCancelledTransfers.set(false);
+
+        try
+        {
+            controller.addBufferListener(listener);
+            controller.removeBufferListener(listener);
+            assertFalse(lifecycle.mEventThreads.getFirst().isAlive());
+            assertEquals(1, controller.mSubmitCalls.get());
+            assertEquals(1, lifecycle.mCancelCalls.get());
+            assertEquals(1, controller.getUsbTransferHealthSnapshot().activeTransferCount());
+            assertEquals(0, controller.mStreamingCleanupCalls.get());
+
+            lifecycle.mReturnCancelledTransfers.set(true);
+            controller.addBufferListener(listener);
+
+            assertEquals(2, controller.mSubmitCalls.get());
+            assertEquals(2, lifecycle.mCancelCalls.get());
+            assertEquals(2, lifecycle.mEventThreads.size());
+            assertTrue(lifecycle.mEventThreads.getLast().isAlive());
+            assertEquals(1, controller.mStreamingCleanupCalls.get());
+            assertTrue(streaming(controller).get());
+            assertEquals(List.of("submit", "cancel", "cancel", "returned", "submit"),
+                lifecycle.mLifecycleOrdering);
+        }
+        finally
+        {
+            closeTestStream(lifecycle, listener);
+        }
+    }
+
+    private static void closeTestStream(StreamingLifecycleController controller, Listener<INativeBuffer> listener)
+        throws Exception
+    {
+        controller.mReleaseHandler.countDown();
+        controller.mReturnCancelledTransfers.set(true);
+        controller.removeBufferListener(listener);
+
+        for(Thread thread: controller.mEventThreads)
+        {
+            thread.join(1_000);
+            assertFalse(thread.isAlive());
+        }
+
+        UsbNativeBufferIngress ingress = nativeBufferIngress(controller);
+        ingress.close();
+        assertTrue(ingress.awaitTermination(1, TimeUnit.SECONDS));
+    }
+
     private static void setRunning(TestController controller, boolean running) throws Exception
     {
         Field field = USBTunerController.class.getDeclaredField("mRunning");
@@ -654,6 +787,96 @@ class USBTunerControllerLifecycleTest
         protected void interruptUsbEventHandler()
         {
             //No native context is used by this lifecycle test.
+        }
+    }
+
+    /** Exercises the listener lifecycle with a fake native-owned transfer and independently controlled callbacks. */
+    private static class StreamingLifecycleController extends TestController
+    {
+        private final List<Thread> mEventThreads = new CopyOnWriteArrayList<>();
+        private final List<String> mLifecycleOrdering = new CopyOnWriteArrayList<>();
+        private final CountDownLatch mBlockedHandlerEntered = new CountDownLatch(1);
+        private final CountDownLatch mReleaseHandler = new CountDownLatch(1);
+        private final AtomicBoolean mBlockFirstHandler;
+        private final AtomicBoolean mCancellationRequested = new AtomicBoolean();
+        private final AtomicBoolean mReturnCancelledTransfers = new AtomicBoolean(true);
+        private final AtomicInteger mCancelCalls = new AtomicInteger();
+        private final TransferManager mTestTransfers;
+
+        private StreamingLifecycleController(boolean blockFirstHandler) throws Exception
+        {
+            this(blockFirstHandler, new LoggingTunerErrorListener());
+        }
+
+        private StreamingLifecycleController(boolean blockFirstHandler, ITunerErrorListener listener) throws Exception
+        {
+            super(listener);
+            mBlockFirstHandler = new AtomicBoolean(blockFirstHandler);
+            mTestTransfers = transferManager(this);
+            Field transfers = TransferManager.class.getDeclaredField("mAvailableTransfers");
+            transfers.setAccessible(true);
+            transfers.set(mTestTransfers, Collections.singletonList(null));
+            Field length = TransferManager.class.getDeclaredField("mExpectedTransferLengthBytes");
+            length.setAccessible(true);
+            length.setInt(mTestTransfers, 4);
+            setRunning(this, true);
+        }
+
+        @Override
+        int submitUsbTransfer(Transfer transfer)
+        {
+            mLifecycleOrdering.add("submit");
+            return super.submitUsbTransfer(transfer);
+        }
+
+        @Override
+        int cancelUsbTransfer(Transfer transfer)
+        {
+            mLifecycleOrdering.add("cancel");
+            mCancelCalls.incrementAndGet();
+            mCancellationRequested.set(true);
+            return LibUsb.SUCCESS;
+        }
+
+        @Override
+        protected Thread createUsbEventThread(Runnable runnable)
+        {
+            Thread thread = new Thread(runnable);
+            mEventThreads.add(thread);
+            return thread;
+        }
+
+        @Override
+        protected void handleUsbEvents(long timeoutMilliseconds)
+        {
+            if(mBlockFirstHandler.compareAndSet(true, false))
+            {
+                mBlockedHandlerEntered.countDown();
+
+                try
+                {
+                    mReleaseHandler.await();
+                }
+                catch(InterruptedException exception)
+                {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+
+            if(mReturnCancelledTransfers.get() && mCancellationRequested.compareAndSet(true, false))
+            {
+                mLifecycleOrdering.add("returned");
+                mTestTransfers.processTransfer(null);
+            }
+
+            LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(1));
+        }
+
+        @Override
+        protected void interruptUsbEventHandler()
+        {
+            //The test owns handler completion and uses no native USB context.
         }
     }
 
