@@ -241,8 +241,28 @@ class RadioReferenceHttpControllerTest
                 URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
                 HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
                 String loginBody = "{\"user_name\":\"test-user\",\"password\":\"catalog-test-password\",\"remember\":false}";
+                String availabilityPath = "/systems/talkgroups/availability?system_id=2001";
+                assertEquals(401, send(client, request(origin, availabilityPath).GET()).statusCode());
                 assertEquals("VALID_PREMIUM", data(send(client, jsonRequest(origin, "/session")
                     .PUT(HttpRequest.BodyPublishers.ofString(loginBody)))).at("/account/state").textValue());
+
+                JsonNode available = data(send(client, request(origin, availabilityPath).GET()));
+                assertTrue(available.path("has_talkgroups").asBoolean());
+                assertEquals(1, available.size(), "availability should return only its boolean result");
+                assertTrue(data(send(client, request(origin, availabilityPath).GET()))
+                    .path("has_talkgroups").asBoolean());
+                assertEquals(1, gateway.talkgroupReads.get(2001).get());
+                assertTrue(gateway.systemReads.isEmpty(), "availability must not load system details");
+                assertTrue(gateway.categoryReads.isEmpty(), "availability must not load categories");
+                assertEquals(400, send(client,
+                    request(origin, availabilityPath + "&limit=1").GET()).statusCode());
+                assertEquals(400, send(client,
+                    request(origin, "/systems/talkgroups/availability?system_id=0").GET()).statusCode());
+                gateway.emptyTalkgroups = true;
+                assertFalse(data(send(client,
+                    request(origin, "/systems/talkgroups/availability?system_id=2003").GET()))
+                    .path("has_talkgroups").asBoolean());
+                gateway.emptyTalkgroups = false;
 
                 String talkgroupsPath = "/systems/talkgroups/catalog?system_id=2001";
                 JsonNode first = data(send(client, request(origin, talkgroupsPath).GET()));
@@ -293,7 +313,8 @@ class RadioReferenceHttpControllerTest
                     .PUT(HttpRequest.BodyPublishers.ofString(
                         "{\"user_name\":\"invalid-user\",\"password\":\"invalid-password\",\"remember\":false}")));
                 assertEquals("INVALID_CREDENTIALS", data(rejectedLogin).at("/account/state").textValue());
-                for(String path: List.of(talkgroupsPath, talkgroupsPath + "&catalog_id=" + refreshedCatalogId,
+                for(String path: List.of(availabilityPath, talkgroupsPath,
+                    talkgroupsPath + "&catalog_id=" + refreshedCatalogId,
                     "/systems/details?system_id=2001", "/systems/sites/catalog?system_id=2001"))
                 {
                     HttpResponse<String> denied = send(client, request(origin, path).GET());
@@ -308,6 +329,8 @@ class RadioReferenceHttpControllerTest
                 assertEquals(400, send(client,
                     request(origin, talkgroupsPath + "&catalog_id=" + refreshedCatalogId).GET()).statusCode(),
                     "the previous account catalog must remain discarded after a new successful login");
+                assertTrue(data(send(client, request(origin, availabilityPath).GET()))
+                    .path("has_talkgroups").asBoolean());
                 JsonNode reloaded = data(send(client, request(origin, talkgroupsPath).GET()));
                 assertFalse(refreshedCatalogId.equals(reloaded.at("/catalog_id").textValue()));
                 assertEquals(3, gateway.talkgroupReads.get(2001).get());
@@ -643,7 +666,9 @@ class RadioReferenceHttpControllerTest
         private final Map<Integer,AtomicInteger> systemReads = new ConcurrentHashMap<>();
         private final Map<Integer,AtomicInteger> siteReads = new ConcurrentHashMap<>();
         private final Map<Integer,AtomicInteger> talkgroupReads = new ConcurrentHashMap<>();
+        private final Map<Integer,AtomicInteger> categoryReads = new ConcurrentHashMap<>();
         private volatile String alphaTag = "Dispatch";
+        private volatile boolean emptyTalkgroups;
         private List<FrequencyResult> namingFrequencyResults;
 
         @Override
@@ -741,6 +766,7 @@ class RadioReferenceHttpControllerTest
         public List<RemoteTalkgroup> talkgroups(int systemId)
         {
             talkgroupReads.computeIfAbsent(systemId, ignored -> new AtomicInteger()).incrementAndGet();
+            if(emptyTalkgroups) return List.of();
             return List.of(new RemoteTalkgroup(9001, 1201, alphaTag, "County dispatch", "D", 0, 701,
                 List.of("Law Dispatch")));
         }
@@ -748,6 +774,7 @@ class RadioReferenceHttpControllerTest
         @Override
         public List<RemoteTalkgroupCategory> talkgroupCategories(int systemId)
         {
+            categoryReads.computeIfAbsent(systemId, ignored -> new AtomicInteger()).incrementAndGet();
             return List.of(new RemoteTalkgroupCategory(701, systemId, "Public Safety"));
         }
 

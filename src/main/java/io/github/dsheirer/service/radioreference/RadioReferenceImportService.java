@@ -81,9 +81,11 @@ public final class RadioReferenceImportService
     private final Map<String,PendingNameLookup> mPendingNameLookups = new HashMap<>();
     private final Map<String,RemoteCatalog> mTalkgroupCatalogs = new LinkedHashMap<>();
     private final Map<Integer,RemoteCatalog> mSystemTalkgroupCatalogs = new LinkedHashMap<>();
+    private final Map<Integer,List<RemoteTalkgroup>> mRawTalkgroups = new LinkedHashMap<>();
     private final Map<Integer,TrunkedSystemDetails> mSystemDetails = new LinkedHashMap<>();
     private final Map<Integer,List<TrunkedSiteDetails>> mSiteCatalogs = new LinkedHashMap<>();
     private final Map<Integer,CompletableFuture<RemoteCatalog>> mTalkgroupLoads = new HashMap<>();
+    private final Map<Integer,CompletableFuture<List<RemoteTalkgroup>>> mRawTalkgroupLoads = new HashMap<>();
     private final Map<Integer,CompletableFuture<TrunkedSystemDetails>> mSystemLoads = new HashMap<>();
     private final Map<Integer,CompletableFuture<List<TrunkedSiteDetails>>> mSiteLoads = new HashMap<>();
     private long mSessionGeneration;
@@ -666,6 +668,19 @@ public final class RadioReferenceImportService
             categories);
     }
 
+    /** Checks only the talkgroup source; the later import reuses this account-scoped download. */
+    public TalkgroupAvailability talkgroupAvailability(int systemId) throws RadioReferenceDirectoryException
+    {
+        positive(systemId, "system_id");
+        requireCatalogSession();
+        synchronized(this)
+        {
+            RemoteCatalog catalog = mSystemTalkgroupCatalogs.get(systemId);
+            if(catalog != null) return new TalkgroupAvailability(!catalog.talkgroups().isEmpty());
+        }
+        return new TalkgroupAvailability(!rawTalkgroups(systemId, false).isEmpty());
+    }
+
     /** Loads the catalog independently, then optionally annotates it against an Alias List. */
     public TalkgroupPage talkgroupCatalog(int systemId, Long aliasListId, String catalogId)
         throws RadioReferenceDirectoryException
@@ -679,7 +694,7 @@ public final class RadioReferenceImportService
         positive(systemId, "system_id");
         RemoteCatalog catalog = refresh || catalogId == null || catalogId.isBlank() ?
             cachedCatalog(systemId, refresh, mSystemTalkgroupCatalogs, mTalkgroupLoads,
-                () -> loadTalkgroupCatalog(systemId)) : requireTalkgroupCatalog(catalogId, systemId);
+                () -> loadTalkgroupCatalog(systemId, refresh)) : requireTalkgroupCatalog(catalogId, systemId);
         DecoderPlan decoder = systemDecoder(catalog.system());
         requireSupported(decoder);
         if(aliasListId == null)
@@ -698,14 +713,14 @@ public final class RadioReferenceImportService
     }
 
     /** Captures upstream data once; preview and apply reuse it without further RadioReference reads. */
-    private RemoteCatalog loadTalkgroupCatalog(int systemId) throws RadioReferenceDirectoryException
+    private RemoteCatalog loadTalkgroupCatalog(int systemId, boolean refresh) throws RadioReferenceDirectoryException
     {
         long started = System.nanoTime();
         TrunkedSystemDetails system = systemDetails(systemId, false);
         long systemLoaded = System.nanoTime();
         DecoderPlan decoder = systemDecoder(system);
         requireSupported(decoder);
-        List<RemoteTalkgroup> talkgroups = mDirectory.allTalkgroups(systemId);
+        List<RemoteTalkgroup> talkgroups = rawTalkgroups(systemId, refresh);
         long talkgroupsLoaded = System.nanoTime();
         List<RemoteTalkgroupCategory> categories = optionalCategories(systemId);
         mLog.info("RadioReference catalog loaded: system {} ms, talkgroups {} ms, categories {} ms, {} rows",
@@ -714,6 +729,13 @@ public final class RadioReferenceImportService
             Duration.ofNanos(System.nanoTime() - talkgroupsLoaded).toMillis(), talkgroups.size());
         RemoteCatalog catalog = new RemoteCatalog(UUID.randomUUID().toString(), system, talkgroups, categories);
         return catalog;
+    }
+
+    private List<RemoteTalkgroup> rawTalkgroups(int systemId, boolean refresh)
+        throws RadioReferenceDirectoryException
+    {
+        return cachedCatalog(systemId, refresh, mRawTalkgroups, mRawTalkgroupLoads,
+            () -> List.copyOf(mDirectory.allTalkgroups(systemId)));
     }
 
     private synchronized RemoteCatalog requireTalkgroupCatalog(String catalogId, int systemId)
@@ -734,9 +756,11 @@ public final class RadioReferenceImportService
         mSessionGeneration++;
         mTalkgroupCatalogs.clear();
         mSystemTalkgroupCatalogs.clear();
+        mRawTalkgroups.clear();
         mSystemDetails.clear();
         mSiteCatalogs.clear();
         cancelCatalogLoads(mTalkgroupLoads);
+        cancelCatalogLoads(mRawTalkgroupLoads);
         cancelCatalogLoads(mSystemLoads);
         cancelCatalogLoads(mSiteLoads);
         mPendingTalkgroups.clear();
@@ -1738,6 +1762,8 @@ public final class RadioReferenceImportService
             changes = List.copyOf(changes);
         }
     }
+
+    public record TalkgroupAvailability(boolean hasTalkgroups) {}
 
     public record TalkgroupPage(long revision, List<TalkgroupRow> items, int offset, Integer nextOffset,
                                 int totalItems, List<RemoteTalkgroupCategory> categories, String catalogId)

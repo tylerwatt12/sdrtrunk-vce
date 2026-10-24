@@ -270,6 +270,15 @@ public final class RadioReferenceHttpController
                         page.nextOffset(), page.totalItems(), categories.items()));
                 }
             }
+            else if((PATH + "/systems/talkgroups/availability").equals(path))
+            {
+                requireMethod(exchange, "GET");
+                requireEmptyBody(exchange, "GET");
+                Map<String,String> query = query(exchange, "system_id");
+                ensureStoredSession();
+                ApiHttpResponse.sendData(exchange, 200, requireImport().talkgroupAvailability(
+                    positiveInt(query.get("system_id"), "system_id")));
+            }
             else if((PATH + "/systems/talkgroups/catalog").equals(path))
             {
                 requireMethod(exchange, "GET");
