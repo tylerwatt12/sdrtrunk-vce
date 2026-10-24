@@ -36,6 +36,10 @@ const snapshot = {
 };
 
 async function openLive(page, showOnlyActiveTrunkedChannels = false, liveSnapshot = snapshot, theme = 'light') {
+  await page.addInitScript(() => {
+    for (const [id, version] of [['welcome', 1], ['live', 3]])
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:operator:live-regression-fixture:${id}:${version}`, '1');
+  });
   let diagnosticSubscriptions = 0;
   await page.addInitScript((liveSnapshot) => {
     const originalFetch = window.fetch.bind(window);
@@ -68,7 +72,7 @@ async function openLive(page, showOnlyActiveTrunkedChannels = false, liveSnapsho
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
-        username: 'operator', tier: 'admin', primary: true,
+        username: 'operator', tier: 'admin', primary: true, guide_dismissal_scope: 'live-regression-fixture',
         capabilities: { live: true, radio: true, 'call-audio': true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: {

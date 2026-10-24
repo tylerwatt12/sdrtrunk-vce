@@ -32,7 +32,9 @@ function closingBrace(start) {
 function functionSource(name) {
   const start = source.indexOf(`function ${name}(`);
   assert.notEqual(start, -1, `Missing ${name}`);
-  const open = source.indexOf('{', start);
+  // Defaults may contain object literals; the body follows the parameter list.
+  const open = source.indexOf(') {', start) + 2;
+  assert.ok(open > start, `Missing body for ${name}`);
   return source.slice(start, closingBrace(open) + 1);
 }
 
@@ -451,7 +453,8 @@ assert.match(channels, /selectRow\(displayed, requestedRow\)/,
   'A conventional deep link must select the corresponding row');
 assert.match(channels, /livePickerNavigationIndex\(event\.key, index, buttons\.length\)/,
   'The Live view picker must provide predictable keyboard navigation');
-assert.match(channels, /storeLiveUiState\(\{ picker_collapsed: pickerCollapsed \}\)/,
+assert.match(channels, /const saveUiState = options\.storeUiState \|\| storeLiveUiState/);
+assert.match(channels, /saveUiState\(\{ picker_collapsed: pickerCollapsed \}\)/,
   'The desktop picker collapse preference must persist across Live visits');
 assert.match(channels, /picker\.closest\('\.live-split'\)\?\.classList\.toggle\('picker-collapsed', pickerCollapsed\)/,
   'Collapsing the picker must release its grid width to the selected channel workspace');
@@ -601,7 +604,8 @@ const workspaceResizer = functionSource('liveWorkspaceResizer');
 assert.match(workspaceResizer, /separator\.setAttribute\('role', 'separator'\)/,
   'The panel divider must expose separator semantics');
 assert.match(workspaceResizer, /separator\.setAttribute\('aria-orientation', 'horizontal'\)/);
-assert.match(workspaceResizer, /storeLiveUiState\(\{ details_panel_percent: detailsPercent \}\)/,
+assert.match(workspaceResizer, /const saveUiState = options\.storeUiState \|\| storeLiveUiState/);
+assert.match(workspaceResizer, /saveUiState\(\{ details_panel_percent: detailsPercent \}\)/,
   'The chosen Live panel ratio must persist in the existing Live UI state');
 assert.match(workspaceResizer, /\['ArrowUp', 'ArrowDown', 'Home', 'End'\]/,
   'The panel divider must support keyboard resizing');
@@ -624,10 +628,12 @@ assert.match(workspaceResizer, /activePointerCleanup\?\.\(\)/,
   'Page cleanup must end an in-progress resize');
 
 const renderLive = functionSource('renderLive');
-assert.match(renderLive, /const workspaceResizer = liveWorkspaceResizer\(rightWorkspace\)/,
+assert.match(renderLive, /const workspaceResizer = liveWorkspaceResizer\(rightWorkspace, options\)/,
   'Live must create one resizer for its right-side workspace');
-assert.match(renderLive, /pageConnections\.add\(workspaceResizer\)/,
+assert.match(renderLive, /registerConnection\(workspaceResizer\)/,
   'The Live resizer must participate in page lifecycle cleanup');
+assert.match(renderLive, /else pageConnections\.add\(connection\)/,
+  'Normal Live controllers must still use the page connection lifecycle');
 assert.match(renderLive,
   /rightWorkspace\.append\(channels\.element, workspaceResizer\.element, eventsPanel\.element\)/,
   'The separator must render between the channel and details panels');

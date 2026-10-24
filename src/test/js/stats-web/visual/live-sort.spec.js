@@ -45,6 +45,10 @@ function densitySnapshot() {
 }
 
 async function openLive(page, theme = 'light', presentation = {}, liveSnapshot = snapshot) {
+  await page.addInitScript(() => {
+    for (const [id, version] of [['welcome', 1], ['live', 3]])
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:operator:live-regression-fixture:${id}:${version}`, '1');
+  });
   let revision = 1;
   let preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = theme;
@@ -100,7 +104,7 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
     const pathname = new URL(request.url()).pathname;
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
-        username: 'operator', tier: 'admin', primary: true,
+        username: 'operator', tier: 'admin', primary: true, guide_dismissal_scope: 'live-regression-fixture',
         capabilities: { live: true, radio: true, 'call-audio': true, 'user-settings': true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       if (request.method() === 'PUT') {

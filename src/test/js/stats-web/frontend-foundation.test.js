@@ -999,7 +999,8 @@ async function main() {
   assert.match(liveSettingsActivationSource, /if \(!button\.isConnected\) return/);
   assert.match(liveSettingsActivationSource, /openLivePresentationSettings\(returnFocusSelector\)/);
   assert.match(liveChannelsSource, /section\('Live Channels', host, titleActions\)/);
-  assert.match(liveChannelsSource, /let requestedChannel = route\.get\('channel'\)/);
+  assert.match(liveChannelsSource, /let requestedChannel = guideMode \? null : route\.get\('channel'\)/,
+    'Normal Live deep links select their channel while isolated examples leave the real route alone');
   assert.match(liveChannelsSource, /liveRequestedChannelMatch\(value, requestedChannel\)/);
   assert.match(liveChannelsSource, /if \(requestedMatch\.row\) \{[\s\S]*selectRow\(displayed, requestedRow\)/,
     'A conventional Live channel deep link must select the matching row');
@@ -1017,7 +1018,8 @@ async function main() {
   assert.match(liveChannelsSource, /selectedViewHeader\?\.replaceChildren\(selectedViewLead, titleActions\)/);
   assert.match(liveChannelsSource, /pickerCollapse\.setAttribute\('aria-controls', picker\.id\)/);
   assert.doesNotMatch(liveChannelsSource, /pickerActions\.(?:append|prepend)\(pickerCollapse\)/);
-  assert.match(liveChannelsSource, /storeLiveUiState\(\{ picker_collapsed: pickerCollapsed \}\)/);
+  assert.match(liveChannelsSource, /const saveUiState = options\.storeUiState \|\| storeLiveUiState/);
+  assert.match(liveChannelsSource, /saveUiState\(\{ picker_collapsed: pickerCollapsed \}\)/);
   assert.match(appSource, /table\(tableController\.rows\(\), declaredColumns/);
   assert.match(appSource, /rebuildTable\(null, reopenLayoutMenu, restoreLayoutFocus\)/);
   assert.match(appSource, /layoutMenuOpen: reopenLayoutMenu/);
@@ -1448,8 +1450,9 @@ async function main() {
   assert.doesNotMatch(appSource, /function liveActivityHistoryNotice\(/);
   assert.doesNotMatch(renderLiveSource, /historyNotice/);
   assert.match(renderLiveSource, /node\('div', 'live-right-workspace'\)/);
-  assert.match(renderLiveSource, /const workspaceResizer = liveWorkspaceResizer\(rightWorkspace\)/);
-  assert.match(renderLiveSource, /pageConnections\.add\(workspaceResizer\)/);
+  assert.match(renderLiveSource, /const workspaceResizer = liveWorkspaceResizer\(rightWorkspace, options\)/);
+  assert.match(renderLiveSource, /registerConnection\(workspaceResizer\)/);
+  assert.match(renderLiveSource, /else pageConnections\.add\(connection\)/);
   assert.match(renderLiveSource,
     /split\.classList\.toggle\('picker-collapsed', channels\.pickerCollapsed\)/);
   assert.match(renderLiveSource,
@@ -1581,7 +1584,8 @@ async function main() {
   assert.match(tunerAllocationRenderer, /recordList: true/);
   assert.match(tunerAllocationRenderer, /sortable: false/);
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
-  const tableCalls = functionCalls(appSource, 'table');
+  // Live panes inject the same production table builder for isolated examples.
+  const tableCalls = [...functionCalls(appSource, 'table'), ...functionCalls(appSource, 'makeTable')];
   assert.equal(tableCalls.length, 22, 'Every application table call must be audited');
   const rrGuidePreparation = functionBinding(appSource, 'prepareWorkspaceGuideSample');
   assert.match(rrGuidePreparation, /return table\(rows, columns, emptyText, \{ \.\.\.options, controller, presentation: true \}\)/,

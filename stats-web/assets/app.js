@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=21';
+import { createGuideController } from './guides/controller.js?v=22';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -7921,7 +7921,10 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const streaming = view === 'streaming';
     const tuners = view === 'tuners';
     const spectrum = view === 'tuner-spectrum';
-    const [feature, presentation] = await Promise.all(spectrum ? [
+    const live = view === 'live';
+    const [feature, presentation] = await Promise.all(live ? [
+      Promise.resolve(null), import('./guides/live-presentation.js?v=1')
+    ] : spectrum ? [
       Promise.resolve(null), import('./guides/spectrum-presentation.js?v=2')
     ] : tuners ? [
       Promise.resolve(null), import('./guides/tuners-presentation.js?v=1')
@@ -7931,9 +7934,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       import('./features/radioreference-import.js?v=33'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
-    const sample = (spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
+    const sample = (live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
       presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal, section });
-    if (spectrum) releases.push(() => sample.dispose());
+    if (spectrum || live) releases.push(() => sample.dispose());
     if (streaming && typeof sample.requestOperationalPreference !== 'function') {
       throw new Error('The Streaming guide settings could not be prepared.');
     }
@@ -7958,7 +7961,31 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     };
     let protectedRoots;
     let routingHost = null;
-    if (spectrum) {
+    if (live) {
+      const pageRoots = [];
+      const guardedConnection = name => (...args) => {
+        if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
+        const connection = sample[name](...args);
+        sampleConnections.add(connection);
+        return connection;
+      };
+      workspace = await renderLive({
+        guideMode: true, renderContext: { ...renderContext, signal: context.signal },
+        activityFeed: guardedConnection('activityFeed'), liveConnection: guardedConnection('liveConnection'),
+        connectionFactory: guardedConnection('connectionFactory'), table: sampleTable,
+        selectedTableId: sample.selectedTableId, selectedRowKey: sample.selectedRowKey,
+        mount: (...nodes) => {
+          if (closed || !context.isCurrent()) return;
+          const roots = nodes.filter(node => node instanceof Element);
+          pageRoots.push(...roots);
+          roots.forEach(root => releases.push(guideSampleData.register('live-workspace', () => {}, { root })));
+          content.replaceChildren(...nodes);
+        },
+        registerConnection: connection => sampleConnections.add(connection)
+      });
+      if (closed || !context.isCurrent()) { workspace?.dispose(); restore(); return restore; }
+      protectedRoots = pageRoots;
+    } else if (spectrum) {
       const pageRoots = [];
       const sampleApi = async (...args) => {
         if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
@@ -8092,7 +8119,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
 }
 
 async function preparePageGuideSample(view, section, context) {
-  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
+  if (['radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live'].includes(view)) return prepareWorkspaceGuideSample(view, section, context);
   if (view === 'channel-setup') return prepareChannelGuideSample(section, context);
   if (!['aliases', 'scan-lists'].includes(view) || context.signal.aborted) return () => {};
   const scanListsTour = view === 'scan-lists';
@@ -10867,8 +10894,10 @@ function liveDetailsPanelPercent(value) {
   return Math.max(15, Math.min(65, Math.round(value)));
 }
 
-function liveWorkspaceResizer(workspace) {
-  let detailsPercent = liveDetailsPanelPercent(liveUiState().details_panel_percent);
+function liveWorkspaceResizer(workspace, options = {}) {
+  const savedUiState = options.uiState || liveUiState();
+  const saveUiState = options.storeUiState || storeLiveUiState;
+  let detailsPercent = liveDetailsPanelPercent(savedUiState.details_panel_percent);
   let activePointerCleanup = null;
   const separator = node('div', 'live-workspace-resizer');
   separator.setAttribute('role', 'separator');
@@ -10897,7 +10926,7 @@ function liveWorkspaceResizer(workspace) {
     detailsPercent = liveDetailsPanelPercent(100 - primaryHeight / availableHeight * 100);
     apply();
   };
-  const persist = () => storeLiveUiState({ details_panel_percent: detailsPercent });
+  const persist = () => saveUiState({ details_panel_percent: detailsPercent });
 
   separator.addEventListener('pointerdown', (event) => {
     if (activePointerCleanup || event.button !== 0 ||
@@ -13784,6 +13813,7 @@ function liveDetailFilterController(options) {
   };
 
   const openFilterModal = () => {
+    if (options.guideMode) return;
     const catalog = model.catalog();
     if (!catalog) return;
     const modalBody = node('div', 'live-filter-editor');
@@ -13979,7 +14009,11 @@ function liveDetailFilterController(options) {
   };
 }
 
-function liveMessagesPane() {
+function liveMessagesPane(options = {}) {
+  const savedUiState = options.uiState || liveUiState();
+  const saveUiState = options.storeUiState || storeLiveUiState;
+  const makeTable = options.table || table;
+  const connect = options.liveConnection || liveConnection;
   const clockFormatter = new Intl.DateTimeFormat([], {
     hour: '2-digit', minute: '2-digit', second: '2-digit'
   });
@@ -14002,21 +14036,21 @@ function liveMessagesPane() {
   const actions = node('div', 'live-detail-pane-actions');
   const columnsHost = node('div', 'live-detail-columns');
   const filters = liveDetailFilterController({
-    noun: 'messages',
+    noun: 'messages', guideMode: options.guideMode,
     title: 'Message filters',
     typeHeading: 'Message types',
     searchPlaceholder: 'Search message text',
     timeslots: true,
     validity: true,
-    initialState: liveUiState().message_filters,
+    initialState: savedUiState.message_filters,
     onChange: () => scheduleRender(),
-    onStateChange: (state) => storeLiveUiState({ message_filters: state })
+    onStateChange: (state) => saveUiState({ message_filters: state })
   });
   actions.append(columnsHost, filters.element);
   const gap = node('div', 'live-detail-gap');
   gap.hidden = true;
   gap.setAttribute('role', 'status');
-  const messagesTable = table([], [
+  const messagesTable = makeTable([], [
     { id: 'time', label: 'Time', reconcileKey: (message) => message.timestamp_ms, render: (message) => {
       const date = new Date(Number(message.timestamp_ms));
       const text = Number.isFinite(date.getTime()) ? clockFormatter.format(date) : '';
@@ -14132,7 +14166,7 @@ function liveMessagesPane() {
     expectedSubscriptionId = randomLiveClientId();
     parameters.subscription_id = expectedSubscriptionId;
     transportReady = false;
-    stream = liveConnection('decode_messages', parameters);
+    stream = connect('decode_messages', parameters);
     stream.addEventListener('decode_message', (event) => {
       if (epoch !== streamEpoch || !transportReady) return;
       const value = JSON.parse(event.data);
@@ -14176,6 +14210,7 @@ function liveMessagesPane() {
     element: pane,
     actions,
     select,
+    table: messagesTable,
     setActive(value) {
       const next = value === true;
       if (active && !next) closeStream();
@@ -14199,7 +14234,8 @@ function liveMessagesPane() {
   };
 }
 
-function liveChannelPane() {
+function liveChannelPane(options = {}) {
+  const connect = options.connectionFactory || binaryFrameConnection;
   let selection = null;
   let active = false;
   let collapsed = false;
@@ -14237,7 +14273,7 @@ function liveChannelPane() {
   actions.append(connection);
 
   const diagnostic = (title, ariaLabel) => {
-    const card = node('section', 'channel-diagnostic-card ui-surface');
+    const card = node('section', 'channel-diagnostic-card ui-surface ui-surface-soft');
     const header = node('div', 'channel-diagnostic-header ui-surface-header');
     const plot = node('div', 'channel-diagnostic-plot');
     const canvas = node('canvas', 'channel-diagnostic-canvas');
@@ -14520,7 +14556,7 @@ function liveChannelPane() {
     const parameters = liveDetailTransportParameters(selection, true);
     parameters.subscription_id = expectedSubscriptionId;
     parameters.strength_encoding = 'packed6';
-    stream = binaryFrameConnection('channel_diagnostics', parameters, {
+    stream = connect('channel_diagnostics', parameters, {
       onOpen: () => {
         if (epoch === streamEpoch) {
           awaitingState = true;
@@ -14644,6 +14680,7 @@ function liveChannelPane() {
     element: pane,
     actions,
     select,
+    plots: diagnosticGrid,
     setActive(value) { active = value; sync(); scheduleDraw(); },
     setCollapsed(value) { collapsed = value; sync(); },
     setPaused(value) { paused = value; sync(); },
@@ -18814,8 +18851,11 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   return controller;
 }
 
-function liveEventsPanel(onCollapse) {
-  const savedUiState = liveUiState();
+function liveEventsPanel(onCollapse, options = {}) {
+  const savedUiState = options.uiState || liveUiState();
+  const saveUiState = options.storeUiState || storeLiveUiState;
+  const makeTable = options.table || table;
+  const connect = options.liveConnection || liveConnection;
   const events = new Map();
   const order = [];
   let selection = null;
@@ -18859,21 +18899,21 @@ function liveEventsPanel(onCollapse) {
   const eventActions = node('div', 'live-detail-pane-actions');
   const eventColumnsHost = node('div', 'live-detail-columns');
   const filters = liveDetailFilterController({
-    noun: 'events',
+    noun: 'events', guideMode: options.guideMode,
     leafLabel: (key) => activityOptionLabel(key, 'EVENT'),
     title: 'Event filters',
     typeHeading: 'Event types',
     searchPlaceholder: 'Search parties or details',
     initialState: savedUiState.event_filters,
     onChange: () => scheduleRender(),
-    onStateChange: (state) => storeLiveUiState({ event_filters: state })
+    onStateChange: (state) => saveUiState({ event_filters: state })
   });
   eventActions.append(eventColumnsHost, filters.element);
   const eventGap = node('div', 'live-detail-gap');
   eventGap.hidden = true;
   eventGap.setAttribute('role', 'status');
 
-  const eventsTable = table([], [
+  const eventsTable = makeTable([], [
     { id: 'time', label: 'Time', className: 'live-event-time', render: (event) => {
       const started = new Date(Number(event.time_start_ms));
       const text = Number.isFinite(started.getTime()) ? started.toLocaleTimeString([], {
@@ -18915,8 +18955,8 @@ function liveEventsPanel(onCollapse) {
   });
   eventPane.append(eventGap, eventsTable);
 
-  const messagesController = liveMessagesPane();
-  const channelController = liveChannelPane();
+  const messagesController = liveMessagesPane(options);
+  const channelController = liveChannelPane(options);
   const messagesPane = messagesController.element;
   const channelPane = channelController.element;
   const paneActions = {
@@ -19012,7 +19052,7 @@ function liveEventsPanel(onCollapse) {
     parameters.subscription_id = subscriptionId;
     expectedSubscriptionId = subscriptionId;
     transportReady = false;
-    stream = liveConnection('decode_events', parameters);
+    stream = connect('decode_events', parameters);
     stream.addEventListener('decode_event', (event) => {
       if (epoch !== streamEpoch || !transportReady) return;
       const value = JSON.parse(event.data);
@@ -19066,7 +19106,7 @@ function liveEventsPanel(onCollapse) {
     const nextEventsActive = id === 'events';
     if (eventsActive && !nextEventsActive) closeStream();
     eventsActive = nextEventsActive;
-    if (persist) storeLiveUiState({ details_active_tab: id });
+    if (persist) saveUiState({ details_active_tab: id });
     if (persist && collapsed) {
       setCollapsed(false, collapsePreferenceExplicit);
     } else {
@@ -19113,7 +19153,7 @@ function liveEventsPanel(onCollapse) {
     messagesController.setCollapsed(collapsed);
     channelController.setCollapsed(collapsed);
     onCollapse(collapsed);
-    if (persist) storeLiveUiState({ details_collapsed: collapsed });
+    if (persist) saveUiState({ details_collapsed: collapsed });
     sync();
   };
   collapse.addEventListener('click', () => {
@@ -19141,6 +19181,10 @@ function liveEventsPanel(onCollapse) {
   return {
     element: panel,
     select,
+    selectPane: id => selectPane(id, false),
+    targets: { 'detail-views': tabBar, events: eventsTable, pause, 'event-filters': filters.element.querySelector('button'),
+      'messages-tab': tabBar.querySelector('[data-tab="messages"]'), messages: messagesController.table,
+      'channel-tab': tabBar.querySelector('[data-tab="channel"]'), channel: channelController.plots },
     close() {
       closeStream();
       if (renderTimer !== null) window.clearTimeout(renderTimer);
@@ -19496,14 +19540,20 @@ function createLivePresentationScheduler(paint) {
   };
 }
 
-function liveChannelsSection(onSelectionChange) {
-  const savedUiState = liveUiState();
-  liveChannelActivityActiveTableId = String(savedUiState.active_channel_table_id || '').trim() || null;
+function liveChannelsSection(onSelectionChange, options = {}) {
+  const guideMode = options.guideMode === true;
+  const savedUiState = options.uiState || liveUiState();
+  const saveUiState = options.storeUiState || storeLiveUiState;
+  const makeTable = options.table || table;
+  const registerConnection = options.registerConnection || (connection => pageConnections.add(connection));
+  const subscribeActivity = options.activityFeed || subscribeLiveChannelActivity;
+  let preferredTableId = String(savedUiState.active_channel_table_id || '').trim() || null;
+  if (!guideMode) liveChannelActivityActiveTableId = preferredTableId;
   let pickerCollapsed = savedUiState.picker_collapsed === true;
   const tables = new Map();
   const tabNodes = new Map();
   const dismissedStoppedTables = new Set();
-  const presentation = activeUserPreferences().presentation;
+  const presentation = options.presentation || activeUserPreferences().presentation;
   const decodeDisplay = {
     show_control: presentation.show_control_decode_quality,
     show_voice: presentation.show_voice_decode_quality,
@@ -19658,7 +19708,9 @@ function liveChannelsSection(onSelectionChange) {
   const presentationSettings = iconButton('icon-live-presentation', 'Live presentation settings',
     'ui-button ui-button-secondary ui-icon-button section-title-icon live-presentation-settings');
   presentationSettings.id = 'live-presentation-settings';
-  presentationSettings.addEventListener('click', () => void activateLivePresentationSettings(presentationSettings));
+  presentationSettings.addEventListener('click', () => {
+    if (!guideMode) void activateLivePresentationSettings(presentationSettings);
+  });
   titleActions.append(presentationSettings);
   let activeTableId = null;
   let applyingSnapshot = false;
@@ -19667,9 +19719,12 @@ function liveChannelsSection(onSelectionChange) {
   let pickerTabSequence = 0;
   let selectedViewSignature = '';
   let pickerSummaryDirty = false;
-  const liveTable = table([], columns, presentation.show_only_active_trunked_channels ?
+  const liveTable = makeTable([], columns, presentation.show_only_active_trunked_channels ?
     'No active channels observed' : 'No channels observed', {
     type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
+    ...(guideMode ? { layout: { ...tableDefaults.layout('live-channels', columns), column_widths: {
+      status: 68, tags: 56, channel: 72, frequency: 88, signal: 92, 'decode-health': 110,
+      source: 128, target: 132, decoder: 62 } } } : {}),
     sortable: false,
     rowClass: activityRowClass,
     onRowClick: (row) => {
@@ -19732,7 +19787,7 @@ function liveChannelsSection(onSelectionChange) {
     pickerCollapse.setAttribute('aria-expanded', String(!pickerCollapsed));
     pickerCollapse.setAttribute('aria-label', label);
     pickerCollapse.title = label;
-    if (persist) storeLiveUiState({ picker_collapsed: pickerCollapsed });
+    if (persist) saveUiState({ picker_collapsed: pickerCollapsed });
   };
   pickerCollapse.addEventListener('click', () => setPickerCollapsed(!pickerCollapsed));
   setPickerCollapsed(pickerCollapsed, false);
@@ -19840,8 +19895,9 @@ function liveChannelsSection(onSelectionChange) {
     if (!value) return;
     activeTableId = tableId;
     clearSelection();
-    liveChannelActivityActiveTableId = tableId;
-    storeLiveUiState({ active_channel_table_id: tableId });
+    preferredTableId = tableId;
+    if (!guideMode) liveChannelActivityActiveTableId = tableId;
+    saveUiState({ active_channel_table_id: tableId });
     const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
     liveTable.tableController.replaceRows(displayed.rows);
     const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
@@ -19857,7 +19913,7 @@ function liveChannelsSection(onSelectionChange) {
     updateSelectedView(value);
     if (closeMobilePicker) closePicker(true);
   };
-  let requestedChannel = route.get('channel');
+  let requestedChannel = guideMode ? null : route.get('channel');
 
   const reconcileSelection = (displayed) => {
     if (!selection) return;
@@ -19879,8 +19935,8 @@ function liveChannelsSection(onSelectionChange) {
     const value = tables.get(activeTableId);
     if (value) updateVisibleRows(value);
   };
-  sourceNamePresentationRenderer = refreshSourceNames;
-  pageConnections.add({ close: () => {
+  if (!guideMode) sourceNamePresentationRenderer = refreshSourceNames;
+  registerConnection({ close: () => {
     if (sourceNamePresentationRenderer === refreshSourceNames) sourceNamePresentationRenderer = null;
   } });
 
@@ -20021,8 +20077,8 @@ function liveChannelsSection(onSelectionChange) {
       requestedChannel = null;
       route.delete('channel');
       window.history.replaceState({}, '', currentHref());
-    } else if (!applyingSnapshot && !activeTableId && (!liveChannelActivityActiveTableId ||
-      liveChannelActivityActiveTableId === value.table_id)) {
+    } else if (!applyingSnapshot && !activeTableId && (!preferredTableId ||
+      preferredTableId === value.table_id)) {
       showTable(tables.has('conventional') ? 'conventional' : value.table_id);
     }
     else updateVisibleRows(value);
@@ -20030,7 +20086,7 @@ function liveChannelsSection(onSelectionChange) {
 
   const showFallbackTable = () => {
     if (activeTableId) return;
-    const preferred = requestedChannel ? null : liveChannelActivityActiveTableId;
+    const preferred = requestedChannel ? null : preferredTableId;
     const fallback = tables.has(preferred) ? preferred :
       (tables.has('conventional') ? 'conventional' : tables.keys().next().value);
     if (fallback) showTable(fallback);
@@ -20071,7 +20127,7 @@ function liveChannelsSection(onSelectionChange) {
       pickerSummaryDirty = false;
     }
   });
-  pageConnections.add(presentationScheduler);
+  registerConnection(presentationScheduler);
   const receiveTable = (value) => {
     if (!value?.table_id) return;
     if (dismissedStoppedTables.has(value.table_id)) {
@@ -20092,7 +20148,7 @@ function liveChannelsSection(onSelectionChange) {
     else presentationScheduler.discard(tableId);
   };
 
-  subscribeLiveChannelActivity({
+  const activitySubscription = subscribeActivity({
     snapshot: (snapshot) => {
       const values = Array.isArray(snapshot?.tables) ? snapshot.tables : [];
       const tableIds = new Set(values.map((value) => String(value?.table_id || '')).filter(Boolean));
@@ -20116,27 +20172,109 @@ function liveChannelsSection(onSelectionChange) {
       connection.className = 'badge ui-pill state-stale';
     }
   });
-  return { element: block, picker, pickerCollapsed };
+  registerConnection(activitySubscription);
+  return {
+    element: block, picker, pickerCollapsed,
+    targets: { views: picker, presentation: presentationSettings },
+    selectGuideChannel(tableId, rowKey = null) {
+      if (!guideMode || !tables.has(tableId)) return false;
+      const value = tables.get(tableId);
+      const row = rowKey ? value.rows?.find(row => row.key === rowKey) : liveCurrentControlRow(value);
+      if (!row) return false;
+      if (activeTableId !== tableId) showTable(tableId);
+      selectRow(value, row);
+      return true;
+    },
+    guideRow(rowKey) {
+      return liveTable.querySelector(`tbody tr[data-id="${CSS.escape(String(rowKey))}"]`);
+    }
+  };
 }
 
-async function renderLive() {
-  const renderContext = captureRenderContext();
+async function renderLive(workspaceOptions = {}) {
+  const guideMode = workspaceOptions.guideMode === true;
+  if (guideMode && ['activityFeed', 'liveConnection', 'connectionFactory', 'table', 'mount']
+    .some(key => typeof workspaceOptions[key] !== 'function')) {
+    throw new Error('Live examples require isolated activity and diagnostic transports.');
+  }
+  const renderContext = workspaceOptions.renderContext || captureRenderContext();
+  const scopedConnections = new Set();
+  const registerConnection = connection => {
+    if (!connection) return;
+    if (guideMode) {
+      scopedConnections.add(connection);
+      workspaceOptions.registerConnection?.(connection);
+    } else pageConnections.add(connection);
+  };
+  const sampleUiState = guideMode ? { details_panel_percent: 40, details_active_tab: 'events',
+    details_collapsed: false, picker_collapsed: false,
+    active_channel_table_id: workspaceOptions.selectedTableId } : null;
+  const options = guideMode ? { ...workspaceOptions, uiState: sampleUiState,
+    storeUiState: update => Object.assign(sampleUiState, update), registerConnection,
+    presentation: { ...activeUserPreferences().presentation, show_only_active_trunked_channels: false,
+      show_control_decode_quality: true, show_voice_decode_quality: true,
+      decode_quality_display_mode: 'compact', show_encryption_details: false } } : { registerConnection };
   const split = node('div', 'live-split');
   const rightWorkspace = node('div', 'live-right-workspace');
-  const workspaceResizer = liveWorkspaceResizer(rightWorkspace);
-  const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed));
-  pageConnections.add(eventsPanel);
-  pageConnections.add(workspaceResizer);
+  const workspaceResizer = liveWorkspaceResizer(rightWorkspace, options);
+  const eventsPanel = liveEventsPanel((collapsed) => split.classList.toggle('details-collapsed', collapsed), options);
+  registerConnection(eventsPanel);
+  registerConnection(workspaceResizer);
   const channels = liveChannelsSection((selection) => {
     eventsPanel.select(selection);
-  });
+  }, options);
   split.classList.toggle('picker-collapsed', channels.pickerCollapsed);
   channels.element.id = 'live-primary-panel';
   eventsPanel.element.id = 'live-details-panel';
   workspaceResizer.element.setAttribute('aria-controls', 'live-primary-panel live-details-panel');
   rightWorkspace.append(channels.element, workspaceResizer.element, eventsPanel.element);
   split.append(channels.picker, rightWorkspace);
-  beginPage(renderContext, split);
+  if (guideMode) {
+    split.dataset.guideExample = 'live';
+    const example = uiPill('Example data');
+    channels.element.querySelector('.live-channels-title-actions')?.prepend(example);
+    workspaceOptions.mount(split);
+  } else beginPage(renderContext, split);
+  let disposed = false;
+  return {
+    element: split,
+    async prepareGuide(section, context) {
+      if (!guideMode) return;
+      const voiceSections = new Set(['detail-views', 'events', 'pause', 'event-filters',
+        'messages-tab', 'messages', 'channel-tab', 'channel', 'workspace-size', 'presentation']);
+      const rowKey = voiceSections.has(section) ? workspaceOptions.selectedRowKey : null;
+      const started = performance.now();
+      while (!disposed && context.isCurrent() && !context.signal.aborted &&
+        !channels.selectGuideChannel(workspaceOptions.selectedTableId, rowKey)) {
+        if (performance.now() - started > 2500) throw new Error('The Live guide activity could not be prepared.');
+        await new Promise(resolve => window.setTimeout(resolve, 16));
+      }
+      if (disposed || context.signal.aborted || !context.isCurrent()) return;
+      const pane = ['channel', 'workspace-size', 'presentation'].includes(section) ? 'channel' :
+        ['messages', 'channel-tab'].includes(section) ? 'messages' : 'events';
+      eventsPanel.selectPane(pane);
+      // Let table reconciliation and the production canvases paint before placement.
+      await new Promise(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+      if (disposed || context.signal.aborted || !context.isCurrent()) return;
+      const sheriff = channels.guideRow(workspaceOptions.selectedRowKey);
+      const target = { ...channels.targets, ...eventsPanel.targets,
+        activity: sheriff,
+        'select-channel': sheriff, 'workspace-size': workspaceResizer.element };
+      // Highlight actual rendered reception cells, so CC and VC remain together.
+      if (section === 'reception') {
+        channels.element.querySelectorAll('[data-column="signal"], [data-column="decode-health"]')
+          .forEach(cell => { cell.dataset.guideTarget = 'lv-reception'; });
+      }
+      const element = target[section];
+      if (element && section !== 'reception') element.dataset.guideTarget = `lv-${section}`;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      scopedConnections.forEach(connection => connection.close?.());
+      scopedConnections.clear();
+    }
+  };
 }
 
 let p25VisualizerModulePromise = null;

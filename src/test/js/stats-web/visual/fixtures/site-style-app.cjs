@@ -323,8 +323,8 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
   // Most fixtures inspect existing page workflows. Tour tests opt into a fresh
   // account so onboarding does not cover the controls those fixtures exercise.
   if (!options.guides) await page.addInitScript(() => {
-    for (const id of ['welcome', 'channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${['tuners', 'streaming', 'radioreference'].includes(id) ? 3 : id === 'scan-lists' ? 6 : id === 'aliases' ? 5 : id === 'channel-setup' ? 3 : 1}`, '1');
+    for (const id of ['welcome', 'channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'live']) {
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${['tuners', 'streaming', 'radioreference', 'live'].includes(id) ? 3 : id === 'scan-lists' ? 6 : id === 'aliases' ? 5 : id === 'channel-setup' ? 3 : 1}`, '1');
     }
   });
   await page.addInitScript((snapshotValue) => {

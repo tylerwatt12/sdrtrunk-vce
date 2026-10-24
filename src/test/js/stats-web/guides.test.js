@@ -52,15 +52,15 @@ async function checkGuides(assetsRoot) {
   for (const { id } of definitions) {
     const guide = createGuideDefinition(id);
     assert.ok(guide.steps.length, 'Every Help button can show an authored guide or a useful placeholder.');
-    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum'].includes(id));
+    assert.equal(guide.authored, ['channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live'].includes(id));
     const overview = guide.steps[0];
     assert.equal(overview.id, 'overview');
     assert.equal(overview.overview, true);
     assert.ok(overview.title && overview.paragraphs.length, 'Each overview explains its page’s purpose.');
-    if (id === 'tuner-spectrum') {
+    if (['tuner-spectrum', 'live'].includes(id)) {
       assert.equal(overview.samplePresentation, true,
-        'Hardware-free Spectrum explicitly opts into a sample overview while keeping controls unhighlighted.');
-      assert.deepEqual(overview.samples, [{ id: 'tuner-spectrum-workspace', value: { section: 'overview' } }]);
+        'Hardware-free Live and Spectrum explicitly opt into sample overviews while keeping controls unhighlighted.');
+      assert.deepEqual(overview.samples, [{ id: `${id}-workspace`, value: { section: 'overview' } }]);
       assert.equal(typeof overview.prepare, 'function');
     } else {
       assert.equal(overview.samples, undefined, 'Other overviews leave real page data in place.');
@@ -83,6 +83,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('streaming').version, 3);
   assert.equal(createGuideDefinition('tuners').version, 3);
   assert.equal(createGuideDefinition('tuner-spectrum').version, 4);
+  assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
   const released = [];
@@ -806,6 +807,39 @@ async function checkGuides(assetsRoot) {
   scanListData.rows[0].name = 'Changed sample';
   assert.equal(getScanListsGuideData().rows[0].name, 'Fire Dispatch', 'Each step receives independent sample records.');
   await require('./spectrum-guide-data.test.js').checkSpectrumGuideData(assets);
+  await require('./live-guide-data.test.js').checkLiveGuideData(assets);
+
+  const liveTour = createGuideDefinition('live', {
+    documentValue: targetDocument,
+    preparePlayer: () => { prepared.push('live-player'); return () => released.push('live-player'); },
+    preparePage: async (view, section, context) => {
+      prepared.push([view, section, context]);
+      return () => released.push(section);
+    }
+  });
+  const liveSections = ['overview', 'views', 'activity', 'reception', 'select-channel', 'detail-views',
+    'events', 'pause', 'event-filters', 'messages-tab', 'messages', 'channel-tab', 'channel', 'workspace-size', 'presentation'];
+  assert.deepEqual(liveTour.steps.map(step => step.id), liveSections);
+  for (const step of liveTour.steps) {
+    if (!step.overview) assert.deepEqual(targetNames(step), [`lv-${step.id}`]);
+    const context = { registerLayer() {} };
+    const release = await step.prepare(context);
+    assert.deepEqual(prepared.splice(0), ['live-player', ['live', step.id, context]]);
+    release();
+    assert.deepEqual(released.splice(0), [step.id, 'live-player']);
+  }
+  for (const [opener, destination] of [['select-channel', 'detail-views'], ['messages-tab', 'messages'],
+    ['channel-tab', 'channel']]) {
+    assert.equal(liveSections.indexOf(opener) + 1, liveSections.indexOf(destination),
+      'Live tab and selection destinations follow their dedicated actual opening controls.');
+  }
+  assert.equal(liveTour.steps.at(-1).nextLabel, 'Finish');
+  const failedLive = createGuideDefinition('live', {
+    preparePlayer: () => () => released.push('live-player'),
+    preparePage: () => { throw new Error('Live sample preparation failed'); }
+  });
+  await assert.rejects(failedLive.steps[0].prepare({}), /Live sample preparation failed/);
+  assert.deepEqual(released.splice(0), ['live-player']);
 
   const spectrumTour = createGuideDefinition('tuner-spectrum', {
     documentValue: targetDocument,
@@ -923,6 +957,27 @@ async function checkGuides(assetsRoot) {
   assert.equal(await restrictedRadioReference.controller.pageReady(), false);
   assert.equal(restrictedRadioReference.shown.length, 0,
     'A requested RadioReference tour preserves the production route’s access restrictions.');
+
+  const firstLiveVisit = makeHarness({ context: { view: 'live' }, storage: {
+    getItem: key => /:welcome:1$|:live:[12]$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  await firstLiveVisit.controller.pageReady();
+  assert.equal(firstLiveVisit.shown.at(-1).options.id, 'live');
+  assert.equal(firstLiveVisit.shown.at(-1).options.version, 3,
+    'The earlier Live placeholder does not suppress its authored tour.');
+  firstLiveVisit.finish();
+  firstLiveVisit.controller.destroy();
+  const completedLive = makeHarness({ context: { view: 'live' }, storage: {
+    getItem: key => /:welcome:1$|:live:3$/.test(key) ? '1' : null,
+    setItem() {}
+  } });
+  assert.equal(await completedLive.controller.pageReady(), false);
+  completedLive.controller.destroy();
+  const deniedLive = makeHarness({ context: { view: 'live', guide: 'live', canView: view => view !== 'live' } });
+  assert.equal(await deniedLive.controller.pageReady(), false);
+  assert.equal(deniedLive.shown.length, 0);
+  deniedLive.controller.destroy();
 
   const firstSpectrumVisit = makeHarness({ context: { view: 'tuner-spectrum' }, storage: {
     getItem: key => key.endsWith(':welcome:1') || key.endsWith(':tuner-spectrum:3') ? '1' : null,
