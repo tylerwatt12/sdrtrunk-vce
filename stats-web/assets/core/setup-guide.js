@@ -1,7 +1,7 @@
 // Shared page guidance: the modal foundation owns focus, dismissal and replacement.
 // Steps only describe copy, existing targets and temporary presentation work.
 import { createGuideDiagram } from '../guides/diagrams.js?v=1';
-import { createTunerCoverageDiagram } from '../guides/tuner-coverage.js?v=2';
+import { createTunerCoverageDiagram } from '../guides/tuner-coverage.js?v=3';
 
 const dynamicGuideDiagrams = Object.freeze({ 'tuner-coverage': createTunerCoverageDiagram });
 

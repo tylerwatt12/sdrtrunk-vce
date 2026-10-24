@@ -69,6 +69,7 @@ async function expectOverview(page) {
   await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText('Overview');
   await expect(graph(page)).toBeVisible();
   await expect(graph(page).locator('button, input, select, [data-coverage-time]')).toHaveCount(0);
+  await expect(graph(page).locator('.ui-setup-guide-coverage-recent, .ui-setup-guide-coverage-note')).toHaveCount(0);
   await expect(page.locator('.ui-setup-guide-highlight, [data-guide-sample], .ui-setup-guide-layer')).toHaveCount(0);
 }
 
@@ -495,19 +496,38 @@ for (const dismiss of ['Close guide', 'Escape', 'shade', 'navigation']) {
   });
 }
 
-test('Tuners automatic graph respects reduced motion and pauses and resumes with page visibility', async ({ page }) => {
+test('Tuners automatic graph starts under reduced motion and pauses and resumes with page visibility', async ({ page }) => {
   await page.clock.install();
   const { fixture, requests } = await openTuners(page);
   await expectOverview(page);
-  await expect(graph(page)).toHaveAttribute('data-playing', 'false');
-  expect(Number(await graph(page).getAttribute('data-time'))).toBe(0);
+  await expect(graph(page)).toHaveAttribute('data-playing', 'true');
+  const initialTime = Number(await graph(page).getAttribute('data-time'));
   await page.clock.runFor(1000);
-  expect(Number(await graph(page).getAttribute('data-time'))).toBe(0);
+  expect(Number(await graph(page).getAttribute('data-time')) - initialTime).toBeGreaterThan(4);
+  const traceStyles = await graph(page).locator('.coverage-control, .coverage-call').evaluateAll(elements =>
+    elements.map(element => ({ classes: element.getAttribute('class'), width: Number.parseFloat(getComputedStyle(element).strokeWidth) })));
+  expect(traceStyles.some(trace => trace.classes.includes('coverage-control'))).toBe(true);
+  expect(traceStyles.some(trace => trace.classes.includes('conventional'))).toBe(true);
+  expect(traceStyles.some(trace => trace.classes.includes('voice'))).toBe(true);
+  for (const trace of traceStyles) expect(trace.width, trace.classes).toBe(8);
+  const legendWidths = await graph(page).locator('.ui-setup-guide-coverage-mark').evaluateAll(elements =>
+    Object.fromEntries(elements.map(element => [element.classList.contains('control') ? 'control' :
+      element.classList.contains('received') ? 'received' : element.classList.contains('missed') ? 'missed' : 'edge',
+    Number.parseFloat(getComputedStyle(element).width)])));
+  expect(legendWidths.control).toBe(legendWidths.received);
+  expect(legendWidths.control).toBe(legendWidths.missed);
+  expect(legendWidths.control).toBe(8);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await expect(graph(page)).toHaveAttribute('data-playing', 'true');
+  const preferenceTime = Number(await graph(page).getAttribute('data-time'));
+  await page.clock.runFor(500);
+  expect(Number(await graph(page).getAttribute('data-time')) - preferenceTime).toBeGreaterThan(2);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(graph(page)).toHaveAttribute('data-playing', 'true');
+  const reducedTime = Number(await graph(page).getAttribute('data-time'));
   await page.clock.runFor(1000);
   const visibleTime = Number(await graph(page).getAttribute('data-time'));
-  expect(visibleTime).toBeGreaterThan(4);
+  expect(visibleTime - reducedTime).toBeGreaterThan(4);
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
     document.dispatchEvent(new Event('visibilitychange'));
@@ -525,12 +545,13 @@ test('Tuners automatic graph respects reduced motion and pauses and resumes with
   const resumedTime = Number(await graph(page).getAttribute('data-time'));
   expect(resumedTime - hiddenTime, 'Hidden time does not jump the animation forward').toBeGreaterThan(4);
   expect(resumedTime - hiddenTime).toBeLessThan(8);
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await expect(graph(page)).toHaveAttribute('data-playing', 'false');
-  const staticTime = Number(await graph(page).getAttribute('data-time'));
-  await page.clock.runFor(1000);
-  expect(Number(await graph(page).getAttribute('data-time'))).toBe(staticTime);
+  await graph(page).evaluate(element => { window.tunersAutoplayGraph = element; });
   await page.keyboard.press('Escape');
+  expect(await page.evaluate(() => ({ disposed: window.tunersAutoplayGraph.dataset.disposed,
+    playing: window.tunersAutoplayGraph.dataset.playing }))).toEqual({ disposed: 'true', playing: 'false' });
+  const closedTime = await page.evaluate(() => window.tunersAutoplayGraph.dataset.time);
+  await page.clock.runFor(1000);
+  expect(await page.evaluate(() => window.tunersAutoplayGraph.dataset.time)).toBe(closedTime);
   expectNoEffects(fixture, requests);
 });
 

@@ -2,14 +2,14 @@
 // the actual tuner page and receiver remain untouched throughout the overview.
 const freezeRows = rows => Object.freeze(rows.map(row => Object.freeze(row)));
 const templates = freezeRows([
-  { key: 'fire', name: 'Fire Dispatch', frequency: 856.6125, duration: 3, type: 'conventional' },
+  { key: 'fire', name: 'Fire Dispatch', frequency: 856.4125, duration: 3, type: 'conventional' },
   { key: 'regional', name: 'Regional Fire', frequency: 857.9125, duration: 3.5, type: 'voice' },
   { key: 'sheriff', name: 'Sheriff', frequency: 856.9125, duration: 3.75, type: 'voice' },
   { key: 'regional', name: 'Regional Fire', frequency: 857.9125, duration: 3.5, type: 'voice' },
   { key: 'city-fire', name: 'City Fire', frequency: 861.5125, duration: 4.25, type: 'voice' },
   { key: 'distant', name: 'Distant voice call', frequency: 868.1125, duration: 3, type: 'voice' },
   { key: 'public-works', name: 'Public Works', frequency: 865.8125, duration: 2.75, type: 'conventional' },
-  { key: 'ems', name: 'County EMS', frequency: 856.7625, duration: 3.25, type: 'voice' },
+  { key: 'ems', name: 'County EMS', frequency: 856.8125, duration: 3.25, type: 'voice' },
   { key: 'city-police', name: 'City Police', frequency: 863.5125, duration: 4, type: 'voice' },
   { key: 'county-tac', name: 'Sheriff Tactical', frequency: 857.1125, duration: 3.25, type: 'voice' },
   { key: 'utilities', name: 'Utilities', frequency: 859.5125, duration: 2.5, type: 'conventional' },
@@ -39,8 +39,8 @@ export const TUNER_COVERAGE_MODEL = Object.freeze({
   initialCenter: 856.1625, shiftedCenter: 857.1625,
   rtl: Object.freeze({ name: 'RTL-SDR R820T2', sampleRate: 2.4, usableBandwidth: 2.352 }),
   airspy: Object.freeze({ name: 'Airspy R2', center: 862.6625, sampleRate: 10, usableBandwidth: 9 }),
-  controls: freezeRows([{ name: 'County P25 control', frequency: 856.3625 },
-    { name: 'City P25 control', frequency: 862.3125 }]),
+  controls: freezeRows([{ name: 'County P25 control', frequency: 856.6625 },
+    { name: 'City P25 control', frequency: 860.3125 }]),
   retunes: freezeRows(Array.from({ length: 2 }, (_, cycle) => [
     { start: cycle * 180 + 13.5, end: cycle * 180 + 14, from: 856.1625, to: 857.1625 },
     { start: cycle * 180 + 154.5, end: cycle * 180 + 155, from: 857.1625, to: 856.1625 }
@@ -139,17 +139,13 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
     entry.append(key, node('span', '', text));
     legend.append(entry);
   }
-  const recent = node('div', 'ui-setup-guide-coverage-recent');
-  recent.setAttribute('aria-label', 'Latest transmission');
-  const note = node('p', 'ui-setup-guide-coverage-note',
-    'Received calls can play through your selected Scan Lists after the transmission ends.');
-  root.append(receivers, scene, svg, legend, recent, note);
+  root.append(receivers, scene, svg, legend);
 
   const mount = ({ signal } = {}) => {
-    const reduced = windowValue.matchMedia('(prefers-reduced-motion: reduce)');
-    let time = 0, playing = !reduced.matches && !document.hidden;
+    // This instructional simulation autoplays even under reduced-motion preferences.
+    let time = 0, playing = !document.hidden;
     let frame = null, lastFrame = null, lastPaint = null, disposed = false, observer = null;
-    let lastScene = '', lastRecent = '', width = 960;
+    let lastScene = '', width = 960;
     const left = 44, right = 12, top = 36, plotHeight = 132, height = 207;
     const clipId = `${idPrefix}-clip`, edgeId = `${idPrefix}-edge`;
     const x = frequency => left + (frequency - 854.2) / (868.8 - 854.2) * (width - left - right);
@@ -230,13 +226,6 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
         trace.setAttribute('y1', y(Math.min(call.end, time))); trace.setAttribute('y2', y(call.start));
       }
       activeCalls.forEach((trace, key) => { if (!keys.has(key)) { trace.remove(); activeCalls.delete(key); } });
-      const latest = visible.at(-1), recentKey = latest && `${latest.cycle}:${latest.id}`;
-      if (latest && recentKey !== lastRecent) {
-        const receiver = coverageReceiverFor(latest);
-        recent.textContent = `${latest.name} · ${latest.frequency.toFixed(4)} MHz · ${receiver ? `Received by ${receiver}` : 'Missed outside usable coverage'}`;
-        recent.dataset.received = String(Boolean(receiver));
-        lastRecent = recentKey;
-      }
     };
     const resize = () => {
       if (disposed) return;
@@ -281,24 +270,21 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
       frame = windowValue.requestAnimationFrame(animate);
     };
     const start = () => {
-      if (disposed || signal?.aborted || document.hidden || reduced.matches) return;
+      if (disposed || signal?.aborted || document.hidden) return;
       cancelFrame(); playing = true; render();
       frame = windowValue.requestAnimationFrame(animate);
     };
     const visibility = () => { if (document.hidden) stop(); else start(); };
-    const motion = () => { if (reduced.matches) stop(); else start(); };
     const cleanup = () => {
       if (disposed) return;
       disposed = true; playing = false; cancelFrame(); observer?.disconnect();
       document.removeEventListener('visibilitychange', visibility);
       windowValue.removeEventListener('pagehide', cleanup);
-      reduced.removeEventListener('change', motion);
       signal?.removeEventListener('abort', cleanup);
       root.dataset.disposed = 'true'; root.dataset.playing = 'false';
     };
     document.addEventListener('visibilitychange', visibility);
     windowValue.addEventListener('pagehide', cleanup);
-    reduced.addEventListener('change', motion);
     signal?.addEventListener('abort', cleanup, { once: true });
     if (windowValue.ResizeObserver) { observer = new windowValue.ResizeObserver(resize); observer.observe(root); }
     resize();

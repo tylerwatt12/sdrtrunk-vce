@@ -326,20 +326,16 @@ body.modal-open {
 .ui-setup-guide-coverage-chart .coverage-edge-line { stroke: var(--guide-coverage-edge); stroke-width: var(--guide-coverage-grid-width); }
 .ui-setup-guide-coverage-chart .coverage-band-rtl { fill: var(--guide-coverage-rtl-fill); }
 .ui-setup-guide-coverage-chart .coverage-band-airspy { fill: var(--guide-coverage-airspy-fill); }
-.ui-setup-guide-coverage-chart .coverage-control { stroke: var(--ink); stroke-width: var(--guide-coverage-control-width); }
+.ui-setup-guide-coverage-chart .coverage-control { stroke: var(--ink); stroke-width: var(--guide-coverage-call-width); }
 .ui-setup-guide-coverage-chart .coverage-call { fill: none; stroke-width: var(--guide-coverage-call-width); stroke-linecap: round; }
-.ui-setup-guide-coverage-chart .coverage-call.conventional { stroke-width: var(--guide-coverage-conventional-width); }
 .ui-setup-guide-coverage-chart .received { stroke: var(--guide-coverage-received); }
 .ui-setup-guide-coverage-chart .missed { stroke: var(--guide-coverage-missed); stroke-dasharray: var(--guide-coverage-missed-dashes); }
 .ui-setup-guide-coverage-legend { gap: var(--space-1) var(--space-4); }
 .ui-setup-guide-coverage-mark { display: inline-block; width: var(--space-2); height: var(--space-3); }
 .ui-setup-guide-coverage-mark.received { background: var(--guide-coverage-received); }
 .ui-setup-guide-coverage-mark.missed { background: var(--guide-coverage-missed-pattern); }
-.ui-setup-guide-coverage-mark.control { width: var(--space-1); background: var(--ink); }
+.ui-setup-guide-coverage-mark.control { background: var(--ink); }
 .ui-setup-guide-coverage-mark.edge { width: var(--space-4); background: var(--guide-coverage-edge-pattern); }
-.ui-setup-guide-coverage-recent { color: var(--guide-coverage-received); }
-.ui-setup-guide-coverage-recent[data-received="false"] { color: var(--guide-coverage-missed); }
-.ui-setup-guide-coverage-note { margin: 0; color: var(--muted); }
 
 @media (max-width: 600px) {
   .ui-setup-guide-coverage-receivers { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }

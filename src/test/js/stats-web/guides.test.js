@@ -480,6 +480,13 @@ async function checkGuides(assetsRoot) {
     await load('guides/tuner-coverage.js');
   assert.deepEqual([coverageModel.rtl.sampleRate, coverageModel.rtl.usableBandwidth,
     coverageModel.airspy.sampleRate, coverageModel.airspy.usableBandwidth], [2.4, 2.352, 10, 9]);
+  for (const center of [coverageModel.initialCenter, coverageModel.shiftedCenter]) {
+    assert.ok(Math.abs(coverageModel.controls[0].frequency - center) >= coverageModel.rtl.usableBandwidth * .2,
+      'The RTL-SDR control channel stays visibly away from the center in both receiving-window positions.');
+  }
+  assert.ok(Math.abs(coverageModel.controls[1].frequency - coverageModel.airspy.center) >=
+    coverageModel.airspy.usableBandwidth * .2,
+    'The Airspy control channel is visibly offset from the center of its receiving window.');
   assert.equal(coverageModel.duration / coverageModel.speed, 60,
     'The overview runs for one minute before repeating.');
   assert.ok(coverageModel.history / coverageModel.speed <= 4,
@@ -556,12 +563,14 @@ async function checkGuides(assetsRoot) {
     }
   }
   const animation = coverageDiagramHarness();
+  animation.motion.matches = true;
   const coverageDiagram = createTunerCoverageDiagram({ document: animation.document, idPrefix: 'coverage-contract' });
   const diagramAbort = new AbortController();
   const closeDiagram = coverageDiagram.mount({ signal: diagramAbort.signal });
   assert.equal(animation.nodes.some(node => ['button', 'input'].includes(node.tag)), false,
     'The overview animation runs automatically without adding operating controls.');
-  assert.equal(animation.frames.size, 1);
+  assert.equal(animation.frames.size, 1,
+    'The explicitly requested demonstration autoplays even when reduced motion is preferred.');
   animation.flush(0); animation.flush(100);
   animation.flush(60100);
   assert.equal(coverageDiagram.element.dataset.cycle, '1');
@@ -581,10 +590,13 @@ async function checkGuides(assetsRoot) {
     'Time spent in a hidden tab does not fast-forward the diagram.');
   animation.flush(200100);
   assert.ok(Number(coverageDiagram.element.dataset.time) > beforeHidden);
-  animation.motion.matches = true; animation.motion.emit('change');
-  assert.equal(animation.frames.size, 0, 'Reduced motion stops automatic movement.');
   animation.motion.matches = false; animation.motion.emit('change');
   assert.equal(animation.frames.size, 1);
+  const beforeMotionChange = Number(coverageDiagram.element.dataset.time);
+  animation.motion.matches = true; animation.motion.emit('change');
+  assert.equal(animation.frames.size, 1, 'Changing the motion preference keeps the demonstration playing.');
+  animation.flush(200200);
+  assert.ok(Number(coverageDiagram.element.dataset.time) > beforeMotionChange);
   const lateFrame = [...animation.frames.values()][0];
   const beforeDismissal = coverageDiagram.element.dataset.time;
   diagramAbort.abort(); closeDiagram();

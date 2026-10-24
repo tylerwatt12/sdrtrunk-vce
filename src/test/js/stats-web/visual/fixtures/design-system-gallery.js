@@ -10,7 +10,7 @@ import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
-import { openSetupGuide } from '/assets/core/setup-guide.js?v=10';
+import { openSetupGuide } from '/assets/core/setup-guide.js?v=11';
 import { createGuideDefinition } from '/assets/guides/catalog.js?v=16';
 import { enrollmentQrCanvas } from '/assets/features/alerts-qr.js?v=2';
 import { openRadioReferenceConnect } from '/assets/features/radioreference-connect.js?v=3';

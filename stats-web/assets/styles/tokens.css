@@ -373,9 +373,7 @@
   --guide-coverage-card-width: 1120px;
   --guide-coverage-chart-height: 180px;
   --guide-coverage-grid-width: 1;
-  --guide-coverage-control-width: 2;
   --guide-coverage-call-width: 8;
-  --guide-coverage-conventional-width: 5;
   --guide-coverage-missed-dashes: 4 5;
   --guide-coverage-rtl: var(--info);
   --guide-coverage-airspy: var(--signal-fair);
