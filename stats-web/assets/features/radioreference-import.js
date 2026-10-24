@@ -1472,16 +1472,15 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     }
   };
 
-  const openConventionalImport = (entry, frequency, categoryId) => {
+  const openConventionalImport = (entry, frequency, categoryId, names) => {
     const form = node('form', 'radioreference-conventional-form editor-workspace');
     const family = compatibleFamily(frequency) || compatibleFamily(entry);
     const systemName = input();
     const siteName = input();
     const channelName = input();
-    systemName.value = textValue(entry, ['name'], '');
-    siteName.value = textValue(entry, ['secondary', 'location'], '');
-    channelName.value = textValue(frequency, ['description', 'alpha_tag', 'alphaTag'],
-      `${formatFrequency(frequencyHz(frequency))} MHz`);
+    systemName.value = textValue(names, ['system']);
+    siteName.value = textValue(names, ['site']);
+    channelName.value = textValue(names, ['name']);
     [systemName, siteName, channelName].forEach((control) => { control.required = true; control.maxLength = 256; });
     const aliases = aliasSelect(family);
     const facts = node('dl', 'radioreference-preview-facts ui-surface ui-surface-soft');
@@ -1594,7 +1593,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       panel.append(header, toolbar, body);
       detailHost.replaceChildren(panel);
 
+      let frequencySequence = 0;
       const load = async (offset = 0) => {
+        const requestSequence = ++frequencySequence;
+        const subCategoryId = category.value;
         tableController.layoutMenuCleanup?.();
         if (!category.value) {
           body.replaceChildren(empty('No conventional categories',
@@ -1604,9 +1606,10 @@ export function createRadioReferenceImportWorkspace(dependencies) {
         body.replaceChildren(feedback('Loading conventional frequencies…', 'loading'));
         try {
           const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.conventionalFrequencies,
-            { sub_category_id: category.value, offset, limit: FREQUENCY_LIMIT }));
-          if (sequence !== state.detailSequence) return;
+            { owner_kind: kind, owner_id: id, sub_category_id: subCategoryId, offset, limit: FREQUENCY_LIMIT }));
+          if (sequence !== state.detailSequence || requestSequence !== frequencySequence) return;
           const values = rows(response);
+          const names = response?.names || response?.data?.names || {};
           const grid = table(values, [
             { id: 'frequency', label: 'Frequency',
               render: (value) => `${formatFrequency(frequencyHz(value))} MHz` },
@@ -1614,7 +1617,9 @@ export function createRadioReferenceImportWorkspace(dependencies) {
               const open = button(textValue(value, ['alpha_tag', 'alphaTag', 'name'], 'Unnamed'),
                 'link-button radioreference-conventional-import');
               open.title = 'Review this channel for import';
-              open.addEventListener('click', () => openConventionalImport(entry, value, category.value));
+              const defaults = names[frequencyId(value)];
+              open.disabled = !defaults;
+              open.addEventListener('click', () => openConventionalImport(entry, value, subCategoryId, defaults));
               return open;
             } },
             { id: 'description', label: 'Description',
@@ -1631,7 +1636,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           status.textContent = `${formatNumber(total)} frequency${total === 1 ? '' : 'ies'} available. ` +
             'Import one channel at a time.';
         } catch (error) {
-          body.replaceChildren(feedback(error.message, 'error'));
+          if (sequence === state.detailSequence && requestSequence === frequencySequence)
+            body.replaceChildren(feedback(error.message, 'error'));
         }
       };
       category.addEventListener('change', () => { updateCategoryStar(); load(0); });

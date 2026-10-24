@@ -80,11 +80,12 @@ async function main() {
     return { items: url.includes('system_id=1&') ? [{ id: 100 }] : [], total_items: 0 };
   });
   const targets = [1, 2, 3].map((rrSystemId) => ({ rrSystemId, matched: true }));
-  assert.deepEqual(await availableTalkgroups([...targets, { rrSystemId: 4, matched: false },
-    { rrSystemId: 0, matched: true }]), [targets[0]]);
+  await assert.rejects(availableTalkgroups([...targets, { rrSystemId: 4, matched: false },
+    { rrSystemId: 0, matched: true }]), /could not be checked/);
   assert.equal(catalogCalls.length, 3);
   assert.ok(catalogCalls.every(([url, timeout]) => url.endsWith('&offset=0&limit=1') && timeout === 15000));
-  await availableTalkgroups(targets);
+  await assert.rejects(availableTalkgroups(targets), /could not be checked/);
+  assert.deepEqual(await availableTalkgroups(targets.slice(0, 2)), [targets[0]]);
   assert.equal(catalogCalls.length, 4, 'Successful catalogs are cached; failed catalogs can be retried.');
   const progress = [];
   const imports = [];

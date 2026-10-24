@@ -69,12 +69,12 @@ function snapshot(protocolId, state) {
         system: state.templateSystem || (isP25 ? 'P25 B0001-123' : digital ? 'County Transit' : ''),
         site: state.templateSite || (isP25 ? 'RFSS 1 Site 2' : digital ? 'North' : ''), settings,
         frequency_map: digital ? state.frequencyMap || [{ number: 1, downlink_hz: 851012500 }] : [] },
-      alias_lists: state.ambiguous ? [{ id: 21, name: 'North aliases', matched: true },
+      alias_lists: state.aliasLists || (state.ambiguous ? [{ id: 21, name: 'North aliases', matched: true },
         { id: 22, name: 'South aliases', matched: true }] :
-        (state.singleMatch ? [{ id: 21, name: 'County aliases', matched: true }] : []),
+        (state.singleMatch ? [{ id: 21, name: 'County aliases', matched: true }] : [])),
       suggested_alias_list_id: null, default_new_alias_list_name: state.defaultAliasName || (isP25 ? 'P25 B0001-123' : analogName)
     },
-    saved: state.saved ? { configuration_id: 'channel-a', alias_list_id: 41,
+    saved: state.saved ? { configuration_id: 'channel-a', alias_list_id: state.savedAliasId || 41,
       running: state.running === true, start_error: state.running ? null : 'Tuner capacity is in use.' } : null
   };
 }
@@ -301,17 +301,18 @@ async function install(page, state = {}) {
       }
       state.saved = true;
       state.running = state.failStart !== true;
-      const createsList = body.alias_list_id === 0 && !state.sameNameReuse &&
-        ['p25-phase1', 'dmr', 'nxdn'].includes(state.protocolId);
-      state.aliasImports = { targets: createsList ? [{ alias_list_id: 41,
-        alias_list_name: body.new_alias_list_name, system_id: state.directoryResult?.state === 'matched' ? 123 : null,
+      state.savedAliasId = body.alias_list_id || 41;
+      const hasTarget = !state.missingImportTarget && ['p25-phase1', 'dmr', 'nxdn'].includes(state.protocolId);
+      state.aliasImports = { targets: hasTarget ? [{ alias_list_id: state.savedAliasId,
+        alias_list_name: body.new_alias_list_name || state.aliasLists?.find(list => list.id === body.alias_list_id)?.name || 'County aliases',
+        system_id: state.directoryResult?.state === 'matched' ? 123 : null,
         system_name: state.directoryResult?.match?.system_name || body.system,
         state: state.directoryResult?.state === 'matched' ? 'pending' : 'unavailable',
-        added: 0, updated: 0, unchanged: 0, message: 'Import these talkgroups later.' }] : [], complete: !createsList };
+        added: 0, updated: 0, unchanged: 0, message: 'Import these talkgroups later.' }] : [], complete: !hasTarget };
       return respond(snapshot(state.protocolId, state));
     }
     if (path.endsWith('/aliases/import')) {
-      expect(body).toEqual({ alias_list_id: 41 });
+      expect(body).toEqual({ alias_list_id: state.savedAliasId || 41 });
       if (state.delayImport) await new Promise((release) => { state.releaseImport = release; });
       const failed = state.failImportOnce === true;
       state.failImportOnce = false;
@@ -533,14 +534,15 @@ test('discovery keeps an explicit No choice after Back and never retries imports
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
 });
 
-test('discovery imports only lists actually created and skips import without a directory match', async ({ page }) => {
-  const state = { ...ohioDiscoveryFixture('light'), sameNameReuse: true };
+test('discovery imports into an explicitly reused same-name list and skips without a directory match', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), aliasLists: [{ id: 21, name: ohioSystem, matched: false }] };
   await install(page, state);
   await begin(page);
   await review(page);
   await addDiscovery(page, importYes);
   await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
-  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
+  expect(state.requests.find(({ path }) => path.endsWith('/save')).body.alias_list_id).toBe(21);
   await wizard(page).getByRole('button', { name: 'Done', exact: true }).click();
   state.saved = false;
   state.directoryResult = { state: 'no_match' };
@@ -789,7 +791,7 @@ test('discovery signs in above the same wizard and immediately uses its region w
   expect(state.requests.filter(({ path, method }) => path === '/api/v1/admin/radioreference/session' && method === 'PUT')).toHaveLength(1);
 });
 
-for (const scenario of [{ talkgroupCount: 0 }, { failTalkgroupCatalog: true }]) {
+for (const scenario of [{ talkgroupCount: 0 }]) {
   test(`discovery skips unavailable talkgroups when ${scenario.talkgroupCount === 0 ? 'empty' : 'the catalog fails'}`, async ({ page }) => {
     const state = { ...ohioDiscoveryFixture('light'), ...scenario };
     await install(page, state);
@@ -1995,14 +1997,15 @@ test('ambiguous aliases require a choice; saved start failure retries without re
     request.method === 'DELETE')).toBe(true);
 });
 
-test('one P25 identity match presents its Alias List without a choice and reuses it', async ({ page }) => {
+test('one P25 identity match offers an explicit existing or new Alias List choice', async ({ page }) => {
   const state = { singleMatch: true };
   await install(page, state);
   await begin(page);
   await review(page);
   const dialog = wizard(page);
   await expect(dialog).toContainText('County aliases');
-  await expect(dialog.getByRole('combobox', { name: 'Alias List', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('combobox', { name: 'Alias List', exact: true })).toHaveValue('21');
+  await expect(dialog.getByRole('option', { name: 'Create a new Alias List', exact: true })).toHaveCount(1);
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeHidden();
   await addDiscovery(page);
   await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
@@ -2158,3 +2161,98 @@ for (const width of [1280, 943, 900, 820, 390, 320]) {
       document.documentElement.clientWidth)).toBe(true);
   });
 }
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`discovery explicitly reuses a same-name Alias List and imports into it in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = { ...ohioDiscoveryFixture(theme), aliasLists: [{ id: 21, name: ohioSystem, matched: false }], delayImport: true };
+    await install(page, state);
+    await begin(page);
+    await review(page);
+    const dialog = wizard(page);
+    await expect(dialog.getByLabel('Alias List', { exact: true })).toHaveValue('21');
+    await expect(dialog.getByText(`Existing Alias List found: ${ohioSystem}`, { exact: true })).toBeVisible();
+    await expect(dialog.getByText('What is an Alias List?', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText('An existing compatible Alias List with this name will be used.', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText('Start automatically', { exact: true })).toHaveCount(0);
+    await expect(dialog.getByText('Follow control frequency changes', { exact: true })).toHaveCount(0);
+    await dialog.getByLabel('Alias List', { exact: true }).scrollIntoViewIfNeeded();
+    await dialog.screenshot({ path: test.info().outputPath(`alias-choice-${theme}-${width}.png`) });
+    await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+    await dialog.getByRole('radio', { name: importYes, exact: true }).check();
+    await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+    await expect(dialog.getByRole('heading', { name: 'Importing talkgroups', exact: true })).toBeVisible();
+    await expect.poll(() => typeof state.releaseImport).toBe('function');
+    state.releaseImport();
+    await expect(dialog).toContainText('73 added, 0 updated, 0 unchanged.');
+    const saves = state.requests.filter(({ path }) => path.endsWith('/save'));
+    expect(saves).toHaveLength(1);
+    expect(saves[0].body.alias_list_id).toBe(21);
+    expect(saves[0].body.new_alias_list_name).toBeNull();
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body.alias_list_id)).toEqual([21]);
+  });
+}
+
+test('discovery can explicitly create a uniquely named list beside an existing system list', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), aliasLists: [{ id: 21, name: ohioSystem, matched: true }] };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  const dialog = wizard(page);
+  await dialog.getByLabel('Alias List', { exact: true }).selectOption('0');
+  const name = dialog.getByLabel('New Alias List name', { exact: true });
+  await expect(name).toBeVisible();
+  await expect(dialog).toContainText('already exists. Choose it above or enter a different name.');
+  await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save') || path.includes('/systems/talkgroups'))).toHaveLength(0);
+  await name.fill('MARCS event listeners');
+  await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Back', exact: true }).click();
+  await expect(dialog.getByLabel('Alias List', { exact: true })).toHaveValue('0');
+  await expect(name).toHaveValue('MARCS event listeners');
+  await addDiscovery(page, importYes);
+  await expect(dialog).toContainText('73 added, 0 updated, 0 unchanged.');
+  const saved = state.requests.find(({ path }) => path.endsWith('/save')).body;
+  expect(saved.alias_list_id).toBe(0);
+  expect(saved.new_alias_list_name).toBe('MARCS event listeners');
+});
+
+test('discovery reports a missing saved import target instead of silently finishing', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), singleMatch: true, missingImportTarget: true };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await addDiscovery(page, importYes);
+  await expect(wizard(page)).toContainText('Talkgroups were not imported. Retry, or import them from RadioReference.');
+  await expect(wizard(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toBeVisible();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+});
+
+test('discovery restores import choices after a failed channel save and retries once', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), failSaveOnce: true };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await addDiscovery(page, importYes);
+  const dialog = wizard(page);
+  await expect(dialog.getByRole('button', { name: 'Try adding again', exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('radio', { name: importYes, exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('radio', { name: importNo, exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Try adding again', exact: true }).click();
+  await expect(dialog).toContainText('73 added, 0 updated, 0 unchanged.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(2);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
+});
+
+test('discovery retries a failed talkgroup catalog check without adding the channel early', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), failTalkgroupCatalog: true };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(wizard(page)).toContainText('Talkgroups could not be checked. Try again.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+  state.failTalkgroupCatalog = false;
+  await addDiscovery(page, importYes);
+  await expect(wizard(page)).toContainText('73 added, 0 updated, 0 unchanged.');
+});

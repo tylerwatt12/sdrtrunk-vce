@@ -46,7 +46,7 @@ function ohioResultsFixture({ pendingMarcs = false } = {}) {
     })),
     customAliasGroups: Object.keys(ohioSystems).map((group, index) => ({
       group_id: group, protocol_id: 'p25-phase1', wacn: 0xbee00, system: systems.find((item) => item[0] === group)[1],
-      alias_lists: index === 0 ? [{ id: 21, name: 'MARCS Dispatch' }] : [],
+      alias_lists: index === 0 ? [{ id: 21, name: 'MARCS Dispatch', matched: true }] : [],
       suggested_alias_list_id: null, default_new_alias_list_name: {
         marcs: 'MARCS-IP', cleveland: 'GCRCN', parma: 'Parma Public Safety'
       }[group]
@@ -99,8 +99,8 @@ function snapshot(state) {
       ...(state.progress || {}) }, candidates: state.empty ? [] : state.customCandidates ?
       state.customCandidates.map((candidate) => ({ ...candidate, ...(state.ledger?.[candidate.candidate_id] || {}) })) : candidates,
     alias_groups: state.customAliasGroups || [{ group_id: 'county', wacn: 0xbee00, system: 0x348,
-      alias_lists: state.ambiguous ? [{ id: 21, name: 'County Dispatch' }, { id: 22, name: 'County Operations' }] :
-        [{ id: 21, name: 'County Dispatch' }], suggested_alias_list_id: null, default_new_alias_list_name: 'County P25' },
+      alias_lists: state.ambiguous ? [{ id: 21, name: 'County Dispatch', matched: true }, { id: 22, name: 'County Operations', matched: true }] :
+        [{ id: 21, name: 'County Dispatch', matched: true }], suggested_alias_list_id: null, default_new_alias_list_name: 'County P25' },
     { group_id: 'regional', wacn: 0xabc00, system: 0x234, alias_lists: [], suggested_alias_list_id: null,
       default_new_alias_list_name: 'Regional P25' }], alias_import: state.aliasImports };
 }
@@ -330,11 +330,14 @@ async function install(page, state = {}) {
           const group = body.alias_groups.find((group) => group.group_id === candidateRow.alias_group_id);
           const aliasListId = group.alias_list_id || state.createdListByGroup.get(group.group_id) ||
             41 + state.createdListByGroup.size;
-          if (!group.alias_list_id && !state.createdListByGroup.has(group.group_id)) {
+          if (!group.alias_list_id && !state.createdListByGroup.has(group.group_id))
             state.createdListByGroup.set(group.group_id, aliasListId);
+          if (!state.unregisteredAliasTargets && !state.aliasImports.targets.some((target) => target.alias_list_id === aliasListId)) {
             const matched = candidateRow.radio_reference?.state === 'matched';
+            const list = snapshot(state).alias_groups.find((entry) => entry.group_id === group.group_id)
+              ?.alias_lists.find((entry) => entry.id === aliasListId);
             state.aliasImports.targets.push({ alias_list_id: aliasListId,
-              alias_list_name: group.new_alias_list_name, system_id: matched ? candidateRow.radio_reference.match?.rr_system_id : null,
+              alias_list_name: list?.name || group.new_alias_list_name, system_id: matched ? candidateRow.radio_reference.match?.rr_system_id : null,
               system_name: candidateRow.system_name, state: matched ? 'pending' : 'unavailable',
               added: 0, updated: 0, unchanged: 0, message: matched ? null : 'Import these talkgroups later.' });
           }
@@ -349,13 +352,17 @@ async function install(page, state = {}) {
       return respond(snapshot(state));
     }
     if (path.endsWith('/aliases/import')) {
-      expect(state.aliasImports.targets.some((target) => target.alias_list_id === body.alias_list_id)).toBe(true);
+      if (!state.aliasImports.targets.some((target) => target.alias_list_id === body.alias_list_id))
+        return state.unregisteredAliasTargets ? respond({ targets: [], complete: true }) :
+          fail('The selected Alias List import is not available.');
       if (state.delayImport) await new Promise((resolve) => { state.releaseImport = resolve; });
       const failed = state.failImportAliasOnce === body.alias_list_id;
       if (failed) state.failImportAliasOnce = null;
       state.aliasImports.targets = state.aliasImports.targets.map((target) =>
         target.alias_list_id === body.alias_list_id ? { ...target, state: failed ? 'failed' : 'imported',
-          added: failed ? 0 : state.importCount || 73, updated: 0, unchanged: 0,
+          added: failed ? 0 : state.aliasImportCounts?.[body.alias_list_id]?.added ?? state.importCount ?? 73,
+          updated: failed ? 0 : state.aliasImportCounts?.[body.alias_list_id]?.updated ?? 0,
+          unchanged: failed ? 0 : state.aliasImportCounts?.[body.alias_list_id]?.unchanged ?? 0,
           message: failed ? 'RadioReference could not load these talkgroups. Try again.' : null } : target);
       state.aliasImports.complete = state.aliasImports.targets.every((target) =>
         ['imported', 'unavailable'].includes(target.state));
@@ -396,9 +403,11 @@ async function expectStepWordsFit(modal) {
 }
 
 async function addChannels(page, count, importChoice = importNo) {
+  await expect(dialog(page)).not.toHaveAttribute('aria-busy', 'true');
   const continueButton = dialog(page).getByRole('button', { name: 'Continue', exact: true });
   if (await continueButton.count()) {
     await continueButton.click();
+    await expect(dialog(page)).not.toHaveAttribute('aria-busy', 'true');
     if (!await dialog(page).getByRole('radio', { name: importChoice, exact: true }).count()) return;
   }
   const choice = dialog(page).getByRole('radio', { name: importChoice, exact: true });
@@ -486,6 +495,107 @@ test('search imports once per new Alias List after releasing the receiver and re
   expect(savedSearchRequests(state).saves).toHaveLength(1);
   await expect.poll(() => savedSearchRequests(state).jobDeletes.length).toBe(1);
   expect(savedSearchRequests(state).browseDeletes).toHaveLength(1);
+});
+
+test('search imports into a same-name existing Alias List and retries without creating it or saving channels again', async ({ page }) => {
+  const fixture = aliasNamingFixture();
+  resolveAliasNamingFixture(fixture, 'Existing transit');
+  fixture.customAliasGroups[0].alias_lists = [{ id: 21, name: 'Existing transit', matched: false }];
+  const state = await install(page, { ...fixture, failImportAliasOnce: 21,
+    aliasImportCounts: { 21: { added: 1, updated: 1, unchanged: 3 } } });
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  const choice = dialog(page).getByRole('combobox', { name: /^Alias List for / });
+  await expect(choice).toHaveValue('21');
+  await expect(choice.locator('option[value="0"]')).toHaveText('Create a new Alias List');
+  await expect(dialog(page).getByRole('textbox', { name: /^New Alias List name for / })).toBeHidden();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText('Existing transit');
+  await addChannels(page, 1, importYes);
+  await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toBeEnabled();
+  await dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true }).click();
+  await expect(dialog(page)).toContainText('1 added, 1 updated, 3 unchanged.');
+  expect(state.createdListByGroup.size).toBe(0);
+  const saves = state.requests.filter(({ path }) => path.endsWith('/save'));
+  expect(saves).toHaveLength(1);
+  expect(saves[0].body.alias_groups).toEqual([{ group_id: 'digital', alias_list_id: 21, new_alias_list_name: null }]);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body))
+    .toEqual([{ alias_list_id: 21 }, { alias_list_id: 21 }]);
+});
+
+test('search shows an import failure when a selected existing Alias List is absent from the saved import targets', async ({ page }) => {
+  const state = await install(page, { ...ohioResultsFixture(), unregisteredAliasTargets: true });
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await addChannels(page, 1, importYes);
+  await expect(dialog(page)).toContainText('Talkgroups were not imported. Retry, or import them from RadioReference.');
+  await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toBeEnabled();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body))
+    .toEqual([{ alias_list_id: 21 }]);
+});
+
+test('search allows explicit New beside one known Alias List and blocks an existing name without silently reusing it', async ({ page }) => {
+  const state = await install(page);
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  const choice = dialog(page).getByRole('combobox', { name: /^Alias List for / });
+  await expect(choice).toHaveValue('21');
+  await choice.selectOption('0');
+  const name = dialog(page).getByRole('textbox', { name: /^New Alias List name for / });
+  await name.fill('County Dispatch');
+  await addChannels(page, 1);
+  await expect(choice).toHaveValue('0');
+  await expect(name).toHaveValue('County Dispatch');
+  await expect(dialog(page)).toContainText('An Alias List named County Dispatch already exists. Choose it above or enter a different name.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+  await name.fill('Separate county listeners');
+  await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await expect(choice).toHaveValue('0');
+  await expect(name).toHaveValue('Separate county listeners');
+  await addChannels(page, 1);
+  await expect(dialog(page)).toContainText('1 channel added.');
+  expect(state.requests.find(({ path }) => path.endsWith('/save')).body.alias_groups)
+    .toEqual([{ group_id: 'county', alias_list_id: 0, new_alias_list_name: 'Separate county listeners' }]);
+});
+
+test('search coalesces imports for multiple selected site groups using the same existing Alias List and RadioReference system', async ({ page }) => {
+  const fixture = ohioResultsFixture();
+  fixture.customCandidates = fixture.customCandidates.slice(0, 2);
+  fixture.customCandidates[1].alias_group_id = 'marcs-lake';
+  fixture.customAliasGroups = [fixture.customAliasGroups[0], { ...fixture.customAliasGroups[0], group_id: 'marcs-lake' }];
+  const state = await install(page, fixture);
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 2 channels', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(1);
+  await expect(dialog(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText('MARCS Dispatch');
+  await addChannels(page, 2, importYes);
+  await expect(dialog(page)).toContainText('2 channels added.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body))
+    .toEqual([{ alias_list_id: 21 }]);
+  expect(state.createdListByGroup.size).toBe(0);
+});
+
+test('search preserves No for an existing Alias List across Back and does not import aliases', async ({ page }) => {
+  const state = await install(page, ohioResultsFixture());
+  await complete(page);
+  await dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await dialog(page).getByRole('radio', { name: importNo, exact: true }).check();
+  await dialog(page).getByRole('button', { name: 'Back', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
+  await addChannels(page, 1, importNo);
+  await expect(dialog(page)).toContainText('1 channel added.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+  expect(state.createdListByGroup.size).toBe(0);
 });
 
 test('search keeps an explicit No choice after Back and Continue', async ({ page }) => {
@@ -582,20 +692,37 @@ test('signed-out search results omit late RadioReference panels and the import s
   expect(state.requests.filter(({ path }) => path.includes('/systems/talkgroups') || path.endsWith('/aliases/import'))).toHaveLength(0);
 });
 
-for (const catalog of ['empty', 'failed']) {
-  test(`search skips a ${catalog} talkgroup catalog and adds channels`, async ({ page }) => {
-    const state = await install(page, importSearchFixture({
-      emptyTalkgroupSystems: catalog === 'empty' ? [123, 124, 125] : [], failTalkgroupCatalog: catalog === 'failed'
-    }));
-    await complete(page);
-    await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
-    await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
-    await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
-    await expect(dialog(page)).toContainText('4 channels added.');
-    await expect(dialog(page).getByRole('radio')).toHaveCount(0);
-    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
-  });
-}
+test('search skips a confirmed empty talkgroup catalog and adds channels', async ({ page }) => {
+  const state = await install(page, importSearchFixture({ emptyTalkgroupSystems: [123, 124, 125] }));
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page)).toContainText('4 channels added.');
+  await expect(dialog(page).getByRole('radio')).toHaveCount(0);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+});
+
+test('search keeps the review after a failed talkgroup catalog check and retries without saving early', async ({ page }) => {
+  const state = await install(page, importSearchFixture({ failTalkgroupCatalog: true }));
+  await complete(page);
+  await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByText('RadioReference talkgroups could not be checked. Try again.', { exact: true }).first()).toBeVisible();
+  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+  state.failTalkgroupCatalog = false;
+  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByRole('heading', {
+    name: 'Do you want to import talkgroups into your Alias Lists?', exact: true })).toBeVisible();
+  await expect(dialog(page)).not.toHaveAttribute('aria-busy', 'true');
+  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(3);
+  await addChannels(page, 4, importYes);
+  await expect(dialog(page)).toContainText('4 channels added.');
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(3);
+});
 
 const searchDirectoryNamesLoading = (page) => dialog(page).getByRole('status')
   .filter({ hasText: /^Looking up RadioReference names…$/ });
@@ -742,7 +869,7 @@ test('search offers and imports only systems with available talkgroups in a mixe
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body.alias_list_id)).toEqual([41, 43]);
 });
 
-test('search skips the import step for existing Alias Lists and new lists without a trusted match', async ({ page }) => {
+test('search skips the import step without a trusted RadioReference match', async ({ page }) => {
   const state = await install(page);
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
@@ -1657,7 +1784,7 @@ test('groups exact identities, saves channels stopped, and retries only failed a
   await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(2);
   await expect(dialog(page).getByText('Could not add', { exact: true })).toHaveCount(1);
   const save = state.requests.find((request) => request.path.endsWith('/save'));
-  expect(save.body.alias_groups).toEqual([{ group_id: 'county', alias_list_id: 21, new_alias_list_name: 'County Public Safety' },
+  expect(save.body.alias_groups).toEqual([{ group_id: 'county', alias_list_id: 21, new_alias_list_name: null },
     { group_id: 'regional', alias_list_id: 0, new_alias_list_name: 'Regional Services' }]);
   expect(save.body.candidates.every((candidate) => candidate.auto_start === false)).toBe(true);
   expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
@@ -1770,31 +1897,33 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     const regional = dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'Regional Services' });
     const name = regional.getByLabel('New Alias List name for WACN 0xABC00 (703488) · SysID 0x234 (564)');
     await expect(name).toBeVisible();
-    await expect(regional).toContainText('An existing compatible Alias List with this name will be used.');
+    await expect(regional.getByText('An existing compatible Alias List with this name will be used.', { exact: true })).toHaveCount(0);
     await name.fill('Regional existing');
     await expect(regional).toContainText('Alias List: Regional existing');
-    await expect(regional).not.toContainText('· New');
+    await expect(regional.getByRole('combobox', { name: /^Alias List for / })).toHaveValue('0');
     await name.scrollIntoViewIfNeeded();
     await dialog(page).screenshot({ path: testInfo.outputPath('alias-list-review.png') });
     await addChannels(page);
     await expect(dialog(page)).toContainText('3 channels added.');
     const save = state.requests.find((request) => request.path.endsWith('/save'));
     expect(save.body.alias_groups).toEqual([
-      { group_id: 'county', alias_list_id: 21, new_alias_list_name: 'County Public Safety' },
+      { group_id: 'county', alias_list_id: 21, new_alias_list_name: null },
       { group_id: 'regional', alias_list_id: 0, new_alias_list_name: 'Regional existing' }
     ]);
   });
 }
 
-test('search review reveals an invalid Alias List choice when its panel was closed', async ({ page }) => {
+test('search review keeps the explicit Alias List choice visible when channel customization is closed', async ({ page }) => {
   const state = await install(page, { ambiguous: true });
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  const alias = dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)', { exact: true });
+  await expect(alias).toBeVisible();
+  await expect(alias.locator('option[value="0"]')).toHaveText('Create a new Alias List');
+  await dialog(page).getByRole('button', { name: 'Customize', exact: true }).click();
   await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
-  await expect(dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)')).toBeHidden();
-  await addChannels(page, 1);
-  await expect(dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)')).toBeVisible();
+  await expect(alias).toBeVisible();
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
 });
 
@@ -2845,7 +2974,9 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
     await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
     const alias = dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)');
-    await expect(alias.locator('option')).toHaveText(['Choose an Alias List', 'County Dispatch', 'County Operations']);
+    await expect(alias.locator('option')).toHaveText([
+      'Choose an Alias List', 'Use existing: County Dispatch', 'Use existing: County Operations', 'Create a new Alias List'
+    ]);
     await alias.click();
     await expect(dialog(page)).toHaveScreenshot(`spectrum-search-alias-control-${theme}-${width}.png`);
     await alias.press('Enter');

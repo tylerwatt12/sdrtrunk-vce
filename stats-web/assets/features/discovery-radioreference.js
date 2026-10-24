@@ -270,6 +270,85 @@ export function discoveryAliasListName(system, fallback = '') {
   return bounded.trim();
 }
 
+export function createDiscoveryAliasListChoice(ui, {
+  lists = [], aliasListId = null, newAliasListName = '', suggestedAliasListId = null,
+  labelSuffix = '', nameEdited: initialNameEdited = false,
+  choiceEdited: initialChoiceEdited = aliasListId != null, onChange = () => {}
+} = {}) {
+  const { node, uiSelect, uiSelectFrame, formField } = ui;
+  const element = node('fieldset', 'ui-form-section');
+  element.append(node('legend', '', 'Alias List'));
+  const matched = lists.filter((list) => list.matched);
+  const sameName = (name) => lists.find((list) =>
+    list.name.trim().toLowerCase() === String(name || '').trim().toLowerCase());
+  const preferred = lists.find((list) => Number(list.id) === Number(suggestedAliasListId));
+  let choiceEdited = initialChoiceEdited;
+  let nameEdited = initialNameEdited;
+  let selected = aliasListId == null ? preferred?.id || (matched.length === 1 ? matched[0].id :
+    sameName(newAliasListName)?.id || (matched.length > 1 ? '' : 0)) : aliasListId;
+  if (Number(selected) > 0 && !lists.some((list) => Number(list.id) === Number(selected))) selected = '';
+  const select = uiSelect([
+    ...lists.map((list) => ({ value: String(list.id), label: `Use existing: ${list.name}` })),
+    { value: '0', label: 'Create a new Alias List' }
+  ], String(selected), selected === '', 'Choose an Alias List');
+  select.required = true;
+  select.setAttribute('aria-label', `Alias List${labelSuffix}`);
+  const found = node('p', 'ui-field-hint');
+  const input = node('input', 'ui-input');
+  input.type = 'text';
+  input.maxLength = ALIAS_LIST_NAME_MAX_LENGTH;
+  input.value = discoveryAliasListName(newAliasListName);
+  input.setAttribute('aria-label', `New Alias List name${labelSuffix}`);
+  const newField = formField('New Alias List name', input);
+  const collision = node('p', 'ui-feedback ui-feedback-error');
+  collision.setAttribute('role', 'status');
+  const defaults = node('p', 'ui-field-hint', 'New Alias Lists use your Default listening list.');
+  element.append(found, formField('Alias List', uiSelectFrame(select)), newField, collision, defaults);
+  const value = () => select.value === '' ? null : Number(select.value);
+  const newName = () => input.value.trim();
+  const name = () => value() > 0 ? lists.find((list) => Number(list.id) === value())?.name || '' : newName();
+  const sync = () => {
+    const creating = value() === 0;
+    newField.hidden = !creating;
+    input.required = creating;
+    input.disabled = !creating;
+    defaults.hidden = !creating;
+    const existing = sameName(newName());
+    const selectedList = lists.find((list) => Number(list.id) === value());
+    found.textContent = selectedList ? `Existing Alias List found: ${selectedList.name}` :
+      existing ? `Existing Alias List found: ${existing.name}` : lists.length ? 'Existing Alias Lists are available.' : '';
+    found.hidden = !found.textContent;
+    const error = creating && existing ?
+      `An Alias List named ${existing.name} already exists. Choose it above or enter a different name.` : '';
+    collision.textContent = error;
+    collision.hidden = !error;
+    input.setCustomValidity(error);
+  };
+  const notify = () => onChange({ alias_list_id: value(), new_alias_list_name: newName(),
+    name_edited: nameEdited, choice_edited: choiceEdited });
+  select.addEventListener('change', () => { choiceEdited = true; sync(); notify(); });
+  input.addEventListener('input', () => { nameEdited = true; sync(); notify(); });
+  sync();
+  return {
+    element, select, input, value, name, newName,
+    refreshName(updated) {
+      if (nameEdited) return;
+      const before = [select.value, input.value];
+      input.value = discoveryAliasListName(updated);
+      if (!choiceEdited) {
+        const existing = sameName(input.value);
+        if (existing && value() === 0) select.value = String(existing.id);
+      }
+      sync();
+      if (before[0] !== select.value || before[1] !== input.value) notify();
+    },
+    validate() {
+      sync();
+      return select.reportValidity() && (input.disabled || input.reportValidity());
+    }
+  };
+}
+
 export function createDiscoveryTalkgroupAvailability(request) {
   const catalogs = new Map();
   return async (targets) => {
@@ -281,7 +360,7 @@ export function createDiscoveryTalkgroupAvailability(request) {
           { csrf: false, timeoutMs: DIRECTORY_TIMEOUT_MS }).then((page) =>
           (Array.isArray(page) ? page : page?.items || []).length > 0).catch(() => {
           catalogs.delete(id);
-          return false;
+          throw new Error('RadioReference talkgroups could not be checked. Try again.');
         });
         catalogs.set(id, pending);
       }
@@ -295,7 +374,7 @@ export function discoveryAliasImportChoice(ui, targets, selected = true) {
   const { node } = ui;
   const matched = targets.some((target) => target.matched);
   const element = node('div', 'spectrum-discovery-review');
-  element.append(node('p', 'muted', 'Import all talkgroups from each matched RadioReference system into its new Alias List.'));
+  element.append(node('p', 'muted', 'Import all talkgroups from each matched RadioReference system into the selected Alias List.'));
   targets.forEach((target) => {
     const lists = node('dl', 'ui-fact-list');
     lists.append(node('dt', '', 'Alias List'), node('dd', '', target.name), node('dt', '', 'System'),
@@ -344,6 +423,15 @@ export function discoveryAliasImportResults(ui, result) {
   return element;
 }
 
+export function discoveryAliasImportForSelection(result, expected) {
+  const targets = [...new Map(expected.map((target) => [Number(target.alias_list_id), target])).values()]
+    .map((target) => (result?.targets || []).find((row) => Number(row.alias_list_id) === Number(target.alias_list_id)) || {
+      ...target, state: 'failed', added: 0, updated: 0, unchanged: 0,
+      message: 'Talkgroups were not imported. Retry, or import them from RadioReference.'
+    });
+  return { ...result, targets, complete: targets.every((target) => target.state === 'imported') };
+}
+
 export async function importDiscoveryAliases(request, url, initial, onProgress, current = () => true) {
   let result = initial || { targets: [], complete: true };
   const scope = new Set(result.targets.map((target) => target.alias_list_id));
@@ -357,7 +445,7 @@ export async function importDiscoveryAliases(request, url, initial, onProgress, 
     onProgress(result);
     try {
       const updated = await request(url, { method: 'POST', body: { alias_list_id: id }, timeoutMs: 90_000 });
-      result = { ...updated, targets: updated.targets.filter((target) => scope.has(target.alias_list_id)) };
+      result = discoveryAliasImportForSelection(updated, initial.targets.filter((target) => scope.has(target.alias_list_id)));
     } catch (cause) {
       if (!current()) break;
       result = { ...result, complete: false, targets: result.targets.map((target) => target.alias_list_id === id ?

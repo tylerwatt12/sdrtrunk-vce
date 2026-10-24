@@ -355,9 +355,19 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
               { field: 'group', before: 'Operations', after: 'Fire' }] }
         ] };
       if (path.includes('/conventional/categories?')) return { items: [
-        { sub_category_id: 44, category_name: 'Fire', sub_category_name: 'Dispatch' }
+        { sub_category_id: 44, category_name: 'Fire', sub_category_name: 'Dispatch' },
+        ...(scenario === 'conventional-category-race' ? [
+          { sub_category_id: 45, category_name: 'EMS', sub_category_name: 'Medical' }
+        ] : [])
       ] };
-      if (path.includes('/conventional/frequencies?')) return { total_items: 1, items: [
+      if (path.includes('/conventional/frequencies?') && scenario === 'conventional-category-race') {
+        const selected = new URL(path, location.href).searchParams.get('sub_category_id');
+        if (selected === '44') await new Promise((resolve) => { window.releaseConventionalCategory = resolve; });
+        else return { total_items: 1, names: { 56: { system: 'County · County Fire', site: 'Medical', name: 'Medical dispatch' } },
+          items: [{ id: 56, downlink_hz: 155100000, alpha_tag: 'Medical', description: 'Medical dispatch', mode: 'FMN' }] };
+      }
+      if (path.includes('/conventional/frequencies?')) return { total_items: 1,
+        names: { 55: { system: 'County · County Fire', site: 'Dispatch', name: 'County fire dispatch' } }, items: [
         { id: 55, downlink_hz: 154430000, alpha_tag: 'Fire Dispatch', description: 'County fire dispatch',
           mode: 'FMN' }
       ] };
@@ -580,6 +590,50 @@ test('Alias List creation updates every import picker without losing talkgroup s
   expect(result.creators.findLast((creator) => creator.created)?.created).toMatchObject({
     beforeRevision: 42, afterRevision: 43, aliasList: { id: 101, family: 'nbfm' }
   });
+});
+
+test('conventional import uses server names and preserves edits through review', async ({ page }) => {
+  await installWorkspace(page);
+  await page.locator('.radioreference-result-open').filter({ hasText: 'County Fire' }).click();
+  await page.locator('.radioreference-conventional-import').click();
+  const modal = page.getByRole('dialog', { name: 'Import County fire dispatch', exact: true });
+  await expect(modal.getByLabel('System name', { exact: true })).toHaveValue('County · County Fire');
+  await expect(modal.getByLabel('Site name', { exact: true })).toHaveValue('Dispatch');
+  await expect(modal.getByLabel('Channel name', { exact: true })).toHaveValue('County fire dispatch');
+  await modal.getByLabel('System name', { exact: true }).fill('My county');
+  await modal.getByLabel('Site name', { exact: true }).fill('My fire district');
+  await modal.getByLabel('Channel name', { exact: true }).fill('My dispatch');
+  await modal.getByRole('button', { name: 'Review Channel' }).click();
+  await expect(page.getByRole('dialog', { name: 'Review My dispatch', exact: true })).toBeVisible();
+  const calls = await page.evaluate(() => window.radioReferenceVisual.calls);
+  const frequencyUrl = new URL(calls.find(([path]) => path.includes('/conventional/frequencies?'))[0], 'https://example.test');
+  expect(frequencyUrl.searchParams.get('owner_kind')).toBe('AGENCY');
+  expect(frequencyUrl.searchParams.get('owner_id')).not.toBeNull();
+  expect(calls.find(([path]) => path.endsWith('/imports/conventional/preview'))[1].body).toMatchObject({
+    system_name: 'My county', site_name: 'My fire district', channel_name: 'My dispatch', sub_category_id: 44,
+    frequency_id: 55
+  });
+});
+
+test('conventional category changes keep the latest rows and naming context', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'conventional-category-race');
+  await page.locator('.radioreference-result-open').filter({ hasText: 'County Fire' }).click();
+  await expect.poll(() => page.evaluate(() => typeof window.releaseConventionalCategory)).toBe('function');
+  await page.getByRole('combobox', { name: 'Category', exact: true }).selectOption('45');
+  await expect(page.getByRole('button', { name: 'Medical', exact: true })).toBeVisible();
+  await page.evaluate(async () => {
+    window.releaseConventionalCategory();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  await expect(page.getByRole('button', { name: 'Medical', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Fire Dispatch', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Medical', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Import Medical dispatch', exact: true });
+  await expect(modal.getByLabel('Site name', { exact: true })).toHaveValue('Medical');
+  await modal.getByRole('button', { name: 'Review Channel' }).click();
+  const body = await page.evaluate(() => window.radioReferenceVisual.calls.find(
+    ([path]) => path.endsWith('/imports/conventional/preview'))[1].body);
+  expect(body).toMatchObject({ sub_category_id: 45, frequency_id: 56, site_name: 'Medical' });
 });
 
 test('talkgroup selections persist through searches and clear explicitly', async ({ page }) => {

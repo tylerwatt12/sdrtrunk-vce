@@ -39,7 +39,7 @@ import { openRadioReferenceConnect, radioReferencePremiumSignup } from './featur
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=58';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
-import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, importDiscoveryAliases } from './features/discovery-radioreference.js?v=10';
+import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, createDiscoveryAliasListChoice, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=11';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
@@ -8187,7 +8187,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : streaming ? [
       import('./features/streaming.js?v=14'), import('./guides/streaming-presentation.js?v=1')
     ] : [
-      import('./features/radioreference-import.js?v=34'), import('./guides/radioreference-presentation.js?v=1')
+      import('./features/radioreference-import.js?v=35'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
     const sample = (mapTour ? presentation.createMapGuideData : visualizerTour ? presentation.createNetworkVisualizerGuideData : topics ? presentation.createTopicsGuideData : scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
@@ -15645,6 +15645,7 @@ function openSpectrumDiscoveryWizard(selection) {
   let reviewDraft = null;
   let channelMapDraft = null;
   let reviewBinding = null;
+  let aliasChoiceEdited = false;
   let activeStep = -1;
   const editedReviewFields = new Set();
   let savedAliasName = '';
@@ -15655,6 +15656,7 @@ function openSpectrumDiscoveryWizard(selection) {
   let directoryRefreshFailed = false;
   let probeNodes = null;
   let signalDetails = null;
+  const disabledControls = new Map();
   const path = '/api/v1/admin/spectrum-discovery';
   const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href,
     connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null },
@@ -15810,11 +15812,8 @@ function openSpectrumDiscoveryWizard(selection) {
     refreshSystemSummary(reviewBinding);
     reviewBinding.refreshActions?.();
     refreshSignalDetails();
-    if (!editedReviewFields.has('new_alias_list_name')) {
-      reviewBinding.alias.value = discoveryAliasListName(
-        reviewBinding.form.querySelector('[data-channel-path=\"system\"]').value, session.review.default_new_alias_list_name);
-      if (reviewDraft) reviewDraft.new_alias_list_name = reviewBinding.alias.value;
-    }
+    reviewBinding.aliasChoice.refreshName(discoveryAliasListName(
+      reviewBinding.form.querySelector('[data-channel-path=\"system\"]').value, session.review.default_new_alias_list_name));
     if (reviewBinding.map && !channelMapDraft) {
       const values = template.frequency_map || session.trunked_evidence?.frequency_map || [];
       if (JSON.stringify(values) !== reviewBinding.mapValues) {
@@ -15870,8 +15869,15 @@ function openSpectrumDiscoveryWizard(selection) {
     directory.setBusy(value);
     actions.querySelectorAll('button').forEach((control) => { control.disabled = value; });
     stage.querySelectorAll('button').forEach((control) => { control.disabled = value; });
-    stage.querySelectorAll('input[type="radio"]').forEach((control) => { control.disabled = value || control.dataset.importUnavailable === 'true'; });
     stage.querySelectorAll('.spectrum-discovery-details-action').forEach((control) => { control.disabled = value; });
+    if (value) stage.querySelectorAll('input,select,textarea').forEach((control) => {
+      if (!disabledControls.has(control)) disabledControls.set(control, control.disabled);
+      control.disabled = true;
+    });
+    else {
+      disabledControls.forEach((disabled, control) => { if (control.isConnected) control.disabled = disabled; });
+      disabledControls.clear();
+    }
     if (!value) reviewBinding?.refreshActions?.();
   };
   const showError = (error, copy = 'This step could not finish. Try again.') => {
@@ -15941,6 +15947,7 @@ function openSpectrumDiscoveryWizard(selection) {
       heartbeatTimer = window.setTimeout(() => void heartbeat(), 10_000);
       settings = { ...(session.review?.template?.settings || {}) };
       reviewDraft = null;
+      aliasChoiceEdited = false;
       channelMapDraft = null;
       editedReviewFields.clear();
       restartRequired = false;
@@ -16227,60 +16234,28 @@ function openSpectrumDiscoveryWizard(selection) {
       channel.append(formField(field.label, control, `${field.help || 'Enter the verified channel numbers and frequencies.'} ` +
         'Unmapped channels can be followed only when the system broadcasts their frequencies.'));
     });
-    channel.append(facts([
-      ['Start automatically', 'On'],
-      ...(trunkedProtocol() ? [['Follow control frequency changes', 'On']] : [])
-    ]));
     form.append(channel);
 
     const lists = review.alias_lists || [];
-    const p25 = trunkedProtocol();
-    const allowNew = !p25 || lists.length === 0;
-    const aliasOptions = [...lists.map((list) => ({ value: list.id, label: list.name })),
-      ...(allowNew ? [{ value: 'new', label: 'Create a new Alias List' }] : [])];
-    const previousAlias = reviewDraft ? (reviewDraft.alias_list_id === 0 ? 'new' : reviewDraft.alias_list_id ?? '') : null;
-    let selected = previousAlias === '' ? '' : aliasOptions.some((option) => String(option.value) === String(previousAlias)) ? previousAlias :
-      (review.suggested_alias_list_id || (lists.length === 1 ? lists[0].id : lists.length ? '' : 'new'));
-    const alias = node('fieldset', 'ui-form-section spectrum-discovery-alias');
-    alias.append(node('legend', '', 'Alias List'));
-    let aliases = null;
-    if (p25 && lists.length === 1) {
-      alias.append(node('strong', '', `Use existing Alias List: ${lists[0].name}`),
-        node('p', 'muted', 'This signal belongs to a system you’ve already added.'));
-    } else if (lists.length > 0) {
-      aliases = uiSelect(aliasOptions, selected, selected === '', 'Choose an Alias List');
-      aliases.required = true;
-      aliases.setAttribute('aria-label', 'Alias List');
-      alias.append(node('p', 'muted', p25 ? 'This system has more than one Alias List. Choose which to use.' :
-        'Use an existing Alias List, or create one for this channel.'),
-      formField('Alias List', uiSelectFrame(aliases)));
-    }
-    const newName = node('input', 'ui-input');
-    newName.type = 'text';
-    newName.setAttribute('aria-label', 'New Alias List name');
-    newName.maxLength = ALIAS_LIST_NAME_MAX_LENGTH;
-    newName.value = reviewDraft?.new_alias_list_name ?? discoveryAliasListName(values.system, review.default_new_alias_list_name);
-    newName.addEventListener('input', () => editedReviewFields.add('new_alias_list_name'));
-    const newField = formField('New Alias List name', newName,
-      'An existing compatible Alias List with this name will be used.');
-    const defaults = node('p', 'ui-field-hint', 'New Alias Lists use your Default listening list.');
-    const syncAlias = () => {
-      if (aliases) selected = aliases.value;
-      newField.hidden = selected !== 'new';
-      newName.required = selected === 'new';
-      defaults.hidden = selected !== 'new';
-    };
-    aliases?.addEventListener('change', syncAlias);
-    syncAlias();
-    alias.append(newField, defaults, disclosure('What is an Alias List?',
-      node('p', '', 'An Alias List names radio groups and controls which groups you hear. Digital radio groups are called talkgroups.'),
-      node('p', '', 'Existing Alias Lists are offered only when the on-air system identity matches.')));
-    form.append(alias);
+    const aliasChoice = createDiscoveryAliasListChoice({ node, uiSelect, uiSelectFrame, formField }, {
+      lists, aliasListId: reviewDraft?.alias_list_id ?? null,
+      suggestedAliasListId: review.suggested_alias_list_id,
+      newAliasListName: reviewDraft?.new_alias_list_name ?? discoveryAliasListName(values.system, review.default_new_alias_list_name),
+      nameEdited: editedReviewFields.has('new_alias_list_name'), choiceEdited: aliasChoiceEdited,
+      onChange: (choice) => {
+        aliasChoiceEdited = choice.choice_edited;
+        if (choice.name_edited) editedReviewFields.add('new_alias_list_name');
+        modal.setDirty(true);
+        try { reviewDraft = read(); } catch (_) { return; }
+        reviewBinding?.refreshActions?.();
+      }
+    });
+    form.append(aliasChoice.element);
     const updateReviewNames = (event) => {
       const key = event?.target?.dataset?.channelPath;
       if (['name', 'system', 'site'].includes(key)) editedReviewFields.add(key);
       if (key === 'system' && !editedReviewFields.has('new_alias_list_name'))
-        newName.value = discoveryAliasListName(event.target.value, review.default_new_alias_list_name);
+        aliasChoice.refreshName(discoveryAliasListName(event.target.value, review.default_new_alias_list_name));
       modal.setDirty(true);
       try { reviewDraft = read(); } catch (_) { return; }
       refreshSystemSummary(system);
@@ -16290,15 +16265,15 @@ function openSpectrumDiscoveryWizard(selection) {
     form.addEventListener('change', updateReviewNames);
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
-    reviewBinding = Object.assign(system, { form, alias: newName,
+    reviewBinding = Object.assign(system, { form, aliasChoice,
       map: form.querySelector('[data-channel-type="frequency_map"]'), mapField: mapFields[0],
       mapValues: JSON.stringify(template.frequency_map || session.trunked_evidence?.frequency_map || []) });
     scheduleDirectoryPoll();
     const read = () => ({
       ...Object.fromEntries(['system', 'site', 'name'].map((key) => [key,
         form.querySelector(`[data-channel-path="${key}"]`).value.trim() || null])),
-      alias_list_id: selected === 'new' ? 0 : selected === '' ? null : Number(selected),
-      new_alias_list_name: selected === 'new' ? newName.value.trim() : null,
+      alias_list_id: aliasChoice.value(),
+      new_alias_list_name: aliasChoice.value() === 0 ? aliasChoice.newName() : null,
       settings, revision: review.revision, browse_lease_id: selection.browseLeaseId || null,
       ...(mapFields.length ? { frequency_map: channelEditorFieldValue(
         form.querySelector('[data-channel-type="frequency_map"]'), mapFields[0]) } : {})
@@ -16311,20 +16286,27 @@ function openSpectrumDiscoveryWizard(selection) {
       drawSetupStatus();
     });
     let add;
+    let saveFailed = false;
     const saveChannel = async () => {
       if (modal.state.isBusy() || refreshDirectoryWait(add)) return;
-      if (!valid(form)) return;
+      if (!aliasChoice.validate() || !valid(form)) return;
       busy(true);
       try {
         reviewDraft = read();
-        savedAliasName = selected === 'new' ? newName.value.trim() :
-          lists.find((list) => String(list.id) === String(selected))?.name || '';
+        savedAliasName = aliasChoice.name();
         session = await request(`${sessionPath()}/save`, { method: 'POST', body: reviewDraft, timeoutMs: 30_000 });
         if (!current()) return;
         modal.setDirty(false);
         selection.onSaved?.(session);
         aliasImportResult = session.alias_import && { ...session.alias_import,
           targets: (session.alias_import.targets || []).filter((target) => aliasImportSystems.has(Number(target.system_id))) };
+        if (wantsAliasImport && aliasImportSystems.size) {
+          aliasImportResult = discoveryAliasImportForSelection(session.alias_import, [{
+            alias_list_id: session.saved.alias_list_id, alias_list_name: savedAliasName,
+            system_id: Number(session.radio_reference?.match?.rr_system_id),
+            system_name: spectrumDiscoverySystemName(session, reviewDraft)
+          }]);
+        }
         if (wantsAliasImport && aliasImportResult?.targets?.length) await runAliasImports();
         else showComplete();
       } catch (error) {
@@ -16351,6 +16333,7 @@ function openSpectrumDiscoveryWizard(selection) {
             }
           } catch (refreshError) { showError(refreshError); }
         } else {
+          saveFailed = true;
           showError(error, 'We couldn’t add your channel. Your choices are still here. Try again.');
           add.textContent = 'Try adding again';
         }
@@ -16358,17 +16341,20 @@ function openSpectrumDiscoveryWizard(selection) {
     };
     const addAction = async () => {
       if (modal.state.isBusy() || refreshDirectoryWait(add)) return;
-      if (!valid(form)) return;
+      if (!aliasChoice.validate() || !valid(form)) return;
       reviewDraft = read();
-      if (canOfferAliasImport() && selected === 'new') {
+      if (canOfferAliasImport()) {
         busy(true);
         message.textContent = 'Checking available talkgroups…';
         let targets;
         try {
-          targets = await availableTalkgroups([{ name: reviewDraft.new_alias_list_name,
+          targets = await availableTalkgroups([{ name: aliasChoice.name(),
             systemName: spectrumDiscoverySystemName(session, reviewDraft), matched: true,
             rrSystemId: Number(session.radio_reference.match.rr_system_id) }]);
-        } finally { if (current()) { busy(false); message.replaceChildren(); } }
+        } catch (error) {
+          showError(error, 'Talkgroups could not be checked. Try again.');
+          return;
+        } finally { if (current()) { busy(false); if (targets) message.replaceChildren(); } }
         if (!current()) return;
         if (!targets.length) { wantsAliasImport = false; void saveChannel(); return; }
         aliasImportSystems = new Set(targets.map((target) => target.rrSystemId));
@@ -16379,12 +16365,11 @@ function openSpectrumDiscoveryWizard(selection) {
         add = button('Add and start listening', () => { wantsAliasImport = choice.wantsImport(); void saveChannel(); }, true);
       } else { wantsAliasImport = false; void saveChannel(); }
     };
-    add = button(canOfferAliasImport() && selected === 'new' ? 'Continue' : 'Add and start listening', () => void addAction(), true);
+    add = button(canOfferAliasImport() ? 'Continue' : 'Add and start listening', () => void addAction(), true);
     reviewBinding.refreshActions = () => {
-      add.textContent = canOfferAliasImport() && selected === 'new' ? 'Continue' : 'Add and start listening';
+      add.textContent = saveFailed ? 'Try adding again' : canOfferAliasImport() ? 'Continue' : 'Add and start listening';
       refreshDirectoryWait(add);
     };
-    aliases?.addEventListener('change', reviewBinding.refreshActions);
     reviewBinding.refreshActions();
   };
   const runAliasImports = async () => {
@@ -25902,7 +25887,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=36');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=37');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -29255,7 +29240,7 @@ function radioReferenceWorkspaceDependencies(overrides = {}) {
 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
-  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=34');
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=35');
   if (!renderIsCurrent(renderContext)) return;
   if (!beginPage(renderContext, radioReferencePageHeader())) return;
   const { page, loadingState, gate, workspace, workspaceHeader, accountStatus, settingsButton } =
