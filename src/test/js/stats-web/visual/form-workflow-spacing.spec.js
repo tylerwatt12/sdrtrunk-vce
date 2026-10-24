@@ -255,10 +255,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await page.locator('.channel-edit-name').filter({ hasText: channelName }).click();
     await page.getByRole('dialog', { name: `Edit ${channelName}`, exact: true })
       .getByRole('button', { name: 'Update from RadioReference', exact: true }).click();
-    await page.getByRole('alertdialog', { name: 'Update from RadioReference', exact: true })
-      .getByRole('button', { name: 'Look up channel', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Review RadioReference names', exact: true });
-    await expect(dialog.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled();
+    await expect(dialog.getByRole('button', { name: 'Use these names', exact: true })).toBeEnabled();
     await inspectWithoutFields(dialog.locator('form.ui-form-workflow'), `radioreference-names-${suffix}`, true);
   });
 }

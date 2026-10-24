@@ -57,7 +57,7 @@ export function spectrumSteps(documentValue, preparePlayer, preparePage, canView
     { id: 'lookup', title: 'Identify the user', capability: 'admin-settings',
       paragraphs: ['Find matching entries in your region to help identify the signal.'] },
     { id: 'add-channel', title: 'Add what you found', capability: 'admin-channels',
-      paragraphs: ['Open the channel wizard to choose the radio type, identify the signal, and review its receiving configuration.'] },
+      paragraphs: ['Detect a trunked system automatically, or open Create Channel in a new tab with this frequency to choose the protocol yourself.'] },
     { id: 'modes', title: 'Tune through the band',
       paragraphs: ['Setup temporarily stops this tuner’s channels so you can tune freely. In the full view, click and drag to move the receiving window, or enter a center frequency above.',
         'Return to Live to resume the channels this session stopped.'] },

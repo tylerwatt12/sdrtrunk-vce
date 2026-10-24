@@ -48,7 +48,6 @@ vm.runInContext(`
   ${functionSource('function channelValueAt(value, path)')}
   ${functionSource('function channelFieldOptions(field, profile, options)')}
   ${functionSource('function channelEditorControl(field, profile, options, channel, protocolCatalog)')}
-  ${functionSource('function spectrumDiscoveryManualChannel(selection, probe = {})')}
   ${functionSource('function setUiToggle(input, checked)')}
   const CHANNEL_ENCRYPTED_SKIP_PATH = 'settings.ignore_encrypted_calls';
   ${functionSource('function channelEncryptedCallSkipLocked(field, protocolCatalog)')}
@@ -62,8 +61,6 @@ vm.runInContext(`
   ${functionSource('function channelEditorVisibility(form)')}
   ${functionSource('function channelEditorDependencies(form)')}
   ${functionSource('function channelRestoreProtocolDefaults(form, profile)')}
-  ${functionSource('function spectrumDiscoverySettingFields(profile)')}
-  ${functionSource('function spectrumDiscoverySettings(form, profile)')}
   ${functionSource('function channelIsRemote(channel)')}
   ${functionSource('function channelEnrichmentSupported(channel, profile)')}
   ${functionSource('function channelEnrichmentAvailability(channel, profile, account)')}
@@ -101,42 +98,24 @@ const unchangedDefaults = JSON.parse(vm.runInContext(`JSON.stringify(channelCrea
 assert.equal(unchangedDefaults.alias_list_id, 10,
   'The template choice should remain when the selected protocol has no Default alias list');
 
-const manualDraft = JSON.parse(vm.runInContext(`JSON.stringify(spectrumDiscoveryManualChannel(
-  { frequencyHz: 774706250, tunerName: 'Receiver A', tunerId: 'private-id' },
-  { c4fm: { valid_control_messages: 38, quality_pct: 3 },
-    cqpsk: { valid_control_messages: 0, quality_pct: 0 },
-    identity: { wacn: 123, system: 456, site: 7 } }
-))`, context));
-assert.deepEqual(manualDraft, { protocol_id: 'p25-phase1', source: {
-  frequencies_hz: [774706250], preferred_frequency_hz: 774706250, preferred_tuner: 'Receiver A'
-}, settings: { modulation: 'C4FM' } },
-'Manual setup carries frequency and winning modulation without inventing verified identity');
-for (const [winner, other] of [['cqpsk', 'c4fm'], ['c4fm', 'cqpsk']]) {
-  const zeroScoreWinner = JSON.parse(vm.runInContext(`JSON.stringify(spectrumDiscoveryManualChannel(
-    { frequencyHz: 774706250 }, ${JSON.stringify({
-      [winner]: { valid_control_messages: 1, quality_pct: 0 },
-      [other]: { valid_control_messages: 0, quality_pct: 0 }
-    })}
-  ).settings)`, context));
-  assert.deepEqual(zeroScoreWinner, { modulation: winner.toUpperCase() },
-    'A sole decoder with valid control evidence wins even at zero score');
+for (const protocolId of ['am', 'nbfm', 'p25-phase1', 'p25-conventional', 'dmr', 'nxdn']) {
+  const prefilled = JSON.parse(vm.runInContext(`JSON.stringify(channelCreationPrefill(
+    { protocol_id: '${protocolId}', name: 'Template', alias_list_id: 11, observed: {},
+      source: { rotation_delay_ms: 500 }, settings: { selected: 'default' } },
+    { id: '${protocolId}' },
+    { frequency_hz: 154920000, protocol_id: 'p25-phase1',
+      source: { preferred_tuner: 'Do not copy' }, settings: { modulation: 'C4FM' } }
+  ))`, context));
+  assert.deepEqual(prefilled.source, { rotation_delay_ms: 500, frequencies_hz: [154920000] },
+    'A Spectrum handoff retains only frequency across every manual protocol choice');
+  assert.deepEqual(prefilled.settings, { selected: 'default' });
+  assert.deepEqual(prefilled.observed, {});
+  assert.equal(prefilled.alias_list_id, 11);
 }
-assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify(spectrumDiscoveryManualChannel(
-  { frequencyHz: 774706250 }, { c4fm: { valid_control_messages: 38, quality_pct: 3 },
-    cqpsk: { valid_control_messages: 38, quality_pct: 3 } }
-).settings)`, context)), {}, 'An exact tie leaves modulation for manual selection');
-const prefilled = JSON.parse(vm.runInContext(`JSON.stringify(channelCreationPrefill(
-  { protocol_id: 'p25-phase1', name: 'Template', alias_list_id: 11, observed: {},
-    source: { rotation_delay_ms: 500 }, settings: { traffic_channel_pool_size: 20, modulation: 'CQPSK' } },
-  { id: 'p25-phase1' },
-  { protocol_id: 'p25-phase1', observed: { p25_site_identity: 'unverified' }, system: 'Unverified system',
-    source: { frequencies_hz: [774706250] }, settings: { modulation: 'C4FM' } }
-))`, context));
-assert.deepEqual(prefilled.source, { rotation_delay_ms: 500, frequencies_hz: [774706250] });
-assert.deepEqual(prefilled.settings, { traffic_channel_pool_size: 20, modulation: 'C4FM' });
-assert.equal(prefilled.alias_list_id, 11);
-assert.deepEqual(prefilled.observed, {});
-assert.equal(prefilled.system, undefined);
+assert.match(application, /route.get\('create'\) === '1'/);
+assert.match(application, /initialChannel: \{ frequency_hz: frequencyHz \}/);
+assert.match(application, /create: '1', frequency_hz: selection.frequencyHz/);
+assert.match(application, /externalAnchor\('Set up manually'/);
 
 assert.equal(vm.runInContext(`channelEncryptedCallSkipLocked(
   { path: 'settings.ignore_encrypted_calls' }, { voice_decryption_module_loaded: true })`, context), true);
@@ -471,14 +450,14 @@ context.enrichmentChannel = { protocol_id: 'p25-phase1', source: remoteChannel.s
   observed: { p25_site_identity: { wacn: 0xBEE00, system: 0x348, rfss: 1, site: 2 } } };
 assert.equal(vm.runInContext('channelEnrichmentSupported(enrichmentChannel, enrichmentProfile)', context), true,
   'Remote P25 trunked channels are eligible for name enrichment');
-assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'p25-conventional' }, enrichmentProfile)", context), false);
-assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'p25-phase1', channel_kind: 'CONVENTIONAL' }, enrichmentProfile)", context), false);
-assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'dmr', channel_kind: 'TRUNKED' }, enrichmentProfile)", context), false);
+assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'p25-conventional' }, enrichmentProfile)", context), true);
+assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'p25-phase1', channel_kind: 'CONVENTIONAL' }, enrichmentProfile)", context), true);
+assert.equal(vm.runInContext("channelEnrichmentSupported({ protocol_id: 'dmr', channel_kind: 'TRUNKED' }, enrichmentProfile)", context), true);
 assert.equal(vm.runInContext("channelEnrichmentAvailability(enrichmentChannel, enrichmentProfile, { state: 'SIGNED_OUT' }).available", context), false);
 assert.equal(vm.runInContext("channelEnrichmentAvailability(enrichmentChannel, enrichmentProfile, { state: 'EXPIRED_PREMIUM' }).available", context), false);
 assert.equal(vm.runInContext("channelEnrichmentAvailability(enrichmentChannel, enrichmentProfile, { state: 'VALID_PREMIUM' }).available", context), true);
-assert.equal(vm.runInContext("channelEnrichmentAvailability({ protocol_id: 'p25-phase1', observed: { p25_site_identity: { wacn: 1, system: 2, site: 3 } } }, enrichmentProfile, { state: 'VALID_PREMIUM' }).available", context), false,
-  'A matching site number without RFSS is not sufficient');
+assert.equal(vm.runInContext("channelEnrichmentAvailability({ protocol_id: 'p25-phase1', observed: { p25_site_identity: { wacn: 1, system: 2, site: 3 } } }, enrichmentProfile, { state: 'VALID_PREMIUM' }).available", context), true,
+  'A manual channel can select its RadioReference record without a learned identity');
 context.enrichmentPreview = { changes: [
   { field: 'system', before: 'Unknown', after: 'County Radio' },
   { field: 'site', before: 'North', after: 'North' },
@@ -671,14 +650,6 @@ for (const protocolId of ['am', 'nbfm', 'p25-phase2']) {
   assert.equal(form.controls.get(path).disabled, true);
   assert.equal(Object.hasOwn(editorPayload(form, profile).settings, path.substring(9)), false,
     'Dependency-hidden values must be omitted for server preservation rather than parsed from drafts');
-  if (protocolId !== 'p25-phase2') {
-    context.catalogForm = form;
-    context.catalogProfile = profile;
-    const wizardSettings = JSON.parse(vm.runInContext(
-      'JSON.stringify(spectrumDiscoverySettings(catalogForm, catalogProfile))', context));
-    assert.equal(Object.hasOwn(wizardSettings, 'low_pass_cutoff_hz'), false,
-      'Spectrum audio settings must use the same hidden-field rules');
-  }
   form.controls.get(dependency).checked = protocolId !== 'p25-phase2';
   refreshVisibility(form);
   assert.equal(form.controls.get(path).disabled, false);

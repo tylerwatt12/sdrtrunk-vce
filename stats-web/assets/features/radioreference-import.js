@@ -1480,7 +1480,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     const channelName = input();
     systemName.value = textValue(entry, ['name'], '');
     siteName.value = textValue(entry, ['secondary', 'location'], '');
-    channelName.value = textValue(frequency, ['alpha_tag', 'alphaTag', 'description'],
+    channelName.value = textValue(frequency, ['description', 'alpha_tag', 'alphaTag'],
       `${formatFrequency(frequencyHz(frequency))} MHz`);
     [systemName, siteName, channelName].forEach((control) => { control.required = true; control.maxLength = 256; });
     const aliases = aliasSelect(family);

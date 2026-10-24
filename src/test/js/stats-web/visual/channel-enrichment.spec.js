@@ -1,259 +1,204 @@
 'use strict';
 const { expect, test } = require('@playwright/test');
-const fs = require('node:fs');
-const path = require('node:path');
-const { pathToFileURL } = require('node:url');
-let defaults;
-const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../../../src/main/resources/channel-protocols.json')));
-test.beforeAll(async () => {
-  defaults = (await import(pathToFileURL(path.resolve(__dirname, '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults;
-});
+const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
+const manifest = require('../../../../../src/main/resources/channel-protocols.json');
+
+function template(protocolId) {
+  const profile = manifest.profiles.find(entry => entry.id === protocolId);
+  return { protocol_id: protocolId, name: 'Channel', system: '', site: '',
+    alias_list_id: profile.alias_family === 'NBFM' ? 1 : 2,
+    source: { frequencies_hz: [154920000], preferred_tuner: null },
+    settings: Object.fromEntries(profile.sections.flatMap(section => section.fields)
+      .filter(field => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
+      .map(field => [field.path.slice(9), field.default])),
+    frequency_map: [], event_logs: [], recorders: [], auxiliary_decoders: [], observed: {} };
+}
 
 async function openEditor(page, options = {}) {
-  const protocol = options.protocol || 'p25-phase1';
-  const profile = manifest.profiles.find((entry) => entry.id === protocol);
-  const settings = Object.fromEntries(profile.sections.flatMap((section) => section.fields)
-    .filter((field) => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
-    .map((field) => [field.path.substring(9), field.default]));
-  const channel = { configuration_id: 'enrichment', protocol_id: protocol,
-    system: 'P25 BEE00-348', site: 'Site 01-02', name: 'My control channel',
-    radio_resolve_id: '30bf9438-6d5b-4a44-90b2-22b00efa731a', alias_list_id: 1,
-    source: { source_type: options.remote ? 'REMOTE' : 'TUNER', frequencies_hz: [851012500],
-      ...(options.remote ? { sender_id: 'test-sender', feed_id: 'test-feed' } : {}) },
-    settings, event_logs: ['CALL_EVENT'], frequency_map: [], recorders: [], auxiliary_decoders: [],
-    observed: { p25_site_identity: options.identity === false ? {} : { wacn: 0xBEE00, system: 0x348, rfss: 1, site: 2 } } };
-  const original = structuredClone(channel);
-  const state = { channel, original, revision: 1, previews: [], applies: [], puts: [],
-    previewState: 'matched', failApply: false, waitApply: null,
-    changes: [
-      { field: 'system', before: channel.system, after: 'Countywide Public Safety Radio System' },
-      { field: 'site', before: channel.site, after: 'North County Simulcast' },
-      { field: 'name', before: channel.name, after: 'Countywide Public Safety Radio System · North County Simulcast' }
-    ] };
-  const preferences = structuredClone(defaults);
-  preferences.appearance.theme = options.theme || 'light';
-  await page.route('**/api/v1/**', async (route) => {
+  await installSiteStyleApplication(page, options.theme || 'light');
+  const channel = { ...template(options.protocol || 'nbfm'),
+    ...(options.create ? {} : { configuration_id: 'saved-channel' }) };
+  const state = { channel, previews: [], writes: [], mode: options.mode || 'choose_record',
+    account: options.account || 'VALID_PREMIUM', rejectSave: false };
+  const names = { system: 'Lorain County', site: 'Fire Departments', name: 'Fire SE Dispatch' };
+  await page.route('**/api/v1/**', async route => {
     const request = route.request();
-    const pathname = new URL(request.url()).pathname;
-    const respond = (data) => route.fulfill({ json: { data } });
-    if (pathname === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
-      username: 'operator', tier: 'admin', primary: true, csrf_token: 'test-token', capabilities: { 'admin-channels': true } });
-    if (pathname === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
-    if (pathname === '/api/v1/admin/channels') return respond({ revision: state.revision,
-      channels: [{ ...channel, channel_kind: profile.channel_kind, protocol_label: profile.label,
-        frequencies_hz: channel.source.frequencies_hz, processing_state: options.running ? 'RUNNING' : 'STOPPED', editable: true }] });
-    if (pathname === '/api/v1/admin/channels/enrichment') {
-      if (request.method() === 'PUT') state.puts.push(request.postDataJSON());
-      if (state.waitRefresh && state.applies.length > 0) await state.waitRefresh;
-      return respond({ revision: state.revision, channel, processing_state: options.running ? 'RUNNING' : 'STOPPED' });
+    const path = new URL(request.url()).pathname;
+    const respond = data => route.fulfill({ json: { data } });
+    if (path === '/api/v1/admin/channels' || path === '/api/v1/channel-catalog') {
+      if (request.method() === 'POST') {
+        state.writes.push(request.postDataJSON());
+        if (state.rejectSave) return route.fulfill({ status: 409, json: { error: {
+          code: 'configuration_conflict', message: 'A channel already uses 154.920 MHz.' } } });
+      }
+      return respond({ revision: 1, channels: options.catalogChannels || (options.create ? [] : [{ ...channel,
+        name: channel.name, frequencies_hz: channel.source.frequencies_hz,
+        protocol_label: 'NBFM', channel_kind: 'CONVENTIONAL', processing_state: 'STOPPED', editable: true }]) });
     }
-    if (pathname === '/api/v1/admin/channels/options') return respond({ revision: state.revision,
-      alias_lists: [{ id: 1, name: 'My aliases', family: 'P25' }], tuners: [] });
-    if (pathname === '/api/v1/admin/channels/protocols') return respond({ profiles: [profile] });
-    if (pathname === '/api/v1/admin/radioreference') {
-      if (options.waitAccount) await options.waitAccount;
-      return respond({ account: { state: options.account || 'VALID_PREMIUM' } });
+    if (path === '/api/v1/admin/channels/saved-channel') {
+      if (request.method() === 'PUT') state.writes.push(request.postDataJSON());
+      return respond({ revision: 1, edit_revision: 'fixture-edit', channel, processing_state: 'STOPPED' });
     }
-    if (pathname.endsWith('/channels/enrichment/preview')) {
-      state.previews.push(request.postDataJSON());
-      return respond({ preview_id: state.previewState === 'matched' ? `preview-${state.previews.length}` : null,
-        configuration_id: channel.configuration_id, revision: state.revision, state: state.previewState,
-        reason: state.previewState === 'no_match' ? 'No matching RadioReference site was found.' :
-          state.previewState === 'ambiguous' ? 'More than one RadioReference site matches this identity.' :
-            'RadioReference is unavailable. Try again.', changes: state.changes,
-        running: options.running === true,
-        system_url: 'https://www.radioreference.com/db/sid/123', site_url: 'https://www.radioreference.com/db/site/456' });
+    if (path === '/api/v1/admin/channels/protocols') return respond(manifest);
+    if (path.endsWith('/template')) return respond(template(path.split('/').at(-2)));
+    if (path === '/api/v1/admin/channels/options') return respond({ revision: 1, tuners: [], alias_lists: [
+      { id: 1, name: 'Default Analog', family: 'NBFM' }, { id: 2, name: 'Default P25', family: 'P25' },
+      { id: 3, name: 'Default DMR', family: 'DMR' }, { id: 4, name: 'Default NXDN', family: 'NXDN' }
+    ] });
+    if (path === '/api/v1/admin/radioreference') return respond({ account: { state: state.account }, country_id: 1, state_id: 39 });
+    if (path === '/api/v1/admin/radioreference/countries') return respond({ items: [{ id: 1, name: 'United States' }] });
+    if (path === '/api/v1/admin/radioreference/states') return respond({ items: [{ id: 39, name: 'Ohio' }] });
+    if (path.endsWith('/channels/enrichment/preview')) {
+      expect(request.headers()['x-csrf-token']).toBeTruthy();
+      const body = request.postDataJSON();
+      state.previews.push(body);
+      if (state.mode !== 'choose_record' && state.mode !== 'matched') return respond({
+        state: state.mode, reason: 'No matching RadioReference record was found.', changes: [] });
+      if (!body.candidate_id && state.mode === 'choose_record') return respond({ state: 'choose_record', lookup_id: 'lookup-1', candidates: [
+        { candidate_id: 'record-1', name: names.name, context: 'LC SE FDISP · Lorain County · FMN', protocol_id: 'nbfm' },
+        { candidate_id: 'record-2', name: 'Other dispatch', context: 'OTHER · Neighbor County · FMN', protocol_id: 'nbfm' }
+      ] });
+      return respond({ state: 'matched', preview_id: 'preview-1', names,
+        system_url: 'https://www.radioreference.com/db/subcat/16320',
+        changes: Object.entries(names).map(([field, after]) => ({ field, before: body.channel[field] || '', after })) });
     }
-    if (pathname.endsWith('/channels/enrichment/apply')) {
-      const payload = request.postDataJSON();
-      state.applies.push(payload);
-      if (state.waitApply) await state.waitApply;
-      if (state.failApply) return route.fulfill({ status: 409, json: { error: { message: 'This comparison has expired.' } } });
-      for (const change of state.changes) if (change.field !== 'name' || payload.replace_name) channel[change.field] = change.after;
-      state.revision++;
-      return respond({ configuration_id: channel.configuration_id, revision: state.revision });
-    }
-    return route.fulfill({ status: 404, json: { error: { message: 'Unavailable in this browser test.' } } });
+    if (request.method() !== 'GET' && !path.startsWith('/api/v1/me/')) state.writes.push({ path, body: request.postDataJSON() });
+    return route.fallback();
   });
-  await page.goto('/app.html?view=channel-setup&channel=enrichment');
+  await page.goto(options.create ? '/app.html?view=channel-setup&create=1&frequency_hz=154920000' :
+    '/app.html?view=channel-setup&channel=saved-channel');
   state.editor = page.locator('.channel-editor-modal');
+  if (options.blocked) return state;
   await expect(state.editor).toBeVisible();
   state.openPreview = async () => {
     await state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true }).click();
-    const confirm = page.getByRole('alertdialog', { name: 'Update from RadioReference' });
-    await expect(confirm.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
-    await confirm.getByRole('button', { name: 'Look up channel', exact: true }).click();
     const preview = page.getByRole('dialog', { name: 'Review RadioReference names', exact: true });
     await expect(preview).toBeVisible();
-    await expect(preview.getByText('Looking up this channel in RadioReference…')).toHaveCount(0);
+    await expect(preview.getByText('Looking up this channel in RadioReference…', { exact: true })).toHaveCount(0);
     return preview;
   };
   return state;
 }
 
-test('remote P25 compares names, preserves cancelled choices and saves only reviewed names', async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 900 });
-  const state = await openEditor(page, { remote: true });
-  await expect(state.editor.locator('.channel-editor-footer').getByRole('button', {
-    name: 'Update from RadioReference', exact: true })).toBeVisible();
-  let preview = await state.openPreview();
-  await expect(preview.getByRole('checkbox', { name: 'Replace channel name' })).toHaveCount(0);
-  const comparison = preview.getByRole('table');
-  await expect(comparison.getByRole('columnheader')).toHaveText(['Field', 'Current', 'Suggested']);
-  await expect(comparison.getByRole('rowheader')).toHaveText(['System', 'Site', 'Channel name']);
-  for (const [index, change] of state.changes.entries()) {
-    await expect(comparison.getByRole('row').nth(index + 1).getByRole('cell'))
-      .toHaveText([change.before, change.after], { useInnerText: true });
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`conventional names select a record and apply to an unsaved editor in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await openEditor(page, { create: true, theme });
+    await state.editor.locator('.channel-protocol-select select').selectOption('nbfm');
+    await expect(state.editor.locator('[data-channel-path="source.frequencies_hz"] input').first()).toHaveValue('154.92');
+    await state.editor.getByLabel('Name', { exact: true }).fill('My unsaved channel');
+    const before = await state.editor.locator('[data-channel-path^="settings."]').evaluateAll(controls =>
+      controls.map(c => [c.dataset.channelPath, c.type === 'checkbox' ? c.checked : c.value]));
+    let preview = await state.openPreview();
+    await expect(preview.getByRole('button', { name: 'Use these names' })).toBeDisabled();
+    await expect(preview.getByLabel('RadioReference channel')).toHaveValue('');
+    await expect(preview.getByLabel('RadioReference channel')).toContainText('LC SE FDISP');
+    await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('My unsaved channel');
+    preview = await state.openPreview();
+    await preview.getByLabel('RadioReference channel').selectOption('record-1');
+    await expect(preview.getByRole('table').getByRole('rowheader')).toHaveText(['System', 'Site', 'Channel name']);
+    await expect(preview.getByRole('link', { name: 'Source' })).toHaveAttribute('target', '_blank');
+    await preview.getByRole('button', { name: 'Use these names' }).click();
+    await expect(preview).toHaveCount(0);
+    await expect(state.editor.getByLabel('System', { exact: true })).toHaveValue('Lorain County');
+    await expect(state.editor.getByLabel('Site', { exact: true })).toHaveValue('Fire Departments');
+    await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('Fire SE Dispatch');
+    expect(await state.editor.locator('[data-channel-path^="settings."]').evaluateAll(controls =>
+      controls.map(c => [c.dataset.channelPath, c.type === 'checkbox' ? c.checked : c.value]))).toEqual(before);
+    expect(state.writes).toHaveLength(0);
+    await state.editor.screenshot({ path: test.info().outputPath(`names-${theme}-${width}.png`) });
+    await state.editor.getByRole('button', { name: 'Create channel', exact: true }).click();
+    await expect.poll(() => state.writes.length).toBe(1);
+    expect(state.writes[0].name).toBe('Fire SE Dispatch');
+    expect(state.writes[0].source.frequencies_hz).toEqual([154920000]);
+    expect(state.writes[0].protocol_id).toBe('nbfm');
+    expect(state.writes[0].reject_existing_frequency).toBe(true);
+  });
+}
+
+test('manual handoff keeps frequency and protocol defaults when choosing every radio type', async ({ page }) => {
+  const state = await openEditor(page, { create: true });
+  for (const protocol of ['nbfm', 'p25-conventional', 'dmr', 'nxdn', 'p25-phase1', 'am']) {
+    await state.editor.locator('.channel-protocol-select select').selectOption(protocol);
+    const sources = state.editor.locator('[data-channel-path="source.frequencies_hz"]');
+    await expect(sources.locator('input').first()).toHaveValue('154.92');
+    await expect(state.editor.getByLabel('Alias List', { exact: true })).toHaveValue(
+      ['am', 'nbfm'].includes(protocol) ? '1' : protocol === 'dmr' ? '3' : protocol === 'nxdn' ? '4' : '2');
   }
-  for (const [label, destination] of [['System', 'sid/123'], ['Site', 'site/456']]) {
-    const link = preview.getByRole('link', { name: label, exact: true });
-    await expect(link).toHaveAttribute('href', `https://www.radioreference.com/db/${destination}`);
-    await expect(link).toHaveAttribute('target', '_blank');
-  }
-  await expect(preview.getByText('Saving briefly pauses this channel, then resumes it.')).toHaveCount(0);
-  const bounds = await preview.boundingBox();
-  expect(bounds.width).toBeLessThanOrEqual(680);
-  expect(bounds.height).toBeLessThanOrEqual(520);
-  await preview.screenshot({ path: test.info().outputPath('enrichment-light-desktop.png') });
-  await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.original.name);
-  expect(state.applies).toHaveLength(0);
-  preview = await state.openPreview();
-  await preview.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect(preview).toHaveCount(0);
-  await expect(state.editor.getByLabel('System', { exact: true })).toHaveValue(state.changes[0].after);
-  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.changes[2].after);
-  await expect(state.editor.getByRole('button', { name: 'Start', exact: true })).toBeEnabled();
-  expect(await state.editor.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  await state.editor.screenshot({ path: test.info().outputPath('enrichment-editor-light-desktop.png') });
-  expect(state.previews[0]).toEqual({ configuration_id: 'enrichment', revision: 1 });
-  expect(state.applies[0]).toEqual({ preview_id: 'preview-2', replace_name: true });
-  expect(state.puts).toHaveLength(0);
-  for (const field of ['source', 'radio_resolve_id', 'alias_list_id', 'settings', 'recorders', 'event_logs']) {
-    expect(state.channel[field]).toEqual(state.original[field]);
-  }
+  expect(state.writes).toHaveLength(0);
 });
 
-test('name-only changes can be saved and saving locks duplicate submits and dismissal on a dark phone', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const state = await openEditor(page, { theme: 'dark', running: true });
-  state.changes = state.changes.filter((change) => change.field === 'name');
-  const preview = await state.openPreview();
-  const save = preview.getByRole('button', { name: 'Save changes', exact: true });
-  await expect(preview.getByRole('table').getByRole('rowheader')).toHaveText(['Channel name']);
-  await expect(save).toBeEnabled();
-  await expect(preview.getByText('Saving briefly pauses this channel, then resumes it.')).toBeVisible();
-  expect(await preview.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  await preview.screenshot({ path: test.info().outputPath('enrichment-dark-phone.png') });
-  let release;
-  state.waitApply = new Promise((resolve) => { release = resolve; });
-  await save.click();
-  await expect.poll(() => state.applies.length).toBe(1);
-  await expect(save).toBeDisabled();
-  await expect(preview.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
-  await page.keyboard.press('Escape');
-  await expect(preview).toBeVisible();
-  let releaseRefresh;
-  state.waitRefresh = new Promise((resolve) => { releaseRefresh = resolve; });
-  release();
-  await expect.poll(() => state.revision).toBe(2);
-  await expect(preview.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
-  await page.keyboard.press('Escape');
-  await expect(preview).toBeVisible();
-  releaseRefresh();
-  await expect(preview).toHaveCount(0);
-  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.changes[0].after);
-  await expect(state.editor.locator('.channel-editor-footer').getByRole('button', {
-    name: 'Update from RadioReference', exact: true })).toBeVisible();
-  expect(await state.editor.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
-  await state.editor.screenshot({ path: test.info().outputPath('enrichment-editor-dark-phone.png') });
-  expect(state.applies).toEqual([{ preview_id: 'preview-1', replace_name: true }]);
-});
-
-test('dirty editor blocks lookup, and initial confirmation cancellation preserves it', async ({ page }) => {
+test('existing conventional editor keeps names as a draft until normal Save', async ({ page }) => {
   const state = await openEditor(page);
-  const update = state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true });
-  await state.editor.getByLabel('Name', { exact: true }).fill('My unsaved draft');
-  await update.click();
-  await expect(state.editor.getByText('Save or reset your changes before updating from RadioReference.')).toBeVisible();
-  expect(state.previews).toHaveLength(0);
-  await state.editor.getByRole('button', { name: 'Reset changes', exact: true }).click();
-  await update.click();
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true }).click();
-  expect(state.previews).toHaveLength(0);
-  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue(state.original.name);
-});
-
-for (const [label, options, message] of [
-  ['signed out', { account: 'SIGNED_OUT' }, 'Sign in to RadioReference with a Premium account'],
-  ['expired Premium', { account: 'EXPIRED_PREMIUM' }, 'A RadioReference Premium subscription is required.'],
-  ['missing identity', { identity: false }, 'Run this channel until it learns its WACN']
-]) test(`enrichment hides the unavailable action for ${label}`, async ({ page }) => {
-  const state = await openEditor(page, options);
-  await expect(state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true })).toHaveCount(0);
-  await expect(state.editor.getByText(message, { exact: false })).toHaveCount(0);
-});
-
-test('conventional P25 does not offer trunked enrichment', async ({ page }) => {
-  const state = await openEditor(page, { protocol: 'p25-conventional' });
-  await expect(state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true })).toHaveCount(0);
-});
-
-test('lookup states and stale saves keep the parent intact and require a fresh review', async ({ page }) => {
-  const state = await openEditor(page);
-  state.previewState = 'ambiguous';
   const preview = await state.openPreview();
-  await expect(preview.getByText('More than one RadioReference site matches this identity.')).toBeVisible();
-  await expect(preview.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
-  state.previewState = 'no_match';
-  await preview.getByRole('button', { name: 'Look up again', exact: true }).click();
-  await expect(preview.getByText('No matching RadioReference site was found.')).toBeVisible();
-  state.previewState = 'unavailable';
-  await preview.getByRole('button', { name: 'Look up again', exact: true }).click();
-  await expect(preview.getByText('RadioReference is unavailable. Try again.')).toBeVisible();
-  state.previewState = 'matched';
-  await preview.getByRole('button', { name: 'Look up again', exact: true }).click();
-  await expect(preview.getByRole('button', { name: 'Save changes', exact: true })).toBeEnabled();
-  state.failApply = true;
-  await preview.getByRole('button', { name: 'Save changes', exact: true }).click();
-  await expect(preview.getByRole('alert')).toContainText('This comparison has expired.');
-  await expect(preview.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
-  await expect(preview.getByRole('button', { name: 'Look up again', exact: true })).toBeEnabled();
-  state.previewState = 'no_changes';
-  state.revision = 2;
-  await preview.getByRole('button', { name: 'Look up again', exact: true }).click();
-  await expect(preview.getByText('This channel is already up to date.')).toBeVisible();
-  expect(state.previews.at(-1).revision).toBe(2);
-  await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(state.editor.getByLabel('System', { exact: true })).toHaveValue(state.original.system);
+  await preview.getByLabel('RadioReference channel').selectOption('record-1');
+  await preview.getByRole('button', { name: 'Use these names' }).click();
+  expect(state.writes).toHaveLength(0);
+  await state.editor.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect.poll(() => state.writes.length).toBe(1);
+  expect(state.writes[0].name).toBe('Fire SE Dispatch');
+  expect({ ...state.channel.settings, ...state.writes[0].settings }).toEqual(state.channel.settings);
 });
 
-
-test('location requirement links to existing RadioReference settings', async ({ page }) => {
-  const state = await openEditor(page);
-  state.previewState = 'location_required';
+test('lookup failures allow retry and cancellation without altering a dirty parent', async ({ page }) => {
+  const state = await openEditor(page, { mode: 'no_match' });
+  await state.editor.getByLabel('Name', { exact: true }).fill('Keep my name');
   const preview = await state.openPreview();
-  const link = preview.getByRole('link', { name: 'Open RadioReference settings' });
-  await expect(link).toHaveAttribute('href', /view=radioreference/);
-  await expect(link).toHaveAttribute('target', '_blank');
-  await expect(preview.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+  await expect(preview.getByText('No matching RadioReference record was found.')).toBeVisible();
+  await expect(preview.getByRole('button', { name: 'Use these names' })).toBeDisabled();
+  state.mode = 'matched';
+  await preview.getByRole('button', { name: 'Look up again' }).click();
+  await expect(preview.getByRole('button', { name: 'Use these names' })).toBeEnabled();
   await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true })).toBeFocused();
+  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('Keep my name');
+  expect(state.writes).toHaveLength(0);
+});
+
+for (const account of ['SIGNED_OUT', 'EXPIRED_PREMIUM']) test(`manual creation remains usable with RadioReference ${account}`, async ({ page }) => {
+  const state = await openEditor(page, { create: true, account });
+  await expect(state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true })).toBeHidden();
+  await expect(state.editor.getByRole('button', { name: 'Create channel', exact: true })).toBeEnabled();
 });
 
 
-test('a slow account check leaves the editor usable and preserves an in-progress draft', async ({ page }) => {
-  let release;
-  const waitAccount = new Promise((resolve) => { release = resolve; });
-  const state = await openEditor(page, { waitAccount });
-  const update = state.editor.getByRole('button', { name: 'Update from RadioReference', exact: true });
-  await expect(update).toHaveCount(0);
-  await expect(state.editor.getByText('Checking RadioReference account…')).toHaveCount(0);
-  await state.editor.getByLabel('Name', { exact: true }).fill('My draft while RadioReference loads');
-  release();
-  await expect(update).toBeEnabled();
-  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('My draft while RadioReference loads');
-  await update.click();
-  await expect(state.editor.getByText('Save or reset your changes before updating from RadioReference.')).toBeVisible();
-  expect(state.previews).toHaveLength(0);
+test('duplicate save failure preserves the populated draft and permits correction', async ({ page }) => {
+  const state = await openEditor(page, { create: true });
+  await state.editor.getByLabel('Name', { exact: true }).fill('My channel');
+  state.rejectSave = true;
+  await state.editor.getByRole('button', { name: 'Create channel', exact: true }).click();
+  await expect(state.editor).toContainText('A channel already uses 154.920 MHz.');
+  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('My channel');
+  await expect(state.editor.getByRole('button', { name: 'Create channel', exact: true })).toBeEnabled();
+});
+
+test('Spectrum manual handoff rejects an existing local frequency before opening the editor', async ({ page }) => {
+  const state = await openEditor(page, { create: true, blocked: true, catalogChannels: [
+    { configuration_id: 'local-channel', name: 'Local dispatch', frequencies_hz: [154920000],
+      protocol_label: 'NBFM', channel_kind: 'CONVENTIONAL', processing_state: 'STOPPED', editable: true }
+  ] });
+  await expect(page.getByText('A channel already uses 154.92 MHz.', { exact: true })).toBeVisible();
+  await expect(state.editor).toHaveCount(0);
+  expect(state.writes).toHaveLength(0);
+});
+
+test('a remote stream on the same frequency permits a local Spectrum draft', async ({ page }) => {
+  const state = await openEditor(page, { create: true, catalogChannels: [
+    { configuration_id: 'remote-channel', name: 'Remote dispatch', frequencies_hz: [154920000],
+      protocol_label: 'NBFM', channel_kind: 'CONVENTIONAL', processing_state: 'STOPPED', editable: false,
+      remote_origin: { remote: true } }
+  ] });
+  await expect(state.editor.locator('[data-channel-path="source.frequencies_hz"] input').first()).toHaveValue('154.92');
+  expect(state.writes).toHaveLength(0);
+});
+
+test('verified P25 names also apply to the existing editor draft without separate persistence', async ({ page }) => {
+  const state = await openEditor(page, { protocol: 'p25-phase1', mode: 'matched' });
+  const preview = await state.openPreview();
+  await expect(preview.getByLabel('RadioReference channel')).toHaveCount(0);
+  await preview.getByRole('button', { name: 'Use these names' }).click();
+  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('Fire SE Dispatch');
+  expect(state.writes).toHaveLength(0);
+  expect(state.previews[0].configuration_id).toBe('saved-channel');
+  expect(state.previews[0].channel.protocol_id).toBe('p25-phase1');
 });

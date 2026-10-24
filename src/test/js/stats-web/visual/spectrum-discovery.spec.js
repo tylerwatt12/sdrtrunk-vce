@@ -10,6 +10,7 @@ const realDirectory = process.env.VCE_DISCOVERY_REAL_DATA ?
 
 const ohioSystem = 'Ohio MARCS-IP: Multi-Agency Radio Communications';
 const ohioSite = 'Cuyahoga County / Greater Cleveland Simulcast';
+const fixtureStates = new WeakMap();
 
 function ohioDiscoveryFixture(theme) {
   // Public system names with synthetic observations; no receiver is contacted.
@@ -43,7 +44,7 @@ function snapshot(protocolId, state) {
     .map((field) => [field.path.substring(9), field.default]));
   if (digital) settings.channel_mode = 'TRUNKED';
   return { session_id: 'discovery-a', state: state.saved ? state.running ? 'running' : 'saved' : state.phase || 'ready', reason: state.reason || null,
-    protocol_id: protocolId,
+    protocol_id: state.automaticIdentifying && state.phase === 'identifying' ? 'auto' : protocolId,
     tuner_id: 'idle-a', target_id: 'target-a', frequency_hz: state.frequencyHz || 851012500,
     expires_at_ms: Date.now() + 30000,
     radio_reference: state.directoryResult?.state === 'matched' ? { ...state.directoryResult,
@@ -147,6 +148,7 @@ async function installLiveSpectrumStream(page) {
 }
 
 async function install(page, state = {}) {
+  fixtureStates.set(page, state);
   const browseWillFail = state.failBrowseOnce === true;
   state.tuner = tuner();
   state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value = state.locked === true;
@@ -239,19 +241,6 @@ async function install(page, state = {}) {
       return respond({ items: [{ id: 39, name: 'Ohio' }, { id: 42, name: 'Pennsylvania' }] });
     }
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
-    if (state.manualSetup && path === '/api/v1/admin/channels/options') return respond({
-      revision: 7, tuners: ['Test receiver'], alias_lists: [{ id: 21, name: 'Default P25', family: 'P25' }]
-    });
-    if (state.manualSetup && path === '/api/v1/admin/channels/protocols/p25-phase1/template') {
-      const profile = protocols.profiles.find((candidate) => candidate.id === 'p25-phase1');
-      const settings = Object.fromEntries(profile.sections.flatMap((section) => section.fields)
-        .filter((field) => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
-        .map((field) => [field.path.substring(9), field.default]));
-      return respond({ protocol_id: 'p25-phase1', name: 'P25 Channel', alias_list_id: 21,
-        source: { frequencies_hz: [], rotation_delay_ms: 500 }, settings, observed: {},
-        event_logs: [], recorders: [], auxiliary_decoders: [] });
-    }
-    if (state.manualSetup && path === '/api/v1/admin/channels') return respond({ revision: 8, channels: [] });
     if (path.endsWith('/eligibility')) return respond({ eligible: !state.known,
       reason: state.known ? 'This frequency belongs to County Control.' : null,
       matches: state.known ? [{ configuration_id: 'channel-a', name: 'County Control',
@@ -262,7 +251,7 @@ async function install(page, state = {}) {
         return route.fulfill({ status: 503, contentType: 'application/json',
           body: JSON.stringify({ error: { code: 'unavailable', message: 'Could not start the signal check. Try again.' } }) });
       }
-      state.protocolId = body.protocol_id;
+      state.protocolId = body.protocol_id === 'auto' ? state.detectedProtocolId || 'p25-phase1' : body.protocol_id;
       state.frequencyHz = body.frequency_hz;
       return respond(snapshot(state.protocolId, state));
     }
@@ -356,18 +345,14 @@ async function install(page, state = {}) {
 
 const wizard = (page) => page.locator('.spectrum-discovery-modal');
 const signalDetails = (page) => page.locator('.spectrum-discovery-detail-modal');
-const radioTypes = { 'p25-phase1': 'P25 radio system', dmr: 'DMR trunked system', nxdn: 'NXDN trunked system', am: 'AM radio', nbfm: 'FM two-way radio' };
-
 async function begin(page, protocolId = 'p25-phase1') {
+  fixtureStates.get(page).detectedProtocolId = protocolId;
   await page.evaluate(() => window.openDiscovery());
-  await wizard(page).getByRole('radio', { name: radioTypes[protocolId], exact: true }).check();
-  await wizard(page).getByRole('button', { name: ['p25-phase1', 'dmr', 'nxdn'].includes(protocolId) ? 'Check signal' : 'Continue',
-    exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
 }
 
-async function review(page, protocolId = 'p25-phase1') {
-  await wizard(page).getByRole('button', { name: ['p25-phase1', 'dmr', 'nxdn'].includes(protocolId) ? 'Review channel' : 'Continue',
-    exact: true }).click();
+async function review(page) {
+  await wizard(page).getByRole('button', { name: 'Review channel', exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'Name your channel', exact: true })).toBeVisible();
 }
 
@@ -544,7 +529,7 @@ for (const [theme, viewport] of [['light', { width: 1365, height: 900 }],
     await wizard(page).getByLabel('RadioReference state or province').selectOption('42');
     await wizard(page).getByLabel('RadioReference state or province').scrollIntoViewIfNeeded();
     await wizard(page).screenshot({ path: testInfo.outputPath('region-selection.png') });
-    await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+    await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
     await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
     expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
       request.method === 'POST').body.radioreference_state_id).toBe(42);
@@ -558,7 +543,7 @@ test('starting a signal check waits for the saved RadioReference region to load'
   await install(page, state);
   await page.evaluate(() => window.openDiscovery());
   await expect.poll(() => typeof state.releaseDirectory).toBe('function');
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await page.clock.fastForward(6000);
   expect(state.requests.some((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
     request.method === 'POST')).toBe(false);
@@ -579,7 +564,7 @@ test('discovery lookup regions wait beyond five seconds and preserve the saved s
   await expect(wizard(page)).toContainText('Loading states and provinces…');
   await page.clock.fastForward(6000);
   await expect(wizard(page).getByRole('button', { name: 'Retry loading regions', exact: true })).toBeHidden();
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   expect(state.requests.some(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')).toBe(false);
   state.releaseDirectoryStates();
   await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
@@ -612,7 +597,7 @@ for (const [theme, viewport] of [['light', { width: 1365, height: 900 }],
     await region.selectOption('42');
     await region.scrollIntoViewIfNeeded();
     await wizard(page).screenshot({ path: testInfo.outputPath('region-load-recovered.png') });
-    await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+    await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
     await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
     expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference/states')).toHaveLength(2);
     expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')
@@ -628,7 +613,7 @@ test('discovery lookup region list failure keeps the saved state in the start pa
   await expect(wizard(page)).toContainText('Your saved lookup region will be used.');
   await expect(wizard(page).getByLabel('RadioReference state or province')).toHaveValue('39');
   await expect(wizard(page).getByRole('button', { name: 'Retry loading regions', exact: true })).toBeVisible();
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')
     .body.radioreference_state_id).toBe(39);
@@ -644,7 +629,7 @@ test('discovery start waits for a pending region retry', async ({ page }) => {
   state.delayDirectoryStates = true;
   await wizard(page).getByRole('button', { name: 'Retry loading regions', exact: true }).click();
   await expect.poll(() => typeof state.releaseDirectoryStates).toBe('function');
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await page.clock.fastForward(1000);
   expect(state.requests.some(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')).toBe(false);
   state.releaseDirectoryStates();
@@ -666,7 +651,7 @@ test('discovery lookup country failure retries account settings and recovers its
   const region = wizard(page).getByLabel('RadioReference state or province');
   await expect(region).toBeEnabled();
   await region.selectOption('39');
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference')).toHaveLength(2);
   expect(state.requests.filter(({ path }) => path === '/api/v1/admin/radioreference/countries')).toHaveLength(2);
@@ -682,20 +667,20 @@ test('signed-out spectrum discovery offers connection before checking and hides 
   await expect(wizard(page).getByRole('button', { name: 'Connect account', exact: true })).toBeEnabled();
   await expect(wizard(page).getByRole('link', { name: 'RadioReference settings', exact: true })).toHaveCount(0);
   await expect(wizard(page).getByLabel('RadioReference state or province')).toHaveCount(0);
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(wizard(page).locator('summary').filter({ hasText: /^RadioReference$/ })).toHaveCount(0);
   expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
     request.method === 'POST').body.radioreference_state_id).toBe(null);
 });
 
-test('discovery signs in above the same wizard and immediately uses its region without resetting the radio type', async ({ page }) => {
+test('discovery signs in above the same wizard and immediately uses its region without leaving the setup choices', async ({ page }) => {
   const state = {};
   await install(page, state);
   await page.evaluate(() => window.openDiscovery());
   const parent = wizard(page);
   const original = await parent.elementHandle();
-  await parent.getByRole('radio', { name: 'DMR trunked system', exact: true }).check();
+  state.detectedProtocolId = 'dmr';
   await disclose(page, 'RadioReference names (optional)');
   await parent.getByRole('button', { name: 'Connect account', exact: true }).click();
   const connection = page.getByRole('dialog', { name: 'Connect RadioReference', exact: true });
@@ -707,13 +692,13 @@ test('discovery signs in above the same wizard and immediately uses its region w
   await expect(connection).toHaveCount(0);
   expect(await parent.evaluate((element, previous) => element === previous, original)).toBe(true);
   await expect(parent).toContainText('Connected to RadioReference.');
-  await expect(parent.getByRole('radio', { name: 'DMR trunked system', exact: true })).toBeChecked();
+  await expect(parent.getByRole('link', { name: 'Set up manually', exact: true })).toBeVisible();
   await expect(parent.getByLabel('RadioReference state or province')).toHaveValue('39');
   await expect(parent.getByLabel('RadioReference state or province')).toBeFocused();
-  await parent.getByRole('button', { name: 'Check signal', exact: true }).click();
+  await parent.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect(parent.getByRole('heading', { name: /details found$/, exact: false })).toBeVisible();
   expect(state.requests.find(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST').body)
-    .toMatchObject({ protocol_id: 'dmr', radioreference_state_id: 39 });
+    .toMatchObject({ protocol_id: 'auto', radioreference_state_id: 39 });
   expect(state.requests.filter(({ path, method }) => path === '/api/v1/admin/radioreference/session' && method === 'PUT')).toHaveLength(1);
 });
 
@@ -738,13 +723,13 @@ test('discovery start failure restores the saved region control after its pendin
   await page.evaluate(() => window.openDiscovery());
   await expect.poll(() => typeof state.releaseDirectoryStates).toBe('function');
   await disclose(page, 'RadioReference names (optional)');
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   state.releaseDirectoryStates();
   await expect(wizard(page)).toContainText('Could not start the signal check. Try again.');
   const region = wizard(page).getByLabel('RadioReference state or province');
   await expect(region).toBeEnabled();
   await expect(region).toHaveValue('39');
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   expect(state.requests.filter(({ path, method }) => path === '/api/v1/admin/spectrum-discovery' && method === 'POST')
     .map(({ body }) => body.radioreference_state_id)).toEqual([39, 39]);
@@ -1008,7 +993,7 @@ for (const protocolId of ['dmr', 'nxdn']) {
       url: 'https://www.radioreference.com/db/sid/123',
       channels: [{ frequency_hz: 851012500, logical_channel_number: 1, primary_control: true }] } };
     await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeVisible();
-    await review(page, protocolId);
+    await review(page);
     await expect(wizard(page)).toContainText('Unmapped channels can be followed only when the system broadcasts their frequencies.');
     await expect(wizard(page).locator('.channel-map-row input').nth(1)).toHaveValue(/^851\.01250*$/);
     await expect(wizard(page).getByRole('link', { name: 'County Transit', exact: true })).toHaveCount(1);
@@ -1031,7 +1016,7 @@ for (const protocolId of ['dmr', 'nxdn']) {
     expect(saved.body.settings.channel_mode).toBe('TRUNKED');
     expect(saved.body.frequency_map).toEqual([{ number: 1, downlink_hz: 851012500, uplink_hz: 0 }]);
     expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
-      request.method === 'POST').body.protocol_id).toBe(protocolId);
+      request.method === 'POST').body.protocol_id).toBe('auto');
   });
 }
 
@@ -1491,18 +1476,20 @@ test('a single tuner can retry failed browsing without changing selection', asyn
     .toHaveLength(2);
 });
 
-test('the default P25 path uses plain language and waits for explicit review', async ({ page }) => {
+test('the shared trunked detection path uses plain language and waits for explicit review', async ({ page }) => {
   const state = {};
   await install(page, state);
   await page.evaluate(() => window.openDiscovery());
   const dialog = wizard(page);
   await expect(dialog.getByRole('heading', { name: 'Add a channel', exact: true })).toBeVisible();
-  const types = dialog.getByRole('group', { name: 'Radio type', exact: true });
-  await expect(types.getByRole('radio')).toHaveCount(5);
-  await expect(types.getByRole('radio', { name: 'P25 radio system', exact: true })).toBeChecked();
+  await expect(dialog.getByRole('radio')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Detect trunked system', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Set up manually', exact: true })).toBeVisible();
+  await expect(dialog).toContainText('Checks P25 Phase 1, DMR, and NXDN trunked control channels.');
+  await expect(dialog).toContainText('Supports AM, NBFM, P25, DMR, and NXDN.');
   await expect(dialog.getByText('Help me choose', { exact: true })).toHaveCount(0);
   expect(await dialog.innerText()).not.toMatch(/C4FM|CQPSK|WACN|RFSS|SysID|NAC/);
-  await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(dialog.getByText('Ready to add', { exact: true })).toBeVisible();
   await expect(dialog.getByText('The system, site, and signal setting stayed consistent.', { exact: true })).toBeVisible();
@@ -1623,6 +1610,27 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     });
 }
 
+test('automatic trunked detection starts without a chosen protocol and adopts the detected protocol', async ({ page }) => {
+  const state = { phase: 'identifying', automaticIdentifying: true };
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.clock.install();
+  await install(page, state);
+  await begin(page, 'dmr');
+  const dialog = wizard(page);
+  await expect(dialog.getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled();
+  state.phase = 'ready';
+  await page.clock.fastForward(900);
+  await expect(dialog.getByRole('heading', { name: 'DMR trunked system details found', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Details', exact: true })).toBeEnabled();
+  await review(page);
+  await expect(dialog.getByRole('group', { name: 'Channel', exact: true })).toBeVisible();
+  expect(state.requests.find(request => request.path === '/api/v1/admin/spectrum-discovery' && request.method === 'POST')
+    .body.protocol_id).toBe('auto');
+  expect(errors).toEqual([]);
+});
+
 test('P25 becoming ready preserves keyboard focus until the user reviews it', async ({ page }) => {
   const state = { phase: 'identifying' };
   await page.clock.install();
@@ -1689,139 +1697,83 @@ test('P25 polling retains Cancel focus and cancellation releases the probe', asy
   await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
 });
 
-test('retrying inconclusive P25 identification restores Cancel while scanning and saves no channel', async ({ page }) => {
-  const state = { phase: 'inconclusive' };
+const noTrunkedSignal = 'No supported trunked control channel was found. Try again or set up the channel manually.';
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`manual Spectrum setup opens Channel Manager in a new tab without checking or changing the receiver in ${theme}`,
+    async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      const state = { theme, discoveryFrequencyHz: 154920000 };
+      await install(page, state);
+      await page.evaluate(() => window.openDiscovery());
+      const dialog = wizard(page);
+      const manual = dialog.getByRole('link', { name: 'Set up manually', exact: true });
+      await expect(manual).toHaveAttribute('target', '_blank');
+      await expect(manual).toHaveAttribute('rel', /noopener/);
+      await expect(manual).toHaveAttribute('href', '/?view=channel-setup&create=1&frequency_hz=154920000');
+      expect(await dialog.evaluate(element => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.left >= 0 && bounds.right <= innerWidth && element.scrollWidth <= element.clientWidth + 1;
+      })).toBe(true);
+      await dialog.screenshot({ path: testInfo.outputPath(`spectrum-setup-choices-${theme}.png`) });
+      const receiverMutations = () => state.requests.filter(request =>
+        request.path === '/api/v1/admin/spectrum-discovery' && request.method === 'POST' ||
+        request.path.includes('/settings/') || request.path.endsWith('/save') || request.path.endsWith('/start'));
+      const before = receiverMutations().length;
+      const [manualPage] = await Promise.all([page.waitForEvent('popup'), manual.click()]);
+      await expect(manualPage).toHaveURL(/view=channel-setup&create=1&frequency_hz=154920000/);
+      await expect(page).toHaveURL(/view=tuner-spectrum/);
+      await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
+      await expect(dialog).toHaveCount(0);
+      expect(receiverMutations()).toHaveLength(before);
+      expect(await page.evaluate(() => window.discoveryProbeStates)).toEqual([false]);
+      await manualPage.close();
+    });
+}
+
+for (const protocolId of ['p25-phase1', 'dmr', 'nxdn']) {
+  for (const phase of ['inconclusive', 'failed']) {
+    test(`${phase} ${protocolId} detection releases the check and returns to the same setup choices`, async ({ page }) => {
+      const state = { phase };
+      await install(page, state);
+      await begin(page, protocolId);
+      const dialog = wizard(page);
+      await expect(dialog).toContainText(noTrunkedSignal);
+      await expect(dialog.getByRole('button', { name: 'Detect trunked system', exact: true })).toBeEnabled();
+      await expect(dialog.getByRole('link', { name: 'Set up manually', exact: true }))
+        .toHaveAttribute('href', '/?view=channel-setup&create=1&frequency_hz=851012500');
+      await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
+      await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
+      expect(state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'DELETE')).toHaveLength(1);
+      expect(state.requests.filter(request => request.path.endsWith('/save') || request.path.endsWith('/start'))).toHaveLength(0);
+      state.phase = 'identifying';
+      await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
+      await expect(dialog.getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await expect(dialog).toHaveCount(0);
+      await expect.poll(() => state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'DELETE').length).toBe(2);
+      expect(state.requests.filter(request => request.path === '/api/v1/admin/spectrum-discovery' && request.method === 'POST')
+        .map(request => request.body.protocol_id)).toEqual(['auto', 'auto']);
+    });
+  }
+}
+
+test('an inconclusive automatic check waits for successful cancellation before returning to setup', async ({ page }) => {
+  const state = { phase: 'inconclusive', deferDeleteOnce: true, failDeleteOnce: true };
   await install(page, state);
   await begin(page);
   const dialog = wizard(page);
-  await expect(dialog.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Choose another radio type', exact: true })).toBeVisible();
-  state.phase = 'identifying';
-  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
-  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeVisible();
-  await expect(dialog.getByRole('button', { name: 'Try again', exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole('button', { name: 'Choose another radio type', exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole('button', { name: 'Set up manually', exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
-  await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(dialog).toHaveCount(0);
-  await expect.poll(() => state.requests.filter((request) => request.path.endsWith('/discovery-a') &&
-    request.method === 'DELETE').length).toBe(2);
-  expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
-});
-
-test('weak P25 with incomplete identity hands off to manual setup without claiming discovery proof', async ({ page }) => {
-  const state = { phase: 'inconclusive', manualSetup: true, probeOverride: {
-    c4fm: { valid_messages: 38, valid_control_messages: 38, invalid_control_messages: 169, quality_pct: 3 },
-    cqpsk: { valid_messages: 0, valid_control_messages: 0, invalid_control_messages: 0, quality_pct: 0 },
-    identity: null, selected_modulation: null
-  } };
-  await install(page, state);
-  await page.evaluate(() => window.discoveryApi.openSpectrumDiscoveryWizard({
-    tunerId: 'idle-a', tunerName: 'Test receiver', frequencyHz: 774706250,
-    setProbeActive: (active) => window.discoveryProbeStates.push(active)
-  }));
-  await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
-  await expect(wizard(page).getByRole('button', { name: 'Set up manually', exact: true })).toBeVisible();
-  await wizard(page).getByRole('button', { name: 'Set up manually', exact: true }).click();
-  const editor = page.locator('.channel-editor-modal').filter({ has: page.getByRole('heading', { name: 'Create Channel', exact: true }) });
-  await expect(editor).toBeVisible();
-  await expect(wizard(page)).toHaveCount(0);
-  await expect(editor.getByRole('combobox', { name: /^Protocol / })).toHaveValue('p25-phase1');
-  await expect(editor.locator('[data-channel-path="source.frequencies_hz"] input')).toHaveValue('774.70625');
-  await expect(editor.getByRole('combobox', { name: 'Preferred Tuner', exact: true })).toHaveValue('Test receiver');
-  await expect(editor.getByRole('combobox', { name: 'Modulation', exact: true })).toHaveValue('C4FM');
-  await expect(editor.getByLabel('System', { exact: true })).toHaveValue('');
-  await expect(editor.getByLabel('Site', { exact: true })).toHaveValue('');
-  await expect(editor.getByText('ABCDE', { exact: true })).toHaveCount(0);
-  await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
-  expect(state.requests.filter((request) => request.method === 'DELETE' && request.path.endsWith('/discovery-a'))).toHaveLength(1);
-  expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start'))).toHaveLength(0);
-  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await expect(editor).toHaveCount(0);
-  expect(state.requests.filter((request) => request.path === '/api/v1/admin/channels' && request.method === 'POST')).toHaveLength(0);
-});
-
-test('manual P25 setup waits for cancellation and preserves the wizard when cancellation fails', async ({ page }) => {
-  const state = { phase: 'inconclusive', manualSetup: true, deferDeleteOnce: true, failDeleteOnce: true };
-  await install(page, state);
-  await begin(page);
-  const manual = wizard(page).getByRole('button', { name: 'Set up manually', exact: true });
-  await manual.click();
   await expect.poll(() => typeof state.releaseDelete).toBe('function');
-  await expect(manual).toBeDisabled();
-  await expect(page.getByRole('heading', { name: 'Create Channel', exact: true })).toHaveCount(0);
+  await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await expect(dialog.getByRole('link', { name: 'Set up manually', exact: true })).toHaveCount(0);
   state.releaseDelete();
-  await expect(wizard(page).getByText('This signal check could not be stopped yet. Try again before setting up manually.')).toBeVisible();
-  await expect(manual).toBeEnabled();
-  await expect(page.getByRole('heading', { name: 'Create Channel', exact: true })).toHaveCount(0);
-  await manual.click();
-  await expect(page.getByRole('heading', { name: 'Create Channel', exact: true })).toBeVisible();
-  await expect(wizard(page)).toHaveCount(0);
+  await expect(dialog).toContainText('The signal check could not be stopped. Try again.');
+  await expect(dialog).not.toHaveAttribute('aria-busy', 'true');
+  await dialog.getByRole('button', { name: 'Back to setup', exact: true }).click();
+  await expect(dialog).toContainText(noTrunkedSignal);
   await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
-  expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start'))).toHaveLength(0);
+  expect(state.requests.filter(request => request.path.endsWith('/save') || request.path.endsWith('/start'))).toHaveLength(0);
 });
-
-for (const signal of [
-  { name: '38 controls and 3% score', controls: 38, rejected: 169, score: 3, phase: 'inconclusive', modulation: 'C4FM' },
-  { name: 'one control and 3% score', controls: 1, rejected: 169, score: 3, phase: 'inconclusive', modulation: 'C4FM' },
-  { name: 'one C4FM control and zero score', controls: 1, rejected: 169, score: 0, phase: 'inconclusive', modulation: 'C4FM' },
-  { name: 'one CQPSK control and zero score', controls: 1, rejected: 169, score: 0, phase: 'inconclusive', modulation: 'CQPSK' },
-  { name: 'zero decode evidence', controls: 0, rejected: 0, score: 0, phase: 'failed' }
-]) {
-  test(`manual weak P25 setup saves ${signal.name} without verified identity or autostart`, async ({ page }) => {
-    const state = { phase: signal.phase, manualSetup: true, probeOverride: {
-      c4fm: { valid_messages: signal.modulation === 'C4FM' ? signal.controls : 0,
-        valid_control_messages: signal.modulation === 'C4FM' ? signal.controls : 0,
-        invalid_control_messages: signal.modulation === 'C4FM' ? signal.rejected : 0,
-        quality_pct: signal.modulation === 'C4FM' ? signal.score : 0 },
-      cqpsk: { valid_messages: signal.modulation === 'CQPSK' ? signal.controls : 0,
-        valid_control_messages: signal.modulation === 'CQPSK' ? signal.controls : 0,
-        invalid_control_messages: signal.modulation === 'CQPSK' ? signal.rejected : 0,
-        quality_pct: signal.modulation === 'CQPSK' ? signal.score : 0 },
-      identity: null, selected_modulation: null
-    } };
-    await install(page, state);
-    await page.evaluate(() => window.discoveryApi.openSpectrumDiscoveryWizard({
-      tunerId: 'idle-a', tunerName: 'Test receiver', frequencyHz: 774706250,
-      setProbeActive: (active) => window.discoveryProbeStates.push(active)
-    }));
-    await wizard(page).getByRole('button', { name: 'Check signal', exact: true }).click();
-    await wizard(page).getByRole('button', { name: 'Set up manually', exact: true }).click();
-    const editor = page.locator('.channel-editor-modal').filter({ has: page.getByRole('heading', { name: 'Create Channel', exact: true }) });
-    const modulation = editor.getByRole('combobox', { name: 'Modulation', exact: true });
-    await expect(modulation).toHaveValue(signal.modulation || 'CQPSK');
-    if (!signal.modulation) await modulation.selectOption('C4FM');
-    await editor.getByLabel('Name', { exact: true }).fill('Weak Control');
-    await editor.getByRole('button', { name: 'Create channel', exact: true }).click();
-    await expect.poll(() => state.requests.filter((request) => request.path === '/api/v1/admin/channels' &&
-      request.method === 'POST').length).toBe(1);
-    const saved = state.requests.find((request) => request.path === '/api/v1/admin/channels' && request.method === 'POST').body;
-    expect(saved.protocol_id).toBe('p25-phase1');
-    expect(saved.name).toBe('Weak Control');
-    expect(saved.source.frequencies_hz).toEqual([774706250]);
-    expect(saved.source.preferred_tuner).toBe('Test receiver');
-    expect(saved.settings.modulation).toBe(signal.modulation || 'C4FM');
-    expect(saved.observed?.p25_site_identity).toBeUndefined();
-    expect(saved.auto_start_order).toBeUndefined();
-    await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
-    expect(state.requests.filter((request) => request.method === 'DELETE' && request.path.endsWith('/discovery-a'))).toHaveLength(1);
-    expect(state.requests.filter((request) => request.path.endsWith('/save') || request.path.endsWith('/start') ||
-      request.path.endsWith('/actions') && request.body.action === 'START')).toHaveLength(0);
-  });
-}
-
-for (const protocolId of ['dmr', 'nxdn']) {
-  test(`inconclusive ${protocolId.toUpperCase()} does not offer the P25 manual handoff`, async ({ page }) => {
-    const state = { phase: 'inconclusive' };
-    await install(page, state);
-    await begin(page, protocolId);
-    await expect(wizard(page).getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
-    await expect(wizard(page).getByRole('button', { name: 'Set up manually', exact: true })).toHaveCount(0);
-    await expect(wizard(page).getByText('Decode score', { exact: true })).toHaveCount(0);
-    await expect(wizard(page).getByText(/A low score can still confirm/)).toHaveCount(0);
-  });
-}
 
 test('recovering P25 probe status restores the scanning footer', async ({ page }) => {
   const state = { phase: 'identifying', failProbeStatusOnce: true };
@@ -1848,51 +1800,44 @@ test('a setup that expires during review cannot add a channel and can retry sign
   state.phase = 'failed';
   state.reason = 'The signal check has expired.';
   await page.clock.fastForward(11000);
-  await expect(dialog.getByRole('heading', { name: 'We couldn’t identify this signal', exact: true })).toBeVisible();
+  await expect(dialog).toContainText(noTrunkedSignal);
   await expect(dialog.getByRole('button', { name: 'Add and start listening', exact: true })).toHaveCount(0);
-  await expect(dialog.getByRole('button', { name: 'Choose another radio type', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('link', { name: 'Set up manually', exact: true })).toBeVisible();
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
   state.phase = 'ready';
   state.reason = null;
-  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
   await review(page);
-  await expect(dialog.getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
   expect(state.requests.filter((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
     request.method === 'POST')).toHaveLength(2);
 });
 
-test('a delayed status from the previous radio type cannot replace a new signal check', async ({ page }) => {
-  const state = {};
+test('a delayed status from a cancelled automatic check cannot replace a new check', async ({ page }) => {
+  const state = { phase: 'identifying' };
   await page.clock.install();
   await install(page, state);
-  await begin(page, 'am');
-  await expect(wizard(page).getByRole('heading', { name: 'Ready for audio', exact: true })).toBeVisible();
-  state.phase = 'failed';
-  state.reason = 'The old AM setup has expired.';
+  await begin(page);
   state.deferStatusOnce = true;
-  await page.clock.fastForward(11000);
+  await page.clock.fastForward(900);
   await expect.poll(() => typeof state.releaseStatus).toBe('function');
-  const dialog = wizard(page);
-  await dialog.getByRole('button', { name: 'Back', exact: true }).click();
+  await wizard(page).getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(wizard(page)).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
   state.phase = 'ready';
-  state.reason = null;
-  await dialog.getByRole('radio', { name: 'P25 radio system', exact: true }).check();
-  await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
-  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
-  const response = page.waitForResponse((candidate) => candidate.request().method() === 'GET' &&
-    new URL(candidate.url()).pathname.endsWith('/spectrum-discovery/discovery-a'));
+  await begin(page, 'nxdn');
+  const dialog = wizard(page);
+  await expect(dialog.getByRole('heading', { name: 'NXDN trunked system details found', exact: true })).toBeVisible();
   state.releaseStatus();
-  await response;
   await page.waitForTimeout(100);
-  await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
-  await expect(dialog.getByRole('heading', { name: 'AM radio setup interrupted', exact: true })).toHaveCount(0);
+  await page.clock.fastForward(100);
+  await expect(dialog.getByRole('heading', { name: 'NXDN trunked system details found', exact: true })).toBeVisible();
   await review(page);
-  const opens = state.requests.filter((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
-    request.method === 'POST');
-  expect(opens.map((request) => request.body.protocol_id)).toEqual(['am', 'p25-phase1']);
-  expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
+  expect(state.requests.filter(request => request.path === '/api/v1/admin/spectrum-discovery' && request.method === 'POST')
+    .map(request => request.body.protocol_id)).toEqual(['auto', 'auto']);
+  expect(state.requests.filter(request => request.path.endsWith('/save'))).toHaveLength(0);
 });
 
 for (const expiredStatusCode of [409, 410]) {
@@ -1908,11 +1853,12 @@ for (const expiredStatusCode of [409, 410]) {
     await page.clock.fastForward(11000);
     const dialog = wizard(page);
     await expect(signalDetails(page)).toHaveCount(0);
-    await expect(dialog.getByRole('heading', { name: 'We couldn’t identify this signal', exact: true })).toBeFocused();
-    await expect(dialog.getByRole('button', { name: 'Try again', exact: true })).toBeVisible();
+    await expect(dialog).toContainText(noTrunkedSignal);
+    await expect(dialog.getByRole('heading', { name: 'How would you like to add this frequency?', exact: true })).toBeFocused();
+    await expect(dialog.getByRole('button', { name: 'Detect trunked system', exact: true })).toBeVisible();
     await expect(dialog.getByRole('button', { name: 'Add and start listening', exact: true })).toHaveCount(0);
     state.expiredStatus = false;
-    await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
     await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
     expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
   });
@@ -2014,6 +1960,7 @@ test('retrying a failed add preserves names and listening choices without adding
   await expect(dialog.getByText('Could not add this channel. Try again.', { exact: true })).toBeHidden();
   await expect(dialog.getByRole('button', { name: 'Try adding again', exact: true })).toBeEnabled();
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
+  await review(page);
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue('County Control');
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('County listening');
   await expect(dialog.getByLabel('System', { exact: true })).toHaveValue('County Radio');
@@ -2035,180 +1982,6 @@ test('retrying a failed add preserves names and listening choices without adding
   expect(state.requests.filter((request) => request.path.endsWith('/start'))).toHaveLength(0);
 });
 
-test('going Back with no analog Alias List selected does not silently create a new Alias List', async ({ page }) => {
-  const state = { ambiguous: true };
-  await install(page, state);
-  await begin(page, 'am');
-  await review(page, 'am');
-  const dialog = wizard(page);
-  const choices = dialog.getByLabel('Alias List', { exact: true });
-  await expect(choices).toHaveValue('');
-  await dialog.getByRole('button', { name: 'Back', exact: true }).click();
-  await review(page, 'am');
-  await expect(choices).toHaveValue('');
-  await addDiscovery(page);
-  expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
-  await choices.selectOption('21');
-  await addDiscovery(page);
-  await expect(dialog.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
-  expect(state.requests.find((request) => request.path.endsWith('/save')).body.alias_list_id).toBe(21);
-});
-
-test('FM defaults are unambiguous and edited audio settings survive review and Back', async ({ page }) => {
-  const state = {};
-  await install(page, state);
-  await begin(page, 'nbfm');
-  const dialog = wizard(page);
-  await expect(dialog.getByRole('heading', { name: 'Ready for audio', exact: true })).toBeVisible();
-  expect(await dialog.innerText()).toContain('12.5 kHz');
-  await expect(dialog.getByLabel('De-emphasis', { exact: true })).toBeHidden();
-  await disclose(page, 'Adjust audio settings');
-  const bandwidth = dialog.getByLabel('Bandwidth', { exact: true });
-  const emphasis = dialog.getByLabel('De-emphasis', { exact: true });
-  await expect(bandwidth).toHaveValue('BW_12_5');
-  await expect(emphasis).toHaveValue('NONE');
-  await expect(emphasis.locator('option').filter({ hasText: /^None$/ })).toHaveCount(1);
-  await expect(dialog.getByRole('group', { name: 'Audio', exact: true })).toBeVisible();
-  await expect(dialog.getByRole('group', { name: 'Squelch', exact: true })).toBeVisible();
-  await bandwidth.selectOption('BW_25_0');
-  await emphasis.selectOption('US_750US');
-  await review(page, 'nbfm');
-  expect(await dialog.innerText()).toContain('25.0 kHz');
-  expect(await dialog.innerText()).toContain('750 µs');
-  await dialog.getByLabel('Channel name', { exact: true }).fill('County dispatch');
-  await dialog.getByLabel('New Alias List name', { exact: true }).fill('Dispatch listening');
-  await dialog.getByRole('button', { name: 'Back', exact: true }).click();
-  await disclose(page, 'Adjust audio settings');
-  await expect(bandwidth).toHaveValue('BW_25_0');
-  await expect(emphasis).toHaveValue('US_750US');
-  await bandwidth.selectOption('BW_7_5');
-  await review(page, 'nbfm');
-  await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue('County dispatch');
-  await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('Dispatch listening');
-  const visibleReview = await dialog.innerText();
-  expect(visibleReview).toContain('7.5 kHz');
-  expect(visibleReview).toContain('750 µs');
-  expect(visibleReview).not.toContain('25.0 kHz');
-  await addDiscovery(page);
-  await expect(dialog.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
-  await expect(dialog).toContainText('County dispatch');
-  await expect(dialog).toContainText('FM two-way radio');
-  await expect(dialog).toContainText('Dispatch listening');
-  expect(state.requests.find((request) => request.path.endsWith('/save')).body)
-    .toMatchObject({ name: 'County dispatch', new_alias_list_name: 'Dispatch listening',
-      settings: { bandwidth: 'BW_7_5', deemphasis: 'US_750US' } });
-});
-
-for (const protocolId of ['am', 'nbfm']) {
-  test(`${protocolId} can be added with the audio settings disclosure left closed`, async ({ page }) => {
-    const state = {};
-    await install(page, state);
-    await begin(page, protocolId);
-    const dialog = wizard(page);
-    await expect(dialog.getByLabel('Bandwidth', { exact: true })).toBeHidden();
-    await expect(dialog.locator('summary').filter({ hasText: /^Adjust audio settings$/ }).locator('..'))
-      .toHaveJSProperty('open', false);
-    await review(page, protocolId);
-    await addDiscovery(page);
-    await expect(dialog.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
-    const save = state.requests.find((request) => request.path.endsWith('/save')).body;
-    expect(save.settings).toEqual(snapshot(protocolId, {}).review.template.settings);
-    expect(save.alias_list_id).toBe(0);
-    expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
-  });
-}
-
-for (const [protocolId, theme, width] of [['am', 'light', 1280], ['nbfm', 'dark', 390]]) {
-  test(`${protocolId} manifest settings and review fit ${theme} at ${width}px`, async ({ page }) => {
-    const state = { theme };
-    await page.setViewportSize({ width, height: 900 });
-    await page.emulateMedia({ colorScheme: theme });
-    await install(page, state);
-    await begin(page, protocolId);
-    const dialog = wizard(page);
-    await expect(dialog.getByRole('heading', { name: 'Ready for audio', exact: true })).toBeVisible();
-    const bandwidth = dialog.getByLabel('Bandwidth', { exact: true });
-    await expect(bandwidth).toBeHidden();
-    await disclose(page, 'Adjust audio settings');
-    await expect(bandwidth).toBeVisible();
-    await bandwidth.selectOption('BW_25_0');
-    await review(page, protocolId);
-    await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeVisible();
-    const bounds = await dialog.boundingBox();
-    expect(bounds.x).toBeGreaterThanOrEqual(0);
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-    await expect(dialog).toHaveScreenshot(`spectrum-discovery-${protocolId}-${theme}.png`);
-    await addDiscovery(page);
-    await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
-    const save = state.requests.find((request) => request.path.endsWith('/save')).body;
-    expect(save.settings.bandwidth).toBe('BW_25_0');
-    expect(save.alias_list_id).toBe(0);
-    expect(save.new_alias_list_name).toBe(protocolId === 'am' ? 'AM channel' : 'FM channel');
-  });
-}
-
-for (const theme of ['light', 'dark']) {
-  for (const width of [1280, 390]) {
-    test(`weak P25 manual choice fits ${theme} at ${width}px`, async ({ page }) => {
-      await page.setViewportSize({ width, height: 900 });
-      await page.emulateMedia({ colorScheme: theme });
-      const state = { theme, phase: 'inconclusive', probeOverride: {
-        c4fm: { valid_messages: 38, valid_control_messages: 38, invalid_control_messages: 169, quality_pct: 3 },
-        cqpsk: { valid_messages: 0, valid_control_messages: 0, invalid_control_messages: 0, quality_pct: 0 },
-        identity: null, selected_modulation: null
-      } };
-      await install(page, state);
-      await begin(page);
-      const dialog = wizard(page);
-      await expect(dialog.getByRole('button', { name: 'Set up manually', exact: true })).toBeVisible();
-      await dialog.getByRole('button', { name: 'Details', exact: true }).click();
-      const details = signalDetails(page);
-      await expect(details.getByRole('columnheader', { name: 'Decode score', exact: true })).toBeVisible();
-      const fits = await details.evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.left >= 0 && rect.right <= innerWidth && element.scrollWidth <= element.clientWidth + 1 &&
-          [...element.querySelectorAll('.ui-modal-footer button')].every((button) => {
-            const bounds = button.getBoundingClientRect();
-            return bounds.left >= rect.left && bounds.right <= rect.right;
-          });
-      });
-      expect(fits).toBe(true);
-      await details.screenshot({ path: test.info().outputPath(`weak-p25-details-${theme}-${width}.png`) });
-      await page.keyboard.press('Escape');
-      await expect(dialog.getByRole('button', { name: 'Details', exact: true })).toBeFocused();
-      await dialog.screenshot({ path: test.info().outputPath(`weak-p25-${theme}-${width}.png`) });
-    });
-  }
-}
-
-for (const protocolId of ['am', 'nbfm']) {
-  test(`${protocolId} interrupted setup stays protocol-specific and retries the selected protocol`, async ({ page }) => {
-    const state = {};
-    await page.clock.install();
-    await install(page, state);
-    await begin(page, protocolId);
-    const dialog = wizard(page);
-    await expect(dialog.getByRole('heading', { name: 'Ready for audio', exact: true })).toBeVisible();
-    state.phase = 'failed';
-    state.reason = 'The selected tuner is unavailable.';
-    await page.clock.fastForward(11000);
-    await expect(dialog.getByRole('heading', { name: /setup interrupted/ })).toBeVisible();
-    await expect(dialog).toContainText('The selected tuner is unavailable.');
-    await expect(dialog).not.toContainText('P25');
-    await expect(dialog).not.toContainText('C4FM');
-    await expect(dialog).not.toContainText('CQPSK');
-    await expect(dialog.getByRole('button', { name: 'Choose another radio type', exact: true })).toBeVisible();
-    state.phase = 'ready';
-    state.reason = null;
-    await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
-    await expect(dialog.getByRole('heading', { name: 'Ready for audio', exact: true })).toBeVisible();
-    const opens = state.requests.filter((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
-      request.method === 'POST');
-    expect(opens.map((request) => request.body.protocol_id)).toEqual([protocolId, protocolId]);
-    expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
-  });
-}
-
 test('a fractional Hertz spectrum selection displays and submits the same integer frequency', async ({ page }) => {
   const state = {};
   await install(page, state);
@@ -2221,7 +1994,7 @@ test('a fractional Hertz spectrum selection displays and submits the same intege
   await add.click();
   const dialog = wizard(page);
   await expect(dialog.locator('.spectrum-discovery-context strong')).toHaveText('776.715008 MHz');
-  await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await review(page);
   await expect(dialog.getByRole('heading', { name: 'Name your channel' })).toBeVisible();
   await expect(dialog.locator('.spectrum-discovery-context strong')).toHaveText('776.715008 MHz');

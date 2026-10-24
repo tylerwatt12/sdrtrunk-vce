@@ -544,13 +544,13 @@ test('Alias List creation updates every import picker without losing talkgroup s
 
   await page.locator('.radioreference-result-open').filter({ hasText: 'County Fire' }).click();
   await page.locator('.radioreference-conventional-import').click();
-  const conventionalModal = page.getByRole('dialog', { name: /Import Fire Dispatch/ });
+  const conventionalModal = page.getByRole('dialog', { name: /Import County fire dispatch/ });
   const conventionalList = conventionalModal.getByLabel('Alias List');
   await expect(conventionalList).toHaveValue('13');
   await conventionalModal.getByRole('button', { name: 'New list' }).click();
   await expect(conventionalList).toHaveValue('101');
   await conventionalModal.getByRole('button', { name: 'Review Channel' }).click();
-  const previewModal = page.getByRole('dialog', { name: /Review Fire Dispatch/ });
+  const previewModal = page.getByRole('dialog', { name: /Review County fire dispatch/ });
   await previewModal.getByRole('button', { name: 'Apply Channel' }).click();
 
   const result = await page.evaluate(() => {

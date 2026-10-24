@@ -277,7 +277,7 @@ async function openDiscoveryFromSpectrum(page) {
   await expect(add).toBeEnabled();
   await add.click();
   const dialog = page.locator('.spectrum-discovery-modal');
-  await expect(dialog.getByRole('heading', { name: 'What kind of signal is this?', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'How would you like to add this frequency?', exact: true })).toBeVisible();
   return dialog;
 }
 
@@ -347,7 +347,7 @@ test('channel discovery reconnects Spectrum only after its probe DELETE complete
   await expect.poll(async () => (await streams()).opened).toBe(1);
   const dialog = await openDiscoveryFromSpectrum(page);
 
-  await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect(dialog.getByRole('heading', { name: 'P25 details found', exact: true })).toBeVisible();
   await expect(status).toHaveText('In use');
   const createIndex = state.requests.findIndex((request) =>
@@ -390,7 +390,7 @@ test('forced close during discovery POST deletes the created probe before Spectr
   await expect.poll(async () => (await streams()).opened).toBe(1);
   const dialog = await openDiscoveryFromSpectrum(page);
 
-  await dialog.getByRole('button', { name: 'Check signal', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await expect.poll(() => typeof state.releaseDiscoveryPost).toBe('function');
   await expect(status).toHaveText('In use');
   await page.evaluate(() => window.spectrumLifecycleApi.closeReadOnlyModal(true));
