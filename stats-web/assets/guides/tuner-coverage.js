@@ -1,4 +1,4 @@
-// Fictional receiving windows. Both hardware examples follow the same calls;
+// Fictional receiving windows. All hardware examples follow the same calls;
 // the actual tuner page, saved settings and receiver remain untouched.
 const freezeRows = rows => Object.freeze(rows.map(row => Object.freeze(row)));
 const rtl = Object.freeze({ name: 'RTL-SDR R820T2', sampleRate: 2.4, usableBandwidth: 2.352, centerGap: .005 });
@@ -53,34 +53,98 @@ for (const call of calls) {
   // both windows is missed when the roaming tuner is already receiving traffic.
   if (call.start < unlockAt || receiving.length) continue;
   const center = call.frequency === 857.9125 ? 858.1625 : call.frequency - .35;
-  retunes.push({ start: call.start - .25, end: call.start - .125, from: movingCenter, to: center });
+  retunes.push({ start: call.start - .25, end: call.start - .125, from: movingCenter, to: center, receiverIndex: 1 });
   movingCenter = center;
   receiving.push(call);
 }
+// A retune must retain every channel already being received, including the
+// persistent trunked control channel. Match the passband and center-gap checks
+// used by VCE's tuner coverage planner; choose the nearest legal placement.
+const legalCenter = (frequencies, center, hardware = rtl) => {
+  const half = hardware.usableBandwidth / 2, channelHalf = .00625;
+  const low = Math.max(...frequencies.map(frequency => frequency + channelHalf - half));
+  const high = Math.min(...frequencies.map(frequency => frequency - channelHalf + half));
+  if (low > high) return null;
+  const bounded = value => Math.max(low, Math.min(value, high));
+  const candidates = [bounded(center), low, high, (low + high) / 2];
+  for (const frequency of frequencies) candidates.push(
+    bounded(frequency - channelHalf - hardware.centerGap - .000001),
+    bounded(frequency + channelHalf + hardware.centerGap + .000001));
+  return candidates.filter(candidate => frequencies.every(frequency => fitsWindow(frequency, candidate, hardware)))
+    .sort((a, b) => Math.abs(a - center) - Math.abs(b - center) || a - b)[0] ?? null;
+};
+const controlFrequency = 856.6625;
+const buildPlacements = (centers, lockedUntil) => {
+  const current = [...centers], active = centers.map(() => []), changes = [];
+  for (const call of calls) {
+    const retuneStart = call.start - .25;
+    active.forEach((received, index) => { active[index] = received.filter(item => item.end > retuneStart); });
+    const covered = current.findIndex(center => fitsWindow(call.frequency, center));
+    if (covered >= 0) { active[covered].push(call); continue; }
+    const candidates = current.flatMap((center, receiverIndex) => {
+      if (call.start < lockedUntil[receiverIndex]) return [];
+      const required = active[receiverIndex].map(item => item.frequency);
+      if (receiverIndex === 0) required.push(controlFrequency);
+      const next = legalCenter([...required, call.frequency], center);
+      return next === null ? [] : [{ receiverIndex, center: next, distance: Math.abs(next - center) }];
+    }).sort((a, b) => a.distance - b.distance || a.receiverIndex - b.receiverIndex);
+    const placement = candidates[0];
+    if (!placement) continue;
+    const index = placement.receiverIndex;
+    changes.push({ start: retuneStart, end: call.start - .125,
+      from: current[index], to: placement.center, receiverIndex: index });
+    current[index] = placement.center;
+    active[index].push(call);
+  }
+  return freezeRows(changes);
+};
 const shared = { duration, history, speed, unlockAt, rtl, airspy, calls,
   frequencyMin: 854, frequencyMax: 864.4,
   maximumCallDuration: Math.max(...calls.map(call => call.end - call.start)),
-  controls: freezeRows([{ name: 'County P25 control', frequency: 856.6625 }]) };
+  controls: freezeRows([{ name: 'County P25 control', frequency: controlFrequency }]) };
+const singleCenters = Object.freeze([primaryCenter]);
+const doubleCenters = Object.freeze([primaryCenter, initialCenter]);
+const tripleCenters = Object.freeze([primaryCenter, initialCenter, 858.1625]);
 export const TUNER_COVERAGE_EXAMPLES = Object.freeze({
-  rtl: Object.freeze({ ...shared, primaryCenter, initialCenter, retunes: freezeRows(retunes),
+  'rtl-single': Object.freeze({ ...shared, primaryCenter, initialCenter: primaryCenter,
+    initialCenters: singleCenters, lockedUntil: Object.freeze([0]),
+    retunes: buildPlacements(singleCenters, [0]),
+    receivers: freezeRows([{ ...rtl, name: 'RTL-SDR 1' }]) }),
+  rtl: Object.freeze({ ...shared, primaryCenter, initialCenter, initialCenters: doubleCenters,
+    lockedUntil: Object.freeze([Infinity, unlockAt]), retunes: freezeRows(retunes),
     receivers: freezeRows([{ ...rtl, name: 'RTL-SDR 1' }, { ...rtl, name: 'RTL-SDR 2' }]) }),
+  'rtl-three': Object.freeze({ ...shared, primaryCenter, initialCenter, initialCenters: tripleCenters,
+    lockedUntil: Object.freeze([Infinity, unlockAt, unlockAt]),
+    retunes: buildPlacements(tripleCenters, [Infinity, unlockAt, unlockAt]),
+    receivers: freezeRows([{ ...rtl, name: 'RTL-SDR 1' }, { ...rtl, name: 'RTL-SDR 2' }, { ...rtl, name: 'RTL-SDR 3' }]) }),
   airspy: Object.freeze({ ...shared, primaryCenter: 859.1625, initialCenter: 859.1625,
+    initialCenters: Object.freeze([859.1625]), lockedUntil: Object.freeze([Infinity]),
     retunes: Object.freeze([]), receivers: freezeRows([{ ...airspy, name: 'Airspy' }]) })
 });
 export const TUNER_COVERAGE_MODEL = TUNER_COVERAGE_EXAMPLES.rtl;
-const exampleModel = example => example === 'airspy' ? TUNER_COVERAGE_EXAMPLES.airspy : TUNER_COVERAGE_MODEL;
+const exampleModel = example => TUNER_COVERAGE_EXAMPLES[example] || TUNER_COVERAGE_MODEL;
 
 export function coverageTimeAt(time) {
-  return ((time % duration) + duration) % duration;
+  const remainder = time % duration;
+  return remainder < 0 ? remainder + duration : remainder;
+}
+
+export function coverageCentersAt(time, includeRetune = true, example = 'rtl') {
+  const model = exampleModel(example), phase = coverageTimeAt(time);
+  const centers = [...model.initialCenters];
+  // Retuning is a discrete placement change, not a sweep through the frequencies.
+  if (includeRetune) for (const retune of model.retunes) {
+    // Wrapped decimal timestamps can lose a few machine-precision bits.
+    if (phase + 1e-10 < retune.end) break;
+    centers[retune.receiverIndex] = retune.to;
+  }
+  return centers;
 }
 
 export function coverageCenterAt(time, includeRetune = true, example = 'rtl') {
-  const model = exampleModel(example), phase = coverageTimeAt(time);
-  // Retuning is a discrete placement change, not a sweep through the frequencies.
-  if (includeRetune) for (let index = model.retunes.length - 1; index >= 0; index -= 1) {
-    if (phase >= model.retunes[index].end) return model.retunes[index].to;
-  }
-  return model.initialCenter;
+  const centers = coverageCentersAt(time, includeRetune, example);
+  // Preserve the original two-tuner API, which reports the roaming receiver.
+  return centers[centers.length > 1 ? 1 : 0];
 }
 
 export function coverageCallsAt(time) {
@@ -100,22 +164,26 @@ export function coverageCallsAt(time) {
 }
 
 export function coverageReceiverFor(call, includeRetune = true, example = 'rtl') {
-  const model = exampleModel(example);
-  if (fitsWindow(call.frequency, model.primaryCenter, model.receivers[0])) return model.receivers[0].name;
-  if (model.receivers.length < 2 || !fitsWindow(call.frequency,
-    coverageCenterAt(call.start, includeRetune, example), model.receivers[1])) return null;
-  // Later retunes never change the outcome of earlier waterfall traces.
-  if (includeRetune && Number.isFinite(call.end)) {
-    const firstCycle = Math.floor(call.start / duration), lastCycle = Math.floor(call.end / duration);
-    for (let cycle = firstCycle; cycle <= lastCycle; cycle += 1) {
-      for (const boundary of [0, ...model.retunes.map(retune => retune.end)]) {
-        const moment = cycle * duration + boundary;
-        if (moment > call.start && moment < call.end && !fitsWindow(call.frequency,
-          coverageCenterAt(moment, true, example), model.receivers[1])) return null;
+  const model = exampleModel(example), centers = coverageCentersAt(call.start, includeRetune, example);
+  for (let index = 0; index < model.receivers.length; index += 1) {
+    const hardware = model.receivers[index];
+    if (!fitsWindow(call.frequency, centers[index], hardware)) continue;
+    let covered = true;
+    // Keep the outcome fixed for the whole call, including wrapped history.
+    if (includeRetune && Number.isFinite(call.end)) {
+      const firstCycle = Math.floor(call.start / duration), lastCycle = Math.floor(call.end / duration);
+      const boundaries = [0, ...model.retunes.filter(retune => retune.receiverIndex === index).map(retune => retune.end)];
+      for (let cycle = firstCycle; covered && cycle <= lastCycle; cycle += 1) {
+        for (const boundary of boundaries) {
+          const moment = cycle * duration + boundary;
+          if (moment > call.start && moment < call.end && !fitsWindow(call.frequency,
+            coverageCentersAt(moment, true, example)[index], hardware)) { covered = false; break; }
+        }
       }
     }
+    if (covered) return hardware.name;
   }
-  return model.receivers[1].name;
+  return null;
 }
 
 export function createTunerCoverageDiagram({ document, idPrefix }) {
@@ -136,15 +204,18 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
   const root = node('div', 'ui-setup-guide-coverage');
   root.dataset.guideDiagram = 'tuner-coverage';
   const receivers = node('div', 'ui-setup-guide-coverage-receivers');
-  const secondaryMode = node('span', '', 'Locked');
+  let receiverModes = [];
   const renderReceivers = () => {
     receivers.replaceChildren();
+    receiverModes = [];
     model.receivers.forEach((hardware, index) => {
       const receiver = node('div', 'ui-setup-guide-coverage-receiver');
       const identity = node('div', 'ui-setup-guide-coverage-identity');
       const key = node('i', `ui-setup-guide-coverage-key ${index ? 'secondary' : 'rtl'}`);
       key.setAttribute('aria-hidden', 'true');
-      identity.append(key, node('strong', '', hardware.name), index ? secondaryMode : node('span', '', 'Locked'));
+      const mode = node('span');
+      receiverModes.push(mode);
+      identity.append(key, node('strong', '', hardware.name), mode);
       receiver.append(identity, node('span', 'ui-setup-guide-coverage-detail',
         `${hardware.sampleRate} MHz sampled · ${hardware.usableBandwidth} MHz usable`));
       receivers.append(receiver);
@@ -173,7 +244,8 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
   const toggle = node('div', 'ui-segmented');
   toggle.setAttribute('role', 'group');
   toggle.setAttribute('aria-label', 'Example tuner hardware');
-  const exampleButtons = Object.entries({ rtl: '2× RTL-SDR', airspy: '1× Airspy' }).map(([id, label]) => {
+  const exampleButtons = Object.entries({ 'rtl-single': '1× RTL-SDR (unlocked)', rtl: '2× RTL-SDR',
+    'rtl-three': '3× RTL-SDR', airspy: '1× Airspy' }).map(([id, label]) => {
     const button = node('button', 'ui-segmented-option', label);
     button.type = 'button';
     button.setAttribute('aria-pressed', String(id === example));
@@ -203,17 +275,29 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
     const bands = svgNode('g'), grid = svgNode('g'), controlTraces = svgNode('g'), callTraces = svgNode('g');
     const bandPaths = name => [svgNode('path', { fill: `url(#${edgeId})` }),
       svgNode('path', { fill: `url(#${edgeId})` }), svgNode('path', { class: `coverage-band-${name}` })];
-    const rtlPaths = bandPaths('rtl'), secondaryPaths = bandPaths('secondary');
-    bands.append(...rtlPaths, ...secondaryPaths);
+    let receiverBands = [], receiverCaptions = [];
+    const renderBands = () => {
+      receiverBands = model.receivers.map((hardware, index) => {
+        const paths = bandPaths(index ? 'secondary' : 'rtl');
+        paths.forEach(path => path.setAttribute('data-receiver-index', String(index)));
+        return paths;
+      });
+      receiverCaptions = model.receivers.map((hardware, index) => svgNode('text', {
+        y: 22, 'text-anchor': 'middle', 'data-receiver-index': index }, hardware.name));
+      bands.replaceChildren(...receiverBands.flat());
+    };
+    renderBands();
     chart.append(bands, grid, controlTraces, callTraces);
     const annotations = svgNode('g');
-    const rtlCaption = svgNode('text', { y: 22, 'text-anchor': 'middle' }, 'RTL-SDR 1');
-    const secondaryCaption = svgNode('text', { y: 22, 'text-anchor': 'middle' }, 'RTL-SDR 2');
     svg.replaceChildren(title, description, defs, chart, annotations);
     const activeCalls = new Map();
     const sceneAt = () => {
       if (example === 'airspy') return ['One wider window covers this system',
         'The control channel and all these simultaneous voice calls fit inside the Airspy’s usable bandwidth.'];
+      if (example === 'rtl-single') return ['Unlocked still keeps the control channel covered',
+        'The window can shift while current calls and the control channel still fit. Calls farther away are missed.'];
+      if (example === 'rtl-three') return ['Two tuners follow the voice traffic',
+        'RTL-SDR 1 keeps the control channel. RTL-SDR 2 and 3 move independently while keeping their current calls covered.'];
       const phase = coverageTimeAt(time);
       if (phase < 5.25) return ['One tuner holds the control channel', 'RTL-SDR 1 receives the control channel and other frequencies inside its usable window.'];
       if (phase < model.unlockAt) return ['Locked windows stay in place', 'Regional Fire is beyond both usable windows, so that call is missed.'];
@@ -234,11 +318,17 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
       root.dataset.cycle = String(Math.floor(time / model.duration));
       root.dataset.playing = String(playing);
       root.dataset.example = example;
-      root.dataset.rtlCenter = String(model.primaryCenter);
-      root.dataset.primaryCenter = String(model.primaryCenter);
-      root.dataset.secondaryCenter = example === 'rtl' ? String(coverageCenterAt(time)) : '';
-      root.dataset.secondaryLocked = String(example === 'rtl' && coverageTimeAt(time) < model.unlockAt);
-      secondaryMode.textContent = coverageTimeAt(time) < model.unlockAt ? 'Locked' : 'Unlocked';
+      const centers = coverageCentersAt(time, true, example), phase = coverageTimeAt(time);
+      root.dataset.receiverCount = String(model.receivers.length);
+      root.dataset.centers = JSON.stringify(centers);
+      root.dataset.rtlCenter = String(centers[0]);
+      root.dataset.primaryCenter = String(centers[0]);
+      root.dataset.secondaryCenter = centers.length > 1 ? String(centers[1]) : '';
+      root.dataset.tertiaryCenter = centers.length > 2 ? String(centers[2]) : '';
+      root.dataset.secondaryLocked = String(centers.length > 1 && phase < model.lockedUntil[1]);
+      receiverModes.forEach((mode, index) => {
+        mode.textContent = phase < model.lockedUntil[index] ? 'Locked' : 'Unlocked';
+      });
       const nextScene = sceneAt();
       if (nextScene[0] !== lastScene) {
         [sceneTitle.textContent, sceneCopy.textContent] = nextScene;
@@ -252,16 +342,15 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
         }
       }
       moments.sort((a, b) => b - a);
-      const primaryHardware = model.receivers[0];
-      drawBand(rtlPaths, () => model.primaryCenter, primaryHardware.usableBandwidth / 2, primaryHardware.sampleRate / 2,
-        [time, time - model.history]);
-      if (example === 'rtl') drawBand(secondaryPaths, coverageCenterAt,
-        model.rtl.usableBandwidth / 2, model.rtl.sampleRate / 2, moments);
-      else secondaryPaths.forEach(path => path.setAttribute('d', ''));
-      rtlCaption.textContent = model.receivers[0].name;
-      secondaryCaption.textContent = model.receivers[1]?.name || '';
-      rtlCaption.setAttribute('x', x(model.primaryCenter));
-      secondaryCaption.setAttribute('x', x(coverageCenterAt(time, true, example)));
+      model.receivers.forEach((hardware, index) => {
+        drawBand(receiverBands[index], moment => coverageCentersAt(moment, true, example)[index],
+          hardware.usableBandwidth / 2, hardware.sampleRate / 2, moments);
+        receiverBands[index][2].setAttribute('data-center', String(centers[index]));
+        receiverCaptions[index].setAttribute('x', x(centers[index]));
+        // Nearby windows can share frequencies; keep their names readable.
+        receiverCaptions[index].setAttribute('y', index > 0 && centers.slice(0, index)
+          .some(center => Math.abs(x(center) - x(centers[index])) < 85) ? '10' : '22');
+      });
       const visible = coverageCallsAt(time), keys = new Set();
       for (const call of visible) {
         const key = `${call.cycle}:${call.id}`;
@@ -296,7 +385,7 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
         labels.push(svgNode('text', { x: left - 7, y: position + 4, 'text-anchor': 'end' }, age ? `${age}s` : 'Now'));
       }
       labels.push(svgNode('text', { x: (left + width - right) / 2, y: height - 2,
-        'text-anchor': 'middle' }, 'Frequency (MHz)'), rtlCaption, secondaryCaption);
+        'text-anchor': 'middle' }, 'Frequency (MHz)'), ...receiverCaptions);
       grid.replaceChildren(...lines); annotations.replaceChildren(...labels);
       controlTraces.replaceChildren(...model.controls.map(control => {
         const trace = svgNode('line', { x1: x(control.frequency), x2: x(control.frequency), y1: top,
@@ -329,18 +418,21 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
       description.textContent = 'Frequency increases left to right. New transmissions appear at the top and move down into history. ' +
         'Colored windows show usable bandwidth. Solid calls are received; dashed calls outside coverage are missed. ' +
         (example === 'airspy' ? 'One Airspy receives every call shown within its wider window.' :
-          'RTL-SDR 1 holds the control channel while RTL-SDR 2 follows voice calls. Multiple calls inside either window can be received together.');
+          example === 'rtl-single' ? 'One unlocked RTL-SDR shifts only when its control channel and every current call remain covered.' :
+          example === 'rtl-three' ? 'RTL-SDR 1 holds the control channel. RTL-SDR 2 and 3 follow voice traffic independently.' :
+            'RTL-SDR 1 holds the control channel while RTL-SDR 2 follows voice calls. Multiple calls inside either window can be received together.');
     };
     const selectExample = id => {
       if (disposed || example === id) return;
       example = id; model = exampleModel(id);
       exampleButtons.forEach(({ id: option, button }) => button.setAttribute('aria-pressed', String(option === id)));
       renderReceivers();
+      renderBands();
       // Compare identical traffic at the current moment, including its history.
       // No extra animation loop, timeline reset or saved receiver setting is used.
       activeCalls.clear(); callTraces.replaceChildren(); lastScene = '';
       describeExample();
-      render();
+      resize();
     };
     const choiceListeners = exampleButtons.map(({ id, button }) => {
       const listener = () => selectExample(id);

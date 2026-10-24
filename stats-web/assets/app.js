@@ -16,7 +16,7 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=33';
+import { createGuideController } from './guides/controller.js?v=34';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -18114,7 +18114,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
 
   const selectedTargetId = () => targetSelect.value;
   const managedEmptyState = () => panelOptions.emptyState?.() || {
-    status: 'Idle', message: 'No live samples—the tuner is idle.'
+    status: 'Idle', message: 'Tuner is idle - Switch to setup mode to see signal'
   };
   const shouldRun = () => !disposed && !paused && !externallySuspended && (guideMode || pageFocused) && !pageSuspended &&
     !document.hidden && selectedTargetId();

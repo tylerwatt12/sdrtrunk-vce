@@ -4,11 +4,17 @@ const { expect, test } = require('@playwright/test');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
+const { installSiteStyleApplication, operatorTuner } = require('./fixtures/site-style-app.cjs');
 const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="tuners"]');
 const graph = page => page.locator('[data-guide-diagram="tuner-coverage"]');
+const hardwareExamples = [
+  { id: 'rtl-single', label: '1× RTL-SDR (unlocked)', receivers: 1 },
+  { id: 'rtl', label: '2× RTL-SDR', receivers: 2 },
+  { id: 'rtl-three', label: '3× RTL-SDR', receivers: 3 },
+  { id: 'airspy', label: '1× Airspy', receivers: 1 }
+];
 const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:tuners:3';
 const steps = ['modes', 'setup-button', 'enter-setup', 'receiving-window', 'center-frequency',
   'lock-center', 'gain', 'frequency-correction', 'frequency-limits-button', 'frequency-limits',
@@ -71,13 +77,13 @@ async function expectOverview(page) {
   await expect(guide(page).getByRole('heading', { name: 'One receiver, several channels', exact: true })).toBeVisible();
   await expect(guide(page)).toContainText('SDR models have different usable bandwidths.');
   await expect(guide(page)).toContainText('Adding tuners lets VCE cover more frequencies at once, helping prevent missed calls');
-  await expect(guide(page)).toContainText('This example follows one trunked system with two RTL-SDRs.');
+  await expect(guide(page)).toContainText('one trunked system');
   await expect(graph(page)).toBeVisible();
   await expect(graph(page).locator('.ui-setup-guide-coverage-identity strong')).toHaveText(['RTL-SDR 1', 'RTL-SDR 2']);
   await expect(graph(page).locator('.coverage-control')).toHaveCount(1);
   await expect(graph(page)).toHaveAttribute('data-example', 'rtl');
   const examples = graph(page).getByRole('group', { name: 'Example tuner hardware', exact: true });
-  await expect(examples.getByRole('button')).toHaveText(['2× RTL-SDR', '1× Airspy']);
+  await expect(examples.getByRole('button')).toHaveText(hardwareExamples.map(example => example.label));
   await expect(examples.getByRole('button', { name: '2× RTL-SDR', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(examples.getByRole('button', { name: '1× Airspy', exact: true })).toHaveAttribute('aria-pressed', 'false');
   await expect(graph(page).locator('input, select, [data-coverage-time]')).toHaveCount(0);
@@ -295,6 +301,22 @@ for (const { theme, width, height } of [
     expectNoEffects(fixture, requests);
   });
 }
+
+test('an idle tuner shows its setup instruction in the actual signal panel', async ({ page }) => {
+  const { fixture, requests } = await openTuners(page, { replay: false });
+  await page.route('**/api/v1/admin/tuners', route => route.fulfill({ json: { data: {
+    tuners: [operatorTuner()]
+  } } }));
+  await page.reload();
+  await expect(page.locator('.tuners-workspace')).toBeVisible();
+  await expect(page.locator('.tuners-spectrum .badge')).toHaveText('Idle');
+  await expect(page.locator('.tuners-spectrum .channel-diagnostic-overlay:visible')).toHaveText([
+    'Tuner is idle - Switch to setup mode to see signal',
+    'Tuner is idle - Switch to setup mode to see signal'
+  ]);
+  await expect(page.locator('.tuners-spectrum')).not.toContainText('No Samples');
+  expectNoEffects(fixture, requests);
+});
 
 test('Tuners uses the ordinary renderer and its Enter Setup, Resume channels, and Disable tuner dialogs', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -516,6 +538,8 @@ for (const { theme, width, height } of [
     await graph(page).evaluate(element => { window.tunersSharedExampleGraph = element; });
     await rtlButton.focus();
     await page.keyboard.press('Tab');
+    await expect(examples.getByRole('button', { name: '3× RTL-SDR', exact: true })).toBeFocused();
+    await page.keyboard.press('Tab');
     await expect(airspyButton).toBeFocused();
     await page.keyboard.press('Space');
     await expect(graph(page)).toHaveAttribute('data-example', 'airspy');
@@ -564,15 +588,16 @@ for (const height of [720, 900]) for (const theme of ['light', 'dark']) {
     await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now())));
     await page.clock.runFor(3400);
     const examples = graph(page).getByRole('group', { name: 'Example tuner hardware', exact: true });
-    for (const example of ['rtl', 'airspy']) {
-      if (example === 'airspy') {
-        await examples.getByRole('button', { name: '1× Airspy', exact: true }).focus();
-        await page.keyboard.press('Space');
-      }
-      await expect(graph(page)).toHaveAttribute('data-example', example);
+    await freshCoveragePaint(page);
+    const currentTime = await graph(page).getAttribute('data-time');
+    const sharedCalls = await graph(page).locator('[data-call]').evaluateAll(calls => calls.map(call => call.dataset.call));
+    for (const example of hardwareExamples) {
+      await examples.getByRole('button', { name: example.label, exact: true }).focus();
+      await page.keyboard.press('Space');
+      await expect(graph(page)).toHaveAttribute('data-example', example.id);
+      await expect(graph(page).locator('.ui-setup-guide-coverage-receiver')).toHaveCount(example.receivers);
       for (const region of [guide(page), graph(page), examples,
-        examples.getByRole('button', { name: '2× RTL-SDR', exact: true }),
-        examples.getByRole('button', { name: '1× Airspy', exact: true }),
+        ...hardwareExamples.map(choice => examples.getByRole('button', { name: choice.label, exact: true })),
         guide(page).getByRole('button', { name: 'Start tour', exact: true }),
         guide(page).getByRole('button', { name: 'Close guide', exact: true })])
         await expectWithinViewport(region, viewport);
@@ -586,8 +611,11 @@ for (const height of [720, 900]) for (const theme of ['light', 'dark']) {
       });
       expect(clippedLabels).toEqual([]);
       await expect(graph(page).locator('[data-call]')).not.toHaveCount(0);
-      if (example === 'airspy') await expect(graph(page).locator('[data-received="false"]')).toHaveCount(0);
-      await screenshot(page, `tuners-overview-${example}-1280x${height}-${theme}`);
+      expect(await graph(page).locator('[data-call]').evaluateAll(calls => calls.map(call => call.dataset.call))).toEqual(sharedCalls);
+      // A switch renders the internal moment, which may be at most one paint interval beyond the displayed time.
+      expect(Math.abs(Number(await graph(page).getAttribute('data-time')) - Number(currentTime))).toBeLessThan(.3);
+      if (example.id === 'airspy') await expect(graph(page).locator('[data-received="false"]')).toHaveCount(0);
+      await screenshot(page, `tuners-overview-${example.id}-1280x${height}-${theme}`);
     }
     await page.clock.resume();
     await page.keyboard.press('Escape');

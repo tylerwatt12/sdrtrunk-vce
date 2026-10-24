@@ -567,9 +567,10 @@ async function checkGuides(assetsRoot) {
   assert.throws(releaseFailedTuner, /Tuner cleanup failed/);
   assert.deepEqual(released.splice(0), ['player']);
   const { TUNER_COVERAGE_MODEL: coverageModel, TUNER_COVERAGE_EXAMPLES: coverageExamples,
-    coverageCenterAt, coverageReceiverFor, coverageTimeAt, coverageCallsAt, createTunerCoverageDiagram } =
+    coverageCenterAt, coverageCentersAt, coverageReceiverFor, coverageTimeAt, coverageCallsAt, createTunerCoverageDiagram } =
     await load('guides/tuner-coverage.js');
-  assert.deepEqual(Object.keys(coverageExamples), ['rtl', 'airspy']);
+  const exampleIds = ['rtl-single', 'rtl', 'rtl-three', 'airspy'];
+  assert.deepEqual(Object.keys(coverageExamples), exampleIds);
   assert.equal(coverageExamples.rtl, coverageModel, 'Two RTL-SDRs remain the initial example.');
   assert.deepEqual(coverageModel.receivers.map(receiver => [receiver.name, receiver.sampleRate, receiver.usableBandwidth]),
     [['RTL-SDR 1', 2.4, 2.352], ['RTL-SDR 2', 2.4, 2.352]]);
@@ -578,7 +579,8 @@ async function checkGuides(assetsRoot) {
   assert.match(wideModel.receivers[0].name, /Airspy/);
   assert.equal(wideModel.receivers[0].sampleRate, 10);
   assert.equal(wideModel.receivers[0].usableBandwidth, 9);
-  assert.equal(wideModel.calls, coverageModel.calls, 'Both examples receive the very same transmissions.');
+  for (const model of Object.values(coverageExamples))
+    assert.equal(model.calls, coverageModel.calls, 'Every hardware example receives the very same transmissions.');
   assert.equal(coverageModel.controls.length, 1);
   assert.equal(wideModel.controls.length, 1);
   for (const model of Object.values(coverageExamples)) {
@@ -650,6 +652,48 @@ async function checkGuides(assetsRoot) {
     assert.ok(placements.every(center => rtlCovers(call.frequency, center)),
       'A received call stays fully inside its assigned usable bandwidth throughout every subsequent retune.');
   }
+  const missedCounts = Object.fromEntries(exampleIds.map(example => [example,
+    coverageModel.calls.filter(call => !coverageReceiverFor(call, true, example)).length]));
+  assert.ok(missedCounts['rtl-single'] > missedCounts.rtl, 'The single narrow receiver misses more of the shared busy system.');
+  assert.ok(missedCounts['rtl-three'] < missedCounts.rtl, 'A third receiver picks up more of the identical competing traffic.');
+  assert.equal(missedCounts.airspy, 0);
+  assert.equal(coverageExamples['rtl-single'].receivers.length, 1);
+  assert.equal(coverageExamples['rtl-three'].receivers.length, 3);
+  assert.ok(coverageExamples['rtl-single'].retunes.length > 0, 'The single unlocked receiver demonstrates its limited retuning choices.');
+  assert.deepEqual([...new Set(coverageExamples['rtl-three'].retunes.map(retune => retune.receiverIndex))].sort(), [1, 2],
+    'The three-tuner example has two independently moving voice receivers.');
+  for (const example of exampleIds) {
+    const model = coverageExamples[example];
+    const initialCenters = coverageCentersAt(0, false, example);
+    assert.equal(initialCenters.length, model.receivers.length);
+    for (const time of [0, 14, 85, 155, 359.5]) {
+      assert.deepEqual(coverageCentersAt(time, false, example), initialCenters);
+      assert.deepEqual(coverageCentersAt(time + model.duration, true, example), coverageCentersAt(time, true, example));
+    }
+    for (const retune of model.retunes) {
+      assert.ok(Number.isInteger(retune.receiverIndex) && retune.receiverIndex >= 0 && retune.receiverIndex < model.receivers.length);
+      assert.equal(coverageCentersAt(retune.start, true, example)[retune.receiverIndex], retune.from);
+      assert.equal(coverageCentersAt(retune.end, true, example)[retune.receiverIndex], retune.to);
+    }
+    if (example === 'airspy') continue;
+    const moments = [0, ...model.retunes.flatMap(retune => [retune.start, retune.end]), ...model.calls.map(call => call.start)];
+    for (const time of moments) assert.ok(rtlCovers(model.controls[0].frequency, coverageCentersAt(time, true, example)[0]),
+      'The control channel stays fully in usable bandwidth even when the single unlocked receiver changes position.');
+    for (const call of model.calls) {
+      const receiver = coverageReceiverFor(call, true, example);
+      const centers = coverageCentersAt(call.start, true, example);
+      assert.equal(Boolean(receiver), centers.some(center => rtlCovers(call.frequency, center)),
+        'Every call fitting a receiving window when it begins retains full reception.');
+      if (!receiver) continue;
+      const receiverIndex = model.receivers.findIndex(candidate => candidate.name === receiver);
+      assert.ok(receiverIndex >= 0);
+      const boundaries = model.retunes.filter(retune => retune.receiverIndex === receiverIndex &&
+        retune.end > call.start && retune.end < call.end).map(retune => retune.end);
+      for (const time of [call.start, ...boundaries]) assert.ok(rtlCovers(call.frequency,
+        coverageCentersAt(time, true, example)[receiverIndex]),
+      'Each independent receiver preserves all of its active calls through every retune.');
+    }
+  }
   const retainedHistory = coverageModel.retunes.map(retune => ({ retune, earlierReceived: coverageModel.calls.find(call =>
     call.end < retune.end && call.end > retune.end - coverageModel.history &&
     coverageReceiverFor(call) === 'RTL-SDR 2' && !rtlCovers(call.frequency, retune.to)) }))
@@ -675,7 +719,7 @@ async function checkGuides(assetsRoot) {
     }
     assert.deepEqual(coverageCallsAt(elapsed).map(call => `${call.cycle}:${call.sourceId}`).sort(), expected.sort(),
       'The waterfall keeps every overlapping transmission intersecting its visible history, including across a loop.');
-    for (const call of coverageCallsAt(elapsed)) for (const example of ['rtl', 'airspy']) {
+    for (const call of coverageCallsAt(elapsed)) for (const example of exampleIds) {
       const original = coverageModel.calls.find(candidate => candidate.id === call.sourceId);
       assert.equal(coverageReceiverFor(call, true, example), coverageReceiverFor(original, true, example),
         'A trace carried through the loop retains its reception outcome for the selected example.');
@@ -687,9 +731,12 @@ async function checkGuides(assetsRoot) {
   const diagramAbort = new AbortController();
   const closeDiagram = coverageDiagram.mount({ signal: diagramAbort.signal });
   const exampleButtons = animation.nodes.filter(node => node.tag === 'button');
-  assert.deepEqual(exampleButtons.map(button => button.textContent), ['2× RTL-SDR', '1× Airspy']);
+  assert.deepEqual(exampleButtons.map(button => button.textContent),
+    ['1× RTL-SDR (unlocked)', '2× RTL-SDR', '3× RTL-SDR', '1× Airspy']);
+  const rtlChoice = exampleButtons.find(button => button.textContent === '2× RTL-SDR');
+  const airspyChoice = exampleButtons.find(button => button.textContent === '1× Airspy');
   assert.equal(animation.nodes.some(node => ['input', 'select'].includes(node.tag)), false,
-    'Only the two hardware examples are selectable; the simulation autoplays.');
+    'Only hardware examples are selectable; the simulation autoplays.');
   assert.equal(coverageDiagram.element.dataset.example, 'rtl');
   assert.equal(animation.frames.size, 1,
     'The explicitly requested demonstration autoplays even when reduced motion is preferred.');
@@ -705,10 +752,10 @@ async function checkGuides(assetsRoot) {
   assert.ok(beforeHidden > 0);
   animation.document.hidden = true; animation.document.emit('visibilitychange');
   assert.equal(animation.frames.size, 0, 'A hidden overview releases its animation frame.');
-  exampleButtons[1].emit('click');
+  airspyChoice.emit('click');
   assert.equal(animation.frames.size, 0, 'Switching the hidden example cannot start another animation loop.');
   assert.equal(Number(coverageDiagram.element.dataset.time), beforeHidden);
-  exampleButtons[0].emit('click');
+  rtlChoice.emit('click');
   animation.document.hidden = false; animation.document.emit('visibilitychange');
   assert.equal(animation.frames.size, 1, 'Returning to the visible overview resumes its animation.');
   animation.flush(200000);
@@ -724,13 +771,13 @@ async function checkGuides(assetsRoot) {
   animation.flush(200200);
   assert.ok(Number(coverageDiagram.element.dataset.time) > beforeMotionChange);
   const beforeSwitch = coverageDiagram.element.dataset.time;
-  exampleButtons[1].emit('click');
+  airspyChoice.emit('click');
   assert.equal(coverageDiagram.element.dataset.example, 'airspy');
   assert.equal(coverageDiagram.element.dataset.time, beforeSwitch, 'Switching hardware preserves the shared call timeline.');
   assert.equal(animation.frames.size, 1, 'Switching examples retains only one animation loop.');
   assert.equal(animation.nodes.filter(node => node.attributes['data-call'] && node.parentNode &&
     node.attributes['data-received'] === 'false').length, 0, 'The wider example redraws the same history as received.');
-  exampleButtons[0].emit('click');
+  rtlChoice.emit('click');
   assert.equal(coverageDiagram.element.dataset.example, 'rtl');
   assert.equal(coverageDiagram.element.dataset.time, beforeSwitch);
   assert.equal(animation.frames.size, 1);
@@ -738,6 +785,20 @@ async function checkGuides(assetsRoot) {
   assert.equal(animation.nodes.filter(node => node.attributes['data-call'] && node.parentNode).length,
     coverageCallsAt(coverageModel.duration + coverageModel.speed * .3).length,
     'Switching back replaces the visible trace set without retaining old example traces.');
+  for (const [index, example] of exampleIds.entries()) {
+    exampleButtons[index].emit('click');
+    assert.equal(coverageDiagram.element.dataset.example, example);
+    assert.equal(coverageDiagram.element.dataset.time, beforeSwitch);
+    assert.equal(animation.frames.size, 1);
+    const traces = animation.nodes.filter(node => node.attributes['data-call'] && node.parentNode);
+    for (const trace of traces) {
+      const call = coverageModel.calls.find(candidate => candidate.id === trace.attributes['data-call']);
+      assert.ok(call);
+      assert.equal(trace.attributes['data-received'], String(Boolean(coverageReceiverFor(call, true, example))),
+        'Changing the example redraws the same history with that hardware’s reception outcomes.');
+    }
+  }
+  rtlChoice.emit('click');
   const lateFrame = [...animation.frames.values()][0];
   const beforeDismissal = coverageDiagram.element.dataset.time;
   diagramAbort.abort(); closeDiagram();
@@ -753,7 +814,7 @@ async function checkGuides(assetsRoot) {
       'Dismissal releases visibility, motion, and page lifecycle listeners.');
     owner.emit('visibilitychange'); owner.emit('change');
   }
-  exampleButtons[1].emit('click');
+  airspyChoice.emit('click');
   assert.equal(coverageDiagram.element.dataset.example, 'rtl', 'A disposed example switch cannot redraw the removed graph.');
   assert.equal(animation.frames.size, 0, 'A dismissed overview cannot restart from a later lifecycle event.');
   const { createTunersGuideData } = await load('guides/tuners-presentation.js');
