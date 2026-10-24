@@ -16,8 +16,8 @@ import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=29';
-import { adminSectionForStep } from './guides/pages/admin.js?v=1';
+import { createGuideController } from './guides/controller.js?v=30';
+import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -7924,34 +7924,11 @@ function administrationRequestDependencies(renderContext) {
   };
 }
 
-function markAdministrationGuideNavigation(root) {
-  const marked = [];
-  root.querySelectorAll('.admin-settings-tree a').forEach(link => {
-    const tab = new URL(link.href, window.location.href).searchParams.get('tab');
-    if (!tab) return;
-    marked.push([link, link.getAttribute('data-guide-target')]);
-    link.dataset.guideTarget = `admin-nav-${tab}`;
-  });
-  return () => marked.forEach(([link, previous]) => {
-    if (previous === null) link.removeAttribute('data-guide-target');
-    else link.setAttribute('data-guide-target', previous);
-  });
-}
-
 async function prepareAdministrationGuideSample(section, context) {
   const tab = adminSectionForStep(section);
   if (!tab || context.signal.aborted) return () => {};
   const allowed = adminSettingsLeaves(adminSettingsGroups()).some(item => item.id === tab);
   if (!allowed) throw new Error('The Administration section is unavailable.');
-  if (section.endsWith('-open')) {
-    const unmark = markAdministrationGuideNavigation(content);
-    const navigation = content.querySelector('.admin-settings-tree');
-    const unprotect = navigation ? guideSampleData.register('admin-workspace', () => {}, { root: navigation }) : null;
-    content.querySelector(`[data-guide-target="admin-nav-${tab}"]`)
-      ?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
-    return () => { try { unprotect?.(); } finally { unmark(); } };
-  }
-
   const parent = captureRenderContext();
   const { createAdministrationGuideData, ADMINISTRATION_GUIDE_IDS } =
     await import('./guides/administration-data.js?v=1');
@@ -8030,7 +8007,6 @@ async function prepareAdministrationGuideSample(section, context) {
     const shell = content.querySelector('.admin-settings-shell');
     if (!shell) throw new Error('The Administration example could not be displayed.');
     shell.querySelector('.ui-settings-title-row')?.append(uiPill('Example data'));
-    markAdministrationGuideNavigation(shell);
     const selectors = {
       computer: '.receiver-computer-page', health: '.receiver-health-overview',
       'application-log': '.application-log-workspace', 'web-diagnostic-log': '.web-diagnostic-log-workspace',

@@ -108,17 +108,18 @@ async function checkGuides(assetsRoot) {
       preparePage: async (view, section, context) => {
         prepared.push([view, section, context]); return () => released.push(section);
       } });
-    const expected = ['overview', `${chapter.id}-open`,
+    const expected = ['overview',
       ...(chapter.id === 'tuner-allocation' ? ['tuner-allocation-channel'] : []), `${chapter.id}-purpose`,
       ...(['recordings', 'activity'].includes(chapter.id) ? [`${chapter.id}-retention`] : []),
       ...(chapter.id === 'tuner-allocation' ? ['tuner-allocation-back', 'tuner-allocation-catalog'] : [])];
     assert.equal(guide.adminTab, chapter.id);
     assert.deepEqual(guide.steps.map(step => step.id), expected,
-      'Each Administration chapter stays brief and shows the sidebar action before its destination.');
-    assert.deepEqual(targetNames(guide.steps[1]), [`admin-nav-${chapter.id}`]);
+      'Each Administration chapter starts directly with its actual sample panel or channel selection.');
+    assert.deepEqual(targetNames(guide.steps[1]), [chapter.id === 'tuner-allocation' ?
+      'admin-tuner-allocation-channel' : `admin-${chapter.id}-panel`]);
     const purpose = guide.steps.find(step => step.id === `${chapter.id}-purpose`);
     assert.deepEqual(targetNames(purpose), [`admin-${chapter.id}-panel`]);
-    assert.ok(guide.steps[1].contextTargets, 'The opening action keeps its sidebar group visible.');
+    assert.ok(guide.steps[1].contextTargets, 'The initial sample stop keeps its actual owning panel visible.');
     assert.ok(purpose.contextTargets, 'The purpose lesson exposes its whole actual panel.');
     assert.equal(guide.steps.at(-1).nextLabel, 'Finish');
     for (const step of guide.steps.slice(1)) {
@@ -158,6 +159,8 @@ async function checkGuides(assetsRoot) {
       'A page-wide purpose explains related production panels with all of their context visible.');
   }
   const allocationTour = createGuideDefinition('admin', { documentValue: targetDocument, adminTab: 'tuner-allocation' });
+  assert.deepEqual(allocationTour.steps.map(step => step.id), ['overview', 'tuner-allocation-channel',
+    'tuner-allocation-purpose', 'tuner-allocation-back', 'tuner-allocation-catalog']);
   for (const [id, target] of [['tuner-allocation-channel', 'admin-tuner-allocation-channel'],
     ['tuner-allocation-back', 'admin-tuner-allocation-back'], ['tuner-allocation-catalog', 'admin-tuner-allocation-panel']]) {
     assert.deepEqual(targetNames(allocationTour.steps.find(step => step.id === id)), [target],
@@ -1312,8 +1315,8 @@ async function checkGuides(assetsRoot) {
   const recordingChapter = adminChapter.shown.at(-1);
   assert.equal(healthOverview.closed, true);
   assert.equal(recordingChapter.options.adminTab, 'recordings');
-  assert.equal(recordingChapter.options.steps[recordingChapter.options.initialStep].id, 'recordings-open',
-    'Choosing a chapter starts at its actual sidebar opening action.');
+  assert.equal(recordingChapter.options.steps[recordingChapter.options.initialStep].id, 'recordings-purpose',
+    'Choosing a chapter starts directly at its actual sample panel.');
   assert.equal(recordingChapter.options.steps[0].id, 'overview', 'Back can return to the common chapter chooser.');
   assert.equal(adminChapter.context.adminTab, 'health', 'A sample chapter keeps the real route unchanged.');
   assert.equal(adminChapter.navigations.length, 0);

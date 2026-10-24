@@ -61,16 +61,16 @@ async function installAdministration(page, { theme = 'light', tab = 'health', re
 async function selectChapter(page, id, label) {
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
   await guide(page).getByRole('button', { name: label, exact: true }).click();
-  await expect(guide(page)).toHaveAttribute('data-guide-step', `${id}-open`);
-  const opening = page.locator(`[data-guide-target="admin-nav-${id}"]`);
-  await expect(opening).toBeVisible();
-  await expect(opening).toHaveText(new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
-  await expect(guide(page)).toContainText(`Open ${label} from the Administration sidebar.`);
+  const initial = id === 'tuner-allocation' ? 'tuner-allocation-channel' : `${id}-purpose`;
+  try { await expect(guide(page)).toHaveAttribute('data-guide-step', initial); }
+  catch (error) { throw new Error(`${id} preparation failed. ${guideErrors.get(page).join('\n')}`, { cause: error }); }
+  await expect(guide(page)).not.toContainText('from the Administration sidebar');
+  await expect(guide(page).locator('.ui-setup-guide-counter')).toHaveText(
+    `Step 1 of ${id === 'tuner-allocation' ? 4 : ['recordings', 'activity'].includes(id) ? 2 : 1}`);
 }
 
 async function openPurpose(page, id, label) {
   await selectChapter(page, id, label);
-  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
   if (id === 'tuner-allocation') {
     await expect(guide(page)).toHaveAttribute('data-guide-step', 'tuner-allocation-channel');
     const channel = page.locator('[data-guide-target="admin-tuner-allocation-channel"]');
@@ -165,6 +165,7 @@ for (const [index, [id, label, populated]] of chapters.entries()) {
     await expect.poll(() => page.locator('.admin-settings-content').evaluate(element => element.innerText))
       .not.toMatch(/could not be loaded|could not be read|Unknown Administration example|invalid response/i);
     await expectLitPanel(page, id);
+    if (id === 'application-log') await capture(page, testInfo, `administration-${id}-first-step-${theme}`);
     if (['audio-quality', 'access'].includes(id)) {
       await expectRelatedPurposePanelsLit(page, id);
       await capture(page, testInfo, `administration-${id}-related-context-${theme}`);
@@ -288,8 +289,6 @@ test('Administration first visit remembers one guide and Help starts the current
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
   await expect(guide(page).getByRole('button', { name: 'Computer & version', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await guide(page).getByRole('button', { name: 'Start tour', exact: true }).click();
-  await expect(guide(page)).toHaveAttribute('data-guide-step', 'computer-open');
-  await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'computer-purpose');
   await guide(page).getByRole('button', { name: 'Finish', exact: true }).click();
   await expect(guide(page)).toHaveCount(0);
@@ -315,12 +314,14 @@ test('Administration cancellation during a pending sample import restores the re
   await page.evaluate(() => { window.administrationPendingOriginal = document.querySelector('.admin-settings-shell'); });
   const url = page.url();
   try {
-    await selectChapter(page, 'recordings', 'Recording settings');
-    await guide(page).getByRole('button', { name: 'Next', exact: true }).click();
+    await guide(page).getByRole('button', { name: 'Recording settings', exact: true }).click();
     await requestStarted;
-    await expect(guide(page)).toHaveAttribute('aria-busy', 'true');
+    // Initial sample preparation shows the shared busy dialog before its step identity is committed.
+    const pending = page.getByRole('dialog', { name: 'Administration', exact: true });
+    await expect(pending).toHaveAttribute('aria-busy', 'true');
+    await expect(pending.getByRole('button', { name: 'Close guide', exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
-    await expect(guide(page)).toHaveCount(0);
+    await expect(pending).toHaveCount(0);
   } finally { release(); }
   await requestServed;
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -336,8 +337,6 @@ test('Administration guide Back returns to the common chooser and navigation rel
   await page.setViewportSize({ width: 1440, height: 1000 });
   const state = await installAdministration(page);
   await openPurpose(page, 'remote-links', 'Remote Links');
-  await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
-  await expect(guide(page)).toHaveAttribute('data-guide-step', 'remote-links-open');
   await guide(page).getByRole('button', { name: 'Back', exact: true }).click();
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
   await expect(page.locator('.admin-settings-content .page-title')).toHaveText('Receiver status');

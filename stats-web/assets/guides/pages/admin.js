@@ -30,7 +30,7 @@ export function availableAdministrationSections(canAccess) {
 }
 
 export function adminSectionForStep(id) {
-  return administrationSections.find(section => ['open', 'purpose', 'retention', 'channel', 'back', 'catalog'].some(suffix => id === `${section.id}-${suffix}`))?.id || null;
+  return administrationSections.find(section => ['purpose', 'retention', 'channel', 'back', 'catalog'].some(suffix => id === `${section.id}-${suffix}`))?.id || null;
 }
 
 const sectionCopy = Object.freeze({
@@ -96,22 +96,18 @@ export function adminSteps(documentValue, preparePlayer, preparePage, { adminTab
   const chapter = selectedAdministrationSection(adminTab, canAccess);
   if (!chapter) return [];
   const focus = name => () => [...(documentValue?.querySelectorAll(`[data-guide-target="${name}"]`) || [])];
-  const opening = focus(`admin-nav-${chapter.id}`);
   const panel = focus(`admin-${chapter.id}-panel`);
   const panelContext = ['audio-quality', 'access'].includes(chapter.id) ? () =>
     [...new Set(panel().flatMap(element => [element,
       ...(element.closest?.('.admin-settings-content')?.querySelectorAll('.ui-settings-panel') || [])]))] : panel;
   const steps = [
-    { id: `${chapter.id}-open`, title: `Open ${chapter.label}`,
-      paragraphs: [`Open ${chapter.label} from the Administration sidebar.`],
-      targets: opening, contextTargets: contextualTargets(opening, '.admin-settings-branch') },
     { id: `${chapter.id}-purpose`, title: chapter.label, paragraphs: sectionCopy[chapter.id], targets: panel,
       contextTargets: panelContext }
   ];
   if (chapter.id === 'tuner-allocation') {
     const channel = focus('admin-tuner-allocation-channel');
     const back = focus('admin-tuner-allocation-back');
-    steps.splice(1, 0, { id: 'tuner-allocation-channel', title: 'Choose a channel',
+    steps.unshift({ id: 'tuner-allocation-channel', title: 'Choose a channel',
       paragraphs: ['Select a channel to inspect its frequencies and the tuners covering them.'],
       targets: channel, contextTargets: contextualTargets(channel, '.tuner-allocation-catalog') });
     steps.push({ id: 'tuner-allocation-back', title: 'Return to channels',
