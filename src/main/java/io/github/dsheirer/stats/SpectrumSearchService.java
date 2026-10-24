@@ -296,12 +296,32 @@ public final class SpectrumSearchService implements AutoCloseable
         }
     }
 
+    /** A pending optional lookup must not be mistaken for a completed lookup with no import target. */
+    static void requireDirectoryReady(List<RadioReferenceDiscoveryResolver.Result> results)
+    {
+        if(results.stream().anyMatch(result -> result != null && "pending".equals(result.state())))
+            throw new DirectoryPendingException();
+    }
+
+    public static final class DirectoryPendingException extends IllegalStateException
+    {
+        public DirectoryPendingException()
+        { super("RadioReference lookup is still running. Wait for it to finish, then try adding again."); }
+    }
+
     public Snapshot save(String id, SaveRequest request)
     {
         Job job = beginCommand(id);
         try
         {
             List<Row> selected = selected(job, request.candidates().stream().map(SaveCandidate::candidateId).toList());
+            Set<String> selectedGroups = selected.stream().map(Row::groupId)
+                .collect(java.util.stream.Collectors.toSet());
+            synchronized(mLock)
+            {
+                requireDirectoryReady(job.rows.values().stream().filter(row -> selectedGroups.contains(row.groupId()))
+                    .map(row -> row.directory).toList());
+            }
             Map<String,AliasChoice> choices = new LinkedHashMap<>();
             for(var choice: request.aliasGroups())
                 if(!job.groups.containsKey(choice.groupId()) || choices.putIfAbsent(choice.groupId(), choice) != null)

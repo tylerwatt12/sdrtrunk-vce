@@ -13,6 +13,18 @@ import org.junit.jupiter.api.Test;
 class SpectrumDiscoveryServiceTest
 {
     @Test
+    void completedDirectoryFailuresRemainSaveableAndOnlyPendingDefersTheSharedSaveBoundary()
+    {
+        for(String state: List.of("matched", "no_match", "ambiguous", "unavailable", "login_required",
+            "premium_required", "location_required", "identity_required", "manual"))
+            assertDoesNotThrow(() -> SpectrumSearchService.requireDirectoryReady(List.of(
+                RadioReferenceDiscoveryResolver.Result.manual(state, "Terminal lookup result"))));
+        var pending = assertThrows(SpectrumSearchService.DirectoryPendingException.class, () ->
+            SpectrumSearchService.requireDirectoryReady(List.of(RadioReferenceDiscoveryResolver.Result.pending())));
+        assertTrue(pending.getMessage().contains("Wait for it to finish"));
+    }
+
+    @Test
     void nullNewListNameRegistersTheActualSystemFallbackAndExplicitNamesRemainAuthoritative()
     {
         var definition = new ChannelDefinition(null, "p25-phase1", "County Public Safety", "North", "Control",

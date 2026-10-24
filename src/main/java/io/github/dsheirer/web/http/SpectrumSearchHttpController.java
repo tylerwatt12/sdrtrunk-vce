@@ -161,6 +161,10 @@ public final class SpectrumSearchHttpController
         {
             ApiHttpResponse.sendError(exchange, 410, "search_expired", exception.getMessage());
         }
+        catch(io.github.dsheirer.stats.SpectrumSearchService.DirectoryPendingException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 409, "directory_pending", exception.getMessage());
+        }
         catch(IllegalStateException exception)
         {
             ApiHttpResponse.sendError(exchange, 409, "search_conflict", exception.getMessage());

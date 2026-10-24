@@ -172,6 +172,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         if(wizard.saved != null) return snapshot(wizard);
         Snapshot current = snapshot(wizard);
         if(!"ready".equals(current.state())) throw new IllegalStateException("Complete identification before saving");
+        SpectrumSearchService.requireDirectoryReady(List.of(wizard.directory));
         Eligibility eligibility = eligibility(wizard.tunerId, wizard.frequencyHz);
         if(!eligibility.eligible()) throw new IllegalStateException(eligibility.reason());
         ChannelAdministrationService.DiscoveryReview review = current.review();

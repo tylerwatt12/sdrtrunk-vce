@@ -153,6 +153,10 @@ public final class SpectrumDiscoveryHttpController
         {
             ApiHttpResponse.sendError(exchange, 400, "invalid_request", exception.getMessage());
         }
+        catch(io.github.dsheirer.stats.SpectrumSearchService.DirectoryPendingException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 409, "directory_pending", exception.getMessage());
+        }
         catch(IllegalStateException exception)
         {
             ApiHttpResponse.sendError(exchange, 409, "discovery_conflict", exception.getMessage());

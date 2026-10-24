@@ -274,6 +274,14 @@ class SpectrumSearchServiceTest
             var initial = fixture.complete(opened.jobId());
             assertEquals(fixture.channels.systemName, initial.aliasGroups().getFirst().defaultNewAliasListName(),
                 "a known friendly name remains the default while the directory lookup is pending");
+            assertEquals("pending", initial.candidates().getFirst().radioReference().state());
+            var initialRow = initial.candidates().getFirst();
+            assertThrows(SpectrumSearchService.DirectoryPendingException.class, () -> fixture.service.save(opened.jobId(),
+                new SpectrumSearchService.SaveRequest(initial.revision(), List.of(new SpectrumSearchService.SaveCandidate(
+                    initialRow.candidateId(), initialRow.name(), false)), List.of())));
+            assertTrue(fixture.channels.definitions.isEmpty(), "Pending lookup must not create a channel");
+            assertEquals(0, fixture.channels.createdAliases, "Pending lookup must not create an Alias List");
+            assertTrue(fixture.channels.aliasNames.isEmpty());
             gateway.release.countDown();
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
             SpectrumSearchService.Snapshot resolved;
@@ -295,6 +303,80 @@ class SpectrumSearchServiceTest
         {
             gateway.release.countDown();
         }
+    }
+
+    @Test
+    void pendingUnselectedSiblingBlocksTheSelectedSystemUntilItsLookupFinishes() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A, B))
+        {
+            var opened = fixture.open();
+            var completed = fixture.complete(opened.jobId());
+            assertEquals(2, completed.candidates().size());
+            var selected = completed.candidates().getFirst();
+            var sibling = completed.candidates().getLast();
+            assertEquals(selected.aliasGroupId(), sibling.aliasGroupId());
+            setDirectoryResult(fixture.service, sibling.candidateId(), RadioReferenceDiscoveryResolver.Result.pending());
+            var request = new SpectrumSearchService.SaveRequest(completed.revision(),
+                List.of(new SpectrumSearchService.SaveCandidate(selected.candidateId(), selected.name(), false)), List.of());
+            assertThrows(SpectrumSearchService.DirectoryPendingException.class, () -> fixture.service.save(opened.jobId(), request));
+            assertTrue(fixture.channels.definitions.isEmpty());
+            assertEquals(0, fixture.channels.createdAliases);
+            setDirectoryResult(fixture.service, sibling.candidateId(), RadioReferenceDiscoveryResolver.Result.manual(
+                "no_match", "No matching directory record"));
+            var saved = fixture.service.save(opened.jobId(), request);
+            assertTrue(saved.candidates().stream().filter(row -> row.candidateId().equals(selected.candidateId()))
+                .findFirst().orElseThrow().saved());
+            assertEquals(1, fixture.channels.definitions.size());
+            assertEquals(1, fixture.channels.createdAliases);
+        }
+    }
+
+    @Test
+    void pendingLookupForAnUnselectedSystemDoesNotBlockTheSelectedSystem() throws Exception
+    {
+        try(Fixture fixture = new Fixture(A, B))
+        {
+            fixture.check = (lease, frequency, cancelled) -> {
+                var status = evidence(frequency, frequency == A ? 1 : 2, "C4FM", true);
+                if(frequency == A) return status;
+                var mode = status.c4fm();
+                var identity = new P25DiscoveryProbe.Identity(0xBEE00, 0x349, 2, 2, 0x349);
+                var changed = new P25DiscoveryProbe.ModeMetrics(mode.validMessages(), mode.validControlMessages(),
+                    mode.invalidControlMessages(), mode.correctedBits(), mode.syncLossBits(), mode.networkObservations(),
+                    mode.siteObservations(), mode.qualityPct(), true, identity, mode.reason());
+                return new P25DiscoveryProbe.Status(status.state(), status.reason(), status.targetId(), frequency,
+                    status.startedAtMs(), status.elapsedMs(), status.timeoutMs(), 0, changed, status.cqpsk(), status.signal(),
+                    "C4FM", identity);
+            };
+            var opened = fixture.open();
+            var completed = fixture.complete(opened.jobId());
+            var selected = completed.candidates().getFirst();
+            var unrelated = completed.candidates().getLast();
+            assertNotEquals(selected.aliasGroupId(), unrelated.aliasGroupId());
+            setDirectoryResult(fixture.service, unrelated.candidateId(), RadioReferenceDiscoveryResolver.Result.pending());
+            var saved = fixture.service.save(opened.jobId(), new SpectrumSearchService.SaveRequest(completed.revision(),
+                List.of(new SpectrumSearchService.SaveCandidate(selected.candidateId(), selected.name(), false)), List.of()));
+            assertTrue(saved.candidates().stream().filter(row -> row.candidateId().equals(selected.candidateId()))
+                .findFirst().orElseThrow().saved());
+            assertEquals(1, fixture.channels.definitions.size());
+            assertEquals(1, fixture.channels.createdAliases);
+        }
+    }
+
+    /** Install an already-published asynchronous lookup state without relying on worker scheduling. */
+    private static void setDirectoryResult(SpectrumSearchService service, String candidateId,
+        RadioReferenceDiscoveryResolver.Result result) throws Exception
+    {
+        var jobField = SpectrumSearchService.class.getDeclaredField("mJob");
+        jobField.setAccessible(true);
+        Object job = jobField.get(service);
+        var rowsField = job.getClass().getDeclaredField("rows");
+        rowsField.setAccessible(true);
+        Object row = ((Map<?,?>)rowsField.get(job)).get(candidateId);
+        var directoryField = row.getClass().getDeclaredField("directory");
+        directoryField.setAccessible(true);
+        directoryField.set(row, result);
     }
 
     @Test
