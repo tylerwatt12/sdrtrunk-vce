@@ -17,7 +17,8 @@ public final class Format60TestDatabase
             new Format59To60DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 60);
             connection.commit();
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version() != 60)
+                throw new IllegalStateException("The frozen format-60 fixture changed");
         }
         return database;
     }

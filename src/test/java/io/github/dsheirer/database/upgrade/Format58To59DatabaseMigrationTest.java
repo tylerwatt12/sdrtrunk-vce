@@ -48,9 +48,10 @@ class Format58To59DatabaseMigrationTest
             assertTrue(count(connection, "topic_alert_message") > 0);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(List.of("format-58-to-59", "format-59-to-60"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(List.of("format-58-to-59", "format-59-to-60", "format-60-to-61"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
+            assertEquals(0, count(connection, "web_user_tour_dismissal"));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE duration_ms IS NOT NULL"));
             assertTrue(scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE source_call_uuid IS NOT NULL") > 0);
             assertTrue(scalar(connection, "SELECT count(*) FROM topic_alert_message WHERE source_call_uuid IS NOT NULL") > 0);
@@ -156,7 +157,8 @@ class Format58To59DatabaseMigrationTest
         Map<String,List<String>> result = new LinkedHashMap<>();
         List<String> tables = new ArrayList<>();
         try(var sql = connection.createStatement(); var rows = sql.executeQuery("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"))
-        { while(rows.next()) if(!"activity_message_type".equals(rows.getString(1))) tables.add(rows.getString(1)); }
+        { while(rows.next()) if(!java.util.Set.of("activity_message_type", "web_user_tour_dismissal")
+            .contains(rows.getString(1))) tables.add(rows.getString(1)); }
         for(String table: tables)
         {
             List<String> values = new ArrayList<>();

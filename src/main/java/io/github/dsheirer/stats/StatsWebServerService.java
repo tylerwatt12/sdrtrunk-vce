@@ -84,8 +84,10 @@ import io.github.dsheirer.web.http.WebDiagnosticHttpFilter;
 import io.github.dsheirer.web.http.TunerAdminHttpController;
 import io.github.dsheirer.web.http.WebUserAdminHttpController;
 import io.github.dsheirer.web.http.WebUserPreferencesHttpController;
+import io.github.dsheirer.web.http.WebTourDismissalsHttpController;
 import io.github.dsheirer.web.http.StaticWebAssetResponse;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
+import io.github.dsheirer.web.auth.WebTourDismissalService;
 import io.github.dsheirer.web.settings.OperationalPreferencesService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
@@ -635,6 +637,9 @@ public class StatsWebServerService implements AutoCloseable
             mWebRequestSecurity, new WebUserPreferencesService(mWebAccessDatabasePath));
         server.createContext(WebUserPreferencesHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.USER_SETTINGS, userPreferencesController::handle));
+        WebTourDismissalsHttpController tourDismissals = new WebTourDismissalsHttpController(
+            mWebRequestSecurity, new WebTourDismissalService(mWebAccessDatabasePath));
+        server.createContext(WebTourDismissalsHttpController.PATH, tourDismissals::handle);
 
         CallMatchingHttpController callMatchingController = new CallMatchingHttpController(
             () -> mServices.mLogicalCallDiagnosticService, () -> mServices.mAudioCallCoordinator, mServices.mDatabase::enrichSystemNames);

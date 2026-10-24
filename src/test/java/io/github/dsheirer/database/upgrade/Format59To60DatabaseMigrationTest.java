@@ -29,10 +29,9 @@ class Format59To60DatabaseMigrationTest
     @Test void compareFreshAndMigratedDefinitions() throws Exception
     {
         Path database = Format59TestDatabase.create(directory.resolve("definitions.sqlite"));
-        try(var fresh = DriverManager.getConnection("jdbc:sqlite::memory:"); var migrated = open(database))
+        Path historical = Format60TestDatabase.create(directory.resolve("format-60.sqlite"));
+        try(var fresh = open(historical); var migrated = open(database))
         {
-            SdrTrunkDatabaseSchema.create(fresh); ReceiverActivitySchema.create(fresh);
-            DmrActivitySchema.create(fresh); TrunkedSiteSchema.create(fresh); TopicAlertSchema.create(fresh);
             migrated.setAutoCommit(false); ReceiverActivitySchema.upgradeFrom59(migrated);
             assertEquals(SqliteSchemaValidator.fingerprint(fresh), SqliteSchemaValidator.fingerprint(migrated));
         }
@@ -59,7 +58,7 @@ class Format59To60DatabaseMigrationTest
             Map<String,List<String>> columns = columns(connection);
             Map<String,List<String>> before = snapshot(connection, columns);
             connection.setAutoCommit(false);
-            assertEquals(List.of("format-59-to-60"), DatabaseMigrationChain.migrate(connection).steps().stream()
+            assertEquals(List.of("format-59-to-60", "format-60-to-61"), DatabaseMigrationChain.migrate(connection).steps().stream()
                 .map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(before, snapshot(connection, columns));
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
@@ -72,7 +71,7 @@ class Format59To60DatabaseMigrationTest
             assertEquals(before, snapshot(connection, columns));
             DatabaseMigrationChain.migrate(connection); connection.commit();
             assertEquals(before, snapshot(connection, columns));
-            assertEquals(60, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             ReceiverActivitySchema.validate(connection);
             assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
             integrity(connection);
@@ -175,7 +174,7 @@ class Format59To60DatabaseMigrationTest
         {
             statement.executeUpdate("UPDATE activity_message_type SET label='Radio disabled temporarily'," +
                 "meaning='A temporary disable command was observed.' WHERE definition_kind='EVENT' AND name='STUN'");
-            DatabaseFormatCatalog.requireCurrent(connection); ReceiverActivitySchema.validate(connection);
+            assertEquals(60, DatabaseFormatCatalog.inspect(connection).version()); ReceiverActivitySchema.validate(connection);
             assertEquals("Radio disabled temporarily", ActivityMessageCatalog.read(connection).stream()
                 .filter(row -> row.get("definition_kind").equals("EVENT") && row.get("name").equals("STUN"))
                 .findFirst().orElseThrow().get("label"));

@@ -143,7 +143,8 @@ final class CurrentDatabaseAdministrativeRepair
                     "exhausted revision"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP, "unusable secondary web accounts",
                 inspection.droppedSecondaryWebAccounts(),
-                "Preserve the usable primary administrator and discard only unusable or excess secondary accounts"),
+                "Preserve the usable primary administrator and discard only unusable or excess secondary accounts " +
+                    "with their account-owned tour history"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DROP, "unusable web access policy overrides",
                 inspection.droppedWebPolicies(),
                 "Discard only an override whose capability cannot be identified or no longer accepts overrides"),
@@ -152,7 +153,8 @@ final class CurrentDatabaseAdministrativeRepair
                 "Preserve each known restriction while defaulting only its malformed tier or update timestamp"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
                 "web accounts with no usable primary administrator", inspection.resetWebAccounts(),
-                "Require administrator password setup only when the primary credential cannot be retained safely"),
+                "Require administrator password setup only when the primary credential cannot be retained safely; " +
+                    "remove the discarded accounts' tour history"),
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT,
                 "administrator password setup state", inspection.defaultedAdminSetupMarker(),
                 "Normalize the marker and require a password only when no usable primary credential remains"),
@@ -671,6 +673,7 @@ final class CurrentDatabaseAdministrativeRepair
                 statement.executeUpdate("DELETE FROM web_access_policy");
                 statement.executeUpdate("DELETE FROM web_user");
             }
+            removeDeletedAccountTourHistory(connection);
             return;
         }
 
@@ -693,6 +696,7 @@ final class CurrentDatabaseAdministrativeRepair
         if(inspection.droppedSecondaryAccounts() > 0)
         {
             deleteUsersExcept(connection, inspection.retainedUserRowIds());
+            removeDeletedAccountTourHistory(connection);
         }
 
         final String defaults;
@@ -754,6 +758,21 @@ final class CurrentDatabaseAdministrativeRepair
                 update.addBatch();
             }
             update.executeBatch();
+        }
+    }
+
+    /** Account repair runs with foreign keys disabled; mirror only its deleted accounts' cascade here. */
+    private static void removeDeletedAccountTourHistory(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement(); ResultSet row = statement.executeQuery(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='web_user_tour_dismissal'"))
+        {
+            if(!row.next()) return; // Historical formats predate this account-owned table.
+        }
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM web_user_tour_dismissal WHERE NOT EXISTS " +
+                "(SELECT 1 FROM web_user WHERE web_user.id=web_user_tour_dismissal.user_id)");
         }
     }
 

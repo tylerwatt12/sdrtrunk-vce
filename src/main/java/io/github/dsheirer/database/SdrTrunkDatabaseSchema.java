@@ -705,6 +705,20 @@ public final class SdrTrunkDatabaseSchema
     private static final String WEB_USER_TABLE_SQL = FORMAT_26_WEB_USER_TABLE_SQL.replace(
         "OR (primary_admin = 0 AND username <> 'admin')",
         "OR (primary_admin = 0 AND username <> 'admin' AND tier = 'USER')");
+    private static final String WEB_USER_TOUR_DISMISSAL_TABLE_SQL = """
+        CREATE TABLE IF NOT EXISTS web_user_tour_dismissal (
+            user_id INTEGER NOT NULL CHECK(typeof(user_id) = 'integer' AND user_id > 0),
+            guide_id TEXT NOT NULL CHECK(
+                typeof(guide_id) = 'text' AND length(guide_id) BETWEEN 1 AND 64
+                AND substr(guide_id, 1, 1) GLOB '[a-z]' AND guide_id NOT GLOB '*[^a-z0-9_-]*'
+            ),
+            guide_version INTEGER NOT NULL CHECK(
+                typeof(guide_version) = 'integer' AND guide_version BETWEEN 1 AND 1000000
+            ),
+            PRIMARY KEY(user_id, guide_id),
+            FOREIGN KEY(user_id) REFERENCES web_user(id) ON DELETE CASCADE
+        ) WITHOUT ROWID
+        """;
     private static final String WEB_ACCESS_POLICY_TABLE_SQL = """
         CREATE TABLE IF NOT EXISTS web_access_policy (
             capability_id TEXT NOT NULL PRIMARY KEY CHECK(
@@ -894,6 +908,7 @@ public final class SdrTrunkDatabaseSchema
             RECEIVER_HEALTH_INCIDENT_TABLE_SQL));
     private static final List<SqliteSchemaValidator.Definition> EXACT_WEB_SETTINGS_OBJECTS = List.of(
         new SqliteSchemaValidator.Definition("table", "web_user", WEB_USER_TABLE_SQL),
+        new SqliteSchemaValidator.Definition("table", "web_user_tour_dismissal", WEB_USER_TOUR_DISMISSAL_TABLE_SQL),
         new SqliteSchemaValidator.Definition("table", "web_access_policy", WEB_ACCESS_POLICY_TABLE_SQL),
         new SqliteSchemaValidator.Definition("index", "idx_web_user_one_primary_admin",
             WEB_USER_PRIMARY_INDEX_SQL));
@@ -984,6 +999,7 @@ public final class SdrTrunkDatabaseSchema
                 "credential_version", "password_algorithm", "password_iterations", "password_derived_key_bits",
                 "password_salt", "password_hash", "password_changed_at_ms", "auth_revision", "preferences_json",
                 "preferences_revision", "created_at_ms", "updated_at_ms"),
+            new SqliteSchemaValidator.Table("web_user_tour_dismissal", "user_id", "guide_id", "guide_version"),
             new SqliteSchemaValidator.Table("web_access_policy", "capability_id", "required_tier", "updated_at_ms")
         );
     }
@@ -992,6 +1008,38 @@ public final class SdrTrunkDatabaseSchema
     {
         create(connection, CONFIGURATION_CHANNEL_TABLE_SQL, true, ALIAS_LIST_TABLE_SQL, true);
         createReceiverHealthIncidentTable(connection);
+        createWebTourDismissalTable(connection);
+    }
+
+    /** Creates account tour history only for fresh databases and the adjacent Application Migrator. */
+    public static void createWebTourDismissalTable(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate(WEB_USER_TOUR_DISMISSAL_TABLE_SQL);
+        }
+    }
+
+    /** Validates the bounded account history without repairing or creating stored state. */
+    public static void validateWebTourDismissals(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+            SELECT 1 FROM web_user_tour_dismissal dismissal LEFT JOIN web_user account ON account.id=dismissal.user_id
+            WHERE account.id IS NULL OR typeof(dismissal.user_id)<>'integer' OR dismissal.user_id<=0
+                OR typeof(guide_id)<>'text' OR length(guide_id) NOT BETWEEN 1 AND 64
+                OR substr(guide_id,1,1) NOT GLOB '[a-z]' OR guide_id GLOB '*[^a-z0-9_-]*'
+                OR typeof(guide_version)<>'integer' OR guide_version NOT BETWEEN 1 AND 1000000
+            LIMIT 1
+            """))
+        {
+            if(rows.next()) throw new SQLException("Stored account tour history is invalid");
+        }
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+            SELECT user_id FROM web_user_tour_dismissal GROUP BY user_id HAVING count(*)>64 LIMIT 1
+            """))
+        {
+            if(rows.next()) throw new SQLException("Stored account tour history exceeds its account limit");
+        }
     }
 
     /** Creates the frozen format-43 core schema, before the Alias List name bound was expanded. */
@@ -1402,6 +1450,7 @@ public final class SdrTrunkDatabaseSchema
         SqliteSchemaValidator.validateDefinitions(connection, ANALOG_ACTIVITY_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_CONFIGURATION_OBJECTS);
         SqliteSchemaValidator.validateDefinitions(connection, EXACT_WEB_SETTINGS_OBJECTS);
+        validateWebTourDismissals(connection);
         Format5WebStateValidator.validate(connection);
         io.github.dsheirer.database.settings.ReceiverSettingsSchema.validate(connection);
 
