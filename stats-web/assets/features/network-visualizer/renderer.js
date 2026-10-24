@@ -141,7 +141,6 @@ async function createP25Renderer(options = {}) {
   let scope = { level: 'overview', systemKey: '' };
   let interactionUntil = 0;
   let programmatic = false;
-  let reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches || false;
   let focusKeys = new Set();
   let focusAmount = 0;
   let focusTarget = 0;
@@ -275,14 +274,6 @@ async function createP25Renderer(options = {}) {
     focusFrom = focusAmount;
     focusTarget = target;
     focusStartedAt = performance.now();
-    if (reducedMotion) {
-      focusAmount = focusTarget;
-      updateFocusOpacity();
-      if (!focusTarget) {
-        focusKeys.clear();
-        applyFocusStyles();
-      }
-    }
   }
 
   function setFocus(keys) {
@@ -362,7 +353,7 @@ async function createP25Renderer(options = {}) {
 
   function setData(value = {}, optionsValue = {}) {
     if (!graph || disposed) return;
-    const animate = optionsValue.animate !== false && !reducedMotion && !documentValue.hidden;
+    const animate = optionsValue.animate !== false && !documentValue.hidden;
     const now = performance.now();
     const incomingNodes = new Map((Array.isArray(value.nodes) ? value.nodes : []).map((node) =>
       [String(node.id), node]));
@@ -418,11 +409,11 @@ async function createP25Renderer(options = {}) {
       const trip = affiliationMoves.get(id);
       const affiliationChanged = previous.affiliationGroupKey !== incoming.affiliationGroupKey;
       canonicalPositions.set(id, { ...target, groupKey: incoming.groupKey });
-      const continuing = movement && !reducedMotion &&
+      const continuing = movement &&
         Math.hypot(target.x - movement.target.x, target.y - movement.target.y,
           target.z - movement.target.z) < 0.001;
       Object.assign(previous, incoming, { id });
-      if ((trip && !reducedMotion) || continuing) {
+      if (trip || continuing) {
         // Highlight expiry and repeated observations must not restart an in-flight relocation.
         Object.assign(previous, original, { fx: original.x, fy: original.y, fz: original.z });
       } else if (animate && !affiliationChanged && previous.type === 'radio' && distance > 1) {
@@ -491,7 +482,7 @@ async function createP25Renderer(options = {}) {
     if (!controls) return;
     controls.autoRotate = Boolean(mode === 'auto' && cameraPhase === 'roam' &&
       (scope.level === 'system' || scope.level === 'talkgroup') &&
-      !programmatic && performance.now() >= interactionUntil && !documentValue.hidden && !guideSuspended && !reducedMotion);
+      !programmatic && performance.now() >= interactionUntil && !documentValue.hidden && !guideSuspended);
     controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
   }
 
@@ -518,7 +509,7 @@ async function createP25Renderer(options = {}) {
     const from = cameraPose();
     const toPosition = { x: finite(position.x), y: finite(position.y), z: finite(position.z) };
     const toTarget = { x: finite(target.x), y: finite(target.y), z: finite(target.z) };
-    const milliseconds = reducedMotion ? 0 : Math.max(0, duration);
+    const milliseconds = Math.max(0, duration);
     const apply = (progress) => {
       const amount = ease(progress);
       camera.position.set(from.position.x + (toPosition.x - from.position.x) * amount,
@@ -605,7 +596,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function focusAffiliation(radioKey, duration = 900) {
-    if (mode !== 'auto' || reducedMotion || documentValue.hidden || scope.level !== 'system') return false;
+    if (mode !== 'auto' || documentValue.hidden || scope.level !== 'system') return false;
     const trip = affiliationMoves.get(String(radioKey));
     if (!trip || trip.phase !== 'waiting') return false;
     const keys = [String(radioKey), trip.attachedGroupKey];
@@ -919,31 +910,6 @@ async function createP25Renderer(options = {}) {
   });
   themeObserver.observe(documentValue.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   documentValue.addEventListener('visibilitychange', onVisibility);
-  const media = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
-  const onMotion = () => {
-    reducedMotion = Boolean(media?.matches);
-    if (reducedMotion) {
-      stopCamera();
-      clearAffiliationMoves();
-      for (const [key, movement] of movements) {
-        const node = nodes.get(key);
-        if (node) Object.assign(node, movement.target, { fx: movement.target.x,
-          fy: movement.target.y, fz: movement.target.z });
-      }
-      movements.clear();
-    }
-    if (reducedMotion && focusAmount !== focusTarget) {
-      focusAmount = focusTarget;
-      updateFocusOpacity();
-      if (!focusTarget) {
-        focusKeys.clear();
-        applyFocusStyles();
-      }
-    }
-    updateAutoRotate();
-  };
-  media?.addEventListener?.('change', onMotion);
-
   async function enterFullscreen() {
     const target = host.closest('.network-visualizer-layout') || host;
     if (documentValue.fullscreenElement === target) return true;
@@ -982,7 +948,6 @@ async function createP25Renderer(options = {}) {
     resizeObserver?.disconnect();
     themeObserver?.disconnect();
     documentValue.removeEventListener('visibilitychange', onVisibility);
-    media?.removeEventListener?.('change', onMotion);
     controls?.removeEventListener('start', onControlsStart);
     controls?.removeEventListener('end', onControlsEnd);
     canvas?.removeEventListener('webglcontextlost', onContextLost, false);

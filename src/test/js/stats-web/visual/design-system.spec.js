@@ -86,7 +86,7 @@ for (const [, theme, viewport] of galleryCases) {
 }
 
 for (const theme of ['light', 'dark']) {
-  test(`awaiting apply halo ${theme} reduced motion retains a steady theme ring`, async ({ page }) => {
+  test(`awaiting apply halo ${theme} reduced motion retains the animated halo and theme ring`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/design-system.html?theme=${theme}&view=awaiting-apply&hue=280`);
@@ -94,13 +94,19 @@ for (const theme of ['light', 'dark']) {
     const search = example.getByRole('button', { name: 'Search recordings', exact: true });
     await expect.poll(() => search.evaluate((button) => ({
       animation: getComputedStyle(button, '::after').animationName,
-      waveOpacity: getComputedStyle(button, '::after').opacity,
+      repeats: getComputedStyle(button, '::after').animationIterationCount,
       ringWidth: getComputedStyle(button, '::before').borderTopWidth,
       ringStyle: getComputedStyle(button, '::before').borderTopStyle,
       ringOpacity: getComputedStyle(button, '::before').opacity
-    }))).toEqual({ animation: 'none', waveOpacity: '0', ringWidth: '2px',
+    }))).toEqual({ animation: 'ui-button-awaiting-apply-halo', repeats: 'infinite', ringWidth: '2px',
       ringStyle: 'solid', ringOpacity: '1' });
-    await expect(example).toHaveScreenshot(`awaiting-apply-${theme}-reduced-motion.png`);
+    const wave = await search.evaluate(button => getComputedStyle(button, '::after').opacity);
+    await expect.poll(() => search.evaluate(button => getComputedStyle(button, '::after').opacity)).not.toBe(wave);
+    await search.evaluate(button => {
+      const animation = button.getAnimations({ subtree: true }).find(item => item.animationName === 'ui-button-awaiting-apply-halo');
+      animation.pause(); animation.currentTime = 350;
+    });
+    await expect(example).toHaveScreenshot(`awaiting-apply-${theme}-reduced-motion.png`, { animations: 'allow' });
     await search.click();
     await expect(search).not.toHaveClass(/ui-button-awaiting-apply/);
   });

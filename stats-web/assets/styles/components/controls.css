@@ -1559,11 +1559,6 @@ a.ui-link-tile:focus-visible {
   to { transform: rotate(360deg); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .ui-feedback-loading::before,
-  .ui-icon-button.is-loading::before { animation: none; }
-}
-
 .ui-feedback-error {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, var(--surface));

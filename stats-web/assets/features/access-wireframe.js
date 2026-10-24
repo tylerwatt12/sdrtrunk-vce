@@ -4,7 +4,6 @@ export function mountAccessWireframe(canvas, { compact = false } = {}) {
   if (!context) return () => {};
 
   const host = canvas.parentElement;
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let width = 0;
   let height = 0;
   let frameId = 0;
@@ -160,7 +159,7 @@ export function mountAccessWireframe(canvas, { compact = false } = {}) {
 
   function frame(time) {
     frameId = 0;
-    if (removed || !visible || document.hidden || reducedMotion.matches) return;
+    if (removed || !visible || document.hidden) return;
     if (time - lastFrame >= 40) {
       draw(time);
       lastFrame = time;
@@ -169,7 +168,7 @@ export function mountAccessWireframe(canvas, { compact = false } = {}) {
   }
 
   function synchronizeMotion() {
-    const animate = visible && !document.hidden && !reducedMotion.matches;
+    const animate = visible && !document.hidden;
     if (!animate && frameId) cancelAnimationFrame(frameId);
     if (!animate) frameId = 0;
     if (visible) resize();
@@ -197,7 +196,6 @@ export function mountAccessWireframe(canvas, { compact = false } = {}) {
   host.addEventListener('pointermove', pointerMove);
   host.addEventListener('pointerleave', pointerLeave);
   document.addEventListener('visibilitychange', synchronizeMotion);
-  reducedMotion.addEventListener('change', synchronizeMotion);
   resize();
 
   return () => {
@@ -208,6 +206,5 @@ export function mountAccessWireframe(canvas, { compact = false } = {}) {
     host.removeEventListener('pointermove', pointerMove);
     host.removeEventListener('pointerleave', pointerLeave);
     document.removeEventListener('visibilitychange', synchronizeMotion);
-    reducedMotion.removeEventListener('change', synchronizeMotion);
   };
 }

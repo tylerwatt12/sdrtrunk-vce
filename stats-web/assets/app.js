@@ -6,7 +6,7 @@ import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js?v=5';
 import * as tableDefaults from './core/table-defaults.js?v=29';
-import { createTableOverflow } from './core/table-overflow.js?v=1';
+import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=2';
@@ -42,10 +42,10 @@ import { createDiscoveryRadioReferenceContext, createDiscoveryTalkgroupAvailabil
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=33';
+import { createAudioDock } from './core/audio-dock.js?v=34';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
-import { mountAccessWireframe } from './features/access-wireframe.js?v=1';
+import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
 import { WebCallPlayer } from './web-call-player.js?v=19';
 
 let route = new URLSearchParams(window.location.search);
@@ -7940,9 +7940,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const mapTour = view === 'map';
     const visualizerTour = view === 'network-visualizer';
     const [feature, presentation] = await Promise.all(mapTour ? [
-      import('./features/listen-map.js?v=13'), import('./guides/map-presentation.js?v=1')
+      import('./features/listen-map.js?v=14'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=57'), import('./guides/network-visualizer-presentation.js?v=1')
+      import('./features/network-visualizer/index.js?v=58'), import('./guides/network-visualizer-presentation.js?v=1')
     ] : topics ? [
       import('./features/alerts.js?v=21'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
@@ -20738,7 +20738,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=57');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=58');
   const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer(p25VisualizerDependencies(renderContext));
@@ -25769,7 +25769,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=33');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=34');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -31534,7 +31534,7 @@ async function renderAdminWebDiagnosticLog(renderContext) {
 
 async function renderListenMap() {
   const renderContext = captureRenderContext();
-  const { createListenMap } = await import('./features/listen-map.js?v=13');
+  const { createListenMap } = await import('./features/listen-map.js?v=14');
   if (!renderIsCurrent(renderContext)) return;
   const map = createListenMap({
     node, iconGlyph, iconButton, radioSystemLink,

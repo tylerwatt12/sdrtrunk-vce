@@ -124,6 +124,26 @@ test('Activity arrows reveal clipped columns, track both ends, and preserve the 
   await parts.root.screenshot({ path: testInfo.outputPath('activity-overflow-controls.png') });
 });
 
+test('table arrows request smooth scrolling regardless of the motion preference', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await installApplication(page);
+  await page.goto(`/app.html?${activityQuery}`);
+  const wrapper = page.getByRole('region', { name: 'Table, scroll horizontally for more columns', exact: true });
+  const right = page.getByRole('button', { name: 'Scroll table right', exact: true });
+  await expect(right).toBeEnabled();
+  await wrapper.evaluate((element) => {
+    const scrollTo = element.scrollTo.bind(element);
+    element.scrollTo = (options) => {
+      element.dataset.requestedScrollBehavior = options.behavior;
+      scrollTo(options);
+    };
+  });
+  await right.click();
+  await expect(wrapper).toHaveAttribute('data-requested-scroll-behavior', 'smooth');
+  await expect.poll(() => wrapper.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+});
+
 test('table keyboard scrolling leaves column-resizer arrows available and tracks changed layouts', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = await installApplication(page, 'dark');

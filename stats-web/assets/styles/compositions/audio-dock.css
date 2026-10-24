@@ -288,4 +288,3 @@
   .audio-dock-source-native select { font-size: var(--font-size-label); }
   .audio-dock-library-control .audio-dock-scan-label { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .audio-dock-motion { display: none; } }

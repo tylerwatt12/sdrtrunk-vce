@@ -471,24 +471,29 @@ test('minimize and expand animate between panel and header without changing audi
   await expect(hide(page)).toBeFocused();
 });
 
-test('reduced motion restores immediately and resize or repeated activation removes animation copies', async ({ page }) => {
+test('motion preferences keep player animations enabled while resize and repeated activation clean up copies', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await openApp(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await hide(page).click();
-  await expectSuperCollapsed(page);
-  await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
-  await restore(page).click();
-  await expectExpandedCloseControl(page);
-  await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  const copies = await page.evaluate(() => {
-    document.querySelector('button[aria-label="Minimize player to header"]').click();
-    document.querySelector('button[aria-label="Restore player"]').click();
-    return document.querySelectorAll('.audio-dock-motion').length;
-  });
-  expect(copies).toBe(1);
+  await openApp(page);
+  for (const preference of ['reduce', 'no-preference']) {
+    await page.emulateMedia({ reducedMotion: preference });
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const motion = await page.evaluate(() => {
+      const trigger = (label) => {
+        document.querySelector(`button[aria-label="${label}"]`).click();
+        const ghost = document.querySelector('.audio-dock-motion');
+        const animation = ghost.getAnimations()[0];
+        return { count: document.querySelectorAll('.audio-dock-motion').length,
+          running: animation.playState === 'running', duration: animation.effect.getTiming().duration,
+          display: getComputedStyle(ghost).display };
+      };
+      return { collapse: trigger('Minimize player to header'), restore: trigger('Restore player') };
+    });
+    expect(motion.collapse).toMatchObject({ count: 1, running: true, duration: 600 });
+    expect(motion.restore).toMatchObject({ count: 1, running: true, duration: 320 });
+    expect(motion.collapse.display).not.toBe('none');
+    expect(motion.restore.display).not.toBe('none');
+  }
   await page.setViewportSize({ width: 901, height: 900 });
   await expect(page.locator('.audio-dock-motion')).toHaveCount(0);
   await hide(page).click();

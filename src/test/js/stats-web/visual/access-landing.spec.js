@@ -318,7 +318,7 @@ test('a small phone can use the landing and compact dialog without horizontal sc
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(321);
 });
 
-test('reduced-motion visitors can use the landing form', async ({ page }) => {
+test('the access wireframe keeps animating with reduced motion while the landing form remains usable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await mockAccess(page, false);
@@ -326,6 +326,13 @@ test('reduced-motion visitors can use the landing form', async ({ page }) => {
 
   await expect(page.locator('.access-landing')).toBeVisible();
   expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
+  const canvas = page.locator('.access-landing .access-scene-canvas');
+  const firstFrame = await canvas.evaluate((element) => element.toDataURL());
+  await expect.poll(() => canvas.evaluate((element) => element.toDataURL())).not.toBe(firstFrame);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const afterPreferenceChange = await canvas.evaluate((element) => element.toDataURL());
+  await expect.poll(() => canvas.evaluate((element) => element.toDataURL())).not.toBe(afterPreferenceChange);
   const username = page.locator('.access-login-form').getByLabel('Username');
   await username.fill('listener');
   await expect(username).toHaveValue('listener');

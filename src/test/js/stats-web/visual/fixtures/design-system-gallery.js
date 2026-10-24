@@ -4,7 +4,7 @@ import { setIconHintDetails } from '/assets/core/icon-hints.js';
 import { formatPagingToneSummary } from '/assets/core/call-audio-details.js';
 import * as tableDefaults from '/assets/core/table-defaults.js';
 import * as tableLayouts from '/assets/core/table-layout.js';
-import { createTableOverflow } from '/assets/core/table-overflow.js?v=1';
+import { createTableOverflow } from '/assets/core/table-overflow.js?v=2';
 import { createDualRange } from '/assets/core/dual-range.js';
 import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';

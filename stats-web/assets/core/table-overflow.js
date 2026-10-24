@@ -120,9 +120,7 @@ export function createTableOverflow({ wrapper, table, actionsHost, iconButton, s
     const { maximum, position, rtl } = geometry();
     const next = boundary ? (direction < 0 ? 0 : maximum) :
       Math.max(0, Math.min(maximum, position + direction * Math.max(1, wrapper.clientWidth * 0.8)));
-    const reducedMotion = view.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    wrapper.scrollTo({ left: rtl ? next - maximum : next,
-      behavior: reducedMotion ? 'instant' : 'smooth' });
+    wrapper.scrollTo({ left: rtl ? next - maximum : next, behavior: 'smooth' });
     scheduleRefresh();
   };
   const scrollLeft = () => scroll(-1);

@@ -2407,7 +2407,7 @@ test('paging, page size and sort preserve the search halo for an unapplied draft
 });
 
 for (const theme of ['light', 'dark']) {
-  test(`search halo respects reduced motion, all schemes and keyboard focus on a 320px ${theme} page`, async ({ page }, testInfo) => {
+  test(`search halo animates with reduced motion, all schemes and keyboard focus on a 320px ${theme} page`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 320, height: 844 });
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await openRecordings(page, { theme });
@@ -2416,10 +2416,11 @@ for (const theme of ['light', 'dark']) {
     const before = await submit.evaluate(element => getComputedStyle(element, '::before').borderTopWidth);
     await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('dispatch');
     await submit.scrollIntoViewIfNeeded();
-    await expectSearchHalo(submit, false);
+    await expectSearchHalo(submit, true);
     await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::before').borderTopWidth)).not.toBe(before);
     await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::before').borderTopWidth)).toBe('2px');
-    await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::after').opacity)).toBe('0');
+    const wave = await submit.evaluate(element => getComputedStyle(element, '::after').opacity);
+    await expect.poll(() => submit.evaluate(element => getComputedStyle(element, '::after').opacity)).not.toBe(wave);
     const palettes = await submit.evaluate(async element => {
       const { APPEARANCE_SCHEMES, applyThemeHue } = await import('/assets/core/theme.js');
       const root = document.documentElement;
@@ -2438,8 +2439,7 @@ for (const theme of ['light', 'dark']) {
       expect(palette.width, palette.name).toBe('2px');
       expect(palette.style, palette.name).toBe('solid');
       expect(palette.ringOpacity, palette.name).toBe('1');
-      expect(palette.animation, palette.name).toBe('none');
-      expect(palette.waveOpacity, palette.name).toBe('0');
+      expect(palette.animation, palette.name).toBe('ui-button-awaiting-apply-halo');
     }
     await submit.focus();
     await page.keyboard.press('Shift+Tab');

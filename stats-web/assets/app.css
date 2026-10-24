@@ -9,13 +9,13 @@
 @import url("./styles/base.css?v=2") layer(reset);
 @import url("./styles/tokens.css?v=54") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=7") layer(components);
-@import url("./styles/components/controls.css?v=48") layer(components);
+@import url("./styles/components/controls.css?v=49") layer(components);
 @import url("./styles/components/audio-controls.css?v=13") layer(components);
 @import url("./styles/compositions/workspaces.css?v=37") layer(compositions);
 @import url("./styles/compositions/tables.css?v=20") layer(compositions);
 @import url("./styles/compositions/browsing.css?v=1") layer(compositions);
 @import url("./styles/compositions/app-chrome.css?v=22") layer(compositions);
-@import url("./styles/compositions/audio-dock.css?v=22") layer(compositions);
+@import url("./styles/compositions/audio-dock.css?v=23") layer(compositions);
 @import url("./styles/compositions/charts.css?v=10") layer(compositions);
 @import url("./styles/compositions/modals.css?v=25") layer(compositions);
 @import url("./styles/compositions/settings.css?v=16") layer(compositions);
@@ -49,4 +49,3 @@
 @import url("./styles/features/recordings.css?v=22") layer(features);
 @import url("./styles/features/call-relations.css?v=1") layer(features);
 @import url("./styles/utilities/table-measurement.css?v=2") layer(utilities);
-@import url("./styles/utilities/reduced-motion.css?v=16") layer(utilities);

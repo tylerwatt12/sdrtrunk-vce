@@ -23,7 +23,6 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   let superCollapsed = false;
   let guidePresentation = false;
   const mobileLayout = window.matchMedia('(max-width: 900px), (max-height: 500px) and (pointer: coarse)');
-  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   let presentationMotion = null;
   let sizeGesture = null;
   let source = 'live';
@@ -335,7 +334,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     motion.ghost.remove();
   };
   const animatePresentation = (from, to, template, target) => {
-    if (reducedMotion.matches || !from.width || !from.height || !to.width || !to.height) return;
+    if (!from.width || !from.height || !to.width || !to.height) return;
     const tokens = getComputedStyle(document.documentElement);
     const durationToken = tokens.getPropertyValue(target === restore ?
       '--audio-presentation-collapse-motion-duration' : '--audio-presentation-motion-duration').trim();
@@ -1172,7 +1171,6 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const visibilityChanged = () => { if (document.hidden) { cancelSizeGesture(); closeVolume(false); } synchronizeLoops(); };
   const escapeContext = event => { if (!guideScanListState && event.key === 'Escape' && !volumePopover.matches(':popover-open') && panel) { event.preventDefault(); closePanel(); } };
   mobileLayout.addEventListener('change', updatePresentationLayout);
-  reducedMotion.addEventListener('change', cancelPresentationMotion);
   window.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('scroll', viewportChanged);
   window.addEventListener('blur', cancelSizeGesture);
   document.addEventListener('visibilitychange', visibilityChanged); dock.addEventListener('keydown', escapeContext);
@@ -1278,7 +1276,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     cancelSizeGesture();
     closeVolume(false); destroyed = true; synchronizeLoops();
     mobileLayout.removeEventListener('change', updatePresentationLayout);
-    reducedMotion.removeEventListener('change', cancelPresentationMotion); window.removeEventListener('resize', viewportChanged);
+    window.removeEventListener('resize', viewportChanged);
     window.removeEventListener('blur', cancelSizeGesture);
     window.visualViewport?.removeEventListener('resize', viewportChanged); window.visualViewport?.removeEventListener('scroll', viewportChanged);
     document.removeEventListener('visibilitychange', visibilityChanged); dock.removeEventListener('keydown', escapeContext);

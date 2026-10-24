@@ -106,15 +106,39 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   });
 }
 
-test('reduced motion places radios directly without a later stale tween', async ({ page }) => {
-  await openRenderer(page, 'light', 1280, true);
+test('browser motion preferences preserve radio tweens and automatic rotation', async ({ page }) => {
+  await openRenderer(page, 'light', 1280, true, true);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
     fixture.renderer.setData(fixture.data(140));
   });
-  await expect.poll(() => page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(140);
-  await page.waitForTimeout(100);
+  await page.clock.runFor(250);
+  const midpoint = await page.evaluate(() => window.visualizerFixture.mesh().position.x);
+  expect(midpoint).toBeGreaterThan(0);
+  expect(midpoint).toBeLessThan(140);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.clock.runFor(100);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.clock.runFor(100);
+  const continuing = await page.evaluate(() => window.visualizerFixture.mesh().position.x);
+  expect(continuing).toBeGreaterThan(midpoint);
+  expect(continuing).toBeLessThan(140);
+  await page.clock.runFor(1_000);
   expect(await page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(140);
+  await page.evaluate(() => {
+    const fixture = window.visualizerFixture;
+    fixture.renderer.setMode('auto');
+    fixture.renderer.setCameraPhase('roam');
+    fixture.beforeRotation = fixture.graph.camera().position.clone();
+  });
+  await page.clock.runFor(250);
+  const rotating = await page.evaluate(() => {
+    const fixture = window.visualizerFixture;
+    return { enabled: fixture.graph.controls().autoRotate,
+      distance: fixture.graph.camera().position.distanceTo(fixture.beforeRotation) };
+  });
+  expect(rotating.enabled).toBe(true);
+  expect(rotating.distance).toBeGreaterThan(0.1);
   await page.evaluate(() => window.visualizerFixture.renderer.dispose());
 });
 
@@ -267,7 +291,7 @@ test('manual camera and scope changes cancel affiliation follow without dangling
   await page.evaluate(() => window.visualizerFixture.stop());
 });
 
-test('reduced motion and expired queued evidence settle once without replay', async ({ page }) => {
+test('affiliation focus animates with reduced motion and expired evidence settles without replay', async ({ page }) => {
   await openRenderer(page, 'dark', 390, true);
   await affiliationScene(page);
   await page.evaluate(() => {
@@ -276,9 +300,17 @@ test('reduced motion and expired queued evidence settle once without replay', as
     fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges: fixture.changes });
     fixture.focused = fixture.renderer.focusAffiliation('radio-7001');
   });
-  expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(false);
-  await expect.poll(() => page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(18);
+  expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(true);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.waitForTimeout(600);
+  const focusing = await page.evaluate(() => window.visualizerFixture.capture());
+  expect(focusing.radio.x).toBeCloseTo(-82, 1);
+  expect(focusing.attached).toEqual(['A']);
+  expect(focusing.target.x).toBeLessThan(60);
+  await expect.poll(() => page.evaluate(() => window.visualizerFixture.capture().attached[0]),
+    { timeout: 5_000 }).toBe('C');
+  expect(await page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBeCloseTo(18, 1);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
     fixture.renderer.setData(fixture.affiliationData('A'), { animate: false });

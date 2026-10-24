@@ -13,13 +13,13 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/base.css?v=2") layer(reset);',
   '@import url("./styles/tokens.css?v=54") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=7") layer(components);',
-  '@import url("./styles/components/controls.css?v=48") layer(components);',
+  '@import url("./styles/components/controls.css?v=49") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=13") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=37") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=20") layer(compositions);',
   '@import url("./styles/compositions/browsing.css?v=1") layer(compositions);',
   '@import url("./styles/compositions/app-chrome.css?v=22") layer(compositions);',
-  '@import url("./styles/compositions/audio-dock.css?v=22") layer(compositions);',
+  '@import url("./styles/compositions/audio-dock.css?v=23") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=10") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=25") layer(compositions);',
   '@import url("./styles/compositions/settings.css?v=16") layer(compositions);',
@@ -53,7 +53,6 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/recordings.css?v=22") layer(features);',
   '@import url("./styles/features/call-relations.css?v=1") layer(features);',
   '@import url("./styles/utilities/table-measurement.css?v=2") layer(utilities);',
-  '@import url("./styles/utilities/reduced-motion.css?v=16") layer(utilities);',
 ];
 
 // Feature styles may shape shared primitives only where page-specific composition requires it.
@@ -893,39 +892,34 @@ function validateLiveFeature(stylesheets, entry) {
     'A saved collapsed state must return to the single-column picker on narrow screens');
 }
 
-function validateReducedMotionCoverage(stylesheets, entry) {
-  const stylesDirectory = path.resolve(path.dirname(path.resolve(entry)), 'styles');
-  const utilities = stylesheetModule(stylesheets, entry, 'utilities/reduced-motion.css');
-  const reducedMotionHeader = '@media (prefers-reduced-motion: reduce)';
-  const disabledTransitions = new Set();
+function validateMotionIndependence(source, label) {
+  assert.doesNotMatch(source, /prefers-reduced-motion/i,
+    `${label}: site animations must use their normal behavior regardless of the browser motion preference`);
+}
 
-  for (const rule of utilities.rules) {
-    if (!rule.atRules.includes(reducedMotionHeader) || !/\btransition\s*:\s*none\s*;?/i.test(rule.body)) continue;
-    for (const selector of splitSelectorList(rule.header)) disabledTransitions.add(selector);
-  }
-
-  const missing = [];
-  for (const stylesheet of stylesheets) {
-    const relative = path.relative(stylesDirectory, stylesheet.file).split(path.sep).join('/');
-    if (!/^(?:components|compositions|features)\//.test(relative)) continue;
-    for (const rule of stylesheet.rules) {
-      if (!/\btransition(?:-[a-z-]+)?\s*:/i.test(rule.body)) continue;
-      for (const selector of splitSelectorList(rule.header)) {
-        if (!disabledTransitions.has(selector)) missing.push(`${relative}: ${selector}`);
+function validateSiteMotionPolicy(entry) {
+  const assets = path.dirname(path.resolve(entry));
+  function inspect(directory) {
+    for (const item of fs.readdirSync(directory, { withFileTypes: true })) {
+      const candidate = path.join(directory, item.name);
+      if (item.isDirectory()) inspect(candidate);
+      else if (/\.(?:css|js)$/.test(item.name)) {
+        validateMotionIndependence(fs.readFileSync(candidate, 'utf8'), path.relative(assets, candidate));
       }
     }
   }
-
-  assert.deepEqual(missing, [],
-    `Modern transitions need ${reducedMotionHeader} overrides in utilities/reduced-motion.css`);
-  const hoveredButton = ruleBody(utilities.source,
-    '.ui-button:hover:not(:disabled, [aria-disabled="true"])');
-  assert.match(hoveredButton, /transform:\s*none/);
-  const pressedButton = ruleBody(utilities.source, '.ui-button:active:not(:disabled)');
-  assert.match(pressedButton, /transform:\s*none/);
+  inspect(assets);
 }
 
 function runFocusedContractTests() {
+  validateMotionIndependence('.panel { transition: opacity 120ms ease; }', 'normal-motion.css');
+  for (const [label, source] of [
+    ['preference.css', '@media (prefers-reduced-motion: reduce) { .panel { animation: none; } }'],
+    ['preference.js', 'window.matchMedia("(prefers-reduced-motion: reduce)")'],
+  ]) {
+    assert.throws(() => validateMotionIndependence(source, label), /regardless of the browser motion preference/);
+  }
+
   const themeBoundaryFixture = (declaration) => {
     const source = `.fixture { ${declaration} }`;
     return [{ file: path.resolve(path.dirname(entryStylesheet), 'styles/components/fixture.css'),
@@ -1081,5 +1075,5 @@ validateScannerFeature(stylesheets, entryStylesheet);
 validateAliasesFeature(stylesheets, entryStylesheet);
 validateScanListsFeature(stylesheets, entryStylesheet);
 validateLiveFeature(stylesheets, entryStylesheet);
-validateReducedMotionCoverage(stylesheets, entryStylesheet);
+validateSiteMotionPolicy(entryStylesheet);
 console.log(`CSS architecture contract passed for ${stylesheets.length} stylesheet(s).`);
