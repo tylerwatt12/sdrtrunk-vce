@@ -366,7 +366,6 @@ public final class ChannelAdministrationService
         {
             ChannelProtocolRegistry.Profile profile = discoveryProfile(protocolId);
             List<DiscoveryAliasList> lists = discoveryAliasLists(profile, identity);
-            Long suggested = lists.size() == 1 ? lists.getFirst().id() : null;
             String system = null;
             String site = identity != null ? String.format("Site %02X-%02X", identity.rfss(), identity.site()) : null;
             if(identity != null)
@@ -376,13 +375,15 @@ public final class ChannelAdministrationService
                         channel.getP25SiteIdentity().wacn() == identity.wacn() &&
                         channel.getP25SiteIdentity().system() == identity.system()).toList();
                 system = known.stream().map(Channel::getSystem).filter(value -> value != null && !value.isBlank())
-                    .findFirst().orElse(lists.size() == 1 ? lists.getFirst().name() : null);
+                    .findFirst().orElse(null);
                 if(system == null || system.isBlank())
                     system = discoverySystemName(RadioSystemKey.p25(identity),
                         String.format("P25 %05X-%03X", identity.wacn(), identity.system()));
                 site = known.stream().filter(channel -> identity.equals(channel.getP25SiteIdentity()))
                     .map(Channel::getSite).filter(value -> value != null && !value.isBlank()).findFirst().orElse(site);
             }
+            Long suggested = identity != null ? suggestedDiscoveryAliasListId(lists, system) :
+                lists.size() == 1 ? lists.getFirst().id() : null;
             Map<String,Object> settings = new LinkedHashMap<>(profile.defaultSettings());
             if(identity != null)
             {
@@ -424,13 +425,13 @@ public final class ChannelAdministrationService
             ChannelProtocolRegistry.Profile profile = mProtocolRegistry.require(protocolId);
             List<DiscoveryAliasList> lists = discoveryTrunkedAliasLists(profile, evidence, mConfigurationManager.getChannelModel().getChannels(),
                 mConfigurationManager.getAliasModel().aliasListDefinitions());
-            Long suggested = lists.size() == 1 ? lists.getFirst().id() : null;
             List<Channel> known = knownTrunkedChannels(evidence, false, mConfigurationManager.getChannelModel().getChannels());
             String system = known.stream().map(Channel::getSystem)
                 .filter(value -> value != null && !value.isBlank()).findFirst()
-                .orElse(lists.size() == 1 ? lists.getFirst().name() : null);
+                .orElse(null);
             if(system == null || system.isBlank())
                 system = discoverySystemName(evidence.identity().radioSystemKey(), evidence.systemName());
+            Long suggested = suggestedDiscoveryAliasListId(lists, system);
             String site = knownTrunkedChannels(evidence, true, mConfigurationManager.getChannelModel().getChannels()).stream().map(Channel::getSite)
                 .filter(value -> value != null && !value.isBlank()).findFirst().orElse(evidence.siteName());
             ChannelDefinition template = new ChannelDefinition(null, protocolId, system, site,
@@ -504,10 +505,10 @@ public final class ChannelAdministrationService
     {
         Set<Long> matchingIds = knownTrunkedChannels(evidence, false, channels).stream().map(Channel::getAliasListId)
             .collect(java.util.stream.Collectors.toSet());
-        return definitions.stream()
-            .filter(list -> list.getFamily() == profile.aliasFamily() && matchingIds.contains(list.getId()))
-            .map(list -> new DiscoveryAliasList(list.getId(), list.getName(), true))
-            .sorted(Comparator.comparing(DiscoveryAliasList::name, String.CASE_INSENSITIVE_ORDER)).toList();
+        Set<Long> conflictingIds = channels.stream().filter(channel -> confirmedDiscoverySystem(channel) &&
+            (channel.getTrunkedDiscoveryIdentity() == null || !channel.getTrunkedDiscoveryIdentity().matches(evidence, false)))
+            .map(Channel::getAliasListId).collect(java.util.stream.Collectors.toSet());
+        return eligibleDiscoveryAliasLists(profile, matchingIds, conflictingIds, definitions);
     }
 
     private ChannelProtocolRegistry.Profile discoveryProfile(String protocolId)
@@ -528,18 +529,43 @@ public final class ChannelAdministrationService
         P25SiteIdentity identity, List<Channel> channels, List<AliasListDefinition> definitions)
     {
         Set<Long> matchingIds = new HashSet<>();
+        Set<Long> conflictingIds = new HashSet<>();
         if(identity != null)
             for(Channel channel: channels)
             {
                 P25SiteIdentity known = channel.getP25SiteIdentity();
                 if(known != null && known.wacn() == identity.wacn() && known.system() == identity.system())
                     matchingIds.add(channel.getAliasListId());
+                else if(confirmedDiscoverySystem(channel)) conflictingIds.add(channel.getAliasListId());
             }
+        return eligibleDiscoveryAliasLists(profile, matchingIds, conflictingIds, definitions);
+    }
+
+    /** Unknown/manual assignments do not prove that an administrator-owned list belongs to another system. */
+    private static boolean confirmedDiscoverySystem(Channel channel)
+    {
+        return channel.getP25SiteIdentity() != null || channel.getTrunkedDiscoveryIdentity() != null &&
+            channel.getTrunkedDiscoveryIdentity().identity().radioSystemKey() != null;
+    }
+
+    private static List<DiscoveryAliasList> eligibleDiscoveryAliasLists(ChannelProtocolRegistry.Profile profile,
+        Set<Long> matchingIds, Set<Long> conflictingIds, List<AliasListDefinition> definitions)
+    {
         return definitions.stream()
-            .filter(list -> list.getFamily() == profile.aliasFamily() &&
-                (identity == null || matchingIds.contains(list.getId())))
-            .map(list -> new DiscoveryAliasList(list.getId(), list.getName(), identity != null))
+            .filter(list -> list.getFamily() == profile.aliasFamily() && !conflictingIds.contains(list.getId()))
+            .map(list -> new DiscoveryAliasList(list.getId(), list.getName(), matchingIds.contains(list.getId())))
             .sorted(Comparator.comparing(DiscoveryAliasList::name, String.CASE_INSENSITIVE_ORDER)).toList();
+    }
+
+    /** Suggestions never change the explicit durable-ID/new-list choice submitted by the administrator. */
+    public static Long suggestedDiscoveryAliasListId(List<DiscoveryAliasList> lists, String system)
+    {
+        List<DiscoveryAliasList> matched = lists.stream().filter(DiscoveryAliasList::matched).toList();
+        if(matched.size() == 1) return matched.getFirst().id();
+        if(system != null && !system.isBlank())
+            return lists.stream().filter(list -> discoveryAliasListName(system, null).equalsIgnoreCase(list.name()))
+                .map(DiscoveryAliasList::id).findFirst().orElse(null);
+        return null;
     }
 
     /** Identity is supplied by the receiver's probe, never by a browser channel document. */
@@ -590,18 +616,24 @@ public final class ChannelAdministrationService
             AliasConfigurationSnapshot aliases = mConfigurationManager.createDetachedAliasConfigurationSnapshot();
             List<DiscoverySave> results = new ArrayList<>();
             Set<String> createdIds = new LinkedHashSet<>();
+            Map<DiscoveryListChoice,Long> createdAliasLists = new LinkedHashMap<>();
             boolean aliasesChanged = false;
             for(DiscoveryRequest row: rows)
             {
                 try
                 {
                     if(cancelled.getAsBoolean()) throw new IllegalStateException("The search was cancelled");
-                    PreparedDiscovery prepared = prepareDiscovery(row, channels, aliases);
+                    DiscoveryListChoice choice = discoveryListChoice(row);
+                    Long sharedId = choice != null ? createdAliasLists.get(choice) : null;
+                    PreparedDiscovery prepared = prepareDiscovery(sharedId != null ? withDiscoveryAliasList(row, sharedId) : row,
+                        channels, aliases);
                     aliases = prepared.aliases();
                     Channel created = prepared.channel();
                     channels.add(created);
                     createdIds.add(created.getConfigurationId());
                     aliasesChanged |= prepared.created().aliasListCreated();
+                    if(choice != null && prepared.created().aliasListCreated())
+                        createdAliasLists.put(choice, prepared.created().aliasListId());
                     results.add(new DiscoverySave(prepared.created(), null));
                 }
                 catch(IllegalArgumentException | IllegalStateException rejected)
@@ -633,6 +665,29 @@ public final class ChannelAdministrationService
         })));
     }
 
+    private record DiscoveryListChoice(String system, String name) {}
+
+    /** One explicit new-list choice serves all sites of that system in this admitted batch only. */
+    private static DiscoveryListChoice discoveryListChoice(DiscoveryRequest request)
+    {
+        if(request.definition().aliasListId() != 0) return null;
+        String system = request.evidence() != null ? request.evidence().groupId() :
+            request.p25Identity() != null ? RadioSystemKey.p25(request.p25Identity()) : null;
+        if(system == null) return null;
+        String name = request.newAliasListName() != null ? request.newAliasListName().strip() :
+            discoveryAliasListName(request.definition().system(), request.definition().name());
+        return new DiscoveryListChoice(system, name.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    private static DiscoveryRequest withDiscoveryAliasList(DiscoveryRequest request, long aliasListId)
+    {
+        ChannelDefinition source = request.definition();
+        ChannelDefinition definition = new ChannelDefinition(source.configurationId(), source.protocolId(), source.system(),
+            source.site(), source.name(), source.radioResolveId(), aliasListId, source.source(), source.settings(),
+            source.frequencyMap(), source.eventLogs(), source.recorders(), source.auxiliaryDecoders(), source.observed());
+        return new DiscoveryRequest(definition, request.p25Identity(), request.evidence(), null, request.autoStart());
+    }
+
     private PreparedDiscovery prepareDiscovery(DiscoveryRequest request, List<Channel> channels,
                                                  AliasConfigurationSnapshot aliases)
     {
@@ -661,13 +716,7 @@ public final class ChannelAdministrationService
             discoveryAliasLists(profile, identity, channels, aliases.definitions());
         boolean newList = definition.aliasListId() == 0;
         AliasListDefinition selected;
-        if(newList && (identity != null || evidence != null) && compatibleLists.size() == 1)
-        {
-            long id = compatibleLists.getFirst().id();
-            selected = aliases.definitions().stream().filter(list -> list.getId() == id).findFirst().orElseThrow();
-            newList = false;
-        }
-        else if(newList)
+        if(newList)
         {
             String name = request.newAliasListName() != null ? request.newAliasListName().strip() :
                 discoveryAliasListName(definition.system(), definition.name());
@@ -678,20 +727,11 @@ public final class ChannelAdministrationService
                 .filter(list -> name.equalsIgnoreCase(list.getName())).findFirst().orElse(null);
             if(existing != null)
             {
-                boolean matchesSystem = compatibleLists.stream().anyMatch(list -> list.id() == existing.getId());
-                boolean assignedToTrunked = channels.stream().anyMatch(channel -> channel.getAliasListId() == existing.getId() &&
-                    ChannelConfigurationPolicy.requireChannelKind(channel) == ChannelConfigurationPolicy.ChannelKind.TRUNKED);
-                if(existing.getFamily() != profile.aliasFamily() ||
-                    (identity != null || evidence != null) && assignedToTrunked && !matchesSystem)
-                    throw new IllegalArgumentException("Choose a compatible Alias List for this system");
-                selected = existing;
-                newList = false;
+                throw new IllegalArgumentException("An Alias List named [" + name +
+                    "] already exists. Use that list or choose a different name.");
             }
             else
             {
-                if((identity != null || evidence != null) && !compatibleLists.isEmpty())
-                    throw new IllegalArgumentException(identity != null ? "Use an Alias List matching this P25 system" :
-                        "Use an Alias List matching this trunked system");
                 selected = new AliasListDefinition(name, profile.aliasFamily());
                 selected.setId(mConfigurationManager.nextAliasListIds(aliases.definitions().stream()
                     .map(AliasListDefinition::getId).toList(), 1).getFirst());

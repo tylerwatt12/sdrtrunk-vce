@@ -11,7 +11,7 @@ import java.util.Objects;
 import java.util.function.BooleanSupplier;
 import java.util.function.LongSupplier;
 
-/** Imports normal talkgroup aliases into lists actually created by a wizard, independently of its RF lease. */
+/** Imports normal talkgroup aliases into lists explicitly used by a wizard, independently of its RF lease. */
 public final class DiscoveryAliasImportService
 {
     private static final long RETENTION_MS = 900_000;
@@ -97,10 +97,24 @@ public final class DiscoveryAliasImportService
                                           RadioReferenceDiscoveryResolver.Result directory)
         {
             if(aliasListId <= 0) throw new IllegalArgumentException("Alias List ID must be positive");
-            if(mEntries.containsKey(aliasListId)) return;
-            if(mEntries.size() >= 32) throw new IllegalStateException("Too many discovery Alias Lists");
             Integer systemId = directory != null && directory.matched() && directory.match().rrSystemId() > 0 ?
                 directory.match().rrSystemId() : null;
+            Entry existing = mEntries.get(aliasListId);
+            if(existing != null)
+            {
+                if(existing.target.systemId() != null && systemId != null && !existing.target.systemId().equals(systemId))
+                {
+                    existing.conflictingSystem = true;
+                    existing.target = new Target(aliasListId, existing.target.aliasListName(), null,
+                        existing.target.systemName(), "unavailable", 0, 0, 0,
+                        "This Alias List was selected for conflicting RadioReference systems. Import these talkgroups separately later.");
+                }
+                else if(existing.target.systemId() == null && systemId != null && !existing.conflictingSystem)
+                    existing.target = new Target(aliasListId, existing.target.aliasListName(), systemId,
+                        systemName == null ? "" : systemName, "pending", 0, 0, 0, null);
+                return;
+            }
+            if(mEntries.size() >= 32) throw new IllegalStateException("Too many discovery Alias Lists");
             String name = systemName == null ? "" : systemName;
             mEntries.put(aliasListId, new Entry(new Target(aliasListId,
                 aliasListName == null ? "" : aliasListName.strip(), systemId, name,
@@ -117,7 +131,7 @@ public final class DiscoveryAliasImportService
         private synchronized Entry entry(long aliasListId)
         {
             Entry entry = mEntries.get(aliasListId);
-            if(entry == null) throw new IllegalArgumentException("Choose an Alias List created by this wizard");
+            if(entry == null) throw new IllegalArgumentException("Choose an Alias List used by this wizard");
             return entry;
         }
 
@@ -140,13 +154,17 @@ public final class DiscoveryAliasImportService
         Entry entry = batch.entry(aliasListId);
         synchronized(entry)
         {
-            Target target = entry.target;
-            if(List.of("imported", "restart_required").contains(target.state()) || target.systemId() == null)
-                return batch.snapshot();
-            entry.target = target.withState("importing", null);
+            Target target;
+            synchronized(batch)
+            {
+                target = entry.target;
+                if(List.of("imported", "restart_required").contains(target.state()) || target.systemId() == null)
+                    return batch.snapshot();
+                entry.target = target.withState("importing", null);
+            }
             try
             {
-                requireCurrent(() -> current.getAsBoolean() && !batch.mRestartRequired);
+                requireCurrent(() -> current.getAsBoolean() && !batch.mRestartRequired && !entry.conflictingSystem);
                 if(mOperations == null) throw new IllegalStateException("RadioReference import is unavailable");
                 Catalog catalog;
                 synchronized(batch)
@@ -158,18 +176,21 @@ public final class DiscoveryAliasImportService
                     catalog = mOperations.catalog(target.systemId());
                     synchronized(batch) { batch.mCatalogs.put(target.systemId(), catalog); }
                 }
-                requireCurrent(() -> current.getAsBoolean() && !batch.mRestartRequired);
+                requireCurrent(() -> current.getAsBoolean() && !batch.mRestartRequired && !entry.conflictingSystem);
                 Counts counts;
                 if(catalog.rows() == 0) counts = new Counts(0, 0, 0);
                 else
                 {
                     String previewId = mOperations.preview(target.systemId(), aliasListId, catalog.id());
-                    requireCurrent(() -> current.getAsBoolean() && !batch.mRestartRequired);
+                    requireCurrent(() -> current.getAsBoolean() && !batch.mRestartRequired && !entry.conflictingSystem);
                     counts = mOperations.apply(previewId);
                 }
-                entry.target = new Target(aliasListId, target.aliasListName(), target.systemId(), target.systemName(), "imported",
-                    counts.added(), counts.updated(), counts.unchanged(),
-                    catalog.rows() == 0 ? "RadioReference has no talkgroups for this system." : null);
+                synchronized(batch)
+                {
+                    if(!entry.conflictingSystem) entry.target = new Target(aliasListId, target.aliasListName(), target.systemId(), target.systemName(), "imported",
+                        counts.added(), counts.updated(), counts.unchanged(),
+                        catalog.rows() == 0 ? "RadioReference has no talkgroups for this system." : null);
+                }
             }
             catch(ConfigurationManager.ConfigurationPublicationException exception)
             {
@@ -182,10 +203,13 @@ public final class DiscoveryAliasImportService
             {
                 // Account changes invalidate catalog IDs, and a failed/committed apply consumes its preview.
                 // Retrying from current local aliases avoids duplicates after a lost response or publication failure.
-                synchronized(batch) { batch.mCatalogs.remove(target.systemId()); }
-                entry.target = target.withState(batch.mRestartRequired ? "restart_required" : "failed",
-                    batch.mRestartRequired ? "VCE needs to restart before aliases can be imported." :
-                        "Aliases could not be imported. Retry, or import them later.");
+                synchronized(batch)
+                {
+                    batch.mCatalogs.remove(target.systemId());
+                    if(!entry.conflictingSystem) entry.target = target.withState(batch.mRestartRequired ? "restart_required" : "failed",
+                        batch.mRestartRequired ? "VCE needs to restart before aliases can be imported." :
+                            "Aliases could not be imported. Retry, or import them later.");
+                }
             }
             return batch.snapshot();
         }
@@ -207,6 +231,7 @@ public final class DiscoveryAliasImportService
     private static final class Entry
     {
         volatile Target target;
+        volatile boolean conflictingSystem;
         Entry(Target target) { this.target = target; }
     }
     public record Target(long aliasListId, String aliasListName, Integer systemId, String systemName, String state,

@@ -85,6 +85,22 @@ class SpectrumDiscoveryServiceTest
     }
 
     @Test
+    void directoryNameSuggestsAnEligibleExistingListWithoutClaimingAnUnknownSystemMatch()
+    {
+        var template = new ChannelDefinition(null, "p25-phase1", "P25 BEE00-49F", "North", "Control",
+            null, 0, new ChannelDefinition.Source(List.of(853_162_500L), null, null, 853_162_500L,
+            "Tuner", null), Map.of(), List.of(), List.of(), List.of(), List.of(), ChannelDefinition.Observed.EMPTY);
+        var lists = List.of(new ChannelAdministrationService.DiscoveryAliasList(23, "Ohio MARCS", false));
+        var original = new ChannelAdministrationService.DiscoveryReview(7, template, lists, null, "P25 BEE00-49F");
+        var match = new RadioReferenceDiscoveryResolver.Match(100, 200, "Ohio MARCS", "North", List.of(), null, null);
+        var resolved = SpectrumDiscoveryService.directoryReview(original,
+            new RadioReferenceDiscoveryResolver.Result("matched", "Matched", match, "radioreference"));
+        assertEquals(23L, resolved.suggestedAliasListId());
+        assertEquals(23, resolved.template().aliasListId());
+        assertFalse(resolved.aliasLists().getFirst().matched(), "A matching name is a suggestion, not native system proof");
+    }
+
+    @Test
     void eligibilityReasonNamesTheOwningChannel()
     {
         var configured = new ChannelAdministrationService.DiscoveryFrequencyMatch(

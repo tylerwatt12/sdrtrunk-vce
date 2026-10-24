@@ -168,11 +168,11 @@ class TrunkedDiscoveryChannelPersistenceTest
                 Map.of("channel_mode", "TRUNKED"));
             var next = fixture.channels.discoveryTrunkedReview("dmr", 452_000_000, null, nextSite);
             assertEquals(created.aliasListId(), next.suggestedAliasListId());
-            assertEquals(1, next.aliasLists().size());
-            assertEquals("Network 17", next.aliasLists().getFirst().name());
+            assertEquals(List.of(new ChannelAdministrationService.DiscoveryAliasList(created.aliasListId(), "Network 17", true)),
+                next.aliasLists().stream().filter(ChannelAdministrationService.DiscoveryAliasList::matched).toList());
             var nextTemplate = next.template();
             var namedListChoice = new ChannelDefinition(null, nextTemplate.protocolId(), nextTemplate.system(),
-                nextTemplate.site(), nextTemplate.name(), null, 0, nextTemplate.source(), nextTemplate.settings(),
+                nextTemplate.site(), nextTemplate.name(), null, created.aliasListId(), nextTemplate.source(), nextTemplate.settings(),
                 nextTemplate.frequencyMap(), List.of(), List.of(), List.of(), nextTemplate.observed());
             var reused = fixture.channels.createTrunkedDiscovered(namedListChoice, nextSite, "network 17",
                 next.revision(), false);
@@ -180,7 +180,8 @@ class TrunkedDiscoveryChannelPersistenceTest
 
             var unrelated = evidence("dmr", "TIER_III", "dmr:tier3:small:18", 3, 454_000_000,
                 Map.of("channel_mode", "TRUNKED"));
-            assertTrue(fixture.channels.discoveryTrunkedReview("dmr", 454_000_000, null, unrelated).aliasLists().isEmpty());
+            assertTrue(fixture.channels.discoveryTrunkedReview("dmr", 454_000_000, null, unrelated).aliasLists().stream()
+                .noneMatch(list -> list.id() == created.aliasListId()));
             var unrelatedReview = fixture.channels.discoveryTrunkedReview("dmr", 454_000_000, null, unrelated);
             assertThrows(IllegalArgumentException.class, () -> fixture.channels.createTrunkedDiscovered(
                 unrelatedReview.template(), unrelated, "Network 17", unrelatedReview.revision(), false));
@@ -192,7 +193,7 @@ class TrunkedDiscoveryChannelPersistenceTest
     }
 
     @Test
-    void newListChoiceReusesTheSingleMatchingListDespiteADifferentProposedName() throws Exception
+    void explicitNewListChoiceCreatesAnotherListForEverySupportedTrunkedProtocol() throws Exception
     {
         try(Fixture fixture = new Fixture(root))
         {
@@ -208,19 +209,21 @@ class TrunkedDiscoveryChannelPersistenceTest
 
                 var nextSite = matchingSiteEvidence(protocol, 4, frequency + 1_000_000);
                 var next = fixture.channels.discoveryTrunkedReview(protocol, frequency + 1_000_000, null, nextSite);
-                assertEquals(1, next.aliasLists().size());
-                assertEquals(created.aliasListId(), next.aliasLists().getFirst().id());
+                assertEquals(List.of(created.aliasListId()), next.aliasLists().stream()
+                    .filter(ChannelAdministrationService.DiscoveryAliasList::matched)
+                    .map(ChannelAdministrationService.DiscoveryAliasList::id).toList());
                 var template = next.template();
                 var newListChoice = new ChannelDefinition(null, template.protocolId(), template.system(),
                     template.site(), template.name(), null, 0, template.source(), template.settings(),
                     template.frequencyMap(), List.of(), List.of(), List.of(), template.observed());
                 var reused = fixture.channels.createTrunkedDiscovered(newListChoice, nextSite,
-                    "New directory name", next.revision(), false);
-                assertEquals(created.aliasListId(), reused.aliasListId());
+                    protocol + " Alternative", next.revision(), false);
+                assertTrue(reused.aliasListCreated());
+                assertNotEquals(created.aliasListId(), reused.aliasListId());
             }
             var disk = new ConfigurationRepository(fixture.database).load();
             assertEquals(6, disk.channels().size());
-            assertEquals(existingLists + 3, disk.aliasListDefinitions().size());
+            assertEquals(existingLists + 6, disk.aliasListDefinitions().size());
         }
     }
 
@@ -276,7 +279,9 @@ class TrunkedDiscoveryChannelPersistenceTest
                 Map.of("channel_mode", "TRUNKED"));
             assertNull(fixture.channels.discoveryTrunkedSiteMatch(another));
             var anotherReview = fixture.channels.discoveryTrunkedReview("dmr", 452_000_000, null, another);
-            assertTrue(anotherReview.aliasLists().isEmpty());
+            assertTrue(anotherReview.aliasLists().contains(new ChannelAdministrationService.DiscoveryAliasList(firstSaved.aliasListId(),
+                review.defaultNewAliasListName(), false)),
+                "Local site identities do not prove that an existing list belongs to another native system");
             assertNotEquals(review.defaultNewAliasListName(),anotherReview.defaultNewAliasListName(),
                 "Frequency-scoped systems need distinct default Alias List names");
             var anotherSaved = fixture.channels.createTrunkedDiscovered(
@@ -311,7 +316,7 @@ class TrunkedDiscoveryChannelPersistenceTest
             var thirdReview = fixture.channels.discoveryTrunkedReview("nxdn", 454_000_000, null, third);
             var requests = List.of(
                 new ChannelAdministrationService.DiscoveryRequest(firstReview.template(), null, first, "DMR Batch", true),
-                new ChannelAdministrationService.DiscoveryRequest(secondReview.template(), null, second, "Different suggestion", true),
+                new ChannelAdministrationService.DiscoveryRequest(secondReview.template(), null, second, "DMR Batch", true),
                 new ChannelAdministrationService.DiscoveryRequest(firstReview.template(), null, first, "Duplicate", false),
                 new ChannelAdministrationService.DiscoveryRequest(thirdReview.template(), null, third, "NXDN Batch", false));
             var batch = fixture.channels.createDiscoveredBatch(requests, firstReview.revision(), () -> false);

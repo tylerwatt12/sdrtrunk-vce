@@ -306,6 +306,45 @@ class SpectrumSearchServiceTest
     }
 
     @Test
+    void explicitlyReusedListGetsAnImportTargetForTheVerifiedDirectorySystem() throws Exception
+    {
+        NamingGateway gateway = new NamingGateway();
+        try(RadioReferenceDirectoryService directory = new RadioReferenceDirectoryService((user, password) -> gateway);
+            Fixture fixture = new Fixture(A))
+        {
+            directory.login("test", "cleared-password".toCharArray());
+            fixture.directory = new RadioReferenceDiscoveryResolver(directory);
+            fixture.channels.matchingAliasLists = List.of(
+                new ChannelAdministrationService.DiscoveryAliasList(21, "Existing local names", false));
+            var opened = fixture.open();
+            assertTrue(gateway.entered.await(2, TimeUnit.SECONDS));
+            fixture.complete(opened.jobId());
+            gateway.release.countDown();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
+            SpectrumSearchService.Snapshot resolved;
+            do
+            {
+                resolved = fixture.service.status(opened.jobId());
+                if(resolved.candidates().stream().allMatch(row -> row.radioReference().matched())) break;
+                Thread.sleep(5);
+            } while(System.nanoTime() < deadline);
+            assertTrue(resolved.candidates().stream().allMatch(row -> row.radioReference().matched()));
+            var saved = fixture.service.save(opened.jobId(), new SpectrumSearchService.SaveRequest(resolved.revision(),
+                resolved.candidates().stream().map(row -> new SpectrumSearchService.SaveCandidate(row.candidateId(), row.name(), false)).toList(),
+                List.of(new SpectrumSearchService.AliasChoice(resolved.aliasGroups().getFirst().groupId(), 21, null))));
+            assertTrue(saved.candidates().stream().allMatch(SpectrumSearchService.Candidate::saved));
+            assertEquals(0, fixture.channels.createdAliases);
+            assertEquals(1, saved.aliasImport().targets().size());
+            var target = saved.aliasImport().targets().getFirst();
+            assertEquals(21, target.aliasListId());
+            assertEquals(2001, target.systemId());
+            assertEquals("Existing local names", target.aliasListName());
+            assertEquals("pending", target.state());
+        }
+        finally { gateway.release.countDown(); }
+    }
+
+    @Test
     void pendingUnselectedSiblingBlocksTheSelectedSystemUntilItsLookupFinishes() throws Exception
     {
         try(Fixture fixture = new Fixture(A, B))
@@ -445,7 +484,7 @@ class SpectrumSearchServiceTest
     }
 
     @Test
-    void newListChoiceReusesASingleMatchingAliasListWithADifferentName() throws Exception
+    void explicitNewListChoiceIsNotOverriddenByASingleMatchingAliasList() throws Exception
     {
         try(Fixture fixture = new Fixture(A, B))
         {
@@ -455,14 +494,14 @@ class SpectrumSearchServiceTest
             var saved = fixture.service.save(completed.jobId(), saveRequest(completed, Map.of()));
 
             assertTrue(saved.candidates().stream().allMatch(SpectrumSearchService.Candidate::saved));
-            assertEquals(0, fixture.channels.createdAliases);
+            assertEquals(1, fixture.channels.createdAliases);
             assertEquals(2, fixture.channels.definitions.size());
-            assertTrue(fixture.channels.definitions.stream().allMatch(definition -> definition.aliasListId() == 21));
+            assertTrue(fixture.channels.definitions.stream().allMatch(definition -> definition.aliasListId() == 0));
         }
     }
 
     @Test
-    void severalMatchingAliasListsNeedAnExplicitIdOrMatchingName() throws Exception
+    void existingAliasListChoiceUsesItsDurableIdAndAnUnknownIdCannotSave() throws Exception
     {
         try(Fixture fixture = new Fixture(A))
         {
@@ -470,19 +509,22 @@ class SpectrumSearchServiceTest
                 new ChannelAdministrationService.DiscoveryAliasList(21, "County Dispatch", true),
                 new ChannelAdministrationService.DiscoveryAliasList(22, "County Operations", true));
             var completed = fixture.complete(fixture.open().jobId());
-            var unresolved = fixture.service.save(completed.jobId(), saveRequest(completed, Map.of()));
+            var initial = saveRequest(completed, Map.of());
+            var unresolved = fixture.service.save(completed.jobId(), new SpectrumSearchService.SaveRequest(initial.revision(),
+                initial.candidates(), List.of(new SpectrumSearchService.AliasChoice(
+                    completed.aliasGroups().getFirst().groupId(), 999, null))));
             assertFalse(row(unresolved, A).saved());
-            assertEquals("Choose the matching Alias List for this system", row(unresolved, A).saveError());
+            assertEquals("Choose a compatible Alias List for this system", row(unresolved, A).saveError());
             assertTrue(fixture.channels.definitions.isEmpty());
 
             var base = saveRequest(unresolved, Map.of());
             var named = new SpectrumSearchService.SaveRequest(base.revision(), base.candidates(), List.of(
-                new SpectrumSearchService.AliasChoice(completed.aliasGroups().getFirst().groupId(), 0,
-                    " county operations ")));
+                new SpectrumSearchService.AliasChoice(completed.aliasGroups().getFirst().groupId(), 22, null)));
             var saved = fixture.service.save(completed.jobId(), named);
             assertTrue(row(saved, A).saved());
             assertEquals(22, row(saved, A).aliasListId());
             assertEquals(0, fixture.channels.createdAliases);
+            assertEquals("County Operations", saved.aliasImport().targets().getFirst().aliasListName());
         }
     }
 

@@ -25,6 +25,7 @@ import io.github.dsheirer.rrapi.RadioReferenceService;
 import io.github.dsheirer.rrapi.request.RequestEnvelope;
 import io.github.dsheirer.rrapi.response.Fault;
 import io.github.dsheirer.rrapi.response.GetCountryInfoResponse;
+import io.github.dsheirer.rrapi.response.GetAgencyInfoResponse;
 import io.github.dsheirer.rrapi.response.GetCountryListResponse;
 import io.github.dsheirer.rrapi.response.GetCountyInfoResponse;
 import io.github.dsheirer.rrapi.response.GetFlavorsResponse;
@@ -43,12 +44,15 @@ import io.github.dsheirer.rrapi.response.ResponseBody;
 import io.github.dsheirer.rrapi.response.ResponseEnvelope;
 import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
 import io.github.dsheirer.rrapi.type.Agency;
+import io.github.dsheirer.rrapi.type.AgencyInfo;
+import io.github.dsheirer.rrapi.type.Category;
 import io.github.dsheirer.rrapi.type.Country;
 import io.github.dsheirer.rrapi.type.CountryInfo;
 import io.github.dsheirer.rrapi.type.County;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.State;
 import io.github.dsheirer.rrapi.type.StateInfo;
+import io.github.dsheirer.rrapi.type.SubCategory;
 import io.github.dsheirer.rrapi.type.Site;
 import io.github.dsheirer.rrapi.type.SearchFrequencyResult;
 import io.github.dsheirer.rrapi.type.SystemInformation;
@@ -208,6 +212,54 @@ class RrapiRadioReferenceGatewayTransportTest
         assertTrue(requests.getLast().contains("xsi:type=\"xsd:decimal\""));
         assertTrue(requests.getLast().contains(">rpc</style>"));
         assertEquals("http://api.radioreference.com/soap2#searchStateFreq", soapActions.getLast());
+    }
+
+    @Test
+    void conventionalCatalogUsesAuthoritativeAgencyCountyAndCategoryNames() throws Exception
+    {
+        SubCategory subCategory = new SubCategory();
+        subCategory.setSubCategoryId(444);
+        subCategory.setName("Fire SE");
+        Category category = new Category();
+        category.setName("Public Safety");
+        category.setSubCategories(List.of(subCategory));
+        AgencyInfo agency = new AgencyInfo();
+        agency.setAgencyId(1001);
+        agency.setName("Fire Agency");
+        agency.setCountyId(100);
+        agency.setCategories(List.of(category));
+        GetAgencyInfoResponse agencyResponse = new GetAgencyInfoResponse();
+        agencyResponse.setAgencyInfo(agency);
+        CountyInfo county = new CountyInfo();
+        county.setCountyId(100);
+        county.setName("Lorain");
+        county.setCategories(List.of(category));
+        GetCountyInfoResponse countyResponse = new GetCountyInfoResponse();
+        countyResponse.setCountyInfo(county);
+        List<String> responses = List.of(response(agencyResponse), response(countyResponse), response(countyResponse));
+        AtomicInteger requests = new AtomicInteger();
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            byte[] bytes = responses.get(requests.getAndIncrement()).getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "text/xml;charset=UTF-8");
+            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+            SecureRadioReferenceSoapClient client = client(server.endpoint(), server.sslContext(), Duration.ofSeconds(2), 1024 * 1024);
+            RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client))
+        {
+            var agencyCatalog = gateway.conventionalCatalog(RadioReferenceGateway.DetailKind.AGENCY, 1001);
+            assertEquals("Lorain", agencyCatalog.countyName());
+            assertEquals("Fire Agency", agencyCatalog.agencyName());
+            assertEquals(new RadioReferenceGateway.FrequencyCategory(444, "Public Safety", "Fire SE"),
+                agencyCatalog.categories().getFirst());
+            var countyCatalog = gateway.conventionalCatalog(RadioReferenceGateway.DetailKind.COUNTY, 100);
+            assertEquals("Lorain", countyCatalog.countyName());
+            assertEquals("", countyCatalog.agencyName());
+            assertEquals(agencyCatalog.categories(), countyCatalog.categories());
+        }
+        assertEquals(3, requests.get(), "Agency context uses two bounded owner reads; county context needs one");
     }
 
     @Test

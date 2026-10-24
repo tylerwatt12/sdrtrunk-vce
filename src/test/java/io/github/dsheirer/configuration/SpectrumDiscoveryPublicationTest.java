@@ -97,7 +97,7 @@ class SpectrumDiscoveryPublicationTest
             var secondReview = channels.discoveryReview("p25-phase1", 852_012_500, "Tuner", second, "C4FM");
             var requests = List.of(
                 new ChannelAdministrationService.DiscoveryRequest(firstReview.template(), first, null, "County P25", false),
-                new ChannelAdministrationService.DiscoveryRequest(secondReview.template(), second, null, "Another suggestion", false));
+                new ChannelAdministrationService.DiscoveryRequest(secondReview.template(), second, null, "County P25", false));
             var batch = channels.createDiscoveredBatch(requests, firstReview.revision(), () -> false);
             assertNotNull(batch.publicationFailure());
             assertTrue(batch.results().stream().allMatch(result -> result.created() != null && result.failure() == null));

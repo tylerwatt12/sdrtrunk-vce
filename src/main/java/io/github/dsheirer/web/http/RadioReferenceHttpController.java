@@ -296,12 +296,24 @@ public final class RadioReferenceHttpController
             {
                 requireMethod(exchange, "GET");
                 requireEmptyBody(exchange, "GET");
-                Map<String,String> query = query(exchange, "sub_category_id", "search", "offset", "limit");
+                Map<String,String> query = query(exchange, "owner_kind", "owner_id", "sub_category_id", "search", "offset", "limit");
                 ensureStoredSession();
-                ApiHttpResponse.sendData(exchange, 200, mService.conventionalFrequencies(
-                    positiveInt(query.get("sub_category_id"), "sub_category_id"),
-                    query.getOrDefault("search", ""), optionalInt(query.get("offset"), 0),
-                    optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
+                if(query.containsKey("owner_kind") || query.containsKey("owner_id"))
+                {
+                    ApiHttpResponse.sendData(exchange, 200, mService.conventionalFrequencies(
+                        enumValue(DetailKind.class, query.get("owner_kind"), "owner_kind"),
+                        positiveInt(query.get("owner_id"), "owner_id"),
+                        positiveInt(query.get("sub_category_id"), "sub_category_id"),
+                        query.getOrDefault("search", ""), optionalInt(query.get("offset"), 0),
+                        optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
+                }
+                else
+                {
+                    ApiHttpResponse.sendData(exchange, 200, mService.conventionalFrequencies(
+                        positiveInt(query.get("sub_category_id"), "sub_category_id"),
+                        query.getOrDefault("search", ""), optionalInt(query.get("offset"), 0),
+                        optionalInt(query.get("limit"), DEFAULT_RESULT_LIMIT)));
+                }
             }
             else if((PATH + "/channels/enrichment/preview").equals(path))
             {
@@ -363,6 +375,7 @@ public final class RadioReferenceHttpController
                     requiredPositive(request.aliasListId(), "alias_list_id");
                 ApiHttpResponse.sendData(exchange, 200,
                     requireImport().previewConventional(new ConventionalImportRequest(
+                        ownerKind, requiredPositive(request.ownerId(), "owner_id"),
                         requiredPositive(request.subCategoryId(), "sub_category_id"),
                         requiredPositive(request.frequencyId(), "frequency_id"), aliasListId,
                         request.systemName(), request.siteName(), request.channelName())));

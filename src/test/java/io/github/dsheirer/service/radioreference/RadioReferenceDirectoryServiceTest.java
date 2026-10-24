@@ -308,6 +308,37 @@ class RadioReferenceDirectoryServiceTest
     }
 
     @Test
+    void conventionalPageSuppliesCanonicalNamesAndValidatesSelectedOwnerCategory() throws Exception
+    {
+        FakeGateway gateway = populatedGateway();
+        gateway.conventional = List.of(
+            new ConventionalFrequency(1, 154_100_000L, null, "", "Fire SE", "Fire", "", "", "", "", "FMN", 0, "", List.of(), 444),
+            new ConventionalFrequency(2, 154_200_000L, null, "", " ", "Alpha only", "", "", "", "", "FMN", 0, "", List.of(), 444),
+            new ConventionalFrequency(3, 154_300_000L, null, "", "", "", "", "", "", "", "FMN", 0, "", List.of(), 444));
+        try(RadioReferenceDirectoryService service = service(new FakeFactory(gateway)))
+        {
+            service.login("user", "secret".toCharArray());
+            var page = service.conventionalFrequencies(DetailKind.AGENCY, 1001, 444, "", 0, 10);
+            assertEquals(new RadioReferenceChannelNames("Franklin · State Police", "County Dispatch", "Fire SE"), page.names().get(1));
+            assertEquals("Alpha only", page.names().get(2).name());
+            assertEquals("154.300000 MHz", page.names().get(3).name());
+            assertEquals(1, gateway.categoryCalls.get(), "One owner snapshot supplies every row on the page");
+            var detail = service.frequencyDetails(154_100_000L, null, 0, 444, 1001, 100, "FMN");
+            assertEquals(page.names().get(1), RadioReferenceChannelNames.conventional(detail.conventionalContext().countyName(),
+                detail.conventionalContext().agencyName(), detail.conventionalContext().stateName(), detail.category(),
+                detail.subCategory(), "Fire SE", "Fire", 154_100_000L));
+            gateway.categories = List.of(new FrequencyCategory(444, "Public Safety", " "));
+            var county = service.conventionalFrequencies(DetailKind.COUNTY, 100, 444, "", 0, 10);
+            assertEquals("Franklin", county.names().get(1).system());
+            assertEquals("Public Safety", county.names().get(1).site());
+            assertEquals(Code.INVALID_REQUEST, assertThrows(RadioReferenceDirectoryException.class,
+                () -> service.conventionalFrequencies(DetailKind.COUNTY, 100, 999, "", 0, 10)).code());
+            assertEquals(Code.INVALID_REQUEST, assertThrows(RadioReferenceDirectoryException.class,
+                () -> service.conventionalFrequencies(DetailKind.TRUNKED_SYSTEM, 100, 444, "", 0, 10)).code());
+        }
+    }
+
+    @Test
     void returnsBoundedConventionalAndTrunkedFrequencyMatchesWithStableLinks() throws Exception
     {
         FakeGateway gateway = populatedGateway();
@@ -1092,6 +1123,14 @@ class RadioReferenceDirectoryServiceTest
         {
             categoryCalls.incrementAndGet();
             return categories;
+        }
+
+        @Override
+        public ConventionalCatalog conventionalCatalog(DetailKind ownerKind, int ownerId)
+        {
+            categoryCalls.incrementAndGet();
+            return new ConventionalCatalog("Franklin", ownerKind == DetailKind.AGENCY ? "State Police" : "",
+                "State", categories);
         }
 
         @Override

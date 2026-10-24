@@ -937,7 +937,9 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
         return new FrequencyDetails(resolveMode(rawMode, modes),
             selectedCategory == null ? "" : selectedCategory.categoryName(),
-            selectedCategory == null ? "" : selectedCategory.subCategoryName(), siteDetail);
+            selectedCategory == null ? "" : selectedCategory.subCategoryName(), siteDetail,
+            snapshot.catalog() == null ? null : new ConventionalContext(snapshot.catalog().countyName(),
+                snapshot.catalog().agencyName(), snapshot.catalog().stateName()));
     }
 
     /** Loads one trunked-system description for a preview/import workflow. */
@@ -1140,6 +1142,57 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         return page(frequencies, offset, limit);
     }
 
+    /** Adds canonical naming defaults without changing the conventional frequency rows. */
+    public ConventionalFrequencyPage conventionalFrequencies(RadioReferenceGateway.DetailKind ownerKind,
+        int ownerId, int subCategoryId, String search, int offset, int limit) throws RadioReferenceDirectoryException
+    {
+        var catalog = conventionalCatalog(ownerKind, ownerId);
+        var category = conventionalCategory(catalog, subCategoryId);
+        var frequencies = conventionalFrequencies(subCategoryId, search, offset, limit);
+        Map<Integer,RadioReferenceChannelNames> names = new LinkedHashMap<>();
+        for(var frequency: frequencies.items())
+            names.put(frequency.id(), conventionalNames(catalog, category, frequency));
+        return new ConventionalFrequencyPage(frequencies.items(), frequencies.offset(), frequencies.nextOffset(),
+            frequencies.totalItems(), names);
+    }
+
+    /** Resolves one import's defaults and verifies that its category belongs to the selected owner. */
+    public RadioReferenceChannelNames conventionalNames(RadioReferenceGateway.DetailKind ownerKind, int ownerId,
+        int subCategoryId, RadioReferenceGateway.ConventionalFrequency frequency) throws RadioReferenceDirectoryException
+    {
+        var catalog = conventionalCatalog(ownerKind, ownerId);
+        return conventionalNames(catalog, conventionalCategory(catalog, subCategoryId), frequency);
+    }
+
+    private RadioReferenceGateway.ConventionalCatalog conventionalCatalog(RadioReferenceGateway.DetailKind ownerKind,
+        int ownerId) throws RadioReferenceDirectoryException
+    {
+        validateId(ownerId);
+        if(ownerKind != RadioReferenceGateway.DetailKind.AGENCY && ownerKind != RadioReferenceGateway.DetailKind.COUNTY)
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
+        var catalog = invokePremiumDetail(gateway -> gateway.conventionalCatalog(ownerKind, ownerId), mRequestDeadlineNanos);
+        if(catalog == null)
+            throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.UNAVAILABLE);
+        enforceImportBound(catalog.categories().size());
+        return catalog;
+    }
+
+    private static RadioReferenceGateway.FrequencyCategory conventionalCategory(
+        RadioReferenceGateway.ConventionalCatalog catalog, int subCategoryId) throws RadioReferenceDirectoryException
+    {
+        return catalog.categories().stream().filter(Objects::nonNull)
+            .filter(category -> category.subCategoryId() == subCategoryId).findFirst()
+            .orElseThrow(() -> new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST));
+    }
+
+    private static RadioReferenceChannelNames conventionalNames(RadioReferenceGateway.ConventionalCatalog catalog,
+        RadioReferenceGateway.FrequencyCategory category, RadioReferenceGateway.ConventionalFrequency frequency)
+    {
+        return RadioReferenceChannelNames.conventional(catalog.countyName(), catalog.agencyName(), catalog.stateName(),
+            category.categoryName(), category.subCategoryName(), frequency.description(), frequency.alphaTag(),
+            frequency.downlinkHz());
+    }
+
     /** Reloads selected conventional IDs so an import never trusts browser-supplied frequency fields. */
     public List<RadioReferenceGateway.ConventionalFrequency> conventionalFrequenciesById(int subCategoryId,
                                                                                           Collection<Integer> ids)
@@ -1214,15 +1267,23 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     {
         List<RadioReferenceGateway.Mode> modes = systemId == null ? optionalModes(gateway) : List.of();
         List<RadioReferenceGateway.Site> sites = systemId == null ? List.of() : optionalSites(gateway, systemId);
-        List<RadioReferenceGateway.FrequencyCategory> categories = List.of();
+        RadioReferenceGateway.ConventionalCatalog catalog = null;
 
         if(systemId == null && subCategoryId > 0)
         {
-            categories = agencyId > 0 ? optionalAgencyCategories(gateway, agencyId) :
-                optionalCountyCategories(gateway, countyId);
+            try
+            {
+                if(agencyId > 0 || countyId > 0)
+                    catalog = gateway.conventionalCatalog(agencyId > 0 ? RadioReferenceGateway.DetailKind.AGENCY :
+                        RadioReferenceGateway.DetailKind.COUNTY, agencyId > 0 ? agencyId : countyId);
+            }
+            catch(RadioReferenceGatewayException exception)
+            {
+                // The frequency drilldown remains useful when optional category metadata is unavailable.
+            }
         }
 
-        return new FrequencyDetailSnapshot(modes, sites, categories);
+        return new FrequencyDetailSnapshot(modes, sites, catalog);
     }
 
     private static List<RadioReferenceGateway.Mode> optionalModes(RadioReferenceGateway gateway)
@@ -1244,36 +1305,6 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             List<RadioReferenceGateway.Site> sites = gateway.sites(systemId);
             return sites == null ? List.of() : sites;
-        }
-        catch(RadioReferenceGatewayException exception)
-        {
-            return List.of();
-        }
-    }
-
-    private static List<RadioReferenceGateway.FrequencyCategory> optionalAgencyCategories(
-        RadioReferenceGateway gateway, int agencyId)
-    {
-        try
-        {
-            List<RadioReferenceGateway.FrequencyCategory> categories =
-                gateway.agencyFrequencyCategories(agencyId);
-            return categories == null ? List.of() : categories;
-        }
-        catch(RadioReferenceGatewayException exception)
-        {
-            return List.of();
-        }
-    }
-
-    private static List<RadioReferenceGateway.FrequencyCategory> optionalCountyCategories(
-        RadioReferenceGateway gateway, int countyId)
-    {
-        try
-        {
-            List<RadioReferenceGateway.FrequencyCategory> categories = countyId > 0 ?
-                gateway.countyFrequencyCategories(countyId) : List.of();
-            return categories == null ? List.of() : categories;
         }
         catch(RadioReferenceGatewayException exception)
         {
@@ -2082,14 +2113,16 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
 
     private record FrequencyDetailSnapshot(List<RadioReferenceGateway.Mode> modes,
                                            List<RadioReferenceGateway.Site> sites,
-                                           List<RadioReferenceGateway.FrequencyCategory> categories)
+                                           RadioReferenceGateway.ConventionalCatalog catalog)
     {
         private FrequencyDetailSnapshot
         {
             modes = modes == null ? List.of() : List.copyOf(modes);
             sites = sites == null ? List.of() : List.copyOf(sites);
-            categories = categories == null ? List.of() : List.copyOf(categories);
         }
+
+        private List<RadioReferenceGateway.FrequencyCategory> categories()
+        { return catalog == null ? List.of() : catalog.categories(); }
     }
 
     private record SiteMatch(Integer siteId, Integer siteNumber, String siteName, int countyId,
@@ -2448,13 +2481,39 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     }
 
     public record FrequencyDetails(String modeName, String category, String subCategory,
-                                   FrequencySiteDetail site)
+                                   FrequencySiteDetail site, ConventionalContext conventionalContext)
     {
+        public FrequencyDetails(String modeName, String category, String subCategory, FrequencySiteDetail site)
+        {
+            this(modeName, category, subCategory, site, null);
+        }
+
         public FrequencyDetails
         {
             modeName = text(modeName);
             category = text(category);
             subCategory = text(subCategory);
+        }
+    }
+
+    /** Present only when the selected conventional owner was resolved authoritatively. */
+    public record ConventionalContext(String countyName, String agencyName, String stateName)
+    {
+        public ConventionalContext
+        {
+            countyName = text(countyName);
+            agencyName = text(agencyName);
+            stateName = text(stateName);
+        }
+    }
+
+    public record ConventionalFrequencyPage(List<RadioReferenceGateway.ConventionalFrequency> items, int offset,
+        Integer nextOffset, int totalItems, Map<Integer,RadioReferenceChannelNames> names)
+    {
+        public ConventionalFrequencyPage
+        {
+            items = List.copyOf(items);
+            names = Map.copyOf(names);
         }
     }
 

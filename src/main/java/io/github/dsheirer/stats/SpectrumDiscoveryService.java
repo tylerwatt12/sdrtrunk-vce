@@ -207,12 +207,11 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             throw new IllegalArgumentException("The selected bandwidth extends outside the usable receiver window");
         wizard.saved = saveEvidence != null ? mChannels.createTrunkedDiscovered(definition,saveEvidence,request.newAliasListName(),request.revision(),true) :
             mChannels.createDiscovered(definition, identity, request.newAliasListName(), request.revision());
-        if(wizard.saved.aliasListCreated())
-        {
-            wizard.aliasImport.register(wizard.saved.aliasListId(), savedAliasListName(request.newAliasListName(), definition),
-                definition.system(), wizard.directory);
-            mAliasImporter.retain(wizard.id, wizard.aliasImport);
-        }
+        String aliasName = review.aliasLists().stream().filter(list -> list.id() == wizard.saved.aliasListId())
+            .map(ChannelAdministrationService.DiscoveryAliasList::name).findFirst()
+            .orElseGet(() -> savedAliasListName(request.newAliasListName(), definition));
+        wizard.aliasImport.register(wizard.saved.aliasListId(), aliasName, definition.system(), wizard.directory);
+        mAliasImporter.retain(wizard.id, wizard.aliasImport);
         wizard.close();
         return startSaved(wizard);
     }
@@ -344,14 +343,17 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         String system = match.systemName() != null && !match.systemName().isBlank() ?
             match.systemName() : template.system();
         String site = match.siteName() != null && !match.siteName().isBlank() ? match.siteName() : template.site();
+        Long suggested = review.suggestedAliasListId() != null ? review.suggestedAliasListId() :
+            ChannelAdministrationService.suggestedDiscoveryAliasListId(review.aliasLists(), system);
         long frequency = template.source().preferredFrequencyHz() != null ? template.source().preferredFrequencyHz() :
             template.source().frequenciesHz().stream().findFirst().orElse(0L);
         template = new ChannelDefinition(null, template.protocolId(), system, site,
-            RadioReferenceChannelNames.trunked(system, site, frequency).name(), null, template.aliasListId(), template.source(),
+            RadioReferenceChannelNames.trunked(system, site, frequency).name(), null,
+            suggested != null ? suggested : template.aliasListId(), template.source(),
             template.settings(), template.frequencyMap(), template.eventLogs(), template.recorders(),
             template.auxiliaryDecoders(), template.observed());
         return new ChannelAdministrationService.DiscoveryReview(review.revision(), template, review.aliasLists(),
-            review.suggestedAliasListId(), ChannelAdministrationService.discoveryAliasListName(system,
+            suggested, ChannelAdministrationService.discoveryAliasListName(system,
                 review.defaultNewAliasListName()));
     }
 

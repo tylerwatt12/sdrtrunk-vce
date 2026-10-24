@@ -80,7 +80,7 @@ class TrunkedSpectrumSearchServiceTest
         }
     }
 
-    @Test void namedExistingAliasListChoiceReusesItsIdDuringSearchSave() throws Exception
+    @Test void explicitExistingAliasListChoiceUsesItsIdDuringSearchSave() throws Exception
     {
         var lease = new Lease(true,A); var channels = new Channels();
         channels.aliasLists = List.of(new ChannelAdministrationService.DiscoveryAliasList(17,"County",true),
@@ -91,14 +91,14 @@ class TrunkedSpectrumSearchServiceTest
             var row = result.candidates().getFirst(); var group = result.aliasGroups().getFirst();
             var saved = service.save(result.jobId(),new SpectrumSearchService.SaveRequest(result.revision(),
                 List.of(new SpectrumSearchService.SaveCandidate(row.candidateId(),"Site",false,List.of())),
-                List.of(new SpectrumSearchService.AliasChoice(group.groupId(),0," county "))));
+                List.of(new SpectrumSearchService.AliasChoice(group.groupId(),17,null))));
             assertTrue(saved.candidates().getFirst().saved());
             assertEquals(17, channels.saved.aliasListId());
             assertEquals(17, saved.candidates().getFirst().aliasListId());
         }
     }
 
-    @Test void onlyActuallyCreatedListsRegisterOnceAndTheirImportResultSurvivesReceiverRelease() throws Exception
+    @Test void existingAndNewListsRegisterOnceAndTheirImportResultSurvivesReceiverRelease() throws Exception
     {
         var lease = new Lease(true,A,B); var channels = new Channels();
         channels.createsAliasList = true;
@@ -121,16 +121,17 @@ class TrunkedSpectrumSearchServiceTest
         }
 
         var reusedLease = new Lease(true,A); var reused = new Channels();
-        // An id=0 request may reuse a named/compatible list. The actual create result is authoritative.
+        reused.aliasLists = List.of(new ChannelAdministrationService.DiscoveryAliasList(1, "Existing aliases", false));
         try(var service = service(reusedLease,reused,(l,f,c) -> evidence("dmr","TIER_III","dmr:tier3:tiny:341",7,f)))
         {
             var found = complete(service,service.open("recording","browse",RANGE,750).jobId());
             var row = found.candidates().getFirst();
             var saved = service.save(found.jobId(),new SpectrumSearchService.SaveRequest(found.revision(),
                 List.of(new SpectrumSearchService.SaveCandidate(row.candidateId(),"Site",false)),
-                List.of(new SpectrumSearchService.AliasChoice(row.aliasGroupId(),0,"Existing aliases"))));
-            assertTrue(saved.aliasImport().targets().isEmpty());
-            assertThrows(IllegalStateException.class, () -> service.importAliases(saved.jobId(), 1));
+                List.of(new SpectrumSearchService.AliasChoice(row.aliasGroupId(),1,null))));
+            assertEquals(1, saved.aliasImport().targets().size());
+            assertEquals("Existing aliases", saved.aliasImport().targets().getFirst().aliasListName());
+            assertEquals(saved.aliasImport(), service.importAliases(saved.jobId(), 1));
         }
     }
 

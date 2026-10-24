@@ -70,6 +70,13 @@ public interface RadioReferenceGateway extends AutoCloseable
         return List.of();
     }
 
+    /** Authoritative owner labels and categories used to name conventional imports. */
+    default ConventionalCatalog conventionalCatalog(DetailKind ownerKind, int ownerId)
+        throws RadioReferenceGatewayException
+    {
+        throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+    }
+
     /** Loads the decoder-relevant description of one trunked system. */
     default TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceGatewayException
     {
@@ -233,6 +240,15 @@ public interface RadioReferenceGateway extends AutoCloseable
         public ConventionalFrequency
         {
             tags = immutable(tags);
+        }
+    }
+
+    record ConventionalCatalog(String countyName, String agencyName, String stateName,
+                               List<FrequencyCategory> categories)
+    {
+        public ConventionalCatalog
+        {
+            categories = immutable(categories);
         }
     }
 

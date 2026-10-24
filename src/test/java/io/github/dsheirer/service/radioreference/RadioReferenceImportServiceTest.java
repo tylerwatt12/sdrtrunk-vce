@@ -645,7 +645,8 @@ class RadioReferenceImportServiceTest
                     case "p25-conventional" -> "P25"; case "dmr" -> "DMR"; default -> "NXDN48"; };
                 fixture.directory.frequencyMatches = List.of(namingMatch(154_100_000L, mode, "Fire Dispatch", "Fire", null));
                 fixture.directory.namingDetails = new RadioReferenceDirectoryService.FrequencyDetails(mode,
-                    "Public Safety", "Fire", null);
+                    "Public Safety", "Fire", null,
+                    new RadioReferenceDirectoryService.ConventionalContext("County", "Fire Agency", "State"));
                 ChannelDefinition draft = namingDraft(fixture, protocol, true, 154_100_000L);
                 long revision = fixture.channels.currentRevision();
                 var choices = fixture.importer.previewChannelNames(null, null, draft, 10, null, null);
@@ -658,6 +659,13 @@ class RadioReferenceImportServiceTest
                 assertEquals("County · Fire Agency", selected.names().system());
                 assertEquals("Fire", selected.names().site());
                 assertEquals("Fire Dispatch", selected.names().name());
+                fixture.directory.conventional = List.of(new ConventionalFrequency(7, 154_100_000L, null, "",
+                    "Fire Dispatch", "Fire", "", "", "", "", mode, 0, "", List.of(), 70));
+                var directImport = fixture.importer.previewConventional(new RadioReferenceImportService.ConventionalImportRequest(
+                    RadioReferenceGateway.DetailKind.AGENCY, 1001, 70, 7, null, null, null, null));
+                assertEquals(selected.names(), new RadioReferenceChannelNames(directImport.channel().system(),
+                    directImport.channel().site(), directImport.channel().name()),
+                    "Direct import and Update names must use the same conventional defaults");
                 assertEquals(revision, fixture.channels.currentRevision(), "Looking up names must not create or change a channel");
                 assertTrue(fixture.channels.catalog().channels().isEmpty());
                 assertThrows(IllegalArgumentException.class, () -> fixture.importer.applyChannelEnrichment(
@@ -681,7 +689,8 @@ class RadioReferenceImportServiceTest
                 namingMatch(154_100_000L, "FMN", "Medical Dispatch", "EMS", null),
                 namingMatch(154_100_000L, "DMR", "Wrong protocol", "DMR", null),
                 namingMatch(155_100_000L, "FMN", "Wrong frequency", "Other", null));
-            fixture.directory.namingDetails = new RadioReferenceDirectoryService.FrequencyDetails("FMN", "Safety", "Dispatch", null);
+            fixture.directory.namingDetails = new RadioReferenceDirectoryService.FrequencyDetails("FMN", "Safety", "Dispatch", null,
+                new RadioReferenceDirectoryService.ConventionalContext("County", "Fire Agency", "State"));
             long revision = fixture.channels.currentRevision();
             var choices = fixture.importer.previewChannelNames(id, revision, null, 10, null, null);
             assertEquals(2, choices.candidates().size(), "Wrong frequency and protocol must be excluded");
@@ -702,6 +711,38 @@ class RadioReferenceImportServiceTest
             assertThrows(ChannelAdministrationService.StaleRevisionException.class, () ->
                 fixture.importer.previewChannelNames(id, revision, null, 10, choices.lookupId(),
                     choices.candidates().getFirst().candidateId()));
+        }
+    }
+
+    @Test
+    void conventionalNamesRequireResolvedOwnerMetadataAndAllowCategoryFallbackWithoutChangingTheChannel() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            fixture.directory.frequencyMatches = List.of(namingMatch(154_100_000L, "FMN", "Fire Dispatch", "Fire", null));
+            String id = fixture.channels.create(namingDraft(fixture, "nbfm", true, 154_100_000L)).configurationIds().getFirst();
+            ChannelDefinition before = fixture.channels.get(id).channel();
+            long revision = fixture.channels.currentRevision();
+            var owner = new RadioReferenceDirectoryService.ConventionalContext("County", "Fire Agency", "State");
+            for(var details: List.of(
+                new RadioReferenceDirectoryService.FrequencyDetails("FMN", "Public Safety", "Fire", null),
+                new RadioReferenceDirectoryService.FrequencyDetails("FMN", "", " ", null, owner)))
+            {
+                fixture.directory.namingDetails = details;
+                var unavailable = fixture.importer.previewChannelNames(id, revision, null, 10, null, null);
+                assertEquals("unavailable", unavailable.state());
+                assertTrue(unavailable.reason().contains("Try this lookup again"));
+                assertNull(unavailable.previewId());
+                assertNull(unavailable.lookupId());
+                assertTrue(unavailable.candidates().isEmpty());
+                assertEquals(before, fixture.channels.get(id).channel());
+                assertEquals(revision, fixture.channels.currentRevision());
+            }
+            fixture.directory.namingDetails = new RadioReferenceDirectoryService.FrequencyDetails("FMN", "Public Safety", " ", null, owner);
+            var retry = fixture.importer.previewChannelNames(id, revision, null, 10, null, null);
+            assertEquals("choose_record", retry.state());
+            assertEquals("Public Safety", retry.candidates().getFirst().site(), "A blank Subcategory falls back to its Category");
+            assertEquals(before, fixture.channels.get(id).channel());
         }
     }
 
@@ -923,15 +964,35 @@ class RadioReferenceImportServiceTest
             fixture.directory.conventional = List.of(new ConventionalFrequency(7, 154_100_000L, null, "",
                 "County dispatch", "Dispatch", "", "", "", "", "FMN", 0, "", List.of(), 70));
             RadioReferenceImportService.ChannelPreview preview = fixture.importer.previewConventional(
-                new RadioReferenceImportService.ConventionalImportRequest(70, 7, null, "County", "Public Safety",
+                new RadioReferenceImportService.ConventionalImportRequest(RadioReferenceGateway.DetailKind.AGENCY, 1001, 70, 7, null, "County", "Public Safety",
                     null));
             assertEquals(RadioReferenceImportService.ChannelAction.CREATE, preview.action());
             assertEquals("nbfm", preview.channel().protocolId());
             assertEquals("County dispatch", preview.channel().name());
+            assertEquals("County", preview.channel().system(), "Preserve an edited system name");
+            assertEquals("Public Safety", preview.channel().site(), "Preserve an edited site name");
             assertEquals("Default Analog", fixture.channels.options().aliasLists().stream()
                 .filter(list -> list.id() == preview.channel().aliasListId()).findFirst().orElseThrow().name());
             assertEquals(List.of(154_100_000L), preview.channel().source().frequenciesHz());
             fixture.importer.applyChannel(preview.previewId());
+        }
+    }
+
+    @Test
+    void conventionalImportPreservesEditedNamesWhileUsingRadioReferenceDecoderDefaults() throws Exception
+    {
+        try(Fixture fixture = new Fixture(mTemporaryFolder))
+        {
+            fixture.directory.conventional = List.of(new ConventionalFrequency(7, 154_100_000L, null, "",
+                "County dispatch", "Dispatch", "123.0 PL", "4", "100", "2", "NXDN96", 0, "", List.of(), 70));
+            var preview = fixture.importer.previewConventional(new RadioReferenceImportService.ConventionalImportRequest(
+                RadioReferenceGateway.DetailKind.AGENCY, 1001, 70, 7, null, "My system", "My site", "My channel"));
+            assertEquals("My system", preview.channel().system());
+            assertEquals("My site", preview.channel().site());
+            assertEquals("My channel", preview.channel().name());
+            assertEquals("nxdn", preview.channel().protocolId());
+            assertEquals("CONVENTIONAL", preview.channel().settings().get("channel_mode"));
+            assertEquals("M9600", preview.channel().settings().get("transmission_mode"));
         }
     }
 
@@ -1117,7 +1178,7 @@ class RadioReferenceImportServiceTest
             long selectedListId = fixture.aliases.createAliasList("County Analog", AliasListFamily.NBFM)
                 .aliasListId();
             RadioReferenceImportService.ChannelPreview preview = fixture.importer.previewConventional(
-                new RadioReferenceImportService.ConventionalImportRequest(70, 7, selectedListId, "County",
+                new RadioReferenceImportService.ConventionalImportRequest(RadioReferenceGateway.DetailKind.AGENCY, 1001, 70, 7, selectedListId, "County",
                     "Public Safety", null));
 
             assertEquals(selectedListId, preview.channel().aliasListId());
@@ -1125,7 +1186,7 @@ class RadioReferenceImportServiceTest
             long incompatibleListId = aliasList(fixture, AliasListFamily.P25);
             IllegalArgumentException incompatible = assertThrows(IllegalArgumentException.class,
                 () -> fixture.importer.previewConventional(
-                    new RadioReferenceImportService.ConventionalImportRequest(70, 7, incompatibleListId,
+                    new RadioReferenceImportService.ConventionalImportRequest(RadioReferenceGateway.DetailKind.AGENCY, 1001, 70, 7, incompatibleListId,
                         "County", "Public Safety", null)));
             assertTrue(incompatible.getMessage().contains("not compatible"));
         }
@@ -1526,8 +1587,9 @@ class RadioReferenceImportServiceTest
         @Override public RadioReferenceDirectoryService.FrequencyDetails frequencyDetails(long frequencyHz,
             Integer systemId, int siteNumber, int subCategoryId, int agencyId, int countyId, String rawMode)
         { return namingDetails != null ? new RadioReferenceDirectoryService.FrequencyDetails(rawMode,
-            namingDetails.category(), namingDetails.subCategory(), null) :
-            new RadioReferenceDirectoryService.FrequencyDetails(rawMode, "", "", null); }
+            namingDetails.category(), namingDetails.subCategory(), null, namingDetails.conventionalContext()) :
+            new RadioReferenceDirectoryService.FrequencyDetails(rawMode, "Public Safety", "Fire", null,
+                new RadioReferenceDirectoryService.ConventionalContext("County", "Fire Agency", "State")); }
         private List<TrunkedSiteDetails> sites;
         private int siteCatalogReads;
         private int catalogReads;
@@ -1590,6 +1652,17 @@ class RadioReferenceImportServiceTest
             { return new BoundedPage<>(categories, 0, null, categories.size()); }
         @Override public List<RemoteTalkgroupCategory> allTalkgroupCategories(int systemId)
             { categoryReads++; return categories; }
+        @Override public RadioReferenceChannelNames conventionalNames(RadioReferenceGateway.DetailKind ownerKind,
+            int ownerId, int subCategoryId, ConventionalFrequency frequency)
+        {
+            assertEquals(RadioReferenceGateway.DetailKind.AGENCY, ownerKind);
+            assertEquals(1001, ownerId);
+            assertEquals(frequency.subCategoryId(), subCategoryId);
+            return RadioReferenceChannelNames.conventional("County", "Fire Agency", "State",
+                namingDetails == null ? "Public Safety" : namingDetails.category(),
+                namingDetails == null ? "Fire" : namingDetails.subCategory(),
+                frequency.description(), frequency.alphaTag(), frequency.downlinkHz());
+        }
         @Override public List<ConventionalFrequency> conventionalFrequenciesById(int subCategoryId,
             Collection<Integer> ids)
             { return ids.stream().map(id -> conventional.stream().filter(row -> row.id() == id).findFirst().orElseThrow()).toList(); }

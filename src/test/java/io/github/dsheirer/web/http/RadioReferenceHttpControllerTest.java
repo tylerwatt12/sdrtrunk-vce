@@ -417,6 +417,11 @@ class RadioReferenceHttpControllerTest
                 assertEquals(155_250_000L, data(send(client,
                     request(origin, "/conventional/frequencies?sub_category_id=501").GET()))
                     .at("/items/0/downlink_hz").longValue());
+                JsonNode conventional = data(send(client, request(origin,
+                    "/conventional/frequencies?owner_kind=COUNTY&owner_id=100&sub_category_id=501").GET()));
+                assertEquals("Franklin", conventional.at("/names/8001/system").textValue());
+                assertEquals("Dispatch", conventional.at("/names/8001/site").textValue());
+                assertEquals("County Dispatch", conventional.at("/names/8001/name").textValue());
 
                 String invalidConventionalPreview = "{" +
                     "\"owner_kind\":\"COUNTY\",\"owner_id\":100,\"sub_category_id\":501," +
@@ -707,6 +712,12 @@ class RadioReferenceHttpControllerTest
         public List<FrequencyCategory> countyFrequencyCategories(int countyId)
         {
             return List.of(new FrequencyCategory(501, "Public Safety", "Dispatch"));
+        }
+
+        @Override
+        public ConventionalCatalog conventionalCatalog(DetailKind ownerKind, int ownerId)
+        {
+            return new ConventionalCatalog("Franklin", "", "", countyFrequencyCategories(ownerId));
         }
 
         @Override

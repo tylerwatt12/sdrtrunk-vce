@@ -351,17 +351,11 @@ public final class SpectrumSearchService implements AutoCloseable
                     AliasChoice choice = choices.get(row.groupId());
                     long aliasId = job.aliasIds.getOrDefault(row.groupId(), choice != null ? choice.aliasListId() :
                         review.suggestedAliasListId() != null ? review.suggestedAliasListId() : 0L);
-                    String aliasName = choice != null && choice.newAliasListName() != null ? choice.newAliasListName() :
+                    String newAliasName = choice != null && choice.newAliasListName() != null ? choice.newAliasListName() :
                         ChannelAdministrationService.discoveryAliasListName(row.systemName(), review.defaultNewAliasListName());
-                    if(aliasId == 0 && !review.aliasLists().isEmpty())
-                    {
-                        aliasId = review.aliasLists().size() == 1 ? review.aliasLists().getFirst().id() :
-                            review.aliasLists().stream().filter(list -> aliasName != null &&
-                                aliasName.strip().equalsIgnoreCase(list.name())).mapToLong(
-                                    ChannelAdministrationService.DiscoveryAliasList::id).findFirst().orElse(0);
-                        if(aliasId == 0)
-                            throw new IllegalArgumentException("Choose the matching Alias List for this system");
-                    }
+                    String aliasName = aliasId > 0 ? review.aliasLists().stream().filter(list -> list.id() == aliasId)
+                        .map(ChannelAdministrationService.DiscoveryAliasList::name).findFirst()
+                        .orElseThrow(() -> new IllegalArgumentException("Choose a compatible Alias List for this system")) : newAliasName;
                     var template = review.template();
                     TrunkedDiscoveryEvidence saveEvidence = row.evidence.withManualFrequencyMap(edit.frequencyMap());
                     ChannelDefinition definition = new ChannelDefinition(null, row.evidence.protocolId(), row.systemName(),
@@ -405,7 +399,7 @@ public final class SpectrumSearchService implements AutoCloseable
                     for(PendingSave save: pending)
                     {
                         Row row = save.row();
-                        if(row.saved != null && row.saved.aliasListCreated())
+                        if(row.saved != null)
                         {
                             job.aliasImport.register(row.saved.aliasListId(), save.aliasName(), save.system(), save.directory());
                             mAliasImporter.retain(job.id, job.aliasImport);
@@ -507,8 +501,10 @@ public final class SpectrumSearchService implements AutoCloseable
             var review = mChannels.reviewTrunked(row.frequency, preferred(job), row.evidence);
             if(row.directory.match() == null) { row.friendlySystem = review.template().system(); row.friendlySite = review.template().site(); }
             if(groups.containsKey(row.groupId())) continue;
+            Long suggested = review.suggestedAliasListId() != null ? review.suggestedAliasListId() :
+                ChannelAdministrationService.suggestedDiscoveryAliasListId(review.aliasLists(), row.systemName());
             groups.put(row.groupId(), new AliasGroup(row.groupId(), row.identity != null ? row.identity.wacn() : 0, row.identity != null ? row.identity.system() : 0,
-                review.aliasLists(), job.aliasIds.getOrDefault(row.groupId(), review.suggestedAliasListId()),
+                review.aliasLists(), job.aliasIds.getOrDefault(row.groupId(), suggested),
                 ChannelAdministrationService.discoveryAliasListName(row.systemName(), review.defaultNewAliasListName()),
                 row.evidence.protocolId(), row.systemName()));
         }

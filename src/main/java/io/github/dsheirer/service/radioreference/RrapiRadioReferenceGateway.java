@@ -44,6 +44,7 @@ import io.github.dsheirer.rrapi.response.GetUserFeedBroadcastsResponse;
 import io.github.dsheirer.rrapi.response.GetVoicesResponse;
 import io.github.dsheirer.rrapi.response.SearchFrequencyResponse;
 import io.github.dsheirer.rrapi.type.CountryInfo;
+import io.github.dsheirer.rrapi.type.AgencyInfo;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.StateInfo;
 import io.github.dsheirer.rrapi.type.UserInfo;
@@ -381,9 +382,7 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     {
         try
         {
-            GetAgencyInfoResponse response = client().execute(
-                authorization -> GetAgencyInfo.create(authorization, agencyId), GetAgencyInfoResponse.class);
-            return categories(response.getAgencyInfo() == null ? null : response.getAgencyInfo().getCategories());
+            return categories(agencyInfo(agencyId).getCategories());
         }
         catch(RuntimeException exception)
         {
@@ -396,14 +395,57 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     {
         try
         {
-            GetCountyInfoResponse response = client().execute(
-                authorization -> GetCountyInfo.create(authorization, countyId), GetCountyInfoResponse.class);
-            return categories(response.getCountyInfo() == null ? null : response.getCountyInfo().getCategories());
+            return categories(countyInfo(countyId).getCategories());
         }
         catch(RuntimeException exception)
         {
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
+    }
+
+    @Override
+    public ConventionalCatalog conventionalCatalog(DetailKind ownerKind, int ownerId)
+        throws RadioReferenceGatewayException
+    {
+        try
+        {
+            if(ownerKind == DetailKind.COUNTY)
+            {
+                CountyInfo county = countyInfo(ownerId);
+                return new ConventionalCatalog(county.getName(), "", "", categories(county.getCategories()));
+            }
+            if(ownerKind == DetailKind.AGENCY)
+            {
+                AgencyInfo agency = agencyInfo(ownerId);
+                String county = agency.getCountyId() > 0 ? countyInfo(agency.getCountyId()).getName() : "";
+                return new ConventionalCatalog(county, agency.getName(), "", categories(agency.getCategories()));
+            }
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+        }
+        catch(RuntimeException exception)
+        {
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    private AgencyInfo agencyInfo(int agencyId) throws RadioReferenceGatewayException
+    {
+        GetAgencyInfoResponse response = client().execute(
+            authorization -> GetAgencyInfo.create(authorization, agencyId), GetAgencyInfoResponse.class);
+        AgencyInfo info = response.getAgencyInfo();
+        if(info == null || info.getAgencyId() != agencyId)
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+        return info;
+    }
+
+    private CountyInfo countyInfo(int countyId) throws RadioReferenceGatewayException
+    {
+        GetCountyInfoResponse response = client().execute(
+            authorization -> GetCountyInfo.create(authorization, countyId), GetCountyInfoResponse.class);
+        CountyInfo info = response.getCountyInfo();
+        if(info == null || info.getCountyId() != countyId)
+            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+        return info;
     }
 
     @Override

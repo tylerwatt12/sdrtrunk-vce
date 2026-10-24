@@ -187,6 +187,8 @@ public final class RadioReferenceImportService
         }
 
         ConventionalFrequency frequency = rows.getFirst();
+        RadioReferenceChannelNames names = mDirectory.conventionalNames(request.ownerKind(), request.ownerId(),
+            subCategoryId, frequency);
         String protocolId = conventionalProtocol(frequency.mode());
         LocalChannelSnapshot local = localSnapshot();
         long aliasListId = request.aliasListId() == null ? defaultAliasList(protocolId, local.options()) :
@@ -194,9 +196,10 @@ public final class RadioReferenceImportService
         ChannelDefinition template = mChannels.template(protocolId);
         Map<String,Object> settings = new LinkedHashMap<>(template.settings());
         applyConventionalSettings(protocolId, frequency.mode(), settings);
-        String name = fallback(request.channelName(), RadioReferenceChannelNames.conventionalChannelName(frequency.description(), frequency.alphaTag(), frequency.downlinkHz()));
-        ChannelDefinition created = new ChannelDefinition(null, protocolId, textOrNull(request.systemName()),
-            textOrNull(request.siteName()), name, null, aliasListId,
+        String name = fallback(request.channelName(), names.name());
+        ChannelDefinition created = new ChannelDefinition(null, protocolId,
+            textOrNull(fallback(request.systemName(), names.system())),
+            textOrNull(fallback(request.siteName(), names.site())), name, null, aliasListId,
             new ChannelDefinition.Source(List.of(frequency.downlinkHz()), null, null, null, null, null), settings,
             List.of(), template.eventLogs(), template.recorders(), template.auxiliaryDecoders(),
             ChannelDefinition.Observed.EMPTY);
@@ -345,12 +348,19 @@ public final class RadioReferenceImportService
                 if(!channel.protocolId().equals(remoteProtocol) || remoteProtocol.equals("nxdn") &&
                     !Objects.equals(channel.settings().getOrDefault("transmission_mode", "M4800"),
                         normalized(mode).contains("96") ? "M9600" : "M4800")) continue;
-                var suggested = RadioReferenceChannelNames.conventional(row.countyName(), row.agencyName(), row.stateName(),
+                var owner = details.conventionalContext();
+                if(owner == null || details.subCategory().isBlank() && details.category().isBlank())
+                    return namesResult(savedId, revision, running, "unavailable",
+                        "RadioReference category names are unavailable. Try this lookup again.", null, List.of());
+                String countyName = owner.countyName();
+                String agencyName = owner.agencyName();
+                String stateName = owner.stateName();
+                var suggested = RadioReferenceChannelNames.conventional(countyName, agencyName, stateName,
                     details.category(), details.subCategory(), row.description(), row.alphaTag(), frequency);
                 String system = suggested.system();
                 String site = suggested.site();
                 String name = suggested.name();
-                String context = java.util.stream.Stream.of(row.countyName(), row.agencyName(), details.category(),
+                String context = java.util.stream.Stream.of(countyName, agencyName, details.category(),
                     details.subCategory(), row.alphaTag(), mode, row.tone(), row.callsign()).filter(value -> value != null && !value.isBlank())
                     .distinct().collect(java.util.stream.Collectors.joining(" · "));
                 String key = "conventional:" + row.subCategoryId() + ':' + system + ':' + site + ':' + name;
@@ -1643,7 +1653,8 @@ public final class RadioReferenceImportService
         }
     }
 
-    public record ConventionalImportRequest(int subCategoryId, int frequencyId, Long aliasListId,
+    public record ConventionalImportRequest(RadioReferenceGateway.DetailKind ownerKind, int ownerId,
+                                            int subCategoryId, int frequencyId, Long aliasListId,
                                             String systemName, String siteName, String channelName)
     {
     }
@@ -1821,6 +1832,8 @@ public final class RadioReferenceImportService
             throws RadioReferenceDirectoryException;
         List<ConventionalFrequency> conventionalFrequenciesById(int subCategoryId, Collection<Integer> ids)
             throws RadioReferenceDirectoryException;
+        RadioReferenceChannelNames conventionalNames(RadioReferenceGateway.DetailKind ownerKind, int ownerId,
+            int subCategoryId, ConventionalFrequency frequency) throws RadioReferenceDirectoryException;
     }
 
     record DirectoryAdapter(RadioReferenceDirectoryService service) implements DirectoryAccess
@@ -1882,6 +1895,9 @@ public final class RadioReferenceImportService
         @Override public List<ConventionalFrequency> conventionalFrequenciesById(int subCategoryId,
             Collection<Integer> ids) throws RadioReferenceDirectoryException
             { return service.conventionalFrequenciesById(subCategoryId, ids); }
+        @Override public RadioReferenceChannelNames conventionalNames(RadioReferenceGateway.DetailKind ownerKind,
+            int ownerId, int subCategoryId, ConventionalFrequency frequency) throws RadioReferenceDirectoryException
+            { return service.conventionalNames(ownerKind, ownerId, subCategoryId, frequency); }
     }
 
     private record LocalChannelSnapshot(ChannelAdministrationService.Options options,

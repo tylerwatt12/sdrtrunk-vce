@@ -33,7 +33,7 @@ class DiscoveryAliasImportServiceTest
     }
 
     @Test
-    void registersEachNewListOnceAndNoChoiceDoesNotReadOrImportAnything()
+    void registersEachChosenListOnceAndNoChoiceDoesNotReadOrImportAnything()
     {
         FakeOperations operations = new FakeOperations();
         var service = new DiscoveryAliasImportService(operations);
@@ -49,6 +49,55 @@ class DiscoveryAliasImportServiceTest
         assertTrue(operations.applies.isEmpty());
         assertThrows(IllegalArgumentException.class, () -> service.importAliases("wizard", 8));
         assertTrue(operations.catalogs.isEmpty());
+    }
+
+    @Test
+    void conflictingDirectorySystemsForOneChosenListCannotImportWhicheverRegisteredFirst()
+    {
+        FakeOperations operations = new FakeOperations();
+        var service = new DiscoveryAliasImportService(operations);
+        var batch = new DiscoveryAliasImportService.Batch();
+        batch.register(7, "Shared local names", "County", matched(10));
+        batch.register(7, "Shared local names", "Another system", matched(11));
+        batch.register(7, "Shared local names", "County", matched(10));
+        service.retain("wizard", batch);
+        assertEquals(1, batch.snapshot().targets().size());
+        assertNull(batch.snapshot().targets().getFirst().systemId());
+        assertEquals("unavailable", batch.snapshot().targets().getFirst().state());
+        assertTrue(batch.snapshot().targets().getFirst().message().contains("conflicting"));
+        assertEquals(batch.snapshot(), service.importAliases("wizard", 7));
+        assertTrue(operations.catalogs.isEmpty());
+        assertTrue(operations.applies.isEmpty());
+    }
+
+    @Test
+    void confirmedSiteCanSupplyTheImportTargetForAnEarlierUnmatchedUseOfTheSameList()
+    {
+        FakeOperations operations = new FakeOperations();
+        var service = new DiscoveryAliasImportService(operations);
+        var batch = new DiscoveryAliasImportService.Batch();
+        batch.register(7, "Existing aliases", "County", RadioReferenceDiscoveryResolver.Result.manual());
+        batch.register(7, "Existing aliases", "County", matched(10));
+        service.retain("wizard", batch);
+        assertEquals("pending", batch.snapshot().targets().getFirst().state());
+        assertTrue(service.importAliases("wizard", 7).complete());
+        assertEquals(List.of(7L), operations.applies);
+    }
+
+    @Test
+    void directoryConflictDuringPreviewKeepsTheExplicitUnavailableResultAndPreventsApply()
+    {
+        FakeOperations operations = new FakeOperations();
+        var service = new DiscoveryAliasImportService(operations);
+        var batch = new DiscoveryAliasImportService.Batch();
+        batch.register(7, "Shared aliases", "County", matched(10));
+        service.retain("wizard", batch);
+        operations.beforeApply = () -> batch.register(7, "Shared aliases", "Another system", matched(11));
+        var result = service.importAliases("wizard", 7);
+        assertEquals("unavailable", result.targets().getFirst().state());
+        assertNull(result.targets().getFirst().systemId());
+        assertTrue(result.targets().getFirst().message().contains("conflicting"));
+        assertTrue(operations.applies.isEmpty());
     }
 
     @Test
