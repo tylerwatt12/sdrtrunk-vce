@@ -2,13 +2,10 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.*;
-import io.github.dsheirer.alerts.TopicAlertSchema;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -26,14 +23,15 @@ class Format58To59DatabaseMigrationTest
     private static final String CALL = "8a220f1a-7ddc-4182-8dd0-fb60506aeb51";
     @TempDir Path directory;
 
-    @Test void freshSchemaMatchesRegisteredSignatureAndActivityDefinition() throws Exception
+    @Test void freshPairAndFrozenAdjacentTargetMatchTheirRegisteredSignatures() throws Exception
     {
-        try(var connection = DriverManager.getConnection("jdbc:sqlite::memory:"))
+        Path fresh = directory.resolve("fresh.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
+        ConfigurationHistoryDatabase.validatePair(fresh);
+        Path adjacent = Format59TestDatabase.create(directory.resolve("adjacent.sqlite"));
+        try(var connection = open(adjacent))
         {
-            SdrTrunkDatabaseSchema.create(connection); ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection); TrunkedSiteSchema.create(connection); TopicAlertSchema.create(connection);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-            ReceiverActivitySchema.validate(connection);
+            assertEquals(DatabaseFormatCatalog.requireVersion(59).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
     }
 
@@ -47,23 +45,22 @@ class Format58To59DatabaseMigrationTest
             assertTrue(count(connection, "receiver_activity_event") > 0);
             assertTrue(count(connection, "topic_alert_message") > 0);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(List.of("format-58-to-59", "format-59-to-60", "format-60-to-61", "format-61-to-62"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            migrateAdjacent(connection);
+            assertEquals(DatabaseFormatCatalog.requireVersion(59).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
-            assertEquals(0, count(connection, "web_user_tour_dismissal"));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE duration_ms IS NOT NULL"));
             assertTrue(scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE source_call_uuid IS NOT NULL") > 0);
             assertTrue(scalar(connection, "SELECT count(*) FROM topic_alert_message WHERE source_call_uuid IS NOT NULL") > 0);
             connection.rollback();
             assertEquals(58, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
-            DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            migrateAdjacent(connection); connection.commit();
+            assertEquals(59, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
             integrity(connection);
         }
+        ApplicationDatabaseMigrator.migrateInPlace(database, null);
+        ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
     }
 
@@ -81,8 +78,8 @@ class Format58To59DatabaseMigrationTest
         assertArrayEquals(before, Files.readAllBytes(database));
         try(var connection = open(database))
         {
-            connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version()); integrity(connection);
+            connection.setAutoCommit(false); migrateAdjacent(connection); connection.commit();
+            assertEquals(59, DatabaseFormatCatalog.inspect(connection).version()); integrity(connection);
         }
     }
 
@@ -124,8 +121,14 @@ class Format58To59DatabaseMigrationTest
     {
         Path database = Format58TestDatabase.create(directory.resolve("startup.sqlite"));
         byte[] before = Files.readAllBytes(database);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(before, Files.readAllBytes(database));
+    }
+
+    private static void migrateAdjacent(Connection connection) throws SQLException
+    {
+        new Format58To59DatabaseMigration().migrate(connection);
+        DatabaseFormatCatalog.stamp(connection, 59);
     }
 
     private static Connection open(Path path) throws SQLException
@@ -157,8 +160,7 @@ class Format58To59DatabaseMigrationTest
         Map<String,List<String>> result = new LinkedHashMap<>();
         List<String> tables = new ArrayList<>();
         try(var sql = connection.createStatement(); var rows = sql.executeQuery("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"))
-        { while(rows.next()) if(!java.util.Set.of("activity_message_type", "web_user_tour_dismissal")
-            .contains(rows.getString(1))) tables.add(rows.getString(1)); }
+        { while(rows.next()) tables.add(rows.getString(1)); }
         for(String table: tables)
         {
             List<String> values = new ArrayList<>();
@@ -172,11 +174,6 @@ class Format58To59DatabaseMigrationTest
                     {
                         String column = rows.getMetaData().getColumnName(i);
                         if(table.equals("receiver_activity_event") && "duration_ms".equals(column)) continue;
-                        if(java.util.Set.of("stun_count", "revive_count", "kill_count", "radio_inhibit_count",
-                            "radio_uninhibit_count", "remote_monitor_count", "authenticate_count", "cancel_call_count",
-                            "radio_detach_count", "protect_count", "vote_now_count").contains(column)) continue;
-                        // Later preference conversion is checked by Format61To62DatabaseMigrationTest.
-                        if(table.equals("web_user") && List.of("preferences_json", "preferences_revision").contains(column)) continue;
                         Object value = rows.getObject(i);
                         row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                     }

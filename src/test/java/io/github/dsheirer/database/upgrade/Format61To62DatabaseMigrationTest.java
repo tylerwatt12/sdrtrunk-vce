@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.web.settings.WebUserPreferences;
 import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
@@ -31,7 +32,7 @@ class Format61To62DatabaseMigrationTest
     {
         Path database = Format61TestDatabase.create(directory.resolve("prior.sqlite"));
         byte[] source = Files.readAllBytes(database);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(source, Files.readAllBytes(database));
         try(var connection = open(database); var statement = connection.createStatement())
         {
@@ -44,25 +45,25 @@ class Format61To62DatabaseMigrationTest
             assertTrue(retained.get("web_user_tour_dismissal").size() >= 3);
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(List.of("format-61-to-62"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
-            assertEquals(preferences.size(), report.steps().getFirst().effects().getFirst().affectedRows());
+            var effects = migrateAdjacent(connection);
+            assertEquals(preferences.size(), effects.getFirst().affectedRows());
             assertRetained(retained, retainedRows(connection));
             assertConverted(preferences, preferences(connection));
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(62, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             connection.rollback();
             assertEquals(61, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(preferences, preferences(connection));
             assertRetained(retained, retainedRows(connection));
-            DatabaseMigrationChain.migrate(connection);
+            migrateAdjacent(connection);
             connection.commit();
             assertConverted(preferences, preferences(connection));
             assertRetained(retained, retainedRows(connection));
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
             try(var rows = statement.executeQuery("PRAGMA integrity_check")) { assertTrue(rows.next()); assertEquals("ok", rows.getString(1)); }
             try(var rows = statement.executeQuery("PRAGMA foreign_key_check")) { assertFalse(rows.next()); }
         }
+        ApplicationDatabaseMigrator.migrateInPlace(database, null);
+        ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         byte[] current = Files.readAllBytes(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
@@ -80,8 +81,8 @@ class Format61To62DatabaseMigrationTest
                 var before = preferences(connection);
                 var retained = retainedRows(connection);
                 statement.executeUpdate("UPDATE web_user SET " + damage + " WHERE primary_admin=1");
-                var report = DatabaseMigrationChain.migrate(connection);
-                assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
+                var effects = migrateAdjacent(connection);
+                assertTrue(effects.stream().anyMatch(effect ->
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
                 for(var entry: preferences(connection).entrySet())
                 {
@@ -95,7 +96,7 @@ class Format61To62DatabaseMigrationTest
                 }
                 // Valid identity, password metadata, account timestamps and tour rows survive independently.
                 assertRetained(retained, retainedRows(connection));
-                DatabaseFormatCatalog.requireCurrent(connection);
+                assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             }
         }
     }
@@ -116,12 +117,12 @@ class Format61To62DatabaseMigrationTest
             "UPDATE web_user SET preferences_json=? WHERE primary_admin=1"))
         {
             update.setString(1, source); assertEquals(1, update.executeUpdate());
-            var report = DatabaseMigrationChain.migrate(connection);
-            var effect = report.steps().getFirst().effects().stream().filter(value ->
+            var effects = migrateAdjacent(connection);
+            var effect = effects.stream().filter(value ->
                 value.kind() == DatabaseMigrationEffect.Kind.RESET && value.subject().contains("storage bound")).findFirst().orElseThrow();
             assertEquals(1, effect.affectedRows());
             assertEquals(converted.json(), preferences(connection).get(primaryId(connection)).json());
-            DatabaseFormatCatalog.requireCurrent(connection);
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 
@@ -142,6 +143,13 @@ class Format61To62DatabaseMigrationTest
         byte[] unchanged = Files.readAllBytes(earlier);
         try(var connection = open(earlier)) { assertThrows(SQLException.class, () -> new Format61To62DatabaseMigration().migrate(connection)); }
         assertArrayEquals(unchanged, Files.readAllBytes(earlier));
+    }
+
+    private static List<DatabaseMigrationEffect> migrateAdjacent(Connection connection) throws Exception
+    {
+        var effects = new Format61To62DatabaseMigration().migrateAndReport(connection);
+        DatabaseFormatCatalog.stamp(connection, 62);
+        return effects;
     }
 
     private static void assertConverted(Map<Long,Preference> before, Map<Long,Preference> after) throws Exception

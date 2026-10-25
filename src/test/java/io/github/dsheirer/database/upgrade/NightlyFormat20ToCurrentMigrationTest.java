@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.ActivityDatabasePath;
+import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -122,7 +124,7 @@ class NightlyFormat20ToCurrentMigrationTest
     {
         Path database = populatedPublishedDatabase("backup-failure.sqlite");
         byte[] before = Files.readAllBytes(database);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(before, Files.readAllBytes(database), "Normal startup must not migrate an older profile");
         assertThrows(IOException.class, () -> ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { },
             () -> { throw new IOException("Injected backup failure"); }));
@@ -208,7 +210,8 @@ class NightlyFormat20ToCurrentMigrationTest
 
     private static void assertPreservedAndCurrent(Path database, Snapshot before) throws Exception
     {
-        try(Connection connection = open(database))
+        ConfigurationHistoryDatabase.validatePair(database);
+        try(Connection connection = openCurrentStores(database))
         {
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
@@ -230,14 +233,16 @@ class NightlyFormat20ToCurrentMigrationTest
                 assertEquals("normal", target.path("presentation").path("live_row_density").asText());
             }
             // Historical full tuples remain unproven: migration must not invent ISSI mappings or Alias matches.
-            assertEquals("0", scalar(connection, "SELECT count(*) FROM p25_subscriber_identity"));
-            assertEquals("0", scalar(connection, "SELECT count(*) FROM p25_wuid_assignment_observation_summary"));
-            assertEquals("0", scalar(connection, "SELECT count(*) FROM radio_system_identity_summary " +
+            assertEquals("0", scalar(connection, "SELECT count(*) FROM activity.p25_subscriber_identity"));
+            assertEquals("0", scalar(connection, "SELECT count(*) FROM activity.p25_wuid_assignment_observation_summary"));
+            assertEquals("0", scalar(connection, "SELECT count(*) FROM activity.radio_system_identity_summary " +
                 "WHERE p25_subscriber_identity_id IS NOT NULL"));
-            assertEquals("2", scalar(connection, "SELECT count(*) FROM activity_event_identity_member " +
+            assertEquals("2", scalar(connection, "SELECT count(*) FROM activity.activity_event_identity_member " +
                 "WHERE channel_id=5000000000"));
             assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
             assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
+            assertEquals("ok", scalar(connection, "PRAGMA activity.integrity_check"));
+            assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check(NULL,'activity')"));
         }
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
@@ -290,7 +295,8 @@ class NightlyFormat20ToCurrentMigrationTest
             String projection = table.getValue().stream().map(name -> "\"" + name + "\"")
                 .collect(java.util.stream.Collectors.joining(","));
             String filter = switch(table.getKey()) {
-                case "database_metadata" -> " WHERE key<>'database_format_version'";
+                case "database_metadata" -> " WHERE key NOT IN ('database_format_version'," +
+                    "'database_role','configuration_history_pair_id')";
                 case "application_settings" -> " WHERE key NOT IN " +
                     "('setup_wizard','remote.links','audio.paging_tones','alert.configuration')";
                 // New tables may acquire their own allocator. Every original table's high-water mark must survive.
@@ -298,10 +304,18 @@ class NightlyFormat20ToCurrentMigrationTest
                     .map(name -> "'" + name + "'").collect(java.util.stream.Collectors.joining(",")) + ")";
                 default -> "";
             };
+            String schema = tableExists(connection, "main", table.getKey()) ? "main" : "activity";
+            String select = "SELECT " + projection + " FROM " + schema + ".\"" + table.getKey() + "\"" + filter;
+            if((table.getKey().equals("database_metadata") || table.getKey().equals("sqlite_sequence")) &&
+                tableExists(connection, "activity", table.getKey()))
+            {
+                // These two physical tables were split between roles; compare their complete original logical rows.
+                select += " UNION SELECT " + projection + " FROM activity.\"" + table.getKey() + "\"" + filter;
+            }
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             long count = 0;
             try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
-                "SELECT " + projection + " FROM \"" + table.getKey() + "\"" + filter + " ORDER BY " + projection))
+                select + " ORDER BY " + projection))
             {
                 while(rows.next())
                 {
@@ -322,6 +336,37 @@ class NightlyFormat20ToCurrentMigrationTest
             contents.put(table.getKey(), new TableContents(count, HexFormat.of().formatHex(digest.digest())));
         }
         return contents;
+    }
+
+    private static boolean tableExists(Connection connection, String schema, String table) throws SQLException
+    {
+        try(Statement statement = connection.createStatement(); ResultSet databases = statement.executeQuery("PRAGMA database_list"))
+        {
+            boolean present = false;
+            while(databases.next()) if(schema.equals(databases.getString("name"))) present = true;
+            if(!present) return false;
+        }
+        try(var query = connection.prepareStatement("SELECT 1 FROM " + schema + ".sqlite_schema WHERE type='table' AND name=?"))
+        {
+            query.setString(1, table);
+            try(ResultSet rows = query.executeQuery()) { return rows.next(); }
+        }
+    }
+
+    private static Connection openCurrentStores(Path database) throws SQLException
+    {
+        Connection connection = open(database);
+        try(var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+        {
+            attach.setString(1, ActivityDatabasePath.forConfiguration(database).toUri().toASCIIString() + "?mode=ro");
+            attach.execute();
+            return connection;
+        }
+        catch(SQLException failure)
+        {
+            try { connection.close(); } catch(SQLException close) { failure.addSuppressed(close); }
+            throw failure;
+        }
     }
 
     private static Connection open(Path database) throws SQLException

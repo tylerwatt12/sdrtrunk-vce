@@ -2,13 +2,9 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.*;
-import io.github.dsheirer.alerts.TopicAlertSchema;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -27,14 +23,14 @@ class Format60To61DatabaseMigrationTest
     @Test void freshAndMigratedDefinitionsMatchTheirRegisteredSignatures() throws Exception
     {
         Path database = Format60TestDatabase.create(directory.resolve("prior.sqlite"));
-        try(var fresh = DriverManager.getConnection("jdbc:sqlite::memory:"); var migrated = open(database))
+        Path fresh = directory.resolve("fresh.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
+        ConfigurationHistoryDatabase.validatePair(fresh);
+        try(var migrated = open(database))
         {
-            SdrTrunkDatabaseSchema.create(fresh); ReceiverActivitySchema.create(fresh);
-            DmrActivitySchema.create(fresh); TrunkedSiteSchema.create(fresh); TopicAlertSchema.create(fresh);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(fresh));
             assertEquals(DatabaseFormatCatalog.requireVersion(60).fingerprint(), SqliteSchemaValidator.fingerprint(migrated));
             migrated.setAutoCommit(false); new Format60To61DatabaseMigration().migrate(migrated);
-            assertEquals(SqliteSchemaValidator.fingerprint(fresh), SqliteSchemaValidator.fingerprint(migrated));
+            assertEquals(DatabaseFormatCatalog.requireVersion(61).fingerprint(), SqliteSchemaValidator.fingerprint(migrated));
         }
     }
 
@@ -42,34 +38,34 @@ class Format60To61DatabaseMigrationTest
     {
         Path database = Format60TestDatabase.create(directory.resolve("upgrade.sqlite"));
         byte[] original = Files.readAllBytes(database);
-        assertThrows(java.sql.SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(original, Files.readAllBytes(database));
         try(var connection = open(database))
         {
             var before = snapshot(connection, null);
             assertTrue(before.get("web_user").size() >= 2, "The frozen prior fixture contains usable distinct accounts.");
             connection.setAutoCommit(false);
-            assertEquals(List.of("format-60-to-61", "format-61-to-62"), DatabaseMigrationChain.migrate(connection).steps().stream()
-                .map(DatabaseMigrationChain.StepReport::id).toList());
+            migrateAdjacent(connection);
             assertEquals(before, snapshot(connection, before.keySet()));
             assertEquals(0, count(connection, "SELECT count(*) FROM web_user_tour_dismissal"));
             connection.rollback();
             assertEquals(60, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, snapshot(connection, null));
-            DatabaseMigrationChain.migrate(connection); connection.commit();
+            migrateAdjacent(connection); connection.commit();
             assertEquals(before, snapshot(connection, before.keySet()));
-            assertEquals(62, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertEquals(61, DatabaseFormatCatalog.inspect(connection).version());
             try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA foreign_key_check"))
             { assertFalse(rows.next()); }
             try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA integrity_check"))
             { assertTrue(rows.next()); assertEquals("ok", rows.getString(1)); }
         }
+        ApplicationDatabaseMigrator.migrateInPlace(database, null);
+        ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         byte[] upgraded = Files.readAllBytes(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         assertArrayEquals(upgraded, Files.readAllBytes(database));
-        Path populated = Format62TestDatabase.create(directory.resolve("current.sqlite"));
+        Path populated = Format63TestDatabase.create(directory.resolve("current.sqlite"));
         try(var connection = open(populated))
         {
             assertTrue(count(connection, "SELECT count(*) FROM web_user_tour_dismissal") >= 3);
@@ -79,7 +75,7 @@ class Format60To61DatabaseMigrationTest
 
     @Test void offlineAccountRepairRemovesOnlyTheDeletedAccountsTourHistory() throws Exception
     {
-        Path database = Format62TestDatabase.create(directory.resolve("account-repair.sqlite"));
+        Path database = Format63TestDatabase.create(directory.resolve("account-repair.sqlite"));
         try(var connection = open(database); var statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=OFF");
@@ -98,6 +94,12 @@ class Format60To61DatabaseMigrationTest
             try(var rows = statement.executeQuery("PRAGMA foreign_key_check")) { assertFalse(rows.next()); }
             connection.rollback();
         }
+    }
+
+    private static void migrateAdjacent(Connection connection) throws Exception
+    {
+        new Format60To61DatabaseMigration().migrate(connection);
+        DatabaseFormatCatalog.stamp(connection, 61);
     }
 
     private static Connection open(Path path) throws Exception
@@ -122,9 +124,6 @@ class Format60To61DatabaseMigrationTest
                         List<String> fields = new ArrayList<>();
                         for(int i=1; i<=rows.getMetaData().getColumnCount(); i++)
                         {
-                            // Format 62 deliberately converts these two fields; its dedicated test verifies their exact contents.
-                            if(table.equals("web_user") && List.of("preferences_json", "preferences_revision")
-                                .contains(rows.getMetaData().getColumnName(i))) continue;
                             Object value = rows.getObject(i);
                             fields.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                         }
