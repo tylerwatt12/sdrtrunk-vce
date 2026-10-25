@@ -174,7 +174,8 @@ test('High-rate Live messages retain ordering, capture, row focus and bounded pr
   await app.send(3, 'decode_message', message(origins[0], '0', 1, 'sample 000000 updated'));
   await expect(messages).toHaveCount(1);
   await expect(messages).toContainText('sample 000000 updated');
-  await page.goto('/app.html?view=dashboard');
+  await page.getByRole('link', { name: 'VCE home', exact: true }).click();
+  await expect(page).toHaveURL(/view=dashboard/);
   await expect.poll(() => app.latest().decode_messages).toBeUndefined();
   expect(app.fixture.pageErrors).toEqual([]);
   expect(app.fixture.unexpected).toEqual([]);
