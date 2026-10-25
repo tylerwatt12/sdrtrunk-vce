@@ -90,6 +90,9 @@ public class ConfigurationManager implements AutoCloseable
     private final Consumer<StatsDatabaseMaintenanceRequest> mMaintenanceDispatcher;
     private final Object mRadioReferenceLoginLock = new Object();
     private volatile boolean mInitialized = false;
+    //Owned only by ConfigurationExecutor. A catalog is published once the complete outer command succeeds.
+    private int mConfigurationTaskDepth;
+    private boolean mChannelCatalogDirty = true;
     private volatile boolean mExternalConfigurationOperation = false;
 
     /**
@@ -143,12 +146,33 @@ public class ConfigurationManager implements AutoCloseable
     /** All configuration clients share this owner; windows never supply its execution thread. */
     public <T> T executeConfigurationTask(Supplier<T> operation)
     {
-        return mConfigurationExecutor.call(operation);
+        return mConfigurationExecutor.call(() -> completeConfigurationTask(operation));
     }
 
     public CompletableFuture<Void> submitConfigurationTask(Runnable operation)
     {
-        return mConfigurationExecutor.submit(operation);
+        return mConfigurationExecutor.submit(() -> completeConfigurationTask(() -> { operation.run(); return null; }));
+    }
+
+    private <T> T completeConfigurationTask(Supplier<T> operation)
+    {
+        mConfigurationTaskDepth++;
+        boolean completed = false;
+        try
+        {
+            T result = operation.get();
+            completed = true;
+            return result;
+        }
+        finally
+        {
+            if(--mConfigurationTaskDepth == 0)
+            {
+                if(completed && mInitialized && mChannelCatalogDirty)
+                    mChannelAdministrationService.publishCommittedCatalog();
+                mChannelCatalogDirty = false;
+            }
+        }
     }
 
     /** Learners submit detached commands without putting database work on metadata or decoder callbacks. */
@@ -193,6 +217,7 @@ public class ConfigurationManager implements AutoCloseable
                 if(frequenciesChanged) live.setSourceConfiguration(source);
             }
             mChannelConfigurationRevision.incrementAndGet();
+            mChannelCatalogDirty = true;
         }).exceptionally(failure ->
         {
             mLog.error("Unable to apply learned channel configuration", failure);
@@ -349,6 +374,7 @@ public class ConfigurationManager implements AutoCloseable
         executeConfigurationTask(() -> {
             transferStateToModels();
             mInitialized = true;
+            mChannelCatalogDirty = true;
             return null;
         });
     }
@@ -617,6 +643,7 @@ public class ConfigurationManager implements AutoCloseable
             }
         }
         mChannelConfigurationRevision.incrementAndGet();
+        mChannelCatalogDirty = true;
     }
 
     public StreamingAdministrationService getStreamingAdministrationService()
@@ -676,6 +703,7 @@ public class ConfigurationManager implements AutoCloseable
         mStreamingConfigurationRevision.incrementAndGet();
         // Alias dialogs include the destination catalog; invalidate stale pickers on rename/add/delete.
         mAliasConfigurationRevision.incrementAndGet();
+        mChannelCatalogDirty = true;
     }
 
     /** Creates an isolated Alias-only candidate; channel and broadcast state is deliberately out of scope. */
@@ -791,6 +819,7 @@ public class ConfigurationManager implements AutoCloseable
         }
 
         mAliasConfigurationRevision.incrementAndGet();
+        mChannelCatalogDirty = true;
     }
 
     private AliasConfigurationSnapshot loadCommittedAliasConfiguration()
@@ -878,7 +907,7 @@ public class ConfigurationManager implements AutoCloseable
     {
         try
         {
-            ConfigurationSnapshot loaded = mConfigurationRepository.load();
+            ConfigurationSnapshot loaded = mConfigurationRepository.loadForStartup();
             ConfigurationSnapshotValidator.validateForStartup(loaded);
             mLog.debug("Loaded configuration alias lists [{}], aliases [{}], scan lists [{}], channels [{}], " +
                     "and streams [{}] from SQLite [{}]", loaded.aliasListDefinitions().size(),

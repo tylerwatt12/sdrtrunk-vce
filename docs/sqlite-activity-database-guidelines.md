@@ -791,3 +791,53 @@ preservation/reset/drop assertions. See [Database Migration Contract](database-m
 
 Any exception to these guidelines must document the user-visible purpose and the measured storage/query tradeoff in the
 change that introduces it.
+
+
+### Configuration-independent activity ownership (format 63)
+
+Receiver Activity and administrator configuration use separate matching SQLite files. Historical `receiver_channel`
+and `radio_system` owners no longer reference configuration through foreign keys. Channel context is stored once
+per historical owner, and Alias summaries retain their activity identity plus Alias and Alias List labels. Removing
+configuration performs no history scan or purge. Receiver callbacks continue offering bounded work to the existing
+background activity writer; no database, filesystem, UI, or network work enters the callback.
+
+Scheduled retention owns detached data. Expired detailed rows and dependent buckets are removed first. Historical
+owners and detached conventional/Alias/analog lifetime summaries become eligible only when expired, no longer
+configured, and no retained descendants remain. Active configuration protects its lifetime totals. Independent
+configuration and subscriber dictionaries are read through a read-only attachment; complete subscriber tuples,
+not integer keys from the other file, resolve cross-store identity. Matcher changes advance the configured Alias
+activity identity and reset boundary, while rename and route edits preserve them.
+
+Eight targeted indexes support those new expiry candidates and descendant probes:
+
+```sql
+CREATE INDEX idx_receiver_channel_statistics_reset_retention ON receiver_channel_statistics_reset(reset_at_ms,configuration_id);
+CREATE INDEX idx_receiver_channel_retention ON receiver_channel(last_seen_ms,id);
+CREATE INDEX idx_alias_activity_retention ON alias_activity_summary(coalesce(last_evidence_ms,updated_at_ms),alias_id);
+CREATE INDEX idx_conventional_summary_retention ON conventional_activity_summary(last_seen_ms,channel_id,frequency_hz,timeslot);
+CREATE INDEX idx_alias_analog_retention ON alias_list_analog_activity_summary(last_seen_ms,alias_list_id,channel_configuration_id,protocol_code,assigned_talkgroup);
+CREATE INDEX idx_trunked_radio_affiliation_channel ON trunked_radio_affiliation(channel_id);
+CREATE INDEX idx_trunked_radio_presence_clear_channel ON trunked_radio_channel_presence_clear(channel_id);
+CREATE INDEX idx_p25_wuid_assignment_observation_channel ON p25_wuid_assignment_observation_summary(last_channel_id) WHERE last_channel_id IS NOT NULL;
+```
+
+The first five index compact reset/owner/summary rows rather than detailed events. The remaining three have one entry
+per existing affiliation, presence-clear, or channel-attributed assignment row. They add no observations or copied
+names, and ordinary writes/retention maintain them on the existing background writer. At R new retained rows per
+hour, time-retained indexes have at most 8,760 × R entries under maximum 365-day retention; owner/summary entries
+follow the retained owner/context count and active configuration. Active lifetime summaries remain intentionally
+protected. Query-plan tests require indexed expiry seeks and channel-first descendant probes, avoiding a scan of
+all active history for each detached owner. Actual index widths and page occupancy determine disk growth; there is
+no fixed bytes-per-row guarantee.
+
+Fresh creation and the adjacent Application Migrator use the same exact role schemas and profile identity. Migration
+rebuilds only compact owners/summaries, extracts configuration, and adds these indexes; retained detailed-event pages
+and indexes remain in their original file. Startup validates both exact fingerprints and their shared identity before
+enabling WAL. It never repairs, creates a missing companion, or finishes an interrupted activation.
+
+
+`receiver_channel_statistics_reset` stores an explicit saved-channel UUID and reset time. Clearing a channel writes
+that marker and removes its observed owner/history without inserting a fabricated observation or advancing its
+first-seen time. Fresh reception begins a real owner at its observation time. Scheduled retention expires reset
+markers only when their configuration is gone and their reset time is older than the selected cutoff; active
+configuration keeps its boundary. The cutoff index has one entry per explicit reset marker, with no event copies.

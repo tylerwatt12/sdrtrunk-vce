@@ -326,7 +326,7 @@ class TrunkedSiteMetadataMapperTest
         writer.close();
         assertEquals(1, writer.getWrittenRecords());
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = ActivityTestDatabase.openPair(database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
                 SELECT protocol_code, observed_network_id, observed_site_id
@@ -358,15 +358,11 @@ class TrunkedSiteMetadataMapperTest
 
     private static void createDatabase(Path database, Channel channel) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = ActivityTestDatabase.openPair(database);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,

@@ -14,6 +14,7 @@ import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfigura
 import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.configuration.ConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.module.decode.am.DecodeConfigAM;
@@ -25,11 +26,13 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.TransmissionMode;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -68,7 +71,10 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
         Channel changed = current.channels().getFirst();
         long owner = channelRow(fixture, changed);
         long history = historyRow(fixture, changed);
-        execute(fixture.database(), "UPDATE configuration_channel SET analog_activity_reset_ms=50 WHERE " + id(changed));
+        execute(ActivityDatabasePath.forConfiguration(fixture.database()),
+            "INSERT INTO receiver_channel_statistics_reset(configuration_id,reset_at_ms) VALUES ('" +
+                changed.getConfigurationId() + "',50)");
+        forbidAll(ActivityDatabasePath.forConfiguration(fixture.database()), "receiver_channel_statistics_reset");
         String sequence = sequence(fixture);
         forbidExceptUpdate(fixture, "configuration_channel", changed.getConfigurationId());
         forbidAll(fixture.database(), "configuration_broadcast_stream");
@@ -84,7 +90,8 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
         assertEquals(122_050_000L, ((SourceConfigTuner)saved.getSourceConfiguration()).getFrequency());
         assertEquals(owner, channelRow(fixture, saved));
         assertEquals(history, historyRow(fixture, saved));
-        assertEquals(50, number(fixture, "SELECT analog_activity_reset_ms FROM configuration_channel WHERE " + id(saved)));
+        assertEquals(50, historyNumber(fixture,
+            "SELECT reset_at_ms FROM receiver_channel_statistics_reset WHERE " + id(saved)));
         assertEquals(sequence, sequence(fixture));
     }
 
@@ -171,7 +178,7 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
     }
 
     @Test
-    void deletingFinalOwnersDoesNotWriteRetainedRowsAndCascadesOnlyTheirHistory() throws Exception
+    void deletingFinalOwnersDoesNotWriteRetainedConfigurationOrAnyHistory() throws Exception
     {
         Fixture fixture = fixture("delete");
         ConfigurationSnapshot current = fixture.repository().load();
@@ -186,8 +193,8 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
         fixture.repository().synchronizeChannelAndBroadcastConfiguration(current.channels().subList(0, 2),
             current.broadcastConfigurations().subList(0, 1));
         assertEquals(2, fixture.repository().load().channels().size());
-        assertEquals(2, number(fixture, "SELECT count(*) FROM receiver_channel"));
-        assertEquals(0, number(fixture, "SELECT count(*) FROM receiver_channel WHERE " + id(removed)));
+        assertEquals(3, historyNumber(fixture, "SELECT count(*) FROM receiver_channel"));
+        assertEquals(1, historyNumber(fixture, "SELECT count(*) FROM receiver_channel WHERE " + id(removed)));
     }
 
     @Test
@@ -242,54 +249,69 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
     }
 
     @Test
-    void decoderChangeReplacesOnlyItsOwnerAndDiscardsOnlyIncompatibleHistory() throws Exception
+    void decoderChangeRequiresANewIdentityAndPreservesConfigurationAndHistory() throws Exception
     {
         Fixture fixture = fixture("decoder-change");
         ConfigurationSnapshot current = fixture.repository().load();
         Channel changed = current.channels().getFirst();
-        long oldOwner = channelRow(fixture, changed);
-        Channel retained = current.channels().get(1);
-        long retainedHistory = historyRow(fixture, retained);
-        forbid(fixture.database(), "configuration_channel", "INSERT", "NEW.configuration_id<>'" + changed.getConfigurationId() + "'");
-        forbid(fixture.database(), "configuration_channel", "DELETE", "OLD.configuration_id<>'" + changed.getConfigurationId() + "'");
+        long owner = channelRow(fixture, changed);
+        long priorHistory = historyRow(fixture, changed);
+        String before = fixture.repository().fingerprint();
+        forbid(fixture.database(), "configuration_channel", "INSERT", "NEW.configuration_id='" + changed.getConfigurationId() + "'");
+        forbid(fixture.database(), "configuration_channel", "DELETE", null);
         forbid(fixture.database(), "configuration_channel", "UPDATE", null);
         forbidAll(fixture.database(), "configuration_broadcast_stream");
         changed.setDecodeConfiguration(new DecodeConfigNBFM());
-        save(fixture, current);
-        assertNotEquals(oldOwner, channelRow(fixture, changed));
-        assertEquals(0, number(fixture, "SELECT count(*) FROM receiver_channel WHERE " + id(changed)));
-        assertEquals(retainedHistory, historyRow(fixture, retained));
+        assertThrows(IOException.class, () -> save(fixture, current));
+        assertEquals(before, fixture.repository().fingerprint());
+        assertEquals(owner, channelRow(fixture, changed));
+        assertEquals(priorHistory, historyRow(fixture, changed));
+        assertFreshClassificationCanBeAdded(fixture, changed);
+        assertEquals(priorHistory, historyRow(fixture, changed));
     }
 
     @Test
-    void changingChannelKindOrNxdnAddressDomainReplacesOnlyIncompatibleHistory() throws Exception
+    void changingChannelKindOrNxdnAddressDomainRequiresANewIdentityWithoutReinterpretingHistory() throws Exception
     {
         for(boolean nxdn: List.of(false, true))
         {
-            Fixture fixture = fixture(nxdn ? "nxdn-domain" : "dmr-kind");
+            Fixture fixture = fixture(nxdn ? "nxdn-domain" : "dmr-kind",
+                nxdn ? AliasListFamily.NXDN : AliasListFamily.DMR);
             ConfigurationSnapshot initial = fixture.repository().load();
             Channel changed = initial.channels().getFirst();
-            changed.setDecodeConfiguration(nxdn ? new DecodeConfigNXDN() : new DecodeConfigDMR());
-            changed.setAliasListDefinition(definition(initial.aliasListDefinitions(),
-                nxdn ? AliasListFamily.NXDN : AliasListFamily.DMR));
-            fixture.repository().commitChannelConfiguration(new ChannelConfigurationSnapshot(initial.channels()));
-            execute(fixture.database(), "INSERT INTO receiver_channel(configuration_id,first_seen_ms,last_seen_ms) " +
-                "VALUES ('" + changed.getConfigurationId() + "',100,200)");
-            long previous = channelRow(fixture, changed);
-            long retainedHistory = historyRow(fixture, initial.channels().get(1));
+            long priorHistory = historyRow(fixture, changed);
+            long owner = channelRow(fixture, changed);
+            String before = fixture.repository().fingerprint();
             forbid(fixture.database(), "configuration_channel", "UPDATE", null);
-            forbid(fixture.database(), "configuration_channel", "INSERT", "NEW.configuration_id<>'" + changed.getConfigurationId() + "'");
-            forbid(fixture.database(), "configuration_channel", "DELETE", "OLD.configuration_id<>'" + changed.getConfigurationId() + "'");
+            forbid(fixture.database(), "configuration_channel", "DELETE", null);
+            forbid(fixture.database(), "configuration_channel", "INSERT", "NEW.configuration_id='" + changed.getConfigurationId() + "'");
             forbidAll(fixture.database(), "configuration_broadcast_stream");
             if(nxdn)
                 ((DecodeConfigNXDN)changed.getDecodeConfiguration()).setTransmissionMode(TransmissionMode.TYPE_D);
             else
                 ((DecodeConfigDMR)changed.getDecodeConfiguration()).setChannelMode(DMRChannelMode.TRUNKED);
-            fixture.repository().commitChannelConfiguration(new ChannelConfigurationSnapshot(initial.channels()));
-            assertNotEquals(previous, channelRow(fixture, changed));
-            assertEquals(0, number(fixture, "SELECT count(*) FROM receiver_channel WHERE " + id(changed)));
-            assertEquals(retainedHistory, historyRow(fixture, initial.channels().get(1)));
+            assertThrows(IOException.class, () -> fixture.repository().commitChannelConfiguration(
+                new ChannelConfigurationSnapshot(initial.channels())));
+            assertEquals(before, fixture.repository().fingerprint());
+            assertEquals(owner, channelRow(fixture, changed));
+            assertEquals(priorHistory, historyRow(fixture, changed));
+            assertFreshClassificationCanBeAdded(fixture, changed);
+            assertEquals(priorHistory, historyRow(fixture, changed));
         }
+    }
+
+    private static void assertFreshClassificationCanBeAdded(Fixture fixture, Channel changed) throws Exception
+    {
+        Channel fresh = changed.copyOf();
+        fresh.setName("New classification");
+        assertNotEquals(changed.getConfigurationId(), fresh.getConfigurationId());
+        List<Channel> channels = new ArrayList<>(fixture.repository().load().channels());
+        channels.add(fresh);
+        fixture.repository().commitChannelConfiguration(new ChannelConfigurationSnapshot(channels));
+        assertEquals(4, fixture.repository().load().channels().size());
+        assertTrue(channelRow(fixture, fresh) > 0);
+        assertEquals(0, historyNumber(fixture,
+            "SELECT count(*) FROM receiver_channel WHERE " + id(fresh)), "Saving configuration does not invent observations");
     }
 
     @Test
@@ -326,11 +348,21 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
 
     private Fixture fixture(String name) throws Exception
     {
+        return fixture(name, null);
+    }
+
+    private Fixture fixture(String name, AliasListFamily family) throws Exception
+    {
         Path database = mTemporaryFolder.resolve(name + ".sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         ConfigurationRepository repository = new ConfigurationRepository(database);
         List<AliasListDefinition> definitions = repository.loadAliasConfiguration().definitions();
         Channel first = channel("First", 121_900_000L, definitions);
+        if(family != null)
+        {
+            first.setDecodeConfiguration(family == AliasListFamily.NXDN ? new DecodeConfigNXDN() : new DecodeConfigDMR());
+            first.setAliasListDefinition(definition(definitions, family));
+        }
         Channel second = channel("Second", 122_000_000L, definitions);
         Channel third = channel("P25 site", 851_012_500L, definitions);
         third.setDecodeConfiguration(new DecodeConfigP25Phase1());
@@ -339,9 +371,10 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
             List.of(stream("First destination"), stream("Second destination")));
         for(Channel channel: List.of(first, second, third))
         {
-            execute(database, "INSERT INTO receiver_channel(configuration_id,first_seen_ms,last_seen_ms) VALUES ('" +
+            execute(ActivityDatabasePath.forConfiguration(database), "INSERT INTO receiver_channel(configuration_id,first_seen_ms,last_seen_ms) VALUES ('" +
                 channel.getConfigurationId() + "',100,200)");
         }
+        forbidAll(ActivityDatabasePath.forConfiguration(database), "receiver_channel");
         return new Fixture(database, repository);
     }
 
@@ -385,7 +418,7 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
 
     private static long historyRow(Fixture fixture, Channel channel) throws Exception
     {
-        return number(fixture, "SELECT id FROM receiver_channel WHERE " + id(channel));
+        return historyNumber(fixture, "SELECT id FROM receiver_channel WHERE " + id(channel));
     }
 
     private static long streamRow(Fixture fixture, BroadcastConfiguration configuration) throws Exception
@@ -409,6 +442,16 @@ class ConfigurationRepositoryChannelStreamDifferentialTest
     {
         try(Connection connection = SdrTrunkDatabase.open(fixture.database()); Statement statement = connection.createStatement();
             ResultSet row = statement.executeQuery(sql))
+        {
+            assertTrue(row.next());
+            return row.getLong(1);
+        }
+    }
+
+    private static long historyNumber(Fixture fixture, String sql) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(ActivityDatabasePath.forConfiguration(fixture.database()));
+            Statement statement = connection.createStatement(); ResultSet row = statement.executeQuery(sql))
         {
             assertTrue(row.next());
             return row.getLong(1);

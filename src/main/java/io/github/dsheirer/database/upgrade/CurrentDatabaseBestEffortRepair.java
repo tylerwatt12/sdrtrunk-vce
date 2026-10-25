@@ -172,6 +172,7 @@ final class CurrentDatabaseBestEffortRepair
     private static void deleteDependentReceiverRows(Connection connection, List<Long> rows) throws SQLException
     {
         if(rows.isEmpty()) return;
+        if(!hasTable(connection,"receiver_channel")) return;
         try(Statement statement = connection.createStatement(); ResultSet setting = statement.executeQuery(
             "PRAGMA foreign_keys"))
         {
@@ -1772,6 +1773,7 @@ final class CurrentDatabaseBestEffortRepair
         {
             return;
         }
+        if(!hasTable(connection,"alias_activity_summary")) return;
         try(PreparedStatement statement = connection.prepareStatement("""
             DELETE FROM alias_activity_summary
             WHERE alias_id=(SELECT id FROM alias WHERE rowid=?)
@@ -1783,6 +1785,15 @@ final class CurrentDatabaseBestEffortRepair
                 statement.addBatch();
             }
             statement.executeBatch();
+        }
+    }
+
+    private static boolean hasTable(Connection connection,String table) throws SQLException
+    {
+        try(PreparedStatement query=connection.prepareStatement("SELECT 1 FROM main.sqlite_master WHERE type='table' AND name=?"))
+        {
+            query.setString(1,table);
+            try(ResultSet rows=query.executeQuery()) { return rows.next(); }
         }
     }
 

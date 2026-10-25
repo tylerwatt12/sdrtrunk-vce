@@ -106,6 +106,7 @@ class P25SiteFactFreshnessTest
         SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
         ReceiverActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         connection.createStatement().executeUpdate("""
             INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,system_name,site_name,name,
                 alias_list_id,auto_start,decoder_type,primary_frequency_hz,config_json)

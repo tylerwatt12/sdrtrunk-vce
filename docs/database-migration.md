@@ -11,8 +11,8 @@ the [documentation index](README.md).
 
 | What you want to do | Where to start | What changes |
 | --- | --- | --- |
-| Use a newer build with the same active VCE data folder | Review the **Update** offered during startup | The active database is updated in place. The optional backup checkbox starts unchecked. |
-| Bring a previous VCE installation into a new download | **Bring my settings**, then choose its folder | A checked copy of the database and its saved settings is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
+| Use a newer build with the same active VCE data folder | Review the **Update** offered during startup | The active profile is updated in place. The optional backup checkbox starts unchecked. |
+| Bring a previous VCE installation into a new download | **Bring my settings**, then choose its folder | A checked copy of the configuration and chosen history is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
 | Start a new installation from a supported XML playlist | **Bring my settings**, then choose the playlist | Supported channels, aliases, and streaming settings initialize the new profile; the XML source stays unchanged. |
 
 External imports are offered only before the destination has a database. Choose an installation folder, portable
@@ -33,8 +33,9 @@ checked. For a manual backup, stop VCE and copy the complete `data` folder, plus
 elsewhere. Keep the matching build if you may need to return to it. Close a previous installation before importing
 from it so its settings and supporting files stay consistent during review.
 
-The automatic recovery backup covers the SQLite database being updated. It does not include every recording, log,
-voice library, or vault file. Backup locations appear in the report; application database backups are under
+The automatic recovery backup covers the application database being updated, including both matching files for a
+separated profile. It does not include every recording, log, voice library, or vault file. Backup locations appear in
+the report; application database backups are under
 `data/database/backups`. Graphical update-backup checkboxes start unchecked; select one to keep a recovery copy.
 Headless upgrade commands keep their backup by default.
 
@@ -53,9 +54,12 @@ Headless upgrade commands keep their backup by default.
 5. Finish setup review. Check channels and aliases, account access, recording and streaming routes, output folders,
    digital voice libraries, and channel auto-start selections before relying on the new installation.
 
-An active-profile update uses one transaction in the existing database. A failure before commit rolls back the
-changes. External profile imports update and validate a private copy, then install it only after the checks pass;
-the selected source stays unchanged. Imported settings are reviewed before reception can start.
+An active-profile update commits its database changes before activation. The configuration/history split first
+commits its extracted configuration, then commits the existing database as retained activity and activates the checked
+pair. Only the Application Migrator completes an interrupted activation. A failure before the source transaction
+commits rolls back the source changes. External profile imports update and validate a private copy, then install it
+only after the checks pass; the selected source stays unchanged. Imported settings are reviewed before reception
+can start.
 
 ### Choose how much to migrate
 
@@ -225,7 +229,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -871,6 +875,43 @@ layouts are removed and counted; all non-layout choices remain intact. No table 
 its frozen populated fixture and version-11 validator; fresh creation and migration reach the same exact format-62
 signature. Normal runtime startup validates the current contract without converting or repairing stored preferences.
 
+## Configuration and receiver activity (format 63)
+
+The application profile now has two matching SQLite files under `data/database`: `sdrtrunk.sqlite` owns saved
+configuration and `activity.sqlite` owns receiver Activity, observations, learned sites, statistics, and receiver-health
+history. Both remain inside the normal portable data folder. Copy, restore, or import both matching files together;
+a missing companion or files from different profiles are refused. The separate Managed Recordings catalog and audio
+retain their existing ownership. Account guide dismissals and the bounded notification service remain with their
+configuration; they do not become receiver Activity.
+
+Removing a saved channel or Alias no longer removes its receiver Activity. Existing historical owners retain the
+last captured channel, Alias, and Alias List labels, so their observations remain understandable after configuration
+is gone. Scheduled retention removes expired observations, then unused historical owners and detached compact
+summaries. Active channels and Aliases keep their lifetime totals. Explicit Activity, statistics, and recording deletion
+actions still perform their requested cleanup. Recording expiry remains governed by recording retention when enabled.
+
+The adjacent 62-to-63 update preserves every usable configuration component and retained observation, counter,
+relationship, identity, and allocator. The original large database becomes the activity file; the update does not copy
+all detailed history into another database. It commits and checks a small extracted configuration database first, then
+converts the original file in its existing migration transaction. Only after both roles are complete does the migrator
+activate their final filenames. A private activation receipt lets the Application Migrator finish an interrupted
+activation; normal startup refuses an incomplete transition and never creates an empty replacement history file.
+The optional recovery snapshot retains its previous behavior. Earlier formats continue through every adjacent step.
+
+Canonical P25 subscriber identities have independent dictionaries in the two stores. A cross-store match uses the
+complete home WACN, home system ID, and subscriber ID tuple; an integer key from one dictionary never identifies a
+row in the other. Each configured Alias also has an activity identity and optional reset time. Renaming or routing an
+Alias keeps these values and its counters. Changing its matcher starts a new activity identity, preventing an old
+counter from appearing under a new matcher while preserving old history for scheduled expiry. The existing
+changed-row persistence, no-op saves, unaffected live Alias objects, and affected-list-only lookup rebuilding remain.
+
+Historical channel ownership has no foreign key into configuration. Its own context holds the last observed display
+fields, Alias List reference/name, frequency, and analog assigned number. Explicit channel statistics reset boundaries live in their own small history table, so clearing statistics never invents a received channel observation. Historical Alias summaries
+hold their Alias activity identity and labels. Detailed events are unchanged; context is captured once per owner,
+rather than repeated in every event. The resolved Activity view reads this historical context without requiring a
+live configuration row. Configuration requests never wait for the history writer; history reads use a read-only
+configuration attachment where current names or filters are needed.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -911,7 +952,7 @@ adjacent format-10-to-11 step creates an empty relationship table without guessi
 all recording metadata, files, transcripts, tones, identifiers, counters and allocators. Deleting a recording cascades
 to its own source references. Deleting Activity or alert history does not delete a recording or its source references.
 The populated format-10 fixture remains frozen and supported. The main application database is independently at
-format 62; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+format 63; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
@@ -981,11 +1022,11 @@ and database services start. The Setup Wizard can already be visible at this poi
    Normal startup opens the result with validation only. Freed pages remain reusable; upgrades do not compact them.
 
 Selecting or skipping a recovery backup changes only step 3. There are no separate safe/fast upgrade engines,
-approval copies or content digests, staged current-profile copies, promotion, or repeated full-history checks.
+approval copies or content digests, staged full-profile copies, or repeated full-history checks. Format 63 adds only the small configuration extraction and checked pair activation described above; detailed history remains in its original file.
 Ordinary startup and current-profile upgrades do not run whole-file integrity or derived-history scans. Damage that
 those scans alone could detect can surface later; explicit inspection and external import retain their fuller checks.
 
-A conversion or final-validation failure before commit rolls back the entire transaction. The adjacent steps do not
+A conversion or final-validation failure before commit rolls back the entire transaction. If the format-63 source transaction committed but filename activation was interrupted, its receipt preserves the checked extraction and original history file for completion by the Application Migrator; startup refuses that incomplete pair. The adjacent steps do not
 commit independently and do not create restart checkpoints. After commit, the prior application version cannot open
 the upgraded format. The optional snapshot remains for manual recovery; there is no automatic post-commit restore.
 Without it, recovery requires another available backup. Statement, connection, temporary-file, or progress-observer

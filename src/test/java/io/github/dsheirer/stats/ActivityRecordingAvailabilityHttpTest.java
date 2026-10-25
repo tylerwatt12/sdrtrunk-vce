@@ -20,7 +20,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
@@ -127,7 +126,7 @@ class ActivityRecordingAvailabilityHttpTest
         {
             Path file = directory.resolve("activity.sqlite");
             SdrTrunkDatabaseStartup.createGlobalDatabase(file);
-            try(var connection = DriverManager.getConnection("jdbc:sqlite:" + file);
+            try(var connection = StatsPairedTestDatabase.open(file);
                 var statement = connection.createStatement())
             {
                 statement.executeUpdate("""

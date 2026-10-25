@@ -22,7 +22,7 @@ class ManagedRecordingSignalingDiscoveryTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(main);
         try(ManagedRecordingCatalog catalog=new ManagedRecordingCatalog(catalogPath,directory.resolve("audio")))
         {
-            try(var connection=DriverManager.getConnection("jdbc:sqlite:"+main);var statement=connection.createStatement())
+            try(var connection=StatsPairedTestDatabase.open(main);var statement=connection.createStatement())
             {
                 statement.execute("INSERT INTO alias_list(id,name,family) VALUES(7,'Signaling','NBFM')");
                 statement.execute("INSERT INTO alias(alias_list_id,matcher_type,protocol,value,name,description,group_name) VALUES"+

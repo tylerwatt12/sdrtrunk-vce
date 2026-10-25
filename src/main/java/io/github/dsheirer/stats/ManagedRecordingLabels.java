@@ -16,7 +16,6 @@ import io.github.dsheirer.stats.activity.RadioSystemIdentityLookup;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -1180,7 +1179,7 @@ final class ManagedRecordingLabels
 
     private Connection open() throws SQLException
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        Connection connection = StatsHistoryContext.openRead(mDatabasePath);
         try(Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);

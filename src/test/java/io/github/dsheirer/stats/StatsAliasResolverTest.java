@@ -11,15 +11,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -49,7 +45,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("observed-group-identities.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -118,7 +114,7 @@ class StatsAliasResolverTest
     {
         Path database = mTemporaryFolder.resolve("observed-nxdn-zero.sqlite");
         createDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -169,7 +165,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -263,7 +259,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("normal-p25.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -324,7 +320,7 @@ class StatsAliasResolverTest
     {
         Path database = mTemporaryFolder.resolve("foreign-talkgroup-alias.sqlite");
         createDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -415,7 +411,7 @@ class StatsAliasResolverTest
     {
         Path database = mTemporaryFolder.resolve("home-canonical-alias.sqlite");
         createDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -483,7 +479,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("canonical-p25-alias.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -498,6 +494,7 @@ class StatsAliasResolverTest
                 VALUES(91,0xBEE00,0x4A2,2115288),
                       (92,0xBEE00,0x4A2,2115289)
                 """);
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
                 VALUES(2,91)
@@ -585,7 +582,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("issi-observed-alias-fallback.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -603,6 +600,7 @@ class StatsAliasResolverTest
                 INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
                 VALUES(91,0xBEE00,0x4A2,2115288),(92,0xBEE00,0x4A2,2115289)
                 """);
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
                 VALUES(2,91),(3,92)
@@ -676,7 +674,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("canonical-p25-catalog.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -689,6 +687,7 @@ class StatsAliasResolverTest
                 INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id)
                 VALUES(91,0xBEE00,0x4A2,2115288)
                 """);
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
                 VALUES(10,91)
@@ -701,6 +700,7 @@ class StatsAliasResolverTest
                 ) VALUES(7001,77,2,0xBEE00,0x4A2,2115288,1000,2000,9,NULL)
                 """);
             AliasActivitySummaryMaintenance.rebuildAll(connection);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
 
             StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
             Map<String,Object> filtered = catalog.aliases(connection, new StatsRequest(Map.of(
@@ -719,6 +719,7 @@ class StatsAliasResolverTest
                 UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=91 WHERE id=7001
                 """);
             AliasActivitySummaryMaintenance.rebuildAll(connection);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
             Map<String,Object> canonical = catalog.alias(connection, 10);
             Map<String,Object> canonicalAlias = (Map<String,Object>)canonical.get("alias");
             List<Map<String,Object>> breakdown = (List<Map<String,Object>>)canonical.get("breakdown");
@@ -736,7 +737,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("shared-system-alias.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -793,7 +794,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("shared-native-system-alias.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -876,7 +877,7 @@ class StatsAliasResolverTest
         String configurationId = "30000000-0000-4000-8000-000000000011";
         String fallbackKey = "dmr:channel:" + configurationId;
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -931,6 +932,7 @@ class StatsAliasResolverTest
                 "detaching a fallback must not detach its exact saved-channel Alias List");
 
             AliasActivitySummaryMaintenance.rebuildAll(connection);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
             Map<String,Object> response = new StatsAliasCatalog(new StatsAliasResolver()).alias(connection, 1);
             Map<String,Object> alias = (Map<String,Object>)response.get("alias");
             List<Map<String,Object>> breakdown = (List<Map<String,Object>>)response.get("breakdown");
@@ -954,7 +956,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("conventional-alias-metrics.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -989,6 +991,7 @@ class StatsAliasResolverTest
             insertConventionalRadioBucket(statement, 102, 501, 6);
             insertConventionalRadioBucket(statement, 103, 501, 7);
             AliasActivitySummaryMaintenance.rebuildAll(connection);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
 
             assertConventionalAliasMetrics(connection, 1, 101, "P25", 2, 1, 1, 0);
             assertConventionalAliasMetrics(connection, 2, 102, "DMR", 3, 1, 0, 1);
@@ -1013,7 +1016,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("p25-local-alias-evidence.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1078,7 +1081,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("p25-compact-alias-evidence-volume.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1175,7 +1178,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("p25-source-working-evidence-volume.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1302,7 +1305,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("current-alias-catalog.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1320,6 +1323,7 @@ class StatsAliasResolverTest
             statement.executeUpdate("UPDATE alias_list SET name='Renamed County' WHERE id=1");
 
             AliasActivitySummaryMaintenance.rebuildAll(connection);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
             Map<String,Object> response = new StatsAliasCatalog(new StatsAliasResolver()).alias(connection, 1);
             Map<String,Object> alias = (Map<String,Object>)response.get("alias");
             List<Map<String,Object>> breakdown = (List<Map<String,Object>>)response.get("breakdown");
@@ -1348,7 +1352,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("requested-alias-volume.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1434,7 +1438,7 @@ class StatsAliasResolverTest
     {
         Path database = mTemporaryFolder.resolve("requested-canonical-subscriber-volume.sqlite");
         createDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1454,12 +1458,14 @@ class StatsAliasResolverTest
                     (50001,1,'Selected canonical','P25_SUBSCRIBER_IDENTITY'),
                     (50002,2,'Other canonical','P25_SUBSCRIBER_IDENTITY')
                 """);
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity VALUES(50001,1),(50002,2)");
             statement.executeUpdate("""
                 WITH RECURSIVE ids(value) AS (SELECT 501 UNION ALL SELECT value+1 FROM ids WHERE value<10500)
                 INSERT INTO alias(id,alias_list_id,name,matcher_type)
                 SELECT 60000+value,2,'Unrelated canonical','P25_SUBSCRIBER_IDENTITY' FROM ids
                 """);
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
                 SELECT id,id-60000 FROM alias WHERE id>60000
@@ -1469,14 +1475,15 @@ class StatsAliasResolverTest
                 INSERT INTO alias(id,alias_list_id,name,matcher_type)
                 SELECT 100000+value,1,'Canonical duplicate '||value,'P25_SUBSCRIBER_IDENTITY' FROM ids
                 """);
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
                 SELECT id,1 FROM alias WHERE id>100000
                 """);
             statement.execute("ANALYZE");
             //A lookup that once had one rule can retain sparse statistics after a bulk import.
-            statement.executeUpdate("UPDATE sqlite_stat1 SET stat='1 1 1' WHERE idx='idx_alias_p25_subscriber_identity'");
-            statement.execute("ANALYZE sqlite_schema");
+            statement.executeUpdate("UPDATE configuration.sqlite_stat1 SET stat='1 1 1' WHERE idx='idx_alias_p25_subscriber_identity'");
+            statement.execute("ANALYZE configuration.sqlite_schema");
             List<Map<String,Object>> identities = new ArrayList<>();
             for(int identity = 1; identity <= 500; identity++)
             {
@@ -1517,7 +1524,7 @@ class StatsAliasResolverTest
     {
         Path database = mTemporaryFolder.resolve("competing-range-rules.sqlite");
         createDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1591,7 +1598,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("bounded-alias-rules.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1662,7 +1669,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("alias-list-rename.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1698,7 +1705,7 @@ class StatsAliasResolverTest
             rows.add(row(1, x + 1));
         }
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        try(Connection connection = StatsPairedTestDatabase.open(database))
         {
             StatsApiException exception = assertThrows(StatsApiException.class,
                 () -> new StatsAliasResolver().enrichP25ConventionalTalkgroups(connection, rows,
@@ -1798,7 +1805,7 @@ class StatsAliasResolverTest
         Path database = mTemporaryFolder.resolve("alias-activity-snapshot.sqlite");
         createDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             clearFactoryAliasLists(statement);
@@ -1834,6 +1841,7 @@ class StatsAliasResolverTest
                 """);
 
             AliasActivitySummaryMaintenance.rebuildAll(connection);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
             StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
             StatsRequest request = new StatsRequest(Map.of("list", "1", "sort", "logical_call_count",
                 "direction", "desc", "limit", "1"));
@@ -1856,6 +1864,7 @@ class StatsAliasResolverTest
                 VALUES (9102, 91, 1, 90, 21, 22, 20)
                 """);
             AliasActivitySummaryMaintenance.rebuildAll(connection);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
             Map<String,Object> refreshed = catalog.aliases(connection, new StatsRequest(Map.of("list", "1",
                 "sort", "logical_call_count", "direction", "desc", "limit", "1")));
             List<Map<String,Object>> refreshedRows = (List<Map<String,Object>>)refreshed.get("rows");
@@ -1866,15 +1875,17 @@ class StatsAliasResolverTest
 
     private static void createDatabase(Path database) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
-            Statement statement = connection.createStatement())
-        {
-            statement.execute("PRAGMA foreign_keys=ON");
-            SdrTrunkDatabaseSchema.create(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
-        }
+        SdrTrunkTestDatabase.create(database);
+    }
+
+    /** These fixtures assign aliases to an explicit configuration dictionary, independently of history storage. */
+    private static void seedConfiguredSubscribers(Statement statement) throws Exception
+    {
+        statement.executeUpdate("""
+            INSERT OR IGNORE INTO configuration.p25_subscriber_identity
+                (id,home_wacn,home_system_id,subscriber_id)
+            SELECT id,home_wacn,home_system_id,subscriber_id FROM main.p25_subscriber_identity
+            """);
     }
 
     private static void insertP25Channel(Statement statement, long receiverChannelId, String configurationId,

@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import org.junit.jupiter.api.Test;
@@ -44,7 +43,7 @@ class AliasActivityRepresentativeTestDatabaseTest
         throws Exception
     {
         assertTrue(fixture.retainedActivityRows() >= 75_000);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + fixture.database());
+        try(Connection connection = StatsPairedTestDatabase.open(fixture.database());
             Statement statement = connection.createStatement())
         {
             assertEquals(fixture.aliasCount(), number(statement,

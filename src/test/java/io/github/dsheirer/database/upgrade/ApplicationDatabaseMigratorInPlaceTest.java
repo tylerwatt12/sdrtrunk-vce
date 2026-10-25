@@ -289,7 +289,14 @@ class ApplicationDatabaseMigratorInPlaceTest
 
     private static Connection open(Path database) throws SQLException
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection=DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path activity=io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database);
+        if(Files.isRegularFile(activity))
+        {
+            try(var attach=connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+            { attach.setString(1,activity.toString());attach.execute(); }
+        }
+        return connection;
     }
 
     private static void execute(Path database, String sql) throws SQLException

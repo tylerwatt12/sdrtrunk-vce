@@ -153,10 +153,10 @@ public final class TopicAlertStore
     /** Latest receiver assignments; no retained-event scan and no lookup on decoder callbacks. */
     public synchronized Map<String,SystemFact> currentSystemFacts() throws SQLException
     {
-        try(Connection connection = open(); Statement query = connection.createStatement(); ResultSet rows = query.executeQuery("""
+        try(Connection connection = openHistory(); Statement query = connection.createStatement(); ResultSet rows = query.executeQuery("""
             SELECT receiver.configuration_id,system.system_key,receiver.last_seen_ms
             FROM receiver_channel receiver JOIN radio_system system ON system.id=receiver.radio_system_id
-            JOIN configuration_channel channel ON channel.configuration_id=receiver.configuration_id
+            JOIN configuration.configuration_channel channel ON channel.configuration_id=receiver.configuration_id
             WHERE channel.channel_kind='TRUNKED'
             ORDER BY receiver.configuration_id LIMIT 4096
             """))
@@ -701,6 +701,12 @@ public final class TopicAlertStore
             prune.executeUpdate("DELETE FROM topic_alert_delivery WHERE state NOT IN ('pending','retry','queued') AND NOT EXISTS (SELECT 1 FROM topic_alert_delivery retained WHERE retained.alert_id=topic_alert_delivery.alert_id AND retained.state IN ('pending','retry','queued')) AND id IN (SELECT id FROM topic_alert_delivery ORDER BY id DESC LIMIT -1 OFFSET " + MAXIMUM_DELIVERIES + ")");
             prune.executeUpdate("UPDATE topic_alert_delivery SET state='cancelled' WHERE device_id IS NULL AND state IN ('pending','retry')");
         }
+    }
+
+    private Connection openHistory() throws SQLException
+    {
+        try { return SdrTrunkDatabase.openHistoryRead(mPath); }
+        catch(IOException exception) { throw new SQLException("Receiver observations are unavailable",exception); }
     }
 
     private Connection open() throws SQLException

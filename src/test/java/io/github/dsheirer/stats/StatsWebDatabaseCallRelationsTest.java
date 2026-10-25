@@ -4,15 +4,10 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.audio.call.SourceCallReference;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.net.URI;
 import java.nio.file.Path;
-import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -33,11 +28,10 @@ class StatsWebDatabaseCallRelationsTest
     @BeforeEach void setup() throws Exception
     {
         path = directory.resolve("activity.sqlite");
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        io.github.dsheirer.database.SdrTrunkTestDatabase.create(path);
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         {
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection); DmrActivitySchema.create(connection); TrunkedSiteSchema.create(connection);
+
             sql.execute("PRAGMA foreign_keys=ON");
             sql.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(71,'Related calls','P25')");
             sql.executeUpdate("""
@@ -91,7 +85,7 @@ class StatsWebDatabaseCallRelationsTest
         assertNull(database.activitySourceCallReference(1004));
         assertNull(database.activitySourceCallReference(-1));
         assertNull(database.activitySourceCallReference(Long.MAX_VALUE));
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         {
             sql.execute("PRAGMA foreign_keys=ON"); sql.executeUpdate("DELETE FROM receiver_activity_event WHERE id=1001");
         }
@@ -160,7 +154,7 @@ class StatsWebDatabaseCallRelationsTest
         assertTrue(database.activitySourceCallReferences(null).isEmpty());
         assertThrows(IllegalArgumentException.class, () -> database.activitySourceCallReferences(
             IntStream.range(0,5001).mapToObj(Long::valueOf).toList()));
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         {
             List<String> plan = new ArrayList<>();
             try(var result = sql.executeQuery("EXPLAIN QUERY PLAN SELECT id,source_call_uuid FROM " +
@@ -174,7 +168,7 @@ class StatsWebDatabaseCallRelationsTest
 
     @Test void activityAndRelatedRowsShareNumericDurationAndExplicitUnknown() throws Exception
     {
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         {
             sql.executeUpdate("UPDATE receiver_activity_event SET duration_ms=12345 WHERE id=1001");
             sql.executeUpdate("UPDATE receiver_activity_event SET duration_ms=0 WHERE id=1003");
@@ -207,7 +201,7 @@ class StatsWebDatabaseCallRelationsTest
         assertTrue(database.activityBySourceCallReferences(full).isEmpty());
         assertThrows(IllegalArgumentException.class,() -> database.activityBySourceCallReferences(
             IntStream.range(0,129).mapToObj(i -> SourceCallReference.fromToken("bounded:" + i)).toList()));
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var insert = connection.prepareStatement("""
+        try(var connection = StatsPairedTestDatabase.open(path); var insert = connection.prepareStatement("""
             INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code,event_type_code,source_call_uuid)
             VALUES(71,71,?,4,7,?)
             """))

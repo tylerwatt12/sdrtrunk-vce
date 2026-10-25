@@ -4,13 +4,9 @@ package io.github.dsheirer.stats;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
@@ -31,11 +27,10 @@ class SpectrumDiscoveryFrequencyOwnersTest
     void createCurrentDatabase() throws Exception
     {
         path = temporary.resolve("sdrtrunk.sqlite");
+        io.github.dsheirer.database.SdrTrunkTestDatabase.create(path);
         try(Connection connection = connection(); Statement statement = connection.createStatement())
         {
-            SdrTrunkDatabaseSchema.create(connection);
-            ReceiverActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
+
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES " +
                 "(81,'Regional P25','P25'),(82,'Regional DMR','DMR')");
             statement.executeUpdate("""
@@ -137,7 +132,7 @@ class SpectrumDiscoveryFrequencyOwnersTest
 
     private Connection connection() throws Exception
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + path);
+        Connection connection = StatsPairedTestDatabase.open(path);
         try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=ON"); }
         return connection;
     }

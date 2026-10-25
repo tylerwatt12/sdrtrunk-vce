@@ -90,6 +90,7 @@ class ReceiverActivityMemberChannelDeletionTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         execute(connection,"INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,name," +
             "alias_list_id,radioresolve_id,decoder_type,primary_frequency_hz,config_json) VALUES('"+CHANNEL+
             "','TRUNKED',0,'Site',(SELECT id FROM alias_list WHERE family='P25' LIMIT 1)," +

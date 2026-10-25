@@ -435,7 +435,7 @@ class ApplicationMigrationServiceTest
             .findFirst().orElseThrow();
         int copyIndex = progress.indexOf("Copying selected database");
         assertTrue(scopeIndex >= 0 && scopeIndex < copyIndex);
-        assertTrue(progress.get(scopeIndex).contains("SQLite database only"));
+        assertTrue(progress.get(scopeIndex).contains("configuration and saved activity"));
     }
 
     @Test
@@ -477,7 +477,7 @@ class ApplicationMigrationServiceTest
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
         assertEquals("keep current external file", Files.readString(retainedJmbe));
         assertFalse(Files.exists(activeRoot.resolve("jmbe/not-imported.jar")));
-        assertTrue(progress.stream().anyMatch(step -> step.contains("SQLite database only")));
+        assertTrue(progress.stream().anyMatch(step -> step.contains("configuration and saved activity")));
         assertTrue(progress.indexOf("Creating current database safety backup") <
             progress.indexOf("Replacing active database"));
         assertEquals("wal", journalMode(activeDatabase));
@@ -523,6 +523,7 @@ class ApplicationMigrationServiceTest
         ApplicationMigrationService.ApprovedMigrationPlan approved =
             ApplicationMigrationService.readMigrationApproval(sourceDatabase);
         Files.delete(sourceDatabase);
+        Files.deleteIfExists(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(sourceDatabase));
         Format14TestDatabase.create(sourceDatabase);
 
         IOException exception = assertThrows(IOException.class,
@@ -597,8 +598,11 @@ class ApplicationMigrationServiceTest
         try(var backups = Files.list(activeDatabase.getParent().resolve("backups")))
         {
             List<Path> retained = backups.toList();
-            assertEquals(1, retained.size());
-            assertEquals("Still Active", scalar(retained.getFirst(), "SELECT name FROM alias WHERE id=1"));
+            assertEquals(2, retained.size());
+            Path configuration=retained.stream().filter(path -> !path.getFileName().toString().endsWith(".activity.sqlite"))
+                .findFirst().orElseThrow();
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(configuration);
+            assertEquals("Still Active", scalar(configuration, "SELECT name FROM alias WHERE id=1"));
         }
     }
 
@@ -716,6 +720,7 @@ class ApplicationMigrationServiceTest
             ApplicationMigrationService.readMigrationApproval(sourceDatabase);
 
         Files.delete(sourceDatabase);
+        Files.deleteIfExists(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(sourceDatabase));
         Format14TestDatabase.create(sourceDatabase);
 
         Path targetRoot = mTemporaryFolder.resolve("approved-plan-target");
@@ -975,7 +980,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void startupSkipsDeepDerivedStateInspectionForExactCurrentFormat() throws Exception
+    void startupAndReviewDoNotTreatUnobservedAliasesAsDamagedHistory() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("fast-startup"));
         SdrTrunkTestDatabase.create(database);
@@ -989,7 +994,7 @@ class ApplicationMigrationServiceTest
         }
 
         assertTrue(ApplicationMigrationService.readStartupPlan(database).steps().isEmpty());
-        assertTrue(ApplicationMigrationService.readMigrationPlan(database).steps().stream().anyMatch(step ->
+        assertTrue(ApplicationMigrationService.readMigrationPlan(database).steps().stream().noneMatch(step ->
             CurrentDatabaseDerivedStateRepair.STEP_ID.equals(step.id())));
         assertEquals("0", scalar(database, """
             SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id IN (
@@ -1408,7 +1413,7 @@ class ApplicationMigrationServiceTest
         SQLException exception = assertThrows(SQLException.class,
             () -> inProcessMigrationService().migrateCurrent(dataRoot, null));
 
-        assertTrue(exception.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
+        assertTrue(exception.getMessage().contains("exact format-63 schema"),exception::getMessage);
         assertArrayEquals(before, sha256(database));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
@@ -1627,8 +1632,7 @@ class ApplicationMigrationServiceTest
         ApplicationMigrationService service = new ApplicationMigrationService(
             (source, destination) ->
             {
-                Files.createDirectories(destination.getParent());
-                Files.copy(source, destination);
+                SqliteDatabaseSnapshot.create(source,destination);
             },
             (staged, source, target, content) ->
             {
@@ -1915,8 +1919,10 @@ class ApplicationMigrationServiceTest
             statement.executeUpdate("""
                 INSERT INTO receiver_channel(
                     id, configuration_id, first_seen_ms, last_seen_ms, radio_system_id,
-                    radio_system_assigned_at_ms
-                ) VALUES (7001, '%s', 1000, 2000, 7000, 1000)
+                    radio_system_assigned_at_ms, name, system_name, site_name, decoder_type,
+                    channel_kind, address_domain_code, primary_frequency_hz
+                ) VALUES (7001, '%s', 1000, 2000, 7000, 1000, 'Preserved Channel',
+                    'Preserved System', 'Preserved Site', 'P25_PHASE1', 'TRUNKED', 0, 451000000)
                 """.formatted(configurationId));
             statement.executeUpdate("""
                 INSERT INTO trunked_control_channel_quality(
@@ -1989,7 +1995,14 @@ class ApplicationMigrationServiceTest
 
     private static Connection open(Path database) throws Exception
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection=DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path activity=io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database);
+        if(Files.isRegularFile(activity))
+        {
+            try(var attach=connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+            { attach.setString(1,activity.toString());attach.execute(); }
+        }
+        return connection;
     }
 
     private static int count(Path database, String table) throws Exception

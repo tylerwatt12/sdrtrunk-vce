@@ -201,7 +201,7 @@ class MigrationContentTest
         try(var connection = open(database(target)))
         {
             DatabaseFormatCatalog.requireCurrent(connection);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(currentRoleFingerprint(connection), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(configuration, rows(connection, configurationTables, true));
             assertConvertedPreferences(preferences, preferences(connection));
             for(String table: List.of("receiver_activity_event", "radio_system", "receiver_activity_tone",
@@ -347,7 +347,7 @@ class MigrationContentTest
     @Test void configurationOnlyIsRefusedForAnAlreadyCurrentDatabase() throws Exception
     {
         Path root = directory.resolve("already-current");
-        Path source = Format62TestDatabase.create(database(root));
+        Path source = Format63TestDatabase.create(database(root));
         byte[] before = Files.readAllBytes(source);
 
         var failure = assertThrows(IllegalArgumentException.class, () -> service().migrateCurrent(root, false,
@@ -429,7 +429,7 @@ class MigrationContentTest
 
     private static void assertEmptyCurrentHistory(Connection connection) throws Exception
     {
-        assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+        assertEquals(currentRoleFingerprint(connection), SqliteSchemaValidator.fingerprint(connection));
         DatabaseFormatCatalog.requireCurrent(connection);
         for(String table: CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES)
             if(!table.equals("alias_activity_summary")) assertEquals(0, count(connection, table), table);
@@ -471,6 +471,7 @@ class MigrationContentTest
                     for(int index = 1; index <= rows.getMetaData().getColumnCount(); index++)
                     {
                         String column = rows.getMetaData().getColumnName(index);
+                        if(addedFormat63Column(table,column)) continue;
                         if(convertedFields && (table.equals("web_user") &&
                             List.of("preferences_json", "preferences_revision").contains(column) ||
                             table.equals("configuration_channel") && column.equals("analog_activity_reset_ms"))) continue;
@@ -513,7 +514,34 @@ class MigrationContentTest
     { return new PreviousBuildLocator.Selection(source, PreviousBuildLocator.InputScope.DATABASE_FILE); }
     private static ApplicationMigrationService service() { return ApplicationMigrationServiceTestSupport.createInProcess(); }
     private static Path database(Path root) { return SdrTrunkDatabasePath.getDatabasePath(root); }
-    private static Connection open(Path source) throws Exception { return DriverManager.getConnection("jdbc:sqlite:" + source); }
+    private static Connection open(Path source) throws Exception
+    {
+        try(var inspect=DriverManager.getConnection("jdbc:sqlite:" + source);var query=inspect.createStatement();
+            var rows=query.executeQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='database_metadata'"))
+        {
+            if(rows.next() && io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(inspect))
+                return io.github.dsheirer.database.SdrTrunkDatabase.openHistory(source);
+        }
+        return DriverManager.getConnection("jdbc:sqlite:" + source);
+    }
+    private static String currentRoleFingerprint(Connection connection) throws Exception
+    {
+        return "activity".equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+            io.github.dsheirer.database.ConfigurationHistorySchema.ROLE_KEY)) ?
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT : DatabaseFormatCatalog.current().fingerprint();
+    }
+    private static boolean addedFormat63Column(String table,String column)
+    {
+        return switch(table)
+        {
+            case "alias" -> List.of("activity_identity","activity_reset_ms").contains(column);
+            case "receiver_channel" -> List.of("name","system_name","site_name","decoder_type","channel_kind",
+                "address_domain_code","alias_list_id","alias_list_name","primary_frequency_hz","assigned_talkgroup").contains(column);
+            case "alias_activity_summary" -> List.of("activity_identity","alias_name","alias_list_name").contains(column);
+            case "alias_list_analog_activity_summary" -> column.equals("alias_list_name");
+            default -> false;
+        };
+    }
     private static long count(Connection connection, String table) throws Exception
     { return scalar(connection, "SELECT count(*) FROM \"" + table + "\""); }
     private static long scalar(Connection connection, String sql) throws Exception

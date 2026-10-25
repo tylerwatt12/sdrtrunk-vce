@@ -48,6 +48,15 @@ final class ReceiverActivityScopedDeletion
     private static final String GROUP_CALL_MATCH =
         "call_count>0 OR logical_call_count>0 OR encrypted_logical_call_count>0 OR " +
             "recorded_output_count>0 OR streamed_output_count>0";
+    private static final String CURRENT_ALIAS_PROTOCOL = """
+        CASE WHEN matcher_type='P25_SUBSCRIBER_IDENTITY' THEN 1
+            WHEN matcher_type IN ('TALKGROUP','TALKGROUP_RANGE','RADIO_ID','RADIO_ID_RANGE')
+            THEN CASE protocol WHEN 'APCO25' THEN 1 WHEN 'APCO25_PHASE2' THEN 1 WHEN 'DMR' THEN 3
+                WHEN 'NXDN' THEN 4
+                WHEN 'NBFM' THEN CASE WHEN matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') THEN 10 ELSE 0 END
+                WHEN 'AM' THEN CASE WHEN matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') THEN 11 ELSE 0 END
+                ELSE 0 END ELSE 0 END
+        """.strip();
     private static final List<String> SIGNALING_COLUMNS = ReceiverActivityCodes.actionCodes().stream()
         .filter(action -> action != ReceiverActivityRecords.Action.CALL && action != ReceiverActivityRecords.Action.TONE)
         .map(action -> action.name().toLowerCase(Locale.ROOT) + "_count").toList();
@@ -116,7 +125,7 @@ final class ReceiverActivityScopedDeletion
             if(target.recordKey() != null)
             {
                 long id = parsePositive(target.recordKey());
-                if(scalar(connection, "SELECT id FROM alias WHERE id=?", List.of(id)) == 0)
+                if(!aliasActivityExists(connection, id))
                     return Plan.missing();
             }
             return new Plan(null);
@@ -709,9 +718,10 @@ final class ReceiverActivityScopedDeletion
 
     private static int analogBoundaryRows(Connection connection, Plan plan, long cutoff) throws SQLException
     {
-        return hasAnalogBoundary(plan) ? count(connection, "configuration_channel",
-            "configuration_id=(SELECT configuration_id FROM receiver_channel WHERE id=?) " +
-                "AND coalesce(analog_activity_reset_ms,0)<?",
+        return hasAnalogBoundary(plan) ? count(connection, "receiver_channel",
+            "id=? " +
+                "AND coalesce((SELECT reset_at_ms FROM receiver_channel_statistics_reset reset " +
+                "WHERE reset.configuration_id=receiver_channel.configuration_id),0)<?",
             List.of(plan.scope.channelId, Math.max(1, cutoff + 1))) : 0;
     }
 
@@ -720,9 +730,10 @@ final class ReceiverActivityScopedDeletion
         if(hasAnalogBoundary(plan))
         {
             try(PreparedStatement statement = connection.prepareStatement("""
-                UPDATE configuration_channel SET analog_activity_reset_ms=?
-                WHERE configuration_id=(SELECT configuration_id FROM receiver_channel WHERE id=?)
-                  AND coalesce(analog_activity_reset_ms,0)<?
+                INSERT INTO receiver_channel_statistics_reset(configuration_id,reset_at_ms)
+                SELECT configuration_id,? FROM receiver_channel WHERE id=?
+                ON CONFLICT(configuration_id) DO UPDATE SET reset_at_ms=excluded.reset_at_ms
+                WHERE reset_at_ms<?
                 """))
             {
                 long boundary = Math.max(1, cutoff + 1);
@@ -744,31 +755,33 @@ final class ReceiverActivityScopedDeletion
             "and their summaries through database foreign keys.");
     }
 
+    private static boolean aliasActivityExists(Connection connection, long aliasId) throws SQLException
+    {
+        return scalar(connection, "SELECT EXISTS(SELECT 1 FROM alias WHERE id=?) OR " +
+            "EXISTS(SELECT 1 FROM alias_activity_summary WHERE alias_id=?)", List.of(aliasId, aliasId)) != 0;
+    }
+
     private static int resetOneAlias(Connection connection, long aliasId) throws SQLException
     {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT OR IGNORE INTO alias_activity_summary
-                (alias_id,alias_list_id,protocol_code,metrics_state,updated_at_ms,last_reset_ms)
-            SELECT id,alias_list_id,
-                   CASE WHEN matcher_type IN
-                       ('TALKGROUP','TALKGROUP_RANGE','RADIO_ID','RADIO_ID_RANGE')
-                       THEN CASE protocol WHEN 'APCO25' THEN 1 WHEN 'APCO25_PHASE2' THEN 1
-                           WHEN 'DMR' THEN 3 WHEN 'NXDN' THEN 4
-                           WHEN 'NBFM' THEN CASE WHEN matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') THEN 10 ELSE 0 END
-                           WHEN 'AM' THEN CASE WHEN matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') THEN 11 ELSE 0 END ELSE 0 END
-                       ELSE 0 END,
-                   CASE WHEN matcher_type IN
-                       ('TALKGROUP','TALKGROUP_RANGE','RADIO_ID','RADIO_ID_RANGE')
-                       AND (protocol IN ('APCO25','APCO25_PHASE2','DMR','NXDN') OR
-                           protocol IN ('AM','NBFM') AND matcher_type IN ('TALKGROUP','TALKGROUP_RANGE'))
-                       THEN 'not_collected' ELSE 'unsupported' END, ?, ?
-            FROM alias WHERE id=?
-            """))
+        // Establish the live matcher identity before resetting its history-owned counters.
+        try(PreparedStatement current = connection.prepareStatement(
+            "SELECT " + CURRENT_ALIAS_PROTOCOL + " FROM alias WHERE id=?"))
         {
-            statement.setLong(1, Math.max(1L, System.currentTimeMillis()));
-            statement.setLong(2, Math.max(1L, System.currentTimeMillis()));
-            statement.setLong(3, aliasId);
-            statement.executeUpdate();
+            current.setLong(1, aliasId);
+            try(ResultSet row = current.executeQuery())
+            {
+                if(row.next()) io.github.dsheirer.stats.AliasActivitySummaryMaintenance.ensureCurrent(
+                    connection, aliasId, row.getInt(1), Math.max(1L, System.currentTimeMillis()));
+                else
+                {
+                    try(PreparedStatement remove = connection.prepareStatement(
+                        "DELETE FROM alias_activity_summary WHERE alias_id=?"))
+                    {
+                        remove.setLong(1, aliasId);
+                        return remove.executeUpdate();
+                    }
+                }
+            }
         }
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE alias_activity_summary
@@ -980,6 +993,9 @@ final class ReceiverActivityScopedDeletion
         private final Map<String,Integer> countsByPart;
         private final long rowsTotal;
         private int cursor;
+        private boolean aliasSeedsPending;
+        private String aliasSeedPredicate;
+        private List<Object> aliasSeedParameters = List.of();
         private boolean removedOwnSnapshot;
         private ReceiverActivityMaintenance.DeletionOutcome outcome;
 
@@ -1005,6 +1021,21 @@ final class ReceiverActivityScopedDeletion
             ordered.sort(Comparator.comparingInt((Step step) -> metadata.rank(step.table))
                 .thenComparingInt(ReceiverActivityScopedDeletion::priority));
             int boundaryRows = analogBoundaryRows(connection, plan, cutoffMs);
+            if("alias_activity".equals(target.sourceKind()))
+            {
+                aliasSeedPredicate = "configured.id<=? AND NOT EXISTS(SELECT 1 FROM alias_activity_summary " +
+                    "WHERE alias_id=configured.id)";
+                aliasSeedParameters = new ArrayList<>(List.of(scalar(connection,
+                    "SELECT coalesce(max(id),0) FROM alias", List.of())));
+                if(target.recordKey() != null)
+                {
+                    aliasSeedPredicate += " AND configured.id=?";
+                    aliasSeedParameters.add(parsePositive(target.recordKey()));
+                }
+                int missing = count(connection, "alias configured", aliasSeedPredicate, aliasSeedParameters);
+                aliasSeedsPending = missing > 0;
+                boundaryRows += missing;
+            }
             if(boundaryRows > 0) countsByPart.put("summary", boundaryRows);
             long total = boundaryRows;
             for(Step step: ordered)
@@ -1021,11 +1052,13 @@ final class ReceiverActivityScopedDeletion
             rowsTotal = total;
         }
 
-        record Position(int cursor, boolean removedOwnSnapshot, ReceiverActivityMaintenance.DeletionOutcome outcome) { }
-        Position position() { return new Position(cursor, removedOwnSnapshot, outcome); }
+        record Position(int cursor, boolean aliasSeedsPending, boolean removedOwnSnapshot,
+                        ReceiverActivityMaintenance.DeletionOutcome outcome) { }
+        Position position() { return new Position(cursor, aliasSeedsPending, removedOwnSnapshot, outcome); }
         void restore(Position position)
         {
             cursor = position.cursor;
+            aliasSeedsPending = position.aliasSeedsPending;
             removedOwnSnapshot = position.removedOwnSnapshot;
             outcome = position.outcome;
         }
@@ -1038,7 +1071,8 @@ final class ReceiverActivityScopedDeletion
         long rowsTotal() { return rowsTotal; }
         long cutoffMs() { return cutoffMs; }
         ReceiverActivityMaintenance.DeletionOutcome outcome() { return outcome; }
-        boolean done() { return outcome != ReceiverActivityMaintenance.DeletionOutcome.DELETED || cursor >= steps.size(); }
+        boolean done() { return outcome != ReceiverActivityMaintenance.DeletionOutcome.DELETED ||
+            !aliasSeedsPending && cursor >= steps.size(); }
 
         Preview preview()
         {
@@ -1064,6 +1098,13 @@ final class ReceiverActivityScopedDeletion
             }
             // Advancing the late-observation fence is one real row change within the same writer budget.
             int changed = resetAnalogBoundary(connection, plan, cutoffMs);
+            if(aliasSeedsPending)
+            {
+                int capacity = MAXIMUM_ROWS_PER_PASS - changed;
+                int seeded = seedMissingAliases(connection, capacity);
+                changed += seeded;
+                aliasSeedsPending = seeded == capacity;
+            }
             int remaining = MAXIMUM_ROWS_PER_PASS - changed;
             int nextCursor = cursor;
             while(remaining > 0 && nextCursor < steps.size())
@@ -1081,12 +1122,39 @@ final class ReceiverActivityScopedDeletion
             return changed;
         }
 
+        private int seedMissingAliases(Connection connection, int maximumRows) throws SQLException
+        {
+            if(maximumRows == 0) return 0;
+            long resetAt = Math.max(1, cutoffMs + 1);
+            String sql = """
+                INSERT INTO alias_activity_summary(alias_id,alias_list_id,protocol_code,metrics_state,
+                    updated_at_ms,last_reset_ms,activity_identity,alias_name,alias_list_name)
+                SELECT configured.id,configured.alias_list_id,%s,
+                    CASE WHEN (%s)=0 THEN 'unsupported' ELSE 'not_collected' END,
+                    ?,max(?,coalesce(configured.activity_reset_ms,0)),configured.activity_identity,
+                    configured.name,coalesce(list.name,'')
+                FROM alias configured JOIN alias_list list ON list.id=configured.alias_list_id
+                WHERE %s ORDER BY configured.id LIMIT ?
+                ON CONFLICT(alias_id) DO NOTHING
+                """.formatted(CURRENT_ALIAS_PROTOCOL.replace("matcher_type", "configured.matcher_type")
+                    .replace("THEN CASE protocol", "THEN CASE configured.protocol"),
+                CURRENT_ALIAS_PROTOCOL.replace("matcher_type", "configured.matcher_type")
+                    .replace("THEN CASE protocol", "THEN CASE configured.protocol"), aliasSeedPredicate);
+            try(PreparedStatement statement = connection.prepareStatement(sql))
+            {
+                List<Object> parameters = new ArrayList<>(List.of(resetAt, resetAt));
+                parameters.addAll(aliasSeedParameters);
+                parameters.add(maximumRows);
+                bind(statement, parameters);
+                return statement.executeUpdate();
+            }
+        }
+
         private ReceiverActivityMaintenance.DeletionOutcome revalidate(Connection connection) throws SQLException
         {
             if("alias_activity".equals(target.sourceKind()))
             {
-                if(target.recordKey() == null || scalar(connection, "SELECT id FROM alias WHERE id=?",
-                    List.of(parsePositive(target.recordKey()))) > 0)
+                if(target.recordKey() == null || aliasActivityExists(connection, parsePositive(target.recordKey())))
                     return ReceiverActivityMaintenance.DeletionOutcome.DELETED;
                 return ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND;
             }
@@ -1107,15 +1175,28 @@ final class ReceiverActivityScopedDeletion
 
         private static void addAliasReset(Plan plan, ScopedData target, long cutoffMs)
         {
-            String reset = "metrics_state=CASE WHEN protocol_code=0 THEN 'unsupported' ELSE 'not_collected' END," +
+            String configuredProtocol = "(SELECT " + CURRENT_ALIAS_PROTOCOL + " FROM alias WHERE id=alias_id)";
+            String reset = "activity_identity=(SELECT activity_identity FROM alias WHERE id=alias_id)," +
+                "alias_list_id=(SELECT alias_list_id FROM alias WHERE id=alias_id)," +
+                "alias_name=(SELECT name FROM alias WHERE id=alias_id)," +
+                "alias_list_name=(SELECT list.name FROM alias definition JOIN alias_list list " +
+                    "ON list.id=definition.alias_list_id WHERE definition.id=alias_id)," +
+                "protocol_code=" + configuredProtocol + ",metrics_state=CASE WHEN " + configuredProtocol +
+                    "=0 THEN 'unsupported' ELSE 'not_collected' END," +
                 "logical_call_count=NULL,recorded_logical_call_count=NULL,stream_submitted_logical_call_count=NULL," +
                 "encrypted_logical_call_count=NULL,grant_observation_count=NULL,join_observation_count=NULL," +
                 "emergency_observation_count=NULL,register_observation_count=NULL,logout_observation_count=NULL," +
                 "denial_observation_count=NULL,data_observation_count=NULL,other_signaling_observation_count=NULL," +
                 "signaling_observation_count=NULL,first_evidence_ms=NULL,last_evidence_ms=NULL," +
-                "updated_at_ms=" + Math.max(1, cutoffMs + 1) + ",last_reset_ms=" + Math.max(1, cutoffMs + 1);
-            plan.add("summary", "alias_activity_summary", target.recordKey() == null ? "1=1" : "alias_id=?",
-                target.recordKey() == null ? List.of() : List.of(parsePositive(target.recordKey())), null, List.of(), reset);
+                "updated_at_ms=" + Math.max(1, cutoffMs + 1) + ",last_reset_ms=max(" + Math.max(1, cutoffMs + 1) +
+                    ",coalesce((SELECT activity_reset_ms FROM alias WHERE id=alias_id),0))";
+            String selected = target.recordKey() == null ? "1=1" : "alias_id=?";
+            List<Object> parameters = target.recordKey() == null ? List.of() : List.of(parsePositive(target.recordKey()));
+            String configured = "EXISTS(SELECT 1 FROM alias WHERE id=alias_id)";
+            plan.add("summary", "alias_activity_summary", selected + " AND NOT " + configured,
+                parameters, null, List.of(), null);
+            plan.add("summary", "alias_activity_summary", selected + " AND " + configured,
+                parameters, null, List.of(), reset);
         }
 
         private static void addFinalReferences(Plan plan, ScopedData target)

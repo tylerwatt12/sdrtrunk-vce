@@ -97,7 +97,6 @@ import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
@@ -1419,7 +1418,7 @@ class ReceiverActivityServiceLifecycleTest
         {
             SdrTrunkTestDatabase.create(database);
             persistChannels(database, channel);
-            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            try(Connection connection = ActivityTestDatabase.openPair(database);
                 Statement statement = connection.createStatement())
             {
                 statement.executeUpdate("""
@@ -2036,7 +2035,7 @@ class ReceiverActivityServiceLifecycleTest
         SdrTrunkTestDatabase.create(database);
         Channel channel = nbfmChannel("00000000-0000-0000-0000-000000000301");
         persistChannels(database, channel);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = ActivityTestDatabase.openPair(database);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
@@ -2119,7 +2118,7 @@ class ReceiverActivityServiceLifecycleTest
             nxdnTrunkedChannel(currentNxdn));
         long now = System.currentTimeMillis();
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        try(Connection connection = ActivityTestDatabase.openPair(database))
         {
             ReceiverActivitySchema.recordActivity(connection,
                 activity(now - TimeUnit.DAYS.toMillis(40)), true);
@@ -2298,7 +2297,7 @@ class ReceiverActivityServiceLifecycleTest
 
     private static int count(Path database, String table) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = ActivityTestDatabase.openPair(database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("SELECT COUNT(*) FROM " + table))
         {
@@ -2309,7 +2308,7 @@ class ReceiverActivityServiceLifecycleTest
 
     private static int countProtocol(Path database, int protocol) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = ActivityTestDatabase.openPair(database);
             var statement = connection.prepareStatement(
                 "SELECT COUNT(*) FROM trunked_site_snapshot WHERE protocol_code = ?"))
         {
@@ -2325,7 +2324,7 @@ class ReceiverActivityServiceLifecycleTest
 
     private static long scalar(Path database, String sql) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = ActivityTestDatabase.openPair(database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery(sql))
         {
@@ -2336,7 +2335,7 @@ class ReceiverActivityServiceLifecycleTest
 
     private static String scalarText(Path database, String sql) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = ActivityTestDatabase.openPair(database);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery(sql))
         {

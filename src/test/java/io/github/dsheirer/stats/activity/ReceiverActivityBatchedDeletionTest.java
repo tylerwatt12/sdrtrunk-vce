@@ -531,6 +531,7 @@ class ReceiverActivityBatchedDeletionTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         for(int id = 1; id <= 2; id++)
         {
             String configuration = id == 1 ? CHANNEL : OTHER;

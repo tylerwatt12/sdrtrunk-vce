@@ -29,7 +29,7 @@ final class WebConfiguredEntityRepository
     static final String CONFIGURED_CHANNEL_SELECT = """
         SELECT config.id AS configuration_row_id, config.configuration_id, config.channel_kind,
             config.system_name AS system_name, config.site_name AS site_name, config.name AS name,
-            alias_list.name AS alias_list_name, config.alias_list_id,
+            coalesce(alias_list.name,channel.alias_list_name) AS alias_list_name, alias_list.id AS alias_list_id,
             config.decoder_type AS decoder, config.primary_frequency_hz,
             channel.id AS channel_id, channel.first_seen_ms, channel.last_seen_ms,
             radio_system.id AS radio_system_id, radio_system.system_key AS radio_system_key,
@@ -64,7 +64,10 @@ final class WebConfiguredEntityRepository
 
     List<ConfiguredChannel> channels(Connection connection) throws SQLException
     {
-        return queryRows(connection, CONFIGURED_CHANNEL_SELECT + """
+        String activeOnly = StatsHistoryContext.configurationAttached(connection) ?
+            " WHERE EXISTS(SELECT 1 FROM configuration.configuration_channel active " +
+                "WHERE active.configuration_id=config.configuration_id) " : "";
+        return queryRows(connection, CONFIGURED_CHANNEL_SELECT + activeOnly + """
             ORDER BY config.sort_order, config.id
             """).stream().map(WebConfiguredEntityRepository::configuredChannel).toList();
     }

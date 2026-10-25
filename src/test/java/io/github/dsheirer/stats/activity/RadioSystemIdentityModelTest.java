@@ -110,12 +110,12 @@ class RadioSystemIdentityModelTest
         repository.synchronizeChannelAndBroadcastConfiguration(List.of(first, second), List.of());
 
         P25SiteIdentity verified = new P25SiteIdentity(0xBEE00, 0x3A9, 1, 1);
-        try(Connection connection = SdrTrunkDatabase.open(database))
+        try(Connection connection = ActivityTestDatabase.openPair(database))
         {
             ReceiverActivitySchema.insertSite(connection,
                 p25Site(first.getConfigurationId(), 100, verified.wacn(), verified.system(), verified.rfss(),
                     verified.site()));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
             assertEquals(1, scalar(connection, """
                 SELECT COUNT(*) FROM configuration_channel
                 WHERE configuration_id='%s'
@@ -123,7 +123,7 @@ class RadioSystemIdentityModelTest
                 """.formatted(first.getConfigurationId())));
         }
 
-        List<Channel> restored = repository.load().channels();
+        List<Channel> restored = repository.loadForStartup().channels();
         Channel restoredFirst = restored.stream()
             .filter(channel -> first.getConfigurationId().equals(channel.getConfigurationId()))
             .findFirst().orElseThrow();
@@ -139,7 +139,7 @@ class RadioSystemIdentityModelTest
         //The next ordinary accepted save persists the restored value. Full runtime/startup validation succeeds
         //immediately, without waiting for another decoder snapshot to repair contradictory state.
         repository.synchronizeChannelAndBroadcastConfiguration(restored, List.of());
-        try(Connection connection = SdrTrunkDatabase.open(database))
+        try(Connection connection = ActivityTestDatabase.openPair(database))
         {
             assertEquals(verified.wacn(), scalar(connection, """
                 SELECT json_extract(config_json, '$.p25SiteIdentity.wacn')
@@ -154,7 +154,7 @@ class RadioSystemIdentityModelTest
                 WHERE configuration_id='%s'
                   AND coalesce(json_type(config_json, '$.p25SiteIdentity'), 'null')='null'
                 """.formatted(second.getConfigurationId())));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
     }
@@ -222,7 +222,7 @@ class RadioSystemIdentityModelTest
                 "native calls converge while retained channel-scoped history remains separate");
             assertEquals(16, scalar(connection,
                 "SELECT SUM(grant_count) FROM radio_system_identity_summary"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -239,13 +239,13 @@ class RadioSystemIdentityModelTest
 
             assertEquals("dmr:channel:" + DMR_A, systemKey(connection, radioSystemId(connection, DMR_A)));
             assertEquals("nxdn-c:channel:" + NXDN_A, systemKey(connection, radioSystemId(connection, NXDN_A)));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
 
             recordTrunkedSite(connection, dmrSite(DMR_A, 200, 1, 2, 42));
             recordTrunkedSite(connection, nxdnSite(NXDN_A, 200, 1, 3, 303));
             assertEquals("dmr:tier3:small:42", systemKey(connection, radioSystemId(connection, DMR_A)));
             assertEquals("nxdn-c:local:303", systemKey(connection, radioSystemId(connection, NXDN_A)));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -315,7 +315,7 @@ class RadioSystemIdentityModelTest
             assertEquals(0, scalar(connection, """
                 SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=1 AND identity_id=92
                 """));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -476,7 +476,7 @@ class RadioSystemIdentityModelTest
                 WHERE system.system_key='p25:bee00:3aa'
                   AND identity.identity_kind_code=2 AND identity.identity_id=1004
                 """));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -510,7 +510,7 @@ class RadioSystemIdentityModelTest
             assertEquals(2, scalar(connection, "SELECT observed_model_code FROM trunked_site_snapshot"));
             assertEquals(1, scalar(connection, "SELECT observed_site_id FROM trunked_site_snapshot"));
             assertEquals(1, scalar(connection, "SELECT variant_code FROM trunked_site_snapshot"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -541,7 +541,7 @@ class RadioSystemIdentityModelTest
             //The supported Capacity Plus/Connect Plus/Capacity Max/Hytera and unknown codes do not infer a system.
             recordTrunkedSite(connection, dmrSite(DMR_A, 5_000, 5, 2, 5));
             assertEquals("dmr:channel:" + DMR_A, systemKey(connection, radioSystemId(connection, DMR_A)));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -654,7 +654,7 @@ class RadioSystemIdentityModelTest
                 p25Call(P25_A, 82, 1_200, 0xBEE00, 0x3A9, null, 10_900_077)));
             assertEquals(2, scalar(connection,
                 "SELECT logical_call_count FROM radio_system_identity_summary WHERE id=" + owner));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -679,7 +679,7 @@ class RadioSystemIdentityModelTest
                 """));
             assertEquals(5, scalar(connection, "SELECT COUNT(*) FROM receiver_activity_event WHERE source_identity_summary_id IS NOT NULL"));
             assertEquals(1_400, scalar(connection, "SELECT last_seen_ms FROM radio_system_identity_summary WHERE identity_kind_code=2"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -713,7 +713,7 @@ class RadioSystemIdentityModelTest
                   AND recorded_output_count=1 AND streamed_output_count=1
                 """));
             assertEquals(1, scalar(connection, "SELECT logical_call_count FROM trunked_logical_call_bucket"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -737,7 +737,7 @@ class RadioSystemIdentityModelTest
                 JOIN radio_system_identity_summary identity ON identity.id=presence.radio_identity_id
                 WHERE presence.observed_working_id=123
                 """));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -790,7 +790,7 @@ class RadioSystemIdentityModelTest
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence_clear WHERE radio_identity_id=" + localOwner));
             assertEquals("v1-r-x-x-123", text(connection, "SELECT source_identity_key FROM receiver_activity_event_resolved WHERE source_identity_summary_id=" + localOwner));
             assertEquals("v1-r-bee00-3a9-123", text(connection, "SELECT source_identity_key FROM receiver_activity_event_resolved WHERE source_identity_summary_id=" + homeOwner));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -828,7 +828,7 @@ class RadioSystemIdentityModelTest
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE id=" + localOwner));
             assertEquals(qualifiedOwner, scalar(connection, "SELECT source_identity_summary_id FROM receiver_activity_event"));
             assertEquals(qualifiedOwner, scalar(connection, "SELECT radio_identity_id FROM trunked_radio_group_summary"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -855,7 +855,7 @@ class RadioSystemIdentityModelTest
                   AND home_wacn=0xBEE00 AND home_system_id=0x3A9 AND p25_subscriber_identity_id IS NULL
                 """.formatted(owner)));
             assertEquals(2, scalar(connection, "SELECT COUNT(*) FROM radio_system_identity_summary WHERE identity_kind_code=2"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -912,7 +912,7 @@ class RadioSystemIdentityModelTest
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
             assertEquals(0xFFFD26, scalar(connection,
                 "SELECT observed_local_id FROM trunked_radio_channel_presence_clear"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -943,7 +943,7 @@ class RadioSystemIdentityModelTest
                 WHERE identity_kind_code=2 AND home_wacn=0xBEE00 AND home_system_id=0x954
                   AND identity_id=831102
                 """));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -1097,11 +1097,11 @@ class RadioSystemIdentityModelTest
             assertEquals(channelId(connection, P25_A), scalar(connection,
                 "SELECT last_channel_id FROM p25_wuid_assignment_observation_summary"));
 
-            //The saved channel is provenance only. Its removal does not discard the observation, but the retained
-            //history is never used to reinterpret a later ordinary radio ID.
+            // Removing configuration preserves its historical provenance until scheduled retention expires it.
+            // The retained assignment never reinterprets a later ordinary radio ID.
             execute(connection, "DELETE FROM configuration_channel WHERE configuration_id='" + P25_A + "'");
             assertEquals(1, scalar(connection,
-                "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary WHERE last_channel_id IS NULL"));
+                "SELECT COUNT(*) FROM p25_wuid_assignment_observation_summary WHERE last_channel_id IS NOT NULL"));
 
             assertTrue(ReceiverActivitySchema.recordResolvedLogicalCall(connection,
                 p25Call(P25_B, 41, 1_200, 0xBEE00, 0x3A9, null, 123)));
@@ -1117,7 +1117,7 @@ class RadioSystemIdentityModelTest
                 WHERE home_wacn=0xBEE00 AND home_system_id=0x3A9 AND identity_id=123
                   AND p25_subscriber_identity_id IS NULL
                 """));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -1159,7 +1159,7 @@ class RadioSystemIdentityModelTest
                     'p25_wuid_assignment_current', 'p25_wuid_assignment_summary',
                     'p25_wuid_assignment_tombstone')
                 """));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -1194,7 +1194,7 @@ class RadioSystemIdentityModelTest
                     10_000_000, ReceiverActivityRecords.RadioPresenceEvidence.AFFILIATION), 1));
             assertEquals(1, scalar(connection,
                 "SELECT affiliation_count FROM p25_wuid_assignment_observation_summary"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -1512,7 +1512,7 @@ class RadioSystemIdentityModelTest
             ReceiverActivitySchema.insertSite(connection, p25Site(P25_A, 200, 0xBEE00, 0x3A9, 1, 1));
             assertEquals("p25:bee00:3a9", systemKey(connection, radioSystemId(connection, P25_A)));
             assertEquals(1, scalar(connection, "SELECT site FROM p25_site_snapshot"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -1532,7 +1532,7 @@ class RadioSystemIdentityModelTest
                 SET config_json='{"p25SiteIdentity":{"wacn":781824,"system":938,"rfss":1,"site":2}}'
                 WHERE configuration_id='%s'
                 """.formatted(P25_A));
-            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+            assertThrows(SQLException.class, () -> ActivityTestDatabase.validateCurrent(connection));
 
             //A call for the newly configured system may be counted historically, but it cannot move the receiver.
             record(connection, trunked(P25_A, "APCO25", 0xBEE00, 0x3AA, 92, 150));
@@ -1544,7 +1544,7 @@ class RadioSystemIdentityModelTest
             assertEquals(2, scalar(connection,
                 "SELECT site FROM p25_site_snapshot WHERE channel_id=" + channelId));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
 
             execute(connection, """
                 UPDATE configuration_channel SET config_json='{}' WHERE configuration_id='%s'
@@ -1583,7 +1583,7 @@ class RadioSystemIdentityModelTest
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_radio_channel_presence"));
             assertEquals(200, scalar(connection,
                 "SELECT radio_system_assigned_at_ms FROM receiver_channel WHERE id=" + channelId));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -1655,11 +1655,11 @@ class RadioSystemIdentityModelTest
 
             long dmrSystem = radioSystemId(connection, DMR_A);
             execute(connection, "DELETE FROM configuration_channel WHERE configuration_id='" + DMR_A + "'");
-            assertEquals(0, scalar(connection,
+            assertEquals(1, scalar(connection,
                 "SELECT COUNT(*) FROM receiver_channel WHERE configuration_id='" + DMR_A + "'"));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + dmrSystem));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + dmrSystem));
 
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -1683,7 +1683,9 @@ class RadioSystemIdentityModelTest
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + system));
             execute(connection, "DELETE FROM radio_system_identity_summary WHERE radio_system_id=" + system);
             execute(connection, "DELETE FROM trunked_radio_group_summary WHERE radio_system_id=" + system);
-            assertEquals(1, ReceiverActivitySchema.runRetentionPass(connection, 0));
+            assertEquals(0, ReceiverActivitySchema.runRetentionPass(connection, 0));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + system));
+            for(int pass=0;pass<20;pass++) ReceiverActivitySchema.runRetentionPass(connection, 3_600_001);
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM radio_system WHERE id=" + system));
         }
     }
@@ -1694,7 +1696,9 @@ class RadioSystemIdentityModelTest
         try(Connection connection = open())
         {
             assertEquals(Set.of("id", "configuration_id", "first_seen_ms", "last_seen_ms", "radio_system_id",
-                    "radio_system_assigned_at_ms"),
+                    "radio_system_assigned_at_ms", "name", "system_name", "site_name", "decoder_type",
+                    "channel_kind", "address_domain_code", "alias_list_id", "alias_list_name",
+                    "primary_frequency_hz", "assigned_talkgroup"),
                 columns(connection, "receiver_channel"));
             assertFalse(columns(connection, "radio_system_identity_summary").contains("last_observed_local_id"));
             assertEquals(0, scalar(connection, """
@@ -1719,7 +1723,7 @@ class RadioSystemIdentityModelTest
                     first_seen_ms, last_seen_ms
                 ) VALUES ('p25:bee00:124', 1, 0, 0xBEE00, 0x123, 1000, 1000)
                 """));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -1742,7 +1746,7 @@ class RadioSystemIdentityModelTest
                 WHERE system_key='dmr:channel:%s'
                 """.formatted(CONVENTIONAL, CONVENTIONAL));
 
-            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+            assertThrows(SQLException.class, () -> ActivityTestDatabase.validateCurrent(connection));
         }
     }
 
@@ -1757,8 +1761,9 @@ class RadioSystemIdentityModelTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         execute(connection, "INSERT INTO alias_list(id, name, family) VALUES (1, 'First', 'P25'), (2, 'Second', 'P25')");
-        ReceiverActivitySchema.validate(connection);
+        ActivityTestDatabase.validateCurrent(connection);
         return connection;
     }
 

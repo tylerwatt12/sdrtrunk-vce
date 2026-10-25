@@ -6,12 +6,15 @@
 package io.github.dsheirer.support;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.database.ActivityDatabasePath;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -42,9 +45,9 @@ class SupportBundleServiceTest
             statement.execute("INSERT INTO database_metadata VALUES('database_format_version','21',1)");
             statement.execute("CREATE TABLE alias_list(id INTEGER, name TEXT)");
             statement.execute("INSERT INTO alias_list VALUES(1,'Default NXDN')");
-            statement.execute("CREATE TABLE receiver_activity_event(id INTEGER, timestamp_ms INTEGER, details TEXT)");
+            statement.execute("CREATE TABLE receiver_activity_event(id INTEGER, timestamp_ms INTEGER, details TEXT, api_key TEXT)");
             statement.execute("INSERT INTO receiver_activity_event VALUES(1," + System.currentTimeMillis() +
-                ",'recent call')");
+                ",'recent call','never-include-history-key')");
             statement.execute("CREATE TABLE web_user(id INTEGER, username TEXT, password_verifier TEXT)");
             statement.execute("INSERT INTO web_user VALUES(1,'admin','never-include-this-verifier')");
             statement.execute("CREATE TABLE future_feature(id INTEGER, value TEXT)");
@@ -86,6 +89,8 @@ class SupportBundleServiceTest
             String all = String.join("\n", entries.values());
             assertFalse(all.contains("never-include-this-verifier"));
             assertFalse(all.contains("never-include-this-key"));
+            assertFalse(all.contains("never-include-history-key"));
+            assertTrue(entries.get("recent-activity-history/receiver-activity-event.csv").contains("[removed]"));
             assertFalse(all.contains("/Users/alice"));
             assertTrue(all.contains("future_feature"));
             assertTrue(all.contains("Not part of a support-bundle section"));
@@ -153,6 +158,68 @@ class SupportBundleServiceTest
                 name.contains("application-settings") || name.contains("configuration-broadcast-stream")));
             assertTrue(entries.get("bundle-summary.json").contains("private_data_never_included"));
         }
+    }
+
+    @Test
+    void pairedHistoryIsOptInUsesTheRecentWindowAndKeepsItsSourceAndPrivacyBoundaries() throws Exception
+    {
+        Path database = SdrTrunkTestDatabase.create(mTemporaryDirectory.resolve("paired.sqlite"));
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        long recent = System.currentTimeMillis();
+        long old = recent - Duration.ofHours(3).toMillis();
+        try(var configuration = SdrTrunkDatabase.open(database); var sql = configuration.createStatement())
+        {
+            sql.executeUpdate("INSERT INTO application_settings(key,settings_json,updated_at_ms) " +
+                "VALUES('private_support_fixture','{\"api_key\":\"paired-credential-secret\"}',1)");
+            sql.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(1,16,1,123)");
+        }
+        try(var history = SdrTrunkDatabase.openHistory(database); var sql = history.createStatement())
+        {
+            sql.executeUpdate("INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,'123e4567-e89b-42d3-a456-426614174001'," + old + "," + recent + ")");
+            sql.executeUpdate("INSERT INTO receiver_activity_event(id,channel_id,observed_at_ms,action_code) " +
+                "VALUES(1,1," + recent + ",1),(2,1," + old + ",1)");
+            sql.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(1,17,2,456)");
+        }
+        byte[] configurationBefore = Files.readAllBytes(database);
+        byte[] historyBefore = Files.readAllBytes(activity);
+        try(SupportBundleService service = new SupportBundleService(database, mTemporaryDirectory.resolve("logs"), Map::of))
+        {
+            Map<String,String> withoutHistory = bundle(service,
+                EnumSet.of(SupportBundleService.Section.SETUP, SupportBundleService.Section.ALIASES));
+            assertFalse(withoutHistory.keySet().stream().anyMatch(name -> name.contains("activity-history/")));
+            Map<String,String> recentHistory = bundle(service,
+                EnumSet.of(SupportBundleService.Section.RECENT_ACTIVITY, SupportBundleService.Section.SETUP));
+            String recentRows = recentHistory.get("recent-activity-history/activity-receiver-activity-event.csv");
+            assertTrue(recentRows.contains(Long.toString(recent)));
+            assertFalse(recentRows.contains(Long.toString(old)));
+            assertEquals(1L, new ObjectMapper().readTree(recentHistory.get("bundle-summary.json"))
+                .path("exported_rows").path("activity.receiver_activity_event").longValue());
+            Map<String,String> fullHistory = bundle(service, EnumSet.of(SupportBundleService.Section.FULL_ACTIVITY));
+            assertTrue(fullHistory.get("full-activity-history/activity-receiver-activity-event.csv").contains(Long.toString(old)));
+            assertTrue(fullHistory.containsKey("full-activity-history/p25-subscriber-identity.csv"));
+            assertTrue(fullHistory.containsKey("full-activity-history/activity-p25-subscriber-identity.csv"));
+            assertFalse(fullHistory.keySet().stream().anyMatch(name -> name.contains("activity-database-metadata") ||
+                name.endsWith(".sqlite") || name.contains("web-user") || name.contains("application-settings")));
+            assertFalse(String.join("\n", recentHistory.values()).contains("paired-credential-secret"));
+            assertFalse(String.join("\n", fullHistory.values()).contains("paired-credential-secret"));
+            assertEquals(2L, new ObjectMapper().readTree(fullHistory.get("bundle-summary.json"))
+                .path("exported_rows").path("activity.receiver_activity_event").longValue());
+        }
+        assertArrayEquals(configurationBefore, Files.readAllBytes(database), "Configuration is never changed by export");
+        assertArrayEquals(historyBefore, Files.readAllBytes(activity), "History is never changed by export");
+    }
+
+    private static Map<String,String> bundle(SupportBundleService service, EnumSet<SupportBundleService.Section> sections)
+        throws Exception
+    {
+        String id = service.generate(new SupportBundleService.Request("Paired history", "a@example.com", "Other",
+            "Something else", "Inspect the selected data.", "Generate a support bundle.", sections));
+        SupportBundleService.Status status = awaitReady(service, id);
+        assertEquals("ready", status.state(), status.message());
+        return unzip(service.download(id).path());
     }
 
     private static SupportBundleService.Status awaitReady(SupportBundleService service, String id) throws Exception

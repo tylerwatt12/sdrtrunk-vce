@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.stats.StatsHistoryContext;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
@@ -70,6 +71,7 @@ final class ReceiverActivityRetention
         {
             throw new SQLException("Activity retention requires an idle database writer connection");
         }
+        StatsHistoryContext.installSubscriberContext(connection);
         long startedAt = nanoTime.getAsLong();
         int cursor = Math.floorMod((int)ReceiverActivitySchema.readStatusLong(connection, CURSOR_STATUS_KEY),
             TASKS.size());
@@ -288,8 +290,12 @@ final class ReceiverActivityRetention
                     WHERE identity.p25_subscriber_identity_id=subscriber.id)
                   AND NOT EXISTS (SELECT 1 FROM p25_wuid_assignment_observation_summary history
                     WHERE history.p25_subscriber_identity_id=subscriber.id)
-                  AND NOT EXISTS (SELECT 1 FROM alias_p25_subscriber_identity alias_identity
-                    WHERE alias_identity.p25_subscriber_identity_id=subscriber.id)
+                  AND NOT EXISTS (SELECT 1 FROM configured_p25_subscriber_identity configured
+                    JOIN alias_p25_subscriber_identity alias_identity
+                      ON alias_identity.p25_subscriber_identity_id=configured.id
+                    WHERE configured.home_wacn=subscriber.home_wacn
+                      AND configured.home_system_id=subscriber.home_system_id
+                      AND configured.subscriber_id=subscriber.subscriber_id)
                 ORDER BY subscriber.id
                 LIMIT ?
             )
@@ -323,6 +329,69 @@ final class ReceiverActivityRetention
                 LIMIT ?
             )
             """));
+
+        // Configuration deletion never visits history. Scheduled retention owns these detached lifetime rows.
+        tasks.add(sql("detached channel reset boundaries", false, """
+            DELETE FROM receiver_channel_statistics_reset WHERE configuration_id IN (
+                SELECT reset.configuration_id FROM receiver_channel_statistics_reset reset
+                    INDEXED BY idx_receiver_channel_statistics_reset_retention
+                WHERE reset.reset_at_ms < ?
+                  AND NOT EXISTS(SELECT 1 FROM configuration_channel configured
+                    WHERE configured.configuration_id=reset.configuration_id)
+                ORDER BY reset.reset_at_ms,reset.configuration_id LIMIT ?
+            )
+            """));
+        tasks.add(sql("detached Alias lifetime totals", false, """
+            DELETE FROM alias_activity_summary WHERE alias_id IN (
+                SELECT summary.alias_id FROM alias_activity_summary summary INDEXED BY idx_alias_activity_retention
+                WHERE coalesce(summary.last_evidence_ms, summary.updated_at_ms) < ?
+                  AND NOT EXISTS(SELECT 1 FROM alias configured WHERE configured.id=summary.alias_id
+                    AND configured.activity_identity=summary.activity_identity)
+                ORDER BY coalesce(summary.last_evidence_ms, summary.updated_at_ms),summary.alias_id LIMIT ?
+            )
+            """));
+        tasks.add(sql("detached analog totals", false, """
+            DELETE FROM alias_list_analog_activity_summary
+            WHERE (alias_list_id,channel_configuration_id,protocol_code,assigned_talkgroup) IN (
+                SELECT summary.alias_list_id,summary.channel_configuration_id,summary.protocol_code,
+                    summary.assigned_talkgroup FROM alias_list_analog_activity_summary summary INDEXED BY idx_alias_analog_retention
+                WHERE summary.last_seen_ms < ?
+                  AND (NOT EXISTS(SELECT 1 FROM configuration_channel configured
+                        WHERE configured.configuration_id=summary.channel_configuration_id)
+                    OR NOT EXISTS(SELECT 1 FROM alias_list configured WHERE configured.id=summary.alias_list_id))
+                ORDER BY summary.last_seen_ms,summary.alias_list_id,summary.channel_configuration_id,
+                    summary.protocol_code,summary.assigned_talkgroup LIMIT ?
+            )
+            """));
+        tasks.add(sql("detached conventional lifetime totals", false, """
+            DELETE FROM conventional_activity_summary WHERE rowid IN (
+                SELECT summary.rowid FROM conventional_activity_summary summary INDEXED BY idx_conventional_summary_retention
+                JOIN receiver_channel channel ON channel.id=summary.channel_id
+                WHERE summary.last_seen_ms < ?
+                  AND NOT EXISTS(SELECT 1 FROM configuration_channel configured
+                    WHERE configured.configuration_id=channel.configuration_id)
+                ORDER BY summary.last_seen_ms,summary.channel_id,summary.frequency_hz,summary.timeslot LIMIT ?
+            )
+            """));
+        StringBuilder detachedOwner = new StringBuilder("""
+            DELETE FROM receiver_channel WHERE id IN (
+                SELECT channel.id FROM receiver_channel channel INDEXED BY idx_receiver_channel_retention
+                WHERE channel.last_seen_ms < ?
+                  AND NOT EXISTS(SELECT 1 FROM configuration_channel configured
+                    WHERE configured.configuration_id=channel.configuration_id)
+            """);
+        for(String table: List.of("receiver_activity_event", "trunked_signaling_activity_bucket",
+            "p25_site_call_identity_bucket", "conventional_activity_bucket", "conventional_activity_summary",
+            "conventional_call_identity_bucket", "p25_site_snapshot", "trunked_control_channel_quality",
+            "trunked_site_snapshot", "trunked_radio_affiliation", "trunked_radio_channel_presence",
+            "trunked_radio_channel_presence_clear", DmrActivitySchema.TALKGROUP_TABLE, DmrActivitySchema.RADIO_TABLE))
+        {
+            detachedOwner.append(" AND NOT EXISTS(SELECT 1 FROM ").append(table)
+                .append(" child WHERE child.channel_id=channel.id)");
+        }
+        detachedOwner.append(" AND NOT EXISTS(SELECT 1 FROM p25_wuid_assignment_observation_summary child " +
+            "WHERE child.last_channel_id=channel.id) ORDER BY channel.last_seen_ms,channel.id LIMIT ?)");
+        tasks.add(sql("detached receiver owners", false, detachedOwner.toString()));
 
         tasks.add(sqlWithoutCutoff("unused radio systems", """
             DELETE FROM radio_system

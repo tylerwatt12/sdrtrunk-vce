@@ -51,8 +51,8 @@ final class ManagedRecordingEntityDiscovery
     {
         ManagedRecordingBrowseOrder.sort(sort);
         boolean labels = Files.isRegularFile(mMainDatabase);
-        try(Connection connection = DriverManager.getConnection(labels ?
-            "jdbc:sqlite:" + mMainDatabase.toAbsolutePath().toUri() + "?mode=ro" : "jdbc:sqlite::memory:"))
+        try(Connection connection = labels ? StatsHistoryContext.openRead(mMainDatabase) :
+            DriverManager.getConnection("jdbc:sqlite::memory:"))
         {
             try(PreparedStatement statement = connection.prepareStatement("ATTACH DATABASE ? AS recordings"))
             {

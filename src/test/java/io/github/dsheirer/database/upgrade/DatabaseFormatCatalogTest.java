@@ -124,21 +124,13 @@ class DatabaseFormatCatalogTest
             try(Connection connection = open(database))
             {
                 assertEquals(descriptor.version(), DatabaseFormatCatalog.inspect(connection).version());
-                connection.setAutoCommit(false);
-                try
-                {
-                    DatabaseMigrationChain.migrate(connection);
-                    connection.commit();
-                }
-                catch(Exception e)
-                {
-                    connection.rollback();
-                    throw e;
-                }
+            }
+            ApplicationDatabaseMigrator.migrateInPlace(database,null);
+            try(Connection connection = open(database))
+            {
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                     DatabaseFormatCatalog.requireCurrent(connection).version());
-                assertEquals(DatabaseFormatCatalog.current().fingerprint(),
-                    SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));
                 assertEquals("0", scalar(connection, """
                     SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>12
                         OR json_extract(preferences_json, '$.presentation.live_row_density') IS NOT 'normal'

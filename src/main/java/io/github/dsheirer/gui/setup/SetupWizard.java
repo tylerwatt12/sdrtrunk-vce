@@ -155,6 +155,17 @@ public final class SetupWizard extends JDialog
 
     public static final class Cancelled extends RuntimeException {}
 
+    static boolean hasPendingDatabaseTransition(Path database)
+    {
+        return Files.exists(ActivityDatabasePath.splitReceipt(database));
+    }
+
+    /** The activation gap still owns this profile even when its final configuration filename is absent. */
+    static boolean hasExistingProfile(Path database)
+    {
+        return Files.isRegularFile(database) || hasPendingDatabaseTransition(database);
+    }
+
     /** Called on the main thread, before constructing SDRTrunk or any receiving service. */
     public static Result run(String[] args, Path root, PortableDataRootLock existingLock) throws Exception
     {
@@ -177,7 +188,7 @@ public final class SetupWizard extends JDialog
             {
                 //The optional catalog retains its existing unavailable-catalog fallback for unknown or damaged files.
             }
-            if(Files.isRegularFile(wizard.database))
+            if(Files.isRegularFile(wizard.database) && !hasPendingDatabaseTransition(wizard.database))
             {
                 try
                 {
@@ -233,9 +244,9 @@ public final class SetupWizard extends JDialog
         managedRecordingCatalog = database.resolveSibling("managed-recordings.sqlite");
         options = SdrTrunkDatabaseBootstrap.Options.parse(args);
         selectedSource = options.importXml() != null ? options.importXml() : options.upgradeData();
-        if(Files.isRegularFile(database) && selectedSource != null)
+        if(hasExistingProfile(database) && selectedSource != null)
             throw new IllegalArgumentException("These settings are already in use. To bring settings from another installation, start VCE in a new folder.");
-        if(!Files.isRegularFile(database) && options.upgradeCurrent())
+        if(!hasExistingProfile(database) && options.upgradeCurrent())
             throw new IllegalArgumentException("--upgrade-current requires an existing portable database.");
         lock = existingLock;
         ownsLock = existingLock == null;
@@ -507,6 +518,15 @@ public final class SetupWizard extends JDialog
 
     private void sourcePage()
     {
+        if(hasPendingDatabaseTransition(database))
+        {
+            notice("Finish updating your settings", "Receiving hasn’t started.", false);
+            paragraph("Your saved configuration and history have an interrupted update. Finish it before reviewing setup.");
+            next.setText("Finish update");
+            accept = () -> prepareProfile(() -> ApplicationMigrationSuccessDialog.currentDatabaseReport(
+                new ApplicationMigrationService().migrateCurrent(root, false, this::migrationProgress)), false);
+            return;
+        }
         if(managedRecordingCatalogNeedsUpgrade && preferences != null)
         {
             reviewSettings(managedRecordingCatalog, managedRecordingCatalog, "Update the recording library. Recording entries and audio are kept.",
@@ -566,7 +586,7 @@ public final class SetupWizard extends JDialog
 
     private void chooseSource()
     {
-        if(busy || sourceCommitted || preferences != null) return;
+        if(busy || sourceCommitted || preferences != null || hasExistingProfile(database)) return;
         JFileChooser chooser = new JFileChooser(selectedSource == null ? null : selectedSource.toFile());
         chooser.setDialogTitle("Choose VCE folder or XML playlist");
         chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
@@ -580,7 +600,7 @@ public final class SetupWizard extends JDialog
     private void inspectSource(Path input)
     {
         if(busy || sourceCommitted) return;
-        if(preferences != null || Files.isRegularFile(database))
+        if(preferences != null || hasExistingProfile(database))
             throw new IllegalStateException("Settings can only be imported into a new installation.");
         selectedSource = input.toAbsolutePath().normalize();
         Path source = selectedSource;

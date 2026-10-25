@@ -18,9 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermission;
@@ -31,6 +33,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.EnumSet;
 import java.util.concurrent.CancellationException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Assumptions;
@@ -43,6 +46,235 @@ class SqliteDatabaseSnapshotTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void snapshotsAndApprovalsIncludeTheActivityCompanion() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        Path copy = mTemporaryFolder.resolve("copied.sqlite");
+        Path externalCopy = mTemporaryFolder.resolve("external.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        SqliteDatabaseSnapshot.create(source, copy);
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(copy);
+        for(Path member: java.util.List.of(copy,io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(copy)))
+        {
+            for(String suffix: java.util.List.of("-wal","-shm","-journal"))
+                assertFalse(Files.exists(Path.of(member + suffix)), "validated snapshots are standalone files");
+        }
+        String before = SqliteDatabaseSnapshot.sha256(source);
+        try(var history = io.github.dsheirer.database.SdrTrunkDatabase.openHistory(source))
+        {
+            history.createStatement().execute("INSERT INTO receiver_channel(configuration_id,first_seen_ms,last_seen_ms) " +
+                "VALUES('123e4567-e89b-42d3-a456-426614174008',1,1)");
+        }
+        assertFalse(before.equals(SqliteDatabaseSnapshot.sha256(source)), "approval binds retained history too");
+        SqliteDatabaseSnapshot.createExternal(source, externalCopy);
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(externalCopy);
+        assertEquals("1", scalar(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(externalCopy),
+            "SELECT count(*) FROM receiver_channel"));
+        assertEquals("0", scalar(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(copy),
+            "SELECT count(*) FROM receiver_channel"));
+    }
+
+    @Test
+    void cancellationBetweenPairMembersRemovesOnlyOwnedDestinations() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        Path copy = mTemporaryFolder.resolve("cancelled.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        assertThrows(CancellationException.class,
+            () -> SqliteDatabaseSnapshot.create(source, copy, () -> Files.exists(copy)));
+        assertFalse(Files.exists(copy));
+        assertFalse(Files.exists(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(copy)));
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(source);
+    }
+
+    @Test
+    void repeatedCanonicalSnapshotsHaveTheSameApprovalDigest() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        Path first = mTemporaryFolder.resolve("first.sqlite");
+        Path second = mTemporaryFolder.resolve("second.sqlite");
+        Path independent = mTemporaryFolder.resolve("independent.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        SqliteDatabaseSnapshot.create(source, first);
+        SqliteDatabaseSnapshot.create(first, second);
+        SqliteDatabaseSnapshot.createExternal(source, independent);
+        assertEquals(SqliteDatabaseSnapshot.sha256(first), SqliteDatabaseSnapshot.sha256(second),
+            () -> byteDifferences(first, second));
+        assertEquals(SqliteDatabaseSnapshot.sha256(first), SqliteDatabaseSnapshot.sha256(independent),
+            () -> byteDifferences(first, independent));
+    }
+
+    @Test
+    void approvalDigestsStillDetectConfigurationHistoryAndOtherHeaderChanges() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        Path first = mTemporaryFolder.resolve("first.sqlite");
+        Path renamed = mTemporaryFolder.resolve("renamed.sqlite");
+        Path observed = mTemporaryFolder.resolve("observed.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        SqliteDatabaseSnapshot.create(source, first);
+        try(Connection configuration = DriverManager.getConnection("jdbc:sqlite:" + source);
+            Statement statement = configuration.createStatement())
+        {
+            statement.executeUpdate("UPDATE alias_list SET name='Changed configuration' " +
+                "WHERE id=(SELECT min(id) FROM alias_list)");
+        }
+        SqliteDatabaseSnapshot.create(source, renamed);
+        assertFalse(SqliteDatabaseSnapshot.sha256(first).equals(SqliteDatabaseSnapshot.sha256(renamed)));
+        try(var history = io.github.dsheirer.database.SdrTrunkDatabase.openHistory(source))
+        {
+            history.createStatement().executeUpdate("INSERT INTO receiver_channel(configuration_id,first_seen_ms,last_seen_ms) " +
+                "VALUES('123e4567-e89b-42d3-a456-426614174008',1,1)");
+        }
+        SqliteDatabaseSnapshot.create(source, observed);
+        assertFalse(SqliteDatabaseSnapshot.sha256(renamed).equals(SqliteDatabaseSnapshot.sha256(observed)));
+        String beforeHeaderChange = SqliteDatabaseSnapshot.sha256(observed);
+        try(Connection configuration = DriverManager.getConnection("jdbc:sqlite:" + observed);
+            Statement statement = configuration.createStatement())
+        {
+            statement.execute("PRAGMA user_version=17");
+        }
+        assertFalse(beforeHeaderChange.equals(SqliteDatabaseSnapshot.sha256(observed)),
+            "Only the proven bookkeeping counters are normalized");
+    }
+
+    @Test
+    void externalSourceMutationDetectionKeepsExactBookkeepingBytes() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        SqliteDatabaseSnapshot.ExternalSourceState before = SqliteDatabaseSnapshot.captureExternalSourceState(source);
+        FileTime modified = Files.getLastModifiedTime(source);
+        try(RandomAccessFile bytes = new RandomAccessFile(source.toFile(), "rw"))
+        {
+            bytes.seek(24); int counter = bytes.readInt();
+            bytes.seek(24); bytes.writeInt(counter + 1);
+            bytes.seek(92); bytes.writeInt(counter + 1);
+        }
+        Files.setLastModifiedTime(source, modified);
+        assertThrows(IOException.class, () -> SqliteDatabaseSnapshot.requireExternalSourceUnchanged(source, before));
+    }
+
+    private static String byteDifferences(Path first, Path second)
+    {
+        StringBuilder differences = new StringBuilder();
+        for(boolean companion: new boolean[]{false, true})
+        {
+            Path left = companion ? io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(first) : first;
+            Path right = companion ? io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(second) : second;
+            try
+            {
+                byte[] original = Files.readAllBytes(left);
+                byte[] copy = Files.readAllBytes(right);
+                differences.append(companion ? " history" : " configuration").append(" sizes=")
+                    .append(original.length).append('/').append(copy.length);
+                for(int offset = 0, count = 0; offset < Math.min(original.length, copy.length); offset++)
+                {
+                    if(original[offset] != copy[offset] && count++ < 20)
+                        differences.append(" offset=").append(offset).append(':')
+                            .append(Byte.toUnsignedInt(original[offset])).append('/')
+                            .append(Byte.toUnsignedInt(copy[offset]));
+                }
+            }
+            catch(IOException failure) { throw new UncheckedIOException(failure); }
+        }
+        return differences.toString();
+    }
+
+    @Test
+    void aCompanionClaimedBetweenMembersIsNeverRemoved() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        Path copy = mTemporaryFolder.resolve("claimed.sqlite");
+        Path companion = io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(copy);
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        AtomicBoolean claimed = new AtomicBoolean();
+        BooleanSupplier cancellation = () -> {
+            if(Files.exists(copy) && claimed.compareAndSet(false, true))
+            {
+                try { Files.writeString(companion, "foreign companion"); }
+                catch(IOException failure) { throw new UncheckedIOException(failure); }
+            }
+            return false;
+        };
+        assertThrows(IOException.class, () -> SqliteDatabaseSnapshot.create(source, copy, cancellation));
+        assertTrue(claimed.get());
+        assertFalse(Files.exists(copy), "The first member is owned by this failed snapshot");
+        assertEquals("foreign companion", Files.readString(companion));
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(source);
+    }
+
+    @Test
+    void aPublishedMemberReplacedBeforeCancellationIsPreserved() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        Path copy = mTemporaryFolder.resolve("replaced.sqlite");
+        Path replacement = mTemporaryFolder.resolve("foreign.sqlite");
+        Files.writeString(replacement, "foreign replacement");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        AtomicBoolean replaced = new AtomicBoolean();
+        BooleanSupplier cancellation = () -> {
+            if(Files.exists(copy) && replaced.compareAndSet(false, true))
+            {
+                try { Files.move(replacement, copy, StandardCopyOption.REPLACE_EXISTING); }
+                catch(IOException failure) { throw new UncheckedIOException(failure); }
+                return true;
+            }
+            return false;
+        };
+        CancellationException failure = assertThrows(CancellationException.class,
+            () -> SqliteDatabaseSnapshot.create(source, copy, cancellation));
+        assertTrue(replaced.get());
+        assertEquals("foreign replacement", Files.readString(copy));
+        assertEquals(1, failure.getSuppressed().length, "Changed ownership makes cleanup fail closed");
+        assertFalse(Files.exists(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(copy)));
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(source);
+    }
+
+    @Test
+    void destinationSidecarsOfEitherPairMemberAreRejectedAndPreserved() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        for(boolean companion: new boolean[]{false, true})
+        {
+            for(String suffix: java.util.List.of("-wal", "-shm", "-journal"))
+            {
+                Path copy = mTemporaryFolder.resolve("occupied-" + companion + suffix + ".sqlite");
+                Path activity = io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(copy);
+                Path sidecar = Path.of((companion ? activity : copy) + suffix);
+                Files.writeString(sidecar, "foreign sidecar");
+                assertThrows(IOException.class, () -> SqliteDatabaseSnapshot.create(source, copy));
+                assertEquals("foreign sidecar", Files.readString(sidecar));
+                assertFalse(Files.exists(copy));
+                assertFalse(Files.exists(activity));
+            }
+        }
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(source);
+    }
+
+    @Test
+    void aSidecarCreatedAfterPublicationIsPreservedWithItsDatabase() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        Path copy = mTemporaryFolder.resolve("opened.sqlite");
+        Path sidecar = Path.of(copy + "-wal");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(source);
+        BooleanSupplier cancellation = () -> {
+            if(!Files.exists(copy)) return false;
+            try { Files.writeString(sidecar, "foreign sidecar"); }
+            catch(IOException failure) { throw new UncheckedIOException(failure); }
+            return true;
+        };
+        CancellationException failure = assertThrows(CancellationException.class,
+            () -> SqliteDatabaseSnapshot.create(source, copy, cancellation));
+        assertTrue(Files.exists(copy));
+        assertEquals("foreign sidecar", Files.readString(sidecar));
+        assertEquals(1, failure.getSuppressed().length, "An externally opened snapshot cannot be cleaned up");
+        assertFalse(Files.exists(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(copy)));
+    }
 
     @Test
     void onlineSnapshotCapturesCommittedRowsThatHaveNotBeenCheckpointedFromWal() throws Exception

@@ -179,6 +179,7 @@ class ReceiverActivityCallKindTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         String decoder = domain == TrunkedIdentityDomain.STANDARD ? "DMR" : "NXDN";
         try(PreparedStatement statement = connection.prepareStatement("""
             INSERT INTO configuration_channel(configuration_id, channel_kind, sort_order, system_name, site_name,

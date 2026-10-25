@@ -194,6 +194,13 @@ public final class ChannelDefinitionCodec
         channel.setAliasListDefinition(aliasList);
         channel.setSourceConfiguration(source);
         channel.setDecodeConfiguration(decoder);
+        if(existing != null && (ChannelConfigurationPolicy.requireChannelKind(existing) !=
+            ChannelConfigurationPolicy.requireChannelKind(channel) ||
+            io.github.dsheirer.database.configuration.ConfigurationChannelProjection.from(existing).addressDomainCode() !=
+                io.github.dsheirer.database.configuration.ConfigurationChannelProjection.from(channel).addressDomainCode()))
+        {
+            throw new IllegalArgumentException("To change the channel mode or NXDN mode, clone a new channel");
+        }
         channel.setAuxDecodeConfiguration(auxiliaryTo(profile, submitted.auxiliaryDecoders()));
         channel.setEventLogConfiguration(loggersTo(profile, submitted.eventLogs(), conventional));
         channel.setRecordConfiguration(recordersTo(profile, submitted.recorders(), conventional));

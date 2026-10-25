@@ -73,9 +73,8 @@ final class ManagedRecordingIdentityDiscovery
     {
         ManagedRecordingBrowseOrder.sort(sort);
         boolean labelsAvailable = Files.isRegularFile(mMainDatabase);
-        String url = labelsAvailable ? "jdbc:sqlite:" + mMainDatabase.toAbsolutePath().toUri() + "?mode=ro" :
-            "jdbc:sqlite::memory:";
-        try(Connection connection = DriverManager.getConnection(url))
+        try(Connection connection = labelsAvailable ? StatsHistoryContext.openRead(mMainDatabase) :
+            DriverManager.getConnection("jdbc:sqlite::memory:"))
         {
             try(PreparedStatement attach = connection.prepareStatement("ATTACH DATABASE ? AS recordings"))
             {

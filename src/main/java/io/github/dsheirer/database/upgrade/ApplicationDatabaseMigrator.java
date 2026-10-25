@@ -222,6 +222,7 @@ public final class ApplicationDatabaseMigrator
     {
         Objects.requireNonNull(content, "Migration contents cannot be null");
         Path normalized = database.toAbsolutePath().normalize();
+        recoverSplitTransition(normalized);
         Consumer<String> listener = progress == null ? ignored -> { } : progress;
         if(Files.isSymbolicLink(normalized) || !Files.isRegularFile(normalized, LinkOption.NOFOLLOW_LINKS))
         {
@@ -262,6 +263,9 @@ public final class ApplicationDatabaseMigrator
                 output.println("Explicitly selected legacy receiver settings recovery: " + recoveryDefaults.size() + " setting(s).");
             MigrationSummary migration = migrateInTransaction(connection, source, null, normalized, true, listener, backup,
                 legacy, recoveryDefaults, content);
+            connection.close();
+            recoverSplitTransition(normalized);
+            SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(normalized);
             printCompletion(output, migration);
             output.println("RESULT: In-place application database update complete.");
             return new InPlaceMigrationResult(plan, bytes.toString(StandardCharsets.UTF_8));
@@ -327,6 +331,8 @@ public final class ApplicationDatabaseMigrator
             //The transaction has checked the exact final schema, required settings and configuration before COMMIT.
             //Finalize this private stage for atomic promotion without scanning retained history again.
             finalizeStagedDatabase(connection);
+            connection.close();
+            recoverSplitTransition(database);
             printCompletion(output, migration);
             output.println("RESULT: Owned complete-profile relocation and bounded validation complete.");
         }
@@ -416,6 +422,8 @@ public final class ApplicationDatabaseMigrator
             //Finalizing the private stage changes only journal state; do not rescan the same retained history here.
             finalizeStagedDatabase(connection);
             DatabaseFormatCatalog.requireCurrent(connection);
+            connection.close();
+            recoverSplitTransition(database);
             validateConfiguration(database);
 
             printCompletion(output, migration);
@@ -488,6 +496,12 @@ public final class ApplicationDatabaseMigrator
             DatabaseMigrationChain.planForApplicationMigration(connection, source);
         requireSourceIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
         return report;
+    }
+
+    /** Completes only an Application-Migrator-owned interrupted format-63 transition under the profile lock. */
+    public static void recoverSplitTransition(Path database) throws IOException, SQLException
+    {
+        Format62To63DatabaseMigration.recover(database.toAbsolutePath().normalize());
     }
 
     private static MigrationSummary migrateInTransaction(Connection connection,
@@ -567,11 +581,15 @@ public final class ApplicationDatabaseMigrator
                     //chain performs strict current-format validation or adopts a missing global marker.
                     portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
                     administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection);
-                    derivedStateRepair = CurrentDatabaseDerivedStateRepair.repair(connection);
+                    if(expectedSource.version()<63) derivedStateRepair = CurrentDatabaseDerivedStateRepair.repair(connection);
                     currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
                     identityRepair = SqliteIdentityRepair.repair(connection);
                 }
 
+                PortablePreferenceResult[] splitPreferences = {null};
+                CurrentDatabaseAdministrativeRepair.Inspection[] splitAdministrative = {null};
+                CurrentDatabaseBestEffortRepair.Inspection[] splitConfiguration = {null};
+                int[] splitTunerPaths = {-1};
                 int totalSteps = Math.max(1, DatabaseFormatCatalog.CURRENT_VERSION - expectedSource.version());
                 int[] stepNumber = {0};
                 DatabaseMigrationChain.MigrationReport chainReport = DatabaseMigrationChain.migrate(connection,
@@ -580,6 +598,17 @@ public final class ApplicationDatabaseMigrator
                     step -> {
                         if(step.sourceVersion() == 52)
                             importedLegacySettings[0] = legacy.importMissing(connection);
+                        if(step.sourceVersion() == 62)
+                        {
+                            try
+                            {
+                                splitPreferences[0] = updatePortableDirectoryPreferences(connection, relocation);
+                                splitAdministrative[0] = CurrentDatabaseAdministrativeRepair.repair(connection, false);
+                                splitConfiguration[0] = CurrentDatabaseBestEffortRepair.repair(connection);
+                                splitTunerPaths[0] = rebaseRecordingTunerPaths(connection, relocation);
+                            }
+                            catch(IOException failure) { throw new SQLException("Unable to prepare configuration extraction",failure); }
+                        }
                     });
                 if(discardedHistoryRows != null)
                 {
@@ -590,7 +619,13 @@ public final class ApplicationDatabaseMigrator
                     chainReport = new DatabaseMigrationChain.MigrationReport(chainReport.source(), chainReport.target(),
                         List.copyOf(reports));
                 }
-                if(inPlace)
+                if(splitPreferences[0] != null)
+                {
+                    portablePreferences = splitPreferences[0];
+                    administrativeRepair = splitAdministrative[0];
+                    currentRepair = splitConfiguration[0];
+                }
+                else if(inPlace)
                 {
                     //All historical layouts have now reached current configuration semantics. Repair this bounded
                     //component once; omit full derived-history, physical-integrity and foreign-key sweeps.
@@ -611,11 +646,11 @@ public final class ApplicationDatabaseMigrator
                         expectedSource.id() + ", marker=" + expectedSource.markerPresent() + "] but migration saw [" +
                         chainReport.source().id() + ", marker=" + chainReport.source().markerPresent() + "]");
                 }
-                if(!inPlace && expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                if(splitPreferences[0] == null && !inPlace && expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
                 {
                     portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
                 }
-                int rebasedRecordingTunerPaths = rebaseRecordingTunerPaths(connection, relocation);
+                int rebasedRecordingTunerPaths = splitTunerPaths[0] >= 0 ? splitTunerPaths[0] : rebaseRecordingTunerPaths(connection, relocation);
 
                 progress.accept("Validating the updated schema and configuration");
                 if(inPlace)
@@ -1350,6 +1385,28 @@ public final class ApplicationDatabaseMigrator
 
     static void validateCurrentDatabase(Connection connection) throws SQLException
     {
+        if("63".equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+            DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
+        {
+            DatabaseFormatCatalog.requireCurrent(connection);
+            if(io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE.equals(
+                io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+                    io.github.dsheirer.database.ConfigurationHistorySchema.ROLE_KEY)))
+                ReceiverActivitySchema.validateRetainedHistoryData(connection);
+            else
+            {
+                Path history=io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(
+                    Format62To63DatabaseMigration.databasePath(connection));
+                try(Connection activity=SqliteDatabaseSnapshot.openImmutable(history))
+                {
+                    io.github.dsheirer.database.ConfigurationHistoryDatabase.validateRole(activity,"activity");
+                    ReceiverActivitySchema.validateRetainedHistoryData(activity);
+                    requireForeignKeysValid(activity);
+                    requireIntegrity(activity,"PRAGMA quick_check","Activity quick check");
+                }
+            }
+            return;
+        }
         SdrTrunkDatabaseSchema.validate(connection);
         ReceiverActivitySchema.validate(connection);
         DmrActivitySchema.validate(connection);
@@ -1364,6 +1421,17 @@ public final class ApplicationDatabaseMigrator
 
     private static void validateConfiguration(Connection connection, Path database) throws IOException, SQLException
     {
+        if(io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE.equals(
+            io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+                io.github.dsheirer.database.ConfigurationHistorySchema.ROLE_KEY)))
+        {
+            Path extracted=io.github.dsheirer.database.ActivityDatabasePath.configurationStage(database);
+            try(Connection configuration=io.github.dsheirer.database.ConfigurationHistoryDatabase.openReadOnly(extracted))
+            {
+                ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(extracted).load(configuration));
+            }
+            return;
+        }
         ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load(connection));
     }
 

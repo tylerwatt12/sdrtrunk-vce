@@ -115,7 +115,7 @@ class ReceiverActivitySchemaIntegrityTest
     }
 
     @Test
-    void configuredChannelOwnsAndCascadesEveryChannelFact() throws Exception
+    void configurationRemovalPreservesHistoryAndHistoricalOwnerDeletionCascadesFacts() throws Exception
     {
         try(Connection connection = open())
         {
@@ -158,14 +158,16 @@ class ReceiverActivitySchemaIntegrityTest
                 VALUES (99, '1-1', 1000)
                 """));
 
+            String[] tables = {"receiver_channel", "receiver_activity_event", "conventional_activity_summary",
+                "p25_site_snapshot", "p25_site_channel", "p25_site_channel_tag", "trunked_control_channel_quality"};
+            java.util.Map<String,Integer> retained = new java.util.LinkedHashMap<>();
+            for(String table: tables) retained.put(table, scalar(connection, "SELECT COUNT(*) FROM " + table));
             execute(connection, "DELETE FROM configuration_channel WHERE configuration_id='" +
                 CONFIGURATION_ID + "'");
-            for(String table: new String[] {"receiver_channel", "receiver_activity_event",
-                "conventional_activity_summary", "p25_site_snapshot", "p25_site_channel",
-                "p25_site_channel_tag", "trunked_control_channel_quality"})
-            {
-                assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM " + table), table);
-            }
+            for(String table: tables)
+                assertEquals(retained.get(table), scalar(connection, "SELECT COUNT(*) FROM " + table), table);
+            execute(connection, "DELETE FROM receiver_channel WHERE configuration_id='" + CONFIGURATION_ID + "'");
+            for(String table: tables) assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM " + table), table);
         }
     }
 
@@ -503,7 +505,8 @@ class ReceiverActivitySchemaIntegrityTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
-        ReceiverActivitySchema.validate(connection);
+        ActivityTestDatabase.currentOwners(connection);
+        ActivityTestDatabase.validateCurrent(connection);
         return connection;
     }
 

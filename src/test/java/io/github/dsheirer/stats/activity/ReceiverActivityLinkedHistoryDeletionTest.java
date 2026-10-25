@@ -239,7 +239,7 @@ class ReceiverActivityLinkedHistoryDeletionTest
             assertNull(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
             assertEquals(512, scalar(connection, "SELECT total_changes()") - changesBefore);
             assertEquals(512, request.progress().rowsDeleted(), "The reset boundary consumes one changed-row slot");
-            String boundaryQuery = "SELECT analog_activity_reset_ms FROM configuration_channel " +
+            String boundaryQuery = "SELECT reset_at_ms FROM receiver_channel_statistics_reset " +
                 "WHERE configuration_id='" + CHANNEL + "'";
             long boundary = scalar(connection, boundaryQuery);
             assertEquals(request.progress().cutoffMs() + 1, boundary);
@@ -363,6 +363,7 @@ class ReceiverActivityLinkedHistoryDeletionTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         return connection;
     }
 

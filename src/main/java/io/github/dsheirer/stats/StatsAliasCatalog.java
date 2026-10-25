@@ -155,7 +155,7 @@ final class StatsAliasCatalog
     /** Current analog coverage credits only the exact/range winner for a saved assigned number. */
     static final String ANALOG_COVERAGE_COUNT_SQL = """
         (SELECT count(*)
-         FROM configuration_channel analog_configuration
+         FROM configured_channel analog_configuration
          JOIN receiver_channel analog_receiver
            ON analog_receiver.configuration_id = analog_configuration.configuration_id
          WHERE analog_configuration.alias_list_id = alias.alias_list_id
@@ -207,10 +207,11 @@ final class StatsAliasCatalog
 
     Map<String,Object> aliasLists(Connection connection, StatsRequest request) throws SQLException
     {
+        StatsHistoryContext.installSubscriberContext(connection);
         List<Map<String,Object>> rows = queryRows(connection, """
             SELECT list.id AS alias_list_id, list.name, list.family,
                 count(DISTINCT alias.id) AS alias_count,
-                (SELECT count(*) FROM configuration_channel channel
+                (SELECT count(*) FROM configured_channel channel
                  WHERE channel.alias_list_id = list.id) AS assigned_channel_count
             FROM alias_list list
             LEFT JOIN alias ON alias.alias_list_id = list.id
@@ -286,6 +287,7 @@ final class StatsAliasCatalog
      */
     List<Long> matchingAliasIds(Connection connection, StatsRequest request) throws SQLException
     {
+        StatsHistoryContext.installSubscriberContext(connection);
         ActivityQuery query = buildActivityQuery(request, null, true, MAX_BULK_ALIAS_SELECTION + 1,
             0, true);
         List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
@@ -507,6 +509,7 @@ final class StatsAliasCatalog
                                                             boolean stableIdentifierOrder)
         throws SQLException
     {
+        StatsHistoryContext.installSubscriberContext(connection);
         StringBuilder sql = new StringBuilder("""
             SELECT alias.id AS alias_id, alias.alias_list_id, alias_list.name AS alias_list_name,
                 alias_list.family, alias.name, alias.description, alias.group_name AS `group`, alias.color,
@@ -519,14 +522,19 @@ final class StatsAliasCatalog
                 END AS identity_type,
                 alias.protocol, alias.value, alias.min_value, alias.max_value,
                 alias.text_value, alias.numeric_value, alias.tone_sequence,
-                subscriber.id AS p25_subscriber_identity_id, subscriber.home_wacn,
+                subscriber.id AS p25_subscriber_identity_id,
+                (SELECT history_identity.id FROM p25_subscriber_identity history_identity
+                 WHERE history_identity.home_wacn=subscriber.home_wacn
+                   AND history_identity.home_system_id=subscriber.home_system_id
+                   AND history_identity.subscriber_id=subscriber.subscriber_id) AS _history_p25_subscriber_identity_id,
+                subscriber.home_wacn,
                 subscriber.home_system_id, subscriber.subscriber_id,
                 CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS ranged,
                 CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact
             FROM alias
             JOIN alias_list ON alias_list.id = alias.alias_list_id
             LEFT JOIN alias_p25_subscriber_identity subscriber_alias ON subscriber_alias.alias_id = alias.id
-            LEFT JOIN p25_subscriber_identity subscriber
+            LEFT JOIN configured_p25_subscriber_identity subscriber
               ON subscriber.id = subscriber_alias.p25_subscriber_identity_id
             WHERE 1=1
             """);
@@ -592,6 +600,7 @@ final class StatsAliasCatalog
                                                                boolean includeConfigurationCollections)
         throws SQLException
     {
+        StatsHistoryContext.installSubscriberContext(connection);
         ActivityQuery query = buildActivityQuery(request, aliasId, true, limit, offset, false);
         List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
 
@@ -646,8 +655,8 @@ final class StatsAliasCatalog
             paged, aliasIdOrder, allowIndexedMetricSort);
         String summaryFrom = indexedSort != null ?
             "alias_activity_summary summary INDEXED BY " + indexedSort.index() +
-                " JOIN alias ON alias.id = summary.alias_id" :
-            "alias LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id";
+                " JOIN alias ON alias.id = summary.alias_id AND alias.activity_identity=summary.activity_identity" :
+            "alias LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id AND summary.activity_identity=alias.activity_identity";
         String indexedSelect = indexedSort != null ?
             ", summary." + indexedSort.column() + " AS _activity_index_sort, " +
                 "summary.alias_id AS _activity_index_alias_id" :
@@ -671,7 +680,7 @@ final class StatsAliasCatalog
                          AND configuration.decoder_type LIKE 'P25%%'
                          AND channel.radio_system_id IS NOT NULL THEN 'T:' || channel.radio_system_id END)
                         AS p25_trunked_source_count
-                FROM configuration_channel configuration
+                FROM configured_channel configuration
                 JOIN receiver_channel channel
                   ON channel.configuration_id = configuration.configuration_id
                 WHERE configuration.alias_list_id IS NOT NULL
@@ -690,7 +699,12 @@ final class StatsAliasCatalog
                     END AS identity_type,
                     alias.protocol, alias.value, alias.min_value, alias.max_value,
                     alias.text_value, alias.numeric_value, alias.tone_sequence,
-                    subscriber.id AS p25_subscriber_identity_id, subscriber.home_wacn,
+                    subscriber.id AS p25_subscriber_identity_id,
+                (SELECT history_identity.id FROM p25_subscriber_identity history_identity
+                 WHERE history_identity.home_wacn=subscriber.home_wacn
+                   AND history_identity.home_system_id=subscriber.home_system_id
+                   AND history_identity.subscriber_id=subscriber.subscriber_id) AS _history_p25_subscriber_identity_id,
+                subscriber.home_wacn,
                     subscriber.home_system_id, subscriber.subscriber_id,
                     CASE WHEN alias.matcher_type IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS ranged,
                     CASE WHEN alias.matcher_type NOT IN ('TALKGROUP_RANGE', 'RADIO_ID_RANGE') THEN 1 ELSE 0 END AS exact,
@@ -762,7 +776,7 @@ final class StatsAliasCatalog
                 JOIN alias_list ON alias_list.id = alias.alias_list_id
                 LEFT JOIN alias_p25_subscriber_identity subscriber_alias
                   ON subscriber_alias.alias_id = alias.id
-                LEFT JOIN p25_subscriber_identity subscriber
+                LEFT JOIN configured_p25_subscriber_identity subscriber
                   ON subscriber.id = subscriber_alias.p25_subscriber_identity_id
                 LEFT JOIN current_coverage coverage
                   ON coverage.alias_list_id = alias.alias_list_id
@@ -953,12 +967,17 @@ final class StatsAliasCatalog
             return;
         }
 
+        StatsHistoryContext.installSubscriberContext(connection);
         Map<Long,Map<String,Object>> subscribers = new HashMap<>();
         for(Map<String,Object> subscriber: queryRows(connection, """
             SELECT subscriber_alias.alias_id, subscriber.id AS p25_subscriber_identity_id,
+                (SELECT history_identity.id FROM p25_subscriber_identity history_identity
+                 WHERE history_identity.home_wacn=subscriber.home_wacn
+                   AND history_identity.home_system_id=subscriber.home_system_id
+                   AND history_identity.subscriber_id=subscriber.subscriber_id) AS _history_p25_subscriber_identity_id,
                 subscriber.home_wacn, subscriber.home_system_id, subscriber.subscriber_id
             FROM alias_p25_subscriber_identity subscriber_alias
-            JOIN p25_subscriber_identity subscriber
+            JOIN configured_p25_subscriber_identity subscriber
               ON subscriber.id = subscriber_alias.p25_subscriber_identity_id
             WHERE subscriber_alias.alias_id IN (%s)
             """.formatted(placeholders(aliasIds.size())), aliasIds.toArray()))
@@ -972,6 +991,7 @@ final class StatsAliasCatalog
             if(subscriber != null)
             {
                 alias.put("p25_subscriber_identity_id", subscriber.get("p25_subscriber_identity_id"));
+                alias.put("_history_p25_subscriber_identity_id", subscriber.get("_history_p25_subscriber_identity_id"));
                 alias.put("home_wacn", subscriber.get("home_wacn"));
                 alias.put("home_system_id", subscriber.get("home_system_id"));
                 alias.put("subscriber_id", subscriber.get("subscriber_id"));
@@ -3241,7 +3261,7 @@ final class StatsAliasCatalog
                 long aliasId = number(alias.get("alias_id"));
                 int kind = identityKindCode(alias);
                 Long p25SubscriberIdentityId = "P25_SUBSCRIBER_IDENTITY".equals(
-                    text(alias.get("matcher_type"))) ? nullableNumber(alias.get("p25_subscriber_identity_id")) : null;
+                    text(alias.get("matcher_type"))) ? nullableNumber(alias.get("_history_p25_subscriber_identity_id")) : null;
                 IdentityRange range = identityRange(alias);
 
                 for(CoverageSource source: coverage.getOrDefault(aliasId, Map.of()).values())

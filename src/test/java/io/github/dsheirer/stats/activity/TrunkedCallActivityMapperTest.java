@@ -308,6 +308,7 @@ class TrunkedCallActivityMapperTest
             ReceiverActivitySchema.create(connection);
             DmrActivitySchema.create(connection);
             TrunkedSiteSchema.create(connection);
+            ActivityTestDatabase.currentOwners(connection);
             statement.executeUpdate("""
                 INSERT INTO configuration_channel(
                     configuration_id, channel_kind, sort_order, system_name, site_name, name,

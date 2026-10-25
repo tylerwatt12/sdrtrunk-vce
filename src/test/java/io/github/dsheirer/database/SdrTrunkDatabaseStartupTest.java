@@ -109,7 +109,7 @@ class SdrTrunkDatabaseStartupTest
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
-            SdrTrunkDatabaseSchema.validate(connection);
+            ConfigurationHistoryDatabase.validateRole(connection, ConfigurationHistorySchema.CONFIGURATION_ROLE);
             assertEquals("0", scalar(statement, """
                 SELECT COUNT(*) FROM sqlite_master
                 WHERE name IN ('configuration_channel_map', 'idx_configuration_channel_map_sort')
@@ -305,7 +305,7 @@ class SdrTrunkDatabaseStartupTest
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         assertEquals("wal", journalMode(database));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database));
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
                 SELECT value FROM database_metadata WHERE key = 'dmr_activity_schema_version'
@@ -423,7 +423,7 @@ class SdrTrunkDatabaseStartupTest
             SdrTrunkDatabaseSchema.create(connection);
         }
 
-        assertThrows(java.sql.SQLException.class,
+        assertThrows(java.io.IOException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
 
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -442,7 +442,8 @@ class SdrTrunkDatabaseStartupTest
         Path database = mTemporaryFolder.resolve("missing-dmr.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + activity);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DROP INDEX " + DmrActivitySchema.TALKGROUP_RETENTION_INDEX);
@@ -456,7 +457,7 @@ class SdrTrunkDatabaseStartupTest
         assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + activity);
             Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
                 SELECT 1 FROM sqlite_master WHERE type = 'table'
@@ -607,7 +608,7 @@ class SdrTrunkDatabaseStartupTest
         assertEquals("delete", journalMode(database));
         java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        assertTrue(failure.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
+        assertTrue(failure.getMessage().contains("exact format-63 schema"));
         assertEquals("delete", journalMode(database));
     }
 
@@ -628,7 +629,7 @@ class SdrTrunkDatabaseStartupTest
 
         java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        assertTrue(failure.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
+        assertTrue(failure.getMessage().contains("exact format-63 schema"));
     }
 
     private static String journalMode(Path database) throws Exception

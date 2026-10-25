@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.stats.StatsHistoryContext;
+import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -528,24 +530,14 @@ final class AliasActivityProjection
             updateSql.append(", ").append(field).append(" = coalesce(")
                 .append(field).append(", 0) + ?");
         }
-        updateSql.append(" WHERE alias_id = ?");
+        updateSql.append(" WHERE alias_id = ? AND coalesce(last_reset_ms,0)<=?");
 
-        try(PreparedStatement ensure = connection.prepareStatement("""
-            INSERT INTO alias_activity_summary(
-                alias_id, alias_list_id, protocol_code, metrics_state, updated_at_ms
-            )
-            SELECT id, alias_list_id, ?, 'not_collected', ?
-            FROM alias WHERE id = ?
-            ON CONFLICT(alias_id) DO NOTHING
-            """); PreparedStatement update = connection.prepareStatement(updateSql.toString()))
+        try(PreparedStatement update = connection.prepareStatement(updateSql.toString()))
         {
             for(Map.Entry<Long,Delta> entry: deltas.entrySet())
             {
                 long aliasId = entry.getKey();
-                ensure.setInt(1, protocol);
-                ensure.setLong(2, updatedAt);
-                ensure.setLong(3, aliasId);
-                ensure.executeUpdate();
+                AliasActivitySummaryMaintenance.ensureCurrent(connection, aliasId, protocol, updatedAt);
 
                 int parameter = 1;
                 update.setLong(parameter++, observedAt);
@@ -558,7 +550,8 @@ final class AliasActivityProjection
                 {
                     update.setLong(parameter++, delta.counts.getOrDefault(field, 0L));
                 }
-                update.setLong(parameter, aliasId);
+                update.setLong(parameter++, aliasId);
+                update.setLong(parameter, observedAt);
                 update.executeUpdate();
             }
         }
@@ -795,6 +788,7 @@ final class AliasActivityProjection
                 return null;
             }
 
+            StatsHistoryContext.installSubscriberContext(connection);
             try(PreparedStatement statement = connection.prepareStatement(canonicalResolverSql()))
             {
                 statement.setLong(1, aliasListId);
@@ -863,7 +857,7 @@ final class AliasActivityProjection
             SELECT alias.id
             FROM alias
             JOIN alias_p25_subscriber_identity subscriber_alias ON subscriber_alias.alias_id = alias.id
-            JOIN p25_subscriber_identity subscriber
+            JOIN configured_p25_subscriber_identity subscriber
               ON subscriber.id = subscriber_alias.p25_subscriber_identity_id
             WHERE alias.alias_list_id = ? AND alias.matcher_type = 'P25_SUBSCRIBER_IDENTITY'
               AND subscriber.home_wacn = ? AND subscriber.home_system_id = ? AND subscriber.subscriber_id = ?
@@ -896,8 +890,9 @@ final class AliasActivityProjection
                 }
             }
 
-            boolean aliases = tables.contains("alias_p25_subscriber_identity") &&
-                tables.contains("p25_subscriber_identity");
+            boolean aliases = tables.contains("p25_subscriber_identity") &&
+                (tables.contains("alias_p25_subscriber_identity") ||
+                    StatsHistoryContext.configurationAttached(connection));
             CanonicalSchemaSupport loaded = new CanonicalSchemaSupport(aliases);
             CANONICAL_SCHEMA_SUPPORT.put(connection, loaded);
             return loaded;

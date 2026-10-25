@@ -681,6 +681,9 @@ class AliasActivityProjectionTest
             statement.execute("PRAGMA foreign_keys=ON");
             SdrTrunkDatabaseSchema.create(connection);
             ReceiverActivitySchema.create(connection);
+            statement.execute("PRAGMA foreign_keys=OFF");
+            io.github.dsheirer.database.ConfigurationHistorySchema.separateHistoryOwners(connection);
+            statement.execute("PRAGMA foreign_keys=ON");
         }
         return connection;
     }

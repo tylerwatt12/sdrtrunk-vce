@@ -3,15 +3,10 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.net.URI;
 import java.nio.file.Path;
-import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,10 +25,10 @@ class P25ActivityDatabaseCursorTest
     @BeforeEach void setup() throws Exception
     {
         path = directory.resolve("activity.sqlite");
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        io.github.dsheirer.database.SdrTrunkTestDatabase.create(path);
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         {
-            SdrTrunkDatabaseSchema.create(connection);SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);DmrActivitySchema.create(connection);TrunkedSiteSchema.create(connection);
+
             sql.execute("PRAGMA foreign_keys=ON");
             sql.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(71,'Shared P25','P25')");
             sql.executeUpdate("""
@@ -57,7 +52,7 @@ class P25ActivityDatabaseCursorTest
     @Test void noteworthyHistoryIsFilteredBeforeLimitAndSurvivesMoreThanFiveHundredRoutineEvents() throws Exception
     {
         event(1,1000,"DENIAL");
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         {
             sql.executeUpdate("""
                 INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code)
@@ -100,7 +95,7 @@ class P25ActivityDatabaseCursorTest
     @Test void nonP25AndConventionalRowsCannotConsumeTheCompactPageAndResetKeepsOriginalContract() throws Exception
     {
         event(1,100,"JOIN");event(2,200,"CALL");
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         {
             sql.executeUpdate("""
                 INSERT INTO radio_system(id,system_key,configuration_id,protocol_code,address_domain_code,first_seen_ms,last_seen_ms)
@@ -110,11 +105,11 @@ class P25ActivityDatabaseCursorTest
         }
         var page = database.savedActivityAfter(0,null);
         assertEquals(List.of(1L,2L),ids(page));assertEquals(3,number(page.get("next_after_id")));
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         { sql.executeUpdate("UPDATE configuration_channel SET channel_kind='CONVENTIONAL' WHERE configuration_id='" + CHANNEL + "'"); }
         var noTrunked = database.savedActivityAfter(0,null);
         assertTrue(rows(noTrunked).isEmpty());assertEquals(3,number(noTrunked.get("next_after_id")));
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         { sql.executeUpdate("DELETE FROM receiver_activity_event"); }
         var reset = database.savedActivityAfter(3,null);
         assertTrue((Boolean)reset.get("reset_required"));assertEquals(0,number(reset.get("watermark_id")));
@@ -123,7 +118,7 @@ class P25ActivityDatabaseCursorTest
 
     @Test void nativePresenterNamesEveryCurrentAffiliationAcrossMoreThan256SystemsAndAliasLists() throws Exception
     {
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path); var sql = connection.createStatement())
+        try(var connection = StatsPairedTestDatabase.open(path); var sql = connection.createStatement())
         {
             sql.execute("PRAGMA foreign_keys=ON");connection.setAutoCommit(false);
             for(int system = 1; system <= 257; system++)
@@ -203,7 +198,7 @@ class P25ActivityDatabaseCursorTest
 
     private void event(int id, long timestamp, String action) throws Exception
     {
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path);
+        try(var connection = StatsPairedTestDatabase.open(path);
             var insert = connection.prepareStatement("INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,action_code) VALUES(?,71,71,?,?)"))
         { insert.setInt(1,id);insert.setLong(2,timestamp);insert.setInt(3,ReceiverActivityFilterCatalog.actionCode(action));insert.executeUpdate(); }
     }

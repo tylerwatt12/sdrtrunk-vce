@@ -1753,7 +1753,8 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         boolean historyActive = summaryActive && historyConfigured && historyWriterEnabled;
         return new ReceiverActivityStatus(summaryConfigured, historyConfigured, summaryActive, historyActive,
             preference.getStatsLoggingRetentionDays(), state,
-            ReceiverActivityPath.getDatabasePath(mUserPreferences).toString(), lastSuccessfulWriteMs,
+            io.github.dsheirer.database.SdrTrunkDatabase.historyPath(
+                ReceiverActivityPath.getDatabasePath(mUserPreferences)).toString(), lastSuccessfulWriteMs,
             recordsWritten, recordsDropped, lastError, serviceDropDiagnostics(writerStatus));
     }
 

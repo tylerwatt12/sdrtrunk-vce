@@ -113,11 +113,15 @@ public class ConfigurationDatabaseStore
     {
         List<Channel> channels = new ArrayList<>();
 
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT channel.configuration_id, channel.channel_kind, channel.system_name, channel.site_name,
-                   channel.name, channel.alias_list_id, list.name AS alias_list_name, channel.radioresolve_id,
-                   channel.auto_start, channel.auto_start_order, channel.decoder_type,
-                   channel.address_domain_code, channel.primary_frequency_hz, channel.config_json,
+        //Frozen monolithic formats retain their recovery projection while the migrator reads them. Current
+        //configuration transactions never consult history: its size and writer are independent of this store.
+        boolean monolithic;
+        try(var tables = connection.createStatement(); var rows = tables.executeQuery(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='receiver_channel'"))
+        {
+            monolithic = rows.next();
+        }
+        String recovery = monolithic ? """
                    current_system.system_key AS current_system_key,
                    current_system.protocol_code AS current_protocol_code,
                    current_system.address_domain_code AS current_address_domain_code,
@@ -127,16 +131,26 @@ public class ConfigurationDatabaseStore
                    current_p25_site.protocol AS current_p25_protocol,
                    current_p25_site.rfss AS current_p25_rfss,
                    current_p25_site.site AS current_p25_site
+            """ : """
+                   NULL AS current_system_key, NULL AS current_protocol_code,
+                   NULL AS current_address_domain_code, NULL AS current_system_configuration_id,
+                   NULL AS current_p25_wacn, NULL AS current_p25_system_id,
+                   NULL AS current_p25_protocol, NULL AS current_p25_rfss, NULL AS current_p25_site
+            """;
+        String joins = monolithic ? """
+            LEFT JOIN receiver_channel receiver ON receiver.configuration_id = channel.configuration_id
+            LEFT JOIN radio_system current_system ON current_system.id = receiver.radio_system_id
+            LEFT JOIN p25_site_snapshot current_p25_site ON current_p25_site.channel_id = receiver.id
+            """ : "";
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT channel.configuration_id, channel.channel_kind, channel.system_name, channel.site_name,
+                   channel.name, channel.alias_list_id, list.name AS alias_list_name, channel.radioresolve_id,
+                   channel.auto_start, channel.auto_start_order, channel.decoder_type,
+                   channel.address_domain_code, channel.primary_frequency_hz, channel.config_json,
+            """ + recovery + """
             FROM configuration_channel channel
             LEFT JOIN alias_list list ON list.id = channel.alias_list_id
-            LEFT JOIN receiver_channel receiver
-              ON receiver.configuration_id = channel.configuration_id
-            LEFT JOIN radio_system current_system
-              ON current_system.id = receiver.radio_system_id
-            LEFT JOIN p25_site_snapshot current_p25_site
-              ON current_p25_site.channel_id = receiver.id
-            ORDER BY channel.sort_order, channel.id
-            """);
+            """ + joins + "ORDER BY channel.sort_order, channel.id");
             ResultSet resultSet = statement.executeQuery())
         {
             while(resultSet.next())
@@ -217,6 +231,48 @@ public class ConfigurationDatabaseStore
         }
     }
 
+    /**
+     * Startup-only recovery of a verified P25 binding whose delayed configuration save was interrupted. Ordinary
+     * configuration reads and transactions never open history. This bounded lookup owns no writer in either store.
+     */
+    public void restoreInterruptedP25Bindings(List<Channel> channels) throws SQLException, IOException
+    {
+        List<Channel> candidates = channels.stream().filter(channel -> channel.getP25SiteIdentity() == null &&
+            ChannelConfigurationPolicy.requireChannelKind(channel) == ChannelConfigurationPolicy.ChannelKind.TRUNKED &&
+            channel.getDecodeConfiguration() != null &&
+            (channel.getDecodeConfiguration().getDecoderType() == io.github.dsheirer.module.decode.DecoderType.P25_PHASE1 ||
+                channel.getDecodeConfiguration().getDecoderType() == io.github.dsheirer.module.decode.DecoderType.P25_PHASE2))
+            .toList();
+        if(candidates.isEmpty()) return;
+        Path activity = SdrTrunkDatabase.historyPath(mDatabasePath);
+        if(!java.nio.file.Files.isRegularFile(activity))
+            throw new IOException("Saved activity is unavailable while restoring channel settings");
+        org.sqlite.SQLiteConfig settings = new org.sqlite.SQLiteConfig();
+        settings.setReadOnly(true);
+        settings.setBusyTimeout(250);
+        try(Connection history = java.sql.DriverManager.getConnection("jdbc:sqlite:" + activity, settings.toProperties());
+            PreparedStatement statement = history.prepareStatement("""
+                SELECT receiver.channel_kind, receiver.decoder_type,
+                    system.system_key AS current_system_key, system.protocol_code AS current_protocol_code,
+                    system.address_domain_code AS current_address_domain_code,
+                    system.configuration_id AS current_system_configuration_id,
+                    system.p25_wacn AS current_p25_wacn, system.p25_system_id AS current_p25_system_id,
+                    site.protocol AS current_p25_protocol, site.rfss AS current_p25_rfss, site.site AS current_p25_site
+                FROM receiver_channel receiver
+                JOIN radio_system system ON system.id=receiver.radio_system_id
+                JOIN p25_site_snapshot site ON site.channel_id=receiver.id
+                WHERE receiver.configuration_id=?
+                """))
+        {
+            for(Channel channel: candidates)
+            {
+                statement.setString(1, channel.getConfigurationId());
+                try(ResultSet rows = statement.executeQuery())
+                { if(rows.next()) restoreInterruptedP25Binding(channel, rows); }
+            }
+        }
+    }
+
     /** Returns an exact SQLite integer for optional derived state, or null for absent/malformed input. */
     private static Integer readCurrentInteger(ResultSet resultSet, String column) throws SQLException
     {
@@ -286,10 +342,19 @@ public class ConfigurationDatabaseStore
             }
         }
 
+        if(io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection))
+        {
+            for(var entry: desired.entrySet())
+            {
+                ChannelRow previous = stored.get(entry.getKey());
+                if(previous != null && !previous.sameClassification(entry.getValue()))
+                    throw new IOException("To change the protocol, channel mode or NXDN mode, clone a new channel");
+            }
+        }
         deleteMissing(connection, "configuration_channel", desired.keySet());
 
-        //Only topology changes discard the receiver's now-incompatible derived history. Renames, frequency changes
-        //and ordering edits retain the stable parent and all of its history.
+        //Frozen monolithic migration snapshots retain their old classification replacement contract. Current
+        //configuration identities keep one classification; ordinary edits never touch receiver history.
         try(PreparedStatement delete = connection.prepareStatement(
                 "DELETE FROM configuration_channel WHERE configuration_id=?");
             PreparedStatement clear = connection.prepareStatement(

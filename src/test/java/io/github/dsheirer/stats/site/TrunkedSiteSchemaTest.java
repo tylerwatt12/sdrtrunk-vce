@@ -243,7 +243,7 @@ class TrunkedSiteSchemaTest
     }
 
     @Test
-    void retentionClearResetAndConfigurationCascadeBoundAllFacts() throws Exception
+    void retentionClearResetAndIndependentHistoricalOwnershipBoundAllFacts() throws Exception
     {
         try(Connection connection = open("lifecycle.sqlite"))
         {
@@ -267,6 +267,8 @@ class TrunkedSiteSchemaTest
 
             TrunkedSiteSchema.upsert(connection, dmr(12_000, HASH_A, List.of(), List.of()));
             execute(connection, "DELETE FROM configuration_channel WHERE configuration_id='" + DMR_CHANNEL + "'");
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
+            for(int pass=0;pass<5;pass++) ReceiverActivitySchema.runRetentionPass(connection, 20_000);
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
         }
     }
@@ -335,6 +337,11 @@ class TrunkedSiteSchemaTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        execute(connection,"PRAGMA foreign_keys=OFF");
+        io.github.dsheirer.database.ConfigurationHistorySchema.separateHistoryOwners(connection);
+        execute(connection,"PRAGMA foreign_keys=ON");
+        io.github.dsheirer.stats.StatsHistoryContext.installSubscriberContext(connection);
+        ReceiverActivitySchema.installConfigurationReadView(connection);
         return connection;
     }
 

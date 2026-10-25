@@ -13,6 +13,8 @@ package io.github.dsheirer.support;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.application.ComputerInformation;
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.database.ActivityDatabasePath;
+import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -75,7 +77,7 @@ public final class SupportBundleService implements AutoCloseable
     private static final List<String> ACTIVITY_PREFIXES = List.of("receiver_", "radio_system",
         "trunked_", "p25_", "dmr_", "nxdn_", "conventional_", "activity_", "alias_activity_");
     private static final List<String> TIME_COLUMNS = List.of("timestamp_ms", "timestamp", "time_start",
-        "time_start_ms", "started_at_ms", "updated_at_ms", "last_seen_at_ms", "last_seen_ms",
+        "time_start_ms", "started_at_ms", "updated_at_ms", "observed_at_ms", "last_seen_at_ms", "last_seen_ms",
         "bucket_start_ms", "created_at_ms", "event_at_ms");
     private static final Pattern PRIVATE_COLUMN = Pattern.compile(
         "(?i)(password|password_verifier|api_key|access_token|refresh_token|session_id|secret|vault_payload|action_config_json)");
@@ -285,6 +287,7 @@ public final class SupportBundleService implements AutoCloseable
 
     private void exportDatabase(ZipOutputStream zip, Job job) throws IOException, SQLException, CancelledException
     {
+        boolean paired;
         try(Connection connection = SdrTrunkDatabase.open(mDatabasePath))
         {
             try(Statement statement = connection.createStatement())
@@ -292,6 +295,7 @@ public final class SupportBundleService implements AutoCloseable
                 statement.execute("PRAGMA query_only=ON");
             }
             List<String> tables = databaseTables(connection);
+            paired = tables.contains("database_metadata") && ConfigurationHistoryDatabase.isPairedConfiguration(connection);
             for(String table: tables)
             {
                 checkCancelled(job);
@@ -312,19 +316,7 @@ public final class SupportBundleService implements AutoCloseable
                 }
                 else if(isActivityTable(table))
                 {
-                    if(job.request.sections.contains(Section.FULL_ACTIVITY))
-                    {
-                        exportTable(zip, connection, table, "full-activity-history/", 0, job);
-                        job.included.add(Section.FULL_ACTIVITY.id);
-                    }
-                    else if(job.request.sections.contains(Section.RECENT_ACTIVITY))
-                    {
-                        long cutoff = System.currentTimeMillis() - RECENT_ACTIVITY_MILLISECONDS;
-                        if(exportTable(zip, connection, table, "recent-activity-history/", cutoff, job))
-                        {
-                            job.included.add(Section.RECENT_ACTIVITY.id);
-                        }
-                    }
+                    exportActivityTable(zip, connection, table, "", job);
                 }
                 else if(!SETUP_TABLES.contains(table) && !ALIAS_TABLES.contains(table))
                 {
@@ -332,21 +324,60 @@ public final class SupportBundleService implements AutoCloseable
                 }
             }
         }
+        if(paired && (job.request.sections.contains(Section.FULL_ACTIVITY) ||
+            job.request.sections.contains(Section.RECENT_ACTIVITY)))
+        {
+            ConfigurationHistoryDatabase.validatePairIdentity(mDatabasePath);
+            try(Connection history = ConfigurationHistoryDatabase.openReadOnly(
+                ActivityDatabasePath.forConfiguration(mDatabasePath)))
+            {
+                for(String table: databaseTables(history))
+                {
+                    checkCancelled(job);
+                    if(!ALWAYS_PRIVATE_TABLES.contains(table) && isActivityTable(table))
+                        exportActivityTable(zip, history, table, "activity", job);
+                }
+            }
+        }
+    }
+
+    private void exportActivityTable(ZipOutputStream zip, Connection connection, String table, String source,
+                                     Job job) throws SQLException, IOException, CancelledException
+    {
+        if(job.request.sections.contains(Section.FULL_ACTIVITY))
+        {
+            exportTable(zip, connection, table, "full-activity-history/", 0, source, job);
+            job.included.add(Section.FULL_ACTIVITY.id);
+        }
+        else if(job.request.sections.contains(Section.RECENT_ACTIVITY))
+        {
+            long cutoff = System.currentTimeMillis() - RECENT_ACTIVITY_MILLISECONDS;
+            if(exportTable(zip, connection, table, "recent-activity-history/", cutoff, source, job))
+                job.included.add(Section.RECENT_ACTIVITY.id);
+        }
     }
 
     private boolean exportTable(ZipOutputStream zip, Connection connection, String table, String folder, long cutoff,
                                 Job job) throws SQLException, IOException, CancelledException
     {
+        return exportTable(zip, connection, table, folder, cutoff, "", job);
+    }
+
+    private boolean exportTable(ZipOutputStream zip, Connection connection, String table, String folder, long cutoff,
+                                String source, Job job) throws SQLException, IOException, CancelledException
+    {
+        String tableKey = source.isEmpty() ? table : source + "." + table;
         List<String> columns = columns(connection, table);
         String timeColumn = cutoff > 0 ? timeColumn(columns) : null;
         if(cutoff > 0 && timeColumn == null)
         {
-            job.omitted.put(table, "No reliable time field was available for the recent-history window");
+            job.omitted.put(tableKey, "No reliable time field was available for the recent-history window");
             return false;
         }
         String sql = "SELECT * FROM " + quote(table) + (timeColumn != null ?
             " WHERE " + quote(timeColumn) + " >= ?" : "");
-        ZipEntry entry = new ZipEntry(folder + friendlyFileName(table) + ".csv");
+        ZipEntry entry = new ZipEntry(folder + (source.isEmpty() ? "" : source + "-") +
+            friendlyFileName(table) + ".csv");
         zip.putNextEntry(entry);
         NonClosingOutputStream nonClosing = new NonClosingOutputStream(zip);
         BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(nonClosing, StandardCharsets.UTF_8));
@@ -384,7 +415,7 @@ public final class SupportBundleService implements AutoCloseable
         }
         writer.flush();
         zip.closeEntry();
-        job.rowCounts.put(table, rows);
+        job.rowCounts.put(tableKey, rows);
         return true;
     }
 

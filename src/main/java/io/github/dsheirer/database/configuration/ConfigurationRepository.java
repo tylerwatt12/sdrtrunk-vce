@@ -92,6 +92,14 @@ public final class ConfigurationRepository
         return inReadTransaction(this::load);
     }
 
+    /** Restores interrupted learned bindings once, outside all ordinary configuration transactions. */
+    public ConfigurationSnapshot loadForStartup() throws IOException, SQLException
+    {
+        ConfigurationSnapshot snapshot = load();
+        mChannelAndBroadcastStore.restoreInterruptedP25Bindings(snapshot.channels());
+        return snapshot;
+    }
+
     /** Loads a complete configuration and its stable database token from exactly the same SQLite read snapshot. */
     public FingerprintedSnapshot loadWithFingerprint() throws IOException, SQLException
     {

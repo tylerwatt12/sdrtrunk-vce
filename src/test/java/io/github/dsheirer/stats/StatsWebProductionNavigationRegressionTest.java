@@ -16,7 +16,6 @@ import io.github.dsheirer.preference.UserPreferences;
 import java.net.URI;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
@@ -76,7 +75,7 @@ class StatsWebProductionNavigationRegressionTest
     @Test
     void configuredConventionalChannelNeedsNoObservationRow() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabasePath);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (92, 'Lake County', 'NBFM')");
@@ -128,7 +127,7 @@ class StatsWebProductionNavigationRegressionTest
 
     private void seedConfiguredP25System() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabasePath);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");

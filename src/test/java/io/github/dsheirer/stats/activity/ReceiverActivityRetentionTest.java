@@ -451,6 +451,9 @@ class ReceiverActivityRetentionTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        try(Statement statement=connection.createStatement()) { statement.execute("PRAGMA foreign_keys=OFF"); }
+        io.github.dsheirer.database.ConfigurationHistorySchema.separateHistoryOwners(connection);
+        try(Statement statement=connection.createStatement()) { statement.execute("PRAGMA foreign_keys=ON"); }
         return connection;
     }
 

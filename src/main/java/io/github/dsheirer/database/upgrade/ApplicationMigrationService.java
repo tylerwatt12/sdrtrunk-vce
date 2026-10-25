@@ -12,6 +12,8 @@
 package io.github.dsheirer.database.upgrade;
 
 import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.database.ActivityDatabasePath;
+import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -361,8 +363,8 @@ public final class ApplicationMigrationService
         ApprovedMigrationPlan expectedPlan = approvedPlan != null ? approvedPlan :
             readMigrationApproval(source, target.getParent());
         listener.update("Migration plan: " + describePlan(expectedPlan.plan()));
-        listener.update("Migration scope: SQLite database only; neighboring source files are not copied and the " +
-            "current portable files outside the database remain in place.");
+        listener.update("Migration scope: configuration and saved activity are imported together. Other source " +
+            "files are not copied, and the current portable files outside the databases remain in place.");
         listener.update("Checking current database");
         DatabaseMigrationChain.PreflightReport currentPlan = readMigrationPlan(target);
         Path databaseDirectory = target.getParent();
@@ -399,7 +401,7 @@ public final class ApplicationMigrationService
                 "The current database safety backup still has SQLite sidecar files and cannot be published safely.");
             targetAttributes.applyTo(stagedBackup);
             Files.createDirectories(backupDirectory);
-            moveAtomically(stagedBackup, backup);
+            moveDatabasePair(stagedBackup, backup, false);
 
             listener.update("Updating selected database copy");
             String helperOutput = mMigrationRunner.run(staged, null, null, expectedPlan.content());
@@ -415,9 +417,7 @@ public final class ApplicationMigrationService
 
             listener.update("Replacing active database");
             prepareLiveDatabaseForReplacement(target);
-            moveAtomicallyReplacing(staged, target);
-
-            validatePromotedDatabaseOrRestore(target, backup, targetAttributes);
+            promoteAndValidateDatabaseOrRestore(staged, target, backup, targetAttributes);
 
             completedResult = new MigrationResult(false, backup, sourcePlan, helperOutput,
                 PreviousBuildLocator.InputScope.DATABASE_FILE);
@@ -524,11 +524,29 @@ public final class ApplicationMigrationService
         Map<String,String> recovery = Map.copyOf(Objects.requireNonNull(expectedLegacyDefaults));
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot.toAbsolutePath().normalize());
+        boolean completingSplit=Files.exists(ActivityDatabasePath.splitReceipt(database));
+        ApplicationDatabaseMigrator.recoverSplitTransition(database);
         SqliteDatabaseSnapshot.requireSourceUsable(database);
         FileAccessAttributeSnapshot attributes = FileAccessAttributeSnapshot.capture(database);
         //The live transaction needs rollback space; only the selected recovery copy adds another footprint.
-        ensureFreeSpace(database.getParent(), safeAdd(safeMultiply(sqliteFootprint(database),
-            createBackup ? 2 : 1), FREE_SPACE_MARGIN_BYTES));
+        DatabaseMigrationChain.PreflightReport ownedPlan=readStartupPlan(database);
+        if(completingSplit && content==MigrationContent.CONFIGURATION_ONLY && recovery.isEmpty() &&
+            ownedPlan.source().version()==DatabaseFormatCatalog.CURRENT_VERSION && !ownedPlan.requiresMigration())
+        {
+            SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
+            var recoveredPlan=new DatabaseMigrationChain.PreflightReport(ownedPlan.source(),ownedPlan.target(),
+                List.of(),MigrationContent.CONFIGURATION_ONLY);
+            return new MigrationResult(false,null,recoveredPlan,
+                "RESULT: Interrupted configuration-only update activation complete. History was not reset again.",
+                PreviousBuildLocator.InputScope.DATABASE_FILE);
+        }
+        if(ownedPlan.requiresMigration() || !recovery.isEmpty())
+        {
+            long workspace = ownedPlan.source().version()==62 && content==MigrationContent.FULL ?
+                splitWorkspace(database) : sqliteFootprint(database);
+            ensureFreeSpace(database.getParent(), safeAdd(safeAdd(workspace,
+                createBackup ? sqliteFootprint(database) : 0), 5L * 1024 * 1024 * 1024));
+        }
         String identity = BACKUP_TIME.format(LocalDateTime.now()) + "-" +
             UUID.randomUUID().toString().substring(0, 8);
         Path backupDirectory = database.getParent().resolve("backups");
@@ -547,7 +565,7 @@ public final class ApplicationMigrationService
                     mLiveSnapshotter.create(database, incomplete);
                     attributes.applyTo(incomplete);
                     requireNoSidecars(incomplete, "The recovery backup must be a standalone SQLite snapshot.");
-                    moveAtomically(incomplete, backup);
+                    moveDatabasePair(incomplete, backup, false);
                     backedUp.set(true);
                 } : null, recovery, content);
             String backupReport = backedUp.get() ? "Recovery backup retained: " + backup :
@@ -588,6 +606,29 @@ public final class ApplicationMigrationService
         return Objects.requireNonNull(completedResult, "Database migration did not complete");
     }
 
+    /** Format 62 keeps detailed event pages in their original file; only compact owners and three indexes change. */
+    private static long splitWorkspace(Path database) throws IOException,SQLException
+    {
+        try(Connection connection=openLiveReadOnly(database);Statement query=connection.createStatement();
+            ResultSet rows=query.executeQuery("""
+                SELECT coalesce(sum(pgsize),0) FROM dbstat WHERE name IN (
+                    SELECT name FROM sqlite_master WHERE tbl_name IN (
+                        'receiver_channel','radio_system','alias','alias_activity_summary',
+                        'alias_list_analog_activity_summary','trunked_radio_affiliation',
+                        'trunked_radio_channel_presence_clear','p25_wuid_assignment_observation_summary',
+                        'alias_list','alias_p25_subscriber_identity','scan_list','alias_scan_list_membership',
+                        'alias_list_unmatched_talkgroup_scan_list_membership','alias_list_new_alias_scan_list_membership',
+                        'alias_broadcast_channel','alias_list_unmatched_talkgroup_stream','alias_list_new_alias_stream',
+                        'configuration_channel','configuration_broadcast_stream','application_settings','application_icons',
+                        'web_user','web_user_tour_dismissal','web_access_policy','p25_subscriber_identity',
+                        'topic_alert_topic','topic_alert_rule','topic_alert_device','topic_alert_membership',
+                        'topic_alert_enrollment','topic_alert_enrollment_topic','topic_alert_message','topic_alert_delivery'))
+                """))
+        {
+            return safeMultiply(rows.next() ? rows.getLong(1) : 0,4);
+        }
+    }
+
     private static MigrationResult withCleanupWarning(MigrationResult result)
     {
         String warning = "WARNING: Temporary migration files could not be removed after installation. " +
@@ -616,6 +657,7 @@ public final class ApplicationMigrationService
         {
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
             DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
+            if(source.version()>=63) ConfigurationHistoryDatabase.validatePairIdentity(normalized);
             if(source.version() == DatabaseFormatCatalog.CURRENT_VERSION)
             {
                 try
@@ -653,6 +695,8 @@ public final class ApplicationMigrationService
         {
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
             DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
+            requireConfigurationSource(connection,source);
+            if(source.version()>=63) io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(normalized);
             requireSourceQuickCheck(connection);
             return DatabaseMigrationChain.planForApplicationMigration(connection, source);
         }
@@ -816,6 +860,8 @@ public final class ApplicationMigrationService
                 SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
                 requireNotCancelled(cancellation);
                 DatabaseFormatCatalog.DetectedFormat source = DatabaseFormatCatalog.inspectForMigration(connection);
+                requireConfigurationSource(connection,source);
+                if(source.version()>=63) io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(normalized);
                 requireNotCancelled(cancellation);
                 requireSourceQuickCheck(connection);
                 requireNotCancelled(cancellation);
@@ -868,6 +914,13 @@ public final class ApplicationMigrationService
                 }
             }
         }
+    }
+
+    private static void requireConfigurationSource(Connection connection,DatabaseFormatCatalog.DetectedFormat source)
+        throws IOException,SQLException
+    {
+        if(source.version()>=63 && !io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection))
+            throw new IOException("Select the configuration database. The activity database is its required companion and cannot be imported on its own.");
     }
 
     private static void requireNotCancelled(BooleanSupplier cancellation)
@@ -974,8 +1027,8 @@ public final class ApplicationMigrationService
         return inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ?
             "portable-profile import; usable neighboring artifacts are attempted independently and stored paths " +
                 "may be remapped." :
-            "SQLite database only; neighboring vault, JMBE, module, and other profile files are not copied, and " +
-                "stored paths are not remapped.";
+            "configuration and saved activity only; neighboring vault, JMBE, module, and other profile files are " +
+                "not copied, and stored paths are not remapped.";
     }
 
     private static void validateGlobalDatabase(Path database) throws IOException, SQLException
@@ -985,6 +1038,22 @@ public final class ApplicationMigrationService
             throw new IOException("Staged VCE SQLite database does not exist: " + database);
         }
 
+        if(io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(database))
+        {
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(database);
+            for(Path file: List.of(database,io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database)))
+            {
+                try(Connection connection=openReadOnly(file))
+                {
+                    requireIntegrity(connection);requireForeignKeysValid(connection);
+                    if(file.equals(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database)))
+                        ReceiverActivitySchema.validateRetainedHistoryData(connection);
+                }
+            }
+            ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load());
+            SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
+            return;
+        }
         try(Connection connection = openReadOnly(database))
         {
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
@@ -1008,6 +1077,28 @@ public final class ApplicationMigrationService
     {
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load());
+    }
+
+    /** A failed replacement restores its exact supported source; it need not already be the new current format. */
+    private static void validateSupportedRestoredDatabase(Path database) throws IOException,SQLException
+    {
+        if(io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(database))
+        {
+            validateGlobalDatabase(database);
+            return;
+        }
+        try(Connection connection=openReadOnly(database))
+        {
+            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+            DatabaseFormatCatalog.DetectedFormat restored=DatabaseFormatCatalog.inspect(connection);
+            requireIntegrity(connection);
+            requireForeignKeysValid(connection);
+            // These monolithic formats already have the complete channel/Alias configuration contract understood
+            // by the current loader. Earlier registered formats retain their frozen catalog configuration checks
+            // and require their supported adjacent update before this build can receive.
+            if(restored.version()>=45)
+                ConfigurationSnapshotValidator.validateForStartup(new ConfigurationRepository(database).load(connection));
+        }
     }
 
     private static void requireMatchingPlan(DatabaseMigrationChain.PreflightReport expected,
@@ -1204,6 +1295,13 @@ public final class ApplicationMigrationService
 
     private static void prepareLiveDatabaseForReplacement(Path database) throws IOException, SQLException
     {
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        if(Files.exists(activity)) prepareSingleLiveDatabaseForReplacement(activity);
+        prepareSingleLiveDatabaseForReplacement(database);
+    }
+
+    private static void prepareSingleLiveDatabaseForReplacement(Path database) throws IOException, SQLException
+    {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
@@ -1232,6 +1330,13 @@ public final class ApplicationMigrationService
 
     private static void finalizeStandaloneSnapshot(Path database) throws IOException, SQLException
     {
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        if(Files.exists(activity)) finalizeSingleStandaloneSnapshot(activity);
+        finalizeSingleStandaloneSnapshot(database);
+    }
+
+    private static void finalizeSingleStandaloneSnapshot(Path database) throws IOException, SQLException
+    {
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
             Statement statement = connection.createStatement())
         {
@@ -1258,7 +1363,7 @@ public final class ApplicationMigrationService
         throws IOException, SQLException
     {
         validatePromotedDatabaseOrRestore(database, backup, accessAttributes,
-            ApplicationMigrationService::validateGlobalDatabase);
+            ApplicationMigrationService::validateSupportedRestoredDatabase);
     }
 
     private void validatePromotedDatabaseOrRestore(Path database, Path backup,
@@ -1266,8 +1371,25 @@ public final class ApplicationMigrationService
                                                    DatabaseValidator restoredDatabaseValidator)
         throws IOException, SQLException
     {
+        promoteAndValidateDatabaseOrRestore(null, database, backup, accessAttributes, restoredDatabaseValidator);
+    }
+
+    private void promoteAndValidateDatabaseOrRestore(Path staged, Path database, Path backup,
+                                                    FileAccessAttributeSnapshot accessAttributes)
+        throws IOException, SQLException
+    {
+        promoteAndValidateDatabaseOrRestore(staged, database, backup, accessAttributes,
+            ApplicationMigrationService::validateSupportedRestoredDatabase);
+    }
+
+    private void promoteAndValidateDatabaseOrRestore(Path staged, Path database, Path backup,
+                                                    FileAccessAttributeSnapshot accessAttributes,
+                                                    DatabaseValidator restoredDatabaseValidator)
+        throws IOException, SQLException
+    {
         try
         {
+            if(staged != null) moveDatabasePair(staged, database, true);
             mPromotedDatabaseValidator.validate(database);
             accessAttributes.applyTo(database);
         }
@@ -1293,11 +1415,11 @@ public final class ApplicationMigrationService
         Throwable primaryFailure = null;
         try
         {
-            Files.copy(backup, restore);
+            SqliteDatabaseSnapshot.create(backup, restore);
             accessAttributes.applyTo(restore);
             requireNoSidecars(database, "The migrated database is still active, so its safety backup cannot be " +
                 "restored automatically.");
-            moveAtomicallyReplacing(restore, database);
+            moveDatabasePair(restore, database, true);
             restoredDatabaseValidator.validate(database);
             accessAttributes.applyTo(database);
         }
@@ -1310,7 +1432,7 @@ public final class ApplicationMigrationService
         {
             try
             {
-                Files.deleteIfExists(restore);
+                deleteDatabaseAndSidecarsIfExists(restore);
             }
             catch(IOException cleanupFailure)
             {
@@ -1326,7 +1448,41 @@ public final class ApplicationMigrationService
         }
     }
 
+    /** Both files are quiescent and validated before promotion; the caller restores the retained pair on failure. */
+    private static void moveDatabasePair(Path source, Path destination, boolean replace) throws IOException
+    {
+        Path sourceActivity = ActivityDatabasePath.forConfiguration(source);
+        Path destinationActivity = ActivityDatabasePath.forConfiguration(destination);
+        boolean companion = Files.exists(sourceActivity);
+        if(companion)
+        {
+            if(replace) moveAtomicallyReplacing(sourceActivity, destinationActivity);
+            else moveAtomically(sourceActivity, destinationActivity);
+        }
+        else if(replace) Files.deleteIfExists(destinationActivity);
+        try
+        {
+            if(replace) moveAtomicallyReplacing(source, destination);
+            else moveAtomically(source, destination);
+        }
+        catch(IOException failure)
+        {
+            if(companion && !replace)
+            {
+                try { moveAtomically(destinationActivity, sourceActivity); }
+                catch(IOException rollback) { failure.addSuppressed(rollback); }
+            }
+            throw failure;
+        }
+    }
+
     private static void requireNoSidecars(Path database, String failureMessage) throws IOException
+    {
+        requireSingleNoSidecars(database, failureMessage);
+        requireSingleNoSidecars(ActivityDatabasePath.forConfiguration(database), failureMessage);
+    }
+
+    private static void requireSingleNoSidecars(Path database, String failureMessage) throws IOException
     {
         if(Files.exists(Path.of(database + "-wal")) || Files.exists(Path.of(database + "-shm")) ||
             Files.exists(Path.of(database + "-journal")))
@@ -1489,9 +1645,10 @@ public final class ApplicationMigrationService
     static void deleteDatabaseAndSidecarsIfExists(Path database) throws IOException
     {
         IOException failure = null;
+        for(Path member: List.of(database, ActivityDatabasePath.forConfiguration(database)))
         for(String suffix: List.of("-journal", "-wal", "-shm", ""))
         {
-            Path path = suffix.isEmpty() ? database : Path.of(database + suffix);
+            Path path = suffix.isEmpty() ? member : Path.of(member + suffix);
             try
             {
                 Files.deleteIfExists(path);
@@ -1609,18 +1766,17 @@ public final class ApplicationMigrationService
 
     private static long sqliteFootprint(Path database) throws IOException
     {
-        long size = Files.size(database);
-
-        for(String suffix : List.of("-wal", "-journal"))
+        long size = 0;
+        for(Path member: List.of(database, ActivityDatabasePath.forConfiguration(database)))
         {
-            Path sidecar = Path.of(database + suffix);
-
-            if(Files.isRegularFile(sidecar))
-            {
-                size = safeAdd(size, Files.size(sidecar));
+            if(!Files.isRegularFile(member)) continue;
+            size = safeAdd(size, Files.size(member));
+            for(String suffix : List.of("-wal", "-journal"))
+        {
+            Path sidecar = Path.of(member + suffix);
+            if(Files.isRegularFile(sidecar)) size = safeAdd(size, Files.size(sidecar));
             }
         }
-
         return size;
     }
 

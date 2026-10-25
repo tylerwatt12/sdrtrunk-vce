@@ -53,7 +53,7 @@ class ManagedRecordingEntityDiscoveryTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(main);
         try(ManagedRecordingCatalog catalog=new ManagedRecordingCatalog(catalogPath,directory.resolve("audio")))
         {
-            try(var connection=DriverManager.getConnection("jdbc:sqlite:"+main);var statement=connection.createStatement())
+            try(var connection=StatsPairedTestDatabase.open(main);var statement=connection.createStatement())
             {
                 statement.execute("INSERT INTO alias_list(id,name,family) VALUES(7,'P25','P25'),(8,'DMR','DMR'),(9,'Analog','NBFM')");
                 for(String[] row: List.of(new String[]{A,"Metro Control","Metro","North","P25_PHASE1"},

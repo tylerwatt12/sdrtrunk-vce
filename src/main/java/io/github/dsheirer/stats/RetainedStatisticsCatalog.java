@@ -21,7 +21,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -44,10 +43,10 @@ final class RetainedStatisticsCatalog
         "nullif(trim(config.name), ''), config.configuration_id)";
     private static final String CHANNEL_CONTEXT = "config.system_name AS radio_system_name, " +
         "config.site_name, config.name AS channel_name, config.alias_list_id, " +
-        "list.name AS alias_list_name";
+        "coalesce(list.name,channel.alias_list_name) AS alias_list_name";
     private static final String CHANNEL_SEARCH = "lower(" + CHANNEL_LABEL + " || ' ' || " +
         "coalesce(config.system_name,'') || ' ' || coalesce(config.site_name,'') || ' ' || " +
-        "coalesce(config.name,'') || ' ' || coalesce(list.name,'') || ' ' || " +
+        "coalesce(config.name,'') || ' ' || coalesce(list.name,channel.alias_list_name,'') || ' ' || " +
         "coalesce(CAST(config.primary_frequency_hz AS TEXT),'') || ' ' || " +
         "coalesce(printf('%.6f',config.primary_frequency_hz/1000000.0),'') || ' ' || " +
         "config.configuration_id) LIKE ? ESCAPE '\\'";
@@ -190,7 +189,18 @@ final class RetainedStatisticsCatalog
     String jobLabel(StatsDatabaseMaintenanceRequest.DeletionTarget target)
     {
         if(!(target instanceof ScopedData scoped)) return "Saved statistics";
-        if("alias_activity".equals(scoped.sourceKind())) return "Alias Activity";
+        if("alias_activity".equals(scoped.sourceKind()))
+        {
+            if(scoped.recordKey() == null) return "Alias Activity";
+            return read(connection -> {
+                List<Map<String,Object>> aliases = queryRows(connection, """
+                    SELECT name AS label FROM alias WHERE id=?
+                    UNION ALL SELECT alias_name FROM alias_activity_summary WHERE alias_id=?
+                        AND NOT EXISTS(SELECT 1 FROM alias WHERE id=alias_id)
+                    """, scoped.recordKey(), scoped.recordKey());
+                return aliases.isEmpty() ? "Alias Activity" : "Alias Activity · " + aliases.getFirst().get("label");
+            });
+        }
         return read(connection -> {
             List<Map<String,Object>> sources = "radio_system".equals(scoped.sourceKind()) ?
                 queryRows(connection, "SELECT " + SYSTEM_LABEL + " AS label FROM radio_system system " +
@@ -565,28 +575,37 @@ final class RetainedStatisticsCatalog
         throws SQLException
     {
         String sql = """
-            SELECT definition.id AS alias_id,definition.alias_list_id,
-                definition.name AS label,definition.description,definition.group_name AS alias_group,
-                definition.matcher_type,definition.protocol,definition.value AS native_id,
-                list.name AS alias_list_name,summary.metrics_state,
-                summary.logical_call_count,summary.first_evidence_ms AS first_seen_ms,
-                summary.last_evidence_ms AS last_seen_ms,
-                summary.signaling_observation_count
-            FROM alias definition
-            JOIN alias_list list ON list.id=definition.alias_list_id
-            LEFT JOIN alias_activity_summary summary ON summary.alias_id=definition.id
-            WHERE 1=1
+            WITH inventory AS (
+                SELECT definition.id AS alias_id,definition.alias_list_id,
+                    definition.name AS label,definition.description,definition.group_name AS alias_group,
+                    definition.matcher_type,definition.protocol,definition.value AS native_id,
+                    list.name AS alias_list_name,summary.metrics_state,
+                    summary.logical_call_count,summary.first_evidence_ms AS first_seen_ms,
+                    summary.last_evidence_ms AS last_seen_ms,summary.signaling_observation_count
+                FROM alias definition
+                JOIN alias_list list ON list.id=definition.alias_list_id
+                LEFT JOIN alias_activity_summary summary ON summary.alias_id=definition.id
+                    AND summary.activity_identity=definition.activity_identity
+                UNION ALL
+                SELECT summary.alias_id,summary.alias_list_id,summary.alias_name,NULL,NULL,NULL,
+                    CASE summary.protocol_code WHEN 1 THEN 'APCO25' WHEN 3 THEN 'DMR' WHEN 4 THEN 'NXDN'
+                        WHEN 10 THEN 'NBFM' WHEN 11 THEN 'AM' END,NULL,
+                    summary.alias_list_name,summary.metrics_state,summary.logical_call_count,
+                    summary.first_evidence_ms,summary.last_evidence_ms,summary.signaling_observation_count
+                FROM alias_activity_summary summary
+                WHERE NOT EXISTS(SELECT 1 FROM alias definition WHERE definition.id=summary.alias_id)
+            ) SELECT * FROM inventory WHERE 1=1
             """;
         List<Object> parameters = new ArrayList<>();
         if(search != null)
         {
-            sql += " AND lower(definition.name || ' ' || coalesce(definition.group_name,'') || ' ' || " +
-                "coalesce(definition.description,'') || ' ' || list.name || ' ' || " +
-                "coalesce(CAST(definition.value AS TEXT),'')) LIKE ? ESCAPE '\\'";
+            sql += " AND lower(label || ' ' || coalesce(alias_group,'') || ' ' || " +
+                "coalesce(description,'') || ' ' || alias_list_name || ' ' || " +
+                "coalesce(CAST(native_id AS TEXT),'')) LIKE ? ESCAPE '\\'";
             parameters.add(like(search));
         }
         long total = count(connection, "SELECT COUNT(*) FROM (" + sql + ")", parameters);
-        sql += " ORDER BY lower(definition.name),definition.id LIMIT ? OFFSET ?";
+        sql += " ORDER BY lower(label),alias_id LIMIT ? OFFSET ?";
         parameters.add(limit + 1);
         parameters.add(offset);
         List<Map<String,Object>> rows = queryRows(connection, sql, parameters.toArray());
@@ -1364,8 +1383,7 @@ final class RetainedStatisticsCatalog
             {
                 throw new IOException("Statistics database is missing");
             }
-            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-                mDatabasePath.toUri() + "?mode=ro"))
+            try(Connection connection = SdrTrunkDatabase.openHistoryRead(mDatabasePath))
             {
                 try(Statement statement = connection.createStatement())
                 {

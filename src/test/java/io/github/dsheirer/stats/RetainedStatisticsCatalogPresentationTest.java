@@ -14,13 +14,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,15 +41,11 @@ class RetainedStatisticsCatalogPresentationTest
     void setUp() throws Exception
     {
         Path database = mDirectory.resolve("retained-presentation.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
             seed(statement);
         }
         mCatalog = new RetainedStatisticsCatalog(database);

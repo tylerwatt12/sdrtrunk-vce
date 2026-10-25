@@ -286,6 +286,22 @@ public class ReceiverActivitySchema
                 "LEFT JOIN activity_message_type message_event ON message_event.definition_kind='EVENT' AND message_event.code=a.event_type_code");
     }
 
+    /**
+     * A connection-local read view can combine current configuration names with retained owner context across
+     * databases. The persistent view remains independently readable without configuration attached.
+     */
+    public static void installConfigurationReadView(Connection connection) throws SQLException
+    {
+        try(Statement statement=connection.createStatement())
+        {
+            statement.execute(createCurrentResolvedViewSql()
+                .replace("CREATE VIEW IF NOT EXISTS receiver_activity_event_resolved",
+                    "CREATE TEMP VIEW IF NOT EXISTS receiver_activity_event_resolved")
+                .replace("configured_alias.name AS resolved_alias_list_name",
+                    "coalesce(configured_alias.name,rc.alias_list_name) AS resolved_alias_list_name"));
+        }
+    }
+
     /** Fresh creation and the format-57-to-58 migrator add only an optional exact source reference. */
     public static void addSourceCallReference(Connection connection) throws SQLException
     {
@@ -539,6 +555,16 @@ public class ReceiverActivitySchema
             Long.toString(System.currentTimeMillis()));
         SdrTrunkDatabaseStartup.setMetadata(connection, TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,
             Long.toString(System.currentTimeMillis()));
+    }
+
+    /**
+     * Explicit import qualification checks retained evidence against its captured owner classification.
+     * Saved P25 bindings and live configuration are validated independently in the configuration file.
+     * This scans history and must not run on normal receiver startup.
+     */
+    public static void validateRetainedHistoryData(Connection connection) throws SQLException
+    {
+        RadioSystemSchema.validateRetainedHistoryData(connection);
     }
 
     public static void validate(Connection connection) throws SQLException
@@ -2615,20 +2641,8 @@ public class ReceiverActivitySchema
                                                           ReceiverActivityRecords.ControlChannelQuality quality)
         throws SQLException
     {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
-            VALUES (?, ?, ?)
-            ON CONFLICT(configuration_id) DO UPDATE SET
-                first_seen_ms = min(receiver_channel.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(receiver_channel.last_seen_ms, excluded.last_seen_ms)
-            """))
-        {
-            statement.setString(1, quality.configurationId());
-            statement.setLong(2, quality.observedAtEpochMilliseconds());
-            statement.setLong(3, quality.observedAtEpochMilliseconds());
-            statement.executeUpdate();
-        }
-        return selectReceiverChannelId(connection, quality.configurationId());
+        return upsertReceiverChannel(connection, new ReceiverChannelMetadata(quality.configurationId(),
+            quality.observedAtEpochMilliseconds(), quality.observedAtEpochMilliseconds()), true);
     }
 
     /** Runs one globally bounded retention pass across every activity subsystem on an idle auto-commit connection. */
@@ -2673,6 +2687,7 @@ public class ReceiverActivitySchema
         deleted += deleteAll(connection, "p25_site_snapshot");
         deleted += deleteAll(connection, "trunked_control_channel_quality");
         deleted += deleteAll(connection, "receiver_channel");
+        deleted += deleteAll(connection, "receiver_channel_statistics_reset");
         deleted += deleteAll(connection, "statistics_status");
         deleted += AliasActivitySummaryMaintenance.resetAll(connection);
         SdrTrunkDatabaseStartup.setMetadata(connection, RADIO_SYSTEM_METRICS_STARTED_AT_KEY,
@@ -2697,12 +2712,12 @@ public class ReceiverActivitySchema
 
         int deleted = 0;
         try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE configuration_channel SET analog_activity_reset_ms=?
-            WHERE configuration_id=?
+            INSERT INTO receiver_channel_statistics_reset(configuration_id,reset_at_ms) VALUES(?,?)
+            ON CONFLICT(configuration_id) DO UPDATE SET reset_at_ms=max(reset_at_ms,excluded.reset_at_ms)
             """))
         {
-            statement.setLong(1, Math.max(1, System.currentTimeMillis() + 1));
-            statement.setString(2, configurationId);
+            statement.setString(1, configurationId);
+            statement.setLong(2, Math.max(1, System.currentTimeMillis()+1));
             statement.executeUpdate();
         }
         try(PreparedStatement statement = connection.prepareStatement(
@@ -4340,31 +4355,38 @@ public class ReceiverActivitySchema
                                              boolean trunked)
         throws SQLException
     {
-        if(metadata == null)
-        {
-            return 0;
-        }
-
+        if(metadata == null) return 0;
+        // Capture descriptive context in the same owner upsert; unchanged batches do not issue a second write.
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
-            VALUES (?, ?, ?)
+            INSERT INTO receiver_channel(configuration_id,first_seen_ms,last_seen_ms,name,system_name,site_name,
+                channel_kind,decoder_type,address_domain_code,alias_list_id,alias_list_name,primary_frequency_hz,
+                assigned_talkgroup)
+            SELECT configured.configuration_id,?,?,configured.name,configured.system_name,configured.site_name,
+                configured.channel_kind,configured.decoder_type,configured.address_domain_code,
+                configured.alias_list_id,coalesce(list.name,''),configured.primary_frequency_hz,
+                CASE WHEN configured.decoder_type IN ('AM','NBFM') THEN
+                    coalesce(json_extract(configured.config_json,'$.decodeConfiguration.talkgroup'),1) END
+            FROM configuration_channel configured LEFT JOIN alias_list list ON list.id=configured.alias_list_id
+            WHERE configured.configuration_id=?
             ON CONFLICT(configuration_id) DO UPDATE SET
-                first_seen_ms = min(receiver_channel.first_seen_ms, excluded.first_seen_ms),
-                last_seen_ms = max(receiver_channel.last_seen_ms, excluded.last_seen_ms),
-                radio_system_id = CASE WHEN ? THEN receiver_channel.radio_system_id END,
-                radio_system_assigned_at_ms = CASE WHEN ? THEN receiver_channel.radio_system_assigned_at_ms END
+                first_seen_ms=min(receiver_channel.first_seen_ms,excluded.first_seen_ms),
+                last_seen_ms=max(receiver_channel.last_seen_ms,excluded.last_seen_ms),
+                radio_system_id=CASE WHEN ? THEN receiver_channel.radio_system_id END,
+                radio_system_assigned_at_ms=CASE WHEN ? THEN receiver_channel.radio_system_assigned_at_ms END,
+                name=excluded.name,system_name=excluded.system_name,site_name=excluded.site_name,
+                channel_kind=excluded.channel_kind,decoder_type=excluded.decoder_type,
+                address_domain_code=excluded.address_domain_code,alias_list_id=excluded.alias_list_id,
+                alias_list_name=excluded.alias_list_name,primary_frequency_hz=excluded.primary_frequency_hz,
+                assigned_talkgroup=excluded.assigned_talkgroup
             RETURNING id
             """))
         {
-            statement.setString(1, metadata.configurationId());
-            statement.setLong(2, metadata.firstSeenEpochMilliseconds());
-            statement.setLong(3, metadata.lastSeenEpochMilliseconds());
+            statement.setLong(1, metadata.firstSeenEpochMilliseconds());
+            statement.setLong(2, metadata.lastSeenEpochMilliseconds());
+            statement.setString(3, metadata.configurationId());
             statement.setBoolean(4, trunked);
             statement.setBoolean(5, trunked);
-            try(ResultSet resultSet = statement.executeQuery())
-            {
-                return resultSet.next() ? resultSet.getLong(1) : 0;
-            }
+            try(ResultSet result=statement.executeQuery()) { return result.next() ? result.getLong(1) : 0; }
         }
     }
 

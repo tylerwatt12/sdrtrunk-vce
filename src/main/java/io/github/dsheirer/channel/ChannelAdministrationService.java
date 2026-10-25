@@ -80,6 +80,7 @@ public final class ChannelAdministrationService
     /** One web mutation or receiver lifecycle batch at a time; saturation fails without blocking request workers. */
     private final Semaphore mCommandAdmission = new Semaphore(1);
     private final Map<String,SquelchPreviewLease> mSquelchPreviews = new HashMap<>();
+    private volatile Catalog mCommittedCatalog = new Catalog(0, List.of());
     public ChannelAdministrationService(ConfigurationManager configurationManager)
     {
         this(configurationManager, new ChannelProtocolRegistry(), RadioSystemNameCatalog.bundled()::nameFor);
@@ -101,7 +102,8 @@ public final class ChannelAdministrationService
 
     public long currentRevision()
     {
-        return onConfigurationThread(this::revision);
+        requireInitialized();
+        return committedCatalog().revision();
     }
 
     public Catalog catalog()
@@ -117,34 +119,44 @@ public final class ChannelAdministrationService
         }).toList());
     }
 
-    /** Current configured channels and running state, without a separate historical frequency lookup. */
-    public Catalog currentCatalog()
+    /** Called by the configuration owner only after a complete committed model publication. */
+    public void publishCommittedCatalog()
     {
-        return onConfigurationThread(() ->
-        {
-            List<Channel> channels = List.copyOf(mConfigurationManager.getChannelModel().getChannels());
-            Map<String,Integer> order = effectiveAutoStartOrder(channels);
-            List<ChannelSummary> summaries = channels.stream().map(channel -> summary(channel,
-                order.get(channel.getConfigurationId()))).toList();
-            return new Catalog(revision(), summaries);
-        });
+        List<Channel> channels = List.copyOf(mConfigurationManager.getChannelModel().getChannels());
+        Map<String,Integer> order = effectiveAutoStartOrder(channels);
+        mCommittedCatalog = new Catalog(revision(), channels.stream().map(channel ->
+            summary(channel, order.get(channel.getConfigurationId()))).toList());
     }
 
-    /** Web navigation needs availability, without constructing the full channel directory. */
+    private Catalog committedCatalog()
+    {
+        //All administration adapters read the manager's one published configuration view.
+        return mConfigurationManager.getChannelAdministrationService().mCommittedCatalog;
+    }
+
+    /** Immutable committed configuration with current nonblocking receiver state. */
+    public Catalog currentCatalog()
+    {
+        requireInitialized();
+        Catalog committed = committedCatalog();
+        Map<String,Channel> live = index(mConfigurationManager.getChannelModel().getChannels());
+        return new Catalog(committed.revision(), committed.channels().stream().map(channel ->
+        {
+            Channel current = live.get(channel.configurationId());
+            Long frequency = current != null ? activeControlFrequency(current, channel.channelKind()) : null;
+            return channel.withRuntimeState(isProcessing(channel.configurationId()) ?
+                ProcessingState.RUNNING : ProcessingState.STOPPED, frequency);
+        }).toList());
+    }
+
+    /** Web navigation does not wait for the configuration owner or consult retained history. */
     public boolean hasRunningP25TrunkedChannel()
     {
-        return onConfigurationThread(() ->
-        {
-            for(Channel channel: mConfigurationManager.getChannelModel().getChannels())
-            {
-                if(!ChannelConfigurationPolicy.isActive(channel)) continue;
-                DecoderType decoder = channel.getDecodeConfiguration().getDecoderType();
-                if((decoder == DecoderType.P25_PHASE1 || decoder == DecoderType.P25_PHASE2) &&
-                    ChannelConfigurationPolicy.requireChannelKind(channel) == ChannelConfigurationPolicy.ChannelKind.TRUNKED &&
-                    isProcessing(channel.getConfigurationId())) return true;
-            }
-            return false;
-        });
+        requireInitialized();
+        return committedCatalog().channels().stream().anyMatch(channel ->
+            "TRUNKED".equals(channel.channelKind()) &&
+                ("p25-phase1".equals(channel.protocolId()) || "p25-phase2".equals(channel.protocolId())) &&
+                isProcessing(channel.configurationId()));
     }
 
     public Entry get(String configurationId)
@@ -1547,6 +1559,15 @@ public final class ChannelAdministrationService
             frequenciesHz = List.copyOf(frequenciesHz);
             remoteOrigin = remoteOrigin != null && Boolean.TRUE.equals(remoteOrigin.get("remote")) ?
                 REMOTE_ORIGIN : null;
+        }
+
+        private ChannelSummary withRuntimeState(ProcessingState state, Long activeFrequency)
+        {
+            Long frequency = activeFrequency != null ? activeFrequency :
+                frequenciesHz.stream().filter(value -> value > 0).findFirst().orElse(null);
+            return new ChannelSummary(configurationId, protocolId, protocolLabel, channelKind, system, site, name,
+                frequenciesHz, state, autoStartOrder, aliasListId, aliasListName, editable, restrictionMessage,
+                remoteOrigin, frequency, activeFrequency != null ? "active-control" : "configured");
         }
 
         private ChannelSummary withDisplayFrequency(long frequency, String source)

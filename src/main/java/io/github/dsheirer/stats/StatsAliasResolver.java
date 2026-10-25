@@ -1706,6 +1706,7 @@ class StatsAliasResolver
     private P25SubscriberRuleIndex loadP25SubscriberRules(Connection connection,
                                                           P25SubscriberRuleTargets targets) throws SQLException
     {
+        StatsHistoryContext.installSubscriberContext(connection);
         Map<P25SubscriberRuleTarget,Rule> rules = new HashMap<>();
         List<P25SubscriberRuleTarget> pairs = targets.pairs();
         for(int offset = 0; offset < pairs.size(); offset += RULE_TARGET_CHUNK)
@@ -1723,12 +1724,13 @@ class StatsAliasResolver
                     FROM alias_p25_subscriber_identity subscriber_alias
                         INDEXED BY idx_alias_p25_subscriber_identity
                     CROSS JOIN alias candidate ON candidate.id = subscriber_alias.alias_id
-                    WHERE subscriber_alias.p25_subscriber_identity_id = requested.p25_subscriber_identity_id
+                    WHERE %s
                       AND candidate.alias_list_id = requested.alias_list_id
                       AND candidate.matcher_type = 'P25_SUBSCRIBER_IDENTITY'
                     ORDER BY subscriber_alias.alias_id DESC LIMIT 1)
                 JOIN alias_list list ON list.id = definition.alias_list_id
-                """.formatted(pairPlaceholders(chunk.size()));
+                """.formatted(pairPlaceholders(chunk.size()), StatsHistoryContext.sameSubscriber(
+                    "subscriber_alias.p25_subscriber_identity_id", "requested.p25_subscriber_identity_id"));
             try(PreparedStatement statement = connection.prepareStatement(sql))
             {
                 int parameter = 1;
@@ -2040,14 +2042,16 @@ class StatsAliasResolver
         {
             if(mP25Subscriber == null)
             {
+                StatsHistoryContext.installSubscriberContext(mConnection);
                 mP25Subscriber = mConnection.prepareStatement("""
                     SELECT alias.id
                     FROM alias_p25_subscriber_identity subscriber_alias
                     JOIN alias ON alias.id=subscriber_alias.alias_id
                     WHERE alias.alias_list_id=? AND alias.matcher_type='P25_SUBSCRIBER_IDENTITY'
-                      AND subscriber_alias.p25_subscriber_identity_id=?
+                      AND %s
                     ORDER BY alias.id DESC LIMIT 1
-                    """);
+                    """.formatted(StatsHistoryContext.sameSubscriber(
+                        "subscriber_alias.p25_subscriber_identity_id", "?")));
             }
             mP25Subscriber.setLong(1, aliasListId);
             mP25Subscriber.setLong(2, p25SubscriberIdentityId);

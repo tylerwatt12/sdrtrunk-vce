@@ -451,7 +451,7 @@ class ConfigurationDatabaseStoreTest
     }
 
     @Test
-    void decoderChangeReplacesOnlyTheChangedChannelRow() throws Exception
+    void decoderChangeRequiresANewIdentityAndPreservesExistingChannelRows() throws Exception
     {
         Path database = mTemporaryFolder.resolve("changed-channel-classification.sqlite");
         SdrTrunkTestDatabase.create(database);
@@ -464,10 +464,18 @@ class ConfigurationDatabaseStoreTest
         long retainedRowId = channelRowId(database, retained.getConfigurationId());
 
         changed.setDecodeConfiguration(new DecodeConfigNBFM());
-        replace(database, state);
-
-        assertTrue(channelRowId(database, changed.getConfigurationId()) > changedRowId);
+        assertThrows(IOException.class, () -> replace(database, state));
+        assertEquals(changedRowId, channelRowId(database, changed.getConfigurationId()));
         assertEquals(retainedRowId, channelRowId(database, retained.getConfigurationId()));
+
+        Channel fresh = changed.copyOf();
+        List<Channel> saved = new ConfigurationDatabaseStore(database).load().channels();
+        state.setChannels(List.of(saved.get(0), saved.get(1), fresh));
+        replace(database, state);
+        assertEquals(3, new ConfigurationDatabaseStore(database).load().channels().size());
+        assertEquals(changedRowId, channelRowId(database, changed.getConfigurationId()));
+        assertEquals(retainedRowId, channelRowId(database, retained.getConfigurationId()));
+        assertTrue(channelRowId(database, fresh.getConfigurationId()) > 0);
     }
 
     @Test

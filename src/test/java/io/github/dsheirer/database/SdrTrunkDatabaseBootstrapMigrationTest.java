@@ -63,7 +63,10 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertEquals("0", scalar(database,
             "SELECT COUNT(*) FROM configuration_channel WHERE config_json='{invalid'"));
         assertEquals(aliasesBefore, scalar(database, "SELECT COUNT(*) FROM alias"));
-        assertEquals(1, regularFiles(database.getParent().resolve("backups")).size());
+        List<Path> backups = regularFiles(database.getParent().resolve("backups"));
+        assertEquals(2, backups.size());
+        ConfigurationHistoryDatabase.validatePair(backups.stream()
+            .filter(path -> !path.getFileName().toString().endsWith(".activity.sqlite")).findFirst().orElseThrow());
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
     }
 
@@ -212,6 +215,42 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
+    }
+
+    @Test
+    void explicitUpgradeResumesActivationWhenConfigurationFilenameIsMissing() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("interrupted-pair-activation");
+        Path database = SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        String pairId = scalar(database, "SELECT value FROM database_metadata " +
+            "WHERE key='configuration_history_pair_id'");
+        java.util.Properties receipt = new java.util.Properties();
+        receipt.setProperty("pair_id", pairId);
+        receipt.setProperty("configuration", database.getFileName().toString());
+        Object fileKey = Files.readAttributes(history, java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+        if(fileKey != null)
+        {
+            receipt.setProperty("source_file_key", fileKey.toString());
+        }
+        Files.move(database, ActivityDatabasePath.configurationStage(database));
+        try(var output = Files.newOutputStream(ActivityDatabasePath.splitReceipt(database)))
+        {
+            receipt.store(output, "interrupted activation fixture");
+        }
+        assertFalse(Files.exists(database));
+        IOException refusal = assertThrows(IOException.class,
+            () -> SdrTrunkDatabaseBootstrap.run(new String[0], dataRoot, true));
+        assertTrue(refusal.getMessage().contains("--upgrade-current"));
+
+        Path password = passwordFile("resume-activation-password.txt");
+        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--no-upgrade-backup",
+            "--admin-password-file", password.toString()}, dataRoot, true).startApplication());
+
+        ConfigurationHistoryDatabase.validatePair(database);
+        assertFalse(Files.exists(ActivityDatabasePath.splitReceipt(database)));
+        assertFalse(Files.exists(ActivityDatabasePath.configurationStage(database)));
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
 
     @Test
@@ -570,7 +609,21 @@ class SdrTrunkDatabaseBootstrapMigrationTest
 
     private static Connection open(Path database) throws Exception
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        if(Files.isRegularFile(history))
+        {
+            try(Statement statement = connection.createStatement())
+            {
+                statement.execute("ATTACH DATABASE '" + history.toString().replace("'", "''") + "' AS activity");
+            }
+            catch(Exception failure)
+            {
+                connection.close();
+                throw failure;
+            }
+        }
+        return connection;
     }
 
     private static String scalar(Path database, String sql) throws Exception

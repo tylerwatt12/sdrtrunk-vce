@@ -87,28 +87,48 @@ class StatsWebDatabaseTest
         mDatabase = new StatsWebDatabase(new UserPreferences(), mDatabasePath);
     }
 
-    /**
-     * Builds the current component schemas directly so these read-model tests do not depend on the migration
-     * catalog's version stamp or historical fingerprints. Startup and whole-file validation have separate tests.
-     */
+    /** Read-model fixtures use the same separate configuration/history files admitted by production startup. */
     private void createCurrentWebTestDatabase() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
-            Statement statement = connection.createStatement())
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(mDatabasePath);
+    }
+
+    /** Fixture writes may address both isolated stores; production writers always attach configuration read-only. */
+    private Connection openFixture() throws Exception
+    {
+        Connection connection=DriverManager.getConnection("jdbc:sqlite:" +
+            io.github.dsheirer.database.SdrTrunkDatabase.historyPath(mDatabasePath));
+        try(var attach=connection.prepareStatement("ATTACH DATABASE ? AS configuration"))
+        { attach.setString(1,mDatabasePath.toString());attach.execute(); }
+        StatsHistoryContext.installSubscriberContext(connection);
+        ReceiverActivitySchema.installConfigurationReadView(connection);
+        // Fixture summaries describe the Alias currently inserted by this test, rather than a replaced matcher.
+        try(Statement statement=connection.createStatement())
         {
-            statement.execute("PRAGMA foreign_keys=ON");
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
+            statement.execute("""
+                CREATE TEMP TRIGGER fixture_summary_identity AFTER INSERT ON main.alias_activity_summary
+                WHEN EXISTS(SELECT 1 FROM alias WHERE id=new.alias_id)
+                BEGIN
+                    UPDATE alias_activity_summary
+                    SET activity_identity=(SELECT activity_identity FROM alias WHERE id=new.alias_id)
+                    WHERE alias_id=new.alias_id;
+                END
+                """);
         }
+        return connection;
+    }
+
+    /** Canonical Alias fixtures explicitly seed their independent configuration dictionary with the same tuples. */
+    private static void seedConfiguredSubscribers(Statement statement) throws Exception
+    {
+        statement.executeUpdate("INSERT OR IGNORE INTO configuration.p25_subscriber_identity " +
+            "SELECT * FROM main.p25_subscriber_identity");
     }
 
     @Test
     void messageDefinitionsComeFromOneTableAndKeepActionAndEventTypesSeparate() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE activity_message_type SET label='Disable command', " +
@@ -128,7 +148,7 @@ class StatsWebDatabaseTest
         assertEquals(false, action.get("dmr"));
         assertEquals(ReceiverActivityFilterCatalog.actionCode("STUN").longValue(), number(action.get("code")));
         assertEquals(ReceiverActivityFilterCatalog.eventTypeCode("STUN").longValue(), number(event.get("code")));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE activity_message_type SET label='Radio disable' " +
@@ -146,7 +166,7 @@ class StatsWebDatabaseTest
         long bucket = now / 3_600_000L * 3_600_000L;
         int stun = ReceiverActivityFilterCatalog.actionCode("STUN");
         int event = ReceiverActivityFilterCatalog.eventTypeCode("STUN");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -184,7 +204,7 @@ class StatsWebDatabaseTest
         String receivingKey = p25IdentityKey(RadioSystemIdentityKey.KIND_RADIO,202);
         assertEquals(receivingKey,provisional.get("identity_key"));
         assertNull(provisional.get("p25_subscriber_identity_id"));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
@@ -231,11 +251,12 @@ class StatsWebDatabaseTest
             request("/?q=home%20unit&limit=1"))).getFirst();
         assertEquals(7102, number(channel.get("identity_summary_id")));
         assertEquals("Home Unit", channel.get("alias_name"));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type) " +
                 "VALUES(9902,71,'Canonical Home Unit','P25_SUBSCRIBER_IDENTITY')");
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id) " +
                 "VALUES(9902,9901)");
         }
@@ -243,7 +264,7 @@ class StatsWebDatabaseTest
             request("/?q=canonical%20home%20unit&sort=alias&limit=1"))).getFirst();
         assertEquals("Canonical Home Unit",namedCanonical.get("alias_name"));
         //The canonical Alias owns every presented/searchable field, including empty optional fields.
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE alias SET description='Local fallback description'," +
@@ -262,7 +283,7 @@ class StatsWebDatabaseTest
     @Test
     void provisionalHomeAndRetainedUnknownHistoryHaveSeparateExactRoutes() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
@@ -290,7 +311,7 @@ class StatsWebDatabaseTest
     @Test
     void callCountCoverageKeepsSummaryCollectionDatesSeparateFromAvailableChannelHistory() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE database_metadata SET value='500' WHERE key='" +
@@ -362,7 +383,7 @@ class StatsWebDatabaseTest
         assertNull(unobserved.get("channel_observations_from_ms"));
         assertNull(unobserved.get("channel_observations_to_ms"));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             try(ResultSet plan = statement.executeQuery("""
@@ -428,7 +449,7 @@ class StatsWebDatabaseTest
     void publicAliasInventoryIncludesNonIdentityMatchersWithoutCountingThemAsUnheard() throws Exception
     {
         long observedAt = System.currentTimeMillis();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
@@ -519,7 +540,7 @@ class StatsWebDatabaseTest
     @Test
     void radioSystemDetailIncludesRetainedSignalingOwnedByTheSystem() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -545,7 +566,7 @@ class StatsWebDatabaseTest
     void nativeDmrAndNxdnSystemFieldsAndObservedGroupsComeFromTheSharedRadioSystem() throws Exception
     {
         long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");
@@ -731,7 +752,7 @@ class StatsWebDatabaseTest
             assertTrue(rows(mDatabase.channelRadios(configurationId, request("/"))).isEmpty(), configurationId);
         }
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DELETE FROM trunked_site_snapshot WHERE channel_id IN (81,82,83,84)");
@@ -761,7 +782,7 @@ class StatsWebDatabaseTest
         long now = System.currentTimeMillis();
         long bucket = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");
@@ -967,7 +988,7 @@ class StatsWebDatabaseTest
         long hour = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
         long older = hour - 3 * 86_400_000L;
         long expired = hour - 8 * 86_400_000L;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE radio_system_identity_summary SET " +
@@ -1019,7 +1040,7 @@ class StatsWebDatabaseTest
         long now = System.currentTimeMillis();
         long hour = Math.floorDiv(now, 3_600_000L) * 3_600_000L;
         int stun = ReceiverActivityFilterCatalog.actionCode("STUN");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");
@@ -1073,7 +1094,7 @@ class StatsWebDatabaseTest
             assertEquals(page.get(field), beyondEnd.get(field), field);
         }
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DELETE FROM receiver_activity_event WHERE action_code=" + stun);
@@ -1092,7 +1113,7 @@ class StatsWebDatabaseTest
     @Test
     void radioAliasSortUsesExactAndRangeIndexesWithoutChangingConsensusOrPaging() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1138,7 +1159,7 @@ class StatsWebDatabaseTest
     {
         String configurationId = "90000000-0000-4000-8000-000000000090";
         String fallbackKey = "dmr:channel:" + configurationId;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");
@@ -1261,7 +1282,7 @@ class StatsWebDatabaseTest
     @Test
     void p25PatchTelemetryUsesCanonicalLocalFieldsAndNavigableSystemIdentities() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE radio_system_identity_summary SET " +
@@ -1334,7 +1355,7 @@ class StatsWebDatabaseTest
         assertEquals(101, number(conflict.get("native_id")));
         assertNull(conflict.get("alias_name"), "Conflicting channel-owned alias lists must not pick a winner");
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE alias SET name='Dispatch' WHERE id=7201");
@@ -1358,7 +1379,7 @@ class StatsWebDatabaseTest
     @Test
     void radioSystemMetricsUseTheirDedicatedStartBoundary() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             PreparedStatement statement = connection.prepareStatement(
                 "UPDATE database_metadata SET value = ? WHERE key = ?"))
         {
@@ -1403,7 +1424,7 @@ class StatsWebDatabaseTest
     @Test
     void lastEncryptionNamesDoNotRequireCompletedEncryptedCalls() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1437,7 +1458,7 @@ class StatsWebDatabaseTest
     @Test
     void lastEncryptionNamesUseTheSummaryProtocol() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             seedTrunkedDmrAndNxdn(statement);
@@ -1480,7 +1501,7 @@ class StatsWebDatabaseTest
             assertNull(summary.get("last_encryption_algorithm_name"));
         }
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1496,7 +1517,7 @@ class StatsWebDatabaseTest
             assertEquals("ENC", summary.get("last_encryption_algorithm_name"));
         }
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1518,7 +1539,7 @@ class StatsWebDatabaseTest
     @Test
     void sitePresenceAndSystemSummaryPreferUniqueConfiguredChannelNames() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1561,7 +1582,7 @@ class StatsWebDatabaseTest
     @Test
     void zeroCallRadioAliasOpensItsRadioPage() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1603,7 +1624,7 @@ class StatsWebDatabaseTest
     @Test
     void trunkedChannelFrequencyMetricMatchesTheFrequencyTable() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1646,7 +1667,7 @@ class StatsWebDatabaseTest
     @Test
     void channelDirectoryIncludesStoredCallCountsAndSortsThemBeforePagination() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1694,7 +1715,7 @@ class StatsWebDatabaseTest
     @Test
     void boundedAliasActivityCsvRetainsLiveRelationshipMetrics() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1732,7 +1753,7 @@ class StatsWebDatabaseTest
     @Test
     void talkgroupAndPatchGroupWithTheSameNumberStayDistinct() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1780,7 +1801,7 @@ class StatsWebDatabaseTest
     void sameNumericIdentitiesStayInsideTheirOwnRadioSystem() throws Exception
     {
         String secondSystemKey = "p25:bee00:4a0";
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list (id, name, family) VALUES (77, 'County C', 'P25')");
@@ -1840,7 +1861,7 @@ class StatsWebDatabaseTest
     @Test
     void affiliationAndPresenceFiltersUseTheExactSavedChannel() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1892,7 +1913,7 @@ class StatsWebDatabaseTest
     void conventionalNxdnZeroActivityKeepsItsAliasSearchAndChannelDrilldown() throws Exception
     {
         conventionalP25AndNxdnExposeRealChannelOwnedGroupsAndRadios();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1931,7 +1952,7 @@ class StatsWebDatabaseTest
     @Test
     void conventionalP25AndNxdnExposeRealChannelOwnedGroupsAndRadios() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -2013,7 +2034,7 @@ class StatsWebDatabaseTest
     {
         long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             PreparedStatement calls = connection.prepareStatement("""
                 INSERT INTO p25_site_call_identity_bucket (
                     radio_system_id, learned_site_id, channel_id, bucket_start_ms, identity_role_code,
@@ -2105,7 +2126,7 @@ class StatsWebDatabaseTest
     void trunkedChannelRadiosExposeAndSearchOnlyTheirOwnedOtaAliases() throws Exception
     {
         long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             seedTrunkedDmrAndNxdn(statement);
@@ -2166,7 +2187,7 @@ class StatsWebDatabaseTest
     {
         long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             PreparedStatement calls = connection.prepareStatement("""
                 INSERT INTO trunked_logical_call_identity_bucket (
                     radio_system_id, bucket_start_ms, identity_role_code, identity_kind_code, identity_summary_id,
@@ -2236,7 +2257,7 @@ class StatsWebDatabaseTest
     @Test
     void trunkedNeighborPagesKeepDmrModelAndNxdnLocationCategorySeparate() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");
@@ -2277,7 +2298,7 @@ class StatsWebDatabaseTest
     {
         conventionalP25AndNxdnExposeRealChannelOwnedGroupsAndRadios();
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -2355,7 +2376,7 @@ class StatsWebDatabaseTest
     void unassignedP25GroupsReuseExactCoverageAndDeduplicateTheirProtocolRanges() throws Exception
     {
         long bucket = Math.floorDiv(System.currentTimeMillis(), 3_600_000L) * 3_600_000L;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement();
             PreparedStatement calls = connection.prepareStatement("""
                 INSERT INTO p25_site_call_identity_bucket (
@@ -2418,7 +2439,7 @@ class StatsWebDatabaseTest
         assertEquals(3,number(mDatabase.unassignedGroupIdentities(71,request("/?q=103")).get("total_count")));
         assertEquals(0,number(mDatabase.unassignedGroupIdentities(71,request("/?q=missing")).get("total_count")));
         assertTrue(rows(mDatabase.unassignedGroupIdentities(71,request("/?offset=20"))).isEmpty());
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> plan = explain(connection,query[0].sql(),query[0].parameters().toArray());
             assertTrue(plan.stream().anyMatch(detail -> detail.contains(
@@ -2436,7 +2457,7 @@ class StatsWebDatabaseTest
             String protocol = "P25".equals(family) ? "APCO25_PHASE2" : family;
             String other = "DMR".equals(family) ? "NXDN" : "DMR";
             String configuration = "90000000-0000-4000-8000-0000000000" + id;
-            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+            try(Connection connection = openFixture();
                 Statement statement = connection.createStatement())
             {
                 statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(" + id + ",'" + family + " ranges','" + family + "')");
@@ -2495,7 +2516,7 @@ class StatsWebDatabaseTest
                        (72,'TALKGROUP_RANGE','APCO25',1,40)
             ), observed(group_identity_id) AS (VALUES(NULL),(9),(10),(15),(20),(21),(30))
             """;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             PreparedStatement statement = connection.prepareStatement(facts + coverage +
                 " SELECT group_identity_id FROM observed WHERE 1=1" + exclusion + " ORDER BY group_identity_id"))
         {
@@ -2512,7 +2533,7 @@ class StatsWebDatabaseTest
     @Test
     void unassignedDuplicateRangesDoNotMultiplyCoverageWork() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
@@ -2534,7 +2555,7 @@ class StatsWebDatabaseTest
         StatsWebDatabase.ObservedGroupIdentityQuery[] captured = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
         var page = mDatabase.observedGroupIdentities(71,request("/?limit=100"),query -> captured[0] = query,true);
         assertEquals(100,number(page.get("total_count")));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             StatsSystemNameResolver.installCatalog(connection);
             AtomicInteger progressCalls = new AtomicInteger();
@@ -2561,7 +2582,7 @@ class StatsWebDatabaseTest
     @Test
     void conventionalDmrAliasDiscoveryKeepsCarrierTimeslotsSeparate() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -2597,7 +2618,7 @@ class StatsWebDatabaseTest
         assertEquals(2, searched.size(), "Search must use the same saved-channel label shown in the browser");
         assertTrue(rows(mDatabase.unassignedGroupIdentities(74,request("/?include_exact=true"))).isEmpty(),
             "Unassigned results must exclude exact definitions even when include_exact is requested");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -2623,7 +2644,7 @@ class StatsWebDatabaseTest
     @Test
     void configuredQuietChannelRemainsVisibleWithoutRuntimeFacts() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -2648,7 +2669,7 @@ class StatsWebDatabaseTest
     @Test
     void analogInventoryStartsProspectivelyAndKeepsUnsupportedMatchersOutOfHeardCounts() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -2683,7 +2704,7 @@ class StatsWebDatabaseTest
     void analogDiscoveryUsesReceivedAssignmentsAndCurrentCoverageWithoutRewritingHistoricalCounts() throws Exception
     {
         String amChannel = "00000000-0000-0000-0000-000000000085";
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -2740,7 +2761,7 @@ class StatsWebDatabaseTest
         assertEquals(8, number(before.get("logical_call_count")));
         assertEquals(2, number(before.get("matched_logical_call_count")));
         assertEquals(6, number(before.get("unmatched_logical_call_count")));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -2767,7 +2788,7 @@ class StatsWebDatabaseTest
     @Test
     void analogInventoryLinksOnlyTheChannelWhoseAssignedNumberMatchesAndDiscoveryUsesCompactSummary() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE configuration_channel SET config_json=" +
@@ -2792,7 +2813,7 @@ class StatsWebDatabaseTest
         StatsWebDatabase.ObservedGroupIdentityQuery[] query = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
         mDatabase.observedGroupIdentities(73, request("/?limit=25"), observed -> query[0] = observed);
         assertFalse(query[0].sql().contains("receiver_activity_event"));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> plan = explain(connection, query[0].sql(), query[0].parameters().toArray());
             assertTrue(plan.stream().anyMatch(detail -> detail.contains("SEARCH summary") &&
@@ -2825,7 +2846,7 @@ class StatsWebDatabaseTest
         long bucket = Math.floorDiv(now, 10_000L) * 10_000L;
         long observed = Math.min(now, bucket + 9_000L);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             seedTrunkedDmrAndNxdn(statement);
@@ -2867,7 +2888,7 @@ class StatsWebDatabaseTest
             )
             """;
         long expected;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             try(ResultSet original = statement.executeQuery(prior))
@@ -2902,7 +2923,7 @@ class StatsWebDatabaseTest
     void mainUsesOnlyCardFieldsAndPreservesNamesAliasesAndCurrentFrequencies() throws Exception
     {
         long now = System.currentTimeMillis();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             seedTrunkedDmrAndNxdn(statement);
@@ -3008,7 +3029,7 @@ class StatsWebDatabaseTest
     @Test
     void boundedDirectoryHandlesRepresentativeIdentityVolume() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -3039,7 +3060,7 @@ class StatsWebDatabaseTest
     @Test
     void radioSystemIdentitySearchUsesConfiguredAndOverTheAirAliasesBeforePaging() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES (75,'Unassigned','P25')");
@@ -3114,7 +3135,7 @@ class StatsWebDatabaseTest
             "Configured group aliases must preserve radio-system ownership");
 
         // The canonical radio address can differ from the channel's locally observed address.
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -3141,7 +3162,7 @@ class StatsWebDatabaseTest
     @Test
     void homeNameSearchKeepsFiltersCountsAndNonDefaultPageOrder() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -3185,7 +3206,7 @@ class StatsWebDatabaseTest
     @Test
     void talkerAliasSearchFindsConfiguredNamesBeforePaging() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE configuration_channel SET alias_list_id = 71 " +
@@ -3237,7 +3258,7 @@ class StatsWebDatabaseTest
         assertEquals(0, number(foreign.get("total_count")));
         assertTrue(rows(foreign).isEmpty(), "Unassigned Alias Lists must not supply search matches");
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -3271,7 +3292,7 @@ class StatsWebDatabaseTest
         mDatabase.radioSystemRadios(RADIO_SYSTEM_KEY, request("/?q=unit&limit=25"),
             query -> radioQuery[0] = query);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> groupPlan = explain(connection, groupQuery[0].sql(),
                 groupQuery[0].parameters().toArray());
@@ -3316,7 +3337,7 @@ class StatsWebDatabaseTest
     @Test
     void activityCursorAndGrantFilterApplyBeforeTheBoundedPage() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -3357,7 +3378,7 @@ class StatsWebDatabaseTest
     @Test
     void tonesFilterKeepsCallClassificationAndFindsEvidenceBeforePagination() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -3386,7 +3407,7 @@ class StatsWebDatabaseTest
     @Test
     void sparseToneHistoryKeepsScopeFiltersAndBothCursorOrders() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");
@@ -3456,7 +3477,7 @@ class StatsWebDatabaseTest
         Map<String,Object> window = mDatabase.activity(request(scope + "&from_ms=10000&to_ms=20000&limit=10"));
         assertEquals(List.of(990002L, 990001L), rows(window).stream().map(row -> number(row.get("id"))).toList());
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             for(StatsWebDatabase.ActivityQuery query: queries)
             {
@@ -3560,7 +3581,7 @@ class StatsWebDatabaseTest
         assertTrue(watermark > firstCursor);
         assertEquals(false, first.get("reset_required"));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> plan = explain(connection, observedQuery[0].sql(),
                 observedQuery[0].parameters().toArray());
@@ -3569,7 +3590,7 @@ class StatsWebDatabaseTest
                 () -> "Expected bounded forward history to seek by row id, plan was: " + plan);
         }
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO receiver_activity_event (
                     channel_id, radio_system_id, observed_at_ms, action_code, event_type_code,
@@ -3623,7 +3644,7 @@ class StatsWebDatabaseTest
     void p25HistoryFiltersBeforePagingAndPreservesOwnedLabelsAndCanonicalIdentities() throws Exception
     {
         seedActivityFilterRows();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
@@ -3686,7 +3707,7 @@ class StatsWebDatabaseTest
         assertEquals(actual, StatsApiV1Payload.p25VisualizerRows(StatsApiV1Payload.source(rows(mDatabase.activity(
             request("/?projection=p25_visualizer&from_ms=9000&to_ms=15002&actions=CALL,DENIAL,GRANT&after_id=0&limit=500"))))),
             "Repeated history reads use the same compact projection");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             List<String> plan = explain(connection, query[0].sql(), query[0].parameters().toArray());
@@ -3710,7 +3731,7 @@ class StatsWebDatabaseTest
     void currentP25AffiliationsUseSkinnyCurrentTablesAndTypedChannelOwnedPresentation() throws Exception
     {
         seedActivityFilterRows();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DELETE FROM trunked_radio_affiliation");
@@ -3738,7 +3759,7 @@ class StatsWebDatabaseTest
         assertFalse(row.has("id"));
         assertFalse(row.has("alias_list_id"));
         assertFalse(row.has("action"),"current state must not impersonate an Activity event");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
@@ -3771,7 +3792,7 @@ class StatsWebDatabaseTest
         assertEquals(row.get("talkgroup_alias_name"), presented.getLast().get("talkgroup_alias_name"));
         assertEquals(110_000, presented.getLast().at("/radio_canonical_identity/subscriber_id").asInt());
         assertFalse(bulk.getFirst().containsKey("source_alias_name"), "presentation must not mutate native reader rows");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         { statement.executeUpdate("DELETE FROM trunked_radio_affiliation"); }
         assertTrue(mDatabase.p25RawSnapshot().affiliations().isEmpty(),"logout/retention/site-clear absence is authoritative");
@@ -3807,7 +3828,7 @@ class StatsWebDatabaseTest
     @Test
     void encryptedOwnerHistoryUsesSparseIndexesWithoutPlannerStatistics() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             try(ResultSet resultSet = statement.executeQuery(
@@ -3880,7 +3901,7 @@ class StatsWebDatabaseTest
         assertFalse(forward[0].sql().contains("INDEXED BY"));
         assertTrue(forward[0].sql().contains("candidate.encrypted = ?"));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> channelPlan = explain(connection, channelEncrypted[0].sql(),
                 channelEncrypted[0].parameters().toArray());
@@ -3898,7 +3919,7 @@ class StatsWebDatabaseTest
     @Test
     void radioHistoryKeepsBroadPagesOnIdentityIndexesAndSelectiveActionPaths() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -4061,7 +4082,7 @@ class StatsWebDatabaseTest
         assertFalse(mixedQuery[0].sql().contains("INDEXED BY idx_receiver_activity_event_target_time"),
             "The target role has 1,001 entries and must make its own decision independently of the sparse source");
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> plan = explain(connection, anyQuery[0].sql(), anyQuery[0].parameters().toArray());
             assertTrue(plan.stream().anyMatch(detail -> detail.contains(
@@ -4140,7 +4161,7 @@ class StatsWebDatabaseTest
     void activityUnionCursorIsStableAndScopedActionEventQueriesUseFormat24Indexes() throws Exception
     {
         seedActivityFilterRows();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -4203,7 +4224,7 @@ class StatsWebDatabaseTest
         mDatabase.activity(request("/?configuration_id=" + DMR_CHANNEL + "&target_id=17&limit=20"),
             query -> channelTarget[0] = query);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> actionPlan = explain(connection, systemAction[0].sql(),
                 systemAction[0].parameters().toArray());
@@ -4250,7 +4271,7 @@ class StatsWebDatabaseTest
         StatsWebDatabase.ObservedGroupIdentityQuery[] observedQuery = new StatsWebDatabase.ObservedGroupIdentityQuery[1];
         mDatabase.observedGroupIdentities(71, request("/?limit=25"), query -> observedQuery[0] = query);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> activityPlan = explain(connection, StatsWebDatabase.ACTIVITY_SELECT_SQL +
                 " AND activity.channel_id = ?" + StatsWebDatabase.ACTIVITY_ORDER_SQL, 71, 201);
@@ -4294,7 +4315,7 @@ class StatsWebDatabaseTest
     @Test
     void systemActivityAndPatchMemberPagingUseNormalizedIdsAndBoundedIndexes() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -4388,7 +4409,7 @@ class StatsWebDatabaseTest
     @Test
     void talkerAliasCsvExportsOnlyNonblankAliases() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -4494,7 +4515,7 @@ class StatsWebDatabaseTest
 
     private void seedCurrentRadioModel() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");
@@ -4568,7 +4589,7 @@ class StatsWebDatabaseTest
 
     private void seedActivityFilterRows() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("PRAGMA foreign_keys=ON");
@@ -4748,7 +4769,7 @@ class StatsWebDatabaseTest
     void issiReadModelSeparatesCanonicalSubscribersFromWorkingAssignmentsAndBands() throws Exception
     {
         long now = System.currentTimeMillis();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -4897,7 +4918,7 @@ class StatsWebDatabaseTest
     @Test
     void foreignGroupHomesAppearWithoutSubscriberRowsOrDuplicateRadioCallCounts() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -4946,7 +4967,7 @@ class StatsWebDatabaseTest
         assertTrue(payload.path("observed_local_id").isNull(), "retained home rows supply no local mapping proof");
         assertFalse(selected[0].sql().contains("JOIN p25_subscriber_identity"),
             "group facts remain direct existing directory columns");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath))
+        try(Connection connection = openFixture())
         {
             List<String> plan = explain(connection, selected[0].sql(), selected[0].parameters().toArray());
             assertTrue(plan.stream().anyMatch(detail -> detail.contains("idx_radio_system_identity_last_seen") ||
@@ -4958,7 +4979,7 @@ class StatsWebDatabaseTest
     @Test
     void currentGroupAssociationUsesObservedLocalAliasAndExistingCanonicalRoute() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -4989,7 +5010,7 @@ class StatsWebDatabaseTest
     @Test
     void assignmentOnlyIssiSubscribersUseOnlyTheirExactChannelAliasList() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -5018,6 +5039,7 @@ class StatsWebDatabaseTest
                     (9304,72,'Wrong County Working ID','RADIO_ID','APCO25',140003),
                     (9305,71,'Equal Working ID','RADIO_ID','APCO25',140004)
                 """);
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("""
                 INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id)
                 VALUES(9302,9302)
@@ -5058,7 +5080,7 @@ class StatsWebDatabaseTest
     @Test
     void activityLabelsOnlyExplicitCanonicalLocalAddressesAsWorkingIds() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -5106,7 +5128,7 @@ class StatsWebDatabaseTest
     @Test
     void liveIssiLabelsSurviveMissingHistoryAndUseTheObservingChannelList() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -5122,6 +5144,7 @@ class StatsWebDatabaseTest
                 INSERT INTO alias(id,alias_list_id,name,matcher_type)
                 VALUES (9913,71,'Permanent Subscriber Alias','P25_SUBSCRIBER_IDENTITY')
                 """);
+            seedConfiguredSubscribers(statement);
             statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity VALUES (9913,9991)");
         }
         List<Map<String,Object>> input = List.of(new LinkedHashMap<>(Map.of(
@@ -5136,7 +5159,7 @@ class StatsWebDatabaseTest
         assertEquals(140001, number(row.get("observed_working_id")));
         assertNull(row.get("last_talker_alias"));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = openFixture();
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""

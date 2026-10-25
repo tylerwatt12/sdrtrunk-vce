@@ -14,16 +14,11 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.lang.reflect.Method;
 import java.net.URI;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
@@ -42,15 +37,12 @@ class StatsChannelAliasSelectionTest
     void setUp() throws Exception
     {
         mDatabasePath = mTemporaryFolder.resolve("channel-aliases.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        io.github.dsheirer.database.SdrTrunkTestDatabase.create(mDatabasePath);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabasePath);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
+
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES " +
                 "(71,'Selected','P25'),(72,'Other','P25')");
             statement.executeUpdate("""
@@ -78,7 +70,7 @@ class StatsChannelAliasSelectionTest
     @Test
     void missingObservedAddressesKeepNativeAliasesInDisplaySearchAndListOwnership() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabasePath);
             Statement statement = connection.createStatement())
         {
             addIdentity(statement, 101, 1, null, 0xBEE00, 0x49F, 101, null, null);
@@ -110,7 +102,7 @@ class StatsChannelAliasSelectionTest
     @Test
     void canonicalHomeAndForeignRadiosUseOnlyTheSupportedWorkingAddressFallback() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabasePath);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -140,7 +132,7 @@ class StatsChannelAliasSelectionTest
         assertTrue(rows(mDatabase.channelRadios(CHANNEL, request("/?q=unproven"))).isEmpty());
         assertTrue(rows(mDatabase.channelRadios(CHANNEL, request("/?q=home%20native"))).isEmpty());
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabasePath);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -148,6 +140,8 @@ class StatsChannelAliasSelectionTest
                     (201,71,'Canonical Foreign','P25_SUBSCRIBER_IDENTITY','',NULL,123),
                     (202,72,'Other List Canonical','P25_SUBSCRIBER_IDENTITY','Other','Other',456)
                 """);
+            statement.executeUpdate("INSERT INTO configuration.p25_subscriber_identity " +
+                "SELECT * FROM main.p25_subscriber_identity");
             statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id) " +
                 "VALUES(201,13),(202,13)");
         }
@@ -168,7 +162,7 @@ class StatsChannelAliasSelectionTest
         Method join = StatsWebDatabase.class.getDeclaredMethod("channelAliasJoin",
             WebConfiguredEntityRepository.ConfiguredChannel.class, String.class, String.class);
         join.setAccessible(true);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabasePath);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabasePath);
             Statement statement = connection.createStatement())
         {
             var configured = new WebConfiguredEntityRepository().requireChannel(connection, CHANNEL);

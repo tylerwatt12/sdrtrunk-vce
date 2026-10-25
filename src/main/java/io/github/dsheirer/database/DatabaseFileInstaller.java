@@ -31,6 +31,14 @@ public final class DatabaseFileInstaller
 
     public static void install(Path databasePath, DatabaseBuilder builder) throws IOException, SQLException
     {
+        install(databasePath,builder,() -> {});
+    }
+
+    @FunctionalInterface interface BeforeConfigurationMove { void run() throws IOException; }
+
+    static void install(Path databasePath,DatabaseBuilder builder,BeforeConfigurationMove beforeConfigurationMove)
+        throws IOException,SQLException
+    {
         Path target = databasePath.toAbsolutePath().normalize();
 
         if(Files.exists(target))
@@ -55,10 +63,23 @@ public final class DatabaseFileInstaller
             }
 
             Path temporary = target.resolveSibling(target.getFileName() + ".creating-" + UUID.randomUUID());
+            Path temporaryActivity = ActivityDatabasePath.forConfiguration(temporary);
+            Path targetActivity = ActivityDatabasePath.forConfiguration(target);
+            boolean activityInstalled=false;
             try
             {
                 builder.build(temporary);
                 checkpoint(temporary);
+                if(Files.exists(temporaryActivity))
+                {
+                    if(Files.exists(targetActivity)) throw new IOException("Refusing to replace an existing activity companion");
+                    checkpoint(temporaryActivity);
+                    move(temporaryActivity,targetActivity);
+                    activityInstalled=true;
+                    deleteSidecars(temporaryActivity);
+                }
+                beforeConfigurationMove.run();
+                if(Files.exists(target)) throw new IOException("Refusing to overwrite an occupied SQLite destination");
                 move(temporary, target);
                 deleteSidecars(temporary);
             }
@@ -66,7 +87,9 @@ public final class DatabaseFileInstaller
             {
                 try
                 {
+                    if(activityInstalled) delete(targetActivity);
                     delete(temporary);
+                    delete(temporaryActivity);
                 }
                 catch(IOException cleanupFailure)
                 {

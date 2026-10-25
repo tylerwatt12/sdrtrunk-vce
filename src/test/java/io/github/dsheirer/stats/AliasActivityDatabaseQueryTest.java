@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.util.ArrayList;
@@ -38,7 +37,7 @@ class AliasActivityDatabaseQueryTest
             AliasActivityRepresentativeTestDatabase.createMoreThan(mTemporaryFolder.resolve("query.sqlite"));
         StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + fixture.database()))
+        try(Connection connection = StatsPairedTestDatabase.open(fixture.database()))
         {
             StatsRequest calls = request(fixture, "logical_call_count", Map.of());
             long started = System.nanoTime();

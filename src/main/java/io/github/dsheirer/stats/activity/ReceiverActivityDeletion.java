@@ -490,7 +490,8 @@ final class ReceiverActivityDeletion
     {
         try(PreparedStatement statement = connection.prepareStatement("""
             SELECT receiver.id, receiver.radio_system_id, receiver.first_seen_ms AS channel_first_seen_ms,
-                config.channel_kind, config.decoder_type,
+                coalesce(receiver.channel_kind,config.channel_kind) AS channel_kind,
+                coalesce(receiver.decoder_type,config.decoder_type) AS decoder_type,
                 p25.channel_id AS p25_snapshot_id, p25.rfss, p25.site,
                 p25.first_seen_ms AS p25_first_seen_ms,
                 trunked.channel_id AS trunked_snapshot_id,
@@ -499,7 +500,7 @@ final class ReceiverActivityDeletion
                 trunked.observed_ran, trunked.observed_model_code,
                 trunked.first_seen_ms AS trunked_first_seen_ms
             FROM receiver_channel receiver
-            JOIN configuration_channel config ON config.configuration_id = receiver.configuration_id
+            LEFT JOIN configuration_channel config ON config.configuration_id = receiver.configuration_id
             LEFT JOIN p25_site_snapshot p25 ON p25.channel_id = receiver.id
             LEFT JOIN trunked_site_snapshot trunked ON trunked.channel_id = receiver.id
             WHERE receiver.configuration_id = ?

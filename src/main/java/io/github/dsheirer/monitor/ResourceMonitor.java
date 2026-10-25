@@ -243,7 +243,9 @@ public class ResourceMonitor
     private long getDatabaseSize()
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mUserPreferences);
-        return size(database) + size(sidecar(database, "-wal")) + size(sidecar(database, "-shm"));
+        Path activity = io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database);
+        return size(database) + size(sidecar(database, "-wal")) + size(sidecar(database, "-shm")) +
+            size(activity) + size(sidecar(activity, "-wal")) + size(sidecar(activity, "-shm"));
     }
 
     private static Path sidecar(Path database, String suffix)

@@ -293,8 +293,7 @@ class ManagedRecordingsHttpControllerTest
         String configurationId = "4b75217f-2555-4c38-aafc-5d17bc0faf71";
         String systemKey = "p25:bee00:49f";
         String otherSystemKey = "p25:bee00:4a0";
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) " +
                 "VALUES(91,'Fixture Aliases','P25')");
@@ -339,8 +338,7 @@ class ManagedRecordingsHttpControllerTest
             "/suggestions?from_ms=0&to_ms=5000&q=4001&kind=talkgroup&system_key=" + systemKey).GET())).at("/data");
         assertEquals(1, numeric.size());
         assertEquals("4001", numeric.get(0).path("id").textValue());
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO p25_site_snapshot(channel_id,first_seen_ms,last_seen_ms," +
                 "protocol,rfss,site) VALUES(91,1000,2000,'APCO25',1,1)");
@@ -457,8 +455,7 @@ class ManagedRecordingsHttpControllerTest
     @Test
     void patchedTalkgroupNamesFindTheSameRecordingAsTheirNumericIdentity() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES" +
                 "(700,'Fixture Recorded List','P25'),(701,'Fixture Other List','P25')");
@@ -489,8 +486,7 @@ class ManagedRecordingsHttpControllerTest
     @Test
     void nxdnZeroRecordingKeepsItsAliasInBrowsingDetailsAndFriendlyNameFilters() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'NXDN Conventional','NXDN')");
             statement.executeUpdate("INSERT INTO alias(alias_list_id,name,description,group_name,matcher_type,protocol,value) " +
@@ -524,8 +520,7 @@ class ManagedRecordingsHttpControllerTest
     @Test
     void foreignCanonicalPatchGroupCannotMatchAnUnrelatedLocalAliasName() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture Local List','P25')");
             statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
@@ -580,8 +575,7 @@ class ManagedRecordingsHttpControllerTest
     @Test
     void patchAliasLookupBudgetCountsDistinctMissesAcrossTheWholePageAndReturnsAnActionableError() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture Members','P25')");
         }
@@ -621,8 +615,7 @@ class ManagedRecordingsHttpControllerTest
     @Test
     void radioOnlyNamesSkipZeroAddressGroupCandidatesAndHomeDirectoryFanoutWhileMixedNamesKeepBothKinds() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture Names','P25')");
             statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
@@ -645,8 +638,7 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(200, radio.statusCode(), radio.body());
         assertEquals(1, json(radio).at("/data/calls/0/id").longValue(),
             "False group candidates must not consume the five empty candidate pages before the radio call");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
                 "VALUES(700,'Patrol group','TALKGROUP','APCO25',101)");
@@ -654,8 +646,7 @@ class ManagedRecordingsHttpControllerTest
         HttpResponse<String> mixed = send(request(base).GET());
         assertEquals(200, mixed.statusCode(), mixed.body());
         assertEquals(7, json(mixed).at("/data/calls").size(), "Both matching name kinds survive deduplication");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE alias SET name='Different group' WHERE matcher_type='TALKGROUP'");
         }
@@ -675,8 +666,7 @@ class ManagedRecordingsHttpControllerTest
     {
         String system = "p25:00001:001";
         int radio = 10_900_077;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO radio_system(id,system_key,protocol_code,address_domain_code," +
                 "p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) VALUES(501,'" + system +
@@ -763,7 +753,7 @@ class ManagedRecordingsHttpControllerTest
     void chosenAliasAndBroadRangeKeepCurrentLabelScopeAcrossSystems() throws Exception
     {
         Path mainDatabase = mDirectory.resolve("main.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mainDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mainDatabase);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES " +
@@ -1019,8 +1009,7 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(0, json(send(request(base + "&kind=talkgroup&system_key=other-system").GET()))
             .at("/data").size());
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(700,'Fixture List','P25')");
             statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
@@ -1063,8 +1052,7 @@ class ManagedRecordingsHttpControllerTest
     void exactFriendlyNamesRemainCurrentBeyondSubstringAliasesAndGeneralChannelMatches() throws Exception
     {
         populateNumericSubstringSuggestions();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value) " +
                 "VALUES(700,'Z Exact Dispatch','TALKGROUP','APCO25',4001)," +
@@ -1107,8 +1095,7 @@ class ManagedRecordingsHttpControllerTest
         assertEquals(0, json(send(request(ManagedRecordingsHttpController.BROWSE_PATH +
             "/suggestions?from_ms=0&to_ms=5000&q=4002&kind=talkgroup").GET())).at("/data").size());
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE alias SET name='Z Current Dispatch' " +
                 "WHERE matcher_type='TALKGROUP' AND value=4001");
@@ -1120,7 +1107,7 @@ class ManagedRecordingsHttpControllerTest
 
     private void populateNumericSubstringSuggestions() throws Exception
     {
-        try(Connection main = DriverManager.getConnection("jdbc:sqlite:" + mDirectory.resolve("main.sqlite"));
+        try(Connection main = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite"));
             Statement names = main.createStatement();
             Connection catalog = DriverManager.getConnection("jdbc:sqlite:" +
                 mDirectory.resolve("managed-recordings.sqlite")); Statement calls = catalog.createStatement())
@@ -1159,8 +1146,7 @@ class ManagedRecordingsHttpControllerTest
     @Test
     void autocompleteOnlyReturnsNamesWithCatalogCallsAndFiltersBeforeItsLimit() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("main.sqlite")); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) " +
                 "VALUES(700,'Fixture Dispatch List','P25')");

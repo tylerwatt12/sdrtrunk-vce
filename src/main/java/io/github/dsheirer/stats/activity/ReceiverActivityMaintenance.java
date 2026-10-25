@@ -139,7 +139,7 @@ public final class ReceiverActivityMaintenance
 
     public static Result run(Path databasePath, int retentionDays, Operation operation) throws IOException, SQLException
     {
-        try(Connection connection = SdrTrunkDatabase.open(databasePath))
+        try(Connection connection = SdrTrunkDatabase.openHistory(databasePath))
         {
             return run(connection, databasePath, retentionDays, operation);
         }
@@ -158,8 +158,8 @@ public final class ReceiverActivityMaintenance
     static Result run(Connection connection, Path databasePath, int retentionDays, Operation operation,
                       AtomicLong historyGeneration) throws IOException, SQLException
     {
-        long databaseBytesBefore = size(databasePath);
-        long walBytesBefore = size(walPath(databasePath));
+        long databaseBytesBefore = size(activityPath(databasePath));
+        long walBytesBefore = size(walPath(activityPath(databasePath)));
         int rowsDeleted = 0;
         String checkResult = null;
 
@@ -193,8 +193,8 @@ public final class ReceiverActivityMaintenance
                 "DELETE_RETAINED_STATS requires a deletion target");
         }
 
-        return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(databasePath), walBytesBefore,
-            size(walPath(databasePath)));
+        return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(activityPath(databasePath)), walBytesBefore,
+            size(walPath(activityPath(databasePath))));
     }
 
     /**
@@ -203,7 +203,7 @@ public final class ReceiverActivityMaintenance
      */
     public static Result clearChannelStats(Path databasePath, String configurationId) throws IOException, SQLException
     {
-        try(Connection connection = SdrTrunkDatabase.open(databasePath))
+        try(Connection connection = SdrTrunkDatabase.openHistory(databasePath))
         {
             return clearChannelStats(connection, databasePath, configurationId);
         }
@@ -226,13 +226,13 @@ public final class ReceiverActivityMaintenance
             throw new IllegalArgumentException("Channel configuration ID is required");
         }
 
-        long databaseBytesBefore = size(databasePath);
-        long walBytesBefore = size(walPath(databasePath));
+        long databaseBytesBefore = size(activityPath(databasePath));
+        long walBytesBefore = size(walPath(activityPath(databasePath)));
         int rowsDeleted = clearChannelStats(connection, configurationId, historyGeneration);
         checkpoint(connection);
         optimize(connection);
-        return new Result(Operation.CLEAR_CHANNEL_STATS, rowsDeleted, null, databaseBytesBefore, size(databasePath),
-            walBytesBefore, size(walPath(databasePath)));
+        return new Result(Operation.CLEAR_CHANNEL_STATS, rowsDeleted, null, databaseBytesBefore, size(activityPath(databasePath)),
+            walBytesBefore, size(walPath(activityPath(databasePath))));
     }
 
     /** Deletes one selected target on the single writer connection after re-resolving its ownership. */
@@ -252,14 +252,14 @@ public final class ReceiverActivityMaintenance
             throw new IllegalArgumentException("Deletion target is required");
         }
 
-        long databaseBytesBefore = size(databasePath);
-        long walBytesBefore = size(walPath(databasePath));
+        long databaseBytesBefore = size(activityPath(databasePath));
+        long walBytesBefore = size(walPath(activityPath(databasePath)));
         ReceiverActivityDeletion.Result deleted = ReceiverActivityDeletion.legacySelectionTooLarge(connection, target) ?
             ReceiverActivityDeletion.Result.tooLarge() : inTransaction(connection,
                 () -> ReceiverActivityDeletion.delete(connection, target), historyGeneration,
                 ReceiverActivityDeletion.Result::rowsDeleted);
         return new Result(Operation.DELETE_RETAINED_STATS, deleted.rowsDeleted(), null, databaseBytesBefore,
-            size(databasePath), walBytesBefore, size(walPath(databasePath)),
+            size(activityPath(databasePath)), walBytesBefore, size(walPath(activityPath(databasePath))),
             deleted.outcome());
     }
 
@@ -277,8 +277,8 @@ public final class ReceiverActivityMaintenance
     {
         if(!(request.deletionTarget() instanceof ScopedData target))
             throw new IllegalArgumentException("Batched cleanup requires a scoped retained-data target");
-        long before = size(databasePath);
-        long walBefore = size(walPath(databasePath));
+        long before = size(activityPath(databasePath));
+        long walBefore = size(walPath(activityPath(databasePath)));
         if(request.cancelled())
         {
             request.setResumable(true);
@@ -332,7 +332,7 @@ public final class ReceiverActivityMaintenance
         throws IOException
     {
         request.setResumable(true);
-        return deletionResult(request, databasePath, size(databasePath), size(walPath(databasePath)),
+        return deletionResult(request, databasePath, size(activityPath(databasePath)), size(walPath(activityPath(databasePath))),
             DeletionOutcome.INTERRUPTED);
     }
 
@@ -340,7 +340,7 @@ public final class ReceiverActivityMaintenance
                                           long before, long walBefore, DeletionOutcome outcome) throws IOException
     {
         return new Result(Operation.DELETE_RETAINED_STATS, Math.toIntExact(request.progress().rowsDeleted()), null,
-            before, size(databasePath), walBefore, size(walPath(databasePath)), outcome);
+            before, size(activityPath(databasePath)), walBefore, size(walPath(activityPath(databasePath))), outcome);
     }
 
     static int runLightMaintenance(Connection connection, int retentionDays) throws SQLException
@@ -462,7 +462,7 @@ public final class ReceiverActivityMaintenance
     {
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA optimize");
+            statement.execute("PRAGMA main.optimize");
         }
     }
 
@@ -470,7 +470,7 @@ public final class ReceiverActivityMaintenance
     {
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA wal_checkpoint(TRUNCATE)");
+            statement.execute("PRAGMA main.wal_checkpoint(TRUNCATE)");
         }
     }
 
@@ -485,7 +485,7 @@ public final class ReceiverActivityMaintenance
     private static String quickCheck(Connection connection) throws SQLException
     {
         try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA quick_check"))
+            ResultSet resultSet = statement.executeQuery("PRAGMA main.quick_check"))
         {
             return resultSet.next() ? resultSet.getString(1) : "no result";
         }
@@ -499,6 +499,11 @@ public final class ReceiverActivityMaintenance
     private static long size(Path path) throws IOException
     {
         return path != null && Files.isRegularFile(path) ? Files.size(path) : 0;
+    }
+
+    private static Path activityPath(Path configurationPath)
+    {
+        return configurationPath == null ? null : SdrTrunkDatabase.historyPath(configurationPath);
     }
 
     private static Path walPath(Path databasePath)

@@ -160,7 +160,7 @@ class RemoteSenderRemovalPersistenceTest
         store.save(original);
         Settings next = new Settings(8, original.listenerEnabled(), original.bindAddress(), original.listenPort(),
             List.of(original.trustedSenders().get(1)), original.outbound());
-        try(Connection connection = SdrTrunkDatabase.open(database);
+        try(Connection connection = SdrTrunkDatabase.openHistory(database);
             PreparedStatement insert = connection.prepareStatement(
                 "INSERT INTO receiver_channel(configuration_id,first_seen_ms,last_seen_ms) VALUES (?,123,456)"))
         {
@@ -204,7 +204,7 @@ class RemoteSenderRemovalPersistenceTest
         assertEquals("Unrelated dispatch", snapshot.aliases().getFirst().getName());
         assertEquals("Unrelated P25", snapshot.aliasListDefinitions().getFirst().getName());
         assertEquals("Unrelated stream", snapshot.broadcastConfigurations().getFirst().getName());
-        try(Connection connection = SdrTrunkDatabase.open(fixture.database()); Statement sql = connection.createStatement();
+        try(Connection connection = SdrTrunkDatabase.openHistory(fixture.database()); Statement sql = connection.createStatement();
             var rows = sql.executeQuery("SELECT count(*) FROM receiver_activity_event WHERE observed_at_ms=456"))
         {
             assertTrue(rows.next()); assertEquals(1, rows.getInt(1));

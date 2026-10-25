@@ -519,6 +519,7 @@ class ReceiverActivityScopedDeletionTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         return connection;
     }
 

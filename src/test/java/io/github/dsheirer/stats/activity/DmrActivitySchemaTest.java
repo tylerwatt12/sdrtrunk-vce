@@ -229,6 +229,7 @@ class DmrActivitySchemaTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         DmrActivitySchema.validate(connection);
         return connection;
     }

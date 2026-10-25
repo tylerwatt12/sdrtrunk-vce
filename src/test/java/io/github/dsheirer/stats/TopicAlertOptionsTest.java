@@ -19,7 +19,7 @@ class TopicAlertOptionsTest
     {
         Path database = directory.resolve("message-options.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        try(var connection = SdrTrunkDatabase.open(database); var sql = connection.createStatement())
+        try(var connection = openFixture(database); var sql = connection.createStatement())
         {
             sql.executeUpdate("UPDATE activity_message_type SET label='Disable radio', " +
                 "meaning='A radio disable command.',dmr=1,nxdn=1,p25=0 " +
@@ -56,7 +56,7 @@ class TopicAlertOptionsTest
     {
         Path database = directory.resolve("catalog-options.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        try(var connection = SdrTrunkDatabase.open(database); var sql = connection.createStatement())
+        try(var connection = openFixture(database); var sql = connection.createStatement())
         {
             for(int index = 1; index <= 2; index++)
             {
@@ -88,7 +88,7 @@ class TopicAlertOptionsTest
     {
         Path database = directory.resolve("options.sqlite"); SdrTrunkDatabaseStartup.createGlobalDatabase(database);
         List<String> decoders = List.of("P25_PHASE1", "P25_PHASE2", "P25_CONVENTIONAL", "NBFM", "AM", "DMR", "NXDN");
-        try(var connection = SdrTrunkDatabase.open(database))
+        try(var connection = openFixture(database))
         {
             for(int index = 0; index < decoders.size(); index++)
             {
@@ -124,6 +124,15 @@ class TopicAlertOptionsTest
         for(String value: List.of("APCO25","APCO25_PHASE2")) assertEquals(List.of("P25"), protocols.stream().filter(p -> value.equals(p.get("value"))).findFirst().orElseThrow().get("protocol_families"));
         assertEquals(List.of("AM","NBFM"),protocols.stream().filter(p -> "DCS".equals(p.get("value"))).findFirst().orElseThrow().get("protocol_families"));
     }
+    /** Test fixtures write both independent stores explicitly; production joins remain read-only. */
+    private static java.sql.Connection openFixture(Path database) throws Exception
+    {
+        var connection=java.sql.DriverManager.getConnection("jdbc:sqlite:"+SdrTrunkDatabase.historyPath(database));
+        try(var attach=connection.prepareStatement("ATTACH DATABASE ? AS configuration"))
+        { attach.setString(1,database.toString());attach.execute(); }
+        return connection;
+    }
+
     @SuppressWarnings("unchecked") private static List<Map<String,Object>> rows(Map<String,Object> catalog, String key)
     { return (List<Map<String,Object>>)catalog.get(key); }
 }

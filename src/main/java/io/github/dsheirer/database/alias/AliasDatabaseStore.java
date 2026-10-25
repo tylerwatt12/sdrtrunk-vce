@@ -122,12 +122,34 @@ public class AliasDatabaseStore
             new ArrayList<>();
         validateSnapshot(safeAliases, safeDefinitions);
         Map<Long,MatcherSignature> previousMatchers = loadAliasMatcherSignatures(connection);
+        boolean separated = hasActivityIdentity(connection);
+        Map<Long,ActivityIdentity> activityIdentities = separated ? loadActivityIdentities(connection) : Map.of();
         clearAliasesAndRoutes(connection);
         deleteMissingDefinitions(connection, safeDefinitions);
         saveDefinitions(connection, safeDefinitions);
         attachDefinitions(safeAliases, safeDefinitions);
         saveAliases(connection, safeAliases);
-        synchronizeAliasActivitySummaries(connection, previousMatchers);
+        if(separated)
+        {
+            Map<Long,MatcherSignature> currentMatchers = loadAliasMatcherSignatures(connection);
+            try(PreparedStatement restore = connection.prepareStatement(
+                "UPDATE alias SET activity_identity=?, activity_reset_ms=? WHERE id=?"))
+            {
+                for(var entry: activityIdentities.entrySet())
+                {
+                    if(Objects.equals(previousMatchers.get(entry.getKey()), currentMatchers.get(entry.getKey())))
+                    {
+                        restore.setString(1, entry.getValue().identity());
+                        if(entry.getValue().resetMs() == null) restore.setNull(2, java.sql.Types.BIGINT);
+                        else restore.setLong(2, entry.getValue().resetMs());
+                        restore.setLong(3, entry.getKey());
+                        restore.addBatch();
+                    }
+                }
+                restore.executeBatch();
+            }
+        }
+        else synchronizeAliasActivitySummaries(connection, previousMatchers);
     }
 
     /**
@@ -152,10 +174,11 @@ public class AliasDatabaseStore
         Map<Long,Alias> aliasesById = new HashMap<>();
         loadAliases(connection, existingDefinitions).forEach(alias -> aliasesById.put(alias.getId(), alias));
         Map<Long,MatcherSignature> previousMatchers = loadAliasMatcherSignatures(connection);
+        boolean separated = hasActivityIdentity(connection);
 
         Set<Long> retainedAliasIds = new HashSet<>();
         desiredAliases.forEach(alias -> retainedAliasIds.add(alias.getId()));
-        try(PreparedStatement summary = connection.prepareStatement(
+        try(PreparedStatement summary = separated ? null : connection.prepareStatement(
                 "DELETE FROM alias_activity_summary WHERE alias_id=?");
             PreparedStatement alias = connection.prepareStatement("DELETE FROM alias WHERE id=?"))
         {
@@ -164,13 +187,16 @@ public class AliasDatabaseStore
                 if(!retainedAliasIds.contains(id))
                 {
                     //The summary's deferred NO ACTION reference is intentionally not an ON DELETE cascade.
-                    summary.setLong(1, id);
-                    summary.addBatch();
+                    if(summary != null)
+                    {
+                        summary.setLong(1, id);
+                        summary.addBatch();
+                    }
                     alias.setLong(1, id);
                     alias.addBatch();
                 }
             }
-            summary.executeBatch();
+            if(summary != null) summary.executeBatch();
             alias.executeBatch();
         }
 
@@ -209,6 +235,8 @@ public class AliasDatabaseStore
             }
             else
             {
+                boolean matcherChanged = !Objects.equals(matcherData(existing), matcherData(alias)) ||
+                    !Objects.equals(subscriberIdentity(existing), subscriberIdentity(alias));
                 if(!aliasFields(existing).equals(aliasFields(alias)))
                 {
                     updateAlias(connection, alias);
@@ -217,11 +245,22 @@ public class AliasDatabaseStore
                 {
                     synchronizeSubscriberIdentity(connection, alias);
                 }
+                if(separated && matcherChanged)
+                {
+                    try(PreparedStatement reset = connection.prepareStatement(
+                        "UPDATE alias SET activity_identity=?, activity_reset_ms=? WHERE id=?"))
+                    {
+                        reset.setString(1, UUID.randomUUID().toString());
+                        reset.setLong(2, Math.max(1L, System.currentTimeMillis()));
+                        reset.setLong(3, alias.getId());
+                        reset.executeUpdate();
+                    }
+                }
             }
         }
 
         //Move summary ownership before an old list's cascading deletion can remove retained history.
-        synchronizeAliasActivitySummaries(connection, previousMatchers);
+        if(!separated) synchronizeAliasActivitySummaries(connection, previousMatchers);
         //An Alias may move out of a removed list. Apply that move before its old parent is deleted.
         deleteMissingDefinitions(connection, desiredDefinitions);
         Map<Long,Set<String>> aliasRoutes = new HashMap<>();
@@ -351,6 +390,34 @@ public class AliasDatabaseStore
     private record AliasFields(long aliasListId, String name, String description, String group, int color,
                                String icon, Integer streamAsTalkgroup, boolean recordable, MatcherData matcher) {}
     private record SubscriberIdentity(int homeWacn, int homeSystemId, int subscriberId) {}
+    private record ActivityIdentity(String identity, Long resetMs) {}
+
+    /** Frozen import stages retain their historical summary contract; current configuration owns no counters. */
+    private static boolean hasActivityIdentity(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement(); ResultSet columns =
+            statement.executeQuery("PRAGMA table_info(alias)"))
+        {
+            while(columns.next()) if("activity_identity".equals(columns.getString("name"))) return true;
+            return false;
+        }
+    }
+
+    private static Map<Long,ActivityIdentity> loadActivityIdentities(Connection connection) throws SQLException
+    {
+        Map<Long,ActivityIdentity> identities = new HashMap<>();
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
+            "SELECT id,activity_identity,activity_reset_ms FROM alias"))
+        {
+            while(rows.next())
+            {
+                long reset = rows.getLong(3);
+                Long resetMs = rows.wasNull() ? null : reset;
+                identities.put(rows.getLong(1), new ActivityIdentity(rows.getString(2), resetMs));
+            }
+        }
+        return identities;
+    }
 
     private void clearAliasesAndRoutes(Connection connection) throws SQLException
     {
@@ -1114,6 +1181,8 @@ public class AliasDatabaseStore
 
     private void saveAliases(Connection connection, List<Alias> aliases) throws SQLException
     {
+        boolean separated = hasActivityIdentity(connection);
+        long createdAt = Math.max(1L, System.currentTimeMillis());
         for(Alias alias: aliases)
         {
             long aliasId;
@@ -1160,6 +1229,16 @@ public class AliasDatabaseStore
             }
 
             insertAliasChildren(connection, aliasId, alias);
+            if(separated)
+            {
+                try(PreparedStatement boundary = connection.prepareStatement(
+                    "UPDATE alias SET activity_reset_ms=? WHERE id=? AND activity_reset_ms IS NULL"))
+                {
+                    boundary.setLong(1, createdAt);
+                    boundary.setLong(2, aliasId);
+                    boundary.executeUpdate();
+                }
+            }
         }
     }
 
@@ -1383,7 +1462,7 @@ public class AliasDatabaseStore
             throw new SQLException("P25 subscriber alias requires a valid canonical identity");
         }
 
-        //Existing canonical identities are shared with retained radio history. Reuse them without an INSERT attempt.
+        //Reuse this configuration dictionary's identity without an INSERT attempt. History owns its own keys.
         try(PreparedStatement select = connection.prepareStatement("""
             SELECT id FROM p25_subscriber_identity WHERE home_wacn=? AND home_system_id=? AND subscriber_id=?
             """))

@@ -72,7 +72,8 @@ final class StatsIdentitySearch
         {
             sql.append(" OR EXISTS (SELECT 1 FROM alias_p25_subscriber_identity canonical_match ")
                 .append("JOIN alias definition ON definition.id=canonical_match.alias_id ")
-                .append("WHERE canonical_match.p25_subscriber_identity_id=summary.p25_subscriber_identity_id ")
+                .append("WHERE ").append(StatsHistoryContext.sameSubscriber(
+                    "canonical_match.p25_subscriber_identity_id", "summary.p25_subscriber_identity_id")).append(" ")
                 .append("AND EXISTS (SELECT 1 FROM receiver_channel assigned_channel ")
                 .append("JOIN configuration_channel assigned_config ON ")
                 .append("assigned_config.configuration_id=assigned_channel.configuration_id ")
@@ -105,7 +106,8 @@ final class StatsIdentitySearch
             "AND assigned_config.alias_list_id=definition.alias_list_id)))";
         String canonical = "SELECT 1 FROM alias_p25_subscriber_identity matched " +
             "JOIN alias definition ON definition.id=matched.alias_id " +
-            "WHERE matched.p25_subscriber_identity_id=subscriber_rows.p25_subscriber_identity_id AND " + scope;
+            "WHERE " + StatsHistoryContext.sameSubscriber("matched.p25_subscriber_identity_id",
+                "subscriber_rows.p25_subscriber_identity_id") + " AND " + scope;
         sql.append(" OR EXISTS (").append(canonical).append(" AND ").append(aliasTextSearch()).append(')');
         addTextParameters(parameters, pattern);
         sql.append(" OR (subscriber_rows.observation_alias_list_id IS NOT NULL ")

@@ -21,13 +21,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.activity.RetainedSiteKey;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.auth.WebAuthenticationService;
 import io.github.dsheirer.web.auth.WebCapability;
@@ -41,7 +38,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.Duration;
@@ -88,16 +84,13 @@ class RetainedStatisticsAdminHttpControllerTest
     void setUp() throws Exception
     {
         mDatabase = mDirectory.resolve("statistics.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        SdrTrunkTestDatabase.create(mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
             seed(statement);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
         }
         mCatalog = new RetainedStatisticsCatalog(mDatabase);
         WebAccessService access = new WebAccessService(mDatabase);
@@ -177,7 +170,7 @@ class RetainedStatisticsAdminHttpControllerTest
     @Test
     void issiAssignmentHistoryCatalogAndRoutesUseOneP25SystemOwnedSummaryTarget() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
@@ -269,7 +262,7 @@ class RetainedStatisticsAdminHttpControllerTest
             .header("Cookie", admin.cookie()).GET())).get("data");
         assertFalse(recovered.get("target").has("include_issi_history"));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE radio_system_identity_summary SET p25_subscriber_identity_id=NULL " +
@@ -484,7 +477,7 @@ class RetainedStatisticsAdminHttpControllerTest
     @Test
     void bandPlansAndCurrentOnlyFrequenciesKeepTheirSavedSiteAndDetailedEvidence() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -564,7 +557,7 @@ class RetainedStatisticsAdminHttpControllerTest
     @Test
     void aliasActivityPreviewIsReadOnlyAndSearchesBeyondTheFirstPage() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -586,6 +579,7 @@ class RetainedStatisticsAdminHttpControllerTest
                 INSERT INTO alias(alias_list_id,name,matcher_type,protocol,value)
                 VALUES (71,'Very distant radio','RADIO_ID','APCO25',2000)
                 """);
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
         }
         RetainedStatisticsCatalog.Page aliasPage = mCatalog.results("alias_activity", null,
             "alias_activity", null, "Very distant", 10, 0);
@@ -637,7 +631,7 @@ class RetainedStatisticsAdminHttpControllerTest
     @Test
     void largeScopedDirectoriesFilterBeforePagination() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase))
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase))
         {
             connection.setAutoCommit(false);
             try(PreparedStatement frequency = connection.prepareStatement("""
@@ -692,7 +686,7 @@ class RetainedStatisticsAdminHttpControllerTest
     @Test
     void snapshotlessSavedSiteKeepsChannelHistoryReachableAndDetectsRecreatedState() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
@@ -709,7 +703,7 @@ class RetainedStatisticsAdminHttpControllerTest
             "control_quality", SITE_B, null, 10, 0);
         assertEquals(key, ((Map<?,?>)quality.rows().getFirst().get("target")).get("expected_site_key"));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
@@ -839,7 +833,7 @@ class RetainedStatisticsAdminHttpControllerTest
     @Test
     void qualityPreviewAcceptsLargeScopeAndStrictOptionalHistoryFilters() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -1054,7 +1048,7 @@ class RetainedStatisticsAdminHttpControllerTest
 
     private void seedAssociatedIssiHistory() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mDatabase);
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");

@@ -2,25 +2,23 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.*;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import java.sql.Connection;
-import java.sql.DriverManager;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class StatsAnalogAliasCatalogTest
 {
+    @TempDir Path mDirectory;
     @Test void catalogUsesProspectiveStoredAnalogCountsAndKeepsProtocolAndRangeScope() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:"); var sql=connection.createStatement())
+        try(Connection connection = fixture(); var sql=connection.createStatement())
         {
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
             long list;
             try(var rows=sql.executeQuery("SELECT id FROM alias_list WHERE family='NBFM'")) { assertTrue(rows.next()); list=rows.getLong(1); }
             sql.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value,min_value,max_value) VALUES " +
@@ -33,6 +31,7 @@ class StatsAnalogAliasCatalogTest
                 "(903," + list + ",10,'not_collected',NULL,NULL,NULL,NULL,NULL,2000)");
             sql.executeUpdate("UPDATE alias_activity_summary SET encrypted_logical_call_count=6," +
                 "signaling_observation_count=7,grant_observation_count=8 WHERE alias_id=901");
+            StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
             StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
             Map<String,Object> response = catalog.aliases(connection,
                 new StatsRequest(Map.of("list",Long.toString(list),"sort","logical_call_count","direction","desc")));
@@ -62,11 +61,8 @@ class StatsAnalogAliasCatalogTest
 
     @Test void currentAnalogCoverageFollowsAssignedNumberAndExactBeforeRangePrecedence() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:"); var sql=connection.createStatement())
+        try(Connection connection = fixture(); var sql=connection.createStatement())
         {
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
             long list;
             try(var rows=sql.executeQuery("SELECT id FROM alias_list WHERE family='NBFM'"))
             { assertTrue(rows.next()); list=rows.getLong(1); }
@@ -118,11 +114,8 @@ class StatsAnalogAliasCatalogTest
 
     @Test void malformedDiscoveryRowsNeverOfferAliasCreation() throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:"))
+        try(Connection connection = fixture())
         {
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
             List<Map<String,Object>> rows = new ArrayList<>(List.of(
                 observed(1,99,7), observed(1,10,65536), observed(1,11,0), observed(0,10,7)));
             Map<String,Object> missingNumber = observed(1,10,7);
@@ -135,6 +128,13 @@ class StatsAnalogAliasCatalogTest
                 assertEquals("none",row.get("match_kind"));
             }
         }
+    }
+
+    private Connection fixture() throws Exception
+    {
+        Path configuration = mDirectory.resolve("analog.sqlite");
+        SdrTrunkTestDatabase.create(configuration);
+        return StatsPairedTestDatabase.open(configuration);
     }
 
     private static Map<String,Object> observed(long list,int protocol,int number)

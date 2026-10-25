@@ -9,11 +9,8 @@ package io.github.dsheirer.stats.activity;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -144,14 +141,9 @@ class ReceiverActivityMaintenanceTest
 
     private static Connection openActivityDatabase(Path database) throws Exception
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
-        execute(connection, "PRAGMA foreign_keys=ON");
-        execute(connection, "PRAGMA journal_mode=WAL");
-        SdrTrunkDatabaseSchema.create(connection);
-        SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-        ReceiverActivitySchema.create(connection);
-        DmrActivitySchema.create(connection);
-        TrunkedSiteSchema.create(connection);
+        io.github.dsheirer.database.SdrTrunkTestDatabase.create(database);
+        Connection connection=ActivityTestDatabase.openPair(database);
+        execute(connection,"PRAGMA foreign_keys=ON");
         return connection;
     }
 

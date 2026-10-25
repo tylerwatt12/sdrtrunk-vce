@@ -141,7 +141,7 @@ class ToneActivitySchemaTest
         ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true, 16, 1, 0);
         writer.start(); assertTrue(writer.enqueue(observation)); assertTrue(writer.enqueue(callActivity(observation)));
         assertTrue(writer.enqueue(observation)); writer.close();
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        try(Connection connection = ActivityTestDatabase.openPair(database))
         {
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone_sequence"));
@@ -176,7 +176,7 @@ class ToneActivitySchemaTest
             assertTrue(writer.enqueue(second));
             assertTrue(writer.enqueue(first));
             writer.close();
-            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+            try(Connection connection = ActivityTestDatabase.openPair(database))
             {
                 assertEquals(detailed ? 2 : 0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
                 assertEquals(detailed ? 2 : 0, scalar(connection, "SELECT count(*) FROM receiver_activity_tone"));
@@ -407,10 +407,23 @@ class ToneActivitySchemaTest
 
     private static Connection open(String database) throws Exception
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection;
+        if(":memory:".equals(database))
+        {
+            connection = DriverManager.getConnection("jdbc:sqlite::memory:");
+            SdrTrunkDatabaseSchema.create(connection);
+            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
+            ReceiverActivitySchema.create(connection);
+            DmrActivitySchema.create(connection);
+            TrunkedSiteSchema.create(connection);
+            ActivityTestDatabase.currentOwners(connection);
+        }
+        else
+        {
+            io.github.dsheirer.database.SdrTrunkTestDatabase.create(Path.of(database));
+            connection = ActivityTestDatabase.openPair(Path.of(database));
+        }
         try(var statement = connection.createStatement()) { statement.execute("PRAGMA foreign_keys=ON"); }
-        SdrTrunkDatabaseSchema.create(connection); SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-        ReceiverActivitySchema.create(connection); DmrActivitySchema.create(connection); TrunkedSiteSchema.create(connection);
         try(var statement = connection.createStatement())
         {
             statement.executeUpdate("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,name,alias_list_id,auto_start,decoder_type,primary_frequency_hz,config_json) VALUES('" + CONFIG + "','CONVENTIONAL',0,'Fixture',(SELECT id FROM alias_list WHERE family='P25' LIMIT 1),0,'P25_CONVENTIONAL',851000000,'{}')");

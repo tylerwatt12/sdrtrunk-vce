@@ -4,6 +4,7 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.alias.AnalogCallAttribution;
+import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -40,8 +41,8 @@ final class AnalogAliasActivityProjection
             INSERT INTO alias_list_analog_activity_summary(
                 alias_list_id, channel_configuration_id, protocol_code, assigned_talkgroup,
                 call_count, unmatched_call_count, recorded_count, streamed_count,
-                first_seen_ms, last_seen_ms, updated_at_ms
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+                first_seen_ms, last_seen_ms, updated_at_ms, alias_list_name
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,(SELECT name FROM alias_list WHERE id=?))
             ON CONFLICT(alias_list_id,channel_configuration_id,protocol_code,assigned_talkgroup) DO UPDATE SET
                 call_count=call_count+excluded.call_count,
                 unmatched_call_count=unmatched_call_count+excluded.unmatched_call_count,
@@ -63,6 +64,7 @@ final class AnalogAliasActivityProjection
             statement.setLong(9, attribution.startedAt());
             statement.setLong(10, attribution.startedAt());
             statement.setLong(11, updatedAt);
+            statement.setLong(12, attribution.aliasListId());
             statement.executeUpdate();
         }
 
@@ -86,7 +88,7 @@ final class AnalogAliasActivityProjection
             SELECT 1 FROM alias_list list
             JOIN configuration_channel configuration ON configuration.configuration_id=?
             WHERE list.id=? AND list.family='NBFM'
-              AND coalesce(configuration.analog_activity_reset_ms,0)<=?
+              AND coalesce((SELECT reset_at_ms FROM receiver_channel_statistics_reset WHERE configuration_id=configuration.configuration_id),0)<=?
               AND coalesce((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key=?),0)<=?
             """))
         {
@@ -111,8 +113,8 @@ final class AnalogAliasActivityProjection
             return true;
         }
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT 1 FROM configuration_channel WHERE configuration_id=?
-                AND coalesce(analog_activity_reset_ms,0)<=?
+            SELECT 1 FROM configuration_channel configuration WHERE configuration_id=?
+                AND coalesce((SELECT reset_at_ms FROM receiver_channel_statistics_reset WHERE configuration_id=configuration.configuration_id),0)<=?
                 AND coalesce((SELECT CAST(value AS INTEGER) FROM database_metadata WHERE key=?),0)<=?
             """))
         {
@@ -131,26 +133,7 @@ final class AnalogAliasActivityProjection
                                     AnalogCallAttribution.Match match, int protocol, int calls,
                                     int recorded, int streamed, long updatedAt) throws SQLException
     {
-        try(PreparedStatement ensure = connection.prepareStatement("""
-            INSERT INTO alias_activity_summary(alias_id,alias_list_id,protocol_code,metrics_state,updated_at_ms)
-            SELECT id,alias_list_id,?,'not_collected',? FROM alias WHERE id=? AND alias_list_id=?
-                AND matcher_type=? AND protocol=? AND
-                    ((matcher_type='TALKGROUP' AND value=?) OR
-                     (matcher_type='TALKGROUP_RANGE' AND min_value=? AND max_value=?))
-            ON CONFLICT(alias_id) DO NOTHING
-            """))
-        {
-            ensure.setInt(1, protocol);
-            ensure.setLong(2, updatedAt);
-            ensure.setLong(3, match.aliasId());
-            ensure.setLong(4, attribution.aliasListId());
-            ensure.setString(5, match.matcherType());
-            ensure.setString(6, attribution.protocol().name());
-            ensure.setInt(7, match.minimum());
-            ensure.setInt(8, match.minimum());
-            ensure.setInt(9, match.maximum());
-            ensure.executeUpdate();
-        }
+        AliasActivitySummaryMaintenance.ensureCurrent(connection, match.aliasId(), protocol, updatedAt);
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE alias_activity_summary SET metrics_state='observed',
                 logical_call_count=coalesce(logical_call_count,0)+?,

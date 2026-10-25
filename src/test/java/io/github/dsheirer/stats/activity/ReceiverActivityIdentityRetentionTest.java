@@ -136,6 +136,7 @@ class ReceiverActivityIdentityRetentionTest
         else ReceiverActivitySchema.createFormat41(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        if(current) ActivityTestDatabase.currentOwners(connection);
         return connection;
     }
 

@@ -18,7 +18,9 @@ import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfigura
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.alias.AliasDatabaseStore;
+import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.tone.AmbeTone;
 import io.github.dsheirer.identifier.tone.Tone;
@@ -248,7 +250,11 @@ class AliasImportServiceTest
             assertEquals(longText.getName(), transferred.getName());
             assertEquals(longText.getDescription(), transferred.getDescription());
             assertEquals(longText.getGroup(), transferred.getGroup());
-            try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + fixture.database);
+            try(var connection = SdrTrunkDatabase.openHistory(fixture.database))
+            {
+                AliasActivitySummaryMaintenance.ensureCurrent(connection, transferredId, 1, System.currentTimeMillis());
+            }
+            try(var connection = SdrTrunkDatabase.openHistory(fixture.database);
                 var statement = connection.prepareStatement("""
                     UPDATE alias_activity_summary
                     SET metrics_state='observed', logical_call_count=9
@@ -283,7 +289,7 @@ class AliasImportServiceTest
             assertTrue(addedDuplicate.getColor() == 55 && addedDuplicate.isRecordable(),
                 repeatedEntries.stream().map(entry -> entry.alias().getName() + ":" + entry.alias().getColor() + ":" +
                     entry.alias().isRecordable()).toList().toString());
-            try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + fixture.database);
+            try(var connection = SdrTrunkDatabase.openHistory(fixture.database);
                 var statement = connection.prepareStatement("""
                     SELECT metrics_state, logical_call_count
                     FROM alias_activity_summary
@@ -302,11 +308,50 @@ class AliasImportServiceTest
                 statement.setLong(1, addedDuplicate.getId());
                 try(var result = statement.executeQuery())
                 {
-                    assertTrue(result.next());
-                    assertEquals("not_collected", result.getString("metrics_state"));
-                    assertNull(result.getObject("logical_call_count"),
-                        "A newly imported duplicate must not inherit another alias's counters");
+                    assertFalse(result.next(), "Configuration import does not invent activity for a new duplicate");
                 }
+            }
+        }
+    }
+
+    @Test void importedRenameAndNoOpKeepCountersWhileAMatcherChangeInvalidatesTheirIdentity() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            long id = fixture.service.createAlias(alias(fixture.list, 700, "Original")).aliasIds().getFirst();
+            try(var history = SdrTrunkDatabase.openHistory(fixture.database); var sql = history.createStatement())
+            {
+                AliasActivitySummaryMaintenance.ensureCurrent(history, id, 1, System.currentTimeMillis());
+                sql.executeUpdate("UPDATE alias_activity_summary SET metrics_state='observed',logical_call_count=9 WHERE alias_id=" + id);
+            }
+            AliasImportService importer = new AliasImportService(fixture.service);
+            List<AliasImportService.Input> unchanged = AliasTransferCsv.read(importer.export(fixture.list),
+                AliasTransferCsv.Format.VCE, fixture.service.options(fixture.list).aliasList());
+            int commits = fixture.manager.commits;
+            importer.apply(importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD, unchanged, null));
+            assertEquals(commits, fixture.manager.commits, "An unchanged transfer stays a no-op");
+            AliasImportService.Input rename = new AliasImportService.Input(alias(fixture.list, 700, "Renamed"),
+                false, true, false, List.of(), List.of(), "County");
+            importer.apply(importer.preview(fixture.list, AliasImportService.Mode.UPDATE_ADD, List.of(rename), null));
+            try(var history = SdrTrunkDatabase.openHistory(fixture.database); var sql = history.createStatement();
+                var rows = sql.executeQuery("SELECT logical_call_count FROM alias_activity_summary summary " +
+                    "JOIN configuration.alias configured ON configured.id=summary.alias_id " +
+                    "AND configured.activity_identity=summary.activity_identity WHERE summary.alias_id=" + id))
+            {
+                assertTrue(rows.next());
+                assertEquals(9L, rows.getLong(1), "No-op and imported name changes keep the existing counter identity");
+            }
+            var current = fixture.service.getAlias(id);
+            current.alias().setMatchIdentifier(new Talkgroup(Protocol.APCO25, 701));
+            fixture.service.replaceAlias(id, current.alias(), current.editRevision());
+            try(var history = SdrTrunkDatabase.openHistory(fixture.database); var sql = history.createStatement();
+                var rows = sql.executeQuery("SELECT summary.activity_identity,summary.logical_call_count," +
+                    "configured.activity_identity FROM alias_activity_summary summary " +
+                    "JOIN configuration.alias configured ON configured.id=summary.alias_id WHERE summary.alias_id=" + id))
+            {
+                assertTrue(rows.next());
+                assertEquals(9L, rows.getLong(2), "The old history generation is retained for the writer and retention");
+                assertNotEquals(rows.getString(1), rows.getString(3), "The new matcher cannot expose old counters");
             }
         }
     }

@@ -20,7 +20,7 @@ import java.sql.Statement;
 import org.sqlite.SQLiteConfig;
 
 /**
- * Opens the global SDRTrunk SQLite database.
+ * Opens configuration and independently owned receiver activity stores.
  */
 public final class SdrTrunkDatabase
 {
@@ -42,6 +42,57 @@ public final class SdrTrunkDatabase
         }
 
         return connection;
+    }
+
+    /** The activity companion belongs to the same portable profile as its configuration. */
+    public static Path historyPath(Path configurationPath)
+    {
+        return ActivityDatabasePath.forConfiguration(configurationPath);
+    }
+
+    /**
+     * Opens the activity writer with configuration attached read-only. Observations can consult committed matching
+     * and routing policy, but this connection cannot write configuration or reserve its database writer.
+     */
+    public static Connection openHistory(Path configurationPath) throws IOException, SQLException
+    {
+        return openHistory(configurationPath, false);
+    }
+
+    /** A history reader may enrich its results with current configuration without owning either write path. */
+    public static Connection openHistoryRead(Path configurationPath) throws IOException, SQLException
+    {
+        return openHistory(configurationPath, true);
+    }
+
+    private static Connection openHistory(Path configurationPath, boolean readOnly) throws IOException, SQLException
+    {
+        Path configuration = configurationPath.toAbsolutePath().normalize();
+        Path activity = historyPath(configuration);
+        requireDatabase(configuration);
+        requireDatabase(activity);
+        SQLiteConfig settings = new SQLiteConfig();
+        settings.setReadOnly(readOnly);
+        settings.setBusyTimeout(BUSY_TIMEOUT_MILLISECONDS);
+        settings.enforceForeignKeys(true);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + activity, settings.toProperties());
+        try
+        {
+            try(var attach = connection.prepareStatement("ATTACH DATABASE ? AS configuration"))
+            {
+                attach.setString(1, configuration.toUri().toASCIIString() + "?mode=ro");
+                attach.execute();
+            }
+            io.github.dsheirer.stats.StatsHistoryContext.installSubscriberContext(connection);
+            if(readOnly) io.github.dsheirer.stats.StatsHistoryContext.installHistoricalChannels(connection);
+            return connection;
+        }
+        catch(SQLException | RuntimeException failure)
+        {
+            try { connection.close(); }
+            catch(SQLException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
     }
 
     /**

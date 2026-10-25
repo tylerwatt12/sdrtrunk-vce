@@ -84,7 +84,7 @@ class AnalogAliasActivityProjectionTest
         try(Connection connection = open(); Statement statement = connection.createStatement())
         {
             var captured = attribution(1, Protocol.NBFM, 7);
-            statement.executeUpdate("UPDATE configuration_channel SET analog_activity_reset_ms=2000");
+            statement.executeUpdate("INSERT INTO receiver_channel_statistics_reset(configuration_id,reset_at_ms) VALUES('" + CHANNEL + "',2000)");
             AnalogAliasActivityProjection.recordOutput(connection, captured, ReceiverActivityRecords.CallOutput.RECORDED);
             AnalogAliasActivityProjection.recordCall(connection, attribution(0, Protocol.NBFM, 7));
             assertEquals(0, metric(connection, "alias_list_analog_activity_summary", "call_count", "1=1"));
@@ -132,7 +132,7 @@ class AnalogAliasActivityProjectionTest
             assertEquals(0, metric(connection, "alias_list_analog_activity_summary", "call_count", "1=1"));
             assertEquals(0, metric(connection, "receiver_channel", "id", "1=1"));
 
-            long reset = metric(connection, "configuration_channel", "analog_activity_reset_ms", "1=1");
+            long reset = metric(connection, "receiver_channel_statistics_reset", "reset_at_ms", "1=1");
             var fresh = new AnalogCallAttribution(CHANNEL, 1, Protocol.NBFM, 7, reset + 1, old.matches());
             ReceiverActivitySchema.recordActivity(connection, mappedCall(fresh), false);
             ReceiverActivitySchema.recordActivity(connection, mappedCall(old), false);
@@ -180,7 +180,7 @@ class AnalogAliasActivityProjectionTest
             assertFalse(ReceiverActivitySchema.applyConventionalCallOutput(connection, output));
             assertEquals(0, metric(connection, "alias_list_analog_activity_summary", "recorded_count", "1=1"));
             assertEquals(0, metric(connection, "alias_list_analog_activity_summary", "call_count", "1=1"));
-            assertTrue(metric(connection, "configuration_channel", "analog_activity_reset_ms", "1=1") > old.startedAt());
+            assertTrue(metric(connection, "receiver_channel_statistics_reset", "reset_at_ms", "1=1") > old.startedAt());
         }
     }
 
@@ -205,6 +205,9 @@ class AnalogAliasActivityProjectionTest
             statement.execute("PRAGMA foreign_keys=ON");
             SdrTrunkDatabaseSchema.create(connection);
             ReceiverActivitySchema.create(connection);
+            statement.execute("PRAGMA foreign_keys=OFF");
+            io.github.dsheirer.database.ConfigurationHistorySchema.separateHistoryOwners(connection);
+            statement.execute("PRAGMA foreign_keys=ON");
             SdrTrunkDatabaseStartup.setMetadata(connection,
                 ReceiverActivitySchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY, "1");
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(1,'Analog One','NBFM'),(2,'Analog Two','NBFM')");

@@ -153,7 +153,7 @@ class ManagedRecordingSuggestionsTest
         alias(700, "RADIO_ID", "APCO25", 101, "Fixture Engine");
         range(700, "TALKGROUP_RANGE", 1000, 1100, "Fixture Dispatch Range");
         call(1, 1, 1, 700, 1, 1, 101, 1001);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mMainDatabase))
+        try(Connection connection = StatsPairedTestDatabase.open(mMainDatabase))
         {
             try(PreparedStatement attach = connection.prepareStatement("ATTACH DATABASE ? AS recordings"))
             {
@@ -437,7 +437,8 @@ class ManagedRecordingSuggestionsTest
 
     private static void execute(Path database, String... sql) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = (java.nio.file.Files.isRegularFile(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database)) ?
+            StatsPairedTestDatabase.open(database) : DriverManager.getConnection("jdbc:sqlite:" + database));
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
@@ -447,7 +448,8 @@ class ManagedRecordingSuggestionsTest
 
     private static int count(Path database, String table) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = (java.nio.file.Files.isRegularFile(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database)) ?
+            StatsPairedTestDatabase.open(database) : DriverManager.getConnection("jdbc:sqlite:" + database));
             Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT count(*) FROM " + table))
         {

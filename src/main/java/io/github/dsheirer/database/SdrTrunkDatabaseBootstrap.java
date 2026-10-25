@@ -47,6 +47,15 @@ public final class SdrTrunkDatabaseBootstrap
         Path normalized = dataRoot.toAbsolutePath().normalize();
         Path database = SdrTrunkDatabasePath.getDatabasePath(normalized);
         Options options = Options.parse(args);
+        if(Files.exists(ActivityDatabasePath.splitReceipt(database)))
+        {
+            if(!options.upgradeCurrent())
+            {
+                throw new IOException("The portable data update was interrupted. Start once with --upgrade-current " +
+                    "to finish the Application Migrator update before receiving starts.");
+            }
+            migrationService.migrateCurrent(normalized, options.createUpgradeBackup(), System.out::println);
+        }
         Path managedRecordingCatalog = database.resolveSibling("managed-recordings.sqlite");
         boolean catalogNeedsUpgrade = false;
         try

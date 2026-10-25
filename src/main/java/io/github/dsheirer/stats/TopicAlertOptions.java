@@ -48,7 +48,7 @@ final class TopicAlertOptions
         result.put("tone_types", List.copyOf(tones));
         result.put("dcs_codes", Arrays.stream(DCSCode.values()).filter(value -> value != DCSCode.UNKNOWN)
             .map(value -> option(value.name(), value.toString(), "")).toList());
-        try(Connection connection = SdrTrunkDatabase.open(database))
+        try(Connection connection = SdrTrunkDatabase.openHistoryRead(database))
         {
             result.put("message_types", ActivityMessageCatalog.read(connection).stream()
                 .filter(row -> "EVENT".equals(row.get("definition_kind")) && !"UNKNOWN".equals(row.get("name")))
@@ -66,7 +66,9 @@ final class TopicAlertOptions
             result.put("systems", systems.stream().map(row -> sourceOption(text(row, "system_key"),
                 named(row, "system_name", "system_key"), text(row, "system_key"), StatsApiProtocol.fromCode(((Number)row.get("protocol_code")).longValue()).name())).toList());
             List<Map<String,Object>> channels = StatsSqlRows.queryRows(connection,
-                WebConfiguredEntityRepository.CONFIGURED_CHANNEL_SELECT + " ORDER BY config.sort_order,config.id");
+                WebConfiguredEntityRepository.CONFIGURED_CHANNEL_SELECT +
+                    " WHERE EXISTS(SELECT 1 FROM configuration.configuration_channel active " +
+                    "WHERE active.configuration_id=config.configuration_id) ORDER BY config.sort_order,config.id");
             StatsSystemNameResolver names = new StatsSystemNameResolver(connection, systemNames);
             for(int index = 0; index < channels.size(); index++) channels.set(index, names.enrichMap(channels.get(index)));
             result.put("channels", channels.stream().map(row -> {
@@ -78,13 +80,13 @@ final class TopicAlertOptions
             }).toList());
             List<Map<String,Object>> sites = StatsSqlRows.queryRows(connection, """
                 SELECT DISTINCT system.system_key,system.protocol_code,config.configuration_id, CAST(site.rfss AS TEXT)||':'||CAST(site.site AS TEXT) AS site_id,
-                    config.site_name
+                    config.site_name AS site_name
                 FROM p25_site_snapshot site JOIN receiver_channel channel ON channel.id=site.channel_id
                 JOIN radio_system system ON system.id=channel.radio_system_id
                 JOIN configuration_channel config ON config.configuration_id=channel.configuration_id
                 WHERE site.rfss IS NOT NULL AND site.site IS NOT NULL
                 UNION
-                SELECT DISTINCT system.system_key,system.protocol_code,config.configuration_id, CAST(site.observed_site_id AS TEXT) AS site_id, config.site_name
+                SELECT DISTINCT system.system_key,system.protocol_code,config.configuration_id, CAST(site.observed_site_id AS TEXT) AS site_id, config.site_name AS site_name
                 FROM trunked_site_snapshot site JOIN receiver_channel channel ON channel.id=site.channel_id
                 JOIN radio_system system ON system.id=channel.radio_system_id
                 JOIN configuration_channel config ON config.configuration_id=channel.configuration_id
@@ -99,7 +101,7 @@ final class TopicAlertOptions
         }
         catch(Exception exception)
         {
-            throw new IllegalStateException("Alert source choices are temporarily unavailable");
+            throw new IllegalStateException("Alert source choices are temporarily unavailable",exception);
         }
         return result;
     }

@@ -12,11 +12,8 @@
 package io.github.dsheirer.database;
 
 import io.github.dsheirer.database.upgrade.DatabaseFormatCatalog;
-import io.github.dsheirer.alerts.TopicAlertSchema;
 import io.github.dsheirer.preference.encryption.vault.EncryptionKeyVaultSchema;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import io.github.dsheirer.web.settings.SpectrumSnapSettings;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -43,101 +40,83 @@ public final class SdrTrunkDatabaseStartup
     public static void createGlobalDatabase(Path databasePath) throws IOException, SQLException
     {
         Path normalized = databasePath.toAbsolutePath().normalize();
-
-        if(Files.exists(normalized))
+        Path activity = ActivityDatabasePath.forConfiguration(normalized);
+        if(Files.exists(normalized) || Files.exists(activity))
         {
-            throw new IOException("Refusing to overwrite existing VCE SQLite database: " + normalized);
+            throw new IOException("Refusing to overwrite an existing configuration/activity database");
         }
-
         Files.createDirectories(normalized.getParent());
-
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
+        String pairId = java.util.UUID.randomUUID().toString();
+        try(Connection configuration = DriverManager.getConnection("jdbc:sqlite:" + normalized))
         {
-            configure(connection);
-            connection.setAutoCommit(false);
-
-            try
+            configure(configuration);
+            try(Statement statement = configuration.createStatement())
             {
-                SdrTrunkDatabaseSchema.create(connection);
-                SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-                ReceiverActivitySchema.create(connection);
-                DmrActivitySchema.create(connection);
-                TrunkedSiteSchema.create(connection);
-                TopicAlertSchema.create(connection);
-                InitialAdminSetup.markRequired(connection);
-                io.github.dsheirer.gui.setup.SetupProgress.write(connection,
-                    new io.github.dsheirer.gui.setup.SetupProgress(false, false));
-                SpectrumSnapSettings.write(connection, SpectrumSnapSettings.defaults());
-                io.github.dsheirer.database.settings.ReceiverSettingsSchema.initializeMissing(connection);
-                //The whole-file marker is authoritative only after every current schema, seed row, and required
-                //fresh-profile marker has been installed successfully.
-                DatabaseFormatCatalog.stamp(connection, DatabaseFormatCatalog.CURRENT_VERSION);
-                requireMainTrackDatabase(connection);
-                SdrTrunkDatabaseSchema.validate(connection);
-                ReceiverActivitySchema.validate(connection);
-                DmrActivitySchema.validate(connection);
-                TrunkedSiteSchema.validate(connection);
-                TopicAlertSchema.validate(connection);
-                DatabaseFormatCatalog.requireCurrent(connection);
-                connection.commit();
+                statement.execute("PRAGMA foreign_keys=OFF");
             }
-            catch(SQLException | RuntimeException | Error exception)
-            {
-                try
-                {
-                    connection.rollback();
-                }
-                catch(SQLException rollbackFailure)
-                {
-                    exception.addSuppressed(rollbackFailure);
-                }
-                throw exception;
-            }
+            configuration.setAutoCommit(false);
+            ConfigurationHistorySchema.createConfiguration(configuration);
+            SdrTrunkDatabaseSchema.seedDefaultAliasLists(configuration);
+            InitialAdminSetup.markRequired(configuration);
+            io.github.dsheirer.gui.setup.SetupProgress.write(configuration,
+                new io.github.dsheirer.gui.setup.SetupProgress(false, false));
+            SpectrumSnapSettings.write(configuration, SpectrumSnapSettings.defaults());
+            io.github.dsheirer.database.settings.ReceiverSettingsSchema.initializeMissing(configuration);
+            ConfigurationHistorySchema.setIdentity(configuration, ConfigurationHistorySchema.CONFIGURATION_ROLE, pairId);
+            setMetadata(configuration, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "63");
+            DatabaseFormatCatalog.requireCurrent(configuration);
+            configuration.commit();
         }
+        try(Connection history = DriverManager.getConnection("jdbc:sqlite:" + activity))
+        {
+            configure(history);
+            try(Statement statement = history.createStatement())
+            {
+                statement.execute("PRAGMA foreign_keys=OFF");
+            }
+            history.setAutoCommit(false);
+            ConfigurationHistorySchema.createHistory(history);
+            ConfigurationHistorySchema.setIdentity(history, ConfigurationHistorySchema.HISTORY_ROLE, pairId);
+            setMetadata(history, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "63");
+            ConfigurationHistoryDatabase.validateRole(history, ConfigurationHistorySchema.HISTORY_ROLE);
+            history.commit();
+        }
+        ConfigurationHistoryDatabase.validatePair(normalized);
     }
 
     public static void validateGlobalDatabase(Path databasePath) throws IOException, SQLException
     {
-        Path normalized = requireDatabase(databasePath, "VCE");
-
-        try(Connection connection = openReadOnly(normalized))
+        validateGlobalDatabaseForStartup(databasePath);
+        for(Path path: List.of(databasePath, ActivityDatabasePath.forConfiguration(databasePath)))
         {
-            requireMainTrackDatabase(connection);
-            SdrTrunkDatabaseSchema.validate(connection);
-            ReceiverActivitySchema.validate(connection);
-            DmrActivitySchema.validate(connection);
-            TrunkedSiteSchema.validate(connection);
-            TopicAlertSchema.validate(connection);
-            DatabaseFormatCatalog.requireCurrent(connection);
-        }
-
-        //Only a database proven to be the current main-track schema may be opened read/write and placed in the
-        //operational WAL mode. A wrong-track or malformed database is rejected above without being changed.
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
-        {
-            configure(connection);
+            try(Connection connection = openReadOnly(path))
+            {
+                try(Statement query = connection.createStatement();
+                    ResultSet rows = query.executeQuery("PRAGMA foreign_key_check"))
+                {
+                    if(rows.next())
+                    {
+                        throw new SQLException("The configuration/activity database contains an invalid relationship");
+                    }
+                }
+                if(path.equals(ActivityDatabasePath.forConfiguration(databasePath)))
+                {
+                    ReceiverActivitySchema.validateRetainedHistoryData(connection);
+                }
+            }
         }
     }
 
-    /**
-     * Admits an exact current database at normal startup without scanning retained receiver-derived history.
-     * The global catalog verifies the complete schema fingerprint, marker, and bounded required settings.
-     * Explicit migration and maintenance retain {@link #validateGlobalDatabase(Path)} and their full checks.
-     */
+    /** Exact pair admission is read-only; operational journal changes follow successful admission of both files. */
     public static void validateGlobalDatabaseForStartup(Path databasePath) throws IOException, SQLException
     {
         Path normalized = requireDatabase(databasePath, "VCE");
-
-        try(Connection connection = openReadOnly(normalized))
+        ConfigurationHistoryDatabase.validatePair(normalized);
+        try(Connection configuration = DriverManager.getConnection("jdbc:sqlite:" + normalized);
+            Connection activity = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(normalized)))
         {
-            requireMainTrackDatabase(connection);
-            DatabaseFormatCatalog.requireCurrent(connection);
-        }
-
-        //No writable connection or operational journal change is allowed until exact admission succeeds.
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + normalized))
-        {
-            configure(connection);
+            configure(configuration);
+            configure(activity);
         }
     }
 
@@ -253,7 +232,7 @@ public final class SdrTrunkDatabaseStartup
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath, config.toProperties());
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA query_only=ON");
+            // The main file is opened read-only. Explicit semantic validation may create its own TEMP view.
             statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
             statement.execute("PRAGMA foreign_keys=ON");
         }

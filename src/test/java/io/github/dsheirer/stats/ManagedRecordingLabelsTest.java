@@ -57,7 +57,7 @@ class ManagedRecordingLabelsTest
         String alphaChannel = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
         Path database = directory.resolve("catalog-suggestions.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.execute("INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order," +
@@ -89,7 +89,7 @@ class ManagedRecordingLabelsTest
             "Channel choices sort by the displayed System name before the limit");
         assertEquals(alphaChannel, labels.suggestions("North", "site", 1).getFirst().get("id"),
             "Site choices sort saved and fallback System names together before the limit");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE configuration_channel SET system_name='P25 BEE00-123' WHERE configuration_id='" + CHANNEL_ID + "'");
@@ -104,49 +104,32 @@ class ManagedRecordingLabelsTest
     void currentNamesAndLatestHomeScopedOtaDecorateOldCallWithoutCopyingLabels() throws Exception
     {
         Path database = directory.resolve("main.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
-            statement.execute("CREATE TABLE configuration_channel(configuration_id TEXT PRIMARY KEY,name TEXT," +
-                "system_name TEXT,site_name TEXT,alias_list_id INTEGER,channel_kind TEXT)");
-            statement.execute("CREATE TABLE alias_list(id INTEGER PRIMARY KEY,name TEXT)");
-            statement.execute("CREATE TABLE alias(id INTEGER PRIMARY KEY,alias_list_id INTEGER," +
-                "matcher_type TEXT,protocol TEXT,value INTEGER,min_value INTEGER,max_value INTEGER," +
-                "name TEXT,description TEXT,group_name TEXT)");
-            statement.execute("CREATE TABLE radio_system(id INTEGER PRIMARY KEY,protocol_code INTEGER,system_key TEXT," +
-                "configuration_id TEXT,p25_wacn INTEGER,p25_system_id INTEGER)");
-            statement.execute("CREATE TABLE radio_system_identity_summary(id INTEGER PRIMARY KEY,radio_system_id INTEGER," +
-                "identity_kind_code INTEGER,identity_id INTEGER,home_wacn INTEGER,home_system_id INTEGER," +
-                "last_talker_alias TEXT,last_talker_alias_seen_ms INTEGER,last_seen_ms INTEGER," +
-                "p25_subscriber_identity_id INTEGER)");
-            statement.execute("CREATE INDEX idx_radio_system_identity_last_seen ON " +
-                "radio_system_identity_summary(radio_system_id,identity_kind_code,last_seen_ms DESC," +
-                "home_wacn,home_system_id,identity_id)");
-            statement.execute("CREATE TABLE receiver_channel(id INTEGER PRIMARY KEY," +
-                "configuration_id TEXT,radio_system_id INTEGER)");
-            statement.execute("CREATE TABLE p25_site_snapshot(channel_id INTEGER,rfss INTEGER,site INTEGER)");
-            statement.execute("INSERT INTO configuration_channel VALUES('site-1','Dispatch'," +
-                "'Metro System','North Site',7,'TRUNKED')");
-            statement.execute("INSERT INTO alias_list VALUES(7,'Default P25')");
-            statement.execute("INSERT INTO alias VALUES(1,7,'TALKGROUP','APCO25',1201,NULL,NULL," +
-                "'Fire Dispatch','County fire','Fire')");
-            statement.execute("INSERT INTO alias VALUES(2,7,'RADIO_ID','APCO25',401,NULL,NULL," +
-                "'Engine 1','First engine','West')");
-            statement.execute("INSERT INTO alias VALUES(3,7,'TALKGROUP_RANGE','APCO25',NULL,1300,1399," +
-                "'Fire Tac Range','All tac channels','Fire')");
-            statement.execute("INSERT INTO radio_system VALUES(1,1,'p25:00001:001',NULL,1,1)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(1,1,2,401,1,1," +
-                "'Engine One OTA',200,200,NULL)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(2,1,2,401,2,2," +
-                "'Wrong Home OTA',300,300,NULL)");
-            statement.execute("INSERT INTO receiver_channel VALUES(11,'site-1',1)");
-            statement.execute("INSERT INTO p25_site_snapshot VALUES(11,4,9)");
+            statement.execute("INSERT INTO alias_list(id,name,family) VALUES(7,'Recording P25','P25')");
+            statement.execute("INSERT INTO configuration_channel(configuration_id,name,system_name,site_name,alias_list_id,channel_kind,sort_order,decoder_type,config_json) " +
+                "VALUES('" + CHANNEL_ID + "','Dispatch','Metro System','North Site',7,'TRUNKED',0,'P25_PHASE1','{}')");
+            statement.execute("INSERT INTO alias(id,alias_list_id,matcher_type,protocol,value,name,description,group_name) VALUES" +
+                "(1,7,'TALKGROUP','APCO25',1201,'Fire Dispatch','County fire','Fire')," +
+                "(2,7,'RADIO_ID','APCO25',401,'Engine 1','First engine','West')");
+            statement.execute("INSERT INTO alias(id,alias_list_id,matcher_type,protocol,min_value,max_value,name,description,group_name) " +
+                "VALUES(3,7,'TALKGROUP_RANGE','APCO25',1300,1399,'Fire Tac Range','All tac channels','Fire')");
+            statement.execute("INSERT INTO radio_system(id,protocol_code,system_key,p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,1,'p25:00001:001',1,1,1,300)");
+            statement.execute("INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,identity_id,home_wacn,home_system_id," +
+                "last_talker_alias,last_talker_alias_seen_ms,first_seen_ms,last_seen_ms) VALUES" +
+                "(1,1,2,401,1,1,'Engine One OTA',200,1,200),(2,1,2,401,2,2,'Wrong Home OTA',300,1,300)");
+            statement.execute("INSERT INTO receiver_channel(id,configuration_id,radio_system_id,radio_system_assigned_at_ms,first_seen_ms,last_seen_ms) " +
+                "VALUES(11,'" + CHANNEL_ID + "',1,1,1,300)");
+            statement.execute("INSERT INTO p25_site_snapshot(channel_id,rfss,site,first_seen_ms,last_seen_ms) VALUES(11,4,9,1,300)");
         }
 
         ManagedRecordingLabels labels = new ManagedRecordingLabels(database);
         Map<String,Object> call = new LinkedHashMap<>(Map.of(
             "id", 99L,
-            "channel_id", "site-1",
+            "channel_id", CHANNEL_ID,
             "system_key", "p25:00001:001",
             "protocol", "APCO25",
             "talkgroup_id", 1201,
@@ -187,7 +170,7 @@ class ManagedRecordingLabelsTest
         assertEquals("p25:00001:001", ((Map<?,?>)missingOrigin.get("source_home_system")).get("key"));
 
         long largeAliasListId = 2_147_483_648L;
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE alias_list SET id=" + largeAliasListId + " WHERE id=7");
@@ -206,26 +189,19 @@ class ManagedRecordingLabelsTest
     void navigationReferencesRequireCurrentDestinationsAndUseCanonicalP25HomeIdentities() throws Exception
     {
         Path database = directory.resolve("navigation.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
-            statement.execute("CREATE TABLE configuration_channel(configuration_id TEXT PRIMARY KEY,name TEXT," +
-                "system_name TEXT,site_name TEXT,alias_list_id INTEGER)");
-            statement.execute("CREATE TABLE radio_system(id INTEGER PRIMARY KEY,system_key TEXT," +
-                "protocol_code INTEGER,p25_wacn INTEGER,p25_system_id INTEGER,configuration_id TEXT)");
-            statement.execute("CREATE TABLE receiver_channel(configuration_id TEXT,radio_system_id INTEGER)");
-            statement.execute("CREATE TABLE radio_system_identity_summary(id INTEGER PRIMARY KEY,radio_system_id INTEGER," +
-                "identity_kind_code INTEGER,home_wacn INTEGER,home_system_id INTEGER,identity_id INTEGER," +
-                "p25_subscriber_identity_id INTEGER)");
-            statement.execute("INSERT INTO configuration_channel VALUES('" + CHANNEL_ID +
-                "','Dispatch','Metro','North',NULL)");
-            statement.execute("INSERT INTO radio_system VALUES(1,'p25:00001:001',1,1,1,NULL)");
-            statement.execute("INSERT INTO receiver_channel VALUES('" + CHANNEL_ID + "',1)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(1,1,2,2,2,900,NULL)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(2,1,3,1,1,1201,NULL)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(3,1,1,3,3,1301,NULL)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(4,1,2,1,1,500,NULL)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(5,1,1,1,1,1301,NULL)");
+            statement.execute("INSERT INTO configuration_channel(configuration_id,name,system_name,site_name,alias_list_id,channel_kind,sort_order,decoder_type,config_json) " +
+                "VALUES('" + CHANNEL_ID + "','Dispatch','Metro','North',(SELECT id FROM alias_list WHERE family='P25' LIMIT 1),'TRUNKED',0,'P25_PHASE1','{}')");
+            statement.execute("INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,'p25:00001:001',1,1,1,1,2)");
+            statement.execute("INSERT INTO receiver_channel(configuration_id,radio_system_id,radio_system_assigned_at_ms,first_seen_ms,last_seen_ms) " +
+                "VALUES('" + CHANNEL_ID + "',1,1,1,2)");
+            statement.execute("INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,1,2,2,2,900,1,2),(2,1,3,1,1,1201,1,2),(3,1,1,3,3,1301,1,2)," +
+                "(4,1,2,1,1,500,1,2),(5,1,1,1,1,1301,1,2)");
         }
 
         Map<String,Object> patch = new LinkedHashMap<>();
@@ -272,22 +248,16 @@ class ManagedRecordingLabelsTest
     void missingOrIncompatibleDestinationsStayPlainText() throws Exception
     {
         Path database = directory.resolve("missing-navigation.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
-            statement.execute("CREATE TABLE configuration_channel(configuration_id TEXT PRIMARY KEY,name TEXT," +
-                "system_name TEXT,site_name TEXT,alias_list_id INTEGER)");
-            statement.execute("CREATE TABLE radio_system(id INTEGER PRIMARY KEY,system_key TEXT," +
-                "protocol_code INTEGER,p25_wacn INTEGER,p25_system_id INTEGER)");
-            statement.execute("CREATE TABLE radio_system_identity_summary(id INTEGER PRIMARY KEY,radio_system_id INTEGER," +
-                "identity_kind_code INTEGER,home_wacn INTEGER,home_system_id INTEGER,identity_id INTEGER," +
-                "p25_subscriber_identity_id INTEGER)");
-            statement.execute("INSERT INTO radio_system VALUES(1,'p25:00001:001',1,1,1)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(1,1,2,1,1,401,NULL)");
-            statement.execute("INSERT INTO radio_system VALUES(2,'dmr:channel:" + CHANNEL_ID +
-                "',3,NULL,NULL)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(2,2,2,-1,-1,123,NULL)");
-            statement.execute("INSERT INTO radio_system_identity_summary VALUES(3,2,1,-1,-1,2401,NULL)");
+            statement.execute("INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,'p25:00001:001',1,1,1,1,2)");
+            statement.execute("INSERT INTO radio_system(id,system_key,protocol_code,configuration_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(2,'dmr:channel:" + CHANNEL_ID + "',3,'" + CHANNEL_ID + "',1,2)");
+            statement.execute("INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,1,2,1,1,401,1,2),(2,2,2,-1,-1,123,1,2),(3,2,1,-1,-1,2401,1,2)");
         }
         Map<String,Object> missing = new LinkedHashMap<>(Map.of("channel_id", CHANNEL_ID,
             "system_key", "p25:00001:001", "protocol", "DMR", "call_type", "DIRECT",
@@ -402,7 +372,7 @@ class ManagedRecordingLabelsTest
     {
         Path database = directory.resolve(filename);
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.execute("INSERT INTO radio_system(id,system_key,protocol_code,address_domain_code," +
@@ -416,7 +386,7 @@ class ManagedRecordingLabelsTest
     void patchMemberAliasesKeepListProtocolRangePrecedenceAndRadioHomeBoundaries() throws Exception
     {
         Path database = freshRadioDatabase("patch-configured-alias.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.execute("INSERT INTO alias_list(id,name,family) VALUES" +
@@ -444,7 +414,7 @@ class ManagedRecordingLabelsTest
         {
             if(!systemRetained)
             {
-                try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+                try(Connection connection = StatsPairedTestDatabase.open(database);
                     Statement statement = connection.createStatement())
                 {
                     statement.execute("DELETE FROM radio_system WHERE id=1");
@@ -464,7 +434,7 @@ class ManagedRecordingLabelsTest
     void patchGroupAliasesRequireAnObservedAddressOrTheSameReceivingHome() throws Exception
     {
         Path database = freshRadioDatabase("qualified-group-alias.sqlite");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.execute("INSERT INTO alias_list(id,name,family) VALUES" +
@@ -508,7 +478,7 @@ class ManagedRecordingLabelsTest
         insertRadio(database, 31, 1, 1, 1, 401, "Home OTA");
         insertRadio(database, 32, 1, 2, 2, 401, "Foreign OTA 401");
         insertRadio(database, 33, 1, 2, 2, 777, "Foreign OTA 777");
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.execute("INSERT INTO alias_list(id,name,family) VALUES(7,'Local List','P25')");
@@ -546,7 +516,7 @@ class ManagedRecordingLabelsTest
     private static void insertRadio(Path database, int id, int system, int homeWacn, int homeSystem,
                                     int radio, String ota) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             PreparedStatement statement = connection.prepareStatement("""
                 INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,home_wacn,
                     home_system_id,identity_id,first_seen_ms,last_seen_ms,last_talker_alias,last_talker_alias_seen_ms)

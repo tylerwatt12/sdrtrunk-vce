@@ -27,12 +27,17 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteConnection;
+import io.github.dsheirer.database.ActivityDatabasePath;
+import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 
 /**
  * Creates consistent standalone SQLite snapshots for either an application-owned live database or an immutable
@@ -62,6 +67,54 @@ public final class SqliteDatabaseSnapshot
     static void create(Path source, Path destination, BooleanSupplier cancellation)
         throws IOException, SQLException
     {
+        requireSourceUsable(source);
+        requireUnusedDestination(destination);
+        boolean paired = pairedConfiguration(source);
+        Path companion = ActivityDatabasePath.forConfiguration(destination);
+        if(paired)
+        {
+            ConfigurationHistoryDatabase.validatePairIdentity(source);
+            requireUnusedDestination(companion);
+        }
+        List<PublishedSnapshot> published = new ArrayList<>();
+        try
+        {
+            createSingle(source, destination, cancellation, published);
+            if(paired)
+            {
+                createSingle(ActivityDatabasePath.forConfiguration(source), companion, cancellation, published);
+                ConfigurationHistoryDatabase.validatePairIdentity(destination);
+            }
+        }
+        catch(IOException | SQLException | RuntimeException | Error failure)
+        {
+            //Admission does not confer ownership: another actor may claim a destination before publication.
+            for(PublishedSnapshot owned: published.reversed())
+            {
+                try { owned.deleteIfUnchanged(); }
+                catch(IOException cleanup) { failure.addSuppressed(cleanup); }
+            }
+            throw failure;
+        }
+    }
+
+    private static boolean pairedConfiguration(Path source) throws SQLException
+    {
+        SQLiteConfig options = new SQLiteConfig();
+        options.setReadOnly(true);
+        options.setBusyTimeout(BUSY_TIMEOUT_MILLISECONDS);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + source, options.toProperties());
+            Statement statement = connection.createStatement(); var tables = statement.executeQuery(
+                "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='database_metadata'"))
+        {
+            return tables.next() && ConfigurationHistoryDatabase.isPairedConfiguration(connection);
+        }
+    }
+
+    private static void createSingle(Path source, Path destination, BooleanSupplier cancellation,
+                                     List<PublishedSnapshot> published)
+        throws IOException, SQLException
+    {
         Objects.requireNonNull(cancellation, "SQLite snapshot cancellation cannot be null");
         requireNotCancelled(cancellation);
         Path normalizedSource = source.toAbsolutePath().normalize();
@@ -83,10 +136,15 @@ public final class SqliteDatabaseSnapshot
             FileAccessAttributeSnapshot.restrictPrivateDirectory(privateDirectory);
             requireNotCancelled(cancellation);
             createOnline(normalizedSource, privateSnapshot, cancellation);
+            makeStandalone(privateSnapshot);
+            requireNotCancelled(cancellation);
             FileAccessAttributeSnapshot.restrictSensitiveFile(privateSnapshot);
+            Object fileKey = Files.readAttributes(privateSnapshot, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS).fileKey();
             requireUnusedDestination(normalizedDestination);
             requireNotCancelled(cancellation);
             Files.move(privateSnapshot, normalizedDestination);
+            published.add(new PublishedSnapshot(normalizedDestination, fileKey));
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
@@ -116,6 +174,29 @@ public final class SqliteDatabaseSnapshot
                 }
             }
         }
+    }
+
+    /** Native backup copies the WAL-mode header too; publish each owned snapshot as one standalone file. */
+    private static void makeStandalone(Path snapshot) throws IOException, SQLException
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + snapshot);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA busy_timeout=" + BUSY_TIMEOUT_MILLISECONDS);
+            try(var rows = statement.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)"))
+            {
+                if(!rows.next() || rows.getInt(1) != 0)
+                    throw new IOException("The private SQLite snapshot could not be checkpointed");
+            }
+            try(var rows = statement.executeQuery("PRAGMA journal_mode=DELETE"))
+            {
+                if(!rows.next() || !"delete".equalsIgnoreCase(rows.getString(1)))
+                    throw new IOException("The private SQLite snapshot could not be made standalone");
+            }
+        }
+        for(String suffix: java.util.List.of("-wal", "-shm", "-journal"))
+            if(Files.exists(Path.of(snapshot + suffix)))
+                throw new IOException("The private SQLite snapshot still has an active sidecar");
     }
 
     /**
@@ -161,9 +242,25 @@ public final class SqliteDatabaseSnapshot
                 sourceState.journal(), cancellation);
             copyCapturedFile(Path.of(normalizedSource + "-wal"), Path.of(privateSource + "-wal"),
                 sourceState.wal(), cancellation);
+            if(sourceState.companion() != null)
+            {
+                Path originalCompanion = ActivityDatabasePath.forConfiguration(normalizedSource);
+                Path privateCompanion = ActivityDatabasePath.forConfiguration(privateSource);
+                copyCapturedFile(originalCompanion, privateCompanion, sourceState.companion().database(), cancellation);
+                copyCapturedFile(Path.of(originalCompanion + "-journal"), Path.of(privateCompanion + "-journal"),
+                    sourceState.companion().journal(), cancellation);
+                copyCapturedFile(Path.of(originalCompanion + "-wal"), Path.of(privateCompanion + "-wal"),
+                    sourceState.companion().wal(), cancellation);
+            }
             requireExternalCopyMatches(privateSource, sourceState, cancellation);
             requireExternalSourceUnchanged(normalizedSource, sourceState, cancellation);
             recoverPrivateSource(privateSource, cancellation);
+            if(sourceState.companion() != null)
+            {
+                recoverPrivateSource(ActivityDatabasePath.forConfiguration(privateSource), cancellation);
+                if(!pairedConfiguration(privateSource))
+                    throw new IOException("The selected source has an unexpected activity companion");
+            }
             requireNotCancelled(cancellation);
             create(privateSource, normalizedDestination, cancellation);
         }
@@ -233,6 +330,9 @@ public final class SqliteDatabaseSnapshot
         requireCopiedContent(privateSource, expected.database(), cancellation);
         requireCopiedContent(Path.of(privateSource + "-journal"), expected.journal(), cancellation);
         requireCopiedContent(Path.of(privateSource + "-wal"), expected.wal(), cancellation);
+        if(expected.companion() != null)
+            requireExternalCopyMatches(ActivityDatabasePath.forConfiguration(privateSource), expected.companion(),
+                cancellation);
     }
 
     private static void requireCopiedContent(Path copied, FileState expected, BooleanSupplier cancellation)
@@ -276,6 +376,10 @@ public final class SqliteDatabaseSnapshot
             }
 
             requireNotCancelled(cancellation);
+            connection.setAutoCommit(false);
+            //Pin one WAL-aware read view. Without this, continuous reception can restart every backup step.
+            try(Statement pin = connection.createStatement(); var ignored = pin.executeQuery(
+                "SELECT rootpage FROM sqlite_schema LIMIT 1")) { ignored.next(); }
             int result = sqliteConnection.getDatabase().backup("main", normalizedDestination.toString(), null);
 
             if(result != SQLITE_OK)
@@ -335,6 +439,16 @@ public final class SqliteDatabaseSnapshot
         {
             throw new IOException("Refusing to overwrite an existing SQLite snapshot: " + destination);
         }
+        requireNoDestinationSidecars(destination);
+    }
+
+    private static void requireNoDestinationSidecars(Path destination) throws IOException
+    {
+        for(String suffix: List.of("-journal", "-wal", "-shm"))
+        {
+            if(Files.exists(Path.of(destination + suffix), LinkOption.NOFOLLOW_LINKS))
+                throw new IOException("Refusing to overwrite an existing SQLite snapshot sidecar: " + destination);
+        }
     }
 
     private static void requireReadableSource(Path normalized) throws IOException
@@ -377,10 +491,22 @@ public final class SqliteDatabaseSnapshot
     {
         requireNotCancelled(cancellation);
         Path normalized = source.toAbsolutePath().normalize();
+        Path companion = ActivityDatabasePath.forConfiguration(normalized);
+        ExternalSourceState companionState = Files.exists(companion, LinkOption.NOFOLLOW_LINKS) ?
+            captureSingleExternalSourceState(companion, cancellation) : null;
+        ExternalSourceState single = captureSingleExternalSourceState(normalized, cancellation);
+        return new ExternalSourceState(single.database(), single.journal(), single.wal(), single.sharedMemory(),
+            companionState);
+    }
+
+    private static ExternalSourceState captureSingleExternalSourceState(Path normalized,
+        BooleanSupplier cancellation) throws IOException
+    {
+        requireReadableSource(normalized);
         return new ExternalSourceState(fileState(normalized, cancellation),
             fileState(Path.of(normalized + "-journal"), cancellation),
             fileState(Path.of(normalized + "-wal"), cancellation),
-            fileState(Path.of(normalized + "-shm"), cancellation));
+            fileState(Path.of(normalized + "-shm"), cancellation), null);
     }
 
     static void requireExternalSourceUnchanged(Path source, ExternalSourceState expected) throws IOException
@@ -411,10 +537,10 @@ public final class SqliteDatabaseSnapshot
         BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class,
             LinkOption.NOFOLLOW_LINKS);
         return new FileState(true, attributes.size(), attributes.lastModifiedTime().toString(),
-            String.valueOf(attributes.fileKey()), sha256(path, cancellation));
+            String.valueOf(attributes.fileKey()), sha256File(path, cancellation));
     }
 
-    /** Content digest for an application-owned standalone snapshot. */
+    /** Content digest for a standalone snapshot, independent of SQLite's matching backup bookkeeping counters. */
     static String sha256(Path path) throws IOException
     {
         return sha256(path, NEVER_CANCELLED);
@@ -422,6 +548,27 @@ public final class SqliteDatabaseSnapshot
 
     /** Content digest that can stop between bounded file reads. */
     static String sha256(Path path, BooleanSupplier cancellation) throws IOException
+    {
+        String configurationDigest = sha256File(path, cancellation, true);
+        Path companion = ActivityDatabasePath.forConfiguration(path);
+        if(!Files.exists(companion, LinkOption.NOFOLLOW_LINKS)) return configurationDigest;
+        String activityDigest = sha256File(companion, cancellation, true);
+        try
+        {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(("configuration/activity-v63\n" + configurationDigest +
+                "\n" + activityDigest).getBytes(java.nio.charset.StandardCharsets.US_ASCII)));
+        }
+        catch(NoSuchAlgorithmException exception) { throw new IllegalStateException(exception); }
+    }
+
+    private static String sha256File(Path path, BooleanSupplier cancellation) throws IOException
+    {
+        return sha256File(path, cancellation, false);
+    }
+
+    private static String sha256File(Path path, BooleanSupplier cancellation, boolean canonicalSnapshot)
+        throws IOException
     {
         Objects.requireNonNull(cancellation, "SQLite digest cancellation cannot be null");
         requireNotCancelled(cancellation);
@@ -436,6 +583,22 @@ public final class SqliteDatabaseSnapshot
         }
         try(InputStream input = Files.newInputStream(path))
         {
+            if(canonicalSnapshot)
+            {
+                byte[] header = input.readNBytes(100);
+                //Native backup and WAL-to-DELETE conversion change these two matching cache/version counters.
+                //They do not describe row content. Preserve every other header byte and every database page;
+                //external-source capture uses the raw digest above and never applies this normalization.
+                if(header.length == 100 &&
+                    "SQLite format 3\0".equals(new String(header, 0, 16,
+                        java.nio.charset.StandardCharsets.US_ASCII)) &&
+                    Arrays.equals(header, 24, 28, header, 92, 96))
+                {
+                    Arrays.fill(header, 24, 28, (byte)0);
+                    Arrays.fill(header, 92, 96, (byte)0);
+                }
+                digest.update(header);
+            }
             byte[] buffer = new byte[COPY_BUFFER_BYTES];
             int read;
             while((read = input.read(buffer)) >= 0)
@@ -531,7 +694,23 @@ public final class SqliteDatabaseSnapshot
         });
     }
 
-    record ExternalSourceState(FileState database, FileState journal, FileState wal, FileState sharedMemory)
+    private record PublishedSnapshot(Path path, Object fileKey)
+    {
+        private void deleteIfUnchanged() throws IOException
+        {
+            if(!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+            Object currentKey = Files.readAttributes(path, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS).fileKey();
+            if(fileKey == null || !fileKey.equals(currentKey))
+                throw new IOException("Snapshot destination ownership changed; preserving " + path);
+            //Standalone publication creates no sidecars. A new sidecar belongs to a different actor.
+            requireNoDestinationSidecars(path);
+            Files.delete(path);
+        }
+    }
+
+    record ExternalSourceState(FileState database, FileState journal, FileState wal, FileState sharedMemory,
+                               ExternalSourceState companion)
     {
     }
 

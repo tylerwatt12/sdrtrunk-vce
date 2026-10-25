@@ -281,7 +281,7 @@ class ChannelDefinitionCodecTest
     }
 
     @Test
-    void existingConventionalProjectionAndModeChangesCannotReviveTrunkedOptions()
+    void classificationChangesRequireNewChannelsAndConventionalProjectionCannotReviveTrunkedOptions()
     {
         for(String protocol: List.of("dmr", "nxdn"))
         {
@@ -296,8 +296,13 @@ class ChannelDefinitionCodecTest
                 List.of(new ChannelDefinition.FrequencyMapEntry(7, 451_012_500L, 0))), aliases, null);
             assertEquals(2, mCodec.fromChannel(trunked).eventLogs().size());
             settings.put("channel_mode", "CONVENTIONAL");
-            Channel conventional = mCodec.toChannel(digitalDefinition(protocol, aliases.getId(), settings,
-                List.of(new ChannelDefinition.FrequencyMapEntry(7, 451_012_500L, 0))), aliases, trunked);
+            ChannelDefinition conventionalDefinition = digitalDefinition(protocol, aliases.getId(), settings,
+                List.of(new ChannelDefinition.FrequencyMapEntry(7, 451_012_500L, 0)));
+            assertThrows(IllegalArgumentException.class,
+                () -> mCodec.toChannel(conventionalDefinition, aliases, trunked));
+            assertEquals("TRUNKED", mCodec.fromChannel(trunked).settings().get("channel_mode"));
+            Channel conventional = mCodec.toChannel(conventionalDefinition, aliases, null);
+            assertNotEquals(trunked.getConfigurationId(), conventional.getConfigurationId());
 
             //Simulate older persisted conventional state containing dormant trunked settings and invalid maps.
             if(conventional.getDecodeConfiguration() instanceof DecodeConfigDMR dmr)
@@ -325,15 +330,34 @@ class ChannelDefinitionCodecTest
 
             Map<String,Object> restoredSettings = new LinkedHashMap<>(projected.settings());
             restoredSettings.put("channel_mode", "TRUNKED");
-            ChannelDefinition restored = new ChannelDefinition(projected.configurationId(), protocol,
+            ChannelDefinition restored = new ChannelDefinition(null, protocol,
                 projected.system(), projected.site(), projected.name(), projected.radioResolveId(), aliases.getId(),
                 projected.source(), restoredSettings, projected.frequencyMap(), projected.eventLogs(),
                 projected.recorders(), projected.auxiliaryDecoders(), projected.observed());
-            ChannelDefinition roundTrip = mCodec.fromChannel(mCodec.toChannel(restored, aliases, conventional));
+            assertThrows(IllegalArgumentException.class, () -> mCodec.toChannel(restored, aliases, conventional));
+            assertEquals("CONVENTIONAL", mCodec.fromChannel(conventional).settings().get("channel_mode"));
+            ChannelDefinition roundTrip = mCodec.fromChannel(mCodec.toChannel(restored, aliases, null));
             assertTrue(roundTrip.frequencyMap().isEmpty(), protocol);
             assertEquals(false, roundTrip.settings().get("ignore_encrypted_calls"), protocol);
             assertEquals(List.of("CALL_EVENT"), roundTrip.eventLogs(), protocol);
         }
+    }
+
+    @Test
+    void nxdnAddressModeChangesRequireANewChannelWithoutMutatingTheSavedDefinition()
+    {
+        AliasListDefinition aliases = aliasList(12, AliasListFamily.NXDN);
+        Map<String,Object> settings = new LinkedHashMap<>(mRegistry.require("nxdn").defaultSettings());
+        settings.put("channel_mode", "TRUNKED");
+        settings.put("transmission_mode", "M4800");
+        Channel saved = mCodec.toChannel(digitalDefinition("nxdn", aliases.getId(), settings, List.of()), aliases, null);
+        settings.put("transmission_mode", "TYPE_D");
+        ChannelDefinition changed = digitalDefinition("nxdn", aliases.getId(), settings, List.of());
+        assertThrows(IllegalArgumentException.class, () -> mCodec.toChannel(changed, aliases, saved));
+        assertEquals("M4800", mCodec.fromChannel(saved).settings().get("transmission_mode"));
+        Channel fresh = mCodec.toChannel(changed, aliases, null);
+        assertNotEquals(saved.getConfigurationId(), fresh.getConfigurationId());
+        assertEquals("TYPE_D", mCodec.fromChannel(fresh).settings().get("transmission_mode"));
     }
 
     @Test

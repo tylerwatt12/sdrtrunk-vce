@@ -6,17 +6,21 @@
 package io.github.dsheirer.database;
 
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.UUID;
 
 /**
- * Creates isolated test databases from one clean, fully checkpointed SDRTrunk database image.
+ * Creates isolated current-format profiles from one clean, fully checkpointed database pair.
  */
 public final class SdrTrunkTestDatabase
 {
-    private static byte[] sTemplate;
+    private static Template sTemplate;
 
     private SdrTrunkTestDatabase()
     {
@@ -25,22 +29,38 @@ public final class SdrTrunkTestDatabase
     public static Path create(Path target) throws IOException, SQLException
     {
         Path database = target.toAbsolutePath().normalize();
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        if(Files.exists(database) || Files.exists(activity))
+        {
+            throw new FileAlreadyExistsException("An isolated test profile cannot replace an existing database pair");
+        }
         Files.createDirectories(database.getParent());
-        Files.write(database, template(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        Template template = template();
+        Files.write(database, template.configuration(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        Files.write(activity, template.activity(), StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+        String pairId = UUID.randomUUID().toString();
+        try(Connection configuration = DriverManager.getConnection("jdbc:sqlite:" + database);
+            Connection history = DriverManager.getConnection("jdbc:sqlite:" + activity))
+        {
+            ConfigurationHistorySchema.setIdentity(configuration, ConfigurationHistorySchema.CONFIGURATION_ROLE, pairId);
+            ConfigurationHistorySchema.setIdentity(history, ConfigurationHistorySchema.HISTORY_ROLE, pairId);
+        }
+        ConfigurationHistoryDatabase.validatePair(database);
         return database;
     }
 
-    private static synchronized byte[] template() throws IOException, SQLException
+    private static synchronized Template template() throws IOException, SQLException
     {
         if(sTemplate == null)
         {
             Path directory = Files.createTempDirectory("sdrtrunk-test-database-");
-            byte[] template;
+            Template template;
             try
             {
                 Path database = directory.resolve("sdrtrunk.sqlite");
                 DatabaseFileInstaller.install(database, SdrTrunkDatabaseStartup::createGlobalDatabase);
-                template = Files.readAllBytes(database);
+                template = new Template(Files.readAllBytes(database),
+                    Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
             }
             finally
             {
@@ -61,4 +81,6 @@ public final class SdrTrunkTestDatabase
 
         return sTemplate;
     }
+
+    private record Template(byte[] configuration, byte[] activity) {}
 }

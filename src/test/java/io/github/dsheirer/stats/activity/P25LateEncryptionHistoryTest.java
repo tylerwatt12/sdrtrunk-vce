@@ -2,7 +2,6 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.audio.call.LogicalCallId;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -15,10 +14,8 @@ import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25Encrypti
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -205,14 +202,10 @@ class P25LateEncryptionHistoryTest
     private Path database(String name, DecoderType decoder) throws Exception
     {
         Path database = directory.resolve(name + ".sqlite");
+        io.github.dsheirer.database.SdrTrunkTestDatabase.create(database);
         try(Connection connection = connection(database); Statement sql = connection.createStatement())
         {
             sql.execute("PRAGMA foreign_keys=ON");
-            SdrTrunkDatabaseSchema.create(connection);
-            SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
             sql.executeUpdate("""
                 INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,system_name,site_name,
                     name,alias_list_id,decoder_type,primary_frequency_hz,config_json)
@@ -225,7 +218,7 @@ class P25LateEncryptionHistoryTest
 
     private static Connection connection(Path database) throws Exception
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection = ActivityTestDatabase.openPair(database);
         try(Statement sql = connection.createStatement())
         {
             sql.execute("PRAGMA foreign_keys=ON");

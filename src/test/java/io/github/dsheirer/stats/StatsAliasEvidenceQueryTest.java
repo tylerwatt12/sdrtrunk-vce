@@ -10,13 +10,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
@@ -280,15 +276,12 @@ class StatsAliasEvidenceQueryTest
 
     private Connection fixture() throws Exception
     {
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" +
-            mTemporaryFolder.resolve("alias-evidence.sqlite"));
+        Path database = mTemporaryFolder.resolve("alias-evidence.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        Connection connection = StatsPairedTestDatabase.open(database);
         try(Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
-            SdrTrunkDatabaseSchema.create(connection);
-            ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection);
-            TrunkedSiteSchema.create(connection);
             statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership");
             statement.executeUpdate("DELETE FROM alias_list");
             statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'Selected', 'P25'), (2, 'Other', 'P25')");

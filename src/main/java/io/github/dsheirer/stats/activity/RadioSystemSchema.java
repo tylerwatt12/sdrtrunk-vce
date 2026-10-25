@@ -2295,13 +2295,18 @@ final class RadioSystemSchema
         deleted += deleteAll(connection, "trunked_radio_channel_presence_clear");
         deleted += deleteAll(connection, "trunked_radio_group_summary");
         deleted += deleteAll(connection, "radio_system_identity_summary");
+        io.github.dsheirer.stats.StatsHistoryContext.installSubscriberContext(connection);
         try(Statement statement = connection.createStatement())
         {
             deleted += statement.executeUpdate("""
                 DELETE FROM p25_subscriber_identity
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM alias_p25_subscriber_identity alias_identity
-                    WHERE alias_identity.p25_subscriber_identity_id=p25_subscriber_identity.id
+                    SELECT 1 FROM configured_p25_subscriber_identity configured
+                    JOIN alias_p25_subscriber_identity alias_identity
+                      ON alias_identity.p25_subscriber_identity_id=configured.id
+                    WHERE configured.home_wacn=p25_subscriber_identity.home_wacn
+                      AND configured.home_system_id=p25_subscriber_identity.home_system_id
+                      AND configured.subscriber_id=p25_subscriber_identity.subscriber_id
                 )
                 """);
         }
@@ -2976,7 +2981,35 @@ final class RadioSystemSchema
         return index;
     }
 
-    private static void validateRadioSystemKeys(Connection connection) throws SQLException
+    static void validateRadioSystemKeys(Connection connection) throws SQLException
+    {
+        validateRadioSystemKeys(connection, "configuration_channel");
+    }
+
+    static void validateRetainedHistoryData(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.execute("""
+                CREATE TEMP VIEW retained_history_channel_context AS
+                SELECT configuration_id, channel_kind, decoder_type, address_domain_code, '{}' AS config_json
+                FROM main.receiver_channel
+                """);
+        }
+        try
+        {
+            validateRadioSystemKeys(connection, "retained_history_channel_context");
+        }
+        finally
+        {
+            try(Statement statement = connection.createStatement())
+            {
+                statement.execute("DROP VIEW temp.retained_history_channel_context");
+            }
+        }
+    }
+
+    private static void validateRadioSystemKeys(Connection connection, String channelContext) throws SQLException
     {
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
@@ -3069,7 +3102,7 @@ final class RadioSystemSchema
                         json_extract(config_json, '$.p25SiteIdentity.system') AS system_id,
                         json_extract(config_json, '$.p25SiteIdentity.rfss') AS rfss,
                         json_extract(config_json, '$.p25SiteIdentity.site') AS site
-                    FROM configuration_channel
+                    FROM %s
                     WHERE channel_kind='TRUNKED' AND decoder_type IN ('P25_PHASE1', 'P25_PHASE2')
                       AND json_type(config_json, '$.p25SiteIdentity.wacn')='integer'
                       AND json_type(config_json, '$.p25SiteIdentity.system')='integer'
@@ -3086,7 +3119,7 @@ final class RadioSystemSchema
                    OR (site.rfss IS NOT NULL AND site.rfss<>configured.rfss)
                    OR (site.site IS NOT NULL AND site.site<>configured.site)
                 LIMIT 1
-                """))
+                """.formatted(channelContext)))
         {
             if(resultSet.next())
             {
@@ -3103,10 +3136,10 @@ final class RadioSystemSchema
                     configured.channel_kind, configured.decoder_type, configured.address_domain_code
                 FROM receiver_channel channel
                 JOIN radio_system system ON system.id = channel.radio_system_id
-                JOIN configuration_channel configured
+                JOIN %s configured
                   ON configured.configuration_id = channel.configuration_id
                 ORDER BY channel.id
-                """))
+                """.formatted(channelContext)))
         {
             while(resultSet.next())
             {

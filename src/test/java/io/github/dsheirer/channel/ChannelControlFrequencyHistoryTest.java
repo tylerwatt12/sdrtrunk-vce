@@ -12,6 +12,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.channel.quality.ControlChannelQualitySnapshot;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.database.ActivityDatabasePath;
+import io.github.dsheirer.database.SdrTrunkDatabase;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -104,15 +107,21 @@ class ChannelControlFrequencyHistoryTest
         Path missing = mTemporaryFolder.resolve("missing.sqlite");
         assertTrue(ChannelControlFrequencyHistory.read(missing, List.of(summary("one", "TRUNKED", "configured"))).isEmpty());
         assertFalse(Files.exists(missing));
-        Path database = mTemporaryFolder.resolve("history.sqlite");
-        try(Connection connection = history(database); Statement sql = connection.createStatement())
+        assertFalse(Files.exists(ActivityDatabasePath.forConfiguration(missing)));
+        Path database = mTemporaryFolder.resolve("configuration.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        String owner = "123e4567-e89b-42d3-a456-426614174001";
+        try(Connection connection = SdrTrunkDatabase.openHistory(database); Statement sql = connection.createStatement())
         {
-            sample(sql, 1, SECOND, 30_000, 29_000);
+            sql.execute("INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,'" + owner + "',1,30000)");
+            sql.execute("INSERT INTO trunked_control_channel_quality(channel_id,frequency_hz,bucket_start_ms," +
+                "observed_at_ms,last_valid_decode_ms) VALUES(1," + SECOND + ",30000,30000,29000)");
         }
         assertEquals(SECOND, ChannelControlFrequencyHistory.read(database,
-            List.of(summary("one", "TRUNKED", "configured"))).get("one"));
+            List.of(summary(owner, "TRUNKED", "configured"))).get(owner));
         assertTrue(ChannelControlFrequencyHistory.read(database,
-            List.of(summary("one", "CONVENTIONAL", "configured"), summary("two", "TRUNKED", "active-control"))).isEmpty());
+            List.of(summary(owner, "CONVENTIONAL", "configured"), summary(owner, "TRUNKED", "active-control"))).isEmpty());
     }
 
     @Test

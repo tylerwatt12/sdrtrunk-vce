@@ -31,11 +31,13 @@ import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
+import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -206,7 +208,7 @@ class AliasDatabaseStoreTest
     }
 
     @Test
-    void preservesActivityForConfigurationEditsResetsMatcherChangesAndSynchronizesLifecycle() throws Exception
+    void preservesHistoryForConfigurationEditsAndDefersMatcherResetToTheActivityWriter() throws Exception
     {
         Path database = database("activity-summary-lifecycle.sqlite");
         AliasDatabaseStore store = new AliasDatabaseStore(database);
@@ -216,8 +218,9 @@ class AliasDatabaseStoreTest
         definition = committed.definitions().getFirst();
         Alias dispatch = committed.aliases().getFirst();
         long dispatchId = dispatch.getId();
+        ensureSummary(database, dispatchId, 1);
 
-        execute(database, """
+        execute(ActivityDatabasePath.forConfiguration(database), """
             UPDATE alias_activity_summary
             SET metrics_state='observed', logical_call_count=17,
                 recorded_logical_call_count=3, first_evidence_ms=1000, last_evidence_ms=2000
@@ -235,9 +238,12 @@ class AliasDatabaseStoreTest
         dispatch.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 101));
         committed = replace(store, List.of(dispatch), List.of(definition));
         dispatch = committed.aliases().getFirst();
+        assertSummary(database, dispatchId, "observed", 17L, 3L, 1000L, 2000L);
+        assertCurrentSummaryMissing(database, dispatchId);
+        ensureSummary(database, dispatchId, 1);
         assertSummary(database, dispatchId, "not_collected", null, null, null, null);
 
-        execute(database, """
+        execute(ActivityDatabasePath.forConfiguration(database), """
             UPDATE alias_activity_summary
             SET metrics_state='observed', logical_call_count=9,
                 recorded_logical_call_count=1, first_evidence_ms=3000, last_evidence_ms=4000
@@ -248,14 +254,17 @@ class AliasDatabaseStoreTest
         Alias savedAdded = committed.aliases().stream()
             .filter(candidate -> "New alias".equals(candidate.getName())).findFirst().orElseThrow();
         assertNotEquals(Alias.UNASSIGNED_ID, savedAdded.getId());
+        assertCurrentSummaryMissing(database, savedAdded.getId());
+        ensureSummary(database, savedAdded.getId(), 1);
         assertSummary(database, savedAdded.getId(), "not_collected", null, null, null, null);
         assertSummary(database, dispatchId, "observed", 9L, 1L, 3000L, 4000L);
 
         replace(store, List.of(savedAdded), List.of(definition));
-        try(Connection connection = SdrTrunkDatabase.open(database))
+        try(Connection connection = SdrTrunkDatabase.open(ActivityDatabasePath.forConfiguration(database)))
         {
-            assertEquals(0, count(connection,
-                "SELECT count(*) FROM alias_activity_summary WHERE alias_id=?", dispatchId));
+            assertEquals(1, count(connection,
+                "SELECT count(*) FROM alias_activity_summary WHERE alias_id=?", dispatchId),
+                "Deleting configuration leaves retained activity for scheduled retention");
             assertEquals(1, count(connection,
                 "SELECT count(*) FROM alias_activity_summary WHERE alias_id=?", savedAdded.getId()));
         }
@@ -273,28 +282,35 @@ class AliasDatabaseStoreTest
         definition = committed.definitions().getFirst();
         analog = committed.aliases().getFirst();
         long id = analog.getId();
-        try(Connection connection = SdrTrunkDatabase.open(database); Statement statement = connection.createStatement();
+        ensureSummary(database, id, 10);
+        try(Connection connection = SdrTrunkDatabase.open(ActivityDatabasePath.forConfiguration(database));
+            Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT protocol_code,last_reset_ms FROM alias_activity_summary WHERE alias_id=" + id))
         {
             assertTrue(rows.next());
             assertEquals(10, rows.getInt("protocol_code"));
             assertTrue(rows.getLong("last_reset_ms") > 0);
         }
-        execute(database, "UPDATE alias_activity_summary SET metrics_state='observed',logical_call_count=17," +
+        execute(ActivityDatabasePath.forConfiguration(database), "UPDATE alias_activity_summary SET metrics_state='observed',logical_call_count=17," +
             "recorded_logical_call_count=3,first_evidence_ms=1000,last_evidence_ms=2000,last_reset_ms=500 WHERE alias_id=" + id);
         analog.setName("Renamed dispatch");
         committed = replace(store, List.of(analog), List.of(definition));
         analog = committed.aliases().getFirst();
         assertSummary(database, id, "observed", 17L, 3L, 1000L, 2000L);
-        try(Connection connection = SdrTrunkDatabase.open(database); Statement statement = connection.createStatement();
+        try(Connection connection = SdrTrunkDatabase.open(ActivityDatabasePath.forConfiguration(database));
+            Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT last_reset_ms FROM alias_activity_summary WHERE alias_id=" + id))
         {
             assertTrue(rows.next()); assertEquals(500, rows.getLong(1));
         }
         analog.setMatchIdentifier(new Talkgroup(Protocol.AM, 100));
         replace(store, List.of(analog), List.of(definition));
+        assertSummary(database, id, "observed", 17L, 3L, 1000L, 2000L);
+        assertCurrentSummaryMissing(database, id);
+        ensureSummary(database, id, 11);
         assertSummary(database, id, "not_collected", null, null, null, null);
-        try(Connection connection = SdrTrunkDatabase.open(database); Statement statement = connection.createStatement();
+        try(Connection connection = SdrTrunkDatabase.open(ActivityDatabasePath.forConfiguration(database));
+            Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("SELECT protocol_code,last_reset_ms FROM alias_activity_summary WHERE alias_id=" + id))
         {
             assertTrue(rows.next()); assertEquals(11, rows.getInt(1)); assertTrue(rows.getLong(2) > 500);
@@ -506,10 +522,28 @@ class AliasDatabaseStoreTest
         }
     }
 
+    private static void ensureSummary(Path database, long aliasId, int protocol) throws Exception
+    {
+        try(Connection history = SdrTrunkDatabase.openHistory(database))
+        {
+            AliasActivitySummaryMaintenance.ensureCurrent(history, aliasId, protocol, System.currentTimeMillis());
+        }
+    }
+
+    private static void assertCurrentSummaryMissing(Path database, long aliasId) throws Exception
+    {
+        try(Connection history = SdrTrunkDatabase.openHistoryRead(database))
+        {
+            assertEquals(0, count(history, "SELECT count(*) FROM alias configured " +
+                "JOIN alias_activity_summary summary ON summary.alias_id=configured.id " +
+                "AND summary.activity_identity=configured.activity_identity WHERE configured.id=?", aliasId));
+        }
+    }
+
     private static void assertSummary(Path database, long aliasId, String state, Long calls, Long recorded,
                                       Long firstSeen, Long lastSeen) throws Exception
     {
-        try(Connection connection = SdrTrunkDatabase.open(database);
+        try(Connection connection = SdrTrunkDatabase.open(ActivityDatabasePath.forConfiguration(database));
             PreparedStatement statement = connection.prepareStatement("""
                 SELECT metrics_state,logical_call_count,recorded_logical_call_count,
                     first_evidence_ms,last_evidence_ms

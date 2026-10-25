@@ -75,8 +75,11 @@ final class MigrationActivityReset
             statement.executeBatch();
         }
         long analogWindows;
+        boolean independentHistory = "activity".equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(
+            connection,io.github.dsheirer.database.ConfigurationHistorySchema.ROLE_KEY));
         try(var statement = connection.prepareStatement(
-            "UPDATE configuration_channel SET analog_activity_reset_ms=? WHERE analog_activity_reset_ms IS NOT NULL"))
+            independentHistory ? "UPDATE receiver_channel_statistics_reset SET reset_at_ms=?" :
+                "UPDATE configuration_channel SET analog_activity_reset_ms=? WHERE analog_activity_reset_ms IS NOT NULL"))
         {
             statement.setLong(1, now); analogWindows = statement.executeUpdate();
         }

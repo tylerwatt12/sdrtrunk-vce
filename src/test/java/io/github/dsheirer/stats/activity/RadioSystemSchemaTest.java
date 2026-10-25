@@ -104,7 +104,7 @@ class RadioSystemSchemaTest
                     nxdn_location_category_code, nxdn_system_id, first_seen_ms, last_seen_ms)
                 VALUES ('nxdn-c:global:1022', 4, 1, 1, 1022, 1000, 1000)
                 """);
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
 
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO radio_system(system_key, protocol_code, address_domain_code,
@@ -172,7 +172,7 @@ class RadioSystemSchemaTest
                 VALUES (%d, 1, 0xABCDE, 0x321, 1200, 1000, 1000)
                 """.formatted(radioSystemId));
 
-            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+            assertThrows(SQLException.class, () -> ActivityTestDatabase.validateCurrent(connection));
         }
     }
 
@@ -193,20 +193,20 @@ class RadioSystemSchemaTest
                 VALUES (%d, %d, %d, %d, 0xFFFFFC, 0xFFFE, 1000)
                 """.formatted(radioSystemId, radioIdentityId, talkgroupIdentityId, channelId));
 
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
 
             execute(connection, """
                 UPDATE trunked_radio_affiliation SET radio_observed_local_id=0xFFFFFD
                 WHERE radio_system_id=%d AND radio_identity_id=%d
                 """.formatted(radioSystemId, radioIdentityId));
-            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+            assertThrows(SQLException.class, () -> ActivityTestDatabase.validateCurrent(connection));
 
             execute(connection, """
                 UPDATE trunked_radio_affiliation
                 SET radio_observed_local_id=0xFFFFFC, talkgroup_observed_local_id=0xFFFF
                 WHERE radio_system_id=%d AND radio_identity_id=%d
                 """.formatted(radioSystemId, radioIdentityId));
-            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+            assertThrows(SQLException.class, () -> ActivityTestDatabase.validateCurrent(connection));
         }
     }
 
@@ -231,13 +231,13 @@ class RadioSystemSchemaTest
                 VALUES (%d, %d, %d, 101, 1000)
                 """.formatted(radioSystemId, radioIdentityId, channelId));
 
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
 
             execute(connection, """
                 UPDATE trunked_radio_channel_presence SET observed_local_id=0xFFFEC0
                 WHERE radio_system_id=%d AND radio_identity_id=%d
                 """.formatted(radioSystemId, radioIdentityId));
-            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+            assertThrows(SQLException.class, () -> ActivityTestDatabase.validateCurrent(connection));
 
             execute(connection, """
                 UPDATE trunked_radio_channel_presence SET observed_local_id=101
@@ -247,7 +247,7 @@ class RadioSystemSchemaTest
                 UPDATE trunked_radio_channel_presence_clear SET observed_local_id=0xFFFEC0
                 WHERE radio_system_id=%d AND radio_identity_id=%d
                 """.formatted(radioSystemId, radioIdentityId));
-            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+            assertThrows(SQLException.class, () -> ActivityTestDatabase.validateCurrent(connection));
         }
     }
 
@@ -272,7 +272,7 @@ class RadioSystemSchemaTest
                 VALUES (%d, %d, %d, 0xFFF1, 1, 1000)
                 """.formatted(radioSystemId, radioIdentityId, channelId));
 
-            assertThrows(SQLException.class, () -> ReceiverActivitySchema.validate(connection));
+            assertThrows(SQLException.class, () -> ActivityTestDatabase.validateCurrent(connection));
 
             execute(connection, """
                 UPDATE configuration_channel SET address_domain_code=2
@@ -283,7 +283,7 @@ class RadioSystemSchemaTest
                 SET system_key='nxdn-d:channel:%s', address_domain_code=2
                 WHERE id=%d
                 """.formatted(CONFIGURATION_ID, radioSystemId));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -419,6 +419,7 @@ class RadioSystemSchemaTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         execute(connection, """
             INSERT INTO configuration_channel(
                 configuration_id, channel_kind, sort_order, system_name, site_name, name,

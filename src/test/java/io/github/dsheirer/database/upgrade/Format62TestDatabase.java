@@ -18,7 +18,8 @@ public final class Format62TestDatabase
             new Format61To62DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 62);
             connection.commit();
-            DatabaseFormatCatalog.requireCurrent(connection);
+            if(DatabaseFormatCatalog.inspect(connection).version()!=62)
+                throw new AssertionError("Frozen format-62 fixture changed");
         }
         return database;
     }

@@ -5,10 +5,9 @@
  */
 package io.github.dsheirer.stats;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
@@ -47,8 +46,8 @@ public final class AliasActivityRepresentativeTestDatabase
             throw new IllegalArgumentException("Representative Alias Activity fixture requires at least 100,000 aliases");
         }
 
-        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=ON");
@@ -59,6 +58,7 @@ public final class AliasActivityRepresentativeTestDatabase
                 insertAliases(statement, aliasCount);
                 insertRetainedActivity(statement, aliasCount);
                 insertActivitySummary(statement, aliasCount);
+                StatsPairedTestDatabase.alignAliasSummaryIdentities(connection);
                 connection.commit();
             }
             catch(Exception exception)

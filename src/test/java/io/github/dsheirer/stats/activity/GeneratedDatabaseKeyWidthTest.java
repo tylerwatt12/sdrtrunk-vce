@@ -204,6 +204,7 @@ class GeneratedDatabaseKeyWidthTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         execute(connection, """
             INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,name,
                 alias_list_id,auto_start,decoder_type,primary_frequency_hz,config_json)
@@ -255,7 +256,7 @@ class GeneratedDatabaseKeyWidthTest
 
     private static void assertHealthy(Connection connection) throws Exception
     {
-        ReceiverActivitySchema.validate(connection);
+        ActivityTestDatabase.validateCurrent(connection);
         assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
         try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("PRAGMA quick_check"))
         {

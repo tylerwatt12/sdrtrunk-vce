@@ -25,7 +25,7 @@ class ManagedRecordingIdentityDiscoveryTest
         SdrTrunkDatabaseStartup.createGlobalDatabase(main);
         try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(catalogPath, directory.resolve("audio")))
         {
-            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + main);
+            try(Connection connection = StatsPairedTestDatabase.open(main);
                 Statement statement = connection.createStatement())
             {
                 statement.execute("INSERT INTO alias_list(id,name,family) VALUES(7,'Regional','P25')");

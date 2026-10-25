@@ -31,7 +31,7 @@ class ReceiverHealthIncidentPersistenceTest
         Path database = mTemporaryFolder.resolve("bounded-health.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        try(Connection connection = io.github.dsheirer.database.SdrTrunkDatabase.openHistory(database))
         {
             connection.setAutoCommit(false);
             for(int occurrence = 1; occurrence <= 205; occurrence++)
@@ -93,7 +93,7 @@ class ReceiverHealthIncidentPersistenceTest
         assertEquals(1, writer.getWrittenRecords());
         writer.close();
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        try(Connection connection = io.github.dsheirer.database.SdrTrunkDatabase.openHistory(database))
         {
             assertEquals(1, number(connection, """
                 SELECT COUNT(*) FROM receiver_health_incident

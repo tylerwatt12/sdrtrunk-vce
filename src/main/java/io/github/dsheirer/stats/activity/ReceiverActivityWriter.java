@@ -463,7 +463,7 @@ class ReceiverActivityWriter implements AutoCloseable
             //Start observations immediately; the first routine retention pass is one hour after writer startup.
             mLastRetentionCleanup = System.currentTimeMillis();
 
-            updateStatusWithRetry(connection, "database_path", mDatabasePath.toString());
+            updateStatusWithRetry(connection, "database_path", SdrTrunkDatabase.historyPath(mDatabasePath).toString());
 
             if(mRunning.get())
             {
@@ -780,7 +780,7 @@ class ReceiverActivityWriter implements AutoCloseable
 
             try
             {
-                connection = SdrTrunkDatabase.open(mDatabasePath);
+                connection = SdrTrunkDatabase.openHistory(mDatabasePath);
 
                 try(Statement statement = connection.createStatement())
                 {

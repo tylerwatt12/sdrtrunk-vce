@@ -442,7 +442,7 @@ class StatsApiV1HttpContractTest
     void publicAliasCoverageRoutesStayReadOnlyAndListScoped() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryDirectory.resolve("data"));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -489,7 +489,7 @@ class StatsApiV1HttpContractTest
     void channelActivityToneFilterIsAcceptedAndAppliedBeforePagination() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryDirectory.resolve("data"));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -836,7 +836,7 @@ class StatsApiV1HttpContractTest
     void messageTypesExposeDatabaseNamesMeaningsAndProtocolSupport() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryDirectory.resolve("data"));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("UPDATE activity_message_type SET label='Disable radio', " +
@@ -1208,7 +1208,7 @@ class StatsApiV1HttpContractTest
 
     private static void seedSystemDirectory(Path database) throws Exception
     {
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
             Statement statement = connection.createStatement())
         {
             connection.setAutoCommit(false);
@@ -1246,6 +1246,14 @@ class StatsApiV1HttpContractTest
                     radio_system_assigned_at_ms
                 ) VALUES (1, '00000000-0000-0000-0000-000000000071', 1000, 2000, 1, 1000),
                          (2, '4b75217f-2555-4c38-aafc-5d17bc0faf71', 1000, 2000, 2, 1000)
+                """);
+            statement.executeUpdate("""
+                UPDATE receiver_channel SET name=config.name, system_name=config.system_name,
+                    site_name=config.site_name, decoder_type=config.decoder_type, channel_kind=config.channel_kind,
+                    address_domain_code=config.address_domain_code, alias_list_id=config.alias_list_id,
+                    alias_list_name=list.name, primary_frequency_hz=config.primary_frequency_hz
+                FROM configuration.configuration_channel config JOIN configuration.alias_list list ON list.id=config.alias_list_id
+                WHERE receiver_channel.configuration_id=config.configuration_id
                 """);
             statement.executeUpdate("""
                 INSERT INTO radio_system_identity_summary (

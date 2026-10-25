@@ -110,7 +110,7 @@ class LogicalCallStatisticsSchemaTest
                 SELECT observed_local_id FROM p25_site_call_identity_bucket
                 WHERE identity_role_code=2
                 """));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -219,7 +219,7 @@ class LogicalCallStatisticsSchemaTest
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_logical_call_bucket"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_site_call_bucket"));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM p25_learned_site"));
-            ReceiverActivitySchema.validate(connection);
+            ActivityTestDatabase.validateCurrent(connection);
         }
     }
 
@@ -324,6 +324,7 @@ class LogicalCallStatisticsSchemaTest
         ReceiverActivitySchema.create(connection);
         DmrActivitySchema.create(connection);
         TrunkedSiteSchema.create(connection);
+        ActivityTestDatabase.currentOwners(connection);
         return connection;
     }
 

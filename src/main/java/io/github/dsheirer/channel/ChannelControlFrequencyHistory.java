@@ -48,7 +48,7 @@ final class ChannelControlFrequencyHistory
         SQLiteConfig config = new SQLiteConfig();
         config.setReadOnly(true);
         config.setBusyTimeout(250);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database, config.toProperties());
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database), config.toProperties());
             Statement settings = connection.createStatement())
         {
             settings.execute("PRAGMA query_only=ON");

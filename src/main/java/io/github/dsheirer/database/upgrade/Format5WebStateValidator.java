@@ -55,7 +55,7 @@ public final class Format5WebStateValidator
     private static final int MINIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 100;
     private static final int MAXIMUM_TRAFFIC_GRANT_AGE_OUT_MILLISECONDS = 15_000;
     private static final int MAXIMUM_PORTABLE_PREFERENCES_BYTES = 4_194_304;
-    private static final int LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION = 11;
+    private static final int LAST_HISTORICAL_PREFERENCE_DOCUMENT_VERSION = 12;
     private static final ObjectMapper STRICT_MAPPER = new ObjectMapper(JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build())
         .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
@@ -439,6 +439,10 @@ public final class Format5WebStateValidator
             else if(preferenceDocumentVersion == 11)
             {
                 Format43WebUserPreferencesCodec.validate(preferencesJson);
+            }
+            else if(preferenceDocumentVersion == 12)
+            {
+                Format62WebUserPreferencesCodec.validate(preferencesJson);
             }
             else if(preferenceDocumentVersion == WebUserPreferences.CURRENT_VERSION)
             {

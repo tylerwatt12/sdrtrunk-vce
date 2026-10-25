@@ -20,7 +20,8 @@ class SdrTrunkDatabaseStartupFastAdmissionTest
     void ordinaryStartupDefersDerivedIdentityDamageWhileExplicitValidationStillRejectsIt() throws Exception
     {
         Path database = SdrTrunkTestDatabase.create(temporary.resolve("derived.sqlite"));
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + history);
             var statement = connection.createStatement())
         {
             statement.executeUpdate("""
@@ -36,7 +37,7 @@ class SdrTrunkDatabaseStartupFastAdmissionTest
         }
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + history);
             var statement = connection.createStatement();
             var rows = statement.executeQuery("SELECT identity_id FROM radio_system_identity_summary"))
         {

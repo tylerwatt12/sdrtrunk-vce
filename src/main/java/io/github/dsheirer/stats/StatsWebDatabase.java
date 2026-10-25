@@ -801,7 +801,7 @@ class StatsWebDatabase
 
     Map<String,Object> status()
     {
-        Path path = getDatabasePath();
+        Path path = SdrTrunkDatabase.historyPath(getDatabasePath());
         Map<String,Object> status = new LinkedHashMap<>();
         status.put("database_exists", Files.isRegularFile(path));
         status.put("database_bytes", fileBytes(path));
@@ -975,7 +975,7 @@ class StatsWebDatabase
             List<Map<String,Object>> rows = queryRows(connection, """
                 SELECT list.id AS alias_list_id, list.name, list.family,
                     (SELECT count(*) FROM alias WHERE alias.alias_list_id = list.id) AS alias_count,
-                    (SELECT count(*) FROM configuration_channel configuration
+                    (SELECT count(*) FROM configured_channel configuration
                         WHERE configuration.alias_list_id = list.id) AS correlated_channel_count
                 FROM alias_list list
                 ORDER BY CASE list.family WHEN 'P25' THEN 1 WHEN 'DMR' THEN 2
@@ -1007,7 +1007,7 @@ class StatsWebDatabase
                     system.system_key AS radio_system_key,
                     CASE configuration.decoder_type WHEN 'DMR' THEN 'DMR' WHEN 'NXDN' THEN 'NXDN'
                         WHEN 'NBFM' THEN 'NBFM' WHEN 'AM' THEN 'AM' ELSE 'P25' END AS protocol
-                FROM configuration_channel configuration INDEXED BY idx_configuration_channel_alias_list
+                FROM configured_channel configuration
                 LEFT JOIN receiver_channel channel ON channel.configuration_id = configuration.configuration_id
                 LEFT JOIN radio_system system ON system.id = channel.radio_system_id
                 WHERE configuration.alias_list_id = ?
@@ -1049,6 +1049,7 @@ class StatsWebDatabase
                         THEN 1 END) AS never_heard_alias_count
                 FROM alias
                 LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
+                    AND summary.activity_identity=alias.activity_identity
                 WHERE alias.alias_list_id = ?
                 """.formatted(StatsAliasCatalog.SUPPORTED_ALIAS_SQL), activeAfter, aliasListId),
                 "Alias List was not found");
@@ -1131,6 +1132,7 @@ class StatsWebDatabase
                 summary.first_evidence_ms, summary.last_evidence_ms
             FROM alias
             LEFT JOIN alias_activity_summary summary ON summary.alias_id = alias.id
+                    AND summary.activity_identity=alias.activity_identity
             WHERE alias.alias_list_id = ?
             """.formatted(StatsAliasCatalog.SUPPORTED_ALIAS_SQL, StatsAliasCatalog.ANALOG_COVERAGE_COUNT_SQL));
         List<Object> parameters = new ArrayList<>(List.of(aliasListId));
@@ -1215,7 +1217,7 @@ class StatsWebDatabase
                     WHEN json_type(config_json, '$.decodeConfiguration.talkgroup') = 'integer'
                         THEN json_extract(config_json, '$.decodeConfiguration.talkgroup')
                     ELSE NULL END AS assigned_number
-            FROM configuration_channel INDEXED BY idx_configuration_channel_alias_list
+            FROM configured_channel
             WHERE alias_list_id = ? AND decoder_type IN ('AM', 'NBFM')
             """, aliasListId))
         {
@@ -1450,7 +1452,7 @@ class StatsWebDatabase
                     SELECT system.id AS radio_system_id,
                         NULL AS channel_id, NULL AS configuration_id,
                         %s AS system_name, NULL AS channel_names, NULL AS frequency_hz
-                    FROM configuration_channel config INDEXED BY idx_configuration_channel_alias_list
+                    FROM configuration_channel config
                     JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
                     JOIN radio_system system ON system.id = channel.radio_system_id
                       AND system.configuration_id IS NULL
@@ -1467,7 +1469,7 @@ class StatsWebDatabase
                         nullif(trim(config.system_name), '') AS system_name,
                         coalesce(nullif(trim(config.site_name), ''), nullif(trim(config.name), '')) AS channel_names,
                         config.primary_frequency_hz AS frequency_hz
-                    FROM configuration_channel config INDEXED BY idx_configuration_channel_alias_list
+                    FROM configuration_channel config
                     JOIN radio_system system ON system.configuration_id = config.configuration_id
                     LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
                     WHERE config.alias_list_id = ? AND system.protocol_code = %d
@@ -1505,7 +1507,7 @@ class StatsWebDatabase
                             WHERE definition.alias_list_id = ? AND definition.matcher_type = 'TALKGROUP'
                               AND definition.value = calls.observed_local_id
                               AND definition.protocol IN ('APCO25', 'APCO25_PHASE2')) AS has_exact_definition
-                    FROM configuration_channel config INDEXED BY idx_configuration_channel_alias_list
+                    FROM configuration_channel config
                     CROSS JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
                     CROSS JOIN radio_system system ON system.id = channel.radio_system_id
                     CROSS JOIN p25_site_call_identity_bucket calls
@@ -4177,7 +4179,7 @@ class StatsWebDatabase
         return read(connection -> queryRows(connection, """
             SELECT DISTINCT config.configuration_id, config.name, config.system_name AS system,
                 config.site_name AS site, 'known' AS kind
-            FROM configuration_channel config
+            FROM configured_channel config
             JOIN receiver_channel receiver ON receiver.configuration_id = config.configuration_id
             WHERE EXISTS (
                 SELECT 1 FROM p25_site_channel_summary frequency
@@ -5650,7 +5652,7 @@ class StatsWebDatabase
     {
         try
         {
-            Path path = getDatabasePath();
+            Path path = SdrTrunkDatabase.historyPath(getDatabasePath());
             var attributes = Files.readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class,
                 java.nio.file.LinkOption.NOFOLLOW_LINKS);
             return p25SourceIdentity(path, attributes);
@@ -5814,7 +5816,7 @@ class StatsWebDatabase
             throw new IllegalArgumentException("Too many Activity rows");
         List<Long> ids = activityIds.stream().distinct().toList();
         long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(100);
-        Path path = getDatabasePath();
+        Path path = SdrTrunkDatabase.historyPath(getDatabasePath());
         if(!Files.isRegularFile(path)) return Map.of();
         org.sqlite.SQLiteConfig config = new org.sqlite.SQLiteConfig();
         config.setReadOnly(true);
@@ -7126,14 +7128,14 @@ class StatsWebDatabase
                       AND identity.identity_kind_code = 2) AS radios,
                 (SELECT COUNT(*) FROM trunked_radio_affiliation affiliation
                     WHERE affiliation.radio_system_id = system.id) AS affiliated_radios,
-                (SELECT group_concat(name, ', ') FROM (
+                (SELECT group_concat(channel_display_name, ', ') FROM (
                     SELECT DISTINCT coalesce(nullif(trim(config.name), ''),
-                                             nullif(trim(config.site_name), '')) AS name
+                                             nullif(trim(config.site_name), '')) AS channel_display_name
                     FROM configuration_channel config
                     LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
                     WHERE (channel.radio_system_id = system.id OR
                            config.configuration_id = system.configuration_id)
-                    ORDER BY lower(name), name
+                    ORDER BY lower(channel_display_name), channel_display_name
                     LIMIT 8)) AS channel_names,
                 (SELECT count(DISTINCT coalesce(nullif(trim(config.name), ''),
                                                 nullif(trim(config.site_name), '')))
@@ -8269,13 +8271,7 @@ class StatsWebDatabase
             throw new IOException("Stats database is missing");
         }
 
-        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + databasePath);
-
-        try(Statement statement = connection.createStatement())
-        {
-            statement.execute("PRAGMA busy_timeout=" + SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
-            statement.execute("PRAGMA query_only=ON");
-        }
+        Connection connection = SdrTrunkDatabase.openHistoryRead(databasePath);
 
         StatsSystemNameResolver.installCatalog(connection);
         return connection;
@@ -8437,8 +8433,9 @@ class StatsWebDatabase
         {
             //Coalesce IDs, never presentation fields: a canonical winner with an empty optional field still wins.
             winner = "coalesce((SELECT alias.id FROM alias_p25_subscriber_identity subscriber " +
-                "JOIN alias ON alias.id=subscriber.alias_id WHERE subscriber.p25_subscriber_identity_id=" +
-                "grouped.p25_subscriber_identity_id AND alias.alias_list_id=" + configured.aliasListId() +
+                "JOIN alias ON alias.id=subscriber.alias_id WHERE " +
+                StatsHistoryContext.sameSubscriber("subscriber.p25_subscriber_identity_id",
+                    "grouped.p25_subscriber_identity_id") + " AND alias.alias_list_id=" + configured.aliasListId() +
                 " AND alias.matcher_type='P25_SUBSCRIBER_IDENTITY' ORDER BY alias.id DESC LIMIT 1), " + winner + ")";
         }
         return "LEFT JOIN alias matched ON matched.id = " + winner;

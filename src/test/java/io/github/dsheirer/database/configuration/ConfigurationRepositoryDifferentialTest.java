@@ -3,7 +3,6 @@ package io.github.dsheirer.database.configuration;
 
 import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -19,11 +18,13 @@ import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.configuration.ConfigurationSnapshot;
+import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
+import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -115,7 +116,7 @@ class ConfigurationRepositoryDifferentialTest
     }
 
     @Test
-    void canonicalAssociationChangesResetHistoryAndReuseSharedIdentityWithoutParentRewrite() throws Exception
+    void canonicalAssociationChangesInvalidateOnlyItsCounterIdentityAndReuseSharedIdentity() throws Exception
     {
         Fixture fixture = fixture("subscriber");
         AliasConfigurationSnapshot candidate = fixture.repository().loadAliasConfiguration();
@@ -125,7 +126,10 @@ class ConfigurationRepositoryDifferentialTest
             "VALUES (1,2,9)");
         long sharedIdentity = number(fixture.database(),
             "SELECT id FROM p25_subscriber_identity WHERE subscriber_id=9");
-        forbidAll(fixture.database(), "alias");
+        forbid(fixture.database(), "alias", "INSERT", null);
+        forbid(fixture.database(), "alias", "DELETE", null);
+        forbid(fixture.database(), "alias", "UPDATE", "OLD.id<>" + changed.getId());
+        forbidAll(fixture.database(), "alias_activity_summary");
         forbidAll(fixture.database(), "p25_subscriber_identity");
         changed.setMatchIdentifier(new P25Subscriber(1, 2, 9));
         AliasConfigurationSnapshot committed = fixture.repository().commitAliasConfiguration(candidate);
@@ -169,8 +173,9 @@ class ConfigurationRepositoryDifferentialTest
             new AliasConfigurationSnapshot(List.of(destination), current.aliases(), scanLists));
         assertEquals(1, committed.definitions().size());
         assertEquals(destination.getId(), committed.aliases().getFirst().getAliasListId());
-        assertEquals(destination.getId(), number(fixture.database(),
-            "SELECT alias_list_id FROM alias_activity_summary WHERE alias_id=" + moved.getId()));
+        assertEquals(current.definitions().getFirst().getId(), number(historyPath(fixture.database()),
+            "SELECT alias_list_id FROM alias_activity_summary WHERE alias_id=" + moved.getId()),
+            "Configuration moves leave history-owned context for the activity writer to refresh");
         assertHistory(fixture.database(), moved.getId(), true);
         assertEquals(current.scanLists().aliasMemberships(), committed.scanLists().aliasMemberships());
     }
@@ -253,7 +258,7 @@ class ConfigurationRepositoryDifferentialTest
     }
 
     @Test
-    void omittedAliasDeletesOnlyItsOwnedRowsAndFullReplacementKeepsItsMeaning() throws Exception
+    void omittedAliasDeletesOnlyConfigurationRowsAndRetainsHistoryForScheduledCleanup() throws Exception
     {
         for(boolean fullReplacement: List.of(false, true))
         {
@@ -261,6 +266,8 @@ class ConfigurationRepositoryDifferentialTest
             AliasConfigurationSnapshot current = fixture.repository().loadAliasConfiguration();
             long removed = current.aliases().get(1).getId();
             long retained = current.aliases().getFirst().getId();
+            history(fixture.database(), removed);
+            forbidAll(fixture.database(), "alias_activity_summary");
             Map<Long,Set<Long>> memberships = new LinkedHashMap<>(current.scanLists().aliasMemberships());
             memberships.remove(removed);
             AliasConfigurationSnapshot desired = new AliasConfigurationSnapshot(current.definitions(),
@@ -275,10 +282,13 @@ class ConfigurationRepositoryDifferentialTest
             }
             else fixture.repository().commitAliasConfiguration(desired);
             assertEquals(retained, fixture.repository().loadAliasConfiguration().aliases().getFirst().getId());
-            for(String table: List.of("alias_activity_summary", "alias_p25_subscriber_identity",
+            for(String table: List.of("alias_p25_subscriber_identity",
                 "alias_broadcast_channel", "alias_scan_list_membership"))
                 assertEquals(0, number(fixture.database(), "SELECT count(*) FROM " + table + " WHERE alias_id=" + removed));
             assertEquals(1, number(fixture.database(), "SELECT count(*) FROM p25_subscriber_identity"));
+            assertEquals(1, number(historyPath(fixture.database()),
+                "SELECT count(*) FROM alias_activity_summary WHERE alias_id=" + removed));
+            assertHistory(fixture.database(), removed, true);
             try(Connection connection = SdrTrunkDatabase.open(fixture.database()); Statement statement = connection.createStatement();
                 ResultSet violations = statement.executeQuery("PRAGMA foreign_key_check"))
             {
@@ -322,6 +332,10 @@ class ConfigurationRepositoryDifferentialTest
             Map.of(state.definitions().getFirst().getId(), Set.of(extraId)));
         AliasConfigurationSnapshot committed = repository.commitAliasConfiguration(
             new AliasConfigurationSnapshot(state.definitions(), state.aliases(), memberships));
+        try(Connection history = SdrTrunkDatabase.openHistory(database))
+        {
+            AliasActivitySummaryMaintenance.resetAll(history);
+        }
         return new Fixture(database, repository, committed, firstStream, secondStream);
     }
 
@@ -332,7 +346,8 @@ class ConfigurationRepositoryDifferentialTest
 
     private void forbid(Path database, String table, String operation, String condition) throws Exception
     {
-        execute(database, "CREATE TRIGGER forbid_" + mTrigger++ + " BEFORE " + operation + " ON " + table +
+        execute(table.equals("alias_activity_summary") ? historyPath(database) : database,
+            "CREATE TRIGGER forbid_" + mTrigger++ + " BEFORE " + operation + " ON " + table +
             (condition == null ? "" : " WHEN " + condition) + " BEGIN SELECT RAISE(ABORT,'unexpected row write'); END");
     }
 
@@ -340,58 +355,64 @@ class ConfigurationRepositoryDifferentialTest
     {
         List<String> assignments = new ArrayList<>();
         COUNTERS.forEach(counter -> assignments.add(counter + "=7"));
-        execute(database, "UPDATE alias_activity_summary SET " + String.join(",", assignments) +
+        execute(historyPath(database), "UPDATE alias_activity_summary SET " + String.join(",", assignments) +
             ",metrics_state='observed',first_evidence_ms=1000,last_evidence_ms=2000,last_reset_ms=500,updated_at_ms=600 WHERE alias_id=" + id);
     }
 
-    private static void assertHistory(Path database, long id, boolean preserved) throws Exception
+    private static void assertHistory(Path database, long id, boolean current) throws Exception
     {
-        try(Connection connection = SdrTrunkDatabase.open(database); Statement statement = connection.createStatement();
+        try(Connection connection = SdrTrunkDatabase.open(historyPath(database));
+            Statement statement = connection.createStatement();
             ResultSet row = statement.executeQuery("SELECT * FROM alias_activity_summary WHERE alias_id=" + id))
         {
             assertTrue(row.next());
-            assertEquals(preserved ? "observed" : "not_collected", row.getString("metrics_state"));
-            for(String counter: COUNTERS)
+            assertEquals("observed", row.getString("metrics_state"));
+            for(String counter: COUNTERS) assertEquals(7L, row.getLong(counter));
+            assertEquals(500L, row.getLong("last_reset_ms"));
+            assertEquals(1000L, row.getLong("first_evidence_ms"));
+            assertEquals(2000L, row.getLong("last_evidence_ms"));
+        }
+        if(!current)
+        {
+            try(Connection connection = SdrTrunkDatabase.openHistoryRead(database);
+                Statement statement = connection.createStatement(); ResultSet row = statement.executeQuery(
+                    "SELECT count(*) FROM alias configured JOIN alias_activity_summary summary " +
+                    "ON summary.alias_id=configured.id AND summary.activity_identity=configured.activity_identity " +
+                    "WHERE configured.id=" + id))
             {
-                if(preserved) assertEquals(7L, row.getLong(counter));
-                else assertNull(row.getObject(counter));
+                assertTrue(row.next());
+                assertEquals(0, row.getLong(1), "Replaced matchers cannot display the retained old counters");
             }
-            if(preserved)
-            {
-                assertEquals(500L, row.getLong("last_reset_ms"));
-                assertEquals(1000L, row.getLong("first_evidence_ms"));
-                assertEquals(2000L, row.getLong("last_evidence_ms"));
-            }
-            else
-            {
-                assertTrue(row.getLong("last_reset_ms") > 500);
-                assertNull(row.getObject("first_evidence_ms"));
-                assertNull(row.getObject("last_evidence_ms"));
-            }
+            assertTrue(number(database, "SELECT activity_reset_ms FROM alias WHERE id=" + id) > 500);
         }
     }
 
     private static Map<String,List<List<Object>>> rows(Path database) throws Exception
     {
         Map<String,List<List<Object>>> result = new LinkedHashMap<>();
-        try(Connection connection = SdrTrunkDatabase.open(database); Statement statement = connection.createStatement())
+        for(String table: TABLES)
         {
-            for(String table: TABLES)
+            List<List<Object>> contents = new ArrayList<>();
+            try(Connection connection = SdrTrunkDatabase.open(
+                    table.equals("alias_activity_summary") ? historyPath(database) : database);
+                Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery("SELECT * FROM " + table + " ORDER BY 1,2"))
             {
-                List<List<Object>> contents = new ArrayList<>();
-                try(ResultSet rows = statement.executeQuery("SELECT * FROM " + table + " ORDER BY 1,2"))
+                while(rows.next())
                 {
-                    while(rows.next())
-                    {
-                        List<Object> row = new ArrayList<>();
-                        for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++) row.add(rows.getObject(column));
-                        contents.add(row);
-                    }
+                    List<Object> row = new ArrayList<>();
+                    for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++) row.add(rows.getObject(column));
+                    contents.add(row);
                 }
-                result.put(table, contents);
             }
+            result.put(table, contents);
         }
         return result;
+    }
+
+    private static Path historyPath(Path database)
+    {
+        return ActivityDatabasePath.forConfiguration(database);
     }
 
     private static long number(Path database, String sql) throws Exception

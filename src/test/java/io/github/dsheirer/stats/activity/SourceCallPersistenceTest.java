@@ -7,7 +7,6 @@ import io.github.dsheirer.audio.call.SourceCallReference;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.bits.IntField;
 import io.github.dsheirer.controller.channel.Channel;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
@@ -22,9 +21,7 @@ import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.message.mac.structure.PushToTalk;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.source.config.SourceConfigRemote;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
-import java.sql.DriverManager;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -83,7 +80,7 @@ class SourceCallPersistenceTest
         var writer = new ReceiverActivityWriter(database,30,true,64,1,0);
         writer.start(); observations.records.forEach(writer::enqueue); writer.close();
         assertEquals(0,writer.getDroppedRecords());
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement())
+        try(var connection = ActivityTestDatabase.openPair(database); var sql = connection.createStatement())
         {
             assertEquals(4,scalar(sql,"SELECT count(*) FROM receiver_activity_event"));
             assertEquals(4,scalar(sql,"SELECT count(DISTINCT source_call_uuid) FROM receiver_activity_event"));
@@ -121,7 +118,7 @@ class SourceCallPersistenceTest
         }
         finally { writer.close(); }
         assertEquals(4,writer.getWrittenRecords()); assertEquals(0,writer.getDroppedRecords());
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement();
+        try(var connection = ActivityTestDatabase.openPair(database); var sql = connection.createStatement();
             var rows = sql.executeQuery("SELECT source_call_uuid FROM receiver_activity_event ORDER BY observed_at_ms,id"))
         {
             assertTrue(rows.next()); assertEquals(SourceCallReference.fromToken("producer:1"),rows.getString(1));
@@ -149,7 +146,7 @@ class SourceCallPersistenceTest
         }
         finally { writer.close(); }
         assertEquals(0,writer.getDroppedRecords());
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement();
+        try(var connection = ActivityTestDatabase.openPair(database); var sql = connection.createStatement();
             var rows = sql.executeQuery("SELECT source_call_uuid,duration_ms FROM receiver_activity_event"))
         {
             assertTrue(rows.next()); assertEquals(SourceCallReference.fromToken("conventional:1"),rows.getString(1));
@@ -183,7 +180,7 @@ class SourceCallPersistenceTest
         writer.enqueue(new ReceiverActivityRecords.P25CallObservation("trunked:1",learned,false,true));
         writer.close();
         assertEquals(0,writer.getDroppedRecords());
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement())
+        try(var connection = ActivityTestDatabase.openPair(database); var sql = connection.createStatement())
         {
             assertEquals(3,scalar(sql,"SELECT count(*) FROM receiver_activity_event"));
             assertEquals(202,scalar(sql,"SELECT source_observed_local_id FROM receiver_activity_event WHERE source_call_uuid='" +
@@ -227,7 +224,7 @@ class SourceCallPersistenceTest
         writer.enqueue(new ReceiverActivityRecords.P25CallObservation("next:1",unrelated,true,false));
         writer.enqueue(resolved); writer.enqueue(resolved); writer.close();
         assertEquals(0,writer.getDroppedRecords());
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement())
+        try(var connection = ActivityTestDatabase.openPair(database); var sql = connection.createStatement())
         {
             assertEquals(1,scalar(sql,"SELECT count(DISTINCT source_identity_summary_id) FROM receiver_activity_event"));
             assertEquals(2,scalar(sql,"SELECT count(*) FROM receiver_activity_event_resolved WHERE source_identity_id=777"));
@@ -285,7 +282,7 @@ class SourceCallPersistenceTest
         }
         writer.close();
         assertEquals(0,writer.getDroppedRecords());
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement())
+        try(var connection = ActivityTestDatabase.openPair(database); var sql = connection.createStatement())
         {
             assertEquals(3,scalar(sql,"SELECT count(*) FROM receiver_activity_event"));
             assertEquals(777,scalar(sql,"SELECT source_identity_id FROM receiver_activity_event_resolved WHERE id=(SELECT id FROM receiver_activity_event WHERE source_call_uuid='" +
@@ -320,7 +317,7 @@ class SourceCallPersistenceTest
         finally { writer.close(); }
         assertEquals(2,writer.getWrittenRecords()); assertEquals(0,writer.getDroppedRecords());
         List<String> references = new ArrayList<>();
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var sql = connection.createStatement();
+        try(var connection = ActivityTestDatabase.openPair(database); var sql = connection.createStatement();
             var rows = sql.executeQuery("SELECT source_call_uuid,duration_ms FROM receiver_activity_event ORDER BY observed_at_ms,id"))
         { while(rows.next()) { references.add(rows.getString(1)); assertEquals(100L,rows.getLong(2)); } }
         assertEquals(List.of(SourceCallReference.fromToken("dmr:1"),SourceCallReference.fromToken("nxdn:1")),references);
@@ -329,17 +326,13 @@ class SourceCallPersistenceTest
     private Path createDatabase(String name) throws Exception
     {
         Path database = directory.resolve(name);
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database))
-        {
-            SdrTrunkDatabaseSchema.create(connection); SdrTrunkDatabaseSchema.seedDefaultAliasLists(connection);
-            ReceiverActivitySchema.create(connection); DmrActivitySchema.create(connection); TrunkedSiteSchema.create(connection);
-        }
+        io.github.dsheirer.database.SdrTrunkTestDatabase.create(database);
         return database;
     }
 
     private static void configure(Path database, String id, String kind, String decoder, String family) throws Exception
     {
-        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database); var insert = connection.prepareStatement("""
+        try(var connection = ActivityTestDatabase.openPair(database); var insert = connection.prepareStatement("""
             INSERT INTO configuration_channel(configuration_id,channel_kind,sort_order,system_name,site_name,name,
                 alias_list_id,radioresolve_id,decoder_type,address_domain_code,primary_frequency_hz,config_json)
             VALUES(?,?,0,'Fixture system','Fixture site','Fixture channel',
