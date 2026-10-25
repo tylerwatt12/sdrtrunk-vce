@@ -431,7 +431,8 @@ class ReceiverActivityScopedDeletionTest
                 """);
             ScopedData target = new ScopedData("saved_channel", CHANNEL, null, null,
                 "all", null, List.of("summary", "buckets", "events"));
-            assertEquals(1, ReceiverActivityMaintenance.preview(connection, target).rowsTotal());
+            // Include the channel's analog-history reset boundary alongside its summary row.
+            assertEquals(2, ReceiverActivityMaintenance.preview(connection, target).rowsTotal());
             assertTrue(ReceiverActivityDeletion.delete(connection, target).found());
             assertEquals(2, count(connection, "receiver_channel"));
             assertEquals(1, count(connection, "conventional_activity_summary WHERE channel_id=2"));
@@ -453,7 +454,8 @@ class ReceiverActivityScopedDeletionTest
                 """);
             ScopedData calls = new ScopedData("saved_channel", CHANNEL, null, null,
                 "call_activity", null, List.of("summary"));
-            assertEquals(1, ReceiverActivityDeletion.delete(connection, calls).rowsDeleted());
+            // Resetting call activity also advances the channel's analog-history boundary once.
+            assertEquals(2, ReceiverActivityDeletion.delete(connection, calls).rowsDeleted());
             assertEquals(1, count(connection,
                 "conventional_activity_summary WHERE call_count=0 AND grant_count=7"));
             ScopedData signaling = new ScopedData("saved_channel", CHANNEL, null, null,

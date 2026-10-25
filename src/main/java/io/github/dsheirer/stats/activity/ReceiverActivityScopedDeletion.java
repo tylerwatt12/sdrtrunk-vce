@@ -84,8 +84,7 @@ final class ReceiverActivityScopedDeletion
             return ReceiverActivityDeletion.Result.deleted(removed);
         }
 
-        resetAnalogBoundary(connection, plan, System.currentTimeMillis());
-        int deleted = 0;
+        int deleted = resetAnalogBoundary(connection, plan, System.currentTimeMillis());
         for(Step step: plan.steps)
         {
             String sql = step.updateSet == null ?
@@ -702,21 +701,38 @@ final class ReceiverActivityScopedDeletion
         }
     }
 
-    private static void resetAnalogBoundary(Connection connection, Plan plan, long cutoff) throws SQLException
+    private static boolean hasAnalogBoundary(Plan plan)
     {
-        if(plan.scope != null && plan.scope.conventional && plan.steps.stream().anyMatch(step ->
-            "alias_list_analog_activity_summary".equals(step.table)))
+        return plan.scope != null && plan.scope.conventional && plan.steps.stream().anyMatch(step ->
+            "alias_list_analog_activity_summary".equals(step.table));
+    }
+
+    private static int analogBoundaryRows(Connection connection, Plan plan, long cutoff) throws SQLException
+    {
+        return hasAnalogBoundary(plan) ? count(connection, "configuration_channel",
+            "configuration_id=(SELECT configuration_id FROM receiver_channel WHERE id=?) " +
+                "AND coalesce(analog_activity_reset_ms,0)<?",
+            List.of(plan.scope.channelId, Math.max(1, cutoff + 1))) : 0;
+    }
+
+    private static int resetAnalogBoundary(Connection connection, Plan plan, long cutoff) throws SQLException
+    {
+        if(hasAnalogBoundary(plan))
         {
             try(PreparedStatement statement = connection.prepareStatement("""
-                UPDATE configuration_channel SET analog_activity_reset_ms=max(coalesce(analog_activity_reset_ms,0),?)
+                UPDATE configuration_channel SET analog_activity_reset_ms=?
                 WHERE configuration_id=(SELECT configuration_id FROM receiver_channel WHERE id=?)
+                  AND coalesce(analog_activity_reset_ms,0)<?
                 """))
             {
-                statement.setLong(1, Math.max(1, cutoff + 1));
+                long boundary = Math.max(1, cutoff + 1);
+                statement.setLong(1, boundary);
                 statement.setLong(2, plan.scope.channelId);
-                statement.executeUpdate();
+                statement.setLong(3, boundary);
+                return statement.executeUpdate();
             }
         }
+        return 0;
     }
 
     private static void addSiteState(Plan plan)
@@ -988,7 +1004,9 @@ final class ReceiverActivityScopedDeletion
             List<Step> ordered = new ArrayList<>(expanded.values());
             ordered.sort(Comparator.comparingInt((Step step) -> metadata.rank(step.table))
                 .thenComparingInt(ReceiverActivityScopedDeletion::priority));
-            long total = 0;
+            int boundaryRows = analogBoundaryRows(connection, plan, cutoffMs);
+            if(boundaryRows > 0) countsByPart.put("summary", boundaryRows);
+            long total = boundaryRows;
             for(Step step: ordered)
             {
                 Table table = metadata.tables.get(step.table);
@@ -1044,9 +1062,9 @@ final class ReceiverActivityScopedDeletion
                 outcome = valid;
                 return 0;
             }
-            resetAnalogBoundary(connection, plan, cutoffMs);
-            int remaining = MAXIMUM_ROWS_PER_PASS;
-            int changed = 0;
+            // Advancing the late-observation fence is one real row change within the same writer budget.
+            int changed = resetAnalogBoundary(connection, plan, cutoffMs);
+            int remaining = MAXIMUM_ROWS_PER_PASS - changed;
             int nextCursor = cursor;
             while(remaining > 0 && nextCursor < steps.size())
             {

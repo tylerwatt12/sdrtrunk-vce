@@ -209,7 +209,7 @@ class ReceiverActivityLinkedHistoryDeletionTest
         {
             seedDmr(connection, 2);
             var preview = ReceiverActivityMaintenance.preview(connection, calls(List.of("summary")));
-            assertEquals(4, preview.rowsTotal());
+            assertEquals(5, preview.rowsTotal());
             assertTrue(preview.effects().stream().anyMatch(effect ->
                 effect.contains("DMR radio and talkgroup call summaries, when present, are removed")));
             finish(connection, StatsDatabaseMaintenanceRequest.delete(calls(List.of("summary"))));
@@ -235,7 +235,14 @@ class ReceiverActivityLinkedHistoryDeletionTest
         {
             seedDmr(connection, 1500);
             var request = StatsDatabaseMaintenanceRequest.delete(calls(List.of("summary", "buckets", "events")));
+            long changesBefore = scalar(connection, "SELECT total_changes()");
             assertNull(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
+            assertEquals(512, scalar(connection, "SELECT total_changes()") - changesBefore);
+            assertEquals(512, request.progress().rowsDeleted(), "The reset boundary consumes one changed-row slot");
+            String boundaryQuery = "SELECT analog_activity_reset_ms FROM configuration_channel " +
+                "WHERE configuration_id='" + CHANNEL + "'";
+            long boundary = scalar(connection, boundaryQuery);
+            assertEquals(request.progress().cutoffMs() + 1, boundary);
             long later = request.progress().cutoffMs() + 1;
             execute(connection, "UPDATE dmr_conventional_radio_summary SET last_seen_ms=" + later +
                 ",call_count=2 WHERE channel_id=1 AND radio_id=1500");
@@ -246,6 +253,20 @@ class ReceiverActivityLinkedHistoryDeletionTest
             request.result().complete(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
             var resumed = request.resume();
             finish(connection, resumed);
+            assertEquals(boundary, scalar(connection, boundaryQuery));
+            long changesBeforeRepeat = scalar(connection, "SELECT total_changes()");
+            connection.setAutoCommit(false);
+            try
+            {
+                assertEquals(0, ReceiverActivityScopedDeletion.Batch.start(connection, calls(List.of("summary")), boundary - 1)
+                    .runPass(connection), "An unchanged boundary and cleared history create no repeat writes");
+            }
+            finally
+            {
+                connection.rollback();
+                connection.setAutoCommit(true);
+            }
+            assertEquals(changesBeforeRepeat, scalar(connection, "SELECT total_changes()"));
             assertEquals(2, scalar(connection, "SELECT count(*) FROM dmr_conventional_radio_summary WHERE channel_id=1"));
             assertEquals(2, scalar(connection, "SELECT call_count FROM dmr_conventional_radio_summary WHERE channel_id=1 AND radio_id=1500"));
             assertEquals(1, resumed.progress().rowsRetained());
