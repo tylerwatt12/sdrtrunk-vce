@@ -23,10 +23,13 @@ import java.util.concurrent.CompletionException;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Administrator tuner inventory and asynchronous maintenance requests. */
 public final class TunerAdminHttpController
 {
+    private static final Logger mLog = LoggerFactory.getLogger(TunerAdminHttpController.class);
     public static final String PATH = "/api/v1/admin/tuners";
     public static final String RESCAN_PATH = PATH + "/rescan";
     public static final String RF_ANALYSIS_PATH = PATH + "/rf-analysis";
@@ -273,7 +276,8 @@ public final class TunerAdminHttpController
                 if(handoff != null && !handoff.isBoolean())
                     throw new IllegalArgumentException("handoff must be true or false");
                 mSettings.releaseBrowse(tuner, leaseId, handoff != null && handoff.booleanValue()).join();
-                ApiHttpResponse.sendData(exchange, 200, Map.of("released", true));
+                ApiHttpResponse.sendData(exchange, 200, Map.of("released", true,
+                    "previous_channels_not_resumed", mSettings.previousChannelsNotResumed(tuner)));
             }
             else
             {
@@ -294,12 +298,18 @@ public final class TunerAdminHttpController
         }
         catch(RuntimeException exception)
         {
-            Throwable cause = exception instanceof CompletionException ? exception.getCause() : exception;
+            Throwable cause = TunerSettingsService.unwrapHandoffFailure(exception);
             if(cause instanceof TunerSettingsService.SettingUnavailableException)
                 ApiHttpResponse.sendError(exchange, 409, "tuner_browse_unavailable", cause.getMessage());
             else if(cause instanceof IllegalArgumentException)
                 ApiHttpResponse.sendError(exchange, 422, "invalid_tuner_browse", cause.getMessage());
-            else ApiHttpResponse.sendError(exchange, 503, "tuner_browse_failed", "Spectrum could not use this tuner");
+            else
+            {
+                mLog.warn("Spectrum receiver handoff failed", TunerSettingsService.handoffFailureForLogging(exception));
+                String reason = TunerSettingsService.handoffFailureMessage(cause);
+                ApiHttpResponse.sendError(exchange, 503, "tuner_browse_failed", reason != null ? reason :
+                    "The receiver handoff failed. Check the receiver log for details and retry.");
+            }
         }
     }
 

@@ -326,7 +326,7 @@ public final class ReceiverWebServices implements AutoCloseable
     {
         if(mAdministrationQuiesced) return;
         closeOwned(List.of(mRetainedStatisticsJobs, mSpectrumSearchService, mSpectrumDiscoveryService,
-            mTunerSettingsService));
+            mTunerSettingsService::closeForReceiverShutdown));
         mAdministrationQuiesced = true;
     }
 

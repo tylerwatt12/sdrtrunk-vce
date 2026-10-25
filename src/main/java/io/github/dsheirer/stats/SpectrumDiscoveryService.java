@@ -21,19 +21,22 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** One short-lived spectrum wizard. All projection and configuration work stays off receiver callbacks. */
 public final class SpectrumDiscoveryService implements AutoCloseable
 {
     private static final long IDLE_EXPIRY_MS = 30_000;
     private static final long MAXIMUM_LIFETIME_MS = 300_000;
+    private static final Logger mLog = LoggerFactory.getLogger(SpectrumDiscoveryService.class);
+    private static final String START_FAILED =
+        "The channel was saved but could not start. Check tuner availability and retry.";
     private final ChannelAdministrationService mChannels;
     private final TunerAdministrationService mTuners;
     private final TunerDiagnosticService mDiagnostics;
     private final TunerSettingsService mSettings;
     private final StatsWebDatabase mDatabase;
-    private final P25DiscoveryProbe mProbe;
-    private final DigitalTrunkedDiscoveryProbe mDigitalProbe;
     private volatile io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver mDirectory;
     private DiscoveryAliasImportService mAliasImporter = new DiscoveryAliasImportService(
         (io.github.dsheirer.service.radioreference.RadioReferenceImportService)null);
@@ -49,8 +52,6 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         mDiagnostics = diagnostics;
         mSettings = settings;
         mDatabase = database;
-        mProbe = new P25DiscoveryProbe(diagnostics, settings);
-        mDigitalProbe = new DigitalTrunkedDiscoveryProbe(diagnostics, settings);
         mExpiry = ThreadPool.SCHEDULED.scheduleWithFixedDelay(this::expire, 5, 5, TimeUnit.SECONDS);
     }
 
@@ -107,8 +108,18 @@ public final class SpectrumDiscoveryService implements AutoCloseable
                 wizard.probe = wizard.autoP25Probe.open(targetId, frequencyHz);
                 wizard.digitalProbe = wizard.autoDigitalProbe.open(targetId, frequencyHz, "auto");
             }
-            else if("p25-phase1".equals(protocolId)) wizard.probe = mProbe.open(targetId, frequencyHz);
-            else if(Set.of("dmr","nxdn").contains(protocolId)) wizard.digitalProbe = mDigitalProbe.open(targetId,frequencyHz,protocolId);
+            else if("p25-phase1".equals(protocolId))
+            {
+                wizard.hold = mSettings.holdForProbe(tuner);
+                wizard.autoP25Probe = new P25DiscoveryProbe(mDiagnostics, wizard.hold);
+                wizard.probe = wizard.autoP25Probe.open(targetId, frequencyHz);
+            }
+            else if(Set.of("dmr","nxdn").contains(protocolId))
+            {
+                wizard.hold = mSettings.holdForProbe(tuner);
+                wizard.autoDigitalProbe = new DigitalTrunkedDiscoveryProbe(mDiagnostics, wizard.hold);
+                wizard.digitalProbe = wizard.autoDigitalProbe.open(targetId, frequencyHz, protocolId);
+            }
             else wizard.hold = mSettings.holdForProbe(tuner);
             mWizard = wizard;
             if(wizard.automatic) beginAutomaticCheck(wizard);
@@ -212,7 +223,6 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             .orElseGet(() -> savedAliasListName(request.newAliasListName(), definition));
         wizard.aliasImport.register(wizard.saved.aliasListId(), aliasName, definition.system(), wizard.directory);
         mAliasImporter.retain(wizard.id, wizard.aliasImport);
-        wizard.close();
         return startSaved(wizard);
     }
 
@@ -252,35 +262,72 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         if(wizard.saved == null) throw new IllegalStateException("Save the channel before starting it");
         try
         {
+            // Detach temporary sources while retaining this wizard's reservation until the allocation worker owns it.
+            wizard.closeProbeResources();
+            DiscoveredTuner selected = mTuners.find(wizard.tunerId);
+            if(selected == null)
+                throw new TunerSettingsService.SettingUnavailableException("Selected tuner is unavailable");
             var start = (java.util.function.Supplier<ChannelAdministrationService.LifecycleResult>) () ->
             {
-                DiscoveredTuner selected = requireTuner(wizard.tunerId);
                 if(selected.getTuner() != wizard.tuner || !wizard.current())
-                    throw new IllegalStateException("The selected tuner changed");
-                return mChannels.startAtCurrentCenter(wizard.saved.configurationId(), selected);
+                    throw new TunerSettingsService.SettingUnavailableException("The tuner changed; retry the saved channel");
+                return requireSuccessfulStart(mChannels.startAtCurrentCenter(wizard.saved.configurationId(), selected));
             };
-            ChannelAdministrationService.LifecycleResult result;
             if(wizard.browseLeaseId != null)
-                result = mSettings.handoffBrowse(requireTuner(wizard.tunerId), wizard.browseLeaseId, start).join();
+                mSettings.handoffBrowse(selected, wizard.browseLeaseId, wizard.hold, start).join();
             else
-                try(var hold = mSettings.holdForProbe(wizard.tuner))
-                {
-                    if(!wizard.current()) throw new IllegalStateException("The tuner changed");
-                    result = start.get();
-                }
+            {
+                if(wizard.hold == null) wizard.hold = mSettings.holdForProbe(wizard.tuner);
+                if(!wizard.hold.valid() || !wizard.current())
+                    throw new TunerSettingsService.SettingUnavailableException("The tuner changed; retry the saved channel");
+                start.get();
+            }
             wizard.browseLeaseId = null;
-            wizard.running = result.success() && result.state() ==
-                ChannelAdministrationService.ProcessingState.RUNNING;
-            wizard.startError = wizard.running ? null : result.message();
+            wizard.running = true;
+            wizard.startError = null;
         }
         catch(RuntimeException exception)
         {
-            if(wizard.browseLeaseId != null &&
-                !mSettings.verifyBrowse(mTuners.find(wizard.tunerId), wizard.browseLeaseId))
+            wizard.running = false;
+            wizard.startError = startFailureMessage(exception);
+            mLog.warn("Unable to start saved Spectrum channel: {}", wizard.startError,
+                TunerSettingsService.handoffFailureForLogging(exception));
+        }
+        finally
+        {
+            // Admission or queue failure may leave the reservation with this caller rather than the handoff worker.
+            wizard.releaseHold();
+            DiscoveredTuner selected = mTuners.find(wizard.tunerId);
+            if(wizard.browseLeaseId != null && (selected == null || !mSettings.verifyBrowse(selected, wizard.browseLeaseId)))
                 wizard.browseLeaseId = null;
-            wizard.startError = "The channel was saved but could not start. Check tuner availability and retry.";
+            wizard.previousChannelsNotResumed = selected == null ? List.of() :
+                List.copyOf(mSettings.previousChannelsNotResumed(selected));
         }
         return snapshot(wizard);
+    }
+
+    static ChannelAdministrationService.LifecycleResult requireSuccessfulStart(
+        ChannelAdministrationService.LifecycleResult result)
+    {
+        if(result == null || !result.success() || result.state() != ChannelAdministrationService.ProcessingState.RUNNING)
+            throw new SavedChannelStartException(result != null && result.message() != null && !result.message().isBlank() ?
+                result.message() : START_FAILED);
+        return result;
+    }
+
+    static String startFailureMessage(Throwable failure)
+    {
+        Throwable cause = TunerSettingsService.unwrapHandoffFailure(failure);
+        if(cause instanceof ChannelAdministrationService.ConfigurationBusyException)
+            return "Channel configuration is busy. Try starting again.";
+        if(cause instanceof SavedChannelStartException) return cause.getMessage();
+        String message = TunerSettingsService.handoffFailureMessage(cause);
+        return message != null ? message : START_FAILED;
+    }
+
+    private static final class SavedChannelStartException extends IllegalStateException
+    {
+        private SavedChannelStartException(String message) { super(message); }
     }
 
     public synchronized void cancel(String id)
@@ -330,7 +377,8 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         return new Snapshot(wizard.id, state, reason, wizard.protocolId, wizard.tunerId, wizard.targetId,
             wizard.frequencyHz, wizard.expiresAt, probe, review, wizard.saved != null ?
                 new Saved(wizard.saved.configurationId(), wizard.saved.aliasListId(), wizard.running,
-                    wizard.startError) : null, digital, wizard.evidence, wizard.directory, wizard.aliasImport.snapshot());
+                    wizard.startError, wizard.browseLeaseId, wizard.previousChannelsNotResumed) : null,
+                digital, wizard.evidence, wizard.directory, wizard.aliasImport.snapshot());
     }
 
     static ChannelAdministrationService.DiscoveryReview directoryReview(
@@ -404,8 +452,6 @@ public final class SpectrumDiscoveryService implements AutoCloseable
     {
         mExpiry.cancel(false);
         closeActiveSession();
-        mProbe.close();
-        mDigitalProbe.close();
         mDirectoryWorker.shutdownNow();
         mAliasImporter.clear();
     }
@@ -447,6 +493,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         final DiscoveryAliasImportService.Batch aliasImport = new DiscoveryAliasImportService.Batch();
         boolean running;
         String startError;
+        List<TunerSettingsService.ChannelInfo> previousChannelsNotResumed = List.of();
         Wizard(String tunerId, String targetId, long frequencyHz, String protocolId, String browseLeaseId, Tuner tuner)
         {
             this.tunerId = tunerId; this.targetId = targetId; this.frequencyHz = frequencyHz;
@@ -460,7 +507,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             return tuner.getTunerController().getFrequency() == centerHz &&
                 tuner.getTunerController().getSampleRate() == sampleRate;
         }
-        @Override public void close()
+        void closeProbeResources()
         {
             closed = true;
             if(directoryFuture != null) { directoryFuture.cancel(true); directoryFuture = null; }
@@ -469,7 +516,15 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             if(digitalProbe != null) digitalProbe.close();
             if(autoP25Probe != null) autoP25Probe.close();
             if(autoDigitalProbe != null) autoDigitalProbe.close();
+        }
+        void releaseHold()
+        {
             if(hold != null) { hold.close(); hold = null; }
+        }
+        @Override public void close()
+        {
+            try { closeProbeResources(); }
+            finally { releaseHold(); }
         }
     }
 
@@ -483,7 +538,16 @@ public final class SpectrumDiscoveryService implements AutoCloseable
                            String newAliasListName, Map<String,Object> settings, long revision)
         { this(system, site, name, aliasListId, newAliasListName, settings, revision, List.of()); }
     }
-    public record Saved(String configurationId, long aliasListId, boolean running, String startError) {}
+    public record Saved(String configurationId, long aliasListId, boolean running, String startError,
+                        String browseLeaseId, List<TunerSettingsService.ChannelInfo> previousChannelsNotResumed)
+    {
+        public Saved
+        {
+            previousChannelsNotResumed = List.copyOf(previousChannelsNotResumed != null ? previousChannelsNotResumed : List.of());
+        }
+        public Saved(String configurationId, long aliasListId, boolean running, String startError)
+        { this(configurationId, aliasListId, running, startError, null, List.of()); }
+    }
     public record Snapshot(String sessionId, String state, String reason, String protocolId, String tunerId,
                            String targetId, long frequencyHz, long expiresAtMs, P25DiscoveryProbe.Status probe,
                            ChannelAdministrationService.DiscoveryReview review, Saved saved, DigitalTrunkedDiscoveryProbe.Status digitalProbe,

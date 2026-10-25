@@ -16,10 +16,13 @@ import io.github.dsheirer.source.tuner.test.TestTunerController;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -29,6 +32,96 @@ import org.junit.jupiter.api.Test;
 
 class SpectrumDiscoveryServiceTest
 {
+    @Test
+    void savedStartUnwrapsControlledTunerFailuresAndConfigurationBusy()
+    {
+        String detail = "The tuner changed; retry the saved channel";
+        var failure = new CompletionException(new CompletionException(
+            new TunerSettingsService.SettingUnavailableException(detail)));
+        assertEquals(detail, SpectrumDiscoveryService.startFailureMessage(failure));
+        assertEquals("Channel configuration is busy. Try starting again.",
+            SpectrumDiscoveryService.startFailureMessage(new CompletionException(
+                new ChannelAdministrationService.ConfigurationBusyException())));
+    }
+
+    @Test
+    void unsuccessfulOrNonrunningLifecycleResultThrowsIntoHandoffCleanup()
+    {
+        var success = new ChannelAdministrationService.LifecycleResult("saved", true,
+            ChannelAdministrationService.ProcessingState.RUNNING, null);
+        assertSame(success, SpectrumDiscoveryService.requireSuccessfulStart(success));
+        for(var result: List.of(
+            new ChannelAdministrationService.LifecycleResult("saved", false,
+                ChannelAdministrationService.ProcessingState.STOPPED, "No Tuner Available"),
+            new ChannelAdministrationService.LifecycleResult("saved", false,
+                ChannelAdministrationService.ProcessingState.RUNNING, "No Tuner Available")))
+        {
+            RuntimeException failure = assertThrows(RuntimeException.class,
+                () -> SpectrumDiscoveryService.requireSuccessfulStart(result));
+            assertEquals("No Tuner Available", SpectrumDiscoveryService.startFailureMessage(
+                new CompletionException(failure)));
+        }
+        assertThrows(RuntimeException.class, () -> SpectrumDiscoveryService.requireSuccessfulStart(
+            new ChannelAdministrationService.LifecycleResult("saved", true,
+                ChannelAdministrationService.ProcessingState.STOPPED, null)));
+    }
+
+    @Test
+    void savedStartPreservesTheNormalChannelApiMessageWithoutASeparateMessageWhitelist()
+    {
+        var normalApiResult = new ChannelAdministrationService.LifecycleResult("saved", false,
+            ChannelAdministrationService.ProcessingState.STOPPED,
+            "The selected receiver does not cover this channel at its current center frequency.");
+        RuntimeException failure = assertThrows(RuntimeException.class,
+            () -> SpectrumDiscoveryService.requireSuccessfulStart(normalApiResult));
+        assertEquals(normalApiResult.message(), SpectrumDiscoveryService.startFailureMessage(new CompletionException(failure)));
+        for(String blank: List.of("", "  "))
+        {
+            RuntimeException empty = assertThrows(RuntimeException.class,
+                () -> SpectrumDiscoveryService.requireSuccessfulStart(new ChannelAdministrationService.LifecycleResult(
+                    "saved", false, ChannelAdministrationService.ProcessingState.STOPPED, blank)));
+            assertTrue(SpectrumDiscoveryService.startFailureMessage(empty).contains("saved but could not start"));
+        }
+    }
+
+    @Test
+    void unknownStartDetailsAreOmittedFromUiAndDiagnosticMessagesButKeepCauseAndStack()
+    {
+        String secret = "unit-test-secret";
+        RuntimeException cause = new IllegalStateException("password=" + secret);
+        cause.setStackTrace(new StackTraceElement[]{new StackTraceElement("example.Receiver", "start", "Receiver.java", 42)});
+        RuntimeException failure = new CompletionException(cause);
+        failure.addSuppressed(new IllegalArgumentException("token=" + secret));
+        String visible = SpectrumDiscoveryService.startFailureMessage(failure);
+        assertTrue(visible.contains("saved but could not start"));
+        assertFalse(visible.contains(secret));
+        StringWriter text = new StringWriter();
+        TunerSettingsService.handoffFailureForLogging(failure).printStackTrace(new PrintWriter(text));
+        assertFalse(text.toString().contains(secret));
+        assertFalse(text.toString().contains("password="));
+        assertFalse(text.toString().contains("token="));
+        assertTrue(text.toString().contains(IllegalStateException.class.getName()));
+        assertTrue(text.toString().contains(IllegalArgumentException.class.getName()));
+        assertTrue(text.toString().contains("Receiver.java:42"));
+
+    }
+
+    @Test
+    void savedOutcomeCarriesOnlyTheCurrentLeaseAndAnImmutablePreviousChannelWarning()
+    {
+        var channel = new TunerSettingsService.ChannelInfo("old", "Previous control", null, "TRUNKED",
+            770_500_000L, "Regional system", "North");
+        var previous = new java.util.ArrayList<>(List.of(channel));
+        var saved = new SpectrumDiscoveryService.Saved("saved", 7, false, "Tuner busy", "owned-lease", previous);
+        previous.clear();
+        assertEquals("owned-lease", saved.browseLeaseId());
+        assertEquals(List.of(channel), saved.previousChannelsNotResumed());
+        assertThrows(UnsupportedOperationException.class, () -> saved.previousChannelsNotResumed().clear());
+        var legacy = new SpectrumDiscoveryService.Saved("saved", 7, true, null);
+        assertNull(legacy.browseLeaseId());
+        assertTrue(legacy.previousChannelsNotResumed().isEmpty());
+    }
+
     @Test
     void abandoningEachBrowseLifecycleCancelsItsDirectoryWorkAndLetsTheNextWizardFinish() throws Exception
     {

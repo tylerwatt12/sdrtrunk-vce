@@ -187,9 +187,11 @@ public final class SpectrumSearchHardware
             digitalProbes.close();
             if(spectrum != null) { spectrum.close(); spectrum = null; }
             tune(centerHz);
-            hold.close();
-            closed = true;
-            return mSettings.handoffBrowse(selected, browseId, start).join();
+            try
+            {
+                return mSettings.handoffBrowse(selected, browseId, hold, start).join();
+            }
+            finally { closed = true; hold.close(); }
         }
 
         public void close()

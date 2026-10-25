@@ -82,8 +82,13 @@ class TunerAdminHttpControllerTest
             assertEquals(true, data.path("can_tune").booleanValue());
             assertEquals(true, data.path("stopped_channels").isArray());
 
-            assertEquals(200, fixture.send(path, "DELETE", "{\"lease_id\":\"" +
-                data.path("lease_id").textValue() + "\"}").statusCode());
+            HttpResponse<String> released = fixture.send(path, "DELETE", "{\"lease_id\":\"" +
+                data.path("lease_id").textValue() + "\",\"handoff\":true}");
+            assertEquals(200, released.statusCode());
+            var releaseData = MAPPER.readTree(released.body()).path("data");
+            assertEquals(true, releaseData.path("released").booleanValue());
+            assertEquals(true, releaseData.path("previous_channels_not_resumed").isArray());
+            assertEquals(0, releaseData.path("previous_channels_not_resumed").size());
         }
     }
 

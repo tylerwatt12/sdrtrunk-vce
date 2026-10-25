@@ -403,7 +403,7 @@ class TunerSettingsServiceTest
     }
 
     @Test
-    void takeoverHandoffRestoresOriginalChannelsBeforeStartingTheSelectedChannel() throws Exception
+    void takeoverHandoffStartsSelectedChannelBeforeResumingCompatibleOriginalChannels() throws Exception
     {
         TrackingAirspyController controller = new TrackingAirspyController();
         CountingChannelManager sources = new CountingChannelManager();
@@ -420,7 +420,7 @@ class TunerSettingsServiceTest
             String result = service.handoffBrowse(tuner, lease.leaseId(), () ->
             {
                 channels.record("selected-start");
-                assertEquals(1, sources.mCount.get());
+                assertEquals(0, sources.mCount.get());
                 assertTrue(configuration.isCenterFrequencyLocked());
                 assertTrue(controller.isCenterFrequencyLocked());
                 return "started";
@@ -428,7 +428,7 @@ class TunerSettingsServiceTest
 
             assertEquals("started", result);
             assertEquals(List.of("stop:" + original.getConfigurationId(),
-                "start:" + original.getConfigurationId(), "selected-start"), channels.operations());
+                "selected-start", "start:" + original.getConfigurationId()), channels.operations());
         }
         finally { channels.close(); }
     }
@@ -857,6 +857,71 @@ class TunerSettingsServiceTest
     }
 
     @Test
+    void finalReceiverShutdownKeepsUnresumedSavedChannelsStoppedWithoutWeakeningOrdinaryClose()
+        throws Exception
+    {
+        CountingChannelManager sources = new CountingChannelManager();
+        TrackingAirspyController controller = new TrackingAirspyController();
+        FakeDiscoveredTuner tuner = runningTuner(controller, sources);
+        TestChannelProcessingManager channels = new TestChannelProcessingManager(tuner, sources);
+        Channel original = channels.addStandard("Prior control", 155_100_000L);
+        TunerSettingsService service = service(tuner, new AtomicInteger(), channels);
+        try
+        {
+            var lease = service.browse(tuner, null, true).get(2, TimeUnit.SECONDS);
+            channels.mFailStarts = true;
+            assertEquals("selected-running", service.handoffBrowse(tuner, lease.leaseId(), () -> "selected-running")
+                .get(2, TimeUnit.SECONDS));
+            assertEquals(List.of(original.getConfigurationId()),
+                service.stoppedChannels(tuner).stream().map(TunerSettingsService.ChannelInfo::id).toList());
+            assertThrows(IllegalStateException.class, () -> service.closeWithin(1, TimeUnit.SECONDS),
+                "ordinary service close must still require explicit prior-channel recovery");
+
+            List<String> beforeShutdown = channels.operations();
+            long center = controller.getFrequency();
+            channels.mFailStarts = false;
+            service.closeForReceiverShutdownWithin(2, TimeUnit.SECONDS);
+
+            assertEquals(beforeShutdown, channels.operations(), "final shutdown must not attempt old-channel restart");
+            assertEquals(center, controller.getFrequency());
+            assertEquals(List.of(original.getConfigurationId()),
+                service.stoppedChannels(tuner).stream().map(TunerSettingsService.ChannelInfo::id).toList(),
+                "the shutdown disposition retains its recovery evidence");
+            assertEquals(List.of(original.getConfigurationId()), service.restoreResult(tuner).failed().stream()
+                .map(TunerSettingsService.ChannelInfo::id).toList());
+            assertThrows(IllegalStateException.class,
+                () -> service.requestState(tuner, DiscoveredTuner.OperatorState.SETUP));
+        }
+        finally { service.close(); channels.close(); }
+    }
+
+    @Test
+    void finalReceiverShutdownTimesOutWithoutInterruptingAnAcceptedHardwareWriteAndCanRetry()
+        throws Exception
+    {
+        FakeDiscoveredTuner tuner = new FakeDiscoveredTuner(true);
+        tuner.setTunerConfiguration(new AirspyTunerConfiguration(tuner.getId()));
+        tuner.prepareRestart(new TrackingAirspyController(), new CountingChannelManager());
+        tuner.mBlockStart = true;
+        TunerSettingsService service = service(tuner, new AtomicInteger());
+        try
+        {
+            service.requestState(tuner, DiscoveredTuner.OperatorState.SETUP);
+            assertTrue(tuner.mStartEntered.await(2, TimeUnit.SECONDS));
+            assertThrows(IllegalStateException.class,
+                () -> service.closeForReceiverShutdownWithin(25, TimeUnit.MILLISECONDS));
+            assertEquals("running", service.operation(tuner).state());
+            assertFalse(tuner.mStartInterrupted.get());
+            tuner.mReleaseStart.countDown();
+            await(Duration.ofSeconds(2), () -> service.transition(tuner) == null);
+            service.closeForReceiverShutdownWithin(2, TimeUnit.SECONDS);
+            assertFalse(tuner.mStartInterrupted.get());
+            assertEquals(1, tuner.mStartCalls.get());
+        }
+        finally { tuner.mReleaseStart.countDown(); service.close(); }
+    }
+
+    @Test
     void closeRetryOwnsGenerationAdvancedByFailedPairedModeRestore()
     {
         DeviceInfo masterInfo = new DeviceInfo(DeviceType.RSPduo, "close-retry-pair");
@@ -1037,6 +1102,126 @@ class TunerSettingsServiceTest
             assertFalse(tuner.isDiscoveryHeld());
             assertFalse(service.verifyBrowse(tuner, lease.leaseId()));
         }
+    }
+
+    @Test
+    void handoffTransfersOnlyItsOwnedProbeHoldAndKeepsProtectionUntilStartupReturns() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch finish = new CountDownLatch(1);
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            try(var hold = service.holdForProbe(tuner))
+            {
+                var handoff = service.handoffBrowse(tuner, lease.leaseId(), hold, () ->
+                {
+                    assertFalse(hold.valid(), "the transferred hold is consumed under the allocation gate");
+                    hold.close();
+                    assertTrue(tuner.isDiscoveryHeld(), "closing the consumed hold must not clear handoff protection");
+                    assertTrue(tuner.tryAcquireForAllocation());
+                    tuner.releaseAfterAllocation();
+                    entered.countDown();
+                    try { assertTrue(finish.await(2, TimeUnit.SECONDS)); }
+                    catch(InterruptedException exception) { throw new AssertionError(exception); }
+                    return "started";
+                });
+                assertTrue(entered.await(2, TimeUnit.SECONDS));
+                assertFalse(tuner.tryAcquireForAllocation(), "another thread cannot take the receiver during startup");
+                assertThrows(TunerSettingsService.SettingUnavailableException.class, () -> service.holdForProbe(tuner));
+                finish.countDown();
+                assertEquals("started", handoff.get(2, TimeUnit.SECONDS));
+                assertFalse(tuner.isDiscoveryHeld());
+                assertFalse(service.verifyBrowse(tuner, lease.leaseId()));
+            }
+        }
+        finally { finish.countDown(); }
+    }
+
+    @Test
+    void unrelatedProbeHoldCannotBeConsumedByBrowseReleaseOrAnotherTuner() throws Exception
+    {
+        FakeDiscoveredTuner first = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        FakeDiscoveredTuner other = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        try(TunerSettingsService service = new TunerSettingsService(() -> {},
+            candidate -> candidate == first || candidate == other, ignored -> first))
+        {
+            var lease = service.browse(first, null).get(2, TimeUnit.SECONDS);
+            try(var foreign = service.holdForProbe(other))
+            {
+                assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                    () -> service.handoffBrowse(first, lease.leaseId(), foreign, () -> "unexpected"));
+                assertTrue(foreign.valid());
+            }
+            try(var hold = service.holdForProbe(first))
+            {
+                assertThrows(TunerSettingsService.SettingUnavailableException.class,
+                    () -> service.handoffBrowse(first, lease.leaseId(), () -> "unexpected"));
+                assertTrue(hold.valid());
+            }
+            service.releaseBrowse(first, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void failedPreparationRetainsOwnedBrowseForExactRetryButAnAttemptedStartConsumesIt() throws Exception
+    {
+        CountingChannelManager sources = new CountingChannelManager();
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), sources);
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            try(var hold = service.holdForProbe(tuner))
+            {
+                sources.mCount.set(1);
+                var failed = service.handoffBrowse(tuner, lease.leaseId(), hold, () -> "unexpected");
+                ExecutionException exception = assertThrows(ExecutionException.class, () -> failed.get(2, TimeUnit.SECONDS));
+                assertTrue(exception.getCause().getMessage().contains("sample source"));
+                assertTrue(service.verifyBrowse(tuner, lease.leaseId()));
+                assertFalse(tuner.isDiscoveryHeld());
+            }
+            sources.mCount.set(0);
+            var failedStart = service.handoffBrowse(tuner, lease.leaseId(), () ->
+            { throw new TunerSettingsService.SettingUnavailableException("Selected tuner is unavailable"); });
+            assertThrows(ExecutionException.class, () -> failedStart.get(2, TimeUnit.SECONDS));
+            assertFalse(service.verifyBrowse(tuner, lease.leaseId()));
+            assertFalse(tuner.isDiscoveryHeld());
+            assertNull(service.transition(tuner));
+        }
+    }
+
+    @Test
+    void rejectedLifecycleQueueLeavesTheProbeAndBrowseOwnedByTheirCaller() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        CountDownLatch entered = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            java.lang.reflect.Field field = TunerSettingsService.class.getDeclaredField("mExecutor");
+            field.setAccessible(true);
+            var executor = (java.util.concurrent.ThreadPoolExecutor)field.get(service);
+            Runnable blocked = () -> { entered.countDown(); try { release.await(2, TimeUnit.SECONDS); }
+                catch(InterruptedException exception) { Thread.currentThread().interrupt(); } };
+            executor.execute(blocked); executor.execute(blocked);
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            for(int count = 0; count < 32; count++) executor.execute(() -> {});
+            try(var hold = service.holdForProbe(tuner))
+            {
+                var failed = service.handoffBrowse(tuner, lease.leaseId(), hold, () -> "unexpected");
+                assertThrows(ExecutionException.class, () -> failed.get(1, TimeUnit.SECONDS));
+                assertTrue(hold.valid());
+                assertTrue(service.verifyBrowse(tuner, lease.leaseId()));
+                assertNull(service.transition(tuner));
+                assertEquals("failed", service.operation(tuner).state());
+            }
+            release.countDown();
+            await(Duration.ofSeconds(2), () -> executor.getQueue().isEmpty());
+            service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
+        }
+        finally { release.countDown(); }
     }
 
     @Test
@@ -1800,6 +1985,7 @@ class TunerSettingsServiceTest
         private final AtomicInteger mStartCalls = new AtomicInteger();
         private final CountDownLatch mStartEntered = new CountDownLatch(1);
         private final CountDownLatch mReleaseStart = new CountDownLatch(1);
+        private final AtomicBoolean mStartInterrupted = new AtomicBoolean();
         private volatile boolean mBlockStart;
         private volatile Error mStartFailure;
         private TrackingAirspyController mRestartController;
@@ -1854,6 +2040,7 @@ class TunerSettingsServiceTest
                 }
                 catch(InterruptedException e)
                 {
+                    mStartInterrupted.set(true);
                     Thread.currentThread().interrupt();
                 }
             }
@@ -2154,6 +2341,15 @@ class TunerSettingsServiceTest
             if(mFailStarts) throw new ChannelException("restart failed");
             if(!mActive.contains(assignment)) mActive.add(assignment);
             updateCounts();
+        }
+
+        @Override
+        public synchronized void startAtCurrentCenter(Channel channel, DiscoveredTuner selectedTuner)
+            throws ChannelException
+        {
+            assertEquals(mTunerIds.get(channel), selectedTuner.getId());
+            assertTrue(selectedTuner.isDiscoveryHeld(), "remembered channel recovery must retain the center hold");
+            start(channel);
         }
 
         private void updateCounts()
