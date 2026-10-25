@@ -2,6 +2,7 @@ const { expect, test } = require('@playwright/test');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
 const { expectRoundedCorners } = require('./fixtures/surface-geometry.cjs');
+const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
 const app = readFileSync(resolve(__dirname, '../../../../..', 'stats-web/assets/app.js'), 'utf8');
 const metricHelpers = app.slice(app.indexOf('function number('), app.indexOf('function hex(')) +
   app.slice(app.indexOf('function valueNode('), app.indexOf('function tableColumnKey(')) +
@@ -10,12 +11,15 @@ const segmentedHelpers = app.slice(app.indexOf('function uiSegmentedControl('),
   app.indexOf('function channelSummaryCards('));
 const requestHelpers = app.slice(app.indexOf('async function requestJson('),
   app.indexOf('function waitForRequestRetry('));
+const revisionHelpers = app.slice(app.indexOf('const WEB_CLIENT_REVISION ='),
+  app.indexOf('\n', app.indexOf('const WEB_CLIENT_REVISION ='))) + '\nlet webClientReloadAttempted = false;\n' +
+  app.slice(app.indexOf('function reloadForWebClientRevision('), app.indexOf('async function loadStatus('));
 
 async function installWorkspace(page, theme = 'light', large = false, slow = false, scenario = '',
   initialAliasListId = null) {
   await page.goto(`/design-system.html?theme=${theme}&view=gallery${large ? '&large=1' : ''}` +
     `${slow ? '&slow=1' : ''}${scenario ? `&scenario=${scenario}` : ''}`);
-  await page.evaluate(async ({ metricHelpers, segmentedHelpers, requestHelpers, initialAliasListId }) => {
+  await page.evaluate(async ({ metricHelpers, segmentedHelpers, requestHelpers, revisionHelpers, initialAliasListId }) => {
     const { createRadioReferenceImportWorkspace } = await import(
       '/assets/features/radioreference-import.js?visual-test=1');
     const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
@@ -70,7 +74,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     const uiStatus = (label, tone = 'neutral') => node('span', `ui-status ui-status-${tone}`, label);
     const uiSegmentedControl = new Function('node', `${segmentedHelpers}; return uiSegmentedControl;`)(node);
     const actualRequestJson = new Function('accessSession', 'activeRenderController', 'initialPageDeadline', 'snakeCasePayload',
-      'systemLabels', `${requestHelpers}; return requestJson;`)({}, new AbortController(), 0,
+      'systemLabels', `${revisionHelpers}\n${requestHelpers}; return requestJson;`)({}, new AbortController(), 0,
       (value) => value, { rememberSystemNames: (value) => value });
     const table = (values, columns, emptyText, options = {}) => {
       options.controller?.layoutMenuCleanup?.();
@@ -182,7 +186,8 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       scenario === 'network-catalog' ? [[2001, 7]] : []);
     let failPreferenceSave = scenario === 'preference-save-error';
     let preferenceGetCount = 0;
-    window.radioReferenceVisual = { calls, popupTriggers, systemPreferences, openReadOnlyModal };
+    window.radioReferenceVisual = { calls, popupTriggers, systemPreferences, openReadOnlyModal,
+      holdSites: scenario === 'held-sites', heldSites: [], failDetails: scenario === 'details-fail-once' };
     const dmr = scenario === 'dmr';
     const nxdn = scenario === 'nxdn';
     let nextAliasListId = 100;
@@ -295,12 +300,18 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
             last_updated_epoch_millis: 1900000000000, detail: { id: 2004 } }
         ] : [])
       ];
+      if (path.includes('/systems/details?') && window.radioReferenceVisual.failDetails) {
+        window.radioReferenceVisual.failDetails = false;
+        throw new Error('System details are temporarily unavailable.');
+      }
       if (path.includes('/systems/details?')) return { system: {
         id: 2001, system_id: '2000', name: dmr ? 'Ford Plant' : nxdn ? 'Regional NXDN' : 'Central County P25',
         type: dmr ? 'DMR' : nxdn ? 'NXDN' : 'Project 25',
         flavor: dmr ? 'Motorola Capacity Plus Single Site (TRBO)' : nxdn ? 'NEXEDGE 9600' : 'Phase II',
         voice: dmr ? 'DMR' : nxdn ? 'NXDN Digital' : 'Digital', city: 'Columbus'
       }, talkgroup_categories: [{ id: 9, name: 'Fire' }] };
+      if (path.includes('/systems/sites/catalog?') && window.radioReferenceVisual.holdSites)
+        await new Promise((resolve, reject) => window.radioReferenceVisual.heldSites.push({ path, resolve, reject }));
       if (path.includes('/systems/sites/catalog?') &&
           new URLSearchParams(location.search).has('slow')) await new Promise((resolve) => setTimeout(resolve, 500));
       if (path.includes('/systems/sites/catalog?') && dmr) return { items: [{
@@ -414,7 +425,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
     window.radioReferenceVisual.workspace = workspace;
     body.append(workspace.element);
     workspace.setConfiguration({ account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39, county_id: 49 });
-  }, { metricHelpers, segmentedHelpers, requestHelpers, initialAliasListId });
+  }, { metricHelpers, segmentedHelpers, requestHelpers, revisionHelpers, initialAliasListId });
   if (scenario !== 'slow-initialize')
     await expect(page.getByRole('button', { name: 'Browse' })).toBeVisible();
 }
@@ -1489,6 +1500,94 @@ test(`Different highlights only changed imported fields and reveals visually equ
   await expect(preview).toContainText('"Fire\\u00a0"');
   await expect(preview.getByText(/Spacing or hidden characters differ/)).toHaveCount(2);
   await preview.screenshot({ path: testInfo.outputPath(`hidden-character-preview-${theme}-${width}.png`) });
+});
+
+test('signing into RadioReference initializes the import workspace once', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await installSiteStyleApplication(page, 'light');
+  const calls = [];
+  let connected = false;
+  await page.route('**/api/v1/**', async route => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const respond = data => route.fulfill({ json: { data } });
+    if (path === '/api/v1/admin/radioreference/session') {
+      connected = true;
+      return respond({ account: { state: 'VALID_PREMIUM', user_name: 'fixture-user' }, country_id: 1, state_id: 39, county_id: 49 });
+    }
+    if (path === '/api/v1/admin/radioreference') return respond({
+      account: { state: connected ? 'VALID_PREMIUM' : 'SIGNED_OUT', user_name: connected ? 'fixture-user' : '' }
+    });
+    if (path.startsWith('/api/v1/admin/radioreference/') ||
+        path === '/api/v1/admin/alias-lists' && url.searchParams.get('include_counts') === 'false') {
+      calls.push(path);
+      if (path.endsWith('/countries')) return respond({ items: [{ id: 1, name: 'United States' }] });
+      if (path.endsWith('/states')) return respond({ items: [{ id: 39, name: 'Ohio' }] });
+      if (path.endsWith('/counties')) return respond({ items: [{ id: 49, name: 'Franklin County' }] });
+      if (path.endsWith('/alias-lists')) return respond({ revision: 1, alias_lists: [] });
+      return respond({ items: [] });
+    }
+    return route.fallback();
+  });
+  await page.goto('/app.html?view=radioreference');
+  const form = page.locator('.radioreference-account-form');
+  await form.getByRole('textbox', { name: 'Username', exact: true }).fill('fixture-user');
+  await form.getByLabel('Password', { exact: true }).fill('synthetic-password');
+  await form.getByRole('button', { name: 'Connect RadioReference', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'No systems or agencies here', exact: true })).toBeVisible();
+  for (const path of ['/api/v1/admin/alias-lists', '/api/v1/admin/radioreference/bookmarks',
+    '/api/v1/admin/radioreference/system-preferences', '/api/v1/admin/radioreference/browse/catalog'])
+    expect(calls.filter(value => value === path)).toHaveLength(1);
+});
+
+test('reopening a system reuses details and sites until an account change clears them', async ({ page }) => {
+  await installWorkspace(page);
+  await openSystem(page);
+  await openSystem(page);
+  let calls = await page.evaluate(() => window.radioReferenceVisual.calls);
+  expect(calls.filter(([path]) => path.includes('/systems/details?'))).toHaveLength(1);
+  expect(calls.filter(([path]) => path.includes('/systems/sites/catalog?'))).toHaveLength(1);
+  await page.evaluate(() => window.radioReferenceVisual.workspace.setConfiguration({
+    account: { state: 'VALID_PREMIUM', user_name: 'another-fixture-account' },
+    country_id: 1, state_id: 39, county_id: 49
+  }));
+  await openSystem(page);
+  calls = await page.evaluate(() => window.radioReferenceVisual.calls);
+  expect(calls.filter(([path]) => path.includes('/systems/details?'))).toHaveLength(2);
+  expect(calls.filter(([path]) => path.includes('/systems/sites/catalog?'))).toHaveLength(2);
+});
+
+test('site tab returns share pending loads and an explicit failed refresh remains retryable', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'held-sites');
+  await page.locator('.radioreference-result-open').first().click();
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.heldSites.length)).toBe(1);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
+  await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(2);
+  await page.getByRole('button', { name: 'Sites & Channels', exact: true }).click();
+  await expect(page.locator('.radioreference-sites-list .ui-feedback-loading')).toBeVisible();
+  expect(await page.evaluate(() => window.radioReferenceVisual.heldSites.length)).toBe(1);
+  await page.evaluate(() => window.radioReferenceVisual.heldSites[0].resolve());
+  await expect(page.getByRole('button', { name: 'Central Simulcast', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Refresh sites from RadioReference', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.heldSites.length)).toBe(2);
+  await page.evaluate(() => window.radioReferenceVisual.heldSites[1].reject(new Error('Sites temporarily unavailable.')));
+  await expect(page.locator('.radioreference-sites-list')).toContainText('Sites temporarily unavailable.');
+  await page.getByRole('button', { name: 'Retry sites', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.radioReferenceVisual.heldSites.length)).toBe(3);
+  await page.evaluate(() => window.radioReferenceVisual.heldSites[2].resolve());
+  await expect(page.getByRole('button', { name: 'Central Simulcast', exact: true })).toBeVisible();
+  const calls = await page.evaluate(() => window.radioReferenceVisual.calls.filter(([path]) => path.includes('/systems/sites/catalog?')));
+  expect(calls).toHaveLength(3);
+  expect(calls.slice(1).every(([path]) => new URL(path, 'http://fixture.invalid').searchParams.get('refresh') === 'true')).toBe(true);
+});
+
+test('failed system details are retried when the result is opened again', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'details-fail-once');
+  await page.locator('.radioreference-result-open').first().click();
+  await expect(page.getByText('System details are temporarily unavailable.', { exact: true })).toBeVisible();
+  await openSystem(page);
+  expect(await page.evaluate(() => window.radioReferenceVisual.calls.filter(([path]) => path.includes('/systems/details?')).length)).toBe(2);
 });
 
 test('explicit refresh bypasses source caches while ordinary filtering and tab returns reuse them', async ({ page }) => {

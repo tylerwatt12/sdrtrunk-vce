@@ -30,6 +30,29 @@ const TALKGROUP_LIMIT = 50;
 const FREQUENCY_LIMIT = 50;
 const COMMON_COUNTRY_CODES = Object.freeze(['US', 'CA', 'AU', 'UK', 'GB']);
 
+export function createRadioReferenceRequestCache({ maximumEntries = 16, lifetimeMs = 5 * 60_000, now = Date.now } = {}) {
+  const requests = new Map();
+  return {
+    load(key, loader, { refresh = false } = {}) {
+      const cached = requests.get(key);
+      if (!refresh && cached && (cached.expiresAt === null || cached.expiresAt > now())) return cached.promise;
+      requests.delete(key);
+      if (requests.size >= maximumEntries) requests.delete(requests.keys().next().value);
+      const entry = { expiresAt: null, promise: null };
+      entry.promise = Promise.resolve().then(loader).then((value) => {
+        entry.expiresAt = now() + lifetimeMs;
+        return value;
+      }).catch((error) => {
+        if (requests.get(key) === entry) requests.delete(key);
+        throw error;
+      });
+      requests.set(key, entry);
+      return entry.promise;
+    },
+    clear() { requests.clear(); }
+  };
+}
+
 export function sortRadioReferenceCountries(countries) {
   const rank = country => {
     const code = String(country?.abbreviation ?? country?.code ?? '').trim().toUpperCase();
@@ -286,6 +309,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     onLocationSaved = null
   } = dependencies;
   const localityCache = dependencies.localityCache || radioReferenceLocalityCache;
+  const directoryRequests = createRadioReferenceRequestCache();
   const guideMode = dependencies.guideMode === true;
   const guideLayers = new Set();
   let guidePending = Promise.resolve();
@@ -329,7 +353,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     preferenceRevisions: new Map(),
     preferenceErrors: new Map(),
     preferenceLoadError: '',
-    siteCatalogs: new Map(),
     talkgroupCatalogs: new Map(),
     talkgroupLoads: new Map(),
     talkgroupCatalogId: null,
@@ -955,25 +978,24 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     target.replaceChildren(toolbar, list);
     try {
       const id = systemId(system);
-      if (refreshRemote || !state.siteCatalogs.has(id)) {
-        const response = await api(query(RADIO_REFERENCE_IMPORT_PATHS.siteCatalog,
-          { system_id: id, refresh: refreshRemote ? true : undefined }), { timeoutMs: 65_000 });
-        state.siteCatalogs.set(id, rows(response).map((site) => ({
-          site,
-          searchText: [
-            textValue(site, ['name', 'description']), siteNumberLabel(site),
-            textValue(site, ['county_name', 'county']),
-            ...siteChannels(site).flatMap((channel) => [
-              textValue(channel, ['channel_id', 'channelId']),
-              textValue(channel, ['name', 'alpha_tag', 'description', 'use']),
-              formatFrequency(frequencyHz(channel))
-            ])
-          ].join(' ').toLowerCase()
-        })));
-      }
+      const response = await directoryRequests.load(`sites:${id}`, () =>
+        api(query(RADIO_REFERENCE_IMPORT_PATHS.siteCatalog,
+          { system_id: id, refresh: refreshRemote ? true : undefined }), { timeoutMs: 65_000 }),
+        { refresh: refreshRemote });
+      const catalog = rows(response).map((site) => ({
+        site,
+        searchText: [
+          textValue(site, ['name', 'description']), siteNumberLabel(site),
+          textValue(site, ['county_name', 'county']),
+          ...siteChannels(site).flatMap((channel) => [
+            textValue(channel, ['channel_id', 'channelId']),
+            textValue(channel, ['name', 'alpha_tag', 'description', 'use']),
+            formatFrequency(frequencyHz(channel))
+          ])
+        ].join(' ').toLowerCase()
+      }));
       if (state.activeSystemId !== id || target.dataset.rrTab !== 'sites' ||
           target.firstElementChild !== toolbar) return;
-      const catalog = state.siteCatalogs.get(id);
       const systemDetails = systemDocument?.system || systemDocument || system;
       search.disabled = false;
       sort.disabled = false;
@@ -1430,7 +1452,8 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     detailHost.closest('.radioreference-browser')?.classList.add('radioreference-detail-open');
     detailHost.replaceChildren(feedback('Loading system details…', 'loading'));
     try {
-      const documentValue = await api(query(RADIO_REFERENCE_IMPORT_PATHS.systemDetails, { system_id: id }));
+      const documentValue = await directoryRequests.load(`system:${id}`, () =>
+        api(query(RADIO_REFERENCE_IMPORT_PATHS.systemDetails, { system_id: id })));
       if (sequence !== state.detailSequence) return;
       const details = documentValue?.system || documentValue;
       const panel = node('section', 'radioreference-system-workspace ui-surface');
@@ -1995,7 +2018,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
   };
 
   const initialize = async () => {
-    if (state.initializing || state.initialized) return;
+    if (destroyed || state.initializing || state.initialized) return;
     if (state.configuration?.account?.state !== 'VALID_PREMIUM') {
       host.replaceChildren(empty('Connect RadioReference to import',
         'A current Premium account is required for directory browsing and imports.'));
@@ -2095,86 +2118,58 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     return () => {};
   };
 
+  const resetWorkspace = ({ clearPreferences = false } = {}) => {
+    ++state.initializeSequence;
+    ++state.detailSequence;
+    ++state.browseSequence;
+    state.initializing = false;
+    state.initialized = false;
+    state.activeSystemId = null;
+    directoryRequests.clear();
+    state.talkgroupCatalogs.clear();
+    state.talkgroupLoads.clear();
+    state.talkgroupCatalogId = null;
+    state.selectedTalkgroups.clear();
+    if (clearPreferences) {
+      state.bookmarks = [];
+      state.systemAliasListPreferences.clear();
+      state.clearedSystemPreferences.clear();
+      state.preferenceSaves.clear();
+      state.preferenceRevisions.clear();
+      state.preferenceErrors.clear();
+      state.preferenceLoadError = '';
+    }
+  };
+
   return {
     element: host,
     prepareGuide,
     destroy() {
       destroyed = true;
-      ++state.initializeSequence;
-      ++state.browseSequence;
-      ++state.detailSequence;
-      state.activeSystemId = null;
+      resetWorkspace({ clearPreferences: true });
       state.onBookmarksChanged = null;
-      state.selectedTalkgroups.clear();
       for (const modal of [...guideLayers].reverse()) modal.close?.();
       guideLayers.clear();
     },
-    setConfiguration(configuration) {
+    setConfiguration(configuration, { refresh = false } = {}) {
       const wasConnected = state.configuration?.account?.state === 'VALID_PREMIUM';
       const previousUser = state.configuration?.account?.user_name;
       state.configuration = configuration || {};
       const connected = state.configuration?.account?.state === 'VALID_PREMIUM';
-      if (!wasConnected && connected) {
-        ++state.initializeSequence;
-        state.initializing = false;
-      }
-      if (wasConnected && connected && previousUser !== state.configuration?.account?.user_name) {
-        ++state.initializeSequence;
-        ++state.detailSequence;
-        ++state.browseSequence;
-        state.initializing = false;
-        state.initialized = false;
-        state.activeSystemId = null;
-        state.systemAliasListPreferences.clear();
-        state.clearedSystemPreferences.clear();
-        state.preferenceSaves.clear();
-        state.preferenceRevisions.clear();
-        state.preferenceErrors.clear();
-        state.preferenceLoadError = '';
-        state.siteCatalogs.clear();
-        state.talkgroupCatalogs.clear();
-        state.talkgroupLoads.clear();
-        state.talkgroupCatalogId = null;
-        state.selectedTalkgroups.clear();
-      }
       if (!connected) {
-        ++state.initializeSequence;
-        ++state.detailSequence;
-        ++state.browseSequence;
-        state.initializing = false;
-        state.initialized = false;
-        state.activeSystemId = null;
-        state.selectedTalkgroups.clear();
-        state.siteCatalogs.clear();
-        state.talkgroupCatalogs.clear();
-        state.talkgroupLoads.clear();
-        state.talkgroupCatalogId = null;
-        state.bookmarks = [];
-        state.systemAliasListPreferences.clear();
-        state.clearedSystemPreferences.clear();
-        state.preferenceSaves.clear();
-        state.preferenceRevisions.clear();
-        state.preferenceErrors.clear();
-        state.preferenceLoadError = '';
+        resetWorkspace({ clearPreferences: true });
         host.replaceChildren(empty('Connect RadioReference to import',
           'A current Premium account is required for directory browsing and imports.'));
         return;
       }
-      if (!wasConnected || !state.initialized) initialization = initialize();
+      const changedAccount = wasConnected && previousUser !== state.configuration?.account?.user_name;
+      if (refresh || !wasConnected || changedAccount)
+        resetWorkspace({ clearPreferences: !wasConnected || changedAccount });
+      if (!state.initialized && !state.initializing) initialization = initialize();
       return initialization;
     },
     reload() {
-      ++state.initializeSequence;
-      ++state.detailSequence;
-      ++state.browseSequence;
-      state.initializing = false;
-      state.initialized = false;
-      state.activeSystemId = null;
-      state.siteCatalogs.clear();
-      state.talkgroupCatalogs.clear();
-      state.talkgroupLoads.clear();
-      state.talkgroupCatalogId = null;
-      state.selectedTalkgroups.clear();
+      resetWorkspace();
       initialization = initialize();
       return initialization;
     }

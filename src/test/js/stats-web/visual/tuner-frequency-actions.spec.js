@@ -61,7 +61,13 @@ async function installActions(page) {
         return structuredClone(state.connected);
       }
       if (path.includes('/countries')) return { items: [{ id: 1, name: 'United States' }] };
-      if (path.includes('/states?')) return { items: [{ id: 39, name: 'Ohio' }, { id: 40, name: 'Oklahoma' }] };
+      if (path.includes('/states?')) {
+        if (state.holdStates) await new Promise((resolve, reject) => {
+          state.finishStates = resolve;
+          options.signal?.addEventListener('abort', () => reject(new DOMException('Lookup closed', 'AbortError')), { once: true });
+        });
+        return { items: [{ id: 39, name: 'Ohio' }, { id: 40, name: 'Oklahoma' }] };
+      }
       if (path.includes('/frequencies?') && state.frequencyError) {
         throw Object.assign(new Error('RadioReference could not be searched. Try again.'), { code: state.frequencyError });
       }
@@ -160,6 +166,29 @@ async function openLookup(page) {
   await page.getByRole('button', { name: 'RadioReference lookup', exact: true }).click();
   return page.getByRole('dialog', { name: 'RadioReference lookup', exact: true });
 }
+
+test('frequency lookups share public regions while keeping account checks fresh after closing the first dialog', async ({ page }) => {
+  await installActions(page);
+  await page.evaluate(() => { window.frequencyTest.holdStates = true; });
+  const first = await openLookup(page);
+  await expect.poll(() => page.evaluate(() => typeof window.frequencyTest.finishStates)).toBe('function');
+  await first.locator('.modal-close').click();
+  await expect(first).toHaveCount(0);
+  const second = await openLookup(page);
+  await expect.poll(() => page.evaluate(() => window.frequencyTest.calls.filter(call =>
+    call.path === '/api/v1/admin/radioreference').length)).toBe(2);
+  expect(await page.evaluate(() => window.frequencyTest.calls.filter(call => call.path.includes('/states?')).length)).toBe(1);
+  await page.evaluate(() => { window.frequencyTest.holdStates = false; window.frequencyTest.finishStates(); });
+  await expect(second.getByText('0 RadioReference matches found.', { exact: true })).toBeVisible();
+  await second.locator('.modal-close').click();
+  await expect(second).toHaveCount(0);
+  const third = await openLookup(page);
+  await expect(third.getByText('0 RadioReference matches found.', { exact: true })).toBeVisible();
+  const calls = await page.evaluate(() => window.frequencyTest.calls);
+  expect(calls.filter(call => call.path === '/api/v1/admin/radioreference')).toHaveLength(3);
+  expect(calls.filter(call => call.path.endsWith('/countries'))).toHaveLength(1);
+  expect(calls.filter(call => call.path.includes('/states?'))).toHaveLength(1);
+});
 
 test('signed-out frequency lookup signs in and searches the original selection without navigation', async ({ page }) => {
   await installActions(page);

@@ -33,13 +33,13 @@ import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=9';
+} from './features/alias-list-create.js?v=10';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=58';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
-import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, createDiscoveryAliasListChoice, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=12';
+import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, createDiscoveryAliasListChoice, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=13';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
@@ -8187,7 +8187,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : streaming ? [
       import('./features/streaming.js?v=14'), import('./guides/streaming-presentation.js?v=1')
     ] : [
-      import('./features/radioreference-import.js?v=35'), import('./guides/radioreference-presentation.js?v=1')
+      import('./features/radioreference-import.js?v=36'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
     const sample = (mapTour ? presentation.createMapGuideData : visualizerTour ? presentation.createNetworkVisualizerGuideData : topics ? presentation.createTopicsGuideData : scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
@@ -16513,7 +16513,7 @@ function openTunerRadioReferenceLookup(selectedHz) {
   if (!modal) return null;
   const current = () => !detailController.signal.aborted && modal.dialog.isConnected;
   const request = (path, options = {}) => requestJson(path, {
-    csrf: false, page: false, timeoutMs: 15_000, ...options, signal: detailController.signal
+    csrf: false, page: false, timeoutMs: 15_000, signal: detailController.signal, ...options
   });
   const allowed = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS);
   const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField,
@@ -25887,7 +25887,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=38');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=39');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -29240,7 +29240,7 @@ function radioReferenceWorkspaceDependencies(overrides = {}) {
 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
-  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=35');
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=36');
   if (!renderIsCurrent(renderContext)) return;
   if (!beginPage(renderContext, radioReferencePageHeader())) return;
   const { page, loadingState, gate, workspace, workspaceHeader, accountStatus, settingsButton } =
@@ -29409,7 +29409,7 @@ async function renderAdminRadioReferenceSettings() {
   }));
   workspace.append(importWorkspace.element);
 
-  const updateAccount = (next, initializeUserName = false) => {
+  const updateAccount = (next, { initializeUserName = false, refreshImports = false } = {}) => {
     configuration = next || configuration || {};
     const account = configuration?.account || {};
     const connected = account.state === 'VALID_PREMIUM';
@@ -29428,7 +29428,7 @@ async function renderAdminRadioReferenceSettings() {
     savedRegionValid = Number(configuration?.country_id) > 0 && Number(configuration?.state_id) > 0;
     regionWorkflow.setReady(canSaveRegion());
     placeRegionForm();
-    importWorkspace.setConfiguration(configuration);
+    importWorkspace.setConfiguration(configuration, { refresh: refreshImports });
     loadingState.hidden = true;
     gate.hidden = connected;
     workspace.hidden = !connected;
@@ -29513,8 +29513,7 @@ async function renderAdminRadioReferenceSettings() {
       password.value = '';
       accountDirty = false;
       synchronizeModal();
-      if (updateAccount(next)) {
-        importWorkspace.reload();
+      if (updateAccount(next, { refreshImports: true })) {
         try {
           await loadRegions();
         } catch (error) {
@@ -29605,7 +29604,7 @@ async function renderAdminRadioReferenceSettings() {
 
   try {
     const initial = await requestJson('/api/v1/admin/radioreference', { csrf: false });
-    if (updateAccount(initial, true)) {
+    if (updateAccount(initial, { initializeUserName: true })) {
       try {
         await loadRegions();
       } catch (error) {

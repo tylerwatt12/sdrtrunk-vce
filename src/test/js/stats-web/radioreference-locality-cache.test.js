@@ -52,6 +52,9 @@ async function checkLocalityCache(file) {
   await assert.rejects(current.load('states:3', failed), /Unavailable/);
   await assert.rejects(current.load('states:3', failed), /Unavailable/);
   assert.equal(failures, 2, 'Failures must remain retryable.');
+  assert.deepEqual(await current.load('states:3', async () => [{ id: 201, name: 'Recovered region' }]),
+    [{ id: 201, name: 'Recovered region' }]);
+  await current.load('states:3', () => assert.fail('A recovered region must be cached.'));
   await assert.rejects(current.load('systems:1', load), /Unknown RadioReference locality/);
 
   for (const raw of ['broken', '{}', JSON.stringify({ version: 2, entries: [] }),

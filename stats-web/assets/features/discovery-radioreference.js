@@ -1,8 +1,12 @@
+import { radioReferenceLocalityCache } from './radioreference-locality-cache.js?v=1';
+
 const API = '/api/v1/admin/radioreference';
 const DIRECTORY_TIMEOUT_MS = 15_000;
 const TALKGROUP_AVAILABILITY_TIMEOUT_MS = 65_000;
 
-export function createDiscoveryRadioReferenceContext(ui, request, { signal, requiredRegion = false } = {}) {
+export function createDiscoveryRadioReferenceContext(ui, request, {
+  signal, requiredRegion = false, localityCache = radioReferenceLocalityCache
+} = {}) {
   const { node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href } = ui;
   const element = node('details', 'ui-section-disclosure ui-section-disclosure-flat');
   const summary = node('summary', 'ui-section-summary', requiredRegion ? 'Lookup region' : 'RadioReference names (optional)');
@@ -100,8 +104,9 @@ export function createDiscoveryRadioReferenceContext(ui, request, { signal, requ
             enable(select, false);
             status.textContent = 'Loading states and provinces…';
             try {
-              const states = rows(await request(`${API}/states?country_id=${encodeURIComponent(countryId)}`,
-                { csrf: false, timeoutMs: DIRECTORY_TIMEOUT_MS }));
+              const states = await localityCache.load(`states:${countryId}`, async () =>
+                rows(await request(`${API}/states?country_id=${encodeURIComponent(countryId)}`,
+                  { csrf: false, page: false, signal: null, timeoutMs: DIRECTORY_TIMEOUT_MS })));
               if (!active() || regionGeneration !== regionLoad) return;
               select.replaceChildren(node('option', '', statePlaceholder), ...states.map((state) => {
                 const option = node('option', '', state.name);
@@ -141,8 +146,9 @@ export function createDiscoveryRadioReferenceContext(ui, request, { signal, requ
           content.append(stateField);
           await loadStates(configuration.country_id, stateId);
         } else {
-          const countries = rows(await request(`${API}/countries`,
-            { csrf: false, timeoutMs: DIRECTORY_TIMEOUT_MS }));
+          const countries = await localityCache.load('countries', async () =>
+            rows(await request(`${API}/countries`,
+              { csrf: false, page: false, signal: null, timeoutMs: DIRECTORY_TIMEOUT_MS })));
           if (!active()) return;
           const country = uiSelect([{ value: '', label: 'Choose a country' },
             ...countries.map((value) => ({ value: value.id, label: value.name }))], configuration.country_id || '');

@@ -648,6 +648,8 @@ async function main() {
   await checkAlertTopicsAvailability();
   await require('./radioreference-locality-cache.test').checkLocalityCache(
     path.resolve(core, '../features/radioreference-locality-cache.js'));
+  await require('./radioreference-request-cache.test').checkRadioReferenceRequestCache(
+    path.resolve(core, '../features/radioreference-import.js'));
   const [routes, preferences, preferenceSchema, tableLayouts, tableDefaults, pageTitles, entityRefs, playerModule] =
     await Promise.all([
     'routes', 'user-preferences', 'preference-schema', 'table-layout', 'table-defaults', 'page-title', 'entity-ref',
