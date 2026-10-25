@@ -77,7 +77,7 @@ async function expectOverview(page) {
   await expect(guide(page).getByRole('heading', { name: 'One receiver, several channels', exact: true })).toBeVisible();
   await expect(guide(page)).toContainText('SDR models have different usable bandwidths.');
   await expect(guide(page)).toContainText('Adding tuners lets VCE cover more frequencies at once, helping prevent missed calls');
-  await expect(guide(page)).toContainText('one trunked system');
+  await expect(graph(page)).toContainText('This example follows one trunked radio system.');
   await expect(graph(page)).toBeVisible();
   await expect(graph(page).locator('.ui-setup-guide-coverage-identity strong')).toHaveText(['RTL-SDR 1', 'RTL-SDR 2']);
   await expect(graph(page).locator('.coverage-control')).toHaveCount(1);

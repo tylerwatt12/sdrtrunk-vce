@@ -21,7 +21,7 @@ for (const theme of ['light', 'dark']) {
     await expect(guide).toHaveAttribute('data-guide-id', 'tuners');
     await expect(guide).toHaveAttribute('data-guide-step', 'overview');
     await expect(guide.getByRole('heading', { name: 'One receiver, several channels', exact: true })).toBeVisible();
-    await expect(guide.locator('.ui-setup-guide-description')).toHaveCount(3);
+    await expect(guide.locator('.ui-setup-guide-copy > .ui-setup-guide-description')).toHaveCount(3);
     await expect(graph).toHaveAttribute('data-example', 'rtl');
     await expect(graph).toHaveAttribute('data-playing', 'true');
     await page.clock.runFor(8000);

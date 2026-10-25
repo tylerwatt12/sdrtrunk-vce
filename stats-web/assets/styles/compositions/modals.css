@@ -338,6 +338,13 @@ body.modal-open {
   font-size: var(--font-size-secondary);
 }
 
+.ui-setup-guide-divider {
+  width: 100%;
+  margin: var(--space-2) 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
 .ui-setup-guide-coverage-identity,
 .ui-setup-guide-coverage-legend,
 .ui-setup-guide-coverage-legend > span {

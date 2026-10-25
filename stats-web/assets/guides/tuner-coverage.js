@@ -253,7 +253,9 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
     return { id, button };
   });
   choices.append(node('strong', '', 'Example:'), toggle);
-  root.append(receivers, scene, svg, legend, choices);
+  root.append(node('hr', 'ui-setup-guide-divider'),
+    node('p', 'ui-setup-guide-description', 'This example follows one trunked radio system.'),
+    receivers, scene, svg, legend, choices);
 
   const mount = ({ signal } = {}) => {
     // This instructional simulation autoplays even under reduced-motion preferences.
