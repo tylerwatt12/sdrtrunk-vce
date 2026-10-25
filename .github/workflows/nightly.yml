@@ -272,6 +272,8 @@ jobs:
               {...repo, run_id: id, per_page: 100});
             const artifact = artifacts.find(item => item.name === `nightly-candidate-${id}`);
             if (!artifact || artifact.expired) throw new Error('Candidate files expired or are unavailable; prepare again');
+            const catalog = artifacts.find(item => item.name === `radio-system-catalog-${id}`);
+            if (!catalog || catalog.expired) throw new Error('Candidate catalog expired or is unavailable; prepare again');
             const newerRuns = await github.paginate(github.rest.actions.listWorkflowRuns,
               {...repo, workflow_id: 'nightly.yml', event: 'workflow_dispatch', status: 'success',
                 head_sha: context.sha, per_page: 100});
@@ -282,6 +284,8 @@ jobs:
               }
             }
             core.setOutput('artifact-id', artifact.id);
+            core.setOutput('catalog-artifact-id', catalog.id);
+            core.setOutput('source-ref', `refs/heads/${run.head_branch}`);
       - name: Check out the approved commit
         uses: actions/checkout@v7
         with:
@@ -296,8 +300,19 @@ jobs:
           path: candidate
           merge-multiple: true
           digest-mismatch: error
+      - name: Download the approved radio-system catalog without fetching again
+        uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ steps.candidate.outputs.catalog-artifact-id }}
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: radio-system-catalog
+          merge-multiple: true
+          digest-mismatch: error
       - name: Verify candidate identity, exact file list, and every checksum
         shell: bash
+        env:
+          CANDIDATE_SOURCE_REF: ${{ steps.candidate.outputs.source-ref }}
         run: |
           python3 - <<'PY'
           import hashlib, json, os, pathlib
@@ -310,9 +325,13 @@ jobs:
           if actual != expected | {'SHA256SUMS'}:
               raise SystemExit('Candidate contains missing or unexpected files')
           metadata = json.loads((root / 'candidate.json').read_text(encoding='utf-8'))
+          catalog = pathlib.Path('radio-system-catalog/dsdplus.networks')
+          with catalog.open('rb') as source:
+              catalog_sha256 = hashlib.file_digest(source, 'sha256').hexdigest()
           if metadata != {'format': 1, 'purpose': 'prepare', 'source_commit': os.environ['GITHUB_SHA'],
-                          'source_ref': metadata.get('source_ref'), 'run_id': build,
-                          'runtime': '25.0.1', 'channel': 'nightly'}:
+                          'source_ref': os.environ['CANDIDATE_SOURCE_REF'], 'run_id': build,
+                          'runtime': '25.0.1', 'channel': 'nightly',
+                          'radio_system_catalog_sha256': catalog_sha256}:
               raise SystemExit('Candidate identity does not match this publication')
           checksums = {}
           for line in (root / 'SHA256SUMS').read_text(encoding='utf-8').splitlines():

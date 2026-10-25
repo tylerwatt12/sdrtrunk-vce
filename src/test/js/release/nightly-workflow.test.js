@@ -60,11 +60,13 @@ function fixture() {
   return {
     id: '100',
     run: { status: 'completed', conclusion: 'success', event: 'workflow_dispatch',
-      path: '.github/workflows/nightly.yml', head_repository: { full_name: 'example/vce' }, head_sha: sha },
+      path: '.github/workflows/nightly.yml', head_repository: { full_name: 'example/vce' }, head_sha: sha,
+      head_branch: 'main' },
     jobs: ['Package candidate', 'Candidate ready', 'Test candidate / Main CI gate',
       ...platforms.map(platform => `Native runtime smoke (${platform})`)]
       .map(name => ({ name, conclusion: 'success' })),
-    artifacts: [{ id: 501, name: 'nightly-candidate-100', expired: false }],
+    artifacts: [{ id: 501, name: 'nightly-candidate-100', expired: false },
+      { id: 502, name: 'radio-system-catalog-100', expired: false }],
     newer: [], newerArtifacts: []
   };
 }
@@ -117,14 +119,20 @@ const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'vce-nightly-contract-')
 const candidate = path.join(temporary, 'candidate');
 fs.mkdirSync(candidate);
 const { createHash } = require('node:crypto');
+const catalog = path.join(temporary, 'radio-system-catalog');
+const catalogFile = path.join(catalog, 'dsdplus.networks');
+const catalogBytes = Buffer.from('synthetic catalog');
+fs.mkdirSync(catalog);
 const metadata = { format: 1, purpose: 'prepare', source_commit: sha, source_ref: 'refs/heads/main',
-  run_id: '100', runtime: '25.0.1', channel: 'nightly' };
+  run_id: '100', runtime: '25.0.1', channel: 'nightly',
+  radio_system_catalog_sha256: createHash('sha256').update(catalogBytes).digest('hex') };
 function resetCandidate() {
   for (const name of fs.readdirSync(candidate)) fs.rmSync(path.join(candidate, name), { recursive: true });
   for (const platform of platforms) fs.writeFileSync(path.join(candidate, `vce-${platform}-100.zip`), `ZIP fixture ${platform}`);
   fs.writeFileSync(path.join(candidate, 'build_info.txt'), `commit: ${sha}\nupdate-build: 100\n`);
   fs.writeFileSync(path.join(candidate, 'update.properties'), 'format=2\ntrack=nightly\nbuild=100\n');
   fs.writeFileSync(path.join(candidate, 'candidate.json'), JSON.stringify(metadata));
+  fs.writeFileSync(catalogFile, catalogBytes);
   rewriteChecksums();
 }
 function rewriteChecksums() {
@@ -134,7 +142,8 @@ function rewriteChecksums() {
 }
 function verified() {
   const result = spawnSync(python, ['-c', pythonBody[1]], { cwd: temporary, encoding: 'utf8', timeout: 10_000,
-    env: { ...process.env, GITHUB_SHA: sha, CANDIDATE_RUN_ID: '100' } });
+    env: { ...process.env, GITHUB_SHA: sha, CANDIDATE_RUN_ID: '100',
+      CANDIDATE_SOURCE_REF: 'refs/heads/main' } });
   assert.ifError(result.error);
   return result;
 }
@@ -315,6 +324,13 @@ function verifyImmutableRadioSystemCatalogWiring() {
     /name: radio-system-catalog-\$\{\{ github\.run_id \}\}/);
   assert.match(step('Build and verify all six packages'),
     /-PradioSystemCatalogFile="\$\{\{ runner\.temp \}\}\/radio-system-catalog\/dsdplus\.networks"/);
+  const approvedCatalog = step('Download the approved radio-system catalog without fetching again');
+  assert.match(approvedCatalog, /artifact-ids: \$\{\{ steps\.candidate\.outputs\.catalog-artifact-id \}\}/);
+  assert.match(approvedCatalog, /run-id: \$\{\{ inputs\.candidate_run_id \}\}/);
+  assert.match(approvedCatalog, /path: radio-system-catalog/);
+  assert.match(approvedCatalog, /digest-mismatch: error/);
+  assert.match(step('Verify candidate identity, exact file list, and every checksum'),
+    /CANDIDATE_SOURCE_REF: \$\{\{ steps\.candidate\.outputs\.source-ref \}\}/);
   assert.match(job('package'), /runs-on: macos-15/,
     'Packaging must build the pinned macOS ARM native library on its native toolchain.');
   assert.doesNotMatch(job('publish'), /fetch_dsdplus_networks|prepareRadioSystemCatalog|runtimeZipAll/,
@@ -327,13 +343,13 @@ function verifyImmutableRadioSystemCatalogWiring() {
     'Ordinary CI must use the committed synthetic fixture instead of depending on the public wiki.');
 }
 
-function verifyCandidateChecksumProducer() {
+function verifyPreparedCandidateRoundTrip() {
   const root = path.join(temporary, 'package-job');
   const image = path.join(root, 'build', 'image');
   const catalog = path.join(root, 'radio-system-catalog');
   fs.mkdirSync(image, { recursive: true });
   fs.mkdirSync(catalog, { recursive: true });
-  fs.writeFileSync(path.join(catalog, 'dsdplus.networks'), 'synthetic catalog');
+  fs.writeFileSync(path.join(catalog, 'dsdplus.networks'), catalogBytes);
   for (const platform of platforms) fs.writeFileSync(path.join(image, `vce-${platform}-100.zip`), platform);
   const source = literal(step('Record the exact candidate and file checksums'), '        run: |\n', 10);
   //Use the selected Python even on Macs whose system python3 predates hashlib.file_digest.
@@ -349,11 +365,19 @@ function verifyCandidateChecksumProducer() {
     const [digest, name] = line.split('  ');
     assert.equal(digest, createHash('sha256').update(fs.readFileSync(path.join(image, name))).digest('hex'));
   }
+  // Feed the actual producer output through the actual publication validator. A separate
+  // hand-written metadata fixture cannot detect a producer/consumer contract mismatch.
+  fs.cpSync(image, candidate, { recursive: true });
+  fs.copyFileSync(path.join(catalog, 'dsdplus.networks'), catalogFile);
+  const validation = verified();
+  assert.equal(validation.status, 0, validation.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(candidate, 'candidate.json'), 'utf8')), metadata);
 }
 
 async function main() {
-  verifyCandidateChecksumProducer();
-  assert.deepEqual(await evaluate(fixture()), { 'artifact-id': 501 });
+  verifyPreparedCandidateRoundTrip();
+  const expectedOutputs = { 'artifact-id': 501, 'catalog-artifact-id': 502, 'source-ref': 'refs/heads/main' };
+  assert.deepEqual(await evaluate(fixture()), expectedOutputs);
   for (const id of ['-1', '0', 'NaN', '9007199254740992']) {
     const state = fixture(); state.id = id;
     await assert.rejects(evaluate(state), /Invalid preparation run ID/);
@@ -375,11 +399,17 @@ async function main() {
     const state = fixture(); state.artifacts = artifacts;
     await assert.rejects(evaluate(state), /expired or are unavailable/);
   }
+  for (const expired of [false, true]) {
+    const state = fixture();
+    if (expired) state.artifacts[1].expired = true;
+    else state.artifacts.pop();
+    await assert.rejects(evaluate(state), /catalog expired or is unavailable/);
+  }
   const newer = fixture(); newer.newer = [{ id: 101 }];
   newer.newerArtifacts = [{ name: 'nightly-candidate-101' }];
   await assert.rejects(evaluate(newer), /newer successful preparation/);
   newer.newerArtifacts = [];
-  assert.deepEqual(await evaluate(newer), { 'artifact-id': 501 }, 'A newer publication run is not a new preparation.');
+  assert.deepEqual(await evaluate(newer), expectedOutputs, 'A newer publication run is not a new preparation.');
 
   resetCandidate();
   let result = verified();
@@ -388,6 +418,8 @@ async function main() {
     () => fs.appendFileSync(path.join(candidate, 'vce-win64-100.zip'), 'changed'),
     () => fs.rmSync(path.join(candidate, 'vce-linux-arm64-100.zip')),
     () => fs.writeFileSync(path.join(candidate, 'unexpected.txt'), 'unexpected'),
+    () => fs.appendFileSync(catalogFile, 'changed'),
+    () => fs.rmSync(catalogFile),
     () => fs.appendFileSync(path.join(candidate, 'SHA256SUMS'), fs.readFileSync(path.join(candidate, 'SHA256SUMS'), 'utf8').split('\n')[0] + '\n'),
     () => fs.writeFileSync(path.join(candidate, 'SHA256SUMS'), fs.readFileSync(path.join(candidate, 'SHA256SUMS'), 'utf8').split('\n').slice(1).join('\n')),
     () => fs.appendFileSync(path.join(candidate, 'SHA256SUMS'), `${'0'.repeat(64)}  ../outside\n`)
@@ -396,7 +428,9 @@ async function main() {
     assert.notEqual(result.status, 0, 'Changed, missing, extra, duplicated, incomplete or unsafe files must fail.');
   }
   for (const [field, value] of [['source_commit', 'b'.repeat(40)], ['run_id', '99'],
-    ['purpose', 'publish'], ['channel', 'alpha'], ['runtime', '17'], ['format', 2]]) {
+    ['source_ref', 'refs/heads/other'], ['purpose', 'publish'], ['channel', 'alpha'], ['runtime', '17'], ['format', 2],
+    ['radio_system_catalog_sha256', '0'.repeat(64)], ['radio_system_catalog_sha256', 'malformed'],
+    ['radio_system_catalog_sha256', undefined], ['unexpected_field', 'unexpected']]) {
     resetCandidate();
     fs.writeFileSync(path.join(candidate, 'candidate.json'), JSON.stringify({ ...metadata, [field]: value }));
     rewriteChecksums();
