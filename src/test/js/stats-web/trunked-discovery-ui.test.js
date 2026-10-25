@@ -10,7 +10,7 @@ async function main() {
   const { spectrumSearchGroupKey, spectrumSearchIdentityFacts, spectrumSearchSystemName } =
     await import(pathToFileURL(path.join(assets, 'features/spectrum-search-data.js')).href);
   const { discoveryRadioReferenceResult, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed,
-    createDiscoveryRadioReferenceWait, createDiscoveryCompletion, createDiscoveryTalkgroupAvailability, importDiscoveryAliases } =
+    createDiscoveryRadioReferenceWait, createDiscoveryCompletion, discoveryAliasImportMatch, discoveryAliasImportTargets, importDiscoveryAliases } =
     await import(pathToFileURL(path.join(assets, 'features/discovery-radioreference.js')).href);
   const { requestChannelAction, requestChannelAdminMutation } =
     await import(pathToFileURL(path.join(assets, 'core/channel-actions.js')).href);
@@ -109,7 +109,7 @@ async function main() {
   assert.match(JSON.stringify(unchanged), /Talkgroups already up to date/);
   const empty = createDiscoveryCompletion(ui, { imports: { targets: [{ state: 'imported',
     added: 0, updated: 0, unchanged: 0 }] } });
-  assert.match(JSON.stringify(empty), /No talkgroups to import/);
+  assert.match(JSON.stringify(empty), /No talkgroups available/);
   const lifecycleCalls = [];
   const savedStart = await requestChannelAction(async (url, options) => {
     lifecycleCalls.push([url, options]);
@@ -124,6 +124,22 @@ async function main() {
   await assert.rejects(requestChannelAction(async () => ({ results: [{ configuration_id: 'saved-channel',
     success: false, state: 'STOPPED', message: 'No receiver is available.' }] }),
   { action: 'START', configurationIds: ['saved-channel'] }), /No receiver is available/);
+  const receiver = { tuner_id: 'receiver-a', browse_lease_id: 'owned-lease' };
+  await requestChannelAction(async (_url, options) => {
+    assert.deepEqual(options.body.receiver, receiver);
+    return { results: [{ configuration_id: 'saved-channel', success: true, state: 'RUNNING' }],
+      receiver: { browse_lease_id: null, previous_channels_not_resumed: [] } };
+  }, { action: 'START', configurationIds: ['saved-channel'], receiver });
+  for (const browseLeaseId of ['owned-lease', null]) {
+    await assert.rejects(requestChannelAction(async () => ({ results: [{ configuration_id: 'saved-channel',
+      success: false, state: 'STOPPED', message: 'Listening could not start.' }],
+      receiver: { browse_lease_id: browseLeaseId, previous_channels_not_resumed: [] } }),
+    { action: 'START', configurationIds: ['saved-channel'], receiver }), (cause) => {
+      assert.equal(cause.receiver.browse_lease_id, browseLeaseId,
+        'A failed START retains the actual lease outcome for safe retry without a separate release.');
+      return true;
+    });
+  }
   await assert.rejects(requestChannelAction(async () => ({ results: [] }),
     { action: 'START', configurationIds: ['saved-channel'] }), /could not be confirmed/);
   const pendingStart = await requestChannelAction(async () => ({ results: [{ configuration_id: 'saved-channel',
@@ -169,54 +185,47 @@ async function main() {
     message: 'Channel discovery expired; begin again' }), true);
   assert.equal(discoveryCleanupAlreadyClosed({ status: 409, code: 'discovery_conflict',
     message: 'The selected tuner changed' }), false, 'Cleanup must not swallow real ownership conflicts.');
-  const availabilityCalls = [];
-  let availabilityRecovered = false;
-  const availableTalkgroups = createDiscoveryTalkgroupAvailability(async (url, options) => {
-    availabilityCalls.push([url, options.timeoutMs, options.csrf]);
-    const requestUrl = new URL(url, 'http://fixture.invalid');
-    assert.equal(requestUrl.pathname, '/api/v1/admin/radioreference/systems/talkgroups/availability');
-    assert.deepEqual([...requestUrl.searchParams.keys()], ['system_id']);
-    const systemId = Number(requestUrl.searchParams.get('system_id'));
-    if (systemId === 3 && !availabilityRecovered) throw new Error('Temporary directory failure');
-    return { has_talkgroups: systemId !== 2 };
-  });
-  const targets = [1, 2, 3].map((rrSystemId) => ({ rrSystemId, matched: true }));
-  await assert.rejects(availableTalkgroups([...targets, { rrSystemId: 4, matched: false },
-    { rrSystemId: 0, matched: true }, { rrSystemId: 1.5, matched: true }]), /could not be checked/);
-  assert.equal(availabilityCalls.length, 3);
-  assert.ok(availabilityCalls.every(([, timeout, csrf]) => timeout === 65000 && csrf === false));
-  await assert.rejects(availableTalkgroups(targets), /could not be checked/);
-  assert.deepEqual(await availableTalkgroups(targets.slice(0, 2)), [targets[0]]);
-  assert.equal(availabilityCalls.length, 4, 'Successful and empty availability checks are cached; failures can be retried.');
-  availabilityRecovered = true;
-  assert.deepEqual(await availableTalkgroups(targets), [targets[0], targets[2]]);
-  assert.equal(availabilityCalls.length, 5, 'Retrying a failed system must keep the other systems cached.');
-
-  let releaseAvailability;
-  let pendingChecks = 0;
-  const sharedAvailability = createDiscoveryTalkgroupAvailability(() => {
-    pendingChecks += 1;
-    return new Promise((resolve) => { releaseAvailability = resolve; });
-  });
-  const sharedTarget = { rrSystemId: 7, matched: true };
-  const firstCheck = sharedAvailability([sharedTarget]);
-  const duplicateCheck = sharedAvailability([sharedTarget, { ...sharedTarget, name: 'Another site' }]);
-  assert.equal(pendingChecks, 1, 'Concurrent sites from the same system share one pending availability request.');
-  releaseAvailability({ has_talkgroups: false });
-  assert.deepEqual(await firstCheck, []);
-  assert.deepEqual(await duplicateCheck, []);
-  assert.deepEqual(await sharedAvailability([sharedTarget]), []);
-  assert.equal(pendingChecks, 1, 'A confirmed empty system must not be checked again after Back.');
-
-  const availabilityReplies = [{}, { has_talkgroups: 'false' }, { has_talkgroups: true }];
-  const validAvailability = createDiscoveryTalkgroupAvailability(async () => availabilityReplies.shift());
-  await assert.rejects(validAvailability([sharedTarget]), /could not be checked/,
-    'A missing availability field must not silently skip the import.');
-  await assert.rejects(validAvailability([sharedTarget]), /could not be checked/,
-    'A nonboolean availability field must not be cached as an empty system.');
-  assert.deepEqual(await validAvailability([sharedTarget]), [sharedTarget],
-    'A malformed availability response must allow a successful retry.');
-  assert.equal(availabilityReplies.length, 0);
+  const matchedSystem = (id = 7) => ({ radio_reference: { state: 'matched', match: { rr_system_id: id } } });
+  const settledMatch = [matchedSystem(), { radio_reference: { state: 'no_match' } }];
+  assert.equal(discoveryAliasImportMatch(settledMatch), 7,
+    'A confirmed match may cover a sibling with no individual directory record.');
+  assert.equal(discoveryAliasImportMatch([matchedSystem(), { radio_reference: { state: 'pending' } }]), null,
+    'A selected system must finish naming before its import can be offered.');
+  assert.equal(discoveryAliasImportMatch([matchedSystem(7), matchedSystem(8)]), null);
+  for (const id of [0, -1, 1.5, 'invalid', null]) assert.equal(discoveryAliasImportMatch([matchedSystem(id)]), null);
+  for (const state of ['unavailable', 'no_match', 'ambiguous', 'manual', 'login_required', 'premium_required'])
+    assert.equal(discoveryAliasImportMatch([{ radio_reference: { state } }]), null);
+  const targetGroup = { groupId: 'north', values: settledMatch, aliasListId: 21,
+    name: 'County aliases', systemName: 'County' };
+  assert.deepEqual(discoveryAliasImportTargets([targetGroup]), [], 'A Premium directory connection is required.');
+  const targets = discoveryAliasImportTargets([targetGroup, { ...targetGroup, groupId: 'south' },
+    { ...targetGroup, groupId: 'new-north', aliasListId: 0, name: 'North aliases' },
+    { ...targetGroup, groupId: 'new-south', aliasListId: 0, name: 'South aliases' }], { available: true });
+  assert.equal(targets.length, 3, 'Only the same matched system and actual existing destination are coalesced.');
+  assert.deepEqual(targets[0], { name: 'County aliases', systemName: 'County', rrSystemId: 7,
+    matched: true, aliasGroupIds: ['north', 'south'] });
+  assert.deepEqual(targets.slice(1).map((target) => target.aliasGroupIds), [['new-north'], ['new-south']],
+    'Explicit new lists keep their own group destinations until Save returns actual IDs.');
+  for (const aliasListId of [null, -1, 1.5, 'invalid'])
+    assert.deepEqual(discoveryAliasImportTargets([{ ...targetGroup, aliasListId }], { available: true }), []);
+  assert.deepEqual(discoveryAliasImportTargets([{ ...targetGroup, name: ' ' }], { available: true }), []);
+  const finder = fs.readFileSync(path.join(assets, 'features/spectrum-search.js'), 'utf8');
+  assert.doesNotMatch(app + finder, /createDiscoveryTalkgroupAvailability|talkgroups\/availability/,
+    'Discovery must not download or check talkgroups before the channel is saved.');
+  const discovery = app.slice(app.indexOf('function openSpectrumDiscoveryWizard(selection)'),
+    app.indexOf('function tunerFrequencyAction(', app.indexOf('function openSpectrumDiscoveryWizard(selection)')));
+  assert.match(discovery, /showStep\(2, 'Review channel'\)/);
+  assert.match(discovery, /Import talkgroup names/);
+  assert.doesNotMatch(discovery, /Name your channel|Give it a name you’ll recognize/);
+  assert.doesNotMatch(discovery, /prepareSavedStart|Do you want to import talkgroups|Checking available talkgroups/);
+  assert.match(discovery, /\.\.\.error\.receiver, running: false/,
+    'Failed saved-channel starts must apply the atomic receiver outcome before onSaved updates lease ownership.');
+  assert.doesNotMatch(discovery, /\/start[`'"]/,
+    'A saved-channel retry uses the normal channel action endpoint rather than temporary RF discovery.');
+  assert.match(discovery, /restart_required: true, start_error: error\.message,\s+browse_lease_id: selection\.browseLeaseId \|\| null/,
+    'Publication failure before handoff preserves the captured Spectrum lease for its original owner.');
+  assert.match(discovery, /!previous\?\.session_id \|\| previous.saved/,
+    'Closing a completed Spectrum result must not delete an RF session.');
   const progress = [];
   const imports = [];
   const imported = await importDiscoveryAliases(async (url, options) => {

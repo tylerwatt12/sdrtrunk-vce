@@ -162,6 +162,7 @@ async function install(page, state = {}) {
   }
   state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value = state.locked === true;
   state.requests = [];
+  state.completedSaveIndexes = [];
   if (state.liveSpectrum) await installLiveSpectrumStream(page);
   const preferenceModule = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
@@ -257,12 +258,6 @@ async function install(page, state = {}) {
         account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39 };
       return respond(state.directoryConfiguration);
     }
-    if (path === '/api/v1/admin/radioreference/systems/talkgroups/availability') {
-      if (state.failTalkgroupCatalog) return route.fulfill({ status: 503, json: { error: {
-        code: 'unavailable', message: 'Talkgroups temporarily unavailable.' } } });
-      const count = state.talkgroupCount ?? 73;
-      return respond({ has_talkgroups: count > 0 });
-    }
     if (path === '/api/v1/admin/radioreference/countries') {
       if (state.failDirectoryCountriesCount > 0) {
         state.failDirectoryCountriesCount -= 1;
@@ -298,6 +293,7 @@ async function install(page, state = {}) {
       }
       state.protocolId = body.protocol_id === 'auto' ? state.detectedProtocolId || 'p25-phase1' : body.protocol_id;
       state.frequencyHz = body.frequency_hz;
+      state.discoveryActive = true;
       return respond(snapshot(state.protocolId, state));
     }
     if (path === '/api/v1/admin/spectrum-discovery/discovery-a') {
@@ -313,8 +309,11 @@ async function install(page, state = {}) {
           return route.fulfill({ status: 503, contentType: 'application/json',
             body: JSON.stringify({ error: { code: 'unavailable', message: 'Could not stop the signal check.' } }) });
         }
+        state.discoveryActive = false;
         return respond(null, 204);
       }
+      if (state.publishedSave) return route.fulfill({ status: 409, json: { error: {
+        code: 'discovery_conflict', message: 'Channel discovery expired; begin again' } } });
       if (state.expiredStatus) return route.fulfill({ status: state.expiredStatusCode || 409, contentType: 'application/json',
         body: JSON.stringify({ error: { code: state.expiredStatusCode === 410 ? 'spectrum_discovery_expired' : 'discovery_conflict',
           message: 'Channel discovery expired; begin again' } }) });
@@ -334,9 +333,14 @@ async function install(page, state = {}) {
       return respond(snapshot(state.protocolId, state));
     }
     if (path.endsWith('/save')) {
-      if (state.restartRequired) return route.fulfill({ status: 503, contentType: 'application/json',
-        body: JSON.stringify({ error: { code: 'channel_saved_restart_required',
-          message: 'The channel was saved, but receiver configuration could not refresh.' } }) });
+      if (state.restartRequired) {
+        state.publishedSave = true;
+        state.discoveryActive = false;
+        state.completedSaveIndexes.push(state.requests.length - 1);
+        return route.fulfill({ status: 503, contentType: 'application/json',
+          body: JSON.stringify({ error: { code: 'channel_saved_restart_required',
+            message: 'The channel was saved, but receiver configuration could not refresh.' } }) });
+      }
       if (state.failSaveOnce) {
         state.failSaveOnce = false;
         return route.fulfill({ status: 503, contentType: 'application/json',
@@ -349,6 +353,8 @@ async function install(page, state = {}) {
           body: JSON.stringify({ error: { code: 'stale_revision', message: 'Configuration changed.' } }) });
       }
       state.saved = true;
+      state.discoveryActive = false;
+      state.completedSaveIndexes.push(state.requests.length - 1);
       state.running = state.failStart !== true;
       if (ownership) {
         expect(body.browse_lease_id).toBe(ownership.active?.lease_id);
@@ -383,7 +389,7 @@ async function install(page, state = {}) {
       const failed = state.failImportOnce === true;
       state.failImportOnce = false;
       state.aliasImports = { targets: state.aliasImports.targets.map((target) => ({ ...target,
-        state: failed ? 'failed' : 'imported', added: failed ? 0 : state.importCount || 73, updated: 0, unchanged: 0,
+        state: failed ? 'failed' : 'imported', added: failed ? 0 : state.importCount ?? 73, updated: 0, unchanged: 0,
         message: failed ? 'RadioReference could not load these talkgroups. Try again.' : null })), complete: !failed };
       return respond(state.aliasImports);
     }
@@ -394,12 +400,24 @@ async function install(page, state = {}) {
       return respond(snapshot(state.protocolId, state));
     }
     if (path === '/api/v1/admin/channels/actions') {
-      if (ownership?.active?.takeover) return route.fulfill({ status: 409, json: { error: {
+      let receiver = null;
+      if (body.receiver) {
+        expect(body.receiver.tuner_id).toBe('idle-a');
+        if (ownership?.active?.lease_id !== body.receiver.browse_lease_id) return route.fulfill({ status: 409,
+          json: { error: { code: 'tuner_browse_unavailable', message: 'Spectrum tuner session belongs to another browser' } } });
+        ownership.active = null;
+        state.retainedBrowseLeaseId = null;
+        state.previousChannelsNotResumed = state.leavePreviousStopped ?
+          [{ id: 'previous-channel', name: 'Original distant receiver channel' }] : [];
+        receiver = { browse_lease_id: null, previous_channels_not_resumed: state.previousChannelsNotResumed };
+      } else if (ownership?.active?.takeover) return route.fulfill({ status: 409, json: { error: {
         code: 'tuner_browse_unavailable', message: 'Receiver is still reserved by Spectrum' } } });
+      state.channelActionStarts = (state.channelActionStarts || 0) + 1;
       state.running = true;
       state.tuner.channel_count = 1;
       state.tuner.operator_state = 'live';
-      return respond({ results: [{ configuration_id: 'channel-a', success: true, state: 'RUNNING', message: null }] });
+      return respond({ results: [{ configuration_id: 'channel-a', success: true, state: 'RUNNING', message: null }],
+        ...(receiver ? { receiver } : {}) });
     }
     return respond({});
   });
@@ -444,11 +462,26 @@ async function beginThroughSpectrumRail(page) {
 
 async function review(page) {
   await wizard(page).getByRole('button', { name: 'Review channel', exact: true }).click();
-  await expect(wizard(page).getByRole('heading', { name: 'Name your channel', exact: true })).toBeVisible();
+  await expect(wizard(page).getByRole('heading', { name: 'Review channel', exact: true })).toBeVisible();
 }
 
-const importYes = 'Yes, import talkgroup names';
-const importNo = "No, I'll import these later";
+const importYes = true;
+const importNo = false;
+const importTalkgroups = (page) => wizard(page).getByRole('checkbox', { name: 'Import talkgroup names', exact: true });
+
+test.afterEach(async ({ page }) => {
+  const state = fixtureStates.get(page);
+  if (!state) return;
+  expect(state.requests.filter(({ path }) =>
+    path.startsWith('/api/v1/admin/radioreference/systems/talkgroups'))).toHaveLength(0);
+  for (const savedAt of state.completedSaveIndexes) {
+    const nextSetup = state.requests.findIndex(({ path, method }, index) => index > savedAt &&
+      path === '/api/v1/admin/spectrum-discovery' && method === 'POST');
+    const afterSave = state.requests.slice(savedAt + 1, nextSetup < 0 ? undefined : nextSetup);
+    expect(afterSave.filter(({ path, method }) => path === '/api/v1/admin/spectrum-discovery/discovery-a' &&
+      ['GET', 'DELETE'].includes(method))).toHaveLength(0);
+  }
+});
 
 test('initial manual RadioReference state stays quiet until lookup starts and keeps real failures visible', async ({ page }) => {
   await page.clock.install();
@@ -473,7 +506,7 @@ test('initial manual RadioReference state stays quiet until lookup starts and ke
   await expect(result).toContainText('RadioReference is unavailable. The on-air result is still available.');
 });
 
-test('expired discovery DELETE cleanup resumes promptly', async ({ page }) => {
+test('saved discovery completion closes without deleting the ended RF session', async ({ page }) => {
   await page.clock.install();
   const state = {};
   await install(page, state);
@@ -484,7 +517,7 @@ test('expired discovery DELETE cleanup resumes promptly', async ({ page }) => {
   await wizard(page).getByRole('button', { name: 'Done', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
   expect(state.requests.filter((request) => request.method === 'DELETE' &&
-    request.path === '/api/v1/admin/spectrum-discovery/discovery-a')).toHaveLength(1);
+    request.path === '/api/v1/admin/spectrum-discovery/discovery-a')).toHaveLength(0);
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
@@ -512,7 +545,7 @@ test(`real Spectrum rail takes over a running receiver and keeps the new channel
 });
 }
 
-test('real Spectrum rail retains a failed handoff and retries its exact lease after discovery expiry', async ({ page }) => {
+test('real Spectrum rail atomically retries a failed handoff with its exact lease after completion expiry', async ({ page }) => {
   await page.clock.install();
   const state = { realSpectrumOwnership: true, liveSpectrum: true, retainHandoffOnce: true, leavePreviousStopped: true };
   await install(page, state);
@@ -526,19 +559,19 @@ test('real Spectrum rail retains a failed handoff and retries its exact lease af
   await expect(page.getByRole('button', { name: 'Setup', exact: true })).toHaveAttribute('aria-pressed', 'true');
   state.expiredStatus = true;
   state.expiredCleanup = true;
-  await page.clock.fastForward(6 * 60_000);
+  await page.clock.fastForward(16 * 60_000);
   await expect.poll(() => state.requests.some((request) => request.path.endsWith('/browse') &&
     request.method === 'POST' && request.body.lease_id === 'owned-browse-2')).toBe(true);
   await wizard(page).getByRole('button', { name: 'Try starting again', exact: true }).click();
   await expect(wizard(page).locator('.discovery-completion-status')).toHaveText('Running');
   await expect.poll(() => state.ownership.active?.lease_id).toBe('owned-browse-3');
-  const release = state.requests.findIndex((request) => request.path.endsWith('/browse') &&
-    request.method === 'DELETE' && request.body.lease_id === 'owned-browse-2');
-  const start = state.requests.findIndex((request) => request.path === '/api/v1/admin/channels/actions');
-  expect(release).toBeGreaterThan(-1);
-  expect(state.requests[release].body).toEqual({ lease_id: 'owned-browse-2', handoff: true });
-  expect(start).toBeGreaterThan(release);
-  expect(state.requests[start].body).toEqual({ action: 'START', configuration_ids: ['channel-a'] });
+  expect(state.requests.filter((request) => request.path.endsWith('/browse') &&
+    request.method === 'DELETE' && request.body.lease_id === 'owned-browse-2')).toHaveLength(0);
+  const starts = state.requests.filter((request) => request.path === '/api/v1/admin/channels/actions');
+  expect(starts).toHaveLength(1);
+  expect(starts[0].body).toEqual({ action: 'START', configuration_ids: ['channel-a'],
+    receiver: { tuner_id: 'idle-a', browse_lease_id: 'owned-browse-2' } });
+  expect(state.channelActionStarts).toBe(1);
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
   await expect(wizard(page).locator('.discovery-completion-name')).toHaveText('My saved control');
   await expect(wizard(page).locator('.discovery-completion-details')).toContainText('My saved aliases');
@@ -546,7 +579,7 @@ test('real Spectrum rail retains a failed handoff and retries its exact lease af
   await wizard(page).getByRole('button', { name: 'Done', exact: true }).click();
   await expect(page.locator('.spectrum-browse-state')).not.toContainText('In use');
   expect(state.requests.filter((request) => request.method === 'DELETE' &&
-    request.path === '/api/v1/admin/spectrum-discovery/discovery-a')).toHaveLength(1);
+    request.path === '/api/v1/admin/spectrum-discovery/discovery-a')).toHaveLength(0);
 });
 
 for (const failure of [false, true]) {
@@ -574,7 +607,7 @@ for (const failure of [false, true]) {
   });
 }
 
-test('real Spectrum rail refuses to release a different tab ownership before retrying a saved channel', async ({ page }) => {
+test('real Spectrum rail rejects atomic retry against another tab ownership without starting or releasing it', async ({ page }) => {
   const state = { realSpectrumOwnership: true, liveSpectrum: true, retainHandoffOnce: true };
   await install(page, state);
   await beginThroughSpectrumRail(page);
@@ -586,7 +619,13 @@ test('real Spectrum rail refuses to release a different tab ownership before ret
   await expect(wizard(page).getByRole('button', { name: 'Try starting again', exact: true })).toBeEnabled();
   await expect(wizard(page)).toContainText('Spectrum tuner session belongs to another browser');
   expect(state.ownership.active.lease_id).toBe('other-tab-lease');
-  expect(state.requests.filter((request) => request.path === '/api/v1/admin/channels/actions')).toHaveLength(0);
+  const starts = state.requests.filter((request) => request.path === '/api/v1/admin/channels/actions');
+  expect(starts).toHaveLength(1);
+  expect(starts[0].body.receiver).toEqual({ tuner_id: 'idle-a', browse_lease_id: 'owned-browse-2' });
+  expect(state.channelActionStarts || 0).toBe(0);
+  expect(state.running).toBe(false);
+  expect(state.requests.filter((request) => request.path.endsWith('/browse') && request.method === 'DELETE' &&
+    ['owned-browse-2', 'other-tab-lease'].includes(request.body.lease_id))).toHaveLength(0);
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
 });
 
@@ -602,33 +641,26 @@ async function expectStepWordsFit(modal) {
 
 async function addDiscovery(page, importChoice = importNo) {
   const modal = wizard(page);
-  const continueButton = modal.getByRole('button', { name: 'Continue', exact: true });
-  if (await continueButton.count()) {
-    await continueButton.click();
-    await expect(modal).not.toHaveAttribute('aria-busy', 'true');
-    if (!await modal.getByRole('radio', { name: importChoice, exact: true }).count()) return;
-  }
-  const choice = modal.getByRole('radio', { name: importChoice, exact: true });
-  if (await choice.count()) await choice.check();
+  const choice = importTalkgroups(page);
+  if (await choice.count()) await choice.setChecked(importChoice);
   await modal.getByRole('button', { name: 'Add and start listening', exact: true }).click();
 }
 
-for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
-  test(`discovery import choice has explicit Yes and No in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+  test(`discovery offers talkgroup import inline on one Review in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const state = ohioDiscoveryFixture(theme);
     await install(page, state);
     await begin(page);
     await review(page);
-    await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
-    await expect(wizard(page).getByRole('heading', {
-      name: /^Do you want to import talkgroups into your Alias Lists?\?$/ })).toBeVisible();
-    await expect(wizard(page).getByRole('radio')).toHaveCount(2);
-    await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toBeChecked();
-    await expect(wizard(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText(ohioSystem);
+    await expect(wizard(page).getByRole('heading', { name: 'Review channel', exact: true })).toBeVisible();
+    await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
+    await expect(wizard(page).getByRole('radio')).toHaveCount(0);
+    await expect(importTalkgroups(page)).toBeChecked();
+    await expect(wizard(page).getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
     await expect(wizard(page).getByRole('button', { name: 'Back', exact: true })).toBeVisible();
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
-    expect(state.requests.filter(({ path }) => path.endsWith('/systems/talkgroups/availability'))).toHaveLength(1);
+    expect(state.requests.filter(({ path }) => path.endsWith('/systems/talkgroups/availability'))).toHaveLength(0);
     expect(state.requests.filter(({ path }) => path.endsWith('/systems/talkgroups'))).toHaveLength(0);
     const fits = await wizard(page).evaluate((element) => {
       const bounds = element.getBoundingClientRect();
@@ -638,7 +670,13 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     });
     expect(fits).toBe(true);
     await wizard(page).screenshot({ animations: 'disabled', path: testInfo.outputPath(`import-choice-${theme}-${width}.png`) });
-    await wizard(page).getByRole('radio', { name: importNo, exact: true }).check();
+    await importTalkgroups(page).scrollIntoViewIfNeeded();
+    await expect(wizard(page).getByRole('button', { name: 'Add and start listening', exact: true })).toBeInViewport();
+    const footer = await wizard(page).locator('.spectrum-discovery-actions').boundingBox();
+    expect(footer.y).toBeGreaterThanOrEqual(0);
+    expect(footer.y + footer.height).toBeLessThanOrEqual(900);
+    await wizard(page).screenshot({ animations: 'disabled', path: testInfo.outputPath(`review-options-${theme}-${width}.png`) });
+    await importTalkgroups(page).uncheck();
     await addDiscovery(page);
     await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
     expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
@@ -648,7 +686,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
 const directoryNamesLoading = (page) => wizard(page).getByRole('status')
   .filter({ hasText: /^Looking up RadioReference names…$/ });
 const discoveryAdvance = (page) => wizard(page).getByRole('button', {
-  name: /^(Continue|Add and start listening)$/
+  name: 'Add and start listening', exact: true
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
@@ -682,11 +720,10 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await expect(directoryNamesLoading(page)).toBeHidden();
     await expect(reviewAction).toBeEnabled();
     await review(page);
-    await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+    await expect(discoveryAdvance(page)).toBeEnabled();
     await wizard(page).getByLabel('Channel name', { exact: true }).fill('My control channel');
     await expect(wizard(page).getByLabel('Channel name', { exact: true })).toHaveValue('My control channel');
-    await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
-    await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toBeChecked();
+    await expect(importTalkgroups(page)).toBeChecked();
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
     await addDiscovery(page, importYes);
     await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
@@ -695,7 +732,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   });
 }
 
-for (const terminalState of ['no_match', 'unavailable']) {
+for (const terminalState of ['no_match', 'unavailable', 'ambiguous']) {
   test(`discovery unlocks adding after RadioReference names resolve to ${terminalState}`, async ({ page }) => {
     await page.clock.install();
     const state = { directoryResult: { state: 'pending' } };
@@ -708,6 +745,7 @@ for (const terminalState of ['no_match', 'unavailable']) {
     await expect(directoryNamesLoading(page)).toBeHidden();
     await expect(wizard(page)).toContainText('The detected names will be used.');
     await review(page);
+    await expect(importTalkgroups(page)).toHaveCount(0);
     await expect(wizard(page).getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
     await addDiscovery(page);
     await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
@@ -734,7 +772,7 @@ test('discovery keeps adding protected after a RadioReference names poll fails a
   await retry.click();
   await expect(directoryNamesLoading(page)).toBeHidden();
   await review(page);
-  await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+  await expect(discoveryAdvance(page)).toBeEnabled();
 });
 
 for (const response of [
@@ -879,12 +917,11 @@ test('discovery keeps an explicit No choice after Back and never retries imports
   await install(page, state);
   await begin(page);
   await review(page);
-  await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  await wizard(page).getByRole('radio', { name: importNo, exact: true }).check();
+  await importTalkgroups(page).uncheck();
   await wizard(page).getByRole('button', { name: 'Back', exact: true }).click();
-  await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(wizard(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
-  await wizard(page).getByRole('radio', { name: importYes, exact: true }).check();
+  await review(page);
+  await expect(importTalkgroups(page)).not.toBeChecked();
+  await importTalkgroups(page).check();
   await addDiscovery(page, importYes);
   await expect(wizard(page)).toContainText('Your channel was saved, but VCE needs to restart');
   await expect(wizard(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
@@ -907,7 +944,7 @@ test('discovery imports into an explicitly reused same-name list and skips witho
   await review(page);
   await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toHaveCount(0);
   await expect(wizard(page).getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
-  await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toHaveCount(0);
+  await expect(importTalkgroups(page)).toHaveCount(0);
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
@@ -942,7 +979,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
         resolve(process.env.VCE_DISCOVERY_SCREENSHOTS, name) : testInfo.outputPath(name) });
     };
     await capture('review');
-    await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(importTalkgroups(page)).toBeChecked();
     await expect(wizard(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText(realDirectory.system_name);
     await expect(wizard(page).getByRole('button', { name: 'Back', exact: true })).toBeVisible();
     await capture('import-choice');
@@ -1148,19 +1185,21 @@ test('discovery signs in above the same wizard and immediately uses its region w
   expect(state.requests.filter(({ path, method }) => path === '/api/v1/admin/radioreference/session' && method === 'PUT')).toHaveLength(1);
 });
 
-for (const scenario of [{ talkgroupCount: 0 }]) {
-  test(`discovery skips unavailable talkgroups when ${scenario.talkgroupCount === 0 ? 'empty' : 'the catalog fails'}`, async ({ page }) => {
-    const state = { ...ohioDiscoveryFixture('light'), ...scenario };
-    await install(page, state);
-    await begin(page);
-    await review(page);
-    await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
-    await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
-    await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toHaveCount(0);
-    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
-    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
-  });
-}
+test('discovery discovers an empty talkgroup import only after saving and completes successfully', async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), importCount: 0 };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await expect(importTalkgroups(page)).toBeChecked();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save') || path.endsWith('/aliases/import'))).toHaveLength(0);
+  await addDiscovery(page, importYes);
+  await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
+  await expect(wizard(page)).toContainText('No talkgroups available');
+  await expect(wizard(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
+  await expect(wizard(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+});
 
 test('discovery start failure restores the saved region control after its pending initial load', async ({ page }) => {
   const state = { delayDirectoryStates: true, failCreateOnce: true,
@@ -1316,6 +1355,7 @@ test('review heartbeat preserves edited System, Alias List, channel name and cha
   await expect(alias).toHaveValue('My transit system');
   await alias.fill('My transit listeners');
   await name.fill('My transit control');
+  await importTalkgroups(page).uncheck();
   await wizard(page).getByRole('button', { name: 'Add mapping', exact: true }).click();
   const manual = wizard(page).locator('.channel-map-row').nth(1);
   await manual.locator('input').nth(0).fill('2');
@@ -1327,6 +1367,7 @@ test('review heartbeat preserves edited System, Alias List, channel name and cha
   await expect(name).toBeFocused();
   await expect(system).toHaveValue('My transit system');
   await expect(alias).toHaveValue('My transit listeners');
+  await expect(importTalkgroups(page)).not.toBeChecked();
   await expect(manual.locator('input').nth(1)).toHaveValue('851.25');
   await addDiscovery(page);
   const saved = state.requests.find(request => request.path.endsWith('/save')).body;
@@ -2041,7 +2082,7 @@ test('P25 becoming ready preserves keyboard focus until the user reviews it', as
   await expect(cancel).toBeFocused();
   await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
   await review(page);
-  await expect(dialog.getByRole('heading', { name: 'Name your channel', exact: true })).toBeFocused();
+  await expect(dialog.getByRole('heading', { name: 'Review channel', exact: true })).toBeFocused();
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
 });
 
@@ -2276,6 +2317,46 @@ test('a saved channel requiring a receiver restart never offers another Add or s
   await expect(dialog).toHaveCount(0);
 });
 
+test('real Spectrum rail ends RF checking after a published-save failure and retains its parent browse lease until page cleanup', async ({ page }) => {
+  await page.clock.install();
+  const state = { ...ohioDiscoveryFixture('light'), realSpectrumOwnership: true, liveSpectrum: true,
+    restartRequired: true };
+  await install(page, state);
+  await beginThroughSpectrumRail(page);
+  await review(page);
+  await expect(importTalkgroups(page)).toBeChecked();
+  await addDiscovery(page, importYes);
+  const dialog = wizard(page);
+  await expect(dialog).toContainText('Your channel was saved, but VCE needs to restart');
+  await expect(dialog.locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
+  expect(state.discoveryActive).toBe(false);
+  expect(state.ownership.active.lease_id).toBe('owned-browse-2');
+  await expect(dialog.getByRole('button', { name: /^(Add and start listening|Try adding again|Try starting again|Retry talkgroup imports)$/ }))
+    .toHaveCount(0);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import') ||
+    path === '/api/v1/admin/channels/actions')).toHaveLength(0);
+  const renewals = () => state.requests.filter(({ path, method, body }) => path.endsWith('/browse') &&
+    method === 'POST' && body.lease_id === 'owned-browse-2').length;
+  const before = renewals();
+  await page.clock.fastForward(35_000);
+  await expect.poll(renewals).toBeGreaterThan(before);
+  expect(state.ownership.active.lease_id).toBe('owned-browse-2');
+  await expect(dialog).not.toContainText(/refresh this setup|Check your connection|discovery expired/);
+  await dialog.getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(state.ownership.active.lease_id).toBe('owned-browse-2');
+  expect(state.requests.filter(({ path, method, body }) => path.endsWith('/browse') &&
+    method === 'DELETE' && body.lease_id === 'owned-browse-2')).toHaveLength(0);
+  await page.evaluate(() => document.querySelector('a[data-view="dashboard"]').click());
+  await expect.poll(() => state.ownership.active).toBe(null);
+  const releases = state.requests.filter(({ path, method, body }) => path.endsWith('/browse') &&
+    method === 'DELETE' && body.lease_id === 'owned-browse-2');
+  expect(releases).toHaveLength(1);
+  expect(releases[0].body).toEqual({ lease_id: 'owned-browse-2' });
+  expect(state.tuner.channel_count).toBe(state.ownership.stoppedChannels);
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+});
+
 test('ambiguous aliases require a choice; saved start failure retries without recreating', async ({ page }) => {
   await page.clock.install();
   const state = { ambiguous: true, failStart: true };
@@ -2303,8 +2384,8 @@ test('ambiguous aliases require a choice; saved start failure retries without re
   expect(save.alias_list_id).toBe(22);
   expect(save.new_alias_list_name).toBeNull();
   await dialog.getByRole('button', { name: 'Done', exact: true }).click();
-  await expect.poll(() => state.requests.some((request) => request.path.endsWith('/discovery-a') &&
-    request.method === 'DELETE')).toBe(true);
+  expect(state.requests.filter((request) => request.path.endsWith('/discovery-a') &&
+    request.method === 'DELETE')).toHaveLength(0);
 });
 
 test('one P25 identity match offers an explicit existing or new Alias List choice', async ({ page }) => {
@@ -2371,7 +2452,7 @@ test('retrying a failed add preserves names and listening choices without adding
   await expect(dialog).toContainText('County Control');
   await expect(dialog).toContainText('Test receiver');
   await expect(dialog).toContainText('851.012500 MHz');
-  await expect(dialog).toContainText('P25 radio system');
+  await expect(dialog).toContainText('P25 Phase 1');
   await expect(dialog).toContainText('County listening');
   await expect(dialog.getByText('Open channel', { exact: true })).toBeVisible();
   const saves = state.requests.filter((request) => request.path.endsWith('/save'));
@@ -2396,7 +2477,7 @@ test('a fractional Hertz spectrum selection displays and submits the same intege
   await expect(dialog.locator('.spectrum-discovery-context strong')).toHaveText('776.715008 MHz');
   await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
   await review(page);
-  await expect(dialog.getByRole('heading', { name: 'Name your channel' })).toBeVisible();
+  await expect(dialog.getByRole('heading', { name: 'Review channel' })).toBeVisible();
   await expect(dialog.locator('.spectrum-discovery-context strong')).toHaveText('776.715008 MHz');
   expect(state.requests.find((request) => request.path === '/api/v1/admin/spectrum-discovery' &&
     request.method === 'POST').body.frequency_hz).toBe(776715008);
@@ -2488,8 +2569,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await expect(dialog.getByText('Follow control frequency changes', { exact: true })).toHaveCount(0);
     await dialog.getByLabel('Alias List', { exact: true }).scrollIntoViewIfNeeded();
     await dialog.screenshot({ path: test.info().outputPath(`alias-choice-${theme}-${width}.png`) });
-    await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
-    await dialog.getByRole('radio', { name: importYes, exact: true }).check();
+    await expect(importTalkgroups(page)).toBeChecked();
     await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
     await expect(dialog.getByRole('heading', { name: 'Importing talkgroups', exact: true })).toBeVisible();
     await expect.poll(() => typeof state.releaseImport).toBe('function');
@@ -2513,13 +2593,15 @@ test('discovery can explicitly create a uniquely named list beside an existing s
   const name = dialog.getByLabel('New Alias List name', { exact: true });
   await expect(name).toBeVisible();
   await expect(dialog).toContainText('already exists. Choose it above or enter a different name.');
-  await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
   expect(state.requests.filter(({ path }) => path.endsWith('/save') || path.includes('/systems/talkgroups'))).toHaveLength(0);
   await name.fill('MARCS event listeners');
-  await dialog.getByRole('button', { name: 'Continue', exact: true }).click();
+  await importTalkgroups(page).uncheck();
   await dialog.getByRole('button', { name: 'Back', exact: true }).click();
+  await review(page);
   await expect(dialog.getByLabel('Alias List', { exact: true })).toHaveValue('0');
   await expect(name).toHaveValue('MARCS event listeners');
+  await expect(importTalkgroups(page)).not.toBeChecked();
   await addDiscovery(page, importYes);
   await expect(dialog).toContainText('73 added, 0 updated, 0 unchanged.');
   const saved = state.requests.find(({ path }) => path.endsWith('/save')).body;
@@ -2546,23 +2628,37 @@ test('discovery restores import choices after a failed channel save and retries 
   await addDiscovery(page, importYes);
   const dialog = wizard(page);
   await expect(dialog.getByRole('button', { name: 'Try adding again', exact: true })).toBeEnabled();
-  await expect(dialog.getByRole('radio', { name: importYes, exact: true })).toBeEnabled();
-  await expect(dialog.getByRole('radio', { name: importNo, exact: true })).toBeEnabled();
+  await expect(importTalkgroups(page)).toBeEnabled();
+  await expect(importTalkgroups(page)).toBeChecked();
   await dialog.getByRole('button', { name: 'Try adding again', exact: true }).click();
   await expect(dialog).toContainText('73 added, 0 updated, 0 unchanged.');
   expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(2);
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
 });
 
-test('discovery retries a failed talkgroup catalog check without adding the channel early', async ({ page }) => {
-  const state = { ...ohioDiscoveryFixture('light'), failTalkgroupCatalog: true };
+for (const failure of ['stale', 'unavailable']) {
+test(`discovery keeps an unchecked import choice and edited names through ${failure} save and retry`, async ({ page }) => {
+  const state = { ...ohioDiscoveryFixture('light'), staleOnce: failure === 'stale', failSaveOnce: failure === 'unavailable' };
+  await page.clock.install();
   await install(page, state);
   await begin(page);
   await review(page);
-  await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(wizard(page)).toContainText('Talkgroups could not be checked. Try again.');
-  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
-  state.failTalkgroupCatalog = false;
-  await addDiscovery(page, importYes);
-  await expect(wizard(page)).toContainText('73 added, 0 updated, 0 unchanged.');
+  const dialog = wizard(page);
+  await dialog.getByLabel('Channel name', { exact: true }).fill('My control');
+  await dialog.getByLabel('New Alias List name', { exact: true }).fill('My names');
+  await importTalkgroups(page).uncheck();
+  await page.clock.fastForward(11_000);
+  await expect(importTalkgroups(page)).not.toBeChecked();
+  await dialog.getByRole('button', { name: 'Add and start listening', exact: true }).click();
+  await expect(dialog).toContainText(failure === 'stale' ?
+    'Your saved choices changed. Check the Alias List and try adding again.' :
+    'We couldn’t add your channel. Your choices are still here. Try again.');
+  await expect(importTalkgroups(page)).not.toBeChecked();
+  await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue('My control');
+  await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('My names');
+  await dialog.getByRole('button', { name: /^(Add and start listening|Try adding again)$/ }).click();
+  await expect(dialog.locator('.discovery-completion')).toBeVisible();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(2);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
 });
+}

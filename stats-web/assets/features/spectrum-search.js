@@ -2,7 +2,7 @@ import { systemIdentity } from '../core/system-labels.js?v=2';
 import { spectrumSearchProtocolLabel, spectrumSearchSystemName, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchGroupKey } from './spectrum-search-data.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=2';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, createDiscoveryCompletion, createDiscoveryRadioReferenceWait, createDiscoveryAliasListChoice, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases, createDiscoveryTalkgroupAvailability } from './discovery-radioreference.js?v=15';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, createDiscoveryCompletion, createDiscoveryRadioReferenceWait, createDiscoveryAliasListChoice, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases, discoveryAliasImportTargets } from './discovery-radioreference.js?v=16';
 
 export function openSpectrumSearchWizard(ui, context = {}) {
   const { node, openReadOnlyModal, requestJson, uiActionButton, iconButton, uiSelect, uiSelectFrame, uiPill,
@@ -281,7 +281,6 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   const receiver = () => catalog?.tuners?.find((tuner) => tuner.id === receiverId);
   const candidates = () => job?.candidates || [];
   const directory = createDiscoveryRadioReferenceContext(ui, request, { signal: abort.signal });
-  const availableTalkgroups = createDiscoveryTalkgroupAvailability(request);
   const scopedAliasImport = (result) => {
     const scoped = result ? { ...result, targets: (result.targets || []).filter((target) =>
       aliasImportSystemIds.has(Number(target.system_id))) } : null;
@@ -1419,34 +1418,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     button('Back', showResults);
     const aliasGroups = groupedCandidates(chosen).filter((entry) => entry.aliasGroup);
     const addLabel = `Add ${chosen.length} ${chosen.length === 1 ? 'channel' : 'channels'}`;
-    const importTargets = () => {
-      if (!directory.available()) return [];
-      const targets = new Map();
-      aliasGroups.forEach((entry) => {
-        const draft = groups.get(entry.aliasGroup.group_id);
-        if (draft?.alias_list_id == null) return;
-        const members = candidates().filter((candidate) => spectrumSearchGroupKey(candidate) === entry.key);
-        const representative = groupRepresentative(members);
-        const matchedIds = members.filter((candidate) => candidate.radio_reference?.state === 'matched')
-          .map((candidate) => Number(candidate.radio_reference.match?.rr_system_id));
-        const directoryIds = new Set(matchedIds);
-        if (directoryIds.size !== 1 || !matchedIds.every((id) => Number.isSafeInteger(id) && id > 0)) return;
-        const rrSystemId = [...directoryIds][0];
-        const aliasListId = Number(draft.alias_list_id);
-        const name = aliasListId > 0 ? entry.aliasGroup.alias_lists?.find((list) => list.id === aliasListId)?.name :
-          draft.new_alias_list_name;
-        if (!name) return;
-        const destination = aliasListId > 0 ? `existing:${aliasListId}` : `new:${entry.aliasGroup.group_id}`;
-        const key = `${rrSystemId}:${destination}`;
-        const existing = targets.get(key);
-        if (existing) existing.aliasGroupIds.push(entry.aliasGroup.group_id);
-        else targets.set(key, {
-          name, systemName: systemLabel(representative), rrSystemId, matched: true,
-          aliasGroupIds: [entry.aliasGroup.group_id]
-        });
-      });
-      return [...targets.values()];
-    };
+    const importTargets = () => discoveryAliasImportTargets(aliasGroups.map((entry) => {
+      const draft = groups.get(entry.aliasGroup.group_id);
+      const members = candidates().filter((candidate) => spectrumSearchGroupKey(candidate) === entry.key);
+      const aliasListId = draft?.alias_list_id;
+      return { groupId: entry.aliasGroup.group_id, values: members, aliasListId,
+        name: Number(aliasListId) > 0 ? entry.aliasGroup.alias_lists?.find((list) => list.id === Number(aliasListId))?.name :
+          draft?.new_alias_list_name,
+        systemName: systemLabel(groupRepresentative(members)) };
+    }), { available: directory.available() });
     const add = button(importTargets().length ? 'Continue' : addLabel, async () => {
       if (busy || pendingSelectedDirectory()) { refreshReviewImportAction?.(); return; }
       const invalidChoice = reviewGroupBindings.find((binding) => binding.aliasChoice && !binding.aliasChoice.validate());
@@ -1467,19 +1447,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         mapEditors.forEach(({ map, field, draft }) => { draft.frequency_map = channelEditorFieldValue(map, field); });
       } catch (cause) { error(cause.message || 'Check the channel maps and try again.'); return; }
       const ids = chosen.map((candidate) => candidate.candidate_id);
-      const possibleTargets = importTargets();
-      let targets = [];
-      if (possibleTargets.length) {
-        setBusy(true);
-        feedback.replaceChildren(node('p', '', 'Checking available talkgroups…'));
-        try { targets = await availableTalkgroups(possibleTargets); }
-        catch (cause) {
-          if (current()) error('RadioReference talkgroups could not be checked. Try again.', cause);
-          return;
-        } finally { if (current()) setBusy(false); }
-        if (!current()) return;
-        clearFeedback();
-      }
+      const targets = importTargets();
       if (pendingSelectedDirectory(ids)) { refreshReviewImportAction?.(); scheduleDirectoryPoll(); return; }
       aliasImportSystemIds = new Set(targets.map((target) => target.rrSystemId));
       aliasImportSelections = targets;

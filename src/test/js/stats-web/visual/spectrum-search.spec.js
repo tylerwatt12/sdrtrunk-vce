@@ -8,6 +8,7 @@ const configurationId = '7f408d02-7c20-44b2-97ce-f6202b24b0f7';
 const protocols = require(resolve(root, 'src/main/resources/channel-protocols.json'));
 const realDirectory = process.env.VCE_DISCOVERY_REAL_DATA ?
   JSON.parse(readFileSync(process.env.VCE_DISCOVERY_REAL_DATA, 'utf8')) : null;
+const fixtureStates = new WeakMap();
 const dialog = (page) => page.locator('.spectrum-search-modal');
 const bandLabels = ['VHF high · 138–174 MHz', 'UHF · 406–470 MHz', '700 MHz · 769–775 MHz',
   '800 MHz · 851–869 MHz', 'Custom range'];
@@ -106,6 +107,7 @@ function snapshot(state) {
 }
 
 async function install(page, state = {}) {
+  fixtureStates.set(page, state);
   state.requests = [];
   if (state.directoryConfiguration === undefined && state.customCandidates?.some((candidate) =>
     candidate.radio_reference && !['login_required', 'premium_required'].includes(candidate.radio_reference.state)))
@@ -161,12 +163,6 @@ async function install(page, state = {}) {
         account: { state: 'VALID_PREMIUM' }, country_id: 1, state_id: 39
       };
       return respond(state.directoryConfiguration);
-    }
-    if (path === '/api/v1/admin/radioreference/systems/talkgroups/availability') {
-      if (state.failTalkgroupCatalog) return fail('Catalog unavailable');
-      const systemId = Number(new URL(request.url()).searchParams.get('system_id'));
-      const empty = state.emptyTalkgroupSystems?.includes(systemId);
-      return respond({ has_talkgroups: !empty });
     }
     if (path === '/api/v1/admin/radioreference/countries') {
       if (state.failDirectoryCountriesCount > 0) {
@@ -359,7 +355,8 @@ async function install(page, state = {}) {
       if (failed) state.failImportAliasOnce = null;
       state.aliasImports.targets = state.aliasImports.targets.map((target) =>
         target.alias_list_id === body.alias_list_id ? { ...target, state: failed ? 'failed' : 'imported',
-          added: failed ? 0 : state.aliasImportCounts?.[body.alias_list_id]?.added ?? state.importCount ?? 73,
+          added: failed || state.emptyTalkgroupSystems?.includes(target.system_id) ? 0 :
+            state.aliasImportCounts?.[body.alias_list_id]?.added ?? state.importCount ?? 73,
           updated: failed ? 0 : state.aliasImportCounts?.[body.alias_list_id]?.updated ?? 0,
           unchanged: failed ? 0 : state.aliasImportCounts?.[body.alias_list_id]?.unchanged ?? 0,
           message: failed ? 'RadioReference could not load these talkgroups. Try again.' : null } : target);
@@ -390,6 +387,12 @@ async function complete(page) {
 
 const importYes = 'Yes, import talkgroup names';
 const importNo = "No, I'll import these later";
+
+test.afterEach(async ({ page }) => {
+  const state = fixtureStates.get(page);
+  if (state) expect(state.requests.filter(({ path }) =>
+    path.startsWith('/api/v1/admin/radioreference/systems/talkgroups'))).toHaveLength(0);
+});
 
 async function expectStepWordsFit(modal) {
   expect(await modal.evaluate((element) => [...element.querySelectorAll('.spectrum-discovery-progress li > span:last-child')]
@@ -504,7 +507,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       await expect(dialog(page).locator('.spectrum-discovery-review dl').nth(index).locator('dd').first()).toHaveText(name);
     await expect(dialog(page).getByRole('button', { name: 'Back', exact: true })).toBeVisible();
     expect(savedSearchRequests(state).saves).toHaveLength(0);
-    expect(state.requests.filter(({ path }) => path.endsWith('/systems/talkgroups/availability'))).toHaveLength(3);
+    expect(state.requests.filter(({ path }) => path.endsWith('/systems/talkgroups/availability'))).toHaveLength(0);
     expect(state.requests.filter(({ path }) => path.endsWith('/systems/talkgroups'))).toHaveLength(0);
     const fits = await dialog(page).evaluate((element) => {
       const bounds = element.getBoundingClientRect();
@@ -741,39 +744,42 @@ test('signed-out search results omit late RadioReference panels and the import s
   expect(state.requests.filter(({ path }) => path.includes('/systems/talkgroups') || path.endsWith('/aliases/import'))).toHaveLength(0);
 });
 
-test('search skips a confirmed empty talkgroup catalog and adds channels', async ({ page }) => {
+test('search completes empty talkgroup imports successfully after adding channels', async ({ page }) => {
   const state = await install(page, importSearchFixture({ emptyTalkgroupSystems: [123, 124, 125] }));
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
   await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
   await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
+  await expect(dialog(page).getByRole('radio', { name: importYes, exact: true })).toBeChecked();
+  expect(state.requests.filter(({ path }) => path.endsWith('/save') || path.endsWith('/aliases/import'))).toHaveLength(0);
+  await addChannels(page, 4, importYes);
   await expect(dialog(page)).toContainText('4 channels added');
   await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
   await expect(dialog(page).getByRole('radio')).toHaveCount(0);
-  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
+  await expect(dialog(page).getByText('No talkgroups available', { exact: true })).toHaveCount(3);
+  await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(3);
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
 });
 
-test('search keeps the review after a failed talkgroup catalog check and retries without saving early', async ({ page }) => {
-  const state = await install(page, importSearchFixture({ failTalkgroupCatalog: true }));
+test('search offers confirmed systems without a talkgroup availability request and No skips downloading', async ({ page }) => {
+  const state = await install(page, importSearchFixture());
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
   await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(dialog(page).getByText('RadioReference talkgroups could not be checked. Try again.', { exact: true }).first()).toBeVisible();
-  await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
-  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
-  state.failTalkgroupCatalog = false;
   await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(dialog(page).getByRole('heading', {
     name: 'Do you want to import talkgroups into your Alias Lists?', exact: true })).toBeVisible();
   await expect(dialog(page)).not.toHaveAttribute('aria-busy', 'true');
   await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(3);
-  await addChannels(page, 4, importYes);
+  expect(state.requests.filter(({ path }) => path.includes('/systems/talkgroups') ||
+    path.endsWith('/save') || path.endsWith('/aliases/import'))).toHaveLength(0);
+  await addChannels(page, 4, importNo);
   await expect(dialog(page)).toContainText('4 channels added');
-  await expect(dialog(page).getByText('73 added, 0 updated, 0 unchanged.', { exact: true })).toHaveCount(3);
+  await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
   await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
   expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
-  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(3);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
 });
 
 const searchDirectoryNamesLoading = (page) => dialog(page).getByRole('status')
@@ -920,19 +926,20 @@ test('search keeps adding protected after a RadioReference names poll fails and 
   await expect(dialog(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
 });
 
-test('search offers and imports only systems with available talkgroups in a mixed result', async ({ page }) => {
+test('search offers every confirmed system and reports empty talkgroups beside successful imports', async ({ page }) => {
   const state = await install(page, importSearchFixture({ emptyTalkgroupSystems: [124] }));
   await complete(page);
   await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
   await dialog(page).getByRole('button', { name: 'Review 4 channels', exact: true }).click();
   await dialog(page).getByRole('button', { name: 'Continue', exact: true }).click();
-  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(2);
-  await expect(dialog(page)).not.toContainText(ohioSystems.cleveland);
+  await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(3);
+  await expect(dialog(page)).toContainText(ohioSystems.cleveland);
   await addChannels(page, 4, importYes);
   await expect(dialog(page)).toContainText('4 channels added');
   await expect(dialog(page).getByText('73 added, 0 updated, 0 unchanged.', { exact: true })).toHaveCount(2);
+  await expect(dialog(page).getByText('No talkgroups available', { exact: true })).toHaveCount(1);
   await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
-  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body.alias_list_id)).toEqual([41, 43]);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body.alias_list_id)).toEqual([41, 42, 43]);
 });
 
 test('search skips the import step without a trusted RadioReference match', async ({ page }) => {

@@ -33,14 +33,14 @@ import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=12';
+} from './features/alias-list-create.js?v=13';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=58';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
-import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=15';
-import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=1';
+import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=16';
+import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
@@ -8188,7 +8188,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : streaming ? [
       import('./features/streaming.js?v=14'), import('./guides/streaming-presentation.js?v=1')
     ] : [
-      import('./features/radioreference-import.js?v=38'), import('./guides/radioreference-presentation.js?v=1')
+      import('./features/radioreference-import.js?v=39'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
     const sample = (mapTour ? presentation.createMapGuideData : visualizerTour ? presentation.createNetworkVisualizerGuideData : topics ? presentation.createTopicsGuideData : scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
@@ -15640,6 +15640,7 @@ function openSpectrumDiscoveryWizard(selection) {
   let pollTimer = null;
   let heartbeatTimer = null;
   let pendingOpen = null;
+  let closingSession = null;
   let closed = false;
   let operation = 0;
   let settings = {};
@@ -15664,7 +15665,6 @@ function openSpectrumDiscoveryWizard(selection) {
   const directory = createDiscoveryRadioReferenceContext({ node, uiSelect, uiSelectFrame, formField, uiActionButton, anchor, href,
     connectRadioReference: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS) ? connectRadioReference : null },
     (url, options) => request(url, options), { signal: abort.signal });
-  const availableTalkgroups = createDiscoveryTalkgroupAvailability((url, options) => request(url, options));
   const directoryWait = createDiscoveryRadioReferenceWait({ node });
   const protocolLabels = { 'p25-phase1': 'P25 radio system', dmr: 'DMR trunked system', nxdn: 'NXDN trunked system' };
   const trunkedProtocol = (id = profile?.id) => ['p25-phase1', 'dmr', 'nxdn'].includes(id);
@@ -15692,14 +15692,20 @@ function openSpectrumDiscoveryWizard(selection) {
     window.clearTimeout(pollTimer);
     window.clearTimeout(heartbeatTimer);
     const previous = session;
-    if (!previous?.session_id) {
+    if (!previous?.session_id || previous.saved) {
       session = null;
       return true;
     }
     try {
-      await requestJson(`${path}/${encodeURIComponent(previous.session_id)}`, {
-        method: 'DELETE', page: false, keepalive: true, timeoutMs: 3000
-      });
+      if (closingSession?.id !== previous.session_id) {
+        const closing = { id: previous.session_id };
+        closing.promise = requestJson(`${path}/${encodeURIComponent(previous.session_id)}`, {
+          method: 'DELETE', page: false, keepalive: true, timeoutMs: 3000
+        });
+        closingSession = closing;
+        void closing.promise.catch(() => { if (closingSession === closing) closingSession = null; });
+      }
+      await closingSession.promise;
     } catch (cause) {
       if (!discoveryCleanupAlreadyClosed(cause)) {
         if (bestEffort) return false;
@@ -15839,7 +15845,7 @@ function openSpectrumDiscoveryWizard(selection) {
     }
   };
   const canOfferAliasImport = () => directory.available() && trunkedProtocol() &&
-    session?.radio_reference?.state === 'matched' && Number(session.radio_reference.match?.rr_system_id) > 0;
+    discoveryAliasImportMatch([session]) != null;
   const showStep = (index, label) => {
     signalDetails?.modal.close();
     activeStep = index;
@@ -16214,8 +16220,7 @@ function openSpectrumDiscoveryWizard(selection) {
   };
   const showReview = () => {
     if (pendingDirectory()) { refreshSetupAction?.(); scheduleDirectoryPoll(); return; }
-    showStep(2, 'Name your channel');
-    stage.append(node('p', 'muted', 'Give it a name you’ll recognize, then start listening.'));
+    showStep(2, 'Review channel');
     const review = session.review;
     const template = review.template;
     const form = node('form', 'channel-editor-form spectrum-discovery-review');
@@ -16268,6 +16273,16 @@ function openSpectrumDiscoveryWizard(selection) {
       }
     });
     form.append(aliasChoice.element);
+    const importOption = node('label', 'alias-confirm-check');
+    const importTalkgroups = node('input', 'ui-selection-check');
+    importTalkgroups.type = 'checkbox';
+    importTalkgroups.checked = wantsAliasImport;
+    importTalkgroups.addEventListener('change', () => {
+      wantsAliasImport = importTalkgroups.checked;
+      modal.setDirty(true);
+    });
+    importOption.append(importTalkgroups, node('span', '', 'Import talkgroup names'));
+    form.append(importOption);
     const updateReviewNames = (event) => {
       const key = event?.target?.dataset?.channelPath;
       if (['name', 'system', 'site'].includes(key)) editedReviewFields.add(key);
@@ -16312,6 +16327,10 @@ function openSpectrumDiscoveryWizard(selection) {
         reviewDraft = read();
         savedAliasName = aliasChoice.name();
         savedAliasExisting = aliasChoice.value() > 0;
+        const targets = discoveryAliasImportTargets([{ groupId: 'channel', values: [session],
+          aliasListId: aliasChoice.value(), name: savedAliasName,
+          systemName: spectrumDiscoverySystemName(session, reviewDraft) }], { available: canOfferAliasImport() });
+        aliasImportSystems = new Set(wantsAliasImport ? targets.map((target) => target.rrSystemId) : []);
         session = await request(`${sessionPath()}/save`, { method: 'POST', body: reviewDraft, timeoutMs: 30_000 });
         if (!current()) return;
         stopSetupPolling();
@@ -16332,7 +16351,8 @@ function openSpectrumDiscoveryWizard(selection) {
         if (!current()) return;
         if (error.code === 'channel_saved_restart_required') {
           restartRequired = true;
-          session.saved = { running: false, restart_required: true, start_error: error.message };
+          session.saved = { running: false, restart_required: true, start_error: error.message,
+            browse_lease_id: selection.browseLeaseId || null };
           stopSetupPolling();
           modal.setDirty(false);
           selection.onSaved?.(session);
@@ -16359,36 +16379,12 @@ function openSpectrumDiscoveryWizard(selection) {
         }
       } finally { if (current()) busy(false); }
     };
-    const addAction = async () => {
-      if (modal.state.isBusy() || refreshDirectoryWait(add)) return;
-      if (!aliasChoice.validate() || !valid(form)) return;
-      reviewDraft = read();
-      if (canOfferAliasImport()) {
-        busy(true);
-        message.textContent = 'Checking available talkgroups…';
-        let targets;
-        try {
-          targets = await availableTalkgroups([{ name: aliasChoice.name(),
-            systemName: spectrumDiscoverySystemName(session, reviewDraft), matched: true,
-            rrSystemId: Number(session.radio_reference.match.rr_system_id) }]);
-        } catch (error) {
-          showError(error, 'Talkgroups could not be checked. Try again.');
-          return;
-        } finally { if (current()) { busy(false); if (targets) message.replaceChildren(); } }
-        if (!current()) return;
-        if (pendingDirectory()) { refreshDirectoryWait(add); scheduleDirectoryPoll(); return; }
-        if (!targets.length) { wantsAliasImport = false; void saveChannel(); return; }
-        aliasImportSystems = new Set(targets.map((target) => target.rrSystemId));
-        showStep(3, 'Do you want to import talkgroups into your Alias List?');
-        const choice = discoveryAliasImportChoice({ node }, targets, wantsAliasImport);
-        stage.append(choice.element);
-        button('Back', () => { wantsAliasImport = choice.wantsImport(); showReview(); });
-        add = button('Add and start listening', () => { wantsAliasImport = choice.wantsImport(); void saveChannel(); }, true);
-      } else { wantsAliasImport = false; void saveChannel(); }
-    };
-    add = button(canOfferAliasImport() ? 'Continue' : 'Add and start listening', () => void addAction(), true);
+    add = button('Add and start listening', () => void saveChannel(), true);
     reviewBinding.refreshActions = () => {
-      add.textContent = saveFailed ? 'Try adding again' : canOfferAliasImport() ? 'Continue' : 'Add and start listening';
+      add.textContent = saveFailed ? 'Try adding again' : 'Add and start listening';
+      importOption.hidden = !canOfferAliasImport();
+      importTalkgroups.checked = wantsAliasImport;
+      importTalkgroups.disabled = modal.state.isBusy() || importOption.hidden;
       refreshDirectoryWait(add);
     };
     reviewBinding.refreshActions();
@@ -16442,23 +16438,22 @@ function openSpectrumDiscoveryWizard(selection) {
         busy(true);
         try {
           const configurationId = session.saved.configuration_id;
-          if (session.saved.browse_lease_id && !selection.prepareSavedStart)
-            throw new Error('Release this Spectrum receiver session before starting the saved channel.');
-          const released = await selection.prepareSavedStart?.(session.saved);
-          if (!current()) return;
-          if (released) session = { ...session, saved: { ...session.saved, ...released } };
-          const result = await requestChannelAction(request, { action: 'START', configurationIds: [configurationId] });
+          const receiver = session.saved.browse_lease_id ? { tuner_id: selection.tunerId,
+            browse_lease_id: session.saved.browse_lease_id } : null;
+          const result = await requestChannelAction(request, { action: 'START', configurationIds: [configurationId],
+            ...(receiver ? { receiver } : {}) });
           if (current()) {
             const outcome = result.results.find((entry) => entry.configuration_id === configurationId);
             const running = outcome.state === 'RUNNING';
-            session = { ...session, saved: { ...session.saved, running,
+            session = { ...session, saved: { ...session.saved, ...result.receiver, running,
               start_error: running ? null : outcome.message || 'Listening could not be started.' } };
             selection.onSaved?.(session);
             showComplete();
           }
         } catch (error) {
           if (current()) {
-            session = { ...session, saved: { ...session.saved, running: false, start_error: error.message } };
+            session = { ...session, saved: { ...session.saved, ...error.receiver, running: false, start_error: error.message } };
+            selection.onSaved?.(session);
             showComplete();
           }
         } finally { if (current()) busy(false); }
@@ -21126,7 +21121,8 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       button.setAttribute('aria-disabled', String(unavailable));
     }
   };
-  const releaseLease = async (suppressFailure = true, { previous = lease, handoff = false } = {}) => {
+  const releaseLease = async (suppressFailure = true) => {
+    const previous = lease;
     if (lease?.lease_id === previous?.lease_id) {
       window.clearTimeout(leaseTimer);
       leaseTimer = null;
@@ -21140,7 +21136,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     }
     try {
       const result = await requestSpectrumJson(leasePath(previous.tuner.id), {
-        method: 'DELETE', body: { lease_id: previous.lease_id, ...(handoff ? { handoff: true } : {}) },
+        method: 'DELETE', body: { lease_id: previous.lease_id },
         page: false, keepalive: true
       });
       if (lease?.lease_id === previous.lease_id) lease = null;
@@ -21361,15 +21357,6 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
           syncTakeoverActions();
           renderCenter();
           await spectrum.setSuspended(active);
-        },
-        prepareSavedStart: async (saved) => {
-          if (!saved?.browse_lease_id) return null;
-          if (saved.browse_lease_id !== capturedLease?.lease_id)
-            throw new Error('This Spectrum receiver session no longer belongs to this channel.');
-          const result = await releaseLease(false, { previous: capturedLease, handoff: true });
-          return { browse_lease_id: null,
-            ...(Array.isArray(result?.previous_channels_not_resumed) ?
-              { previous_channels_not_resumed: result.previous_channels_not_resumed } : {}) };
         },
         onSaved: (savedSession) => {
           const retained = savedSession.saved?.browse_lease_id;
@@ -25951,7 +25938,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=41');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=42');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -29294,7 +29281,7 @@ function radioReferenceWorkspaceDependencies(overrides = {}) {
 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
-  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=38');
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=39');
   if (!renderIsCurrent(renderContext)) return;
   if (!beginPage(renderContext, radioReferencePageHeader())) return;
   const { page, loadingState, gate, workspace, workspaceHeader, accountStatus, settingsButton } =

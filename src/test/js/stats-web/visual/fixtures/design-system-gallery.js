@@ -757,6 +757,62 @@ if (view === 'spectrum-discovery') {
     if (text !== null) element.textContent = String(text);
     return element;
   };
+  if (parameters.get('state') === 'review') {
+    const { createDiscoveryAliasListChoice } = await import('/assets/features/discovery-radioreference.js?v=16');
+    const source = await fetch('/assets/app.js').then(response => response.text());
+    const names = ['formField', 'uiSelect', 'uiSelectFrame'];
+    const controls = names.map(name => {
+      const match = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^\\}`, 'm'));
+      if (!match) throw new Error(`Missing production control ${name}`);
+      return match[0];
+    });
+    const iconGlyph = () => {
+      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      icon.setAttribute('aria-hidden', 'true');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#visual-icon-chevron');
+      icon.append(use);
+      return icon;
+    };
+    const ui = new Function('node', 'iconGlyph', `${controls.join('\n')}\nreturn { ${names.join(', ')} };`)(node, iconGlyph);
+    const stage = workspace.querySelector('.spectrum-discovery-stage');
+    stage.querySelector('h3').textContent = 'Review channel';
+    stage.querySelector('.spectrum-discovery-status').remove();
+    const form = node('form', 'channel-editor-form spectrum-discovery-review');
+    const channel = node('fieldset', 'ui-form-section spectrum-discovery-channel');
+    const name = node('input', 'ui-input');
+    name.value = 'Cuyahoga County · Greater Cleveland Simulcast';
+    channel.append(node('legend', '', 'Channel'), ui.formField('Channel name', name));
+    const optional = node('details', 'ui-section-disclosure ui-section-disclosure-flat spectrum-discovery-optional');
+    optional.append(node('summary', 'ui-section-summary', 'Additional labels (optional)'));
+    const labels = node('div', 'channel-editor-grid');
+    [['System', 'Ohio MARCS-IP'], ['Site', 'Greater Cleveland Simulcast']].forEach(([label, value]) => {
+      const input = node('input', 'ui-input');
+      input.value = value;
+      labels.append(ui.formField(label, input));
+    });
+    optional.append(labels);
+    channel.append(optional);
+    const aliases = createDiscoveryAliasListChoice({ node, ...ui }, { lists: [{ id: 21, name: 'Ohio MARCS-IP', matched: true }],
+      newAliasListName: 'Ohio MARCS-IP' });
+    const importOption = node('label', 'alias-confirm-check');
+    const checkbox = node('input', 'ui-selection-check');
+    checkbox.type = 'checkbox';
+    checkbox.checked = true;
+    importOption.append(checkbox, node('span', '', 'Import talkgroup names'));
+    form.append(channel, aliases.element, importOption);
+    stage.append(form);
+    const steps = workspace.querySelector('.spectrum-discovery-progress');
+    steps.replaceChildren(...['Setup', 'Check signal', 'Review'].map((label, index) => {
+      const item = node('li');
+      item.append(node('span', `ui-pill ui-pill-${index === 2 ? 'blue' : 'success'}`, index === 2 ? '3' : '✓'), node('span', '', label));
+      if (index === 2) item.setAttribute('aria-current', 'step');
+      return item;
+    }));
+    workspace.querySelector('.spectrum-discovery-actions').replaceChildren(
+      node('button', 'ui-button ui-button-secondary', 'Back'), node('button', 'ui-button ui-button-primary', 'Add and start listening'));
+    example.dataset.reviewReady = 'true';
+  }
   let foundation = null;
   let parent = null;
   button.addEventListener('click', async () => {
@@ -914,7 +970,7 @@ if (view === 'spectrum-search') {
 }
 
 if (['spectrum-discovery', 'spectrum-search'].includes(view) && parameters.get('state') === 'complete') {
-  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=15');
+  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=16');
   const node = (tag, className = '', text = null) => {
     const element = document.createElement(tag);
     element.className = className;

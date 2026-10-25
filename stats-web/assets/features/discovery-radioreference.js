@@ -2,7 +2,6 @@ import { radioReferenceLocalityCache } from './radioreference-locality-cache.js?
 
 const API = '/api/v1/admin/radioreference';
 const DIRECTORY_TIMEOUT_MS = 15_000;
-const TALKGROUP_AVAILABILITY_TIMEOUT_MS = 65_000;
 
 export function createDiscoveryRadioReferenceContext(ui, request, {
   signal, requiredRegion = false, localityCache = radioReferenceLocalityCache
@@ -387,27 +386,32 @@ export function createDiscoveryAliasListChoice(ui, {
   };
 }
 
-export function createDiscoveryTalkgroupAvailability(request) {
-  const checks = new Map();
-  return async (targets) => {
-    const checked = await Promise.all(targets.map(async (target) => {
-      const id = Number(target.rrSystemId);
-      if (!target.matched || !Number.isSafeInteger(id) || id <= 0) return null;
-      if (!checks.has(id)) {
-        const pending = request(`${API}/systems/talkgroups/availability?system_id=${id}`,
-          { csrf: false, timeoutMs: TALKGROUP_AVAILABILITY_TIMEOUT_MS }).then((availability) => {
-          if (typeof availability?.has_talkgroups !== 'boolean') throw new Error('Invalid talkgroup availability response.');
-          return availability.has_talkgroups;
-        }).catch(() => {
-          checks.delete(id);
-          throw new Error('RadioReference talkgroups could not be checked. Try again.');
-        });
-        checks.set(id, pending);
-      }
-      return await checks.get(id) ? target : null;
-    }));
-    return checked.filter(Boolean);
-  };
+/** Only settled, uniquely matched systems may offer a talkgroup import. */
+export function discoveryAliasImportMatch(values = []) {
+  if (discoveryRadioReferencePending(values)) return null;
+  const ids = values.filter((value) => value?.radio_reference?.state === 'matched')
+    .map((value) => Number(value.radio_reference.match?.rr_system_id));
+  if (!ids.length || new Set(ids).size !== 1 || !ids.every((id) => Number.isSafeInteger(id) && id > 0)) return null;
+  return ids[0];
+}
+
+/** Offer imports from confirmed identity; the actual catalog is downloaded only after saving. */
+export function discoveryAliasImportTargets(groups = [], { available = false } = {}) {
+  if (!available) return [];
+  const targets = new Map();
+  groups.forEach(({ groupId, values, aliasListId, name, systemName }) => {
+    if (aliasListId == null || !String(name || '').trim()) return;
+    const id = Number(aliasListId);
+    const rrSystemId = discoveryAliasImportMatch(values);
+    if (!Number.isSafeInteger(id) || id < 0 || rrSystemId == null) return;
+    const destination = id > 0 ? `existing:${id}` : `new:${groupId}`;
+    const key = `${rrSystemId}:${destination}`;
+    const existing = targets.get(key);
+    if (existing) {
+      if (!existing.aliasGroupIds.includes(groupId)) existing.aliasGroupIds.push(groupId);
+    } else targets.set(key, { name: String(name).trim(), systemName, rrSystemId, matched: true, aliasGroupIds: [groupId] });
+  });
+  return [...targets.values()];
 }
 
 export function discoveryAliasImportChoice(ui, targets, selected = true) {
@@ -454,7 +458,8 @@ export function discoveryAliasImportResults(ui, result) {
       ['failed', 'unavailable', 'restart_required'].includes(target.state) ? ' ui-notice-warning' : ''));
     row.append(node('strong', '', target.alias_list_name || target.system_name || 'Alias List'));
     const text = target.state === 'imported' ?
-      target.message || `${target.added} added, ${target.updated} updated, ${target.unchanged} unchanged.` :
+      !Number(target.added) && !Number(target.updated) && !Number(target.unchanged) ? 'No talkgroups available' :
+        target.message || `${target.added} added, ${target.updated} updated, ${target.unchanged} unchanged.` :
       target.state === 'importing' ? 'Importing all system talkgroups…' :
       target.state === 'pending' ? 'Waiting to import talkgroups.' : target.message || 'Import these talkgroups later.';
     row.append(node('p', '', text));
@@ -540,7 +545,7 @@ export function createDiscoveryCompletion(ui, { channels = [], imports = null, g
         const counts = [[added, 'added'], [updated, 'updated'], [unchanged, 'unchanged']].filter(([count]) => count > 0);
         const count = (value) => ui.number ? ui.number(value) : value.toLocaleString();
         row.append(node('p', '', !added && !updated ?
-          unchanged ? 'Talkgroups already up to date' : 'No talkgroups to import' : counts.length === 1 ?
+          unchanged ? 'Talkgroups already up to date' : 'No talkgroups available' : counts.length === 1 ?
             `${count(counts[0][0])} talkgroups ${counts[0][1]}` :
             `Talkgroups: ${counts.map(([value, action]) => `${count(value)} ${action}`).join(', ')}`));
         detailEntries.push([targets.length > 1 && target.alias_list_name ?
