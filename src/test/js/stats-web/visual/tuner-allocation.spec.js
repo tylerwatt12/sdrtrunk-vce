@@ -3,6 +3,7 @@
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 let defaults;
 test.beforeAll(async () => {
   defaults = (await import(pathToFileURL(path.resolve(__dirname,
@@ -475,7 +476,7 @@ test('real Albany coverage shows current windows, overlap, and uncovered known f
   await expect(support.getByRole('link', { name: 'Call matching', exact: true })).toHaveCount(0);
   const site = sitePanel(page);
   await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('Albany/Schenectady Counties');
-  await expect(site).toContainText('9 / 11 in windows');
+  await expect(site).toContainText('9 of 11 within windows');
   await expect(site.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(4);
   await expect(tunerRow(page, 1).locator('.chart-window-center title')).toHaveText('Center 855.36250 MHz');
   await expect(tunerRow(page, 2).locator('.chart-window-center title')).toHaveText('Center 852.21250 MHz');
@@ -582,6 +583,71 @@ test('history keeps grouped decisions and captured windows while current positio
 });
 
 for (const theme of ['light', 'dark']) {
+  test(`decision history shares desktop columns and stacks labeled phone records in ${theme}`, async ({ page }, testInfo) => {
+    const failed = decision(2, { outcome: 'allocation_failed', type: 'failure', tuner_name: null, repeat_count: 16,
+      reason: 'No tuner had room for this frequency and its current channels' });
+    await openApp(page, { theme, data: snapshot([failed, decision(1, {
+      reason: 'An unused tuner could receive this call'
+    })]) });
+    await page.getByRole('button', { name: 'Pause tuner allocation monitor' }).click();
+    await page.getByRole('button', { name: 'Decision history', exact: true }).click();
+    const history = page.locator('table[data-table-type="tuner-allocation-decisions"]');
+    for (const width of [1440, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(history.locator('thead')).toBeVisible();
+      expect(await history.locator('thead th').evaluateAll((cells) => cells.map((cell) => cell.dataset.column)))
+        .toEqual(['outcome', 'site', 'time', 'reason', 'action']);
+      const columns = await history.evaluate((table) => ({
+        headers: [...table.querySelectorAll('thead th')].map((cell) => {
+          const { left, width } = cell.getBoundingClientRect();
+          return { left, width };
+        }),
+        rows: [...table.querySelectorAll('tbody tr')].map((row) => [...row.cells].map((cell) => {
+          const { left, width } = cell.getBoundingClientRect();
+          return { left, width };
+        }))
+      }));
+      for (const row of columns.rows) row.forEach((cell, index) => {
+        expect(cell.left).toBeCloseTo(columns.headers[index].left, 0);
+        expect(cell.width).toBeCloseTo(columns.headers[index].width, 0);
+      });
+      const fit = await history.evaluate((table) => {
+        const wrapper = table.closest('.ui-table-wrap');
+        return { content: wrapper.scrollWidth, available: wrapper.clientWidth };
+      });
+      expect(fit.content).toBeLessThanOrEqual(fit.available + 1);
+      const detailLabelLines = await history.locator('tbody button').evaluateAll((buttons) => buttons.map((button) => {
+        const label = document.createRange();
+        label.selectNodeContents(button);
+        return label.getClientRects().length;
+      }));
+      expect(detailLabelLines).toEqual([1, 1]);
+      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`tuner-history-${theme}-${width}.png`), fullPage: true });
+    }
+    for (const width of [390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(history.locator('thead')).toBeHidden();
+      const cells = await history.locator('tbody tr').first().locator('td').evaluateAll((elements) => elements.map((element) => {
+        const { left, top, bottom } = element.getBoundingClientRect();
+        return { left, top, bottom, label: getComputedStyle(element, '::before').content };
+      }));
+      expect(cells.map((cell) => cell.label)).toEqual(['"What happened"', '"Site / tuner"', '"Time"', '"Why"', '"View decision"']);
+      cells.forEach((cell, index) => {
+        expect(cell.left).toBeCloseTo(cells[0].left, 0);
+        if (index) expect(cell.top).toBeGreaterThanOrEqual(cells[index - 1].bottom - .5);
+      });
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    }
+    await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`tuner-history-${theme}-320.png`), fullPage: true });
+    const details = page.getByRole('button', { name: 'Details for tuner decision 2' });
+    await details.click();
+    await expect(page.getByRole('dialog')).toContainText('Requests16');
+    await page.keyboard.press('Escape');
+    await expect(details).toBeFocused();
+  });
+}
+
+for (const theme of ['light', 'dark']) {
   test(`coverage and tuner/decision drilldowns fit desktop and phone in ${theme}`, async ({ page }, testInfo) => {
     await openApp(page, { theme, data: snapshot([decision()]) });
     for (const width of [1280, 390, 320]) {
@@ -679,7 +745,7 @@ test('site selection scopes known frequencies without hiding the tuner inventory
   await chooseChannel(page, 'other-site');
   const selected = page.locator('.tuner-allocation-site[data-site-id="other-site"]');
   await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('Other system');
-  await expect(selected).toContainText('0 / 1 in windows');
+  await expect(selected).toContainText('0 of 1 within windows');
   await expect(selected.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(4);
   await expect(selected.getByRole('button', { name: 'Highlight 773.98750 MHz', exact: true })).toBeVisible();
   await expect(sitePanel(page)).toHaveCount(0);
@@ -793,16 +859,71 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-test('widely separated tuner bands show measured gaps and keep selected known frequencies in their own band', async ({ page }, testInfo) => {
+for (const theme of ['light', 'dark']) {
+  test(`isolated uncovered frequencies stay compact while plotted gaps remain selectable in ${theme}`, async ({ page }, testInfo) => {
+    const data = snapshot();
+    data.sites[0].frequencies.push({ frequency_hz: 773_987_500, bandwidth_hz: 12_500, covered: false, role: 'call' });
+    data.sites[0].known_frequency_count++;
+    const app = await openApp(page, { theme, data });
+    const site = sitePanel(page);
+    const maps = site.locator('.tuner-allocation-map');
+    await expect(maps).toHaveCount(1);
+    await expect(maps.getByRole('heading')).toContainText('MHz');
+    await expect(maps).toContainText('9 of 11 known frequencies within current windows');
+    const outside = site.getByRole('region', { name: 'Outside current windows', exact: true });
+    await expect(outside).toContainText('3 known frequencies');
+    const isolated = site.getByRole('button', { name: 'Highlight 773.98750 MHz', exact: true });
+    await expect(isolated).toHaveCount(1);
+    await expect(outside.locator('svg')).toHaveCount(0);
+    await expect(site.locator('.tuner-allocation-band-gap')).toHaveCount(0);
+    await isolated.click();
+    await expect(isolated).toHaveAttribute('aria-pressed', 'true');
+    await expect(site.locator('.chart-window-highlight')).toHaveCount(0);
+    await isolated.focus();
+    const changed = structuredClone(data);
+    changed.tuners[2].frequency_hz = 859_212_500;
+    app.respond({ data: changed });
+    await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.21250 MHz');
+    await expect(isolated).toBeFocused();
+    await expect(isolated).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Pause tuner allocation monitor' }).click();
+    const plottedGap = site.getByRole('button', { name: 'Highlight 853.73750 MHz', exact: true });
+    await plottedGap.click();
+    await expect(isolated).toHaveAttribute('aria-pressed', 'false');
+    await expect(site.locator('.chart-window-highlight')).toHaveCount(5);
+    for (const width of [1280, 320]) {
+      await page.setViewportSize({ width, height: 900 });
+      const bounds = await maps.boundingBox();
+      const warningBounds = await outside.boundingBox();
+      expect(warningBounds.y).toBeGreaterThan(bounds.y + bounds.height);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await expectContrast(page, { rootSelector: '.tuner-allocation-site', recordOnly: false,
+        reportName: `frequency-ranges-${theme}-${width}` });
+      await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`compact-frequency-ranges-${theme}-${width}.png`), fullPage: true });
+    }
+    for (const hue of [35, 285]) {
+      await page.evaluate(async (hue) => {
+        const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
+        applyThemeHue(hue);
+      }, hue);
+      await expectContrast(page, { rootSelector: '.tuner-allocation-site', recordOnly: false,
+        reportName: `frequency-ranges-${theme}-hue-${hue}` });
+    }
+  });
+}
+
+test('widely separated tuner bands have distinct groups and keep selected known frequencies in their own range', async ({ page }, testInfo) => {
   await openApp(page, { data: separatedBandsSnapshot() });
   const site = sitePanel(page);
   await expect(site.locator('.tuner-allocation-map')).toHaveCount(3);
   await expect(site.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(6);
-  await expect(site.getByText(/621\.64\s*MHz/)).toBeVisible();
-  await expect(site.getByText(/75\.87\s*MHz/)).toBeVisible();
+  await expect(site.getByText('Each range uses its own frequency scale.', { exact: true })).toBeVisible();
+  await expect(site.locator('.tuner-allocation-band-gap')).toHaveCount(0);
   const maps = site.locator('.tuner-allocation-map');
   for (const [index, minimum, maximum] of [[0, 140, 160], [1, 760, 790], [2, 840, 870]]) {
     const map = maps.nth(index);
+    await expect(map).toHaveClass(/ui-surface-soft/);
+    await expect(map.getByRole('heading')).toContainText('MHz');
     await expect(map.locator('.tuner-allocation-ruler-row')).toHaveCount(1);
     await expect(map.locator('.tuner-allocation-known-row')).toHaveCount(index === 2 ? 1 : 0);
     const ticks = await map.locator('.chart-axis-label').allTextContents();
@@ -810,14 +931,18 @@ test('widely separated tuner bands show measured gaps and keep selected known fr
     expect(Math.min(...ticks.map(Number))).toBeGreaterThan(minimum);
     expect(Math.max(...ticks.map(Number))).toBeLessThan(maximum);
   }
-  await expect(maps.nth(0).locator('.chart-window-other')).toHaveCount(1);
-  await expect(maps.nth(1).locator('.chart-window-other')).toHaveCount(1);
+  await expect(maps.nth(0).locator('[data-tuner-id] .chart-window-other')).toHaveCount(1);
+  await expect(maps.nth(1).locator('[data-tuner-id] .chart-window-other')).toHaveCount(1);
   await expect(maps.nth(2).locator('[data-tuner-id] .chart-window-selected')).toHaveCount(3);
   for (const width of [1280, 320]) {
     await page.setViewportSize({ width, height: 900 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
-    await expect(site.getByText(/621\.64\s*MHz/)).toBeVisible();
-    await expect(site.getByText(/75\.87\s*MHz/)).toBeVisible();
+    const boxes = await maps.evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().toJSON()));
+    boxes.forEach((box, index) => {
+      expect(box.left).toBeGreaterThanOrEqual(0);
+      expect(box.right).toBeLessThanOrEqual(width);
+      if (index) expect(box.top).toBeGreaterThan(boxes[index - 1].bottom);
+    });
     await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`separated-tuner-bands-${width}.png`), fullPage: true });
   }
   await changeChannel(page, 'county-fire');
