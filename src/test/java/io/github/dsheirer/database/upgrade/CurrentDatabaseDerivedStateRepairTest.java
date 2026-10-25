@@ -12,6 +12,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
+import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -35,6 +36,58 @@ class CurrentDatabaseDerivedStateRepairTest
 
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void liveStrictPlanIncludesActivityOnlyCommittedWalWithoutResettingIt() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("live-activity-wal.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        try(Connection writer = DriverManager.getConnection("jdbc:sqlite:" + activity);
+            Statement statement = writer.createStatement())
+        {
+            statement.execute("PRAGMA journal_mode=WAL");
+            statement.execute("PRAGMA wal_autocheckpoint=0");
+            statement.executeUpdate("INSERT INTO statistics_status(key,value,updated_at_ms) VALUES('committed-wal','retain',1)");
+            // Use explicitly inspected allocator damage. SQLite's read-only quick_check can omit row CHECK
+            // validation; the real writable private-stage migration separately covers that repair boundary.
+            statement.executeUpdate("INSERT INTO sqlite_sequence(name,seq) VALUES('receiver_activity_event',-1)");
+            assertTrue(java.nio.file.Files.size(Path.of(activity + "-wal")) > 0);
+            var plan = ApplicationMigrationService.readMigrationPlan(database);
+            assertTrue(plan.steps().stream().anyMatch(step -> step.id().equals(CurrentDatabaseDerivedStateRepair.STEP_ID)));
+            assertEquals(1, number(writer, "SELECT count(*) FROM statistics_status WHERE key='committed-wal' AND updated_at_ms=1"));
+            assertEquals(-1, number(writer, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'"));
+        }
+    }
+
+    @Test
+    void strictReadOnlyPairPreflightInspectsHistoryWithoutGrantingWriteAccess() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("read-only-pair-preflight.sqlite");
+        Path profileSource = mTemporaryFolder.resolve("read-only-pair-source.sqlite");
+        SdrTrunkTestDatabase.create(profileSource);
+        SqliteDatabaseSnapshot.create(profileSource, database);
+        for(String suffix: List.of("-wal", "-shm", "-journal"))
+        {
+            org.junit.jupiter.api.Assertions.assertFalse(java.nio.file.Files.exists(Path.of(database + suffix)));
+            org.junit.jupiter.api.Assertions.assertFalse(java.nio.file.Files.exists(Path.of(ActivityDatabasePath.forConfiguration(database) + suffix)));
+        }
+        try(Connection connection = SqliteDatabaseSnapshot.openImmutable(database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA query_only=ON");
+            var source = DatabaseFormatCatalog.inspectForMigration(connection);
+            assertTrue(!DatabaseMigrationChain.planForApplicationMigration(connection, source).requiresMigration());
+            statement.execute("PRAGMA query_only=OFF");
+            org.junit.jupiter.api.Assertions.assertThrows(java.sql.SQLException.class,
+                () -> statement.executeUpdate("INSERT INTO activity.statistics_status(key,value,updated_at_ms) VALUES('no-write','value',1)"));
+        }
+        for(String suffix: List.of("-wal", "-shm", "-journal"))
+        {
+            org.junit.jupiter.api.Assertions.assertFalse(java.nio.file.Files.exists(Path.of(database + suffix)));
+            org.junit.jupiter.api.Assertions.assertFalse(java.nio.file.Files.exists(Path.of(ActivityDatabasePath.forConfiguration(database) + suffix)));
+        }
+    }
 
     @Test
     void resetsTheWholeDerivedComponentForOneCheckViolationAndPreservesTheChannel() throws Exception
@@ -152,43 +205,33 @@ class CurrentDatabaseDerivedStateRepairTest
                     OR first_evidence_ms IS NOT NULL OR last_evidence_ms IS NOT NULL
                 )
                 """));
+            assertEquals(1, number(connection, """
+                SELECT count(*) FROM alias_activity_summary summary
+                JOIN alias configured ON configured.id=summary.alias_id
+                JOIN alias_list owner ON owner.id=configured.alias_list_id
+                WHERE summary.alias_id=9002 AND summary.activity_identity=configured.activity_identity
+                    AND summary.alias_name=configured.name AND summary.alias_list_name=owner.name
+                """));
             assertEquals(0, CurrentDatabaseDerivedStateRepair.inspect(connection).damagedTables());
             assertEquals("ok", text(connection, "PRAGMA quick_check"));
         }
     }
 
     @Test
-    void repairsMissingAliasActivitySummaryAndReseedsEveryAlias() throws Exception
+    void allowsUnobservedAliasesAndDetachedHistoricalSummariesWithoutReset() throws Exception
     {
-        Path database = mTemporaryFolder.resolve("current-derived-missing-alias-summary.sqlite");
+        Path database = mTemporaryFolder.resolve("current-derived-detached-summary.sqlite");
         SdrTrunkTestDatabase.create(database);
-
         try(Connection connection = open(database))
         {
             insertObservedAliasSummary(connection, 9_003L);
             insertObservedAliasSummary(connection, 9_004L);
             execute(connection, "DELETE FROM alias_activity_summary WHERE alias_id=9004");
-
-            CurrentDatabaseDerivedStateRepair.Inspection inspection =
-                CurrentDatabaseDerivedStateRepair.inspect(connection);
-            assertTrue(inspection.requiresRepair());
-            assertEquals(1, inspection.damagedTables());
-            assertEquals(1, inspection.resetRows(),
-                "The retained observed row is reset before every configured Alias is reseeded");
-
-            CurrentDatabaseDerivedStateRepair.repair(connection);
-
-            assertEquals(2, number(connection, """
-                SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id IN (9003,9004)
-                """));
-            assertEquals(2, number(connection, """
-                SELECT COUNT(*) FROM alias_activity_summary
-                WHERE alias_id IN (9003,9004) AND metrics_state='not_collected'
-                  AND protocol_code=1
-                  AND logical_call_count IS NULL AND signaling_observation_count IS NULL
-                  AND first_evidence_ms IS NULL AND last_evidence_ms IS NULL
-                """));
-            assertEquals(0, CurrentDatabaseDerivedStateRepair.inspect(connection).damagedTables());
+            execute(connection, "DELETE FROM alias WHERE id=9003");
+            assertTrue(!CurrentDatabaseDerivedStateRepair.inspect(connection).requiresRepair());
+            assertTrue(!CurrentDatabaseDerivedStateRepair.repair(connection).requiresRepair());
+            assertEquals(1, number(connection, "SELECT count(*) FROM alias_activity_summary WHERE alias_id=9003 AND logical_call_count=7"));
+            assertEquals(0, number(connection, "SELECT count(*) FROM alias_activity_summary WHERE alias_id=9004"));
             assertEquals("ok", text(connection, "PRAGMA quick_check"));
         }
     }
@@ -296,9 +339,9 @@ class CurrentDatabaseDerivedStateRepairTest
         {
             execute(connection, "PRAGMA foreign_keys=OFF");
             execute(connection, """
-                INSERT INTO receiver_channel(configuration_id, first_seen_ms, last_seen_ms)
-                VALUES ('%s', 1, 1)
-                """.formatted(missingConfiguration));
+                INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
+                VALUES (999999, 1, 12)
+                """);
             execute(connection, "PRAGMA foreign_keys=ON");
 
             CurrentDatabaseBestEffortRepair.requireOnlyRepairableForeignKeys(connection);
@@ -308,7 +351,7 @@ class CurrentDatabaseDerivedStateRepairTest
             assertEquals(1, inspection.resetRows());
 
             CurrentDatabaseDerivedStateRepair.repair(connection);
-            assertEquals(0, number(connection, "SELECT COUNT(*) FROM receiver_channel"));
+            assertEquals(0, number(connection, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals(0, number(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
         }
     }
@@ -407,6 +450,8 @@ class CurrentDatabaseDerivedStateRepairTest
             SELECT id, alias_list_id, 1, 'observed', 7, 9, 1000, 2000, 2000
             FROM alias WHERE id=%d
             """.formatted(aliasId));
+        execute(connection, "UPDATE alias_activity_summary SET activity_identity=" +
+            "(SELECT activity_identity FROM alias WHERE id=alias_id) WHERE alias_id=" + aliasId);
     }
 
     private static void execute(Connection connection, String sql) throws Exception
@@ -437,6 +482,12 @@ class CurrentDatabaseDerivedStateRepairTest
 
     private static Connection open(Path database) throws Exception
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database));
+        try(var attach = connection.prepareStatement("ATTACH DATABASE ? AS configuration"))
+        {
+            attach.setString(1, database.toString());
+            attach.execute();
+        }
+        return connection;
     }
 }

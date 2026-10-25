@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.InitialAdminSetup;
+import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
@@ -298,14 +299,14 @@ class ApplicationDatabaseMigratorTest
                 WHERE key='spectrum_snap_country'
                 """);
             statement.executeUpdate("""
-                UPDATE database_metadata SET value='0'
+                UPDATE activity.database_metadata SET value='0'
                 WHERE key='conventional_call_output_metrics_started_at_ms'
                 """);
             statement.executeUpdate("""
-                DELETE FROM database_metadata WHERE key='trunked_logical_call_metrics_started_at_ms'
+                DELETE FROM activity.database_metadata WHERE key='trunked_logical_call_metrics_started_at_ms'
                 """);
             statement.executeUpdate("""
-                UPDATE database_metadata SET value='not-a-time'
+                UPDATE activity.database_metadata SET value='not-a-time'
                 WHERE key='radio_system_metrics_started_at_ms'
                 """);
             statement.executeUpdate("UPDATE scan_list SET is_default=0");
@@ -489,6 +490,137 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    void strictWalCurrentPairRollsBackBothStoresWhenFinalHistoryAdmissionFails() throws Exception
+    {
+        Path database = newStagedDatabase();
+        CurrentFormatTestDatabase.create(database);
+        String channelsBefore;
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            assertEquals("wal", scalar(connection, "PRAGMA main.journal_mode=WAL"));
+            assertEquals("wal", scalar(connection, "PRAGMA activity.journal_mode=WAL"));
+            statement.executeUpdate("INSERT INTO activity.sqlite_sequence(name,seq) SELECT 'receiver_activity_event',-1 " +
+                "WHERE NOT EXISTS(SELECT 1 FROM activity.sqlite_sequence WHERE name='receiver_activity_event')");
+            statement.executeUpdate("UPDATE activity.sqlite_sequence SET seq=-1 WHERE name='receiver_activity_event'");
+            statement.executeUpdate("UPDATE application_settings SET settings_json='{}' WHERE key='setup_wizard'");
+            // Stable catalogue damage cannot be guessed; it must abort after the reset's transaction writes.
+            statement.executeUpdate("UPDATE activity.activity_message_type SET name='ALTERED' " +
+                "WHERE definition_kind='ACTION' AND code=12");
+            channelsBefore = scalar(connection, "SELECT count(*) FROM receiver_channel");
+        }
+
+        CommandResult result = run(database);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, result.exitCode(), result::error);
+        assertTrue(result.error().contains("changed stable identities"), result::error);
+        assertEquals("{}", scalar(database, "SELECT settings_json FROM application_settings WHERE key='setup_wizard'"),
+            "The independent configuration repair must roll back with history");
+        assertEquals(channelsBefore, scalar(database, "SELECT count(*) FROM receiver_channel"));
+        assertEquals("-1", scalar(database, "SELECT seq FROM activity.sqlite_sequence WHERE name='receiver_activity_event'"));
+        assertEquals("ALTERED", scalar(database, "SELECT name FROM activity_message_type WHERE definition_kind='ACTION' AND code=12"));
+        assertEquals("delete", scalar(database, "PRAGMA main.journal_mode"));
+        assertEquals("delete", scalar(database, "PRAGMA activity.journal_mode"));
+    }
+
+    @Test
+    void strictCurrentValidationUsesTheIndependentHistorySubscriberDictionary() throws Exception
+    {
+        Path database = newStagedDatabase();
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(7001,1,1,123)");
+            statement.executeUpdate("INSERT INTO activity.p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(7001,703710,291,9001)");
+            statement.executeUpdate("INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id," +
+                "first_seen_ms,last_seen_ms) VALUES(500,'p25:abcde:123',1,703710,291,1000,1000)");
+            statement.executeUpdate("INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
+                "home_wacn,home_system_id,identity_id,p25_subscriber_identity_id,first_seen_ms,last_seen_ms) " +
+                "VALUES(501,500,2,703710,291,9001,7001,1000,1000)");
+        }
+        CommandResult valid = run(database);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, valid.exitCode(), valid::error);
+        assertFalse(valid.output().contains(completedCurrentStep("reset-damaged-current-derived-state")), valid::output);
+        assertEquals("1", scalar(database, "SELECT count(*) FROM radio_system_identity_summary WHERE id=501"));
+
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            // A locally valid dictionary row that disagrees with its retained owner remains a strict failure.
+            statement.executeUpdate("UPDATE activity.p25_subscriber_identity SET subscriber_id=9002 WHERE id=7001");
+        }
+        byte[] configurationBefore = Files.readAllBytes(database);
+        byte[] activityBefore = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
+        CommandResult invalid = run(database);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, invalid.exitCode(), invalid::error);
+        assertTrue(invalid.error().contains("different canonical P25 subscriber"), invalid::error);
+        assertArrayEquals(configurationBefore, Files.readAllBytes(database));
+        assertArrayEquals(activityBefore, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+    }
+
+    @Test
+    void rejectsHardLinkedCurrentActivityBeforeRepairingEitherStagedFile() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("linked-source/sdrtrunk.sqlite");
+        Files.createDirectories(source.getParent());
+        SdrTrunkTestDatabase.create(source);
+        Path stage = newStagedDatabase();
+        Files.copy(source, stage);
+        try
+        {
+            Files.createLink(ActivityDatabasePath.forConfiguration(stage), ActivityDatabasePath.forConfiguration(source));
+        }
+        catch(UnsupportedOperationException exception)
+        {
+            Assumptions.abort("Filesystem does not support hard links");
+        }
+        byte[] configurationBefore = Files.readAllBytes(stage);
+        byte[] activityBefore = Files.readAllBytes(ActivityDatabasePath.forConfiguration(source));
+
+        CommandResult result = run(stage);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_INPUT, result.exitCode(), result::error);
+        assertArrayEquals(configurationBefore, Files.readAllBytes(stage));
+        assertArrayEquals(activityBefore, Files.readAllBytes(ActivityDatabasePath.forConfiguration(source)));
+    }
+
+    @Test
+    void strictCurrentCopyRepairsHistoryWithoutChangingItsExternalSourcePair() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("external/sdrtrunk.sqlite");
+        Files.createDirectories(source.getParent());
+        CurrentFormatTestDatabase.create(source);
+        try(Connection connection = open(source); Statement statement = connection.createStatement())
+        {
+            assertEquals("wal", scalar(connection, "PRAGMA main.journal_mode=WAL"));
+            assertEquals("wal", scalar(connection, "PRAGMA activity.journal_mode=WAL"));
+            statement.executeUpdate("INSERT INTO activity.sqlite_sequence(name,seq) SELECT 'receiver_activity_event',-1 " +
+                "WHERE NOT EXISTS(SELECT 1 FROM activity.sqlite_sequence WHERE name='receiver_activity_event')");
+            statement.executeUpdate("UPDATE activity.sqlite_sequence SET seq=-1 WHERE name='receiver_activity_event'");
+        }
+        byte[] configurationBefore = Files.readAllBytes(source);
+        Path sourceActivity = ActivityDatabasePath.forConfiguration(source);
+        byte[] activityBefore = Files.readAllBytes(sourceActivity);
+        String configurationFingerprint = new ConfigurationRepository(source).fingerprint();
+        Path stage = newStagedDatabase();
+        Files.copy(source, stage);
+        Files.copy(sourceActivity, ActivityDatabasePath.forConfiguration(stage));
+
+        CommandResult result = run(stage);
+
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result::error);
+        assertTrue(result.output().contains(completedCurrentStep("reset-damaged-current-derived-state")), result::output);
+        assertEquals(configurationFingerprint, new ConfigurationRepository(stage).fingerprint());
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(stage);
+        assertEquals("0", scalar(stage, "SELECT count(*) FROM receiver_activity_event"));
+        assertEquals("delete", scalar(stage, "PRAGMA main.journal_mode"));
+        assertEquals("delete", scalar(stage, "PRAGMA activity.journal_mode"));
+        SdrTrunkDatabaseStartup.validateGlobalDatabase(stage);
+        assertArrayEquals(configurationBefore, Files.readAllBytes(source));
+        assertArrayEquals(activityBefore, Files.readAllBytes(sourceActivity));
+    }
+
+    @Test
     void resetsDamagedCurrentDerivedStateWithoutDiscardingAdministratorAliases() throws Exception
     {
         Path database = newStagedDatabase();
@@ -530,7 +662,7 @@ class ApplicationDatabaseMigratorTest
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM receiver_channel"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM statistics_status"));
         assertEquals("3", scalar(database, """
-            SELECT COUNT(*) FROM database_metadata
+            SELECT COUNT(*) FROM activity.database_metadata
             WHERE key IN (
                 'conventional_call_output_metrics_started_at_ms',
                 'trunked_logical_call_metrics_started_at_ms',
@@ -1442,18 +1574,18 @@ class ApplicationDatabaseMigratorTest
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("DROP INDEX idx_trunked_radio_group_reverse");
+            statement.executeUpdate("DROP INDEX activity.idx_trunked_radio_group_reverse");
         }
 
         CommandResult result = run(database);
 
-        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode());
-        assertTrue(result.error().contains("Unrecognized SQLite database schema fingerprint"), result::error);
+        assertTrue(result.exitCode() != ApplicationDatabaseMigrator.EXIT_SUCCESS);
+        assertTrue(result.error().contains("exact format-63 schema"), result::error);
 
         try(Connection connection = open(database))
         {
             assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM sqlite_schema
+                SELECT COUNT(*) FROM activity.sqlite_schema
                 WHERE type='index' AND name='idx_trunked_radio_group_reverse'
                 """));
         }
@@ -1742,7 +1874,17 @@ class ApplicationDatabaseMigratorTest
 
     private static Connection open(Path database) throws Exception
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        if(java.nio.file.Files.isRegularFile(activity))
+        {
+            try(var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+            {
+                attach.setString(1, activity.toString());
+                attach.execute();
+            }
+        }
+        return connection;
     }
 
     private static String metadata(Connection connection, String key) throws Exception

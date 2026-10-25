@@ -65,7 +65,7 @@ class Format25To26DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report;
             try
             {
-                report = DatabaseMigrationChain.migrate(connection);
+                report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 connection.commit();
             }
             catch(Exception exception)
@@ -79,9 +79,9 @@ class Format25To26DatabaseMigrationTest
             }
             statement.execute("PRAGMA foreign_keys=ON");
 
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 25, report.steps().size());
+            assertEquals(62 - 25, report.steps().size());
             assertEquals("format-25-to-26", report.steps().getFirst().id());
-            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
+            assertEquals("format-61-to-62", report.steps().getLast().id());
             assertEquals(expectedEffects, report.steps().getFirst().effects());
             assertEquals(eventsBefore, rows(statement, "SELECT * FROM receiver_activity_event ORDER BY id"));
             assertEquals(membersBefore, rows(statement,
@@ -136,16 +136,17 @@ class Format25To26DatabaseMigrationTest
 
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             SQLException wrongSource = assertThrows(SQLException.class,
                 () -> new Format25To26DatabaseMigration().migrate(connection));
             assertTrue(wrongSource.getMessage().contains("requires exact source format 25"), wrongSource::getMessage);
             assertEquals(fingerprint, SqliteSchemaValidator.fingerprint(connection));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -169,8 +170,8 @@ class Format25To26DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(62,
+                    CurrentFormatTestDatabase.migrateToVersion(connection, 62).target().version());
                 connection.rollback();
             }
             finally
@@ -195,9 +196,10 @@ class Format25To26DatabaseMigrationTest
             assertEquals(0, number(statement, "SELECT count(*) FROM receiver_activity_event"));
             assertEquals(0, number(statement, "SELECT count(*) FROM activity_event_identity_member"));
             assertEquals(0, number(statement, "SELECT count(*) FROM conventional_activity_summary"));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -287,8 +289,8 @@ class Format25To26DatabaseMigrationTest
             assertEquals(retainedSummaries, rows(statement,
                 "SELECT * FROM conventional_activity_summary WHERE channel_id=9505"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
         }
     }
 
@@ -382,7 +384,7 @@ class Format25To26DatabaseMigrationTest
         connection.setAutoCommit(false);
         try
         {
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
             return report;
         }

@@ -79,7 +79,7 @@ class Format36To37DatabaseMigrationTest
             assertThrows(SQLException.class, () -> new Format36To37DatabaseMigration().migrate(connection));
             assertEquals(before, snapshots(connection), "The frozen target refuses the previous step unchanged");
         }
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(candidate));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(candidate));
         assertArrayEquals(sourceBytes, Files.readAllBytes(source), "The selected source remains untouched");
     }
 

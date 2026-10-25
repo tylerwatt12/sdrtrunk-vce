@@ -195,8 +195,8 @@ class ApplicationMigrationSuccessDialogTest
         String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         assertTrue(wizard.contains("ApplicationMigrationSuccessDialog.currentDatabaseReport"));
         assertTrue(wizard.contains("ApplicationMigrationSuccessDialog.previousImportReport"));
-        assertTrue(wizard.contains("Copy Message"));
-        assertTrue(wizard.contains("countdown.start()"));
+        assertTrue(wizard.contains("Copy error"));
+        assertFalse(wizard.contains("countdown.start()"));
         assertFalse(wizard.contains("ApplicationMigrationSuccessDialog.show("));
     }
 }

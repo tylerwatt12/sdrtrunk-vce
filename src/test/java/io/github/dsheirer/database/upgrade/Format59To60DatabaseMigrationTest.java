@@ -2,14 +2,10 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.*;
-import io.github.dsheirer.alerts.TopicAlertSchema;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.stats.activity.ActivityMessageCatalog;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -39,12 +35,14 @@ class Format59To60DatabaseMigrationTest
 
     @Test void freshCreationMatchesTheRegisteredSignature() throws Exception
     {
-        try(var connection = DriverManager.getConnection("jdbc:sqlite::memory:"))
+        Path fresh = directory.resolve("fresh.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(fresh);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" +
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.companionPath(fresh)))
         {
-            SdrTrunkDatabaseSchema.create(connection); ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection); TrunkedSiteSchema.create(connection); TopicAlertSchema.create(connection);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-            ReceiverActivitySchema.validate(connection);
+            assertEquals(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
+                SqliteSchemaValidator.fingerprint(connection));
             assertEquals(113, ActivityMessageCatalog.read(connection).size());
         }
     }
@@ -58,10 +56,10 @@ class Format59To60DatabaseMigrationTest
             Map<String,List<String>> columns = columns(connection);
             Map<String,List<String>> before = snapshot(connection, columns);
             connection.setAutoCommit(false);
-            assertEquals(List.of("format-59-to-60", "format-60-to-61", "format-61-to-62"), DatabaseMigrationChain.migrate(connection).steps().stream()
+            assertEquals(List.of("format-59-to-60", "format-60-to-61", "format-61-to-62"), CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().stream()
                 .map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(before, snapshot(connection, columns));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             for(String table: List.of("conventional_activity_summary", "conventional_activity_bucket", "trunked_signaling_activity_bucket"))
                 assertEquals(0, scalar(connection, "SELECT coalesce(sum(stun_count+revive_count+kill_count+radio_inhibit_count+" +
                     "radio_uninhibit_count+remote_monitor_count+authenticate_count+cancel_call_count+radio_detach_count+" +
@@ -69,21 +67,21 @@ class Format59To60DatabaseMigrationTest
             connection.rollback();
             assertEquals(59, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, snapshot(connection, columns));
-            DatabaseMigrationChain.migrate(connection); connection.commit();
+            CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
             assertEquals(before, snapshot(connection, columns));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             ReceiverActivitySchema.validate(connection);
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
             integrity(connection);
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test void startupRefusesPriorWithoutChangingItAndInterruptedUpgradeLeavesTheSourceRetryable() throws Exception
     {
         Path database = Format59TestDatabase.create(directory.resolve("interrupted.sqlite"));
         byte[] before = Files.readAllBytes(database);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(before, Files.readAllBytes(database));
         try(var connection = open(database))
         {
@@ -93,9 +91,10 @@ class Format59To60DatabaseMigrationTest
         assertArrayEquals(before, Files.readAllBytes(database));
         try(var connection = open(database))
         {
-            connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
-            DatabaseFormatCatalog.requireCurrent(connection); integrity(connection);
+            connection.setAutoCommit(false); CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
+            DatabaseFormatCatalog.inspect(connection); integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test void populatedEventConstraintRelaxationPreservesBtreesAndReloadsCachedStatements() throws Exception
@@ -123,8 +122,8 @@ class Format59To60DatabaseMigrationTest
             {
                 cached.setInt(1, 25); cached.setInt(2, 63);
                 assertThrows(SQLException.class, cached::executeUpdate);
-                DatabaseMigrationChain.migrate(connection);
-                assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+                CurrentFormatTestDatabase.migrateToVersion(connection, 62);
+                assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(before, snapshot(connection, fields), "Rows, statistics and deleted-ID allocator survive.");
                 assertEquals(btrees, eventBtrees(connection), "No event table or index b-tree is rebuilt.");
                 assertEquals(0, scalar(connection, "PRAGMA writable_schema"));
@@ -139,7 +138,7 @@ class Format59To60DatabaseMigrationTest
                 assertEquals(btrees, eventBtrees(connection));
                 cached.setInt(1, 25); cached.setInt(2, 63);
                 assertThrows(SQLException.class, cached::executeUpdate, "Rollback restores the old cached CHECKs.");
-                DatabaseMigrationChain.migrate(connection);
+                CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 connection.commit();
                 assertEquals(btrees, eventBtrees(connection));
                 assertEquals(1, cached.executeUpdate());
@@ -149,12 +148,13 @@ class Format59To60DatabaseMigrationTest
         }
         try(var connection = open(database))
         {
-            DatabaseFormatCatalog.requireCurrent(connection);
+            DatabaseFormatCatalog.inspect(connection);
             ReceiverActivitySchema.validate(connection);
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE action_code=25 AND event_type_code=63"));
             assertEquals(9000000002L, scalar(connection, "SELECT max(id) FROM receiver_activity_event"));
             integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static Map<String,Long> eventBtrees(Connection connection) throws SQLException

@@ -279,12 +279,9 @@ class Format6To7DatabaseMigrationTest
     void currentFormatRejectsAReintroducedGlobalWebAudioSetting() throws Exception
     {
         Path database = Format6TestDatabase.create(mTemporaryFolder.resolve("retired-setting.sqlite"));
+        CurrentFormatTestDatabase.validateCurrentPair(database);
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
-            connection.commit();
-            connection.setAutoCommit(true);
             statement.executeUpdate("""
                 UPDATE application_settings
                 SET settings_json=json_set(settings_json,

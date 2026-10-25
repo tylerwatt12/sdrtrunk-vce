@@ -55,7 +55,7 @@ class Format41To42DatabaseMigrationTest
                 .map(DatabaseMigrationEffect::affectedRows).toList());
         }
         byte[] bytes = Files.readAllBytes(source);
-        assertThrows(SQLException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
+        assertThrows(java.io.IOException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
         assertArrayEquals(bytes,Files.readAllBytes(source));
         for(int attempt=0;attempt<2;attempt++)
         {
@@ -93,18 +93,18 @@ class Format41To42DatabaseMigrationTest
             try(Connection connection = open(candidate); Statement statement = connection.createStatement())
             {
                 connection.setAutoCommit(false);
-                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 42, report.steps().size());
+                DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
+                assertEquals(62 - 42, report.steps().size());
                 assertEquals("format-42-to-43", report.steps().getFirst().id());
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(62,
+                    DatabaseFormatCatalog.inspect(connection).version());
                 assertEquals("0", scalar(statement, """
                     SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>12
                         OR json_extract(preferences_json, '$.presentation.live_row_density') IS NOT 'normal'
                     """));
                 connection.commit();
             }
-            SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
+            CurrentFormatTestDatabase.validateCurrentPair(candidate);
             assertArrayEquals(bytes,Files.readAllBytes(source));
         }
     }
@@ -158,11 +158,12 @@ class Format41To42DatabaseMigrationTest
             connection.commit();
             assertEquals(42,DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before,tableContents(connection));
-            DatabaseMigrationChain.migrate(connection);
+            CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test

@@ -312,6 +312,7 @@ public final class ApplicationDatabaseMigrator
         requireApplicationStage(database);
         requireOwnedCompleteProfileStage(database, relocation);
         requireSingleFilesystemLinkWhenSupported(database);
+        recoverSplitTransition(database);
         output.println("Checking the owned complete-profile copy's schema and configuration.");
         output.println("Whole-file physical-integrity, derived-history, and foreign-key sweeps are not run " +
             "for this owned copy; use explicit maintenance for those checks.");
@@ -385,12 +386,25 @@ public final class ApplicationDatabaseMigrator
         requireSingleFilesystemLinkWhenSupported(database);
 
         requireApplicationStage(database);
+        recoverSplitTransition(database);
         //The helper output is shown and copyable in migration-completion dialogs. Keep private staging paths out of it.
         output.println("Checking staged database.");
 
         try(Connection connection = open(database))
         {
             DatabaseFormatCatalog.DetectedFormat source = requireSupportedFormat(connection);
+            if(source.version() == 63)
+            {
+                // Only explicit private stages attach writable history. Owned upgrades never inspect retained rows.
+                io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(database);
+                requireSingleFilesystemLinkWhenSupported(
+                    io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database));
+                try(var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+                {
+                    attach.setString(1, io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database).toString());
+                    attach.execute();
+                }
+            }
             output.println("Detected database format " + source.version() + " [" + source.id() + "]: " +
                 source.description() + (source.markerPresent() ? "." : " (legacy layout without global marker)."));
             DatabaseMigrationChain.PreflightReport preflight = requireSupportedPreflight(connection, source).withContent(content);
@@ -416,6 +430,7 @@ public final class ApplicationDatabaseMigrator
             }
 
             output.println("Pre-migration checks passed. Updating the staged database.");
+            if(hasAttachedActivity(connection)) finalizeStagedDatabase(connection);
             MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, false,
                 ignored -> { }, null, legacy, Map.of(), content);
             //The transaction already completed the full schema, row, foreign-key and quick checks before COMMIT.
@@ -495,6 +510,8 @@ public final class ApplicationDatabaseMigrator
         DatabaseMigrationChain.PreflightReport report =
             DatabaseMigrationChain.planForApplicationMigration(connection, source);
         requireSourceIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
+        if(hasAttachedActivity(connection))
+            requireSourceIntegrity(connection, "PRAGMA activity.integrity_check", "Activity integrity check");
         return report;
     }
 
@@ -581,7 +598,7 @@ public final class ApplicationDatabaseMigrator
                     //chain performs strict current-format validation or adopts a missing global marker.
                     portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
                     administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection);
-                    if(expectedSource.version()<63) derivedStateRepair = CurrentDatabaseDerivedStateRepair.repair(connection);
+                    derivedStateRepair = CurrentDatabaseDerivedStateRepair.repair(connection);
                     currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
                     identityRepair = SqliteIdentityRepair.repair(connection);
                 }
@@ -1395,6 +1412,14 @@ public final class ApplicationDatabaseMigrator
                 ReceiverActivitySchema.validateRetainedHistoryData(connection);
             else
             {
+                if(hasAttachedActivity(connection))
+                {
+                    validateAttachedHistoryContent(connection);
+                    ReceiverActivitySchema.validateRetainedHistoryData(connection, "activity");
+                    requireForeignKeysValid(connection, "activity");
+                    requireIntegrity(connection, "PRAGMA activity.quick_check", "Activity quick check");
+                    return;
+                }
                 Path history=io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(
                     Format62To63DatabaseMigration.databasePath(connection));
                 try(Connection activity=SqliteDatabaseSnapshot.openImmutable(history))
@@ -1515,8 +1540,13 @@ public final class ApplicationDatabaseMigrator
 
     private static void requireForeignKeysValid(Connection connection) throws SQLException
     {
+        requireForeignKeysValid(connection, "main");
+    }
+
+    private static void requireForeignKeysValid(Connection connection, String schema) throws SQLException
+    {
         try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA foreign_key_check"))
+            ResultSet resultSet = statement.executeQuery("PRAGMA " + schema + ".foreign_key_check"))
         {
             if(resultSet.next())
             {
@@ -1527,10 +1557,38 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
+    private static void validateAttachedHistoryContent(Connection connection) throws SQLException
+    {
+        // The private companion's exact schema was admitted before this row-only current-format repair.
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validateAdmittedRole(connection,
+            io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE,
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, "activity");
+        String pairKey = io.github.dsheirer.database.ConfigurationHistorySchema.PAIR_ID_KEY;
+        if(!Objects.equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection, pairKey),
+            io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection, "activity", pairKey)))
+            throw new SQLException("The private activity database pair identity changed during migration");
+    }
+
+    private static boolean hasAttachedActivity(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("PRAGMA database_list"))
+        {
+            while(rows.next()) if("activity".equals(rows.getString("name"))) return true;
+            return false;
+        }
+    }
+
     private static void finalizeStagedDatabase(Connection connection) throws SQLException
     {
+        finalizeStagedDatabase(connection, "main");
+        if(hasAttachedActivity(connection)) finalizeStagedDatabase(connection, "activity");
+    }
+
+    private static void finalizeStagedDatabase(Connection connection, String schema) throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown staged database schema");
         try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA wal_checkpoint(TRUNCATE)"))
+            ResultSet resultSet = statement.executeQuery("PRAGMA " + schema + ".wal_checkpoint(TRUNCATE)"))
         {
             if(resultSet.next() && resultSet.getInt(1) != 0)
             {
@@ -1539,7 +1597,7 @@ public final class ApplicationDatabaseMigrator
         }
 
         try(Statement statement = connection.createStatement();
-            ResultSet resultSet = statement.executeQuery("PRAGMA journal_mode=DELETE"))
+            ResultSet resultSet = statement.executeQuery("PRAGMA " + schema + ".journal_mode=DELETE"))
         {
             if(!resultSet.next() || !"delete".equalsIgnoreCase(resultSet.getString(1)))
             {

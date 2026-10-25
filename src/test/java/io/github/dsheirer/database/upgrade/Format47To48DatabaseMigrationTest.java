@@ -49,9 +49,9 @@ class Format47To48DatabaseMigrationTest
             connection.rollback();
             assertEquals(47, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("1", scalar(connection, "SELECT paused FROM topic_alert_device WHERE id='fixture-phone'"));
-            var report = DatabaseMigrationChain.migrate(connection); connection.commit();
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
             assertEquals("format-47-to-48", report.steps().getFirst().id());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             for(String table: List.of("topic_alert_device", "topic_alert_enrollment"))
                 assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_table_info('" + table + "') WHERE name IN ('paused','quiet_start','quiet_end','time_zone')"));
             assertEquals(new ObjectMapper().readTree(ruleJson), new ObjectMapper().readTree(scalar(connection, "SELECT json_remove(rule_json,'$.action_button_enabled') FROM topic_alert_rule")), "Subsequent popup setting migration preserves every original rule field");
@@ -59,9 +59,9 @@ class Format47To48DatabaseMigrationTest
             assertEquals("Activity:Scheduled activity", scalar(connection, "SELECT title||':'||body FROM topic_alert_message"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
             assertNull(scalar(connection, "PRAGMA foreign_key_check"));
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(path);
+        CurrentFormatTestDatabase.validateCurrentPair(path);
         var store = new TopicAlertStore(path);
         assertEquals("fixture-phone", store.findDeviceByTokenHash("a".repeat(64)).orElseThrow().id());
         assertEquals(List.of("fixture-alert"), store.device("fixture-phone").orElseThrow().topicIds(), "Formerly paused phone receives normally");

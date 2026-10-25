@@ -126,12 +126,18 @@ final class LegacyActivityReset
 
     static long count(Connection connection, List<String> tables) throws SQLException
     {
+        return count(connection, tables, "main");
+    }
+
+    static long count(Connection connection, List<String> tables, String schema) throws SQLException
+    {
+        schema = identifier(schema);
         long total = 0;
         try(Statement statement = connection.createStatement())
         {
             for(String table: tables)
             {
-                try(ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM " + identifier(table)))
+                try(ResultSet rows = statement.executeQuery("SELECT COUNT(*) FROM " + schema + "." + identifier(table)))
                 {
                     if(!rows.next())
                     {
@@ -146,6 +152,12 @@ final class LegacyActivityReset
 
     static void clear(Connection connection, List<String> tables) throws SQLException
     {
+        clear(connection, tables, "main");
+    }
+
+    static void clear(Connection connection, List<String> tables, String schema) throws SQLException
+    {
+        schema = identifier(schema);
         Set<String> remaining = new LinkedHashSet<>(tables);
         if(remaining.size() != tables.size())
         {
@@ -157,7 +169,7 @@ final class LegacyActivityReset
         {
             Set<String> parents = new HashSet<>();
             try(Statement statement = connection.createStatement();
-                ResultSet rows = statement.executeQuery("PRAGMA foreign_key_list(" + identifier(table) + ")"))
+                ResultSet rows = statement.executeQuery("PRAGMA " + schema + ".foreign_key_list(" + identifier(table) + ")"))
             {
                 while(rows.next())
                 {
@@ -186,14 +198,14 @@ final class LegacyActivityReset
         {
             for(String table: deletionOrder)
             {
-                statement.executeUpdate("DELETE FROM " + identifier(table));
+                statement.executeUpdate("DELETE FROM " + schema + "." + identifier(table));
             }
         }
 
-        if(tableExists(connection, "sqlite_sequence"))
+        if(tableExists(connection, schema, "sqlite_sequence"))
         {
             try(PreparedStatement statement = connection.prepareStatement(
-                "DELETE FROM sqlite_sequence WHERE name=?"))
+                "DELETE FROM " + schema + ".sqlite_sequence WHERE name=?"))
             {
                 for(String table: tables)
                 {
@@ -205,10 +217,10 @@ final class LegacyActivityReset
         }
     }
 
-    private static boolean tableExists(Connection connection, String table) throws SQLException
+    private static boolean tableExists(Connection connection, String schema, String table) throws SQLException
     {
         try(PreparedStatement statement = connection.prepareStatement(
-            "SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name=?"))
+            "SELECT COUNT(*) FROM " + schema + ".sqlite_schema WHERE type='table' AND name=?"))
         {
             statement.setString(1, table);
             try(ResultSet rows = statement.executeQuery())

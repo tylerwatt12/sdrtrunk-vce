@@ -59,7 +59,7 @@ class Format17To18DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report;
             try
             {
-                report = DatabaseMigrationChain.migrate(connection);
+                report = CurrentFormatTestDatabase.migrateToVersion(connection, 18);
                 connection.commit();
             }
             catch(Exception exception)
@@ -72,8 +72,8 @@ class Format17To18DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
+            assertEquals(18, report.target().version());
+            assertEquals("format-17-to-18", report.steps().getLast().id());
             assertEquals(1, number(statement,
                 "SELECT count(*) FROM receiver_activity_event WHERE id=600 AND observed_site=255"));
             statement.executeUpdate("""
@@ -86,9 +86,10 @@ class Format17To18DatabaseMigrationTest
                 """));
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertEquals(0, number(statement, "SELECT count(*) FROM pragma_foreign_key_check"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(18).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static long number(Statement statement, String sql) throws SQLException

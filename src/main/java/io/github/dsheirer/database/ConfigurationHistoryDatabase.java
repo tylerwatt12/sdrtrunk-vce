@@ -46,30 +46,28 @@ public final class ConfigurationHistoryDatabase
 
     public static void validateRole(Connection connection, String role) throws SQLException
     {
-        String actualRole = ConfigurationHistorySchema.metadata(connection, ConfigurationHistorySchema.ROLE_KEY);
-        String pairId = ConfigurationHistorySchema.metadata(connection, ConfigurationHistorySchema.PAIR_ID_KEY);
-        if(!role.equals(actualRole) || pairId == null || !pairId.matches(
-            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
-        {
-            throw new SQLException("The configuration/activity database identity is missing or invalid");
-        }
-        String expected = role.equals(ConfigurationHistorySchema.CONFIGURATION_ROLE) ?
-            CONFIGURATION_FINGERPRINT : HISTORY_FINGERPRINT;
-        if(!expected.equals(SqliteSchemaValidator.fingerprint(connection)))
-        {
-            throw new SQLException("The " + role + " database does not have the exact format-63 schema");
-        }
-        if(!"63".equals(ConfigurationHistorySchema.metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
-        {
-            throw new SQLException("The " + role + " database format marker is missing or incompatible");
-        }
+        validateAdmittedRole(connection, role, SqliteSchemaValidator.fingerprint(connection));
+    }
+
+    /** Reuses the exact fingerprint just admitted on this connection while checking all role content. */
+    public static void validateAdmittedRole(Connection connection, String role, String admittedFingerprint)
+        throws SQLException
+    {
+        validateAdmittedRole(connection, role, admittedFingerprint, "main");
+    }
+
+    /** Validates the already-admitted private companion within its caller-owned migration transaction. */
+    public static void validateAdmittedRole(Connection connection, String role, String admittedFingerprint, String schema)
+        throws SQLException
+    {
+        validateRoleIdentity(connection, role, admittedFingerprint, schema);
         if(role.equals(ConfigurationHistorySchema.HISTORY_ROLE))
         {
-            io.github.dsheirer.stats.activity.ActivityMessageCatalog.validate(connection);
+            io.github.dsheirer.stats.activity.ActivityMessageCatalog.validate(connection, schema);
             for(String key: java.util.List.of("conventional_call_output_metrics_started_at_ms",
                 "trunked_logical_call_metrics_started_at_ms", "radio_system_metrics_started_at_ms"))
             {
-                String value = ConfigurationHistorySchema.metadata(connection, key);
+                String value = ConfigurationHistorySchema.metadata(connection, schema, key);
                 try
                 {
                     if(value == null || Long.parseLong(value) <= 0 || !Long.toString(Long.parseLong(value)).equals(value))
@@ -85,12 +83,40 @@ public final class ConfigurationHistoryDatabase
         }
     }
 
+    private static void validateRoleIdentity(Connection connection, String role, String fingerprint) throws SQLException
+    {
+        validateRoleIdentity(connection, role, fingerprint, "main");
+    }
+
+    private static void validateRoleIdentity(Connection connection, String role, String fingerprint, String schema)
+        throws SQLException
+    {
+        String actualRole = ConfigurationHistorySchema.metadata(connection, schema, ConfigurationHistorySchema.ROLE_KEY);
+        String pairId = ConfigurationHistorySchema.metadata(connection, schema, ConfigurationHistorySchema.PAIR_ID_KEY);
+        if(!java.util.Set.of(ConfigurationHistorySchema.CONFIGURATION_ROLE, ConfigurationHistorySchema.HISTORY_ROLE)
+            .contains(role) || !role.equals(actualRole) || pairId == null || !pairId.matches(
+            "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+        {
+            throw new SQLException("The configuration/activity database identity is missing or invalid");
+        }
+        String expected = role.equals(ConfigurationHistorySchema.CONFIGURATION_ROLE) ?
+            CONFIGURATION_FINGERPRINT : HISTORY_FINGERPRINT;
+        if(!expected.equals(fingerprint))
+        {
+            throw new SQLException("The " + role + " database does not have the exact format-63 schema");
+        }
+        if(!"63".equals(ConfigurationHistorySchema.metadata(connection, schema, DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
+        {
+            throw new SQLException("The " + role + " database format marker is missing or incompatible");
+        }
+    }
+
     public static void validatePair(Path configuration) throws IOException, SQLException
     {
         validatePair(configuration, true);
     }
 
-    /** Migration/snapshot admission preserves repairable configuration content while requiring exact paired roles. */
+    /** Migration/snapshot admission permits repairable content while requiring exact paired schemas and identities. */
     public static void validatePairIdentity(Path configuration) throws IOException, SQLException
     {
         validatePair(configuration, false);
@@ -111,16 +137,22 @@ public final class ConfigurationHistoryDatabase
         {
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(config);
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(activity);
-            validateRole(config, ConfigurationHistorySchema.CONFIGURATION_ROLE);
-            validateRole(activity, ConfigurationHistorySchema.HISTORY_ROLE);
+            if(validateConfigurationContent)
+            {
+                validateRole(activity, ConfigurationHistorySchema.HISTORY_ROLE);
+                DatabaseFormatCatalog.requireCurrent(config);
+            }
+            else
+            {
+                validateRoleIdentity(config, ConfigurationHistorySchema.CONFIGURATION_ROLE,
+                    SqliteSchemaValidator.fingerprint(config));
+                validateRoleIdentity(activity, ConfigurationHistorySchema.HISTORY_ROLE,
+                    SqliteSchemaValidator.fingerprint(activity));
+            }
             if(!ConfigurationHistorySchema.metadata(config, ConfigurationHistorySchema.PAIR_ID_KEY).equals(
                 ConfigurationHistorySchema.metadata(activity, ConfigurationHistorySchema.PAIR_ID_KEY)))
             {
                 throw new SQLException("The configuration and activity databases belong to different profiles");
-            }
-            if(validateConfigurationContent)
-            {
-                DatabaseFormatCatalog.requireCurrent(config);
             }
         }
     }

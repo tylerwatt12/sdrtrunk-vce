@@ -52,7 +52,7 @@ class Format38To39DatabaseMigrationTest
                 SqliteSchemaValidator.fingerprint(connection), "Already admitted format 38 remains frozen");
         }
         byte[] sourceBytes = Files.readAllBytes(source);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
         assertArrayEquals(sourceBytes, Files.readAllBytes(source));
 
         for(int attempt = 0; attempt < 2; attempt++)
@@ -88,7 +88,7 @@ class Format38To39DatabaseMigrationTest
                 assertEquals("0", scalar(statement,"SELECT count(*) FROM pragma_foreign_key_check"));
             }
             byte[] candidateBytes = Files.readAllBytes(candidate);
-            assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(candidate));
+            assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(candidate));
             assertArrayEquals(candidateBytes,Files.readAllBytes(candidate));
             assertArrayEquals(sourceBytes,Files.readAllBytes(source));
         }

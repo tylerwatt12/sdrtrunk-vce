@@ -223,9 +223,15 @@ public final class ConfigurationHistorySchema
 
     public static String metadata(Connection connection, String key) throws SQLException
     {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT value,typeof(value),typeof(updated_at_ms),updated_at_ms FROM database_metadata WHERE key=?
-            """))
+        return metadata(connection, "main", key);
+    }
+
+    /** Reads one role's metadata while the explicit migration owns both databases on one connection. */
+    public static String metadata(Connection connection, String schema, String key) throws SQLException
+    {
+        if(!java.util.Set.of("main", "activity").contains(schema)) throw new SQLException("Unknown database role schema");
+        try(PreparedStatement statement = connection.prepareStatement("SELECT value,typeof(value)," +
+            "typeof(updated_at_ms),updated_at_ms FROM " + schema + ".database_metadata WHERE key=?"))
         {
             statement.setString(1, key);
             try(ResultSet rows = statement.executeQuery())

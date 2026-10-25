@@ -59,7 +59,7 @@ class Format39To40DatabaseMigrationTest
                 .map(DatabaseMigrationEffect::affectedRows).toList());
         }
         byte[] bytes = Files.readAllBytes(source);
-        assertThrows(SQLException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
+        assertThrows(java.io.IOException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
         assertArrayEquals(bytes,Files.readAllBytes(source));
         for(int attempt=0;attempt<2;attempt++)
         {
@@ -85,7 +85,7 @@ class Format39To40DatabaseMigrationTest
                 assertEquals("ok",scalar(statement,"PRAGMA integrity_check"));
                 assertEquals("0",scalar(statement,"SELECT count(*) FROM pragma_foreign_key_check"));
             }
-            assertThrows(SQLException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(candidate));
+            assertThrows(java.io.IOException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(candidate));
             assertArrayEquals(bytes,Files.readAllBytes(source));
         }
     }
@@ -130,7 +130,7 @@ class Format39To40DatabaseMigrationTest
             assertEquals(indexDefinitions(freshConnection),indexDefinitions(connection));
         }
         byte[] bytes = Files.readAllBytes(current);
-        assertThrows(SQLException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(current));
+        assertThrows(java.io.IOException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(current));
         assertArrayEquals(bytes,Files.readAllBytes(current));
     }
 

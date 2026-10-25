@@ -744,8 +744,8 @@ public final class DatabaseFormatCatalog
         String fingerprint = SqliteSchemaValidator.fingerprint(connection);
         if(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT.equals(fingerprint))
         {
-            io.github.dsheirer.database.ConfigurationHistoryDatabase.validateRole(connection,
-                io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE);
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.validateAdmittedRole(connection,
+                io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE, fingerprint);
             return new DetectedFormat(FORMAT_63, true);
         }
         List<FormatDescriptor> candidates = BY_FINGERPRINT.get(fingerprint);
@@ -1139,8 +1139,8 @@ public final class DatabaseFormatCatalog
         }
         if(descriptor.version() == 63)
         {
-            io.github.dsheirer.database.ConfigurationHistoryDatabase.validateRole(connection,
-                io.github.dsheirer.database.ConfigurationHistorySchema.CONFIGURATION_ROLE);
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.validateAdmittedRole(connection,
+                io.github.dsheirer.database.ConfigurationHistorySchema.CONFIGURATION_ROLE, descriptor.fingerprint());
         }
         else if(descriptor.version() <= 3)
         {

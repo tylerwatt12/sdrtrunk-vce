@@ -48,7 +48,7 @@ class Format49To50DatabaseMigrationTest
             integrity(connection);
             assertEquals(DatabaseFormatCatalog.requireVersion(50).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(prior));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(prior));
         Path fresh = directory.resolve("fresh.sqlite"); SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         try(Connection connection = open(fresh))
         { assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection)); integrity(connection); }
@@ -92,7 +92,7 @@ class Format49To50DatabaseMigrationTest
     {
         Path prior = Format49TestDatabase.create(directory.resolve("refused.sqlite"));
         byte[] original = Files.readAllBytes(prior);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(prior));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(prior));
         assertArrayEquals(original, Files.readAllBytes(prior));
         try(Connection connection = open(prior); var sql = connection.createStatement())
         {
@@ -102,7 +102,7 @@ class Format49To50DatabaseMigrationTest
             sql.execute("PRAGMA foreign_keys=OFF");
             sql.execute("CREATE TABLE receiver_activity_tone_sequence(event_id INTEGER PRIMARY KEY)");
             var before = contents(connection);
-            assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection));
+            assertThrows(SQLException.class, () -> CurrentFormatTestDatabase.migrateToVersion(connection, 62));
             assertEquals(before, contents(connection));
         }
     }

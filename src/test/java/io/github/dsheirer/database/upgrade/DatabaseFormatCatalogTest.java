@@ -270,9 +270,10 @@ class DatabaseFormatCatalogTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseMigrationChain.migrate(connection).target().version());
             connection.commit();
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
                 SqliteSchemaValidator.fingerprint(connection));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -338,9 +339,10 @@ class DatabaseFormatCatalogTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 39, report.steps().size());
             assertEquals("format-39-to-40", report.steps().getFirst().id());
             assertEquals(DatabaseFormatCatalog.requireVersion(39).fingerprint(), fingerprint);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -364,9 +366,10 @@ class DatabaseFormatCatalogTest
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 40, report.steps().size());
             assertEquals("format-40-to-41", report.steps().getFirst().id());
             assertEquals(DatabaseFormatCatalog.requireVersion(40).fingerprint(), fingerprint);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertTrue(DatabaseFormatCatalog.requireCurrent(connection).markerPresent());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test

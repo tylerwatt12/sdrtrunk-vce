@@ -18,6 +18,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.dsheirer.database.ActivityDatabasePath;
+import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
@@ -120,10 +122,14 @@ class ApplicationDatabaseMigratorOwnedProfileTest
             "--complete-profile-copy");
         assertEquals(ApplicationDatabaseMigrator.EXIT_MIGRATION_FAILED, strict.code(), strict::error);
         assertArrayEquals(stageBefore, Files.readAllBytes(profile.stage()));
+        assertTrue(Files.exists(ActivityDatabasePath.splitReceipt(profile.stage())),
+            "A rolled-back split leaves its private extraction receipt for migrator recovery");
 
         Result owned = run(profile.stage().toString(), profile.source().toString(), profile.target().toString(), OWNED);
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, owned.code(), owned::error);
-        assertEquals("1", scalar(profile.stage(),
+        ConfigurationHistoryDatabase.validatePair(profile.stage());
+        assertFalse(Files.exists(ActivityDatabasePath.splitReceipt(profile.stage())));
+        assertEquals("1", scalar(ActivityDatabasePath.forConfiguration(profile.stage()),
             "SELECT count(*) FROM radio_system_identity_summary WHERE identity_id=16777213"));
         assertArrayEquals(sourceBefore, Files.readAllBytes(profile.sourceDatabase()));
     }

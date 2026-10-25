@@ -76,14 +76,14 @@ class Format23To24DatabaseMigrationTest
             connection.commit();
             connection.setAutoCommit(true);
 
-            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToCurrent(connection);
-            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(24),
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsBetween(24, 62),
                 report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(activityBefore, activityRows(statement));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("ok", scalarText(statement, "PRAGMA integrity_check"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
 
@@ -91,6 +91,7 @@ class Format23To24DatabaseMigrationTest
             statement.execute("ANALYZE");
             assertActivityFilterPlans(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test

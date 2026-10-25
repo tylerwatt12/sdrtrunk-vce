@@ -3,6 +3,7 @@ package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
@@ -121,17 +122,19 @@ class HistoricalActivityDiscardMigrationTest
             assertTrue(CurrentDatabaseDerivedStateRepair.inspectHistorical(connection, 25).requiresRepair());
             assertEquals(0, CurrentDatabaseDerivedStateRepair.inspectHistorical(connection, 25).resetRows());
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
-            assertDiscardedAndCurrent(connection);
+            CurrentFormatTestDatabase.migrateToVersion(connection, 62);
+            assertDiscardedAndFormat(connection, 62);
             connection.rollback();
             assertEquals(25, DatabaseFormatCatalog.inspectForMigration(connection).version());
             assertEquals(0, scalar(connection, "SELECT count(*) FROM alias_activity_summary"));
             assertEquals(before.rows(), readConfiguration(connection, before.columns(), before.filters()));
-            DatabaseMigrationChain.migrate(connection);
+            CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
-            assertDiscardedAndCurrent(connection);
+            assertDiscardedAndFormat(connection, 62);
             assertEquals(before.rows(), readConfiguration(connection, before.columns(), before.filters()));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(source);
+        try(var connection = open(source)) { assertDiscardedAndCurrent(connection); }
     }
 
     @Test
@@ -168,24 +171,44 @@ class HistoricalActivityDiscardMigrationTest
                 assertTrue(inspection.resetRows() > 0);
                 statement.execute("PRAGMA foreign_keys=OFF");
                 connection.setAutoCommit(false);
-                var report = DatabaseMigrationChain.migrate(connection);
+                var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 assertEquals(inspection.resetRows(), report.steps().getFirst().effects().stream()
                     .filter(effect -> effect.subject().equals(CurrentDatabaseDerivedStateRepair.RESET_SUBJECT))
                     .findFirst().orElseThrow().affectedRows());
-                assertDiscardedAndCurrent(connection);
+                assertDiscardedAndFormat(connection, 62);
                 assertEquals(10, scalar(connection, "SELECT protocol_code FROM alias_activity_summary WHERE alias_id=9001"));
                 connection.rollback();
                 assertEquals(originalEvents, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
                 assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE id=" + retainedEventId +
                     " AND observed_at_ms=2000 AND action_code=12 AND event_type_code=57"));
             }
+            Path current = strictCurrentCopy(database);
+            try(var connection = open(current)) { assertDiscardedAndCurrent(connection); }
         }
+    }
+
+    private Path strictCurrentCopy(Path source) throws Exception
+    {
+        Path stage = source.resolveSibling(".sdrtrunk.sqlite.migration-" + java.util.UUID.randomUUID());
+        Files.copy(source, stage);
+        var output = new java.io.ByteArrayOutputStream();
+        var error = new java.io.ByteArrayOutputStream();
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, ApplicationDatabaseMigrator.run(
+            new String[]{stage.toString()}, new java.io.PrintStream(output), new java.io.PrintStream(error)), error::toString);
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(stage);
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.validateGlobalDatabase(stage);
+        return stage;
     }
 
     private static void assertDiscardedAndCurrent(Connection connection) throws Exception
     {
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-        assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+        assertDiscardedAndFormat(connection, DatabaseFormatCatalog.CURRENT_VERSION);
+    }
+
+    private static void assertDiscardedAndFormat(Connection connection, int version) throws Exception
+    {
+        assertEquals(version, DatabaseFormatCatalog.inspect(connection).version());
+        assertEquals(DatabaseFormatCatalog.requireVersion(version).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
         assertEquals(0, scalar(connection, "SELECT count(*) FROM radio_system"));
         assertEquals(scalar(connection, "SELECT count(*) FROM alias"),
@@ -204,9 +227,9 @@ class HistoricalActivityDiscardMigrationTest
         {
             long aliases = scalar(connection, "SELECT count(*) FROM alias");
             assertTrue(aliases > 0);
-            statement.executeUpdate("INSERT INTO sqlite_sequence(name,seq) SELECT 'receiver_activity_event',-1 " +
-                "WHERE NOT EXISTS(SELECT 1 FROM sqlite_sequence WHERE name='receiver_activity_event')");
-            statement.executeUpdate("UPDATE sqlite_sequence SET seq=-1 WHERE name='receiver_activity_event'");
+            statement.executeUpdate("INSERT INTO activity.sqlite_sequence(name,seq) SELECT 'receiver_activity_event',-1 " +
+                "WHERE NOT EXISTS(SELECT 1 FROM activity.sqlite_sequence WHERE name='receiver_activity_event')");
+            statement.executeUpdate("UPDATE activity.sqlite_sequence SET seq=-1 WHERE name='receiver_activity_event'");
             connection.setAutoCommit(false);
             var repaired = CurrentDatabaseDerivedStateRepair.repair(connection);
             assertEquals(aliases, CurrentDatabaseDerivedStateRepair.effects(repaired).stream()
@@ -292,7 +315,17 @@ class HistoricalActivityDiscardMigrationTest
     }
 
     private static Connection open(Path database) throws Exception
-    { return DriverManager.getConnection("jdbc:sqlite:" + database); }
+    { Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        if(java.nio.file.Files.isRegularFile(activity))
+        {
+            try(var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+            {
+                attach.setString(1, activity.toString());
+                attach.execute();
+            }
+        }
+        return connection; }
 
     private record Configuration(Map<String,List<String>> columns, Map<String,String> filters, Map<String,List<String>> rows) {}
 }

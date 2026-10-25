@@ -128,7 +128,7 @@ class Format3To4DatabaseMigrationTest
             assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
             DatabaseFormatCatalog.DetectedFormat current = DatabaseFormatCatalog.requireCurrent(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, current.version());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
                 SqliteSchemaValidator.fingerprint(connection));
 
             //Administrator configuration survives the full chain.
@@ -167,6 +167,7 @@ class Format3To4DatabaseMigrationTest
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
             ApplicationDatabaseMigrator.validateCurrentDatabase(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static Connection open(Path database) throws Exception

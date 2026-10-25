@@ -564,7 +564,13 @@ public class ReceiverActivitySchema
      */
     public static void validateRetainedHistoryData(Connection connection) throws SQLException
     {
-        RadioSystemSchema.validateRetainedHistoryData(connection);
+        validateRetainedHistoryData(connection, "main");
+    }
+
+    /** Validates the private attached history while its explicit migration transaction is still uncommitted. */
+    public static void validateRetainedHistoryData(Connection connection, String schema) throws SQLException
+    {
+        RadioSystemSchema.validateRetainedHistoryData(connection, schema);
     }
 
     public static void validate(Connection connection) throws SQLException

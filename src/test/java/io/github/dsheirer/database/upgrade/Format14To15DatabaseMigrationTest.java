@@ -99,9 +99,9 @@ class Format14To15DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-                assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
+                DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
+                assertEquals(62, report.target().version());
+                assertEquals("format-61-to-62", report.steps().getLast().id());
                 connection.commit();
             }
             catch(Exception exception)
@@ -277,8 +277,9 @@ class Format14To15DatabaseMigrationTest
                 """));
             assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
             assertEquals(0, number(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
         var migratedConfiguration = new ConfigurationRepository(database).load();
         assertEquals(2, migratedConfiguration.channels().size());
         assertEquals(2, migratedConfiguration.broadcastConfigurations().size());
@@ -584,6 +585,7 @@ class Format14To15DatabaseMigrationTest
             DatabaseMigrationChain.migrate(connection);
             connection.commit();
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
 
         var channel = new ConfigurationRepository(database).load().channels().stream()
             .filter(candidate -> MIXED_CASE_CHANNEL.equals(candidate.getConfigurationId()))
@@ -641,6 +643,7 @@ class Format14To15DatabaseMigrationTest
             DatabaseMigrationChain.migrate(connection);
             connection.commit();
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
 
         try(Connection connection = open(database))
         {

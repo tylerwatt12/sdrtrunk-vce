@@ -103,7 +103,8 @@ final class CurrentDatabaseDerivedStateRepair
 
     static boolean isReproducibleTable(String table)
     {
-        return table != null && REPRODUCIBLE_TABLE_SET.contains(table);
+        return table != null && (REPRODUCIBLE_TABLE_SET.contains(table) ||
+            Set.of("alias_list_analog_activity_summary", "receiver_channel_statistics_reset").contains(table));
     }
 
     static boolean isMetricBoundaryKey(String key)
@@ -124,9 +125,10 @@ final class CurrentDatabaseDerivedStateRepair
 
     private static Inspection inspect(Connection connection, boolean analogAliasProtocols) throws SQLException
     {
+        String historySchema = historySchema(connection);
         Set<String> damagedTables = new LinkedHashSet<>();
         try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("PRAGMA foreign_key_check"))
+            ResultSet rows = statement.executeQuery("PRAGMA " + historySchema + ".foreign_key_check"))
         {
             while(rows.next())
             {
@@ -138,7 +140,7 @@ final class CurrentDatabaseDerivedStateRepair
             }
         }
 
-        for(String table: REPRODUCIBLE_TABLES)
+        for(String table: repairTables(connection))
         {
             if(!tableChecksAreValid(connection, table))
             {
@@ -169,7 +171,7 @@ final class CurrentDatabaseDerivedStateRepair
         }
 
         long resetRows = damagedTables.isEmpty() ? 0 :
-            LegacyActivityReset.count(connection, repairTables(connection));
+            LegacyActivityReset.count(connection, repairTables(connection), historySchema(connection));
         long emptyAliasCounters = 0;
         if(!damagedTables.isEmpty())
         {
@@ -203,7 +205,7 @@ final class CurrentDatabaseDerivedStateRepair
 
         if(before.damagedTables() > 0)
         {
-            LegacyActivityReset.clear(connection, repairTables(connection));
+            LegacyActivityReset.clear(connection, repairTables(connection), historySchema(connection));
             if(seedCountersNow) AliasActivitySummaryMaintenance.resetAll(connection);
             restartMetricBoundaries(connection, METRIC_BOUNDARY_KEYS);
         }
@@ -272,8 +274,8 @@ final class CurrentDatabaseDerivedStateRepair
             """
                 SELECT CASE WHEN typeof(value)='text' AND length(CAST(value AS BLOB)) <= 64 THEN value END,
                        updated_at_ms, typeof(value), typeof(updated_at_ms)
-                FROM database_metadata WHERE key=?
-                """))
+                FROM %s.database_metadata WHERE key=?
+                """.formatted(historySchema(connection))))
         {
             statement.setString(1, key);
             try(ResultSet rows = statement.executeQuery())
@@ -290,7 +292,8 @@ final class CurrentDatabaseDerivedStateRepair
                 }
                 try
                 {
-                    return Long.parseLong(value) <= 0;
+                    long parsed = Long.parseLong(value);
+                    return parsed <= 0 || !Long.toString(parsed).equals(value);
                 }
                 catch(NumberFormatException ignored)
                 {
@@ -307,6 +310,31 @@ final class CurrentDatabaseDerivedStateRepair
      */
     private static boolean invalidAliasActivitySummaryParity(Connection connection, boolean analogAliasProtocols) throws SQLException
     {
+        boolean separated = !"main".equals(historySchema(connection)) ||
+            "activity".equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+                io.github.dsheirer.database.ConfigurationHistorySchema.ROLE_KEY));
+        if(separated)
+        {
+            // Detached summaries and absent/lazily-created rows are valid after configuration/history separation.
+            // Compare only the same current matcher identity; old matcher snapshots belong to retained history.
+            try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("""
+                SELECT EXISTS(SELECT 1 FROM alias_activity_summary summary
+                    JOIN alias configured ON configured.id=summary.alias_id
+                        AND configured.activity_identity=summary.activity_identity
+                    WHERE summary.protocol_code<>CASE
+                        WHEN configured.matcher_type='P25_SUBSCRIBER_IDENTITY' THEN 1
+                        WHEN configured.matcher_type IN ('TALKGROUP','TALKGROUP_RANGE','RADIO_ID','RADIO_ID_RANGE')
+                        THEN CASE configured.protocol WHEN 'APCO25' THEN 1 WHEN 'APCO25_PHASE2' THEN 1
+                            WHEN 'DMR' THEN 3 WHEN 'NXDN' THEN 4
+                            WHEN 'NBFM' THEN CASE WHEN configured.matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') THEN 10 ELSE 0 END
+                            WHEN 'AM' THEN CASE WHEN configured.matcher_type IN ('TALKGROUP','TALKGROUP_RANGE') THEN 11 ELSE 0 END
+                            ELSE 0 END ELSE 0 END LIMIT 1)
+                """))
+            {
+                if(!rows.next()) throw new SQLException("Unable to inspect paired Alias Activity summary parity");
+                return rows.getInt(1) != 0;
+            }
+        }
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("""
                 SELECT
@@ -356,11 +384,14 @@ final class CurrentDatabaseDerivedStateRepair
     private static List<String> repairTables(Connection connection) throws SQLException
     {
         java.util.Set<String> present = new java.util.HashSet<>();
-        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("SELECT name FROM sqlite_schema WHERE type='table'"))
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("SELECT name FROM " + historySchema(connection) + ".sqlite_schema WHERE type='table'"))
         {
             while(rows.next()) present.add(rows.getString(1));
         }
-        return REPRODUCIBLE_TABLES.stream().filter(table -> present.contains(table) ||
+        List<String> classified = new ArrayList<>(REPRODUCIBLE_TABLES);
+        for(String table: List.of("alias_list_analog_activity_summary", "receiver_channel_statistics_reset"))
+            if(present.contains(table)) classified.add(table);
+        return classified.stream().filter(table -> present.contains(table) ||
             !Set.of("p25_wuid_assignment_observation_summary", "receiver_activity_tone", "receiver_activity_tone_sequence").contains(table)).toList();
     }
 
@@ -375,14 +406,14 @@ final class CurrentDatabaseDerivedStateRepair
         if(Set.of("p25_wuid_assignment_observation_summary", "receiver_activity_tone", "receiver_activity_tone_sequence").contains(table))
         {
             try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='" + table + "'"))
+            ResultSet rows = statement.executeQuery("SELECT 1 FROM " + historySchema(connection) + ".sqlite_schema WHERE type='table' AND name='" + table + "'"))
             {
                 if(!rows.next()) return true;
             }
         }
         boolean result = false;
         try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("PRAGMA quick_check('" + table + "')"))
+            ResultSet rows = statement.executeQuery("PRAGMA " + historySchema(connection) + ".quick_check('" + table + "')"))
         {
             while(rows.next())
             {
@@ -410,7 +441,7 @@ final class CurrentDatabaseDerivedStateRepair
 
         long retainedMaximum;
         try(Statement statement = connection.createStatement();
-            ResultSet rows = statement.executeQuery("SELECT coalesce(max(id), 0) FROM " + table))
+            ResultSet rows = statement.executeQuery("SELECT coalesce(max(id), 0) FROM " + historySchema(connection) + "." + table))
         {
             if(!rows.next())
             {
@@ -424,9 +455,9 @@ final class CurrentDatabaseDerivedStateRepair
                    coalesce(sum(CASE WHEN typeof(seq)='integer' AND seq >= ? AND seq >= 0
                                           AND seq <= ?
                                      THEN 1 ELSE 0 END), 0) AS valid_rows
-            FROM sqlite_sequence
+            FROM %s.sqlite_sequence
             WHERE typeof(name)='text' AND name=?
-            """))
+            """.formatted(historySchema(connection))))
         {
             statement.setLong(1, retainedMaximum);
             statement.setLong(2, Long.MAX_VALUE - 2);
@@ -449,10 +480,10 @@ final class CurrentDatabaseDerivedStateRepair
     {
         long now = Math.max(1L, System.currentTimeMillis());
         try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO database_metadata(key, value, updated_at_ms)
+            INSERT INTO %s.database_metadata(key, value, updated_at_ms)
             VALUES (?, ?, ?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at_ms=excluded.updated_at_ms
-            """))
+            """.formatted(historySchema(connection))))
         {
             for(String key: keys)
             {
@@ -463,6 +494,45 @@ final class CurrentDatabaseDerivedStateRepair
             }
             statement.executeBatch();
         }
+    }
+
+    /** External-source preflight reads the matching history without granting it write access. */
+    static void attachHistoryForInspection(Connection connection) throws SQLException
+    {
+        if(!io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection)) return;
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("PRAGMA database_list"))
+        {
+            while(rows.next()) if("activity".equals(rows.getString("name"))) return;
+        }
+        java.nio.file.Path configuration = Format62To63DatabaseMigration.databasePath(connection);
+        try
+        {
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(configuration);
+        }
+        catch(java.io.IOException failure)
+        {
+            throw new SQLException("A complete matching profile is required for activity inspection", failure);
+        }
+        try(PreparedStatement attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+        {
+            String options = connection.getMetaData().getURL().contains("immutable=1") ?
+                "?mode=ro&immutable=1" : "?mode=ro";
+            attach.setString(1, io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(configuration).toUri() + options);
+            attach.execute();
+        }
+    }
+
+    private static String historySchema(Connection connection) throws SQLException
+    {
+        if(io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection))
+        {
+            try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("PRAGMA database_list"))
+            {
+                while(rows.next()) if("activity".equals(rows.getString("name"))) return "activity";
+            }
+            throw new SQLException("Current activity repair requires the admitted private activity companion");
+        }
+        return "main";
     }
 
     record Inspection(int damagedTables, long resetRows, List<String> invalidMetricBoundaryKeys, long emptyAliasCounters)

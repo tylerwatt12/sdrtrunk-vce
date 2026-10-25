@@ -70,18 +70,18 @@ class Format32To33DatabaseMigrationTest
                     SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(expectedEvents, eventRows(connection));
 
-                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+                DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 connection.commit();
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 32, report.steps().size());
+                assertEquals(62 - 32, report.steps().size());
                 assertEquals("format-32-to-33", report.steps().getFirst().id());
                 assertEquals(1, report.steps().getFirst().effects().getFirst().affectedRows());
-                assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+                assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(expectedEvents, eventRows(connection));
                 assertEquals("ok", scalar(statement, "PRAGMA integrity_check"));
                 assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
                 assertSparseCoveringPlan(statement);
             }
-            SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
+            CurrentFormatTestDatabase.validateCurrentPair(candidate);
             assertArrayEquals(sourceBytes, Files.readAllBytes(source), "Migration leaves the selected source unchanged");
         }
     }

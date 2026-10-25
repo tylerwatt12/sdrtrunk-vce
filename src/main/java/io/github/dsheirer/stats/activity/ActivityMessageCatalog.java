@@ -85,11 +85,16 @@ public final class ActivityMessageCatalog
     /** Bounded database reads are the sole runtime source of visible names, meanings and support. */
     public static List<Map<String,Object>> read(Connection connection) throws SQLException
     {
+        return read(connection, "main");
+    }
+
+    private static List<Map<String,Object>> read(Connection connection, String schema) throws SQLException
+    {
         List<Map<String,Object>> result = new ArrayList<>();
         try(var statement = connection.createStatement(); var rows = statement.executeQuery("""
             SELECT definition_kind,code,name,label,meaning,p25,dmr,nxdn,sort_order
-            FROM activity_message_type ORDER BY definition_kind,sort_order,code
-            """))
+            FROM %s.activity_message_type ORDER BY definition_kind,sort_order,code
+            """.formatted(schema)))
         {
             while(rows.next())
             {
@@ -120,13 +125,20 @@ public final class ActivityMessageCatalog
     /** Stable identities are strict; database-owned friendly wording is deliberately not overwritten or compared. */
     public static void validate(Connection connection) throws SQLException
     {
+        validate(connection, "main");
+    }
+
+    /** Checks the exact attached history schema and its bounded stable catalogue identities before commit. */
+    public static void validate(Connection connection, String schema) throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown Activity catalogue schema");
         SqliteSchemaValidator.validateDefinitions(connection,
-            List.of(new SqliteSchemaValidator.Definition("table", "activity_message_type", SQL)));
+            List.of(new SqliteSchemaValidator.Definition("table", "activity_message_type", SQL)), schema);
         Map<String,String> expected = new LinkedHashMap<>();
         for(Definition definition: definitions())
             expected.put(definition.kind() + ":" + definition.code(), definition.name());
         Map<String,String> actual = new LinkedHashMap<>();
-        for(Map<String,Object> definition: read(connection))
+        for(Map<String,Object> definition: read(connection, schema))
             actual.put(definition.get("definition_kind") + ":" + definition.get("code"), (String)definition.get("name"));
         if(!expected.equals(actual)) throw new SQLException("Activity message definitions are incomplete or have changed stable identities");
     }

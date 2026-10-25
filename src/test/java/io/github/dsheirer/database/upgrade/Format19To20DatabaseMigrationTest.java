@@ -102,7 +102,7 @@ class Format19To20DatabaseMigrationTest
                 "SELECT logical_call_count FROM alias_activity_summary WHERE alias_id=9105"));
 
             assertEquals(List.of("idx_alias_activity_calls", "idx_alias_activity_last_seen",
-                "idx_alias_activity_signaling"), indexNames(statement));
+                "idx_alias_activity_retention", "idx_alias_activity_signaling"), indexNames(statement));
             assertTrue(plan(statement, """
                 SELECT alias_id FROM alias_activity_summary
                 WHERE alias_list_id=9001 ORDER BY logical_call_count DESC, alias_id LIMIT 100
@@ -156,9 +156,10 @@ class Format19To20DatabaseMigrationTest
 
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertEquals(0, number(statement, "SELECT count(*) FROM pragma_foreign_key_check"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
                 SqliteSchemaValidator.fingerprint(connection));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -219,8 +220,9 @@ class Format19To20DatabaseMigrationTest
     @Test
     void normalStartupRejectsMissingSummaryWithoutRepairingIt() throws Exception
     {
-        Path database = Format20TestDatabase.create(mTemporaryFolder.resolve("missing-summary.sqlite"));
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path database = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("missing-summary.sqlite"));
+        Path history = io.github.dsheirer.database.ConfigurationHistoryDatabase.companionPath(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + history);
             Statement statement = connection.createStatement())
         {
             statement.executeUpdate("DROP TABLE alias_activity_summary");
@@ -228,7 +230,7 @@ class Format19To20DatabaseMigrationTest
 
         assertThrows(java.sql.SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
 
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + history);
             Statement statement = connection.createStatement())
         {
             assertEquals(0, number(statement, """
@@ -277,6 +279,7 @@ class Format19To20DatabaseMigrationTest
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertEquals(0, number(statement, "SELECT count(*) FROM pragma_foreign_key_check"));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static void seedRetainedActivity(Statement statement) throws Exception
@@ -293,19 +296,18 @@ class Format19To20DatabaseMigrationTest
             ) VALUES
                 ('90000000-0000-4000-8000-000000000001','TRUNKED',9001,'Migration DMR','North',
                     'North Control',9001,'DMR',0,451012500,
-                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'),
+                    '{"decodeConfiguration":{"type":"decodeConfigDMR","channelMode":"TRUNKED"},"sourceConfiguration":{"type":"sourceConfigTuner","frequency":451012500}}'),
                 ('90000000-0000-4000-8000-000000000002','TRUNKED',9002,'Migration DMR','South',
                     'South Control',9001,'DMR',0,452012500,
-                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'),
+                    '{"decodeConfiguration":{"type":"decodeConfigDMR","channelMode":"TRUNKED"},"sourceConfiguration":{"type":"sourceConfigTuner","frequency":452012500}}'),
                 ('90000000-0000-4000-8000-000000000003','TRUNKED',9003,'Migration DMR','East',
                     'East Control',9002,'DMR',0,453012500,
-                    '{"decodeConfiguration":{"channelMode":"TRUNKED"}}')
+                    '{"decodeConfiguration":{"type":"decodeConfigDMR","channelMode":"TRUNKED"},"sourceConfiguration":{"type":"sourceConfigTuner","frequency":453012500}}')
             """);
         statement.executeUpdate("""
             INSERT INTO radio_system(
-                id,system_key,configuration_id,protocol_code,address_domain_code,first_seen_ms,last_seen_ms
-            ) VALUES(9001,'dmr:channel:90000000-0000-4000-8000-000000000001',
-                '90000000-0000-4000-8000-000000000001',3,0,1000,7000)
+                id,system_key,protocol_code,address_domain_code,dmr_model_code,dmr_network_id,first_seen_ms,last_seen_ms
+            ) VALUES(9001,'dmr:tier3:tiny:1',3,0,1,1,1000,7000)
             """);
         statement.executeUpdate("""
             INSERT INTO receiver_channel(
@@ -359,8 +361,9 @@ class Format19To20DatabaseMigrationTest
                     decoder_type,address_domain_code,primary_frequency_hz,config_json
                 ) VALUES('%s','CONVENTIONAL',%d,'Conventional %s',NULL,'Local',%d,
                     '%s',%d,460025000,
-                    '{"decodeConfiguration":{"channelMode":"CONVENTIONAL"}}')
-                """.formatted(configurationId, channelId, protocol, aliasListId, protocol, addressDomain));
+                    '{"decodeConfiguration":{"type":"%s","channelMode":"CONVENTIONAL"},"sourceConfiguration":{"type":"sourceConfigTuner","frequency":460025000}}')
+                """.formatted(configurationId, channelId, protocol, aliasListId, protocol, addressDomain,
+                    protocol.equals("DMR") ? "decodeConfigDMR" : "decodeConfigNXDN"));
             statement.executeUpdate("""
                 INSERT INTO receiver_channel(id,configuration_id,first_seen_ms,last_seen_ms)
                 VALUES(%d,'%s',1000,20000)
@@ -411,6 +414,7 @@ class Format19To20DatabaseMigrationTest
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertEquals(0, number(statement, "SELECT count(*) FROM pragma_foreign_key_check"));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static void seedHighCardinalityRetainedActivity(Statement statement) throws Exception
@@ -436,7 +440,8 @@ class Format19To20DatabaseMigrationTest
             SELECT printf('99000000-0000-4000-8000-%012d',value),'TRUNKED',10000 + value,
                 'Overflow DMR',printf('Site %03d',value),printf('Control %03d',value),9900,
                 'DMR',0,450000000 + value,
-                '{"decodeConfiguration":{"channelMode":"TRUNKED"}}'
+                json_object('decodeConfiguration',json_object('type','decodeConfigDMR','channelMode','TRUNKED'),
+                    'sourceConfiguration',json_object('type','sourceConfigTuner','frequency',450000000 + value))
             FROM sequence
             """);
         statement.executeUpdate("""

@@ -65,9 +65,17 @@ public final class SqliteSchemaValidator
     public static void validateDefinitions(Connection connection, Collection<Definition> definitions)
         throws SQLException
     {
+        validateDefinitions(connection, definitions, "main");
+    }
+
+    /** Checks an already attached private history schema without opening another connection. */
+    public static void validateDefinitions(Connection connection, Collection<Definition> definitions, String schema)
+        throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown validation schema");
         for(Definition definition: definitions)
         {
-            String actual = objectSql(connection, definition.type(), definition.name());
+            String actual = objectSql(connection, definition.type(), definition.name(), schema);
             String expected = canonicalSql(definition.sql());
 
             if(!expected.equals(canonicalSql(actual)))
@@ -145,11 +153,10 @@ public final class SqliteSchemaValidator
         throw new SQLException("SQLite schema is missing " + type + " [" + name + "]");
     }
 
-    private static String objectSql(Connection connection, String type, String name) throws SQLException
+    private static String objectSql(Connection connection, String type, String name, String schema) throws SQLException
     {
-        try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT sql FROM sqlite_master WHERE type = ? AND name = ?
-            """))
+        try(PreparedStatement statement = connection.prepareStatement(
+            "SELECT sql FROM " + schema + ".sqlite_master WHERE type = ? AND name = ?"))
         {
             statement.setString(1, type);
             statement.setString(2, name);

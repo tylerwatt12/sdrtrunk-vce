@@ -2988,17 +2988,23 @@ final class RadioSystemSchema
 
     static void validateRetainedHistoryData(Connection connection) throws SQLException
     {
+        validateRetainedHistoryData(connection, "main");
+    }
+
+    static void validateRetainedHistoryData(Connection connection, String schema) throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown retained history schema");
         try(Statement statement = connection.createStatement())
         {
             statement.execute("""
                 CREATE TEMP VIEW retained_history_channel_context AS
                 SELECT configuration_id, channel_kind, decoder_type, address_domain_code, '{}' AS config_json
-                FROM main.receiver_channel
-                """);
+                FROM %s.receiver_channel
+                """.formatted(schema));
         }
         try
         {
-            validateRadioSystemKeys(connection, "retained_history_channel_context");
+            validateRadioSystemKeys(connection, "retained_history_channel_context", schema);
         }
         finally
         {
@@ -3010,6 +3016,12 @@ final class RadioSystemSchema
     }
 
     private static void validateRadioSystemKeys(Connection connection, String channelContext) throws SQLException
+    {
+        validateRadioSystemKeys(connection, channelContext, "main");
+    }
+
+    private static void validateRadioSystemKeys(Connection connection, String channelContext, String historySchema)
+        throws SQLException
     {
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
@@ -3198,11 +3210,11 @@ final class RadioSystemSchema
         }
 
         validateIdentitySemantics(connection);
-        validateP25SubscriberIdentitySemantics(connection);
+        validateP25SubscriberIdentitySemantics(connection, historySchema);
         validateObservedLocalIdentitySemantics(connection);
     }
 
-    private static void validateP25SubscriberIdentitySemantics(Connection connection) throws SQLException
+    private static void validateP25SubscriberIdentitySemantics(Connection connection, String historySchema) throws SQLException
     {
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
@@ -3210,7 +3222,7 @@ final class RadioSystemSchema
                     SELECT 'radio-system identity references a different canonical P25 subscriber' AS issue
                     FROM radio_system_identity_summary summary
                     JOIN radio_system system ON system.id=summary.radio_system_id
-                    JOIN p25_subscriber_identity subscriber ON subscriber.id=summary.p25_subscriber_identity_id
+                    JOIN %s.p25_subscriber_identity subscriber ON subscriber.id=summary.p25_subscriber_identity_id
                     WHERE system.protocol_code<>1 OR summary.identity_kind_code<>2
                        OR summary.home_wacn<>subscriber.home_wacn
                        OR summary.home_system_id<>subscriber.home_system_id
@@ -3221,7 +3233,7 @@ final class RadioSystemSchema
                     JOIN radio_system system ON system.id=assignment.radio_system_id
                     WHERE system.protocol_code<>1
                 ) LIMIT 1
-                """))
+                """.formatted(historySchema)))
         {
             if(resultSet.next())
             {

@@ -44,17 +44,18 @@ class Format52To53DatabaseMigrationTest
             sql.execute("ANALYZE receiver_activity_tone_sequence");
             before = retainedContents(connection);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
-            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(52),
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsBetween(52, 62),
                 report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(3, report.steps().getFirst().effects().getLast().affectedRows());
             assertEquals(before, retainedContents(connection));
             assertDefaults(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
             integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
         Path fresh = directory.resolve("fresh.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         try(Connection connection = open(fresh))
@@ -167,7 +168,7 @@ class Format52To53DatabaseMigrationTest
                 delete.executeUpdate();
             }
             byte[] original = Files.readAllBytes(database);
-            assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+            assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
             assertThrows(SQLException.class, () -> new ApplicationMigrationService().migrateCurrent(root, false, null));
             assertArrayEquals(original, Files.readAllBytes(database));
         }
@@ -185,7 +186,7 @@ class Format52To53DatabaseMigrationTest
                     "UPDATE application_settings SET settings_json='{}' WHERE key='audio.voice_enhancement'");
                 assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
             }
-            assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+            assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
             new ApplicationMigrationService().migrateCurrent(root, false, null);
             try(Connection connection = open(database))
             {

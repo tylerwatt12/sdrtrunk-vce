@@ -59,7 +59,7 @@ class Format37To38DatabaseMigrationTest
         }
 
         //Normal receiver startup must refuse the prior format without changing it.
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
         assertArrayEquals(sourceBytes, Files.readAllBytes(source));
 
         for(int attempt = 0; attempt < 2; attempt++)
@@ -97,7 +97,7 @@ class Format37To38DatabaseMigrationTest
                     assertFalse(violations.next());
                 }
             }
-            assertThrows(SQLException.class, () ->
+            assertThrows(java.io.IOException.class, () ->
                 SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(candidate));
             assertArrayEquals(sourceBytes, Files.readAllBytes(source), "The selected source remains unchanged");
         }

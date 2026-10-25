@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.settings.WebUserPreferences;
 import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
@@ -438,7 +438,7 @@ class Format5WebStateValidatorTest
     {
         try(Connection connection = open(database))
         {
-            assertDoesNotThrow(() -> SdrTrunkDatabaseSchema.validate(connection));
+            assertDoesNotThrow(() -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
             assertDoesNotThrow(() -> DatabaseFormatCatalog.inspect(connection));
         }
     }
@@ -448,7 +448,7 @@ class Format5WebStateValidatorTest
         try(Connection connection = open(database))
         {
             SQLException startup = assertThrows(SQLException.class,
-                () -> SdrTrunkDatabaseSchema.validate(connection));
+                () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
             assertTrue(startup.getMessage().contains(expectedMessage), startup::getMessage);
 
             SQLException catalog = assertThrows(SQLException.class,

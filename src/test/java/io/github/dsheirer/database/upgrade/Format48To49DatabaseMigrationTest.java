@@ -45,7 +45,7 @@ class Format48To49DatabaseMigrationTest
             String detailsRule = scalar(connection, "SELECT rule_json FROM topic_alert_rule WHERE id='fixture-details'");
             String channelData = scalar(connection, "SELECT group_concat(id||':'||config_json,'|') FROM configuration_channel");
             String allocator = scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='topic_alert_delivery'");
-            assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(path), "Startup never migrates the prior format");
+            assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(path), "Startup never migrates the prior format");
             connection.setAutoCommit(false);
             var effects = new Format48To49DatabaseMigration().migrateAndReport(connection);
             assertEffect(effects, "alert rule popup settings", 2); assertEffect(effects, "prior Listen popup actions", 1);
@@ -55,9 +55,9 @@ class Format48To49DatabaseMigrationTest
             assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_table_info('topic_alert_message') WHERE name LIKE 'action_%'"));
             assertEquals(metadata, scalar(connection, "SELECT settings_json FROM application_settings WHERE key='alert.configuration'"));
             assertEquals(listenRule, scalar(connection, "SELECT rule_json FROM topic_alert_rule WHERE id='fixture-listen'"));
-            var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals("format-48-to-49", report.steps().getFirst().id()); assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
+            assertEquals("format-48-to-49", report.steps().getFirst().id()); assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(messages, originalMessages(connection)); assertEquals(deliveries, deliveryState(connection));
             assertEquals(channelData, scalar(connection, "SELECT group_concat(id||':'||config_json,'|') FROM configuration_channel"));
             assertEquals(allocator, scalar(connection, "SELECT seq FROM sqlite_sequence WHERE name='topic_alert_delivery'"));
@@ -74,9 +74,9 @@ class Format48To49DatabaseMigrationTest
             assertEquals("2", scalar(connection, "SELECT count(*) FROM topic_alert_membership"));
             assertEquals("pending:fixture-alert", scalar(connection, "SELECT e.status||':'||t.topic_id FROM topic_alert_enrollment e JOIN topic_alert_enrollment_topic t ON t.enrollment_id=e.id"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check")); assertNull(scalar(connection, "PRAGMA foreign_key_check"));
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(path);
+        CurrentFormatTestDatabase.validateCurrentPair(path);
     }
 
     @Test void existingValidBooleanChoicesRemainExplicitAndDoNotFollowTheirTapSetting() throws Exception

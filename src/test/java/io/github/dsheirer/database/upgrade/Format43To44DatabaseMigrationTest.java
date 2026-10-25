@@ -65,7 +65,7 @@ class Format43To44DatabaseMigrationTest
             assertEquals("ok", scalar(connection, "PRAGMA integrity_check"));
             assertEquals("0", scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
         }
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database),
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database),
             "Runtime must refuse the now-historical format 44 without upgrading it");
     }
 
@@ -173,7 +173,7 @@ class Format43To44DatabaseMigrationTest
     {
         Path old = Format43TestDatabase.create(mTemporaryFolder.resolve("old43.sqlite"));
         byte[] before = Files.readAllBytes(old);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(old));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(old));
         assertArrayEquals(before, Files.readAllBytes(old));
         Path current = CurrentFormatTestDatabase.create(mTemporaryFolder.resolve("current.sqlite"));
         before = Files.readAllBytes(current);

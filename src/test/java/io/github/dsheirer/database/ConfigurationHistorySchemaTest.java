@@ -3,6 +3,7 @@ package io.github.dsheirer.database;
 
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
@@ -23,5 +24,43 @@ class ConfigurationHistorySchemaTest
             try(var query=history.createStatement();var rows=query.executeQuery("PRAGMA foreign_key_check"))
             { assertFalse(rows.next()); }
         }
+    }
+
+    @Test void identityAdmissionLeavesRepairableHistoryContentForTheMigrator() throws Exception
+    {
+        Path configuration = directory.resolve("sdrtrunk.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(configuration);
+        Path history = ConfigurationHistoryDatabase.companionPath(configuration);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + history);
+            var statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM database_metadata WHERE key='radio_system_metrics_started_at_ms'");
+        }
+        assertDoesNotThrow(() -> ConfigurationHistoryDatabase.validatePairIdentity(configuration));
+        assertThrows(SQLException.class, () -> ConfigurationHistoryDatabase.validatePair(configuration));
+        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(configuration));
+    }
+
+    @Test void identityAdmissionStillRejectsDifferentProfilesAndSchemaDamage() throws Exception
+    {
+        Path configuration = directory.resolve("sdrtrunk.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(configuration);
+        Path history = ConfigurationHistoryDatabase.companionPath(configuration);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + history);
+            var statement = connection.createStatement())
+        {
+            String pairId = ConfigurationHistorySchema.metadata(connection, ConfigurationHistorySchema.PAIR_ID_KEY);
+            try(var change = connection.prepareStatement("UPDATE database_metadata SET value=? WHERE key=?"))
+            {
+                change.setString(1, java.util.UUID.randomUUID().toString());
+                change.setString(2, ConfigurationHistorySchema.PAIR_ID_KEY);
+                change.executeUpdate();
+                assertThrows(SQLException.class, () -> ConfigurationHistoryDatabase.validatePairIdentity(configuration));
+                change.setString(1, pairId);
+                change.executeUpdate();
+            }
+            statement.execute("CREATE TABLE unexpected_history_object(id INTEGER)");
+        }
+        assertThrows(SQLException.class, () -> ConfigurationHistoryDatabase.validatePairIdentity(configuration));
     }
 }

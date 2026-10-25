@@ -358,20 +358,24 @@ class Format10To11DatabaseMigrationTest
         {
             execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
-            CurrentFormatTestDatabase.migrateToCurrent(connection);
+            CurrentFormatTestDatabase.migrateToVersion(connection, 11);
             connection.rollback();
             connection.setAutoCommit(true);
             assertEquals(10, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("0", scalar(connection, "SELECT count(*) FROM alias_list"));
             migrate(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
+        }
+        Path database = mTemporaryFolder.resolve("fixture.sqlite");
+        CurrentFormatTestDatabase.validateCurrentPair(database);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            execute(connection, "PRAGMA foreign_keys=ON");
             execute(connection, "DELETE FROM alias_list WHERE name='Default DMR'");
             assertTrue(CurrentFormatTestDatabase.migrateToCurrent(connection).steps().isEmpty());
             DatabaseFormatCatalog.requireCurrent(connection);
             assertEquals("0", scalar(connection, "SELECT count(*) FROM alias_list WHERE name='Default DMR'"));
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(mTemporaryFolder.resolve("fixture.sqlite"));
+        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mTemporaryFolder.resolve("fixture.sqlite")))
         {
             assertEquals("0", scalar(connection, "SELECT count(*) FROM alias_list WHERE name='Default DMR'"));

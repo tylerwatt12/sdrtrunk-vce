@@ -66,10 +66,10 @@ class Format55To56DatabaseMigrationTest
                 .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP).count());
 
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
 
-            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(55), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsBetween(55, 62), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             List<DatabaseMigrationEffect> drops = report.steps().getFirst().effects().stream()
                 .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP).toList();
             assertEquals(2, drops.size());
@@ -77,10 +77,11 @@ class Format55To56DatabaseMigrationTest
             assertEquals(2, dropCount(report));
             assertEquals(expected, contents(connection, false));
             assertRetiredStateAbsent(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test void anEmptiedAudioNodeIsRemovedWithoutRemovingThePortableDocumentOrOtherNodes() throws Exception
@@ -93,15 +94,16 @@ class Format55To56DatabaseMigrationTest
                 "unrelated/node", Map.of(AGC_KEY, "keep this unrelated key", "keep", "yes"))), 904);
             Map<String,List<String>> expected = contents(connection, true);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
             assertEquals(2, dropCount(report));
             assertEquals(expected, contents(connection, false));
             ObjectNode portable = readPortable(connection);
             assertFalse(portable.has(AUDIO_NODE));
             assertEquals("keep this unrelated key", portable.path("unrelated/node").path(AGC_KEY).asText());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test void absentContinuousGainDoesNotCreateDefaultsOrReportAPhantomPreferenceDrop() throws Exception
@@ -113,7 +115,7 @@ class Format55To56DatabaseMigrationTest
             assertEquals(55, DatabaseFormatCatalog.inspect(connection).version());
             Map<String,List<String>> expected = contents(connection, true);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
             assertEquals(1, dropCount(report));
             assertEquals(List.of(1L, 0L), report.steps().getFirst().effects().stream()
@@ -121,8 +123,9 @@ class Format55To56DatabaseMigrationTest
                 .map(DatabaseMigrationEffect::affectedRows).toList());
             assertEquals(expected, contents(connection, false));
             assertRetiredStateAbsent(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test void transactionRollbackRestoresExactSourceAndTheSameSourceCanBeRetried() throws Exception
@@ -139,7 +142,7 @@ class Format55To56DatabaseMigrationTest
             Map<String,List<String>> before = contents(connection, false);
             expected = contents(connection, true);
             connection.setAutoCommit(false);
-            assertEquals(2, dropCount(DatabaseMigrationChain.migrate(connection)));
+            assertEquals(2, dropCount(CurrentFormatTestDatabase.migrateToVersion(connection, 62)));
             assertRetiredStateAbsent(connection);
             connection.rollback();
             assertEquals(55, DatabaseFormatCatalog.inspect(connection).version());
@@ -149,13 +152,14 @@ class Format55To56DatabaseMigrationTest
         try(Connection connection = open(database))
         {
             connection.setAutoCommit(false);
-            assertEquals(2, dropCount(DatabaseMigrationChain.migrate(connection)));
+            assertEquals(2, dropCount(CurrentFormatTestDatabase.migrateToVersion(connection, 62)));
             connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(expected, contents(connection, false));
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
             integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test void ownedProfilePreCommitFailureRollsBackAndRetryUsesTheSameAdjacentMigration() throws Exception
@@ -171,7 +175,7 @@ class Format55To56DatabaseMigrationTest
         try(Connection connection = open(database))
         {
             before = contents(connection, false);
-            expected = contents(connection, true);
+            expected = contents(connection, true, true);
         }
         assertThrows(CancellationException.class, () -> new ApplicationMigrationService().migrateCurrent(root,
             false, message -> {
@@ -186,7 +190,7 @@ class Format55To56DatabaseMigrationTest
         try(Connection connection = open(database))
         {
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(expected, contents(connection, false));
+            assertEquals(expected, contents(connection, false, true));
             assertRetiredStateAbsent(connection);
             integrity(connection);
         }
@@ -196,7 +200,7 @@ class Format55To56DatabaseMigrationTest
     {
         Path database = Format55TestDatabase.create(directory.resolve("old-startup.sqlite"));
         byte[] original = Files.readAllBytes(database);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(original, Files.readAllBytes(database));
         try(Connection connection = open(database))
         {
@@ -224,7 +228,7 @@ class Format55To56DatabaseMigrationTest
                     try { save(connection, PORTABLE_KEY, inputs.get(index), 909); }
                     finally { sql.execute("PRAGMA ignore_check_constraints=OFF"); }
                 }
-                expected = contents(connection, true);
+                expected = contents(connection, true, true);
             }
             var result = new ApplicationMigrationService().migrateCurrent(root, false, null);
             assertEquals(55, result.sourceFormat().version());
@@ -237,7 +241,7 @@ class Format55To56DatabaseMigrationTest
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(kept.get(index), readPortable(connection).path("unrelated/node").path("keep").asText());
                 assertRetiredStateAbsent(connection);
-                assertEquals(expected, contents(connection, false));
+                assertEquals(expected, contents(connection, false, true));
                 integrity(connection);
             }
         }
@@ -305,19 +309,20 @@ class Format55To56DatabaseMigrationTest
     /** Whole-file row comparison excludes only the changing global marker and the two declared retirements. */
     private static Map<String,List<String>> contents(Connection connection, boolean applyRetirement) throws Exception
     {
+        return contents(connection, applyRetirement, false);
+    }
+
+    private static Map<String,List<String>> contents(Connection connection, boolean applyRetirement,
+                                                    boolean splitProjection) throws Exception
+    {
         Map<String,List<String>> result = new LinkedHashMap<>();
-        List<String> tables = new ArrayList<>();
-        try(var sql = connection.createStatement(); var rows = sql.executeQuery(
-            "SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"))
-        {
-            while(rows.next()) tables.add(rows.getString(1));
-        }
+        List<String> tables = CurrentFormatTestDatabase.retainedMonolithTables(connection);
         for(String table: tables)
         {
             if(CurrentFormatTestDatabase.addedCurrentTable(connection, table)) continue;
             List<String> values = new ArrayList<>();
             try(var sql = connection.createStatement(); var rows = sql.executeQuery(
-                "SELECT * FROM \"" + table.replace("\"", "\"\"") + "\""))
+                "SELECT * FROM " + CurrentFormatTestDatabase.retainedMonolithQuery(connection, table, splitProjection)))
             {
                 while(rows.next())
                 {
@@ -368,15 +373,7 @@ class Format55To56DatabaseMigrationTest
 
     private static void integrity(Connection connection) throws SQLException
     {
-        try(var sql = connection.createStatement(); var row = sql.executeQuery("PRAGMA foreign_key_check"))
-        {
-            assertFalse(row.next());
-        }
-        try(var sql = connection.createStatement(); var row = sql.executeQuery("PRAGMA quick_check"))
-        {
-            assertTrue(row.next());
-            assertEquals("ok", row.getString(1));
-        }
+        CurrentFormatTestDatabase.retainedPairIntegrity(connection);
     }
 
     private static Connection open(Path database) throws SQLException

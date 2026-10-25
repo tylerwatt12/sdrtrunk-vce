@@ -702,14 +702,20 @@ public final class ApplicationMigrationService
     {
         Path normalized = database.toAbsolutePath().normalize();
         SqliteDatabaseSnapshot.requireSourceUsable(normalized);
-        Path rollbackJournal = Path.of(normalized + "-journal");
-        if(Files.isRegularFile(rollbackJournal, LinkOption.NOFOLLOW_LINKS))
+        Path activity = io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(normalized);
+        boolean committedWalPresent = false;
+        for(Path file: List.of(normalized, activity))
         {
-            //A hot rollback journal requires recovery. Recover only a private copy during startup inspection.
-            return readMigrationApproval(normalized).plan();
+            if(!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) continue;
+            Path rollbackJournal = Path.of(file + "-journal");
+            if(Files.isRegularFile(rollbackJournal, LinkOption.NOFOLLOW_LINKS))
+            {
+                // A hot journal in either profile role requires recovery only on a private copy.
+                return readMigrationApproval(normalized).plan();
+            }
+            Path wal = Path.of(file + "-wal");
+            committedWalPresent |= Files.isRegularFile(wal, LinkOption.NOFOLLOW_LINKS) && Files.size(wal) > 0;
         }
-        Path wal = Path.of(normalized + "-wal");
-        boolean committedWalPresent = Files.isRegularFile(wal, LinkOption.NOFOLLOW_LINKS) && Files.size(wal) > 0;
         try(Connection connection = committedWalPresent ? openLiveReadOnly(normalized) : openReadOnly(normalized))
         {
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);

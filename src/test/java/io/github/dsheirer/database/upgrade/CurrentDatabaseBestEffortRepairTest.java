@@ -13,6 +13,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.configuration.ConfigurationChannelProjection;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
@@ -119,7 +120,8 @@ class CurrentDatabaseBestEffortRepairTest
             assertEquals(1, inspection.droppedBroadcastProviders());
             CurrentDatabaseBestEffortRepair.repair(connection);
             assertEquals(0, number(connection, "SELECT COUNT(*) FROM configuration_channel"));
-            assertEquals(0, number(connection, "SELECT COUNT(*) FROM receiver_channel"));
+            assertEquals(1, number(connection, "SELECT COUNT(*) FROM receiver_channel"),
+                "Skipping unusable configuration leaves its historical owner for scheduled retention");
             assertEquals(0, number(connection, "SELECT COUNT(*) FROM configuration_broadcast_stream"));
         }
     }
@@ -185,8 +187,9 @@ class CurrentDatabaseBestEffortRepairTest
 
             CurrentDatabaseBestEffortRepair.repair(connection);
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias WHERE id BETWEEN 99001 AND 99005"));
-            assertEquals(1, number(connection,
-                "SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id BETWEEN 99001 AND 99005"));
+            assertEquals(5, number(connection,
+                "SELECT COUNT(*) FROM alias_activity_summary WHERE alias_id BETWEEN 99001 AND 99005"),
+                "Configuration repair retains historical Alias counters");
             assertEquals(1, number(connection, "SELECT COUNT(*) FROM alias_scan_list_membership " +
                 "WHERE alias_id BETWEEN 99001 AND 99005"));
             assertEquals("Keep this Alias", text(connection, "SELECT name FROM alias WHERE id=99001"));
@@ -920,6 +923,16 @@ class CurrentDatabaseBestEffortRepairTest
 
     private static Connection open(Path database) throws Exception
     {
-        return DriverManager.getConnection("jdbc:sqlite:" + database);
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        Path activity = ActivityDatabasePath.forConfiguration(database);
+        if(java.nio.file.Files.isRegularFile(activity))
+        {
+            try(var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+            {
+                attach.setString(1, activity.toString());
+                attach.execute();
+            }
+        }
+        return connection;
     }
 }

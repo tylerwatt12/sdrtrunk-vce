@@ -75,8 +75,8 @@ class Format27To28DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
+                assertEquals(62,
+                    CurrentFormatTestDatabase.migrateToVersion(connection, 62).target().version());
                 connection.rollback();
             }
             finally
@@ -87,11 +87,12 @@ class Format27To28DatabaseMigrationTest
             assertEquals(27, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("27", metadata(statement));
             assertEquals(before, configurationDigest(statement));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                CurrentFormatTestDatabase.migrateToVersion(connection, 62).target().version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static void assertEffect(List<DatabaseMigrationEffect> effects, DatabaseMigrationEffect.Kind kind,

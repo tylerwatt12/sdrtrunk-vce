@@ -77,19 +77,19 @@ class Format24To25DatabaseMigrationTest
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "encrypted traffic-channel suppression", 0);
 
-            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToCurrent(connection);
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
 
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 24, report.steps().size());
+            assertEquals(62 - 24, report.steps().size());
             assertEquals("format-24-to-25", report.steps().getFirst().id());
             assertEquals("format-25-to-26", report.steps().get(1).id());
-            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
+            assertEquals("format-61-to-62", report.steps().getLast().id());
             assertEquals(3, report.steps().get(1).effects().size());
             assertEquals(rowsBefore.get("configuration_channel"),
                 report.steps().getFirst().effects().getFirst().affectedRows());
             try(var toneRows = statement.executeQuery("SELECT (SELECT count(*) FROM receiver_activity_tone)+(SELECT count(*) FROM receiver_activity_tone_sequence)"))
             { assertTrue(toneRows.next()); assertEquals(0,toneRows.getLong(1),"Prospective tone tables remain empty for prior history"); }
             assertEquals(configurationBefore, configurationDigest(connection));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
             assertEquals("0", scalar(connection, """
                 SELECT COUNT(*) FROM configuration_channel
@@ -101,13 +101,14 @@ class Format24To25DatabaseMigrationTest
                     '$.decodeConfiguration.ignoreEncryptedCalls')
                 FROM configuration_channel WHERE decoder_type='NXDN'
                 """));
-            assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+            assertEquals(Integer.toString(62),
                 metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -121,8 +122,8 @@ class Format24To25DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
+                assertEquals(62,
+                    CurrentFormatTestDatabase.migrateToVersion(connection, 62).target().version());
                 connection.rollback();
             }
             finally
@@ -133,11 +134,12 @@ class Format24To25DatabaseMigrationTest
             assertEquals(configurationBefore, configurationDigest(connection));
             assertEquals(24, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("24", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                CurrentFormatTestDatabase.migrateToVersion(connection, 62).target().version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -190,8 +192,8 @@ class Format24To25DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.MigrationReport first = CurrentFormatTestDatabase.migrateToCurrent(connection);
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, first.target().version());
+                DatabaseMigrationChain.MigrationReport first = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
+                assertEquals(62, first.target().version());
                 assertEffect(first.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.RESET,
                     "unusable portable preference components", 1);
                 assertEffect(first.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
@@ -225,7 +227,7 @@ class Format24To25DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.MigrationReport retry = CurrentFormatTestDatabase.migrateToCurrent(connection);
+                DatabaseMigrationChain.MigrationReport retry = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 assertEffect(retry.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.RESET,
                     "unusable portable preference components", 1);
                 assertEffect(retry.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
@@ -243,9 +245,10 @@ class Format24To25DatabaseMigrationTest
             }
 
             assertEquals(configurationBefore, configurationDigest(connection));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test

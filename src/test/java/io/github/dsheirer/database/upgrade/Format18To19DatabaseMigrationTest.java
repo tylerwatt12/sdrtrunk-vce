@@ -42,7 +42,7 @@ class Format18To19DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report;
             try
             {
-                report = DatabaseMigrationChain.migrate(connection);
+                report = CurrentFormatTestDatabase.migrateToVersion(connection, 19);
                 connection.commit();
             }
             catch(Exception exception)
@@ -55,17 +55,18 @@ class Format18To19DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
+            assertEquals(19, report.target().version());
+            assertEquals("format-18-to-19", report.steps().getLast().id());
             assertEquals(aliases, number(statement, "SELECT COUNT(*) FROM alias"));
             assertEquals(channels, number(statement, "SELECT COUNT(*) FROM configuration_channel"));
             assertEquals(activity, number(statement, "SELECT COUNT(*) FROM receiver_activity_event"));
             assertEquals(0, number(statement, "SELECT COUNT(*) FROM receiver_health_incident"));
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertEquals(0, number(statement, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(19).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static long number(Statement statement, String sql) throws Exception

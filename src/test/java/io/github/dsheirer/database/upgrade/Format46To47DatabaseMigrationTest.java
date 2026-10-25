@@ -38,7 +38,7 @@ class Format46To47DatabaseMigrationTest
             connection.rollback();
             assertEquals(46, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("0", scalar(connection, "SELECT count(*) FROM sqlite_master WHERE name='topic_alert_topic'"));
-            var report = DatabaseMigrationChain.migrate(connection);
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
             assertEquals("format-46-to-47", report.steps().getFirst().id());
             assertEquals(channels, scalar(connection, "SELECT group_concat(id||':'||config_json,'|') FROM configuration_channel"));
@@ -46,10 +46,10 @@ class Format46To47DatabaseMigrationTest
             assertEquals("0:1", scalar(connection, "SELECT visible||':'||enabled FROM topic_alert_topic WHERE id='administrator-alerts'"));
             assertEquals("0", scalar(connection, "SELECT json_extract(settings_json,'$.push.enabled') FROM application_settings WHERE key='alert.configuration'"));
             assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(path);
+        CurrentFormatTestDatabase.validateCurrentPair(path);
     }
 
     private static String scalar(Connection connection, String query) throws Exception

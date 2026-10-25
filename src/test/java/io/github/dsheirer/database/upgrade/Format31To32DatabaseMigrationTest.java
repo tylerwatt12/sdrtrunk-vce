@@ -151,7 +151,7 @@ class Format31To32DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report;
             try
             {
-                report = DatabaseMigrationChain.migrate(connection);
+                report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 connection.commit();
             }
             catch(Exception exception)
@@ -164,7 +164,7 @@ class Format31To32DatabaseMigrationTest
                 connection.setAutoCommit(true);
             }
 
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
+            assertEquals(62, report.target().version());
             assertEquals(independentDefaults, scalar(statement, "SELECT count(*) FROM alias_list " +
                 "WHERE family='P25' AND new_alias_record_enabled=1 AND unmatched_talkgroup_record_enabled=0"));
             assertEquals(newAliasStreams, scalar(statement, "SELECT count(*) FROM alias_list_new_alias_stream"));
@@ -249,13 +249,14 @@ class Format31To32DatabaseMigrationTest
                 .contains("format20_alias"));
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertEquals(0, scalar(statement, "SELECT count(*) FROM pragma_foreign_key_check"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            SdrTrunkDatabaseSchema.validate(connection);
+            DatabaseFormatCatalog.inspect(connection);
             ReceiverActivitySchema.validate(connection);
             assertTrue(report.steps().getFirst().effects().stream()
                 .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static long scalar(Statement statement, String sql) throws Exception

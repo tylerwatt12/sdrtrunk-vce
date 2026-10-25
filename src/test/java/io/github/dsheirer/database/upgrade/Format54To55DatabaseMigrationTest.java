@@ -2,12 +2,7 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.*;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.alerts.TopicAlertSchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -24,11 +19,14 @@ class Format54To55DatabaseMigrationTest
 
     @Test void freshSchemaMatchesRegisteredSignature() throws Exception
     {
-        try(var connection = DriverManager.getConnection("jdbc:sqlite::memory:"))
+        Path fresh = directory.resolve("fresh.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(fresh);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" +
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.companionPath(fresh)))
         {
-            SdrTrunkDatabaseSchema.create(connection); ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection); TrunkedSiteSchema.create(connection); TopicAlertSchema.create(connection);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
+                SqliteSchemaValidator.fingerprint(connection));
         }
     }
 

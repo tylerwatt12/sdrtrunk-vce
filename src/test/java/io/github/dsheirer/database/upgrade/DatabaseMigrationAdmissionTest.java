@@ -128,6 +128,71 @@ class DatabaseMigrationAdmissionTest
         }
     }
 
+    @Test
+    void frozenTargetRefusesBackwardAndUnknownTargetsBeforeMutation() throws Exception
+    {
+        Path database = Format16TestDatabase.create(mTemporaryFolder.resolve("target-refusal.sqlite"));
+        byte[] before = Files.readAllBytes(database);
+        try(Connection connection = open(database))
+        {
+            var source = DatabaseFormatCatalog.inspectForMigration(connection);
+            AtomicInteger steps = new AtomicInteger();
+            for(int target: new int[]{15, DatabaseFormatCatalog.CURRENT_VERSION + 1})
+            {
+                assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection, source, true,
+                    ignored -> steps.incrementAndGet(), ignored -> {}, target));
+                assertEquals(0, steps.get(), "Invalid targets must be refused before any adjacent step");
+                assertEquals(source, DatabaseFormatCatalog.inspect(connection));
+            }
+        }
+        assertArrayEquals(before, Files.readAllBytes(database));
+    }
+
+    @Test
+    void frozenTargetRunsOnlyItsExactAdjacentSegmentAndPreservesAliasRows() throws Exception
+    {
+        Path database = Format16TestDatabase.create(mTemporaryFolder.resolve("target17.sqlite"));
+        byte[] before = Files.readAllBytes(database);
+        try(Connection connection = open(database))
+        {
+            var aliases = aliasRows(connection);
+            assertFalse(aliases.isEmpty(), "The preservation fixture must contain aliases");
+            connection.setAutoCommit(false);
+            var report = DatabaseMigrationChain.migrate(connection,
+                DatabaseFormatCatalog.inspectForMigration(connection), true, ignored -> {}, ignored -> {}, 17);
+            assertEquals(java.util.List.of("format-16-to-17"), report.steps().stream()
+                .map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(17, report.target().version());
+            assertTrue(report.target().markerPresent());
+            assertEquals(DatabaseFormatCatalog.requireVersion(17).fingerprint(),
+                io.github.dsheirer.database.SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(17, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(aliases, aliasRows(connection));
+            connection.rollback();
+            assertEquals(16, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(aliases, aliasRows(connection));
+        }
+        assertArrayEquals(before, Files.readAllBytes(database));
+        assertFalse(Files.exists(io.github.dsheirer.database.ConfigurationHistoryDatabase.companionPath(database)),
+            "A frozen monolithic target must not begin current pair activation");
+    }
+
+    private static java.util.List<java.util.List<Object>> aliasRows(Connection connection) throws SQLException
+    {
+        var result = new java.util.ArrayList<java.util.List<Object>>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT * FROM alias ORDER BY id"))
+        {
+            while(rows.next())
+            {
+                var values = new java.util.ArrayList<Object>();
+                for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++)
+                    values.add(rows.getObject(column));
+                result.add(values);
+            }
+        }
+        return result;
+    }
+
     static Connection countSchemaScans(Connection connection, AtomicInteger scans)
     {
         return (Connection)Proxy.newProxyInstance(Connection.class.getClassLoader(), new Class<?>[]{Connection.class},

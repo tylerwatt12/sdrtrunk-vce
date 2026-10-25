@@ -33,10 +33,10 @@ class Format50To51DatabaseMigrationTest
             long events = scalar(connection, "SELECT count(*) FROM receiver_activity_event");
             long channelCount = scalar(connection, "SELECT count(*) FROM configuration_channel");
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection);
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
-            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(50), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsBetween(50, 62), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(17, scalar(connection, "SELECT logical_call_count FROM alias_activity_summary WHERE alias_id=900002"));
             assertEquals(2000, scalar(connection, "SELECT last_evidence_ms FROM alias_activity_summary WHERE alias_id=900002"));
             assertEquals("11:not_collected", text(connection, "SELECT protocol_code||':'||metrics_state FROM alias_activity_summary WHERE alias_id=900001"));
@@ -46,9 +46,10 @@ class Format50To51DatabaseMigrationTest
             assertEquals(events, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
             assertEquals(channelCount, scalar(connection, "SELECT count(*) FROM configuration_channel"));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM configuration_channel WHERE analog_activity_reset_ms IS NOT NULL"));
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
             integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
         Path fresh = directory.resolve("fresh.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         try(Connection connection = open(fresh))
@@ -61,7 +62,7 @@ class Format50To51DatabaseMigrationTest
     @Test void migrationRollbackLeavesFrozenFormat50AndCanRetry() throws Exception
     {
         Path database = Format50TestDatabase.create(directory.resolve("retry.sqlite"));
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
         try(Connection connection = open(database))
         {
             connection.setAutoCommit(false);
@@ -70,11 +71,12 @@ class Format50To51DatabaseMigrationTest
             connection.rollback();
             assertEquals(50, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_table_info('alias_activity_summary') WHERE name='last_reset_ms'"));
-            DatabaseMigrationChain.migrate(connection);
+            CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test void analogSummaryHasBoundedExplicitKeysAndRejectsImpossibleCounts() throws Exception

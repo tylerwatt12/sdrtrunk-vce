@@ -60,7 +60,7 @@ class Format26To27DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report;
             try
             {
-                report = DatabaseMigrationChain.migrate(connection);
+                report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 connection.commit();
             }
             catch(Exception exception)
@@ -74,9 +74,9 @@ class Format26To27DatabaseMigrationTest
                 statement.execute("PRAGMA foreign_keys=ON");
             }
 
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 26, report.steps().size());
+            assertEquals(62 - 26, report.steps().size());
             assertEquals("format-26-to-27", report.steps().getFirst().id());
-            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
+            assertEquals("format-61-to-62", report.steps().getLast().id());
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.TRANSFORM,
                 "ordinary administrator accounts", 1);
             Map<String,AccountSnapshot> after = accounts(statement);
@@ -99,10 +99,10 @@ class Format26To27DatabaseMigrationTest
                 "SELECT COUNT(*) FROM web_user WHERE primary_admin=0 AND tier<>'USER'"));
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
 
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 UPDATE web_user SET tier='ADMIN' WHERE username='listener'
@@ -119,6 +119,7 @@ class Format26To27DatabaseMigrationTest
                 FROM web_user WHERE username='admin'
                 """));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -134,8 +135,8 @@ class Format26To27DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(62,
+                    CurrentFormatTestDatabase.migrateToVersion(connection, 62).target().version());
                 connection.rollback();
             }
             finally
@@ -150,8 +151,8 @@ class Format26To27DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(62,
+                    CurrentFormatTestDatabase.migrateToVersion(connection, 62).target().version());
                 connection.commit();
             }
             catch(Exception exception)
@@ -164,11 +165,12 @@ class Format26To27DatabaseMigrationTest
                 connection.setAutoCommit(true);
                 statement.execute("PRAGMA foreign_keys=ON");
             }
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62,
+                DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("USER", text(statement,
                 "SELECT tier FROM web_user WHERE username='operator'"));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test

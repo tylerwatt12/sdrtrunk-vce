@@ -31,7 +31,7 @@ class Format51To52DatabaseMigrationTest
             Path dataRoot = directory.resolve("service-" + backup);
             Path database = populatedPrior(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
             Map<String,List<String>> before;
-            List<String> indexes;
+            Map<String,RetainedIndex> indexes;
             try(Connection connection = open(database))
             {
                 before = contents(connection);
@@ -45,7 +45,7 @@ class Format51To52DatabaseMigrationTest
             {
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(before, contents(connection), "Retain every value, tone fact, statistic and allocator");
-                assertEquals(indexes, indexDefinitions(connection));
+                assertRetainedIndexes(connection, indexes);
                 integrity(connection);
             }
             if(backup)
@@ -132,15 +132,16 @@ class Format51To52DatabaseMigrationTest
             sql.execute("ANALYZE receiver_activity_tone_sequence");
             var before = contents(connection); var indexes = indexDefinitions(connection);
             connection.setAutoCommit(false);
-            var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(51),report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
-            assertEquals(before,contents(connection)); assertEquals(indexes,indexDefinitions(connection));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsBetween(51, 62),report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(before,contents(connection)); assertRetainedIndexes(connection,indexes);
+            assertEquals(62,DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(),SqliteSchemaValidator.fingerprint(connection));
             assertEquals(1,scalar(connection,"SELECT count(*) FROM receiver_activity_tone_sequence s JOIN receiver_activity_tone t USING(event_id) WHERE s.source_code=1 AND s.method_code=1 AND t.frequency_1_millihz=343300"));
             assertEquals(1,scalar(connection,"SELECT count(*) FROM receiver_activity_tone_sequence s JOIN receiver_activity_tone t USING(event_id) WHERE s.source_code=2 AND s.method_code=2 AND t.codec_symbol='HZ_812_50' AND t.frequency_1_millihz=812500"));
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty()); integrity(connection);
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty()); integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
         Path fresh = directory.resolve("fresh.sqlite"); SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         try(Connection connection = open(fresh))
         {
@@ -162,16 +163,17 @@ class Format51To52DatabaseMigrationTest
         assertArrayEquals(original,Files.readAllBytes(database));
         try(Connection connection = open(database))
         {
-            connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,DatabaseFormatCatalog.requireCurrent(connection).version()); integrity(connection);
+            connection.setAutoCommit(false); CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
+            assertEquals(62,DatabaseFormatCatalog.inspect(connection).version()); integrity(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test void startupAndUnsafeForeignKeyBoundaryRefuseWithoutMutation() throws Exception
     {
         Path database = Format51TestDatabase.create(directory.resolve("refuse.sqlite"));
         byte[] original = Files.readAllBytes(database);
-        assertThrows(SQLException.class,()->SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
+        assertThrows(java.io.IOException.class,()->SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
         assertArrayEquals(original,Files.readAllBytes(database));
         try(Connection connection = open(database); var sql = connection.createStatement())
         {
@@ -226,14 +228,13 @@ class Format51To52DatabaseMigrationTest
 
     private static Map<String,List<String>> contents(Connection connection) throws Exception
     {
-        List<String> tables=new ArrayList<>(); Map<String,List<String>> result=new LinkedHashMap<>();
-        try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"))
-        { while(rows.next()) tables.add(rows.getString(1)); }
+        List<String> tables=CurrentFormatTestDatabase.retainedMonolithTables(connection);
+        Map<String,List<String>> result=new LinkedHashMap<>();
         for(String table:tables)
         {
             if(CurrentFormatTestDatabase.addedCurrentTable(connection, table)) continue;
             List<String> values=new ArrayList<>();
-            try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT * FROM \""+table.replace("\"","\"\"")+"\""+
+            try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT * FROM "+CurrentFormatTestDatabase.retainedMonolithQuery(connection,table)+
                 (table.equals("database_metadata")?" WHERE key<>'database_format_version'":
                     table.equals("application_settings")?" WHERE key NOT IN ('remote.links','audio.paging_tones','audio.voice_enhancement')":"")))
             {
@@ -267,19 +268,54 @@ class Format51To52DatabaseMigrationTest
         }
         return database;
     }
-    private static List<String> indexDefinitions(Connection connection) throws Exception
+    private record RetainedIndex(String schema, SqliteSchemaValidator.Definition definition) {}
+
+    private static Map<String,RetainedIndex> indexDefinitions(Connection connection) throws Exception
     {
-        var result=new ArrayList<String>();
-        try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT name||':'||sql FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL AND name NOT IN ('idx_receiver_activity_event_source_call','idx_topic_alert_message_source_call') ORDER BY name"))
-        { while(rows.next()) result.add(rows.getString(1)); }
+        var result = new LinkedHashMap<String,RetainedIndex>();
+        CurrentFormatTestDatabase.retainedMonolithTables(connection);
+        boolean paired = io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection);
+        String schema = paired ?
+            "(SELECT 'main' AS role,name,type,sql FROM main.sqlite_schema UNION ALL " +
+                "SELECT 'activity' AS role,name,type,sql FROM activity.sqlite_schema)" :
+            "(SELECT 'main' AS role,name,type,sql FROM main.sqlite_schema)";
+        try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT role,name,sql FROM " + schema +
+            " WHERE type='index' AND sql IS NOT NULL AND name NOT IN ('idx_receiver_activity_event_source_call'," +
+            "'idx_topic_alert_message_source_call','idx_receiver_channel_statistics_reset_retention'," +
+            "'idx_receiver_channel_retention','idx_alias_activity_retention','idx_conventional_summary_retention'," +
+            "'idx_alias_analog_retention','idx_trunked_radio_affiliation_channel','idx_trunked_radio_presence_clear_channel'," +
+            "'idx_p25_wuid_assignment_observation_channel') ORDER BY name"))
+        {
+            while(rows.next())
+            {
+                String name = rows.getString("name");
+                assertNull(result.put(name, new RetainedIndex(rows.getString("role"),
+                    new SqliteSchemaValidator.Definition("index", name, rows.getString("sql")))),
+                    "A retained index belongs to exactly one database role: " + name);
+            }
+        }
         return result;
     }
+
+    private static void assertRetainedIndexes(Connection connection, Map<String,RetainedIndex> expected)
+        throws Exception
+    {
+        Map<String,RetainedIndex> actual = indexDefinitions(connection);
+        assertEquals(expected.keySet(), actual.keySet(), "Preserve the complete retained index name set");
+        for(var entry: expected.entrySet())
+        {
+            // The existing validator compares complete SQL while permitting insignificant stored whitespace.
+            SqliteSchemaValidator.validateDefinitions(connection, List.of(entry.getValue().definition()),
+                actual.get(entry.getKey()).schema());
+        }
+    }
+
     private static long scalar(Connection connection,String sql) throws Exception
     { try(var statement=connection.createStatement();var row=statement.executeQuery(sql)) { assertTrue(row.next());return row.getLong(1); } }
-    private static void integrity(Connection connection) throws Exception
+    private static void integrity(Connection connection) throws SQLException
     {
-        try(var sql=connection.createStatement();var row=sql.executeQuery("PRAGMA foreign_key_check")) { assertFalse(row.next()); }
-        try(var sql=connection.createStatement();var row=sql.executeQuery("PRAGMA quick_check")) { assertTrue(row.next());assertEquals("ok",row.getString(1)); }
+        CurrentFormatTestDatabase.retainedPairIntegrity(connection);
     }
+
     private static Connection open(Path path) throws Exception { return DriverManager.getConnection("jdbc:sqlite:"+path); }
 }

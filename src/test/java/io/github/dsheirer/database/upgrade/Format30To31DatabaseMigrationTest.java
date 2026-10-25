@@ -47,12 +47,12 @@ class Format30To31DatabaseMigrationTest
             Map<Long,byte[]> credentials = credentialDigests(statement);
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
 
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 30, report.steps().size());
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
+            assertEquals(62 - 30, report.steps().size());
             assertEquals("format-30-to-31", report.steps().getFirst().id());
             assertEquals(before.size(), report.steps().getFirst().effects().getFirst().affectedRows());
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             Map<Long,Preference> after = preferences(statement);
             assertEquals(before.keySet(), after.keySet());
             for(Map.Entry<Long,Preference> entry: before.entrySet())
@@ -69,6 +69,7 @@ class Format30To31DatabaseMigrationTest
             assertEquals("ok", scalar(statement, "PRAGMA integrity_check"));
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -87,7 +88,7 @@ class Format30To31DatabaseMigrationTest
                 String sibling = preferences(statement).get(2L).json();
                 String selected = preferences(statement).get(3L).json();
                 statement.executeUpdate("UPDATE web_user SET " + change + " WHERE id=3");
-                DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+                DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 assertTrue(report.steps().getFirst().effects().stream().anyMatch(effect ->
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
                 assertEquals(change.startsWith("preferences_json=") ? Format62WebUserPreferencesCodec.defaults() :
@@ -99,8 +100,9 @@ class Format30To31DatabaseMigrationTest
                     assertTrue(MessageDigest.isEqual(credential.getValue(),
                         credentialDigests(statement).get(credential.getKey())), "Account or credential changed");
                 }
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             }
+            CurrentFormatTestDatabase.validateCurrentPair(database);
         }
     }
 
@@ -115,7 +117,7 @@ class Format30To31DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.migrate(connection);
+                CurrentFormatTestDatabase.migrateToVersion(connection, 62);
                 connection.rollback();
             }
             finally
@@ -131,7 +133,7 @@ class Format30To31DatabaseMigrationTest
             Path destination = Files.copy(source, mTemporaryFolder.resolve(name));
             try(Connection connection = open(destination); Statement statement = connection.createStatement())
             {
-                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseMigrationChain.migrate(connection).target().version());
+                assertEquals(62, CurrentFormatTestDatabase.migrateToVersion(connection, 62).target().version());
                 for(Map.Entry<Long,Preference> entry: before.entrySet())
                 {
                     Preference current = preferences(statement).get(entry.getKey());
@@ -139,9 +141,10 @@ class Format30To31DatabaseMigrationTest
                         current.json());
                     assertEquals(entry.getValue().revision() + 5, current.revision());
                 }
-                assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+                assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
             }
+            CurrentFormatTestDatabase.validateCurrentPair(destination);
         }
         assertTrue(MessageDigest.isEqual(unchangedSource, Files.readAllBytes(source)), "Source file changed");
     }
@@ -185,7 +188,7 @@ class Format30To31DatabaseMigrationTest
             }
             Map<Long,Preference> before = preferences(statement);
             Map<Long,byte[]> credentials = credentialDigests(statement);
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             var reset = report.steps().getFirst().effects().stream().filter(effect ->
                 effect.kind() == DatabaseMigrationEffect.Kind.RESET &&
                     effect.subject().contains("personal-preference storage bound")).findFirst().orElseThrow();
@@ -211,9 +214,10 @@ class Format30To31DatabaseMigrationTest
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
             }
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             assertFalse(statement.executeQuery("PRAGMA foreign_key_check").next());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static String fullVersionSevenDocument() throws Exception

@@ -59,7 +59,7 @@ class Format40To41DatabaseMigrationTest
                 .map(DatabaseMigrationEffect::affectedRows).toList());
         }
         byte[] bytes = Files.readAllBytes(source);
-        assertThrows(SQLException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
+        assertThrows(java.io.IOException.class,() -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(source));
         assertArrayEquals(bytes,Files.readAllBytes(source));
         for(int attempt=0;attempt<2;attempt++)
         {
@@ -84,8 +84,7 @@ class Format40To41DatabaseMigrationTest
                 assertEquals("ok",scalar(statement,"PRAGMA integrity_check"));
                 assertEquals("0",scalar(statement,"SELECT count(*) FROM pragma_foreign_key_check"));
             }
-            try(Connection connection = open(candidate)) { CurrentFormatTestDatabase.migrateToCurrent(connection); }
-            SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
+            CurrentFormatTestDatabase.validateCurrentPair(candidate);
             assertArrayEquals(bytes,Files.readAllBytes(source));
         }
     }

@@ -65,12 +65,11 @@ class Format44To45DatabaseMigrationTest
             assertEquals(DatabaseFormatCatalog.requireVersion(45).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertConsolidated(connection); assertHealthy(connection);
             connection.setAutoCommit(true); statement.execute("PRAGMA foreign_keys=OFF");
-            connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            connection.setAutoCommit(false); CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             assertHealthy(connection);
         }
-        SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
-        SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test
@@ -99,7 +98,9 @@ class Format44To45DatabaseMigrationTest
                     assertEquals(before, contents(connection));
                 }
             }
-            try(Connection connection = open(database)) { assertConsolidated(connection); assertHealthy(connection); }
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(database);
+            try(Connection connection = open(io.github.dsheirer.database.ConfigurationHistoryDatabase.companionPath(database)))
+            { assertConsolidated(connection); assertHealthy(connection); }
             byte[] currentBytes = Files.readAllBytes(database);
             var noOp = ApplicationDatabaseMigrator.migrateInPlace(database, ignored -> { },
                 () -> fail("A healthy current format must not repeat the migration or backup"));
@@ -124,7 +125,7 @@ class Format44To45DatabaseMigrationTest
                 WHEN OLD.id=5000000010 BEGIN SELECT RAISE(ABORT,'Injected consolidation interruption'); END
                 """);
             connection.setAutoCommit(false);
-            SQLException failure = assertThrows(SQLException.class, () -> DatabaseMigrationChain.migrate(connection));
+            SQLException failure = assertThrows(SQLException.class, () -> CurrentFormatTestDatabase.migrateToVersion(connection, 62));
             assertTrue(failure.getMessage().contains("Injected consolidation interruption"));
             connection.rollback();
             assertEquals(44, DatabaseFormatCatalog.inspect(connection).version());
@@ -133,7 +134,7 @@ class Format44To45DatabaseMigrationTest
             statement.execute("DROP TRIGGER fail_home_radio_merge");
             connection.setAutoCommit(true); statement.execute("PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
-            var retry = DatabaseMigrationChain.migrate(connection);
+            var retry = CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
             assertCounts(retry.steps().getFirst().effects());
             assertConsolidated(connection);
@@ -145,11 +146,13 @@ class Format44To45DatabaseMigrationTest
         try(Connection connection = open(retry))
         {
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
             assertConsolidated(connection);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(candidate);
+        CurrentFormatTestDatabase.validateCurrentPair(retry);
     }
 
     @Test
@@ -157,7 +160,7 @@ class Format44To45DatabaseMigrationTest
     {
         Path old = Format44TestDatabase.createWithHomeRadioSplits(mTemporaryFolder.resolve("old44.sqlite"));
         byte[] before = Files.readAllBytes(old);
-        assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(old));
+        assertThrows(java.io.IOException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(old));
         assertArrayEquals(before, Files.readAllBytes(old));
         Path wrong = Format43TestDatabase.create(mTemporaryFolder.resolve("wrong43.sqlite"));
         try(Connection connection = open(wrong))
@@ -205,7 +208,7 @@ class Format44To45DatabaseMigrationTest
                 """);
             statement.executeUpdate("UPDATE trunked_logical_call_bucket SET logical_call_count=1 WHERE radio_system_id=5000000000");
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            CurrentFormatTestDatabase.migrateToVersion(connection, 62);
             connection.commit();
             assertEquals("2|1|1", scalar(connection, "SELECT logical_call_count||'|'||source_logical_call_count||'|'||" +
                 "target_logical_call_count FROM radio_system_identity_summary WHERE id=5000000011"));
@@ -213,6 +216,7 @@ class Format44To45DatabaseMigrationTest
             assertEquals("1", scalar(connection, "SELECT logical_call_count FROM trunked_logical_call_bucket WHERE radio_system_id=5000000000"));
             assertHealthy(connection);
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     @Test

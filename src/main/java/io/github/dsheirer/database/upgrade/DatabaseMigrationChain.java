@@ -160,8 +160,9 @@ public final class DatabaseMigrationChain
                 steps.add(CurrentDatabaseAdministrativeRepair.preflight(administrativeRepair));
             }
             CurrentDatabaseBestEffortRepair.requireOnlyRepairableForeignKeys(connection);
-            CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair = source.version() >= 63 ?
-                CurrentDatabaseDerivedStateRepair.Inspection.none() : CurrentDatabaseDerivedStateRepair.inspect(connection);
+            CurrentDatabaseDerivedStateRepair.attachHistoryForInspection(connection);
+            CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair =
+                CurrentDatabaseDerivedStateRepair.inspect(connection);
             if(derivedStateRepair.requiresRepair())
             {
                 steps.add(CurrentDatabaseDerivedStateRepair.preflight(derivedStateRepair));
@@ -256,10 +257,24 @@ public final class DatabaseMigrationChain
                                    boolean repairSelectedSource, Consumer<StepDescriptor> progress,
                                    BeforeStep beforeStep) throws SQLException
     {
+        return migrate(connection, source, repairSelectedSource, progress, beforeStep,
+            DatabaseFormatCatalog.CURRENT_VERSION);
+    }
+
+    /** Runs the same adjacent engine to an explicitly registered historical target for frozen-format verification. */
+    static MigrationReport migrate(Connection connection, DatabaseFormatCatalog.DetectedFormat source,
+                                   boolean repairSelectedSource, Consumer<StepDescriptor> progress,
+                                   BeforeStep beforeStep, int targetVersion) throws SQLException
+    {
+        DatabaseFormatCatalog.requireVersion(targetVersion);
+        if(targetVersion < source.version() || targetVersion > DatabaseFormatCatalog.CURRENT_VERSION)
+        {
+            throw new SQLException("Migration target " + targetVersion + " is outside the forward supported chain");
+        }
         List<StepReport> reports = new ArrayList<>();
         DatabaseFormatCatalog.DetectedFormat detected = source;
 
-        while(detected.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+        while(detected.version() < targetVersion)
         {
             DatabaseMigrationStep step = requireStep(detected.version());
             requireAdjacent(step);
@@ -301,7 +316,15 @@ public final class DatabaseMigrationChain
             //Discarded observations are never reconstructed. Only configuration seeds empty current counters.
             io.github.dsheirer.stats.AliasActivitySummaryMaintenance.resetAll(connection);
         }
-        if(repairSelectedSource) DatabaseFormatCatalog.requireCurrent(connection);
+        if(repairSelectedSource)
+        {
+            DatabaseFormatCatalog.DetectedFormat strictTarget = targetVersion == DatabaseFormatCatalog.CURRENT_VERSION ?
+                DatabaseFormatCatalog.requireCurrent(connection) : DatabaseFormatCatalog.inspect(connection);
+            if(strictTarget.version() != targetVersion || !strictTarget.markerPresent())
+            {
+                throw new SQLException("Migration did not produce exact marked target format " + targetVersion);
+            }
+        }
         return new MigrationReport(source, detected, List.copyOf(reports));
     }
 

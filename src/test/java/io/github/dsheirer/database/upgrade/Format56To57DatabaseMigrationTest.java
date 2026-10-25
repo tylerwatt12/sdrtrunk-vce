@@ -2,12 +2,7 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.*;
-import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.alerts.TopicAlertSchema;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
-import io.github.dsheirer.stats.activity.DmrActivitySchema;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -24,11 +19,14 @@ class Format56To57DatabaseMigrationTest
 
     @Test void freshSchemaMatchesRegisteredSignature() throws Exception
     {
-        try(var connection = DriverManager.getConnection("jdbc:sqlite::memory:"))
+        Path fresh = directory.resolve("fresh.sqlite");
+        io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePair(fresh);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" +
+            io.github.dsheirer.database.ConfigurationHistoryDatabase.companionPath(fresh)))
         {
-            SdrTrunkDatabaseSchema.create(connection); ReceiverActivitySchema.create(connection);
-            DmrActivitySchema.create(connection); TrunkedSiteSchema.create(connection); TopicAlertSchema.create(connection);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT,
+                SqliteSchemaValidator.fingerprint(connection));
         }
     }
 
@@ -42,28 +40,29 @@ class Format56To57DatabaseMigrationTest
             insertAnalogTone(connection, 562500);
             Map<String,List<String>> before = contents(connection);
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            CurrentFormatTestDatabase.migrateToVersion(connection, 62);
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
             connection.rollback();
             assertEquals(56, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
-            var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(56), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            var report = CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsBetween(56, 62), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertTrue(report.steps().getFirst().effects().stream().allMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.PRESERVE));
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
             try(var rows = sql.executeQuery("PRAGMA foreign_key_check")) { assertFalse(rows.next()); }
             try(var rows = sql.executeQuery("PRAGMA integrity_check")) { assertTrue(rows.next()); assertEquals("ok", rows.getString(1)); }
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
         }
+        CurrentFormatTestDatabase.validateCurrentPair(path);
     }
 
     @Test void startupRefusesThePriorSemanticMarkerWithoutChangingItsBytes() throws Exception
     {
         Path database = Format56TestDatabase.create(directory.resolve("old-startup.sqlite"));
         byte[] before = java.nio.file.Files.readAllBytes(database);
-        assertThrows(java.sql.SQLException.class,
+        assertThrows(java.io.IOException.class,
             () -> io.github.dsheirer.database.SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(before, java.nio.file.Files.readAllBytes(database));
     }
@@ -73,7 +72,7 @@ class Format56To57DatabaseMigrationTest
         Path database = Format56TestDatabase.create(directory.resolve("new-tone.sqlite"));
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            connection.setAutoCommit(false); DatabaseMigrationChain.migrate(connection); connection.commit();
+            connection.setAutoCommit(false); CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
             long id = insertAnalogTone(connection, 382300);
             connection.commit();
             var row = new LinkedHashMap<String,Object>(); row.put("id", id);
@@ -83,6 +82,7 @@ class Format56To57DatabaseMigrationTest
             var tone = (Map<?,?>)((List<?>)summary.get("tones")).getFirst();
             assertEquals(List.of(382.3), tone.get("frequencies_hz"));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static long insertAnalogTone(Connection connection, int frequency) throws Exception

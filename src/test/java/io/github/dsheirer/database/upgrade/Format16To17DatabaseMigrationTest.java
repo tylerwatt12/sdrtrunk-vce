@@ -31,16 +31,17 @@ class Format16To17DatabaseMigrationTest
             Statement statement = connection.createStatement())
         {
             long aliasesBefore = scalar(statement, "SELECT count(*) FROM alias");
-            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToCurrent(connection);
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
-            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToVersion(connection, 17);
+            assertEquals(17, report.target().version());
+            assertEquals("format-16-to-17", report.steps().getLast().id());
             assertEquals(aliasesBefore, scalar(statement, "SELECT count(*) FROM alias"));
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(),
+            assertEquals(DatabaseFormatCatalog.requireVersion(17).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
             assertTrue(indexExists(statement, "idx_alias_list_id"));
             assertTrue(indexExists(statement, "idx_alias_list_name_sort"));
             assertEquals("ok", statement.executeQuery("PRAGMA integrity_check").getString(1));
         }
+        CurrentFormatTestDatabase.validateCurrentPair(database);
     }
 
     private static long scalar(Statement statement, String sql) throws Exception
