@@ -23,11 +23,11 @@ class Format48To49DatabaseMigrationTest
     {
         for(boolean current: new boolean[]{false, true})
         {
-            Path path = Format46TestDatabase.create(directory.resolve(current ? "current.sqlite" : "frozen48.sqlite"));
+            Path path = directory.resolve(current ? "current.sqlite" : "frozen48.sqlite");
+            if(current) SdrTrunkDatabaseStartup.createGlobalDatabase(path);
+            else Format48TestDatabase.create(path);
             try(var connection = DriverManager.getConnection("jdbc:sqlite:" + path))
             {
-                if(current) { TopicAlertSchema.create(connection); io.github.dsheirer.stats.activity.ToneActivitySchema.upgradeFrom49(connection); }
-                else Format48TopicAlertSchema.create(connection);
                 assertEquals(current ? DatabaseFormatCatalog.current().fingerprint() : DatabaseFormatCatalog.requireVersion(48).fingerprint(),
                     SqliteSchemaValidator.fingerprint(connection));
             }

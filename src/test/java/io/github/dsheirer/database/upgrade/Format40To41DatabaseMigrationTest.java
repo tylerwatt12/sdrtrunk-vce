@@ -84,7 +84,7 @@ class Format40To41DatabaseMigrationTest
                 assertEquals("ok",scalar(statement,"PRAGMA integrity_check"));
                 assertEquals("0",scalar(statement,"SELECT count(*) FROM pragma_foreign_key_check"));
             }
-            try(Connection connection = open(candidate)) { DatabaseMigrationChain.migrate(connection); }
+            try(Connection connection = open(candidate)) { CurrentFormatTestDatabase.migrateToCurrent(connection); }
             SdrTrunkDatabaseStartup.validateGlobalDatabase(candidate);
             assertArrayEquals(bytes,Files.readAllBytes(source));
         }
@@ -123,7 +123,7 @@ class Format40To41DatabaseMigrationTest
         try(Connection connection = open(current); Connection freshConnection = open(fresh))
         {
             Map<String,TableContents> before = tableContents(connection);
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());assertEquals(before,tableContents(connection));
+            assertTrue(CurrentFormatTestDatabase.migrateToCurrent(connection).steps().isEmpty());assertEquals(before,tableContents(connection));
             assertEquals(SqliteSchemaValidator.fingerprint(freshConnection),SqliteSchemaValidator.fingerprint(connection));
             // Historical table rebuilds retain harmless identifier quotes; the fingerprint checks their definitions.
             assertEquals(schemaDefinitions(freshConnection).keySet(),schemaDefinitions(connection).keySet());

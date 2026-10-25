@@ -358,16 +358,16 @@ class Format10To11DatabaseMigrationTest
         {
             execute(connection, "PRAGMA foreign_keys=OFF");
             connection.setAutoCommit(false);
-            DatabaseMigrationChain.migrate(connection);
+            CurrentFormatTestDatabase.migrateToCurrent(connection);
             connection.rollback();
             connection.setAutoCommit(true);
             assertEquals(10, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("0", scalar(connection, "SELECT count(*) FROM alias_list"));
             migrate(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseMigrationChain.migrate(connection).target().version());
+                CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
             execute(connection, "DELETE FROM alias_list WHERE name='Default DMR'");
-            assertTrue(DatabaseMigrationChain.migrate(connection).steps().isEmpty());
+            assertTrue(CurrentFormatTestDatabase.migrateToCurrent(connection).steps().isEmpty());
             DatabaseFormatCatalog.requireCurrent(connection);
             assertEquals("0", scalar(connection, "SELECT count(*) FROM alias_list WHERE name='Default DMR'"));
         }

@@ -201,7 +201,7 @@ class Format14To15DatabaseMigrationTest
             assertPreferencesMigratedToCurrent(beforePreferences, afterPreferences);
             assertEquals(expectedPolicies(beforePolicies), policies(connection));
             assertEquals(beforePolicies.get("site-access"), policies(connection).get("web-access"));
-            assertApplicationSettingsMigrated(beforeApplicationSettings, applicationSettings(connection));
+            assertApplicationSettingsMigrated(beforeApplicationSettings, applicationSettings(connection), true);
             assertEquals(preservedSentinel, scalar(connection, """
                 SELECT settings_json FROM application_settings WHERE key='format-4-preserve-sentinel'
                 """));
@@ -1401,7 +1401,7 @@ class Format14To15DatabaseMigrationTest
             assertEquals(beforeCredentials, credentials(connection));
             assertPreferencesMigrated(beforePreferences, preferences(connection));
             assertEquals(expectedPolicies(beforePolicies), policies(connection));
-            assertApplicationSettingsMigrated(beforeSettings, applicationSettings(connection));
+            assertApplicationSettingsMigrated(beforeSettings, applicationSettings(connection), false);
             Format5WebStateValidator.validateCurrentPolicy(connection, 6);
             connection.rollback();
         }
@@ -2574,10 +2574,10 @@ class Format14To15DatabaseMigrationTest
     }
 
     private static void assertApplicationSettingsMigrated(Map<String,ApplicationSetting> before,
-                                                          Map<String,ApplicationSetting> after) throws Exception
+                                                          Map<String,ApplicationSetting> after, boolean currentTarget) throws Exception
     {
         Set<String> expectedKeys = new java.util.HashSet<>(before.keySet());
-        expectedKeys.addAll(Set.of("remote.links", "alert.configuration", "audio.paging_tones"));
+        if(currentTarget) expectedKeys.addAll(Set.of("remote.links", "alert.configuration", "audio.paging_tones"));
         assertEquals(expectedKeys, after.keySet());
         for(Map.Entry<String,ApplicationSetting> entry: before.entrySet())
         {

@@ -133,7 +133,7 @@ class Format51To52DatabaseMigrationTest
             var before = contents(connection); var indexes = indexDefinitions(connection);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(List.of("format-51-to-52", "format-52-to-53", "format-53-to-54", "format-54-to-55", "format-55-to-56", "format-56-to-57", "format-57-to-58", "format-58-to-59"),report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(51),report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(before,contents(connection)); assertEquals(indexes,indexDefinitions(connection));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));
@@ -231,6 +231,7 @@ class Format51To52DatabaseMigrationTest
         { while(rows.next()) tables.add(rows.getString(1)); }
         for(String table:tables)
         {
+            if(CurrentFormatTestDatabase.addedCurrentTable(connection, table)) continue;
             List<String> values=new ArrayList<>();
             try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT * FROM \""+table.replace("\"","\"\"")+"\""+
                 (table.equals("database_metadata")?" WHERE key<>'database_format_version'":
@@ -244,7 +245,8 @@ class Format51To52DatabaseMigrationTest
                         if("source_call_uuid".equals(rows.getMetaData().getColumnName(column)) ||
                             table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(column)))
                         { assertNull(rows.getObject(column)); continue; }
-                        Object value=rows.getObject(column);
+                        if(CurrentFormatTestDatabase.addedMessageCounter(rows, column)) continue;
+                        Object value=CurrentFormatTestDatabase.retainedValue(table, rows, column);
                         row.add(value instanceof byte[] bytes?java.util.HexFormat.of().formatHex(bytes):String.valueOf(value));
                     }
                     values.add(row.toString());
@@ -268,7 +270,7 @@ class Format51To52DatabaseMigrationTest
     private static List<String> indexDefinitions(Connection connection) throws Exception
     {
         var result=new ArrayList<String>();
-        try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT name||':'||sql FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL AND name NOT IN ('idx_receiver_activity_event_source_call','idx_topic_alert_message_source_call') ORDER BY rowid"))
+        try(var sql=connection.createStatement();var rows=sql.executeQuery("SELECT name||':'||sql FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL AND name NOT IN ('idx_receiver_activity_event_source_call','idx_topic_alert_message_source_call') ORDER BY name"))
         { while(rows.next()) result.add(rows.getString(1)); }
         return result;
     }

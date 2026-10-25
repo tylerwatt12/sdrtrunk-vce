@@ -76,7 +76,7 @@ class Format27To28DatabaseMigrationTest
             try
             {
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    DatabaseMigrationChain.migrate(connection).target().version());
+                    CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -88,7 +88,7 @@ class Format27To28DatabaseMigrationTest
             assertEquals("27", metadata(statement));
             assertEquals(before, configurationDigest(statement));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseMigrationChain.migrate(connection).target().version());
+                CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
         }

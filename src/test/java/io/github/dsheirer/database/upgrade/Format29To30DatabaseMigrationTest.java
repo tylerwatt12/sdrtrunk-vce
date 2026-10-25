@@ -49,7 +49,7 @@ class Format29To30DatabaseMigrationTest
             assertFalse(indexExists(statement, CHANNEL_INDEX));
 
             statement.execute("PRAGMA foreign_keys=OFF");
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToCurrent(connection);
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 29, report.steps().size());
             assertEquals("format-29-to-30", report.steps().getFirst().id());
@@ -128,7 +128,7 @@ class Format29To30DatabaseMigrationTest
             assertEffect(inspected, DatabaseMigrationEffect.Kind.DEFAULT,
                 "unusable setup progress", 1);
 
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToCurrent(connection);
             assertEquals("format-29-to-30", report.steps().getFirst().id());
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.RESET,
                 "unusable portable preference components", 1);
@@ -159,7 +159,7 @@ class Format29To30DatabaseMigrationTest
             try
             {
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    DatabaseMigrationChain.migrate(connection).target().version());
+                    CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -170,7 +170,7 @@ class Format29To30DatabaseMigrationTest
             assertFalse(indexExists(statement, SYSTEM_INDEX));
             assertFalse(indexExists(statement, CHANNEL_INDEX));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseMigrationChain.migrate(connection).target().version());
+                CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
         }
     }
 

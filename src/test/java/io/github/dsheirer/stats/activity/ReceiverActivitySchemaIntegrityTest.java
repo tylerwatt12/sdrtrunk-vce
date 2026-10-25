@@ -59,6 +59,8 @@ class ReceiverActivitySchemaIntegrityTest
             assertEquals(59, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_INHIBIT));
             assertEquals(60, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_UNINHIBIT_ACK));
             assertEquals(61, ReceiverActivityCodes.eventTypeCode(DecodeEventType.RADIO_INHIBIT_ACK));
+            assertEquals(24, ReceiverActivityRecords.Action.TONE.code());
+            assertEquals(62, ReceiverActivityCodes.eventTypeCode(DecodeEventType.TONE));
 
             insertConfiguredChannel(connection);
             execute(connection, """
@@ -85,11 +87,11 @@ class ReceiverActivitySchemaIntegrityTest
                     """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code)
-                VALUES (1, 1001, 24)
+                VALUES (1, 1001, 2147483647)
                 """));
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code, event_type_code)
-                VALUES (1, 1005, 12, 62)
+                VALUES (1, 1005, 12, 2147483647)
                 """));
         }
     }

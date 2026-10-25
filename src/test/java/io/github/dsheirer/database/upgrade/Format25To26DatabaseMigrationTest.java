@@ -128,10 +128,10 @@ class Format25To26DatabaseMigrationTest
                 """));
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
                 INSERT INTO receiver_activity_event(channel_id, observed_at_ms, action_code, event_type_code)
-                VALUES (9500, 5000, 21, 63)
+                VALUES (9500, 5000, 21, 2147483647)
                 """));
             assertThrows(SQLException.class, () -> statement.executeUpdate("""
-                UPDATE conventional_activity_summary SET last_event_type_code=62 WHERE channel_id=9500
+                UPDATE conventional_activity_summary SET last_event_type_code=2147483647 WHERE channel_id=9500
                 """));
 
             assertEquals("ok", text(statement, "PRAGMA integrity_check"));
@@ -351,6 +351,12 @@ class Format25To26DatabaseMigrationTest
                 List<Object> row = new ArrayList<>();
                 for(int column = 1; column <= metadata.getColumnCount(); column++)
                 {
+                    if(List.of("source_call_uuid", "duration_ms").contains(metadata.getColumnName(column)))
+                    {
+                        assertEquals(null, rows.getObject(column));
+                        continue;
+                    }
+                    if(CurrentFormatTestDatabase.addedMessageCounter(rows, column)) continue;
                     if(!metadata.getColumnName(column).endsWith("_observed_working_id"))
                         row.add(rows.getObject(column));
                 }

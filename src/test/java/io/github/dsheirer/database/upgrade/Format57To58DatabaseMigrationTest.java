@@ -48,7 +48,7 @@ class Format57To58DatabaseMigrationTest
             assertTrue(count(connection, "topic_alert_message") > 0);
             connection.setAutoCommit(false);
             var report = DatabaseMigrationChain.migrate(connection);
-            assertEquals(List.of("format-57-to-58", "format-58-to-59"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(57), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE source_call_uuid IS NOT NULL"));
@@ -163,6 +163,7 @@ class Format57To58DatabaseMigrationTest
         { while(rows.next()) tables.add(rows.getString(1)); }
         for(String table: tables)
         {
+            if(CurrentFormatTestDatabase.addedCurrentTable(connection, table)) continue;
             List<String> values = new ArrayList<>();
             try(var sql = connection.createStatement(); var rows = sql.executeQuery("SELECT * FROM \"" + table + "\""))
             {
@@ -174,7 +175,8 @@ class Format57To58DatabaseMigrationTest
                     {
                         if("source_call_uuid".equals(rows.getMetaData().getColumnName(i)) ||
                             table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(i))) continue;
-                        Object value = rows.getObject(i);
+                        if(CurrentFormatTestDatabase.addedMessageCounter(rows, i)) continue;
+                        Object value = CurrentFormatTestDatabase.retainedValue(table, rows, i);
                         row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                     }
                     values.add(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")

@@ -64,6 +64,7 @@ class Format24To25DatabaseMigrationTest
             new Format24To25DatabaseMigration().migrate(connection);
             assertEquals(changesBefore, scalar(connection, "SELECT total_changes()"));
             assertEquals(fingerprintBefore, SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(rowsBefore, tableRowCounts(statement));
 
             DatabaseMigrationChain.PreflightReport preflight = DatabaseMigrationChain.validateSource(connection,
                 DatabaseFormatCatalog.inspect(connection));
@@ -76,7 +77,7 @@ class Format24To25DatabaseMigrationTest
             assertEffect(preflight.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "encrypted traffic-channel suppression", 0);
 
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToCurrent(connection);
 
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 24, report.steps().size());
             assertEquals("format-24-to-25", report.steps().getFirst().id());
@@ -87,7 +88,6 @@ class Format24To25DatabaseMigrationTest
                 report.steps().getFirst().effects().getFirst().affectedRows());
             try(var toneRows = statement.executeQuery("SELECT (SELECT count(*) FROM receiver_activity_tone)+(SELECT count(*) FROM receiver_activity_tone_sequence)"))
             { assertTrue(toneRows.next()); assertEquals(0,toneRows.getLong(1),"Prospective tone tables remain empty for prior history"); }
-            assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(configurationBefore, configurationDigest(connection));
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
@@ -122,7 +122,7 @@ class Format24To25DatabaseMigrationTest
             try
             {
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                    DatabaseMigrationChain.migrate(connection).target().version());
+                    CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
                 connection.rollback();
             }
             finally
@@ -134,7 +134,7 @@ class Format24To25DatabaseMigrationTest
             assertEquals(24, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals("24", metadata(connection, DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
-                DatabaseMigrationChain.migrate(connection).target().version());
+                CurrentFormatTestDatabase.migrateToCurrent(connection).target().version());
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
         }
@@ -190,7 +190,7 @@ class Format24To25DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.MigrationReport first = DatabaseMigrationChain.migrate(connection);
+                DatabaseMigrationChain.MigrationReport first = CurrentFormatTestDatabase.migrateToCurrent(connection);
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, first.target().version());
                 assertEffect(first.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.RESET,
                     "unusable portable preference components", 1);
@@ -225,7 +225,7 @@ class Format24To25DatabaseMigrationTest
             connection.setAutoCommit(false);
             try
             {
-                DatabaseMigrationChain.MigrationReport retry = DatabaseMigrationChain.migrate(connection);
+                DatabaseMigrationChain.MigrationReport retry = CurrentFormatTestDatabase.migrateToCurrent(connection);
                 assertEffect(retry.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.RESET,
                     "unusable portable preference components", 1);
                 assertEffect(retry.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,

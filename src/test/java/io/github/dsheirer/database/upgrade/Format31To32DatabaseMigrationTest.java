@@ -169,12 +169,12 @@ class Format31To32DatabaseMigrationTest
                 "WHERE family='P25' AND new_alias_record_enabled=1 AND unmatched_talkgroup_record_enabled=0"));
             assertEquals(newAliasStreams, scalar(statement, "SELECT count(*) FROM alias_list_new_alias_stream"));
             assertEquals(newAliasScanLists, scalar(statement, "SELECT count(*) FROM alias_list_new_alias_scan_list_membership"));
-            assertEquals(activityIndexes + 6, scalar(statement, "SELECT count(*) FROM sqlite_schema WHERE type='index' " +
+            assertEquals(activityIndexes + 7, scalar(statement, "SELECT count(*) FROM sqlite_schema WHERE type='index' " +
                 "AND name LIKE 'idx_receiver_activity_event_%'"));
             assertEquals(preferencesBefore, text(statement, """
                 SELECT group_concat(json_remove(json_set(preferences_json, '$.version', 8),
                     '$.presentation.source_name_display', '$.presentation.live_channel_sort',
-                    '$.presentation.live_row_density')) FROM web_user ORDER BY id
+                    '$.presentation.live_row_density', '$.guides')) FROM web_user ORDER BY id
                 """), "The downstream personal preference upgrades preserve all previous personal settings");
             assertEquals(aliases, scalar(statement, "SELECT count(*) FROM alias"));
             assertEquals(identities, scalar(statement, "SELECT count(*) FROM radio_system_identity_summary"));

@@ -31,7 +31,7 @@ class Format16To17DatabaseMigrationTest
             Statement statement = connection.createStatement())
         {
             long aliasesBefore = scalar(statement, "SELECT count(*) FROM alias");
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToCurrent(connection);
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
             assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
             assertEquals(aliasesBefore, scalar(statement, "SELECT count(*) FROM alias"));

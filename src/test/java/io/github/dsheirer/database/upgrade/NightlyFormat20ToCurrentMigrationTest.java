@@ -214,6 +214,8 @@ class NightlyFormat20ToCurrentMigrationTest
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before.contents(), tableContents(connection, before.columns()),
                 "Valid configuration, aliases, credentials, activity, relationships or allocators changed");
+            assertEquals("3", scalar(connection, "SELECT count(*) FROM application_settings " +
+                "WHERE key IN ('remote.links','audio.paging_tones','alert.configuration')"));
             assertEquals("1", scalar(connection, "SELECT count(*) FROM web_user WHERE tier='ADMIN' AND primary_admin=1"));
             assertEquals("0", scalar(connection, "SELECT count(*) FROM web_user WHERE tier='ADMIN' AND primary_admin=0"));
             assertEquals("USER", scalar(connection, "SELECT tier FROM web_user WHERE id=3"));
@@ -222,7 +224,7 @@ class NightlyFormat20ToCurrentMigrationTest
                 JsonNode target = MAPPER.readTree(scalar(connection,
                     "SELECT preferences_json FROM web_user WHERE id=" + user.getKey()));
                 assertOriginalPreferences(user.getValue(), target, "");
-                assertEquals(11, target.path("version").asInt());
+                assertEquals(12, target.path("version").asInt());
                 assertTrue(target.path("appearance").path("hue").isNull());
                 assertEquals("talker_alias", target.path("presentation").path("source_name_display").asText());
                 assertEquals("normal", target.path("presentation").path("live_row_density").asText());
@@ -289,7 +291,8 @@ class NightlyFormat20ToCurrentMigrationTest
                 .collect(java.util.stream.Collectors.joining(","));
             String filter = switch(table.getKey()) {
                 case "database_metadata" -> " WHERE key<>'database_format_version'";
-                case "application_settings" -> " WHERE key<>'setup_wizard'";
+                case "application_settings" -> " WHERE key NOT IN " +
+                    "('setup_wizard','remote.links','audio.paging_tones','alert.configuration')";
                 // New tables may acquire their own allocator. Every original table's high-water mark must survive.
                 case "sqlite_sequence" -> " WHERE name IN (" + tables.keySet().stream()
                     .map(name -> "'" + name + "'").collect(java.util.stream.Collectors.joining(",")) + ")";

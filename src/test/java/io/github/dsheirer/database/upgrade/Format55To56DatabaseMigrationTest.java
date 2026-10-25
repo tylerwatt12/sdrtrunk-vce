@@ -61,7 +61,7 @@ class Format55To56DatabaseMigrationTest
             assertEquals(55, DatabaseFormatCatalog.inspect(connection).version());
             Map<String,List<String>> expected = contents(connection, true);
             var preflight = DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
-            assertEquals(List.of("format-55-to-56", "format-56-to-57", "format-57-to-58", "format-58-to-59"), preflight.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(55), preflight.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
             assertEquals(2, preflight.steps().getFirst().effects().stream()
                 .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP).count());
 
@@ -69,7 +69,7 @@ class Format55To56DatabaseMigrationTest
             var report = DatabaseMigrationChain.migrate(connection);
             connection.commit();
 
-            assertEquals(List.of("format-55-to-56", "format-56-to-57", "format-57-to-58", "format-58-to-59"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(55), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             List<DatabaseMigrationEffect> drops = report.steps().getFirst().effects().stream()
                 .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP).toList();
             assertEquals(2, drops.size());
@@ -314,6 +314,7 @@ class Format55To56DatabaseMigrationTest
         }
         for(String table: tables)
         {
+            if(CurrentFormatTestDatabase.addedCurrentTable(connection, table)) continue;
             List<String> values = new ArrayList<>();
             try(var sql = connection.createStatement(); var rows = sql.executeQuery(
                 "SELECT * FROM \"" + table.replace("\"", "\"\"") + "\""))
@@ -329,7 +330,8 @@ class Format55To56DatabaseMigrationTest
                         if("source_call_uuid".equals(rows.getMetaData().getColumnName(column)) ||
                             table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(column)))
                         { assertNull(rows.getObject(column)); continue; }
-                        Object value = rows.getObject(column);
+                        if(CurrentFormatTestDatabase.addedMessageCounter(rows, column)) continue;
+                        Object value = CurrentFormatTestDatabase.retainedValue(table, rows, column);
                         if(table.equals("application_settings") && PORTABLE_KEY.equals(key) && column == 2)
                         {
                             ObjectNode portable = (ObjectNode)JSON.readTree((String)value);

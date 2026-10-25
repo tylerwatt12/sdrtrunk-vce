@@ -49,7 +49,7 @@ class Format56To57DatabaseMigrationTest
             assertEquals(56, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, contents(connection));
             var report = DatabaseMigrationChain.migrate(connection); connection.commit();
-            assertEquals(List.of("format-56-to-57", "format-57-to-58", "format-58-to-59"), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(56), report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
             assertTrue(report.steps().getFirst().effects().stream().allMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.PRESERVE));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(before, contents(connection));
@@ -110,6 +110,7 @@ class Format56To57DatabaseMigrationTest
         { while(rows.next()) tables.add(rows.getString(1)); }
         for(String table: tables)
         {
+            if(CurrentFormatTestDatabase.addedCurrentTable(connection, table)) continue;
             List<String> values = new ArrayList<>();
             try(var sql = connection.createStatement(); var rows = sql.executeQuery("SELECT * FROM \"" + table + "\""))
             {
@@ -122,7 +123,8 @@ class Format56To57DatabaseMigrationTest
                         if("source_call_uuid".equals(rows.getMetaData().getColumnName(i)) ||
                             table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(i)))
                         { assertNull(rows.getObject(i)); continue; }
-                        Object value = rows.getObject(i);
+                        if(CurrentFormatTestDatabase.addedMessageCounter(rows, i)) continue;
+                        Object value = CurrentFormatTestDatabase.retainedValue(table, rows, i);
                         row.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                     }
                     values.add(row.toString());

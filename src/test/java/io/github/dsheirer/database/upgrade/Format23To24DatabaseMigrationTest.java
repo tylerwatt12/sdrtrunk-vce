@@ -59,35 +59,27 @@ class Format23To24DatabaseMigrationTest
             Set<String> objectsBefore = schemaObjects(statement);
 
             statement.execute("PRAGMA foreign_keys=OFF");
-            DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
-
-            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 23, report.steps().size());
-            assertEquals("format-23-to-24", report.steps().getFirst().id());
-            assertEquals(CurrentFormatTestDatabase.lastMigrationStepId(), report.steps().getLast().id());
-            assertEquals(activityBefore.size(), report.steps().getFirst().effects().getFirst().affectedRows());
-            try(var toneRows = statement.executeQuery("SELECT (SELECT count(*) FROM receiver_activity_tone)+(SELECT count(*) FROM receiver_activity_tone_sequence)"))
-            { assertTrue(toneRows.next()); assertEquals(0,toneRows.getLong(1),"Prospective tone tables remain empty for prior history"); }
+            connection.setAutoCommit(false);
+            var adjacentEffects = new Format23To24DatabaseMigration().migrateAndReport(connection);
+            DatabaseFormatCatalog.stamp(connection, 24);
+            assertEquals(activityBefore.size(), adjacentEffects.getFirst().affectedRows());
             assertEquals(rowsBefore, tableRowCounts(statement));
             assertEquals(activityBefore, activityRows(statement));
-
             Set<String> addedObjects = schemaObjects(statement);
             addedObjects.removeAll(objectsBefore);
-            Set<String> expectedObjects = new TreeSet<>(FILTER_INDEXES);
-            expectedObjects.add("idx_receiver_activity_event_source_working_evidence");
-            expectedObjects.add("idx_trunked_logical_identity_identity");
-            expectedObjects.add("idx_receiver_activity_event_id_channel");
-            expectedObjects.add("idx_activity_event_member_identity_channel_local");
-            expectedObjects.add("idx_p25_site_call_identity_identity_address");
-            expectedObjects.add("idx_receiver_activity_event_source_identity_address");
-            expectedObjects.add("idx_receiver_activity_event_target_identity_address");
-            expectedObjects.add("idx_receiver_activity_event_target_event_type_time");
-            expectedObjects.add("idx_receiver_activity_event_channel_frequency_time");
-            expectedObjects.addAll(Set.of("p25_subscriber_identity", "alias_p25_subscriber_identity",
-                "p25_wuid_assignment_observation_summary", "idx_alias_p25_subscriber_identity",
-                "idx_radio_system_identity_p25_subscriber", "idx_p25_wuid_assignment_observation_system_time",
-                "idx_p25_wuid_assignment_observation_subscriber", "idx_p25_wuid_assignment_observation_retention"));
-            expectedObjects.addAll(Set.of("receiver_activity_tone","receiver_activity_tone_sequence"));
-            assertEquals(expectedObjects, addedObjects);
+            Set<String> adjacentIndexes = new TreeSet<>(FILTER_INDEXES);
+            adjacentIndexes.removeAll(Set.of("idx_receiver_activity_event_system_encrypted_time",
+                "idx_receiver_activity_event_channel_encrypted_time"));
+            assertEquals(adjacentIndexes, addedObjects);
+            assertEquals(DatabaseFormatCatalog.requireVersion(24).fingerprint(),
+                SqliteSchemaValidator.fingerprint(connection));
+            connection.commit();
+            connection.setAutoCommit(true);
+
+            DatabaseMigrationChain.MigrationReport report = CurrentFormatTestDatabase.migrateToCurrent(connection);
+            assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(24),
+                report.steps().stream().map(DatabaseMigrationChain.StepReport::id).toList());
+            assertEquals(activityBefore, activityRows(statement));
             assertEquals(DatabaseFormatCatalog.current().fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
@@ -295,6 +287,11 @@ class Format23To24DatabaseMigrationTest
                 List<Object> row = new ArrayList<>(metadata.getColumnCount());
                 for(int column = 1; column <= metadata.getColumnCount(); column++)
                 {
+                    if(List.of("source_call_uuid", "duration_ms").contains(metadata.getColumnName(column)))
+                    {
+                        assertEquals(null, rows.getObject(column));
+                        continue;
+                    }
                     if(!metadata.getColumnName(column).endsWith("_observed_working_id"))
                         row.add(rows.getObject(column));
                 }

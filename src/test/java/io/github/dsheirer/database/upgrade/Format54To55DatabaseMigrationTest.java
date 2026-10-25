@@ -43,7 +43,7 @@ class Format54To55DatabaseMigrationTest
             connection.setAutoCommit(false);
             new Format54To55DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 55);
-            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
+            assertEquals(DatabaseFormatCatalog.requireVersion(55).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(before, contents(connection));
             connection.rollback();
             assertEquals(54, DatabaseFormatCatalog.inspect(connection).version());
