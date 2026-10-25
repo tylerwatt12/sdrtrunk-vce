@@ -1,5 +1,7 @@
 import { radioReferenceLocalityCache } from './radioreference-locality-cache.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
+import { createDiscoveryCompletion } from './discovery-radioreference.js?v=14';
+import { spectrumSearchProtocolLabel } from './spectrum-search-data.js?v=1';
 
 const API_ROOT = '/api/v1/admin/radioreference';
 
@@ -721,22 +723,30 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           });
           if (destroyed || !modal.dialog.isConnected) return;
           modal.setBusy(false);
-          const directValue = firstValue(response, ['created', 'applied']);
-          const directCount = Number(directValue);
-          const changedCount = Number(firstValue(response, ['added'], 0)) +
-            Number(firstValue(response, ['updated'], 0));
-          const count = directValue !== null && directValue !== undefined && Number.isFinite(directCount) &&
-            directCount >= 0 ? directCount : changedCount;
-          const completed = node('div', 'radioreference-import-complete');
-          const completedIcon = node('span', 'ui-icon-tile radioreference-completion-icon');
-          completedIcon.append(iconGlyph(kind === 'talkgroups' ? 'icon-aliases' : 'icon-channel'));
-          completed.append(completedIcon,
-            node('h3', '', kind === 'talkgroups' ? 'Talkgroups imported' : 'Channel saved'),
-            node('p', 'muted', kind === 'talkgroups' ?
-              `${formatNumber(Number.isFinite(count) ? count : 0)} talkgroup change${count === 1 ? '' : 's'} applied.` :
-              'The channel is ready in Channels.'), completionLink(response, kind, aliasListIdValue));
+          const channel = preview?.channel || preview?.candidate || preview?.result || {};
+          const listId = integerValue(response, ['alias_list_id', 'aliasListId']) ||
+            integerValue(channel, ['alias_list_id', 'aliasListId']) || Number(aliasListIdValue || body.alias_list_id);
+          const list = state.aliasLists.find((value) => aliasListId(value) === listId);
+          const listName = textValue(list, ['name'], textValue(preview, ['alias_list_name', 'aliasListName']));
+          const updated = textValue(response, ['action'], textValue(preview, ['action'])).toUpperCase() === 'UPDATE';
+          const frequencies = firstValue(channel?.source, ['frequencies_hz'], []);
+          const completed = createDiscoveryCompletion({ node, uiPill }, kind === 'talkgroups' ? {
+            imports: { targets: [{ alias_list_id: listId, alias_list_name: listName, state: 'imported',
+              added: Number(firstValue(response, ['added'], 0)), updated: Number(firstValue(response, ['updated'], 0)),
+              unchanged: Number(firstValue(response, ['unchanged'], 0)) }] }
+          } : { channels: [{ name: textValue(channel, ['name', 'channel_name'], body.channel_name || 'Channel'),
+            system: textValue(channel, ['system'], body.system_name), site: textValue(channel, ['site'], body.site_name),
+            frequency_hz: Array.isArray(frequencies) ? frequencies[0] : 0,
+            protocol: textValue(channel, ['protocol_name', 'protocol']) ||
+              spectrumSearchProtocolLabel({ protocol_id: textValue(channel, ['protocol_id', 'decoder_type']) }),
+            status: updated ? 'updated' : 'added', alias_list_id: listId, alias_list_name: listName,
+            alias_list_existing: true,
+            details: Array.isArray(frequencies) && frequencies.length > 1 ?
+              [['Frequencies', frequencies.map((frequency) => `${formatFrequency(frequency)} MHz`).join(', ')]] : [] }] });
+          completed.classList.add('radioreference-import-complete', 'radioreference-import-result');
+          completed.append(completionLink(response, kind, aliasListIdValue));
           modal.dialog.classList.add('radioreference-import-modal-complete');
-          modal.dialog.querySelector('.modal-header h2').textContent = 'Import complete';
+          modal.setTitle(kind === 'talkgroups' ? 'Talkgroups imported' : updated ? 'Channel updated' : 'Channel added');
           modal.content.replaceChildren(completed);
           onApplied?.(response);
         } catch (error) {

@@ -44,6 +44,40 @@ test('trunked results gallery keeps every group and selection when shared signal
   await expect(search.locator('tbody tr:visible')).toHaveCount(4);
 });
 
+for (const view of ['spectrum-discovery', 'spectrum-search']) {
+  for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+    test(`shared completion gallery ${view} ${theme} at ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto(`/design-system.html?view=${view}&state=complete&theme=${theme}`);
+      const example = page.locator(view === 'spectrum-discovery' ?
+        '.visual-spectrum-discovery-example' : '.visual-spectrum-search-example');
+      await expect(example).toHaveAttribute('data-completion-ready', 'true');
+      await expect(example.locator('.discovery-completion-channel')).toHaveCount(view === 'spectrum-discovery' ? 1 : 7);
+      await expect(example.locator('.discovery-completion-import')).toHaveCount(view === 'spectrum-discovery' ? 1 : 2);
+      await expect(example.locator('.spectrum-discovery-context')).toBeHidden();
+      await expect(example.locator('.discovery-completion-details')).not.toHaveAttribute('open', '');
+      await expectNoHorizontalOverflow(page);
+      const rootSelector = `${view === 'spectrum-discovery' ? '.visual-spectrum-discovery-example' :
+        '.visual-spectrum-search-example'} .read-only-modal`;
+      await expectContrast(page, { rootSelector, reportName: `completion-${view}-${theme}-${width}-closed` });
+      await example.locator('.read-only-modal').screenshot({ timeout: 5000,
+        path: testInfo.outputPath(`completion-gallery-${view}-${theme}-${width}.png`) });
+      await example.getByText('Details', { exact: true }).click();
+      await expect(example.locator('.discovery-completion-details')).toContainText('Receiver 1');
+      await expectContrast(page, { rootSelector, reportName: `completion-${view}-${theme}-${width}-details` });
+      // The existing theme-hue palette sweep still measures all 360 hues. These populated completion scopes
+      // additionally exercise their actual status pills, metadata, disclosures and action controls at custom hues.
+      for (const hue of [35, 285]) {
+        await page.evaluate(async (hue) => {
+          const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
+          applyThemeHue(hue);
+        }, hue);
+        await expectContrast(page, { rootSelector, reportName: `completion-${view}-${theme}-${width}-hue-${hue}` });
+      }
+    });
+  }
+}
+
 for (const view of galleryViews) {
   for (const presentation of presentations) {
     test(`gallery ${view} ${presentation.name}`, async ({ page }) => {

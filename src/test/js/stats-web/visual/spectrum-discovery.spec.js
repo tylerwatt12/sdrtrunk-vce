@@ -51,7 +51,8 @@ function snapshot(protocolId, state) {
       match: { rr_system_id: 123, ...state.directoryResult.match } } : state.directoryResult,
     alias_import: state.aliasImports,
     digital_probe: digital ? { state: state.phase || 'ready', elapsed_ms: 1200, timeout_ms: 10000 } : null,
-    trunked_evidence: digital ? { variant: protocolId === 'dmr' ? 'Tier III' : 'Type-C', identity: {
+    trunked_evidence: digital ? { variant: protocolId === 'dmr' ? 'Tier III' : 'Type-C',
+      serving_frequency_hz: state.servingFrequencyHz || null, identity: {
       radio_system_key: protocolId === 'dmr' ? 'dmr:tier3:small:12' : 'nxdn-c:local:12',
       network: protocolId === 'dmr' ? 12 : null, system: protocolId === 'nxdn' ? 12 : null, site: 3, ran: 9 },
       frequency_map: [{ number: 1, downlink_hz: 851012500 }] } : null,
@@ -280,6 +281,8 @@ async function install(page, state = {}) {
         state.deferStatusOnce = false;
         const previous = snapshot(state.protocolId, state);
         await new Promise((release) => { state.releaseStatus = release; });
+        if (state.deferredStatusError) return route.fulfill({ status: state.deferredStatusError.status,
+          contentType: 'application/json', body: JSON.stringify({ error: state.deferredStatusError }) });
         return respond(previous);
       }
       return respond(snapshot(state.protocolId, state));
@@ -326,6 +329,12 @@ async function install(page, state = {}) {
       state.tuner.channel_count = 1;
       state.tuner.operator_state = 'live';
       return respond(snapshot(state.protocolId, state));
+    }
+    if (path === '/api/v1/admin/channels/actions') {
+      state.running = true;
+      state.tuner.channel_count = 1;
+      state.tuner.operator_state = 'live';
+      return respond({ results: [{ configuration_id: 'channel-a', success: true, state: 'RUNNING', message: null }] });
     }
     return respond({});
   });
@@ -410,7 +419,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await wizard(page).screenshot({ animations: 'disabled', path: testInfo.outputPath(`import-choice-${theme}-${width}.png`) });
     await wizard(page).getByRole('radio', { name: importNo, exact: true }).check();
     await addDiscovery(page);
-    await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+    await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
     expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
   });
 }
@@ -431,19 +440,18 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await install(page, state);
     await begin(page);
     await expect(directoryNamesLoading(page)).toBeVisible();
-    await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeEnabled();
-    await review(page);
+    const reviewAction = wizard(page).getByRole('button', { name: 'Review channel', exact: true });
+    await expect(reviewAction).toBeDisabled();
     await expect(directoryNamesLoading(page)).toBeVisible();
     await expect(directoryNamesLoading(page)).toBeInViewport();
-    await wizard(page).getByLabel('Channel name', { exact: true }).fill('My control channel');
-    await expect(discoveryAdvance(page)).toBeDisabled();
+    await expect(wizard(page).getByLabel('Channel name', { exact: true })).toHaveCount(0);
     expect(await wizard(page).evaluate(element => {
       const bounds = element.getBoundingClientRect();
       return element.scrollWidth <= element.clientWidth + 1 && bounds.left >= 0 && bounds.right <= innerWidth;
     })).toBe(true);
     await wizard(page).screenshot({ path: test.info().outputPath(`loading-${theme}-${width}.png`) });
     // A queued click must not bypass readiness even if the button has just become disabled.
-    await discoveryAdvance(page).dispatchEvent('click');
+    await reviewAction.dispatchEvent('click');
     await page.clock.fastForward(50);
     expect(state.requests.filter(({ path }) => path.endsWith('/save') || path.includes('/systems/talkgroups'))).toHaveLength(0);
     state.templateSystem = matched.templateSystem;
@@ -451,13 +459,16 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     state.directoryResult = matched.directoryResult;
     await page.clock.fastForward(800);
     await expect(directoryNamesLoading(page)).toBeHidden();
+    await expect(reviewAction).toBeEnabled();
+    await review(page);
     await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
+    await wizard(page).getByLabel('Channel name', { exact: true }).fill('My control channel');
     await expect(wizard(page).getByLabel('Channel name', { exact: true })).toHaveValue('My control channel');
     await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
     await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toBeChecked();
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
     await addDiscovery(page, importYes);
-    await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+    await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
     expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
   });
@@ -469,15 +480,16 @@ for (const terminalState of ['no_match', 'unavailable']) {
     const state = { directoryResult: { state: 'pending' } };
     await install(page, state);
     await begin(page);
-    await review(page);
+    await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeDisabled();
     await expect(directoryNamesLoading(page)).toBeVisible();
-    await expect(discoveryAdvance(page)).toBeDisabled();
     state.directoryResult = { state: terminalState };
     await page.clock.fastForward(800);
     await expect(directoryNamesLoading(page)).toBeHidden();
+    await expect(wizard(page)).toContainText('The detected names will be used.');
+    await review(page);
     await expect(wizard(page).getByRole('button', { name: 'Add and start listening', exact: true })).toBeEnabled();
     await addDiscovery(page);
-    await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+    await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
     expect(state.requests.filter(({ path }) => path.includes('/systems/talkgroups') || path.endsWith('/aliases/import'))).toHaveLength(0);
   });
@@ -488,19 +500,141 @@ test('discovery keeps adding protected after a RadioReference names poll fails a
   const state = { ...ohioDiscoveryFixture('light'), directoryResult: { state: 'pending' } };
   await install(page, state);
   await begin(page);
-  await review(page);
+  const reviewAction = wizard(page).getByRole('button', { name: 'Review channel', exact: true });
+  await expect(reviewAction).toBeDisabled();
   state.failProbeStatusOnce = true;
   await page.clock.fastForward(800);
   const retry = wizard(page).getByRole('button', { name: 'Retry directory lookup', exact: true });
   await expect(retry).toBeEnabled();
   await expect(directoryNamesLoading(page)).toBeVisible();
-  await expect(discoveryAdvance(page)).toBeDisabled();
+  await expect(reviewAction).toBeDisabled();
   expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
   state.directoryResult = ohioDiscoveryFixture('light').directoryResult;
   await retry.click();
   await expect(directoryNamesLoading(page)).toBeHidden();
+  await review(page);
   await expect(wizard(page).getByRole('button', { name: 'Continue', exact: true })).toBeEnabled();
 });
+
+for (const response of [
+  { status: 409, code: 'discovery_conflict', message: 'Channel discovery expired; begin again' },
+  { status: 503, code: 'discovery_unavailable', message: 'Status temporarily unavailable.' }
+]) {
+  test(`completed discovery ignores an in-flight heartbeat ${response.status} and stops polling`, async ({ page }) => {
+    await page.clock.install();
+    const state = {};
+    await install(page, state);
+    await begin(page);
+    await review(page);
+    state.deferStatusOnce = true;
+    await page.clock.fastForward(11000);
+    await expect.poll(() => typeof state.releaseStatus).toBe('function');
+    await addDiscovery(page);
+    const modal = wizard(page);
+    await expect(modal.locator('.discovery-completion')).toBeVisible();
+    state.deferredStatusError = response;
+    state.releaseStatus();
+    await page.clock.fastForward(100);
+    await expect(modal).not.toContainText(/refresh this setup|Check your connection|discovery expired/);
+    const statusRequests = () => state.requests.filter(({ path, method }) =>
+      path === '/api/v1/admin/spectrum-discovery/discovery-a' && method === 'GET').length;
+    const finishedCount = statusRequests();
+    state.expiredStatus = true;
+    await page.clock.fastForward(6 * 60_000);
+    expect(statusRequests()).toBe(finishedCount);
+    await expect(modal.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+  });
+}
+
+test('a long successful talkgroup import remains complete after the temporary discovery expires', async ({ page }) => {
+  await page.clock.install();
+  const state = { ...ohioDiscoveryFixture('light'), delayImport: true, importCount: 6650 };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await addDiscovery(page, importYes);
+  await expect.poll(() => typeof state.releaseImport).toBe('function');
+  await expect(wizard(page)).toContainText('Importing talkgroups');
+  state.expiredStatus = true;
+  await page.clock.fastForward(45_000);
+  state.delayImport = false;
+  state.releaseImport();
+  await expect(wizard(page).locator('.discovery-completion')).toBeVisible();
+  await expect(wizard(page)).toContainText('6,650 talkgroups added');
+  await page.clock.fastForward(6 * 60_000);
+  await expect(wizard(page)).not.toContainText(/refresh this setup|Check your connection|discovery expired/);
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
+});
+
+test('completion uses the detected serving carrier when the saved channel differs from the selected frequency', async ({ page }) => {
+  const state = { servingFrequencyHz: 852012500 };
+  await install(page, state);
+  await begin(page, 'dmr');
+  await review(page);
+  await addDiscovery(page);
+  const metadata = wizard(page).locator('.discovery-completion-meta');
+  await expect(metadata).toContainText('852.012500 MHz');
+  await expect(metadata).not.toContainText('851.012500 MHz');
+  await expect(metadata).toContainText('Running');
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+});
+
+test('failed talkgroup imports remain retryable after RF discovery expiry without recreating the channel', async ({ page }) => {
+  await page.clock.install();
+  const state = { ...ohioDiscoveryFixture('light'), failImportOnce: true };
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await addDiscovery(page, importYes);
+  const retry = wizard(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true });
+  await expect(retry).toBeEnabled();
+  state.expiredStatus = true;
+  await page.clock.fastForward(6 * 60_000);
+  await expect(retry).toBeEnabled();
+  await retry.click();
+  await expect(wizard(page).locator('.discovery-completion')).toContainText('73 talkgroups added');
+  await expect(retry).toHaveCount(0);
+  await expect(wizard(page)).not.toContainText(/refresh this setup|Check your connection|discovery expired/);
+  expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+  expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(2);
+});
+
+for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+  test(`compact channel completion shows one long result and folded details in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const name = 'Greater Cleveland Radio Communications Network · Cleveland Simulcast and Regional Public Safety Dispatch';
+    const state = { ...ohioDiscoveryFixture(theme), singleMatch: true, importCount: 6650 };
+    await install(page, state);
+    await begin(page);
+    await review(page);
+    await wizard(page).getByLabel('Channel name', { exact: true }).fill(name);
+    await addDiscovery(page, importYes);
+    const modal = wizard(page);
+    const completion = modal.locator('.discovery-completion');
+    await expect(completion).toBeVisible();
+    await expect(modal.locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toHaveCount(1);
+    await expect(completion.locator('.discovery-completion-name')).toHaveText(name);
+    await expect(completion.locator('.ui-pill').filter({ hasText: /^Running$/ })).toHaveCount(1);
+    await expect(completion.locator('.discovery-completion-import')).toHaveCount(1);
+    await expect(completion).toContainText('6,650 talkgroups added');
+    await expect(modal.locator('.spectrum-discovery-context')).toBeHidden();
+    await expect(modal.locator('.spectrum-discovery-progress')).toBeHidden();
+    const details = completion.locator('.discovery-completion-details');
+    await expect(details).not.toHaveAttribute('open', '');
+    await expect(modal.getByRole('link', { name: 'Open channel', exact: true })).toBeVisible();
+    const bounds = await modal.boundingBox();
+    expect(bounds.height).toBeLessThan(700);
+    expect(bounds.x).toBeGreaterThanOrEqual(0);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+    expect(await completion.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await modal.screenshot({ path: testInfo.outputPath(`completion-${theme}-${width}.png`) });
+    await details.getByText('Details', { exact: true }).click();
+    await expect(details).toContainText('6650 added, 0 updated, 0 unchanged.');
+    await expect(details).toContainText('Test receiver');
+  });
+}
 
 test('discovery Yes imports talkgroups after adding and retries an import failure without adding again', async ({ page }) => {
   const state = { ...ohioDiscoveryFixture('light'), failImportOnce: true };
@@ -531,7 +665,7 @@ test('discovery keeps an explicit No choice after Back and never retries imports
   await expect(wizard(page).getByRole('radio', { name: importNo, exact: true })).toBeChecked();
   await wizard(page).getByRole('radio', { name: importYes, exact: true }).check();
   await addDiscovery(page, importYes);
-  await expect(wizard(page)).toContainText('Your channel was saved, but the receiver needs to restart');
+  await expect(wizard(page)).toContainText('Your channel was saved, but VCE needs to restart');
   await expect(wizard(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
 });
@@ -542,7 +676,7 @@ test('discovery imports into an explicitly reused same-name list and skips witho
   await begin(page);
   await review(page);
   await addDiscovery(page, importYes);
-  await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+  await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(1);
   expect(state.requests.find(({ path }) => path.endsWith('/save')).body.alias_list_id).toBe(21);
   await wizard(page).getByRole('button', { name: 'Done', exact: true }).click();
@@ -800,7 +934,7 @@ for (const scenario of [{ talkgroupCount: 0 }]) {
     await begin(page);
     await review(page);
     await wizard(page).getByRole('button', { name: 'Continue', exact: true }).click();
-    await expect(wizard(page).getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+    await expect(wizard(page).locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
     await expect(wizard(page).getByRole('radio', { name: importYes, exact: true })).toHaveCount(0);
     expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
@@ -920,155 +1054,103 @@ test('discovery Alias List follows the System label while Channel name and custo
   await expect(alias).toHaveValue('My listening list');
 });
 
-test('late discovery directory naming refreshes an untouched Alias List without replacing its input', async ({ page }) => {
+test('resolved discovery names populate Review before its Alias List input receives focus', async ({ page }) => {
   await page.clock.install();
   const state = { directoryResult: { state: 'pending' }, templateName: 'Decoded control',
     templateSystem: 'Decoded network', defaultAliasName: 'DMR 851.012500' };
   await install(page, state);
   await begin(page, 'dmr');
-  await review(page, 'dmr');
-  const alias = wizard(page).getByLabel('New Alias List name', { exact: true });
-  await expect(alias).toHaveValue('Decoded network');
-  const original = await alias.elementHandle();
-  await alias.focus();
+  await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeDisabled();
+  await expect(wizard(page).getByLabel('New Alias List name', { exact: true })).toHaveCount(0);
   state.templateSystem = ohioSystem;
   state.defaultAliasName = ohioSystem;
-  state.directoryResult = { state: 'matched', match: { system_name: ohioSystem, site_name: 'North',
-    url: 'https://www.radioreference.com/db/sid/123' } };
+  state.directoryResult = ohioDiscoveryFixture('light').directoryResult;
   await page.clock.fastForward(800);
+  await review(page);
+  const alias = wizard(page).getByLabel('New Alias List name', { exact: true });
   await expect(alias).toHaveValue(ohioSystem);
+  const original = await alias.elementHandle();
+  await alias.focus();
+  await page.clock.fastForward(11000);
   expect(await alias.evaluate((element, previous) => element === previous, original)).toBe(true);
   await expect(alias).toBeFocused();
   await disclose(page, 'Additional labels (optional)');
   await expect(wizard(page).getByLabel('System', { exact: true })).toHaveValue(ohioSystem);
 });
 
-test('late discovery directory naming preserves an edited System and Alias List', async ({ page }) => {
+test('review heartbeat preserves edited System, Alias List, channel name and channel maps after lookup', async ({ page }) => {
   await page.clock.install();
   const state = { directoryResult: { state: 'pending' }, templateSystem: 'Decoded network' };
   await install(page, state);
   await begin(page, 'dmr');
-  await review(page, 'dmr');
+  state.templateSystem = ohioSystem;
+  state.directoryResult = ohioDiscoveryFixture('light').directoryResult;
+  await page.clock.fastForward(800);
+  await review(page);
   await disclose(page, 'Additional labels (optional)');
   const system = wizard(page).getByLabel('System', { exact: true });
   const alias = wizard(page).getByLabel('New Alias List name', { exact: true });
+  const name = wizard(page).getByLabel('Channel name', { exact: true });
   await system.fill('My transit system');
   await expect(alias).toHaveValue('My transit system');
   await alias.fill('My transit listeners');
-  state.templateSystem = ohioSystem;
-  state.defaultAliasName = ohioSystem;
-  state.directoryResult = { state: 'matched', match: { system_name: ohioSystem, site_name: 'North',
-    url: 'https://www.radioreference.com/db/sid/123' } };
-  await page.clock.fastForward(800);
-  await expect(system).toHaveValue('My transit system');
-  await expect(alias).toHaveValue('My transit listeners');
-});
-
-test('delayed click-directory matching refreshes untouched fields while preserving edited names and maps', async ({ page }) => {
-  await page.clock.install();
-  const state = { directoryResult: { state: 'pending' }, templateName: 'Decoded control', templateSystem: 'Decoded network' };
-  await install(page, state);
-  await begin(page, 'dmr');
-  await review(page, 'dmr');
-  await wizard(page).getByLabel('Channel name', { exact: true }).fill('My control');
-  await wizard(page).getByLabel('New Alias List name', { exact: true }).fill('My listening');
+  await name.fill('My transit control');
   await wizard(page).getByRole('button', { name: 'Add mapping', exact: true }).click();
   const manual = wizard(page).locator('.channel-map-row').nth(1);
   await manual.locator('input').nth(0).fill('2');
   await manual.locator('input').nth(1).fill('851.25');
-  await disclose(page, 'RadioReference');
-  const directory = wizard(page).locator('details').filter({ has: page.locator('summary').filter({ hasText: /^RadioReference$/ }) });
-  const directoryNode = await directory.elementHandle();
-  const pendingNode = await directory.locator('p').elementHandle();
-  const name = wizard(page).getByLabel('Channel name', { exact: true });
-  const nameNode = await name.elementHandle();
+  const original = await name.elementHandle();
   await name.focus();
-  const polls = () => state.requests.filter(({ path, method }) =>
-    path === '/api/v1/admin/spectrum-discovery/discovery-a' && method === 'GET').length;
-  for (let update = 0; update < 2; update += 1) {
-    const before = polls();
-    await page.clock.fastForward(800);
-    await expect.poll(polls).toBeGreaterThan(before);
-    await expect(directory).toHaveAttribute('open', '');
-    expect(await directory.evaluate((element, previous) => element === previous, directoryNode)).toBe(true);
-    expect(await directory.locator('p').evaluate((element, previous) => element === previous, pendingNode)).toBe(true);
-    expect(await name.evaluate((element, previous) => element === previous, nameNode)).toBe(true);
-    await expect(name).toBeFocused();
-  }
-  state.templateName = 'Directory North';
-  state.templateSystem = 'Transit authority';
-  state.frequencyMap = [{ number: 1, downlink_hz: 851012500 }, { number: 3, downlink_hz: 851500000 }];
-  state.directoryResult = { state: 'matched', match: { system_name: 'Transit authority', site_name: 'North',
-    url: 'https://www.radioreference.com/db/sid/123',
-    channels: [{ logical_channel_number: 3, frequency_hz: 851500000 }] } };
-  await page.clock.fastForward(800);
-  await expect(wizard(page).getByLabel('System', { exact: true })).toHaveValue('Transit authority');
-  await expect(wizard(page).getByLabel('Channel name', { exact: true })).toHaveValue('My control');
-  expect(await name.evaluate((element, previous) => element === previous, nameNode)).toBe(true);
+  await page.clock.fastForward(11000);
+  expect(await name.evaluate((element, previous) => element === previous, original)).toBe(true);
   await expect(name).toBeFocused();
-  await expect(wizard(page).getByLabel('New Alias List name', { exact: true })).toHaveValue('My listening');
-  await expect(manual.locator('input').nth(0)).toHaveValue('2');
+  await expect(system).toHaveValue('My transit system');
+  await expect(alias).toHaveValue('My transit listeners');
   await expect(manual.locator('input').nth(1)).toHaveValue('851.25');
-  await expect(directory).toHaveCount(0);
-  await expect(wizard(page).getByRole('link', { name: 'Transit authority', exact: true })).toHaveCount(1);
   await addDiscovery(page);
-  const saved = state.requests.find((request) => request.path.endsWith('/save'));
-  expect(saved.body.name).toBe('My control');
-  expect(saved.body.new_alias_list_name).toBe('My listening');
-  expect(saved.body.frequency_map).toHaveLength(2);
+  const saved = state.requests.find(request => request.path.endsWith('/save')).body;
+  expect(saved.system).toBe('My transit system');
+  expect(saved.name).toBe('My transit control');
+  expect(saved.new_alias_list_name).toBe('My transit listeners');
+  expect(saved.frequency_map).toHaveLength(2);
 });
 
-test('Spectrum directory polls update focused signal details while preserving edited channel maps',
-  async ({ page }, testInfo) => {
-    await page.clock.install();
-    const state = { templateName: 'Decoded control', templateSystem: 'Decoded network',
-      directoryResult: { state: 'pending' } };
-    await install(page, state);
-    await begin(page, 'dmr');
-    await review(page, 'dmr');
-    const parent = wizard(page);
-    await parent.getByLabel('Channel name', { exact: true }).fill('My control');
-    await parent.getByLabel('New Alias List name', { exact: true }).fill('My listening');
-    await parent.getByRole('button', { name: 'Add mapping', exact: true }).click();
-    const manual = parent.locator('.channel-map-row').nth(1);
-    const mapNode = await manual.elementHandle();
-    await manual.locator('input').nth(0).fill('2');
-    await manual.locator('input').nth(1).fill('851.25');
-    const button = parent.getByRole('button', { name: 'Details', exact: true });
-    await button.click();
-    const child = signalDetails(page);
-    const childNode = await child.elementHandle();
-    const back = child.getByRole('button', { name: 'Back to channel', exact: true });
-    await back.focus();
-    const polls = () => state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'GET').length;
-    const before = polls();
-    await page.clock.fastForward(1600);
-    await expect.poll(polls).toBeGreaterThan(before);
-    await expect(back).toBeFocused();
-    expect(await child.evaluate((element, previous) => element === previous, childNode)).toBe(true);
-    await child.screenshot({ path: testInfo.outputPath('wizard-details-directory-pending.png') });
-    state.templateSystem = ohioSystem;
-    state.templateSite = ohioSite;
-    state.frequencyMap = [{ number: 1, downlink_hz: 851012500 }, { number: 3, downlink_hz: 851500000 }];
-    state.directoryResult = { state: 'matched', match: { system_name: ohioSystem, site_name: ohioSite,
-      url: 'https://www.radioreference.com/db/sid/123' } };
-    await page.clock.fastForward(800);
-    await expect(child.getByRole('group', { name: 'Channel', exact: true })).toContainText(ohioSystem);
-    await expect(child.getByRole('group', { name: 'Channel', exact: true })).toContainText(ohioSite);
-    await expect(back).toBeFocused();
-    expect(await child.evaluate((element, previous) => element === previous, childNode)).toBe(true);
-    await child.screenshot({ path: testInfo.outputPath('wizard-details-directory-matched.png') });
-    await page.keyboard.press('Escape');
-    await expect(child).toHaveCount(0);
-    await expect(button).toBeFocused();
-    await expect(parent.getByRole('link', { name: ohioSystem, exact: true })).toHaveCount(1);
-    await expect(parent.getByLabel('Channel name', { exact: true })).toHaveValue('My control');
-    await expect(parent.getByLabel('New Alias List name', { exact: true })).toHaveValue('My listening');
-    expect(await manual.evaluate((element, previous) => element === previous, mapNode)).toBe(true);
-    await expect(manual.locator('input').nth(0)).toHaveValue('2');
-    await expect(manual.locator('input').nth(1)).toHaveValue('851.25');
-    expect(state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'DELETE')).toHaveLength(0);
-  });
+test('Spectrum directory polls preserve focused signal details before Review becomes available', async ({ page }, testInfo) => {
+  await page.clock.install();
+  const state = { templateName: 'Decoded control', templateSystem: 'Decoded network',
+    directoryResult: { state: 'pending' } };
+  await install(page, state);
+  await begin(page, 'dmr');
+  const parent = wizard(page);
+  await expect(parent.getByRole('button', { name: 'Review channel', exact: true })).toBeDisabled();
+  const button = parent.getByRole('button', { name: 'Details', exact: true });
+  await button.click();
+  const child = signalDetails(page);
+  const childNode = await child.elementHandle();
+  const back = child.getByRole('button', { name: 'Back to channel', exact: true });
+  await back.focus();
+  const polls = () => state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'GET').length;
+  const before = polls();
+  await page.clock.fastForward(1600);
+  await expect.poll(polls).toBeGreaterThan(before);
+  await expect(back).toBeFocused();
+  expect(await child.evaluate((element, previous) => element === previous, childNode)).toBe(true);
+  await child.screenshot({ path: testInfo.outputPath('wizard-details-directory-pending.png') });
+  state.templateSystem = ohioSystem;
+  state.templateSite = ohioSite;
+  state.directoryResult = ohioDiscoveryFixture('light').directoryResult;
+  await page.clock.fastForward(800);
+  await expect(child.getByRole('group', { name: 'Channel', exact: true })).toContainText(ohioSystem);
+  await expect(back).toBeFocused();
+  expect(await child.evaluate((element, previous) => element === previous, childNode)).toBe(true);
+  await child.screenshot({ path: testInfo.outputPath('wizard-details-directory-matched.png') });
+  await back.click();
+  await expect(child).toHaveCount(0);
+  await expect(button).toBeFocused();
+  await review(page);
+  await expect(parent.getByRole('link', { name: ohioSystem, exact: true })).toHaveCount(1);
+  expect(state.requests.filter(request => request.path.endsWith('/save'))).toHaveLength(0);
+});
 
 for (const protocolId of ['dmr', 'nxdn']) {
   test(`click spectrum checks ${protocolId.toUpperCase()} identity and reviews detected trunked channels`, async ({ page }) => {
@@ -1693,7 +1775,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       await expect(parent.getByLabel('System', { exact: true })).toHaveValue('My MARCS system');
       await expect(parent.getByLabel('Site', { exact: true })).toHaveValue('My Cuyahoga site');
       await addDiscovery(page);
-      await expect(parent.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+      await expect(parent.locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
       expect(state.requests.find(request => request.path.endsWith('/save')).body).toMatchObject({
         name: 'Cuyahoga control', system: 'My MARCS system', site: 'My Cuyahoga site',
         new_alias_list_name: 'MARCS Dispatch', alias_list_id: 0
@@ -1962,8 +2044,8 @@ test('a saved channel requiring a receiver restart never offers another Add or s
   await review(page);
   const dialog = wizard(page);
   await addDiscovery(page);
-  await expect(dialog.getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
-  await expect(dialog).toContainText('Your channel was saved, but the receiver needs to restart');
+  await expect(dialog.locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
+  await expect(dialog).toContainText('Your channel was saved, but VCE needs to restart');
   await expect(dialog.getByRole('button', { name: 'Try adding again', exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('button', { name: 'Try starting again', exact: true })).toHaveCount(0);
   await expect(dialog.getByRole('link', { name: 'Open channels', exact: true })).toBeVisible();
@@ -1974,6 +2056,7 @@ test('a saved channel requiring a receiver restart never offers another Add or s
 });
 
 test('ambiguous aliases require a choice; saved start failure retries without recreating', async ({ page }) => {
+  await page.clock.install();
   const state = { ambiguous: true, failStart: true };
   await install(page, state);
   await begin(page);
@@ -1985,12 +2068,16 @@ test('ambiguous aliases require a choice; saved start failure retries without re
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(0);
   await dialog.getByLabel('Alias List', { exact: true }).selectOption('22');
   await addDiscovery(page);
-  await expect(dialog.getByRole('heading', { name: 'Channel added' })).toBeVisible();
+  await expect(dialog.locator('.modal-header').getByRole('heading', { name: 'Channel added' })).toBeVisible();
   await expect(dialog).toContainText('Tuner capacity is in use.');
+  state.expiredStatus = true;
+  await page.clock.fastForward(6 * 60_000);
   await dialog.getByRole('button', { name: 'Try starting again' }).click();
-  await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
+  await expect(dialog.locator('.modal-header').getByRole('heading', { name: 'Channel added' })).toBeVisible();
+  await expect(dialog.locator('.discovery-completion-status')).toHaveText('Running');
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
-  expect(state.requests.filter((request) => request.path.endsWith('/start'))).toHaveLength(1);
+  expect(state.requests.filter((request) => request.path.endsWith('/start'))).toHaveLength(0);
+  expect(state.requests.filter((request) => request.path === '/api/v1/admin/channels/actions')).toHaveLength(1);
   const save = state.requests.find((request) => request.path.endsWith('/save')).body;
   expect(save.alias_list_id).toBe(22);
   expect(save.new_alias_list_name).toBeNull();
@@ -2010,7 +2097,7 @@ test('one P25 identity match offers an explicit existing or new Alias List choic
   await expect(dialog.getByRole('option', { name: 'Create a new Alias List', exact: true })).toHaveCount(1);
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeHidden();
   await addDiscovery(page);
-  await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
+  await expect(dialog.locator('.modal-header').getByRole('heading', { name: 'Channel added' })).toBeVisible();
   expect(state.requests.find((request) => request.path.endsWith('/save')).body.alias_list_id).toBe(21);
 });
 
@@ -2028,7 +2115,7 @@ test('stale save refreshes choices and preserves the draft before an explicit re
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toHaveValue('County aliases');
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
   await addDiscovery(page);
-  await expect(dialog.getByRole('heading', { name: 'Ready to listen' })).toBeVisible();
+  await expect(dialog.locator('.modal-header').getByRole('heading', { name: 'Channel added' })).toBeVisible();
   const saves = state.requests.filter((request) => request.path.endsWith('/save'));
   expect(saves.map((request) => request.body.revision)).toEqual([7, 8]);
   expect(saves[1].body.alias_list_id).toBe(0);
@@ -2059,7 +2146,7 @@ test('retrying a failed add preserves names and listening choices without adding
   await expect(dialog.getByLabel('Site', { exact: true })).toHaveValue('North');
   expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
   await addDiscovery(page);
-  await expect(dialog.getByRole('heading', { name: 'Ready to listen', exact: true })).toBeVisible();
+  await expect(dialog.locator('.modal-header').getByRole('heading', { name: 'Channel added', exact: true })).toBeVisible();
   await expect(dialog).toContainText('County Control');
   await expect(dialog).toContainText('Test receiver');
   await expect(dialog).toContainText('851.012500 MHz');

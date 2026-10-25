@@ -9,8 +9,11 @@ async function main() {
   const assets = path.resolve(process.argv[2] || 'stats-web/assets');
   const { spectrumSearchGroupKey, spectrumSearchIdentityFacts, spectrumSearchSystemName } =
     await import(pathToFileURL(path.join(assets, 'features/spectrum-search-data.js')).href);
-  const { discoveryRadioReferenceResult, createDiscoveryTalkgroupAvailability, importDiscoveryAliases } =
+  const { discoveryRadioReferenceResult, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent,
+    createDiscoveryRadioReferenceWait, createDiscoveryCompletion, createDiscoveryTalkgroupAvailability, importDiscoveryAliases } =
     await import(pathToFileURL(path.join(assets, 'features/discovery-radioreference.js')).href);
+  const { requestChannelAction, requestChannelAdminMutation } =
+    await import(pathToFileURL(path.join(assets, 'core/channel-actions.js')).href);
   const app = fs.readFileSync(path.join(assets, 'app.js'), 'utf8');
   const spectrum = app.slice(app.indexOf('async function renderTunerSpectrum(workspaceOptions = {})'), app.indexOf('function radioDirectory',
     app.indexOf('async function renderTunerSpectrum(workspaceOptions = {})')));
@@ -35,11 +38,100 @@ async function main() {
   assert.ok(spectrumSearchIdentityFacts(nxdn, hex).some(([name, value]) => name === 'RAN' && value === 9));
   assert.equal(spectrumSearchSystemName({ ...dmr, system_name: 'Transit' }), 'Transit');
 
-  const node = (tag, className, text = '') => ({ tag, className, children: [text],
+  const node = (tag, className, text = '') => ({ tag, className, children: [text], attributes: {},
+    classList: { add() {}, toggle() {} },
+    setAttribute(name, value) { this.attributes[name] = value; },
     get firstElementChild() { return this.children.find((child) => child?.tag); },
     append(...children) { this.children.push(...children); },
     replaceChildren(...children) { this.children = children; } });
   const ui = { node, anchor: (label, url) => ({ label, url }), channelMHz: (value) => String(value / 1e6) };
+  const directoryCandidates = [
+    { candidate_id: 'north', group: 'county', radio_reference: { state: 'matched' } },
+    { candidate_id: 'south', group: 'county', radio_reference: { state: 'pending' } },
+    { candidate_id: 'transit', group: 'transit', radio_reference: { state: 'pending' } }
+  ];
+  const selectedDirectory = discoveryRadioReferenceSelection(directoryCandidates, ['north'], (value) => value.group);
+  assert.deepEqual(selectedDirectory.map((value) => value.candidate_id), ['north', 'south'],
+    'Readiness includes unselected siblings in the selected system, without blocking on unrelated systems.');
+  const wait = createDiscoveryRadioReferenceWait(ui);
+  const reviewAction = { disabled: false };
+  assert.equal(wait.update(selectedDirectory, reviewAction), true);
+  assert.equal(wait.element.hidden, false);
+  assert.equal(reviewAction.disabled, true, 'Review and Add share the pending-name gate.');
+  selectedDirectory[1].radio_reference.state = 'no_match';
+  assert.equal(wait.update(selectedDirectory, reviewAction), false);
+  assert.equal(reviewAction.disabled, false);
+  assert.equal(wait.element.hidden, false);
+  assert.match(JSON.stringify(wait.element), /No matching RadioReference record was found/);
+  assert.match(JSON.stringify(wait.element), /Detected names will be used for the unmatched channels/);
+  for (const [state, copy] of [['no_match', 'No matching RadioReference record was found'],
+    ['unavailable', 'RadioReference names could not be loaded'], ['ambiguous', 'No unique RadioReference match was found']]) {
+    wait.update([{ radio_reference: { state } }]);
+    assert.match(wait.element.children[1].textContent, new RegExp(copy));
+    assert.match(wait.element.children[1].textContent, /The detected names will be used/);
+    if (state === 'no_match') assert.doesNotMatch(wait.element.children[1].textContent, /could not be loaded|unavailable/);
+  }
+  selectedDirectory[1].radio_reference.state = 'matched';
+  wait.update(selectedDirectory, reviewAction);
+  assert.equal(wait.element.hidden, true);
+  const snapshot = { state: 'ready' };
+  assert.equal(discoverySnapshotIsCurrent(snapshot, snapshot), true);
+  assert.equal(discoverySnapshotIsCurrent(snapshot, { ...snapshot }), false,
+    'An older status response must not overwrite a newer status or saved result.');
+  for (const state of [{ active: false }, { busy: true }, { finished: true }])
+    assert.equal(discoverySnapshotIsCurrent(snapshot, snapshot, state), false,
+      'Both successful and failed setup responses are ignored after save or while a mutation is running.');
+  const completion = createDiscoveryCompletion(ui, { channels: [{ name: 'North control', system: 'County',
+    frequency_hz: 851012500, protocol: 'P25', status: 'running', alias_list_id: 21,
+    alias_list_name: 'County dispatch aliases', alias_list_existing: true }], receiver: 'Test receiver', imports: {
+    targets: [{ alias_list_id: 21, alias_list_name: 'County dispatch aliases', state: 'imported', added: 6650,
+      updated: 0, unchanged: 0 }, { alias_list_id: 21, alias_list_name: 'County dispatch aliases',
+      state: 'imported', added: 6650, updated: 0, unchanged: 0 }] } });
+  const completionText = JSON.stringify(completion);
+  assert.match(completionText, /6,650 talkgroups added/);
+  assert.equal(completion.children.find((child) => child?.className === 'discovery-completion-imports')
+    .children.filter((child) => child?.tag).length, 1,
+    'Sites sharing one actual Alias List show one import result.');
+  assert.match(completionText, /Existing Alias List/);
+  assert.match(JSON.stringify(completion.children.find((child) => child?.className === 'discovery-completion-imports')),
+    /County dispatch aliases/, 'A destination different from the channel and system remains visible beside its import result.');
+  const completionDetails = completion.children.find((child) => child?.tag === 'details');
+  assert.equal(Boolean(completionDetails.open), false);
+  assert.match(JSON.stringify(completionDetails), /County dispatch aliases|Test receiver/);
+  assert.match(JSON.stringify(completionDetails), /6650 added, 0 updated, 0 unchanged\./);
+  const partial = createDiscoveryCompletion(ui, { channels: [{ name: 'Failed site', status: 'failed',
+    error: 'Receiver changes could not load.' }], imports: { targets: [{ alias_list_id: 22, state: 'failed',
+      message: 'Talkgroups could not be imported. Try again.' }] } });
+  assert.match(JSON.stringify(partial), /Could not add|Receiver changes could not load/);
+  assert.match(JSON.stringify(partial), /Talkgroups could not be imported/);
+  const unchanged = createDiscoveryCompletion(ui, { imports: { targets: [{ state: 'imported',
+    added: 0, updated: 0, unchanged: 20 }] } });
+  assert.match(JSON.stringify(unchanged), /Talkgroups already up to date/);
+  const empty = createDiscoveryCompletion(ui, { imports: { targets: [{ state: 'imported',
+    added: 0, updated: 0, unchanged: 0 }] } });
+  assert.match(JSON.stringify(empty), /No talkgroups to import/);
+  const lifecycleCalls = [];
+  const savedStart = await requestChannelAction(async (url, options) => {
+    lifecycleCalls.push([url, options]);
+    return { results: [{ configuration_id: 'saved-channel', success: true, state: 'RUNNING' }] };
+  }, { action: 'START', configurationIds: ['saved-channel'] });
+  assert.equal(lifecycleCalls[0][0], '/api/v1/admin/channels/actions');
+  assert.deepEqual(lifecycleCalls[0][1].body, { action: 'START', configuration_ids: ['saved-channel'] });
+  assert.equal(lifecycleCalls[0][1].timeoutMs, 30000);
+  assert.equal(savedStart.results[0].state, 'RUNNING');
+  assert.doesNotMatch(JSON.stringify(lifecycleCalls), /discovery|session|revision/,
+    'Starting a saved channel does not depend on temporary discovery state or a stale catalog revision.');
+  await assert.rejects(requestChannelAction(async () => ({ results: [{ configuration_id: 'saved-channel',
+    success: false, state: 'STOPPED', message: 'No receiver is available.' }] }),
+  { action: 'START', configurationIds: ['saved-channel'] }), /No receiver is available/);
+  await assert.rejects(requestChannelAction(async () => ({ results: [] }),
+    { action: 'START', configurationIds: ['saved-channel'] }), /could not be confirmed/);
+  const pendingStart = await requestChannelAction(async () => ({ results: [{ configuration_id: 'saved-channel',
+    success: true, state: 'STOPPED' }] }), { action: 'START', configurationIds: ['saved-channel'] });
+  assert.equal(pendingStart.results[0].state, 'STOPPED', 'An accepted action must not be converted into Running.');
+  await assert.rejects(requestChannelAdminMutation(async () => ({ results: [{ configuration_id: 'catalog-channel',
+    success: false, message: 'Channel is unavailable.' }] }), '/api/v1/admin/channels/actions'), /Channel is unavailable/,
+  'Catalog mutations use the same per-channel failure handling as editor and discovery actions.');
   const rendered = discoveryRadioReferenceResult(ui, { radio_reference: { state: 'ambiguous',
     match: { system_name: 'Incorrect borrowed name' } } });
   assert.doesNotMatch(JSON.stringify(rendered), /Incorrect borrowed name/);

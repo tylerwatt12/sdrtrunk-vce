@@ -222,7 +222,7 @@ for (const { theme, width, height } of [
         await expect(page.locator('.radioreference-preview-facts')).toContainText('851.0125');
       }
       if (step.id === 'channel-complete-close') {
-        await expect(page.locator('.radioreference-import-modal-complete')).toContainText('Channel saved');
+        await expect(page.locator('.radioreference-import-modal-complete')).toContainText('Channel added');
         await expect(page.locator('.radioreference-completion-actions')).toContainText('Open channel');
       }
       if (step.id === 'comparison') {

@@ -2,7 +2,7 @@ import { systemIdentity } from '../core/system-labels.js?v=2';
 import { spectrumSearchProtocolLabel, spectrumSearchSystemName, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchGroupKey } from './spectrum-search-data.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=2';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, createDiscoveryRadioReferenceWait, createDiscoveryAliasListChoice, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases, createDiscoveryTalkgroupAvailability } from './discovery-radioreference.js?v=13';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, createDiscoveryCompletion, createDiscoveryRadioReferenceWait, createDiscoveryAliasListChoice, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases, createDiscoveryTalkgroupAvailability } from './discovery-radioreference.js?v=14';
 
 export function openSpectrumSearchWizard(ui, context = {}) {
   const { node, openReadOnlyModal, requestJson, uiActionButton, iconButton, uiSelect, uiSelectFrame, uiPill,
@@ -250,6 +250,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     disposeResultOverflows();
     progressNodes = null;
     currentStep = next;
+    modal.dialog.classList.toggle('spectrum-search-complete', next === 'saved');
+    modal.setTitle(next === 'saved' ? title : 'Find Trunked Systems');
     receiverChooser = null;
     reviewBindings = [];
     reviewGroupBindings = [];
@@ -268,7 +270,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (position === index) step.setAttribute('aria-current', 'step');
       return step;
     }));
-    const heading = node('h3', '', title);
+    const heading = node('h3', next === 'saved' ? 'visually-hidden' : '', title);
     heading.tabIndex = -1;
     stage.replaceChildren(heading, feedback);
     feedback.hidden = false;
@@ -301,14 +303,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   };
   const selectedCandidates = () => candidates().filter((candidate) => selected.has(candidate.candidate_id));
   const pendingDirectory = () => discoveryRadioReferencePending(candidates());
-  const pendingSelectedDirectory = (ids = [...selected]) => {
-    const wanted = new Set(ids);
-    const selectedGroups = new Set(candidates().filter((candidate) => wanted.has(candidate.candidate_id))
-      .map(spectrumSearchGroupKey));
-    // A sibling can supply a group's import target even when only another site is selected.
-    return discoveryRadioReferencePending(candidates().filter((candidate) =>
-      selectedGroups.has(spectrumSearchGroupKey(candidate))));
-  };
+  const selectedDirectoryCandidates = (ids = [...selected]) =>
+    discoveryRadioReferenceSelection(candidates(), ids, spectrumSearchGroupKey);
+  const pendingSelectedDirectory = (ids = [...selected]) =>
+    discoveryRadioReferencePending(selectedDirectoryCandidates(ids));
   const scheduleDirectoryPoll = () => {
     if (current() && liveJob() && job.phase === 'complete' && pendingDirectory()) {
       window.clearTimeout(pollTimer);
@@ -493,6 +491,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const previousJobId = liveJob() ? job.job_id : null;
     const id = usedReceiverId;
     const operation = generation;
+    let observedJob = null;
     try {
       if (previous) {
         const renewed = await request(browsePath(id), {
@@ -505,10 +504,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         updateContext();
       }
       if (!busy && liveJob() && !['scanning', 'checking'].includes(job.phase)) {
-        const observed = job;
+        observedJob = job;
         const updated = await request(jobPath(), { csrf: false });
-        if (current() && !busy && operation === generation && liveJob() && job === observed &&
-            job.job_id === updated.job_id) {
+        if (discoverySnapshotIsCurrent(observedJob, job, { active: current() && operation === generation &&
+            liveJob() && job.job_id === updated.job_id, busy })) {
           job = updated;
           if (actions.querySelector('[data-directory-retry]')) {
             actions.querySelector('[data-directory-retry]').remove();
@@ -524,7 +523,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (!current() || operation !== generation || usedReceiverId !== id ||
           (previous && lease?.lease_id !== previous.lease_id) ||
           (previousJobId && (!liveJob() || job.job_id !== previousJobId))) return;
-      if (current() && !busy) {
+      if (discoverySnapshotIsCurrent(observedJob || job, job, { active: current(), busy })) {
         if (previous && leaseRenewalLostOwnership(cause)) {
           if (lease?.lease_id === previous.lease_id) lease = null;
           showExpired();
@@ -933,7 +932,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (directoryRefresh && busy) { scheduleDirectoryPoll(); return; }
     try {
       const updated = await request(jobPath(), { csrf: false });
-      if (!current() || operation !== generation || !liveJob() || job !== observed || busy) return;
+      if (!discoverySnapshotIsCurrent(observed, job, { active: current() && operation === generation && liveJob(), busy })) return;
       job = updated;
       clearFeedback();
       actions.querySelector('[data-directory-retry]')?.remove();
@@ -950,7 +949,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       } else if (directoryRefresh && updated.phase === 'complete' && pendingDirectory()) scheduleDirectoryPoll();
       else drawJob();
     } catch (cause) {
-      if (!current() || operation !== generation || !liveJob() || job !== observed || busy) return;
+      if (!discoverySnapshotIsCurrent(observed, job, { active: current() && operation === generation && liveJob(), busy })) return;
       if (isExpired(cause)) { showExpired(); return; }
       if (directoryRefresh) {
         error(pendingSelectedDirectory() ?
@@ -1156,8 +1155,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const directoryWait = createDiscoveryRadioReferenceWait(ui);
     const review = button('Review selected', showReview, true);
     refreshDirectoryWait = () => {
-      directoryWait.update(pendingDirectory());
-      review.disabled = busy || selected.size === 0;
+      directoryWait.update(selected.size ? selectedDirectoryCandidates() : candidates(), review, busy || selected.size === 0);
     };
     const another = button('Search another band', () => void restart());
     actions.prepend(another);
@@ -1284,6 +1282,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
   };
   const showReview = () => {
     if (job.restart_required) { showSaved(); return; }
+    if (pendingSelectedDirectory()) { refreshDirectoryWait?.(); scheduleDirectoryPoll(); return; }
     const chosen = selectedCandidates();
     show('review', 2, `Review ${chosen.length} ${chosen.length === 1 ? 'channel' : 'channels'}`);
     const form = node('form', 'spectrum-discovery-review spectrum-search-review-form');
@@ -1495,13 +1494,13 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         wantsAliasImport = choice.wantsImport();
         void save(ids);
       }, true);
-      refreshDirectoryWait = () => aliasDirectoryWait.update(pendingSelectedDirectory(ids), addChannels, busy);
+      refreshDirectoryWait = () => aliasDirectoryWait.update(selectedDirectoryCandidates(ids), addChannels, busy);
       refreshDirectoryWait();
       scheduleDirectoryPoll();
     }, true);
     refreshReviewImportAction = () => {
       add.textContent = importTargets().length ? 'Continue' : addLabel;
-      directoryWait.update(pendingSelectedDirectory(), add, busy || chosen.length === 0);
+      directoryWait.update(selectedDirectoryCandidates(), add, busy || chosen.length === 0);
     };
     refreshDirectoryWait = refreshReviewImportAction;
     refreshReviewImportAction();
@@ -1637,41 +1636,41 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     } finally { if (current()) setBusy(false); }
   };
   const showSaved = () => {
-    show('saved', 2, 'Your channel results');
     const results = selectedCandidates();
+    const complete = !job.restart_required && results.every((candidate) => candidate.saved || candidate.known_channel);
+    const added = results.filter((candidate) => candidate.saved).length;
+    show('saved', 2, complete ? `${added} ${added === 1 ? 'channel' : 'channels'} added` : 'Channel results');
     if (job.restart_required) stage.append(node('div', 'ui-notice ui-notice-warning',
       `${candidates().some((candidate) => candidate.saved) ? 'Some channels were saved, but VCE could not load the changes.' :
         'VCE needs to restart before changes can be loaded.'} Restart VCE before opening these channels, adding more, or listening. Saved channels do not need to be added again.`));
-    const complete = !job.restart_required && results.every((candidate) => candidate.saved || candidate.known_channel);
-    if (complete) {
-      const added = results.filter((candidate) => candidate.saved).length;
-      const existing = results.length - added;
-      const messages = [];
-      if (added) messages.push(`${added} ${added === 1 ? 'channel' : 'channels'} added.`);
-      if (existing) messages.push(`${existing} ${existing === 1 ? 'channel was' : 'channels were'} already in Channels.`);
-      stage.append(node('div', 'ui-notice ui-notice-success', messages.join(' ')));
-    }
-    else results.forEach((candidate) => {
-      const row = node('section', 'ui-form-section spectrum-discovery-review');
+    const channels = results.map((candidate) => {
       const known = !candidate.saved && candidate.known_channel;
-      const status = candidate.saved ? 'Added' : known ? 'Already added' :
-        job.ledger_unavailable ? 'Status unavailable' : job.restart_required ? 'Not added' : 'Could not add';
-      row.append(node('strong', '', drafts.get(candidate.candidate_id)?.name || candidateName(candidate)),
-        node('p', 'muted', `${systemLabel(candidate)} · ${channelMHz(candidate.frequency_hz)} MHz`),
-        uiPill(status, candidate.saved ? 'success' : known ? 'neutral' : 'warning'));
-      row.append(disclosure('System and site identity', factList(identityFacts(candidate))));
+      const aliasGroup = job.alias_groups?.find((group) => group.group_id === candidate.alias_group_id);
+      const draft = groups.get(candidate.alias_group_id);
+      const chosenList = aliasGroup?.alias_lists?.find((list) => Number(list.id) === Number(draft?.alias_list_id));
+      const rowActions = [];
       if (!candidate.saved && !known && !job.restart_required) {
-        if (candidate.save_error) row.append(node('p', 'muted', candidate.save_error));
-        button('Retry', () => void save([candidate.candidate_id]), true, row).setAttribute('aria-label', `Retry adding ${candidateName(candidate)}`);
-        button('Review choices', showReview, false, row);
+        const retry = uiActionButton('Retry', '', () => void save([candidate.candidate_id]), 'ui-button ui-button-primary');
+        retry.setAttribute('aria-label', `Retry adding ${candidateName(candidate)}`);
+        rowActions.push(retry, uiActionButton('Review choices', '', showReview, 'ui-button ui-button-secondary'));
       }
-      stage.append(row);
+      return { name: drafts.get(candidate.candidate_id)?.name || candidateName(candidate),
+        system: systemLabel(candidate), system_key: spectrumSearchGroupKey(candidate), site: siteLabel(candidate),
+        frequency_hz: candidate.frequency_hz, protocol: spectrumSearchProtocolLabel(candidate, protocols?.profiles),
+        status: candidate.saved ? 'added' : known ? 'already_saved' : job.ledger_unavailable ? 'status_unknown' :
+          job.restart_required ? 'not_added' : 'failed',
+        error: !candidate.saved && !known ? candidate.save_error : null,
+        ...(candidate.saved || known ? { alias_list_id: candidate.alias_list_id,
+          alias_list_name: chosenList?.name || draft?.new_alias_list_name,
+          ...(draft?.alias_list_id != null ? { alias_list_existing: Number(draft.alias_list_id) > 0 } : {}) } : {}),
+        details: identityFacts(candidate), actions: rowActions };
     });
-    if (wantsAliasImport && aliasImportResult?.targets?.length) {
-      stage.append(discoveryAliasImportResults(ui, aliasImportResult));
-      if (!job.restart_required && aliasImportResult.targets.some((target) => target.state === 'failed' || target.state === 'pending'))
-        button('Retry talkgroup imports', () => void runAliasImports());
-    }
+    stage.append(createDiscoveryCompletion(ui, { channels, grouped: results.length > 1,
+      imports: wantsAliasImport ? aliasImportResult : null,
+      receiver: receiver()?.name || receiver()?.label }));
+    if (wantsAliasImport && !job.restart_required && aliasImportResult?.targets?.some((target) =>
+      target.state === 'failed' || target.state === 'pending'))
+      button('Retry talkgroup imports', () => void runAliasImports());
     button('Done', () => modal.close());
     actions.append(anchor('Open Channels', href('channel-setup'), 'ui-button ui-button-primary'));
     if (busy) setBusy(true);

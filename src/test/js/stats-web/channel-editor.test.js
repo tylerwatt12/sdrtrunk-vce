@@ -294,7 +294,7 @@ assert.match(channelModal, /if \(!editing\) channel = channelCreationDefaults\(c
   'Creation defaults must not alter an existing channel');
 assert.match(channelModal, /label: channelCreationProtocolLabel\(candidate\)/,
   'The creation protocol selector must use its purpose-specific labels');
-assert.match(channelModal, /action, configuration_ids: \[configurationId\]/,
+assert.match(channelModal, /requestChannelAction\(requestJson, \{ revision, action, configurationIds: \[configurationId\] \}\)/,
   'The editor must start or stop only its own channel');
 assert.match(channelModal, /modal\.isDirty\(\)/,
   'Start and Stop must not discard unsaved channel settings');

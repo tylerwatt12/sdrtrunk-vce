@@ -44,7 +44,8 @@ async function openEditor(page, options = {}) {
     if (path.endsWith('/template')) return respond(template(path.split('/').at(-2)));
     if (path === '/api/v1/admin/channels/options') return respond({ revision: 1, tuners: [], alias_lists: [
       { id: 1, name: 'Default Analog', family: 'NBFM' }, { id: 2, name: 'Default P25', family: 'P25' },
-      { id: 3, name: 'Default DMR', family: 'DMR' }, { id: 4, name: 'Default NXDN', family: 'NXDN' }
+      { id: 3, name: 'Default DMR', family: 'DMR' }, { id: 4, name: 'Default NXDN', family: 'NXDN' },
+      ...(options.additionalAliasLists || [])
     ] });
     if (path === '/api/v1/admin/radioreference') return respond({ account: { state: state.account }, country_id: 1, state_id: 39 });
     if (path === '/api/v1/admin/radioreference/countries') return respond({ items: [{ id: 1, name: 'United States' }] });
@@ -61,6 +62,7 @@ async function openEditor(page, options = {}) {
         { candidate_id: 'record-2', name: 'Other dispatch', context: 'OTHER · Neighbor County · FMN', protocol_id: 'nbfm' }
       ] });
       return respond({ state: 'matched', preview_id: 'preview-1', names,
+        rr_system_id: options.rrSystemId || null, preferred_alias_list_id: options.preferredAliasListId || null,
         system_url: 'https://www.radioreference.com/db/subcat/16320',
         changes: Object.entries(names).map(([field, after]) => ({ field, before: body.channel[field] || '', after })) });
     }
@@ -142,6 +144,29 @@ test('existing conventional editor keeps names as a draft until normal Save', as
   expect(state.writes[0].name).toBe('Fire SE Dispatch');
   expect({ ...state.channel.settings, ...state.writes[0].settings }).toEqual(state.channel.settings);
 });
+
+for (const create of [true, false]) {
+  test(`names-only RadioReference lookup preserves an explicit Alias List in the ${create ? 'manual Spectrum draft' : 'existing editor'}`, async ({ page }) => {
+    const state = await openEditor(page, { create, protocol: 'p25-phase1', mode: 'matched',
+      rrSystemId: 123, preferredAliasListId: 2,
+      additionalAliasLists: [{ id: 9, name: 'My selected event listeners', family: 'P25' }] });
+    if (create) await state.editor.locator('.channel-protocol-select select').selectOption('p25-phase1');
+    const aliases = state.editor.getByLabel('Alias List', { exact: true });
+    await aliases.selectOption('9');
+    const before = await state.editor.locator('[data-channel-path^="settings."]').evaluateAll(controls =>
+      controls.map(control => [control.dataset.channelPath, control.type === 'checkbox' ? control.checked : control.value]));
+    const preview = await state.openPreview();
+    await preview.getByRole('button', { name: 'Use these names', exact: true }).click();
+    await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('Fire SE Dispatch');
+    await expect(aliases).toHaveValue('9');
+    expect(await state.editor.locator('[data-channel-path^="settings."]').evaluateAll(controls =>
+      controls.map(control => [control.dataset.channelPath, control.type === 'checkbox' ? control.checked : control.value]))).toEqual(before);
+    expect(state.writes).toHaveLength(0);
+    await state.editor.getByRole('button', { name: create ? 'Create channel' : 'Save changes', exact: true }).click();
+    await expect.poll(() => state.writes.length).toBe(1);
+    expect(Number(state.writes[0].alias_list_id)).toBe(9);
+  });
+}
 
 test('lookup failures allow retry and cancellation without altering a dirty parent', async ({ page }) => {
   const state = await openEditor(page, { mode: 'no_match' });

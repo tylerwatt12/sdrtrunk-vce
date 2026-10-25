@@ -208,6 +208,17 @@ export function discoveryRadioReferencePending(values = []) {
   return values.some((value) => value?.radio_reference?.state === 'pending');
 }
 
+export function discoveryRadioReferenceSelection(values, selectedIds, groupKey) {
+  const selected = new Set(selectedIds);
+  const groups = new Set(values.filter((value) => selected.has(value.candidate_id)).map(groupKey));
+  // An unselected site can still supply names and the import destination for its system.
+  return values.filter((value) => groups.has(groupKey(value)));
+}
+
+export function discoverySnapshotIsCurrent(observed, value, { active = true, busy = false, finished = false } = {}) {
+  return active && !busy && !finished && observed === value;
+}
+
 export function createDiscoveryRadioReferenceWait({ node }) {
   const element = node('div');
   const status = node('p', 'ui-feedback ui-feedback-loading', 'Looking up RadioReference names…');
@@ -216,8 +227,21 @@ export function createDiscoveryRadioReferenceWait({ node }) {
   element.hidden = true;
   return {
     element,
-    update(pending, action = null, disabled = false) {
-      element.hidden = !pending;
+    update(values, action = null, disabled = false) {
+      const pending = Array.isArray(values) ? discoveryRadioReferencePending(values) : Boolean(values);
+      const failedStates = Array.isArray(values) ? [...new Set(values.map((value) => value?.radio_reference?.state)
+        .filter((state) => ['no_match', 'unavailable', 'ambiguous'].includes(state)))] : [];
+      const fallback = failedStates.length > 0;
+      const mixed = Array.isArray(values) && values.some((value) => value?.radio_reference?.state === 'matched');
+      const fallbackCopy = {
+        no_match: 'No matching RadioReference record was found.',
+        unavailable: 'RadioReference names could not be loaded.',
+        ambiguous: 'No unique RadioReference match was found.'
+      };
+      element.hidden = !pending && !fallback;
+      status.className = pending ? 'ui-feedback ui-feedback-loading' : 'ui-field-hint';
+      status.textContent = pending ? 'Looking up RadioReference names…' : failedStates.map((state) => fallbackCopy[state]).join(' ') +
+        (fallback ? mixed ? ' Detected names will be used for the unmatched channels.' : ' The detected names will be used.' : '');
       status.setAttribute('aria-busy', String(pending));
       if (action) action.disabled = disabled || pending;
       return pending;
@@ -429,6 +453,111 @@ export function discoveryAliasImportResults(ui, result) {
     row.append(node('p', '', text));
     element.append(row);
   });
+  return element;
+}
+
+/** The result display is shared; channel creation, starting and retries stay with each workflow. */
+export function createDiscoveryCompletion(ui, { channels = [], imports = null, grouped = false, receiver = '' } = {}) {
+  const { node, uiPill } = ui;
+  const element = node('div', 'discovery-completion');
+  element.classList.toggle('discovery-completion-grouped', grouped);
+  const list = node('div', 'discovery-completion-list discovery-completion-channels');
+  const detailEntries = [];
+  const seenLists = new Set();
+  const pill = (label, tone) => uiPill ? uiPill(label, tone) : node('span', `ui-pill ui-pill-${tone}`, label);
+  const facts = (entries) => {
+    const result = node('dl', 'ui-fact-list');
+    entries.filter(([, value]) => value !== undefined && value !== null && value !== '')
+      .forEach(([label, value]) => result.append(node('dt', '', label), node('dd', '', String(value))));
+    return result;
+  };
+  const sections = new Map();
+  channels.forEach((channel) => {
+    const key = grouped ? channel.system_key || channel.system || 'Channels' : '';
+    let section = sections.get(key);
+    if (!section) {
+      section = node('section', 'discovery-completion-group');
+      if (grouped) section.append(node('h4', 'discovery-completion-group-title', channel.system || 'Radio system'));
+      sections.set(key, section);
+      list.append(section);
+    }
+    const row = node('article', 'discovery-completion-row discovery-completion-channel');
+    const header = node('div', 'discovery-completion-header');
+    header.append(node('h3', 'discovery-completion-name', channel.name || 'Saved channel'));
+    const metadata = node('p', 'discovery-completion-meta');
+    const parts = [];
+    if (Number(channel.frequency_hz) > 0) parts.push(`${(Number(channel.frequency_hz) / 1_000_000).toFixed(6)} MHz`);
+    if (channel.protocol) parts.push(channel.protocol);
+    if (parts.length) metadata.append(node('span', '', parts.join(' · ')));
+    const statuses = { running: ['Running', 'success'], added: ['Added', 'success'], saved: ['Added', 'success'], updated: ['Updated', 'success'],
+      already_saved: ['Already added', 'neutral'], failed: ['Could not add', 'warning'],
+      not_added: ['Not added', 'warning'], status_unknown: ['Status unavailable', 'warning'] };
+    const [label, tone] = statuses[channel.status] || statuses.added;
+    const status = pill(label, tone);
+    status.classList.add('discovery-completion-status');
+    metadata.append(status);
+    header.append(metadata);
+    row.append(header);
+    if (channel.error) row.append(node('p', 'ui-notice ui-notice-warning', channel.error));
+    if (channel.actions?.length) {
+      const actions = node('div', 'ui-action-row');
+      actions.append(...channel.actions);
+      row.append(actions);
+    }
+    section.append(row);
+    const aliasKey = Number(channel.alias_list_id) > 0 ? `id:${channel.alias_list_id}` : channel.alias_list_name;
+    if (aliasKey && !seenLists.has(aliasKey)) {
+      seenLists.add(aliasKey);
+      if (typeof channel.alias_list_existing === 'boolean') section.append(node('p', 'discovery-completion-note',
+        channel.alias_list_existing ? 'Existing Alias List' : 'New Alias List'));
+      detailEntries.push(['Alias List', channel.alias_list_name]);
+    }
+    detailEntries.push(...(channels.length > 1 ? [['Channel', channel.name]] : []),
+      ['System', channel.system], ['Site', channel.site], ...(channel.details || []));
+  });
+  element.append(list);
+  const targets = [...new Map((imports?.targets || []).map((target, index) =>
+    [Number(target.alias_list_id) > 0 ? `id:${target.alias_list_id}` : `target:${index}`, target])).values()];
+  if (targets.length) {
+    const section = node('div', 'discovery-completion-imports');
+    targets.forEach((target) => {
+      const row = node('div', 'discovery-completion-import');
+      const destination = target.alias_list_name || target.system_name;
+      const showDestination = destination && (targets.length > 1 || !channels.some((channel) =>
+        channel.name === destination || channel.system === destination));
+      if (showDestination) row.append(node('strong', '', destination));
+      const added = Number(target.added) || 0;
+      const updated = Number(target.updated) || 0;
+      const unchanged = Number(target.unchanged) || 0;
+      if (target.state === 'imported') {
+        const counts = [[added, 'added'], [updated, 'updated'], [unchanged, 'unchanged']].filter(([count]) => count > 0);
+        const count = (value) => ui.number ? ui.number(value) : value.toLocaleString();
+        row.append(node('p', '', !added && !updated ?
+          unchanged ? 'Talkgroups already up to date' : 'No talkgroups to import' : counts.length === 1 ?
+            `${count(counts[0][0])} talkgroups ${counts[0][1]}` :
+            `Talkgroups: ${counts.map(([value, action]) => `${count(value)} ${action}`).join(', ')}`));
+        detailEntries.push([targets.length > 1 && target.alias_list_name ?
+          `Talkgroups · ${target.alias_list_name}` : 'Talkgroup import',
+        `${added} added, ${updated} updated, ${unchanged} unchanged.`]);
+      } else {
+        row.classList.add('ui-notice', 'ui-notice-warning');
+        row.append(node('p', '', target.state === 'importing' ? 'Importing talkgroups…' :
+          target.state === 'pending' ? 'Talkgroups are waiting to import.' :
+            target.message || 'Talkgroups could not be imported. Try again.'));
+      }
+      if (target.alias_list_name && !channels.some((channel) => channel.alias_list_name === target.alias_list_name))
+        detailEntries.push(['Alias List', target.alias_list_name]);
+      section.append(row);
+    });
+    element.append(section);
+  }
+  const receivers = [...new Set([receiver, ...channels.map((channel) => channel.receiver)].filter(Boolean))];
+  receivers.forEach((name) => detailEntries.push(['Receiver', name]));
+  if (detailEntries.some(([, value]) => value !== undefined && value !== null && value !== '')) {
+    const details = node('details', 'ui-section-disclosure ui-section-disclosure-flat discovery-completion-details');
+    details.append(node('summary', 'ui-section-summary', 'Details'), facts(detailEntries));
+    element.append(details);
+  }
   return element;
 }
 

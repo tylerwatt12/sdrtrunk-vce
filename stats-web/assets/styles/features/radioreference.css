@@ -760,6 +760,17 @@
   margin: 0;
 }
 
+.radioreference-import-result {
+  align-content: start;
+  justify-items: stretch;
+  padding: var(--space-4);
+  text-align: left;
+}
+
+.radioreference-import-result .radioreference-completion-actions {
+  justify-content: flex-end;
+}
+
 .radioreference-completion-icon {
   width: 52px;
   height: 52px;

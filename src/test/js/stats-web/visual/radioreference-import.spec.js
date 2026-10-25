@@ -173,6 +173,7 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
       close.addEventListener('click', closeModal);
       return {
         dialog, content: modalContent, close: closeModal,
+        setTitle(title) { header.querySelector('h2').textContent = title; dialog.setAttribute('aria-label', title); },
         setBusy(busy) { close.disabled = Boolean(busy); },
         setDirty() {}
       };
@@ -391,15 +392,18 @@ async function installWorkspace(page, theme = 'light', large = false, slow = fal
             { field: 'description', before: 'Local fireground description', after: 'Fireground operations' },
             { field: 'group', before: 'Operations', after: 'Fire' }]
         }] };
-      if (path.endsWith('/imports/site/preview')) return { preview_id: 'site-preview', action: 'CREATE',
+      if (path.endsWith('/imports/site/preview')) return { preview_id: 'site-preview', action: scenario === 'update-completion' ? 'UPDATE' : 'CREATE',
         detected_modulation: dmr ? null : 'CQPSK',
         channel: { name: options.body.channel_name, protocol_id: dmr ? 'dmr' : 'p25-phase2',
           source: { frequencies_hz: [773081250, 773331250] } } };
       if (path.endsWith('/imports/conventional/preview')) return { preview_id: 'frequency-preview', action: 'CREATE',
         channel: { name: options.body.channel_name, protocol_id: 'nbfm',
           source: { frequencies_hz: [154430000] } } };
-      if (path.endsWith('/imports/site-preview/apply')) return { configuration_id: 'new-channel' };
-      if (path.includes('/imports/') && path.endsWith('/apply')) return { added: 2, updated: 0, alias_list_id: 7 };
+      if (path.endsWith('/imports/site-preview/apply')) return { configuration_id: 'new-channel',
+        action: scenario === 'update-completion' ? 'UPDATE' : 'CREATE' };
+      if (path.includes('/imports/') && path.endsWith('/apply')) return {
+        added: 2, updated: scenario === 'mixed-import-counts' ? 3 : 0,
+        unchanged: scenario === 'mixed-import-counts' ? 4 : 0, alias_list_id: 7 };
       if (path.endsWith('/location')) return { account: { state: 'VALID_PREMIUM' }, country_id: 1,
         state_id: 39, county_id: options.body.countyId || 0 };
       throw new Error(`Unexpected visual-test API path: ${path}`);
@@ -624,6 +628,39 @@ test('conventional import uses server names and preserves edits through review',
     system_name: 'My county', site_name: 'My fire district', channel_name: 'My dispatch', sub_category_id: 44,
     frequency_id: 55
   });
+});
+
+test('normal RadioReference talkgroup completion preserves added, updated and unchanged counts without duplicate success blocks', async ({ page }) => {
+  await installWorkspace(page, 'light', false, false, 'mixed-import-counts');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
+  await page.getByLabel('Compare with Alias List', { exact: true }).selectOption('7');
+  await page.getByRole('button', { name: 'Import all system talkgroups', exact: true }).click();
+  const preview = page.getByRole('dialog', { name: 'Import all system talkgroups', exact: true });
+  await preview.getByRole('button', { name: 'Apply Import', exact: true }).click();
+  const complete = page.getByRole('dialog', { name: 'Talkgroups imported', exact: true });
+  await expect(complete.locator('.discovery-completion-import')).toHaveCount(1);
+  await expect(complete.locator('.radioreference-completion-icon')).toHaveCount(0);
+  await expect(complete.locator('.discovery-completion-details')).not.toHaveAttribute('open', '');
+  await expect(complete).toContainText('Talkgroups: 2 added, 3 updated, 4 unchanged');
+  await complete.getByText('Details', { exact: true }).click();
+  await expect(complete).toContainText('2 added, 3 updated, 4 unchanged.');
+  await expect(complete.getByRole('link', { name: 'Open Alias List', exact: true })).toBeVisible();
+});
+
+test('normal RadioReference channel update completion says Updated without implying listening started', async ({ page }) => {
+  await installWorkspace(page, 'dark', false, false, 'update-completion');
+  await openSystem(page);
+  await page.getByRole('button', { name: 'Central Simulcast', exact: true }).click();
+  const form = page.getByRole('dialog', { name: /Import Central Simulcast/ });
+  await form.getByLabel('Alias List', { exact: true }).selectOption('7');
+  await form.getByRole('button', { name: 'Review Channel', exact: true }).click();
+  await page.getByRole('button', { name: 'Apply Channel', exact: true }).click();
+  const complete = page.getByRole('dialog', { name: 'Channel updated', exact: true });
+  await expect(complete.locator('.discovery-completion-name')).toHaveCount(1);
+  await expect(complete.locator('.discovery-completion-status')).toHaveText('Updated');
+  await expect(complete.getByText('Running', { exact: true })).toHaveCount(0);
+  await expect(complete.getByRole('link', { name: 'Open channel', exact: true })).toBeVisible();
 });
 
 test('conventional category changes keep the latest rows and naming context', async ({ page }) => {
@@ -1185,8 +1222,11 @@ test('site sorting and preview use the RadioReference database system ID', async
   await page.getByRole('dialog', { name: /Review Central County P25 · Alpha Site/ }).getByRole('button',
     { name: 'Apply Channel' }).click();
   const completed = page.locator('.radioreference-import-complete');
-  await expect(completed.locator('.radioreference-completion-icon')).toBeVisible();
-  await expect(completed).toContainText('The channel is ready in Channels.');
+  await expect(completed.locator('.discovery-completion-name')).toHaveText('Central County P25 · Alpha Site');
+  await expect(completed.locator('.discovery-completion-status')).toHaveText('Added');
+  await expect(completed.getByText('Running', { exact: true })).toHaveCount(0);
+  await expect(completed.locator('.discovery-completion-details')).not.toHaveAttribute('open', '');
+  await expect(page.locator('.radioreference-import-modal-complete .modal-header h2')).toHaveText('Channel added');
   const openChannel = completed.getByRole('link', { name: 'Open channel' });
   await expect(openChannel).toHaveClass(/ui-button-primary/);
   await expect(openChannel).toHaveAttribute('href', '/?view=channel-setup&channel=new-channel');

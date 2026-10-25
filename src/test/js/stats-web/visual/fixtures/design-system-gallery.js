@@ -913,6 +913,41 @@ if (view === 'spectrum-search') {
   }));
 }
 
+if (['spectrum-discovery', 'spectrum-search'].includes(view) && parameters.get('state') === 'complete') {
+  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=14');
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = text;
+    return element;
+  };
+  const single = view === 'spectrum-discovery';
+  const example = document.querySelector(single ? '.visual-spectrum-discovery-example' : '.visual-spectrum-search-example');
+  const modal = example.querySelector('.read-only-modal');
+  modal.classList.add(single ? 'spectrum-discovery-complete' : 'spectrum-search-complete');
+  modal.querySelector('.modal-header h2').textContent = single ? 'Channel added' : '7 channels added';
+  const channels = Array.from({ length: single ? 1 : 7 }, (_, index) => ({
+    name: single ? 'Greater Cleveland Radio Communications Network · Cleveland Simulcast' :
+      `County ${index + 1} Simulcast and Regional Public Safety Control`,
+    system: index < 4 ? 'Greater Cleveland Radio Communications Network' : 'Ohio MARCS-IP',
+    site: `County ${index + 1} Simulcast`, frequency_hz: 851012500 + index * 25000, protocol: 'P25 Phase 1',
+    status: single ? 'running' : 'added', alias_list_id: index < 4 ? 1 : 2,
+    alias_list_name: index < 4 ? 'GCRCN dispatch aliases' : 'MARCS dispatch aliases', alias_list_existing: true
+  }));
+  const imports = { targets: [...new Set(channels.map(channel => channel.alias_list_id))].map(id => ({
+    alias_list_id: id, alias_list_name: id === 1 ? 'GCRCN dispatch aliases' : 'MARCS dispatch aliases',
+    state: 'imported', added: id === 1 ? 454 : 18, updated: 0, unchanged: 0
+  })) };
+  example.querySelector('.spectrum-discovery-stage').replaceChildren(
+    createDiscoveryCompletion({ node }, { channels, imports, grouped: !single, receiver: 'Receiver 1' }));
+  const open = node('a', 'ui-button ui-button-secondary', single ? 'Open channel' : 'Open Channels');
+  open.href = '#';
+  const done = node('button', 'ui-button ui-button-primary', 'Done');
+  done.type = 'button';
+  example.querySelector('.spectrum-discovery-actions').replaceChildren(open, done);
+  example.dataset.completionReady = 'true';
+}
+
 if (view === 'table-overflow') {
   const iconButton = (iconId, text, className) => {
     const button = document.createElement('button');
