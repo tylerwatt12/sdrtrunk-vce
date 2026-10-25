@@ -1,5 +1,6 @@
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const longChannelName = 'MetropolitanEmergencyCommunications';
 const longAliasListName = 'Metropolitan Emergency Communications County Public Safety';
@@ -18,6 +19,8 @@ async function expectWithin(element, container) {
 for (const width of [320, 390, 430]) {
   test(`DMR uplink map and long channel name remain inside the editor at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
+    const preferences = structuredClone((await import(pathToFileURL(path.resolve(__dirname,
+      '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults);
     const configurationId = '00000000-0000-4000-8000-000000000001';
     const channel = {
       configuration_id: configurationId, protocol_id: 'dmr', name: longChannelName,
@@ -28,11 +31,12 @@ for (const width of [320, 390, 430]) {
     };
     await page.route('**/api/v1/**', async (route) => {
       const pathname = new URL(route.request().url()).pathname;
+      if (pathname === '/api/v1/me/preferences') {
+        return route.fulfill({ json: { revision: 1, preferences } });
+      }
       const data = pathname === '/api/v1/auth/session' ? {
         configured: true, authenticated: true, username: 'operator', tier: 'admin', primary: true,
         csrf_token: 'test-token', capabilities: { 'admin-channels': true }
-      } : pathname === '/api/v1/me/preferences' ? {
-        revision: 1, preferences: {}
       } : pathname === '/api/v1/admin/channels' ? {
         revision: 1, channels: [{ ...channel, frequencies_hz: channel.source.frequencies_hz,
           protocol_label: 'DMR', channel_kind: 'TRUNKED', processing_state: 'RUNNING',

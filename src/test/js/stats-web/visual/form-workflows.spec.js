@@ -10,13 +10,9 @@ test.beforeAll(async () => {
 });
 
 async function openForms(page, view, theme = 'light', scanList = {}) {
-  await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['scan-lists', 7], ['scanner', 4]]) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:form-workflows-fixture:${id}:${version}`, '1');
-    }
-  });
   let preferences = structuredClone(defaults);
   let preferenceRevision = 1;
+  const history = { version: 1, dismissed: { welcome: 1, 'scan-lists': 7, scanner: 4, live: 3, admin: 3 } };
   preferences.appearance.theme = theme;
   const state = { writes: [], pending: [], scanLists: [{ id: 1, name: 'Public Safety',
     description: 'Dispatch and mutual aid', edit_revision: 'scan-list-1-1',
@@ -31,6 +27,13 @@ async function openForms(page, view, theme = 'light', scanList = {}) {
       username: 'admin', tier: 'admin', primary: true, guide_dismissal_scope: 'form-workflows-fixture', capabilities: {
         'admin-settings': true, 'admin-aliases': true, 'receiver-health': true,
         'scanner': true, 'call-audio': true, 'live': true, 'user-settings': true, 'recordings': true, 'credits': true } });
+    if (pathname === '/api/v1/me/tour-dismissals') {
+      if (request.method() === 'PUT') {
+        for (const [id, version] of Object.entries(request.postDataJSON().dismissed))
+          history.dismissed[id] = Math.max(history.dismissed[id] || 0, version);
+      }
+      return data(history);
+    }
     if (pathname === '/api/v1/me/preferences') {
       if (request.method() === 'PUT') {
         state.writes.push({ pathname, body: request.postDataJSON(), revision: request.headers()['if-match'] });
@@ -58,6 +61,10 @@ async function openForms(page, view, theme = 'light', scanList = {}) {
       return route.fulfill({ json: state.receiver });
     }
     if (pathname === '/api/v1/admin/receiver-settings') return route.fulfill({ json: state.receiver });
+    if (pathname === '/api/v1/receiver-health') return data({
+      started_at_ms: Date.now() - 3_600_000, generated_at_ms: Date.now(),
+      summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
+      active: [], resolved: [], measurements: [] });
     if (pathname === '/api/v1/admin/spectrum-snap-presets') return route.fulfill({ json: {
       revision: 9, country_code: 'US', country_label: 'United States',
       countries: [{ code: 'US', label: 'United States' }], scopes: [] } });
@@ -220,19 +227,19 @@ test('failure mapping cannot strand a form busy or enable a permanently disabled
 
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
 for (const [view, trigger, title, setting, saveLabel] of [
-  ['settings', '#status-icon-settings', 'Status icon issues', null, 'Save choices'],
+  ['admin&tab=health', '#receiver-health-alert-settings', 'Status icon issues', null, 'Save choices'],
   ['live', '.live-presentation-button', 'Live presentation', 'Matching rows shown', 'Save Live Presentation'],
   ['scanner', '#scanner-settings', 'Scanner settings', 'Calls before switching targets', 'Save Scanner Settings']
 ]) {
   test(`${title} shares busy, failure, retry, and conflict handling in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 740 });
     const app = await openForms(page, `view=${view}`, theme);
-    if (view === 'settings' && width === 1280)
+    if (!setting && width === 1280)
       await page.getByRole('button', { name: 'Minimize player to header', exact: true }).click();
     if (view === 'live') await page.getByRole('button', { name: 'Live presentation settings', exact: true }).click();
     else await page.locator(trigger).click();
     const dialog = page.getByRole('dialog', { name: title, exact: true });
-    if (view === 'settings' && width === 1280) {
+    if (!setting && width === 1280) {
       await page.getByRole('button', { name: 'Restore player', exact: true }).evaluate(button => button.click());
       await expect(page.locator('#audio-dock')).toHaveAttribute('data-super-collapsed', 'false');
     }

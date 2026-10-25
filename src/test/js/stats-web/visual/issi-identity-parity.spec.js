@@ -64,7 +64,8 @@ for (const presentation of [
       expect(target.searchParams.get('system_key')).toBe(systemKey);
       expect(target.searchParams.has('talkgroup_id')).toBe(false);
       await group.click();
-      await expect(page.locator('.recordings-selected-filters')).toContainText('Talkgroup: Dispatch');
+      await expect(page.locator('.recordings-selected-filters')
+        .getByRole('button', { name: 'Remove Talkgroup: Dispatch filter', exact: true })).toContainText('Dispatch');
       await expectNoHorizontalOverflow(page);
       expect(errors).toEqual([]);
     });

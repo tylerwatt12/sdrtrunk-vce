@@ -3,14 +3,33 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
 const guideDismissalScope = 'channel-setup-fixture';
-test.beforeEach(async ({ page }) => {
-  const { guideStorageKey } = await import(pathToFileURL(path.resolve(__dirname,
-    '../../../../../stats-web/assets/guides/persistence.js')).href);
-  const keys = ['welcome', 'channel-setup'].map(id => guideStorageKey('channel-admin', guideDismissalScope, id));
-  await page.addInitScript(completed => {
-    completed.forEach(key => localStorage.setItem(key, '1'));
-  }, keys);
-});
+const accountFixtures = new WeakSet();
+
+async function openFixturePage(page, url) {
+  if (!accountFixtures.has(page)) {
+    const { defaults } = await import(pathToFileURL(path.resolve(__dirname,
+      '../../../../../stats-web/assets/core/preference-schema.js')).href);
+    let preferences = structuredClone(defaults), revision = 1;
+    const history = { version: 1, dismissed: { welcome: 1, 'channel-setup': 4 } };
+    // Register after the case's broad API fixture so account state stays healthy.
+    await page.route('**/api/v1/me/preferences', async route => {
+      if (route.request().method() === 'PUT') {
+        preferences = route.request().postDataJSON();
+        revision++;
+      }
+      await route.fulfill({ json: { revision, preferences } });
+    });
+    await page.route('**/api/v1/me/tour-dismissals', async route => {
+      if (route.request().method() === 'PUT') {
+        for (const [id, version] of Object.entries(route.request().postDataJSON().dismissed))
+          history.dismissed[id] = Math.max(history.dismissed[id] || 0, version);
+      }
+      await route.fulfill({ json: apiData(history) });
+    });
+    accountFixtures.add(page);
+  }
+  await page.goto(url);
+}
 
 const p25Phase1Profile = require(path.resolve(__dirname,
   '../../../../../src/main/resources/channel-protocols.json')).profiles
@@ -149,7 +168,7 @@ test('channel editor refreshes the voice-module override and renders the effecti
     });
   });
 
-  await page.goto('/app.html?view=channel-setup');
+  await openFixturePage(page, '/app.html?view=channel-setup');
   await expect(page.locator('.channel-admin-catalog')).toBeVisible();
   expect(protocolRequests).toBe(1);
 
@@ -211,7 +230,7 @@ test('editing a channel opens and creates the selected Alias List without losing
       body: JSON.stringify(data ? apiData(data) : { error: { message: 'Not available in this browser contract' } }) });
   });
 
-  await page.goto(`/app.html?view=channel-setup&channel=${configurationId}`);
+  await openFixturePage(page, `/app.html?view=channel-setup&channel=${configurationId}`);
   const dialog = page.getByRole('dialog', { name: 'Edit Test channel' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -273,7 +292,7 @@ test('editing a channel opens and creates the selected Alias List without losing
   expect(createdList).not.toHaveProperty('revision');
 
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto('/app.html?view=channel-setup');
+  await openFixturePage(page, '/app.html?view=channel-setup');
   const aliasCell = page.locator(`.channel-admin-catalog tr[data-id="${configurationId}"] td[data-column="alias-list"]`);
   const aliasLink = aliasCell.getByRole('link', { name: 'First list' });
   await expect(aliasLink).toHaveAttribute('href', /view=aliases&list=1$/);
@@ -365,7 +384,7 @@ async function installEditableChannelCatalog(page) {
 test('remote P25 editor shows applicable controls and preserves its linked source on save', async ({ page }) => {
   const fixture = await installEditableChannelCatalog(page);
   const { remoteId, localId, senderId, feedId, settings } = fixture;
-  await page.goto('/app.html?view=channel-setup');
+  await openFixturePage(page, '/app.html?view=channel-setup');
   await page.locator(`tr[data-id="${remoteId}"]`).getByRole('button', { name: 'Remote Control', exact: true }).click();
   const remoteDialog = page.getByRole('dialog', { name: 'Edit Remote Control' });
   await expect(remoteDialog).toBeVisible();
@@ -393,7 +412,7 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
   expect(fixture.savedRemote.recorders).toEqual(['BASEBAND'],
     'editing a remote channel must not erase hidden saved recorder choices');
 
-  await page.goto(`/app.html?view=channel-setup&channel=${localId}`);
+  await openFixturePage(page, `/app.html?view=channel-setup&channel=${localId}`);
   const localDialog = page.getByRole('dialog', { name: 'Edit Local Control' });
   await expect(localDialog).toBeVisible();
   await expect(localDialog.getByLabel('Preferred Tuner')).toBeVisible();
@@ -413,7 +432,7 @@ for (const width of [1280, 390]) {
     const readOnlyId = '55555555-5555-4555-8555-555555555555';
     fixture.channels.set(readOnlyId, { ...fixture.channels.get(fixture.localId),
       configuration_id: readOnlyId, name: 'Read-only Control', editable: false });
-    await page.goto('/app.html?view=channel-setup');
+    await openFixturePage(page, '/app.html?view=channel-setup');
     const row = page.locator(`tr[data-id="${fixture.remoteId}"]`);
     const dialogs = page.getByRole('dialog');
     const select = row.getByRole('checkbox', { name: 'Select Remote Control', exact: true });
@@ -497,7 +516,7 @@ test('bulk Clone is unavailable whenever the selection includes a remote channel
     }
   });
 
-  await page.goto('/app.html?view=channel-setup');
+  await openFixturePage(page, '/app.html?view=channel-setup');
   const clone = page.locator('.channel-selection-bar').getByRole('button', { name: 'Clone' });
   await page.getByRole('checkbox', { name: 'Select Local Control' }).check();
   await expect(clone).toBeEnabled();
@@ -577,7 +596,7 @@ test('startup-order view moves keyed rows without replacing the page or losing p
     await respond({ error: { message: 'Not available in this browser contract' } }, 404);
   });
 
-  await page.goto('/app.html?view=channel-setup');
+  await openFixturePage(page, '/app.html?view=channel-setup');
   const catalog = page.locator('.channel-admin-catalog');
   await expect(catalog).toBeVisible();
   const restrictedAliasCell = catalog.locator('tr[data-id="channel-01"] td[data-column="alias-list"]');

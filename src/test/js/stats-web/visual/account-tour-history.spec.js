@@ -110,8 +110,10 @@ test('legacy browser dismissals migrate only their known versions for the exact 
   };
   const fixture = await install(page, server, { legacy });
   await open(page);
-  await expect(guide(page)).toHaveAttribute('data-guide-id', 'admin');
   await expect.poll(() => server.record(owner)).toEqual({ welcome: 1, admin: 2, recordings: 4 });
+  await expect(guide(page)).toHaveCount(0);
+  await page.locator('#page-guide-button').click();
+  await expect(guide(page)).toHaveAttribute('data-guide-id', 'admin');
   expect(await page.evaluate(names => Object.fromEntries(names.map(name => [name, localStorage.getItem(name)])), Object.keys(legacy)))
     .toEqual(legacy);
   await page.keyboard.press('Escape');
@@ -146,6 +148,8 @@ test('a failed dismissal save survives reload and retries without reopening the 
   server.failWrites = true;
   const fixture = await install(page, server);
   await open(page);
+  await expect(guide(page)).toHaveCount(0);
+  await page.locator('#page-guide-button').click();
   await expect(guide(page)).toHaveAttribute('data-guide-id', 'admin');
   await page.keyboard.press('Escape');
   await expect(page.locator('#guide-history-status')).toContainText('could not be saved to your account');

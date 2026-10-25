@@ -1,13 +1,21 @@
 const { expect, test } = require('@playwright/test');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 async function openDeleteDialog(page, channelCount = 0) {
+  const preferences = structuredClone((await import(pathToFileURL(path.resolve(__dirname,
+    '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults);
   const aliasList = { alias_list_id: 1, name: 'Test', family: 'P25',
     alias_count: 2, assigned_channel_count: channelCount };
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
+    if (path === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
     const data = path === '/api/v1/auth/session' ? {
       configured: true, authenticated: true, username: 'alias-admin', tier: 'admin', primary: true,
+      guide_dismissal_scope: 'alias-delete-fixture',
       csrf_token: 'test-token', capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true }
+    } : path === '/api/v1/me/tour-dismissals' ? {
+      version: 1, dismissed: { welcome: 1, aliases: 5 }
     } : path === '/api/v1/alias-lists' ? {
       rows: [aliasList], limit: 500, offset: 0, has_more: false, next_offset: null
     } : path === '/api/v1/admin/alias-lists' ? { revision: 1, alias_lists: [aliasList] } :

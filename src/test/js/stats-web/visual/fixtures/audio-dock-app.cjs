@@ -107,6 +107,10 @@ async function openAudioApp(page, options = {}) {
     source_entity_ref: { kind: 'radio', radio_system_key: systemKey,
       identity_key: `v1-r-00001-001-${30914 + index}` } }));
   const state = { requests: [], preferenceWrites: [], preferenceRevision: 1, feedRequests: 0, feedDelivered: false,
+    tourDismissals: { version: 1, dismissed: { welcome: 1, 'channel-setup': 4, aliases: 5,
+      'scan-lists': 7, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5,
+      dashboard: 3, live: 3, admin: 3, scanner: 4, recordings: 4, topics: 3, map: 3,
+      'network-visualizer': 3 } },
     feedCallsEnabled: options.feedCallsEnabled !== false, transcript: options.transcript || transcript,
     session: { configured: true, authenticated: options.authenticated !== false,
       username: options.authenticated === false ? null : 'fixture-listener',
@@ -124,6 +128,13 @@ async function openAudioApp(page, options = {}) {
     state.requests.push({ path: p, method: route.request().method(), query: Object.fromEntries(url.searchParams) });
     const fulfill = (data) => route.fulfill({ json: { data } });
     if (p === '/api/v1/auth/session') return fulfill(state.session);
+    if (p === '/api/v1/me/tour-dismissals') {
+      if (route.request().method() === 'PUT') {
+        for (const [id, version] of Object.entries(route.request().postDataJSON().dismissed))
+          state.tourDismissals.dismissed[id] = Math.max(state.tourDismissals.dismissed[id] || 0, version);
+      }
+      return fulfill(state.tourDismissals);
+    }
     if (p === '/api/v1/me/preferences') {
       if (route.request().method() !== 'GET') {
         const write = route.request().postDataJSON();

@@ -481,6 +481,7 @@ for (const theme of ['light', 'dark']) {
     expect(result.panelPageMinimum, `${theme} standalone panels must remain distinct from the page`)
       .toBeGreaterThanOrEqual(1.10);
     await page.goto(`/design-system.html?theme=${theme}&view=radio-directory&hue=335`);
+    await expect(page.locator('.visual-radio-directory-example')).toHaveAttribute('data-production-ready', 'true');
     await expect(page.locator('.radio-directory-conventional-card').first()).toBeVisible();
     await expect(page.locator('body')).toHaveScreenshot(`coordinated-directory-${theme}.png`, { fullPage: true });
   });

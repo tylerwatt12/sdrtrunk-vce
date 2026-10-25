@@ -13,7 +13,8 @@ const agreedDescriptions = {
 };
 const completeMenu = {
   capabilities: { 'admin-streaming': true },
-  serviceStatus: { stats_logging: { summary_active: true, detailed_history_active: true } },
+  serviceStatus: { p25_visualizer_available: true,
+    stats_logging: { summary_active: true, detailed_history_active: true } },
   channelCatalog: [{ channel_kind: 'TRUNKED', processing_state: 'RUNNING', protocol_id: 'p25-phase2' }]
 };
 

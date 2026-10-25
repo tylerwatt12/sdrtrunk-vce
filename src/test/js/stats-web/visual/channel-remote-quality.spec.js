@@ -75,7 +75,7 @@ async function openQuality(page, configurationId, { samples = false, theme = 'li
 }
 
 test('remote channel Quality keeps decode history without RF signal presentation', async ({ page }) => {
-  await page.clock.install({ time: new Date(sampleTime) });
+  await page.clock.setFixedTime(new Date(sampleTime));
   await page.setViewportSize({ width: 1280, height: 900 });
   const requests = await openQuality(page, remoteId, { samples: true });
   const quality = page.locator('.site-signal-history-section');
@@ -87,6 +87,7 @@ test('remote channel Quality keeps decode history without RF signal presentation
   await expect(quality.locator('.decode-health-path')).toHaveCount(1);
   await expect(quality.locator('.signal-chart')).toHaveCount(0);
   await expect(quality.locator('.signal-history-overview .ui-metric')).toHaveCount(2);
+  await expect(quality.locator('.ui-metric').filter({ hasText: 'Last sample' })).toContainText('30s ago');
   expect(requests.qualityRequests()).toBe(1);
   expect(requests.requestedRanges()).toEqual(['1h']);
   await expect(quality.getByRole('button', { name: '1h' })).toHaveAttribute('aria-pressed', 'true');
@@ -103,17 +104,18 @@ test('remote channel Quality keeps decode history without RF signal presentation
 });
 
 test('remote decode history fits dark mobile without RF fields', async ({ page }) => {
-  await page.clock.install({ time: new Date(sampleTime) });
+  await page.clock.setFixedTime(new Date(sampleTime));
   await page.setViewportSize({ width: 390, height: 844 });
   await openQuality(page, remoteId, { samples: true, theme: 'dark' });
   const quality = page.locator('.site-signal-history-section');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(quality.locator('.signal-chart')).toHaveCount(0);
+  await expect(quality.locator('.ui-metric').filter({ hasText: 'Last sample' })).toContainText('30s ago');
   await expect(quality).toHaveScreenshot('remote-channel-quality-dark-mobile.png');
 });
 
 test('channel quality uses the explicit returned origin when channel metadata has none', async ({ page }) => {
-  await page.clock.install({ time: new Date(sampleTime) });
+  await page.clock.setFixedTime(new Date(sampleTime));
   await openQuality(page, remoteId, { samples: true, rowOriginOnly: true });
   const quality = page.locator('.site-signal-history-section');
   await expect(quality.locator('.decode-chart')).toHaveCount(1);

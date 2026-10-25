@@ -439,6 +439,74 @@ const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
 
+if (view === 'radio-directory') {
+  // Keep the sample observations, but build their cards with the same production
+  // composition as Main so surface, readout and responsive audits cannot drift.
+  const example = document.querySelector('.visual-radio-directory-example');
+  const sampleSections = [...example.querySelectorAll('.radio-directory-section')].map((section, sectionIndex) => ({
+    title: section.querySelector('h2').textContent,
+    kind: sectionIndex ? 'conventional' : 'trunked',
+    rows: [...section.querySelectorAll('.radio-directory-system-card')].map((card, cardIndex) => ({
+      system_name: card.querySelector('h3').textContent,
+      radio_system_key: `sample:${sectionIndex}:${cardIndex}`,
+      protocol: sectionIndex ? 'NBFM' : 'P25', protocol_labels: sectionIndex ? ['AM', 'NBFM'] : [],
+      children: [...card.querySelectorAll('.radio-directory-site-row')].map((row, rowIndex) => {
+        const frequency = Number.parseFloat(row.querySelector('.radio-directory-frequency strong').textContent);
+        return {
+          configuration_id: `sample-${sectionIndex}-${cardIndex}-${rowIndex}`,
+          name: row.querySelector('.channel-name-link').textContent,
+          site: row.querySelector('.channel-row-context')?.textContent || '',
+          processing_state: row.querySelector('.radio-directory-live-state').textContent.toUpperCase(),
+          frequencies_hz: Number.isFinite(frequency) ? [frequency * 1e6] : [],
+          display_frequency_source: 'active-control', display_frequency_hz: frequency * 1e6
+        };
+      })
+    }))
+  }));
+  const source = await fetch('/assets/app.js').then(response => response.text());
+  const names = ['uiPill', 'uiStatus', 'radioDirectoryCompare', 'radioDirectoryField',
+    'radioDirectoryLiveLink', 'radioDirectoryReading', 'radioDirectorySiteRow',
+    'radioDirectorySystemCard', 'radioDirectoryCardSection'];
+  const functions = names.map(name => {
+    const match = source.match(new RegExp(`^function ${name}\\([\\s\\S]*?^\\}`, 'm'));
+    if (!match) throw new Error(`Missing production directory builder ${name}`);
+    return match[0];
+  });
+  const node = (tag, className = '', text = null) => {
+    const element = document.createElement(tag);
+    element.className = className;
+    if (text !== null) element.textContent = String(text);
+    return element;
+  };
+  const anchor = (label, target, className = '') => {
+    const element = node('a', className, label);
+    element.href = target;
+    return element;
+  };
+  const dependencies = {
+    node, anchor, href: () => '#', capabilityAllowed: () => true,
+    ACCESS_CAPABILITIES: { RADIO: 'radio', LIVE: 'live' },
+    radioSystemDisplayName: row => row.system_name,
+    radioSystemLink: (_reference, label) => anchor(label, '#'),
+    protocolFamily: row => row.protocol,
+    canonicalConfigurationId: value => value,
+    frequency: value => (value / 1e6).toFixed(5),
+    elapsedLabel: () => '1s ago', optionalNumber: value => value == null ? null : Number(value),
+    percentNumber: value => Number.isFinite(value) ? `${value.toFixed(1)}%` : '—',
+    signalChannelState: () => ({ label: 'Healthy', className: 'healthy' }),
+    SIGNAL_OFFLINE_MILLISECONDS: 10_000,
+    DECODE_DEGRADED_MINIMUM_PERCENT: 80, DECODE_HEALTHY_MINIMUM_PERCENT: 95
+  };
+  const builders = new Function(...Object.keys(dependencies),
+    `${functions.join('\n')}\nreturn { radioDirectoryCardSection };`)(...Object.values(dependencies));
+  const quality = new Map(sampleSections.flatMap(section => section.rows.flatMap(system =>
+    system.children.map(row => [row.configuration_id, { last_observed_ms: Date.now() - 1000,
+      signal_dbfs: -55.3, average_signal_dbfs: -58.1, decode_health_pct: 99.4 }]))));
+  example.querySelector('.radio-directory-content').replaceChildren(...sampleSections.map(section =>
+    builders.radioDirectoryCardSection(section.title, section.rows, section.kind, 'No channels', quality)));
+  example.dataset.productionReady = 'true';
+}
+
 if (view === 'admin-support' || view === 'gallery') {
   const node = (tag, className = '', text = null) => {
     const element = document.createElement(tag);

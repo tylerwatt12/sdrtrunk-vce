@@ -451,8 +451,8 @@ test('call tones preserve group call types and filter independently with alias c
   ] });
   await showActivityColumns(page, ['tones']);
   const row = page.locator('tr[data-id="18"]');
-  await expect(row.locator('[data-column="event"]')).toHaveText('CALL_GROUP');
-  await expect(row.locator('[data-column="action"]')).toHaveText('CALL');
+  await expect(row.locator('[data-column="event"]')).toHaveText('Call Group');
+  await expect(row.locator('[data-column="action"]')).toHaveText('Call');
   await expect(row.locator('[data-column="tones"]')).toContainText('Audio detection');
   await expect(row.locator('[data-column="tones"]')).toContainText('593.75 Hz · 1020 ms · at 80 ms');
   await expect(row.locator('[data-column="event"]')).not.toContainText('measured');

@@ -1,8 +1,12 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 async function openMenu(page, available, { delayStatus = false } = {}) {
+  const preferences = structuredClone((await import(pathToFileURL(path.resolve(__dirname,
+    '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults);
   let current = available;
   let failed = false;
   let statusRequests = 0;
@@ -16,7 +20,7 @@ async function openMenu(page, available, { delayStatus = false } = {}) {
       await respond({ configured: true, authenticated: true, username: 'operator', tier: 'admin',
         primary: true, capabilities: { dashboard: true, radio: true, credits: true } });
     } else if (pathname === '/api/v1/me/preferences') {
-      await route.fulfill({ json: { revision: 1, preferences: {} } });
+      await route.fulfill({ json: { revision: 1, preferences } });
     } else if (pathname === '/api/v1/status') {
       statusRequests += 1;
       if (statusReady) await statusReady;

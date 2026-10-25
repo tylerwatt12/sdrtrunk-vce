@@ -296,7 +296,7 @@ test('starting a recording from the page while hidden changes source without sho
   await expect(dock(page).getByRole('button', { name: 'Pause recording', exact: true })).toBeVisible();
 });
 
-test('super collapse keeps desktop page geometry unchanged and remains hidden through navigation and Scanner', async ({ page }) => {
+test('super collapse releases the desktop player reserve without moving calls and remains hidden through navigation and Scanner', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   const state = await openApp(page);
   // The fixture has 30 calls, with 25 rendered on the first result page. Wait
@@ -310,17 +310,32 @@ test('super collapse keeps desktop page geometry unchanged and remains hidden th
     height: content.getBoundingClientRect().height, scrollHeight: content.scrollHeight,
     paddingBottom: getComputedStyle(content).paddingBottom,
     spacer: getComputedStyle(content, '::after').content,
+    reserve: parseFloat(getComputedStyle(content, '::after').height),
+    dockHeight: parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--audio-dock-height')),
+    calls: [...content.querySelectorAll('.recordings-call')].map((call) => ({
+      top: call.getBoundingClientRect().top - content.getBoundingClientRect().top,
+      height: call.getBoundingClientRect().height
+    })),
     documentHeight: document.documentElement.scrollHeight,
     scrollPaddingTop: getComputedStyle(document.documentElement).scrollPaddingTop,
-    scrollPaddingBottom: getComputedStyle(document.documentElement).scrollPaddingBottom,
+    scrollPaddingBottom: parseFloat(getComputedStyle(document.documentElement).scrollPaddingBottom),
   }));
+  await expect.poll(async () => (await geometry()).dockHeight).toBeGreaterThan(0);
   const before = await geometry();
   const recordingRequests = state.requests.filter((request) => request.path === '/api/v1/recordings/calls').length;
   const writes = state.requests.filter((request) => request.method !== 'GET');
   const transport = await page.evaluate(() => [...window.audioTest.recordings]);
   await hide(page).click();
   await expectSuperCollapsed(page);
-  await expect.poll(geometry).toEqual(before);
+  // The player reserves scroll room beneath the last call. Hiding it releases
+  // that room while preserving every call's position and the page padding.
+  const hidden = { ...before, dockHeight: 0,
+    height: before.height - before.dockHeight,
+    scrollHeight: before.scrollHeight - before.dockHeight,
+    reserve: before.reserve - before.dockHeight,
+    documentHeight: before.documentHeight - before.dockHeight,
+    scrollPaddingBottom: before.scrollPaddingBottom - before.dockHeight };
+  await expect.poll(geometry).toEqual(hidden);
   expect(state.requests.filter((request) => request.path === '/api/v1/recordings/calls').length).toBe(recordingRequests);
   expect(state.requests.filter((request) => request.method !== 'GET')).toEqual(writes);
   expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
@@ -333,6 +348,7 @@ test('super collapse keeps desktop page geometry unchanged and remains hidden th
   await expectSuperCollapsed(page);
   await restore(page).click();
   await expect(dock(page)).toHaveAttribute('data-state', 'full');
+  await expect.poll(geometry).toEqual(before);
 });
 
 for (const theme of ['light', 'dark']) test(`hidden desktop choice is suspended on mobile and retained when returning to desktop in ${theme}`, async ({ page }) => {

@@ -86,6 +86,12 @@ for (const view of galleryViews) {
       await expect(page.locator('body')).toHaveAttribute('data-gallery-view', view);
       const example = page.locator(gallerySelector(view));
       await expect(example).toBeVisible();
+      if (view === 'radio-directory') {
+        await expect(example).toHaveAttribute('data-production-ready', 'true');
+        await expect(example.locator('.radio-directory-row-head').first()).toContainText('Decode quality');
+        await expect(example.locator('.radio-directory-site-row').first().getByRole('group', { name: 'Signal', exact: true }))
+          .toContainText('-55.3');
+      }
       if (view === 'admin-navigation') {
         await expect(example.locator('[data-visual-admin-navigation]')).toContainText('Decisions engine');
         await expect(example.locator('[data-visual-admin-navigation]')).toContainText('Tuner allocation');

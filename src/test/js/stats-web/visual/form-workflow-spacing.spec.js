@@ -112,9 +112,10 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`every receiver page workflow owns its field inset ${suffix}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await installApplication(page, theme);
+    // Receiver audio processing is module-owned; the page keeps paging-tone and MP3 settings.
     for (const [context, route, count] of [
-      ['operations', 'view=admin&tab=operations', 9], ['display', 'view=admin&tab=display', 2],
-      ['audio-quality', 'view=admin&tab=audio-quality', 6], ['activity', 'view=admin&tab=activity', 3],
+      ['operations', 'view=admin&tab=operations', 8], ['display', 'view=admin&tab=display', 2],
+      ['audio-quality', 'view=admin&tab=audio-quality', 4], ['activity', 'view=admin&tab=activity', 3],
       ['recordings', 'view=admin&tab=recordings', 3], ['streaming', 'view=streaming', 1],
       ['web-diagnostic-log', 'view=admin&tab=web-diagnostic-log', 1]
     ]) {

@@ -81,6 +81,8 @@ async function openLive(page, showOnlyActiveTrunkedChannels = false, liveSnapsho
         presentation: { ...defaultPreferences.presentation,
           show_only_active_trunked_channels: showOnlyActiveTrunkedChannels }
       } } });
+    } else if (pathname === '/api/v1/me/tour-dismissals') {
+      await route.fulfill({ json: { data: { version: 1, dismissed: { welcome: 1, live: 3 } } } });
     } else if (pathname === '/api/v1/live/multiplex/control') {
       const body = route.request().postDataJSON();
       if (body?.subscriptions?.channel_diagnostics) diagnosticSubscriptions += 1;

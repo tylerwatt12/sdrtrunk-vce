@@ -1684,18 +1684,21 @@ test('selected channel actions remain below the app header while scrolling', asy
 test('radio-directory-light-desktop', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/design-system.html?theme=light&view=radio-directory');
+  await expect(page.locator('.visual-radio-directory-example')).toHaveAttribute('data-production-ready', 'true');
   await expect(page.locator('body')).toHaveScreenshot('radio-directory-light-desktop.png', { fullPage: true });
 });
 
 test('radio-directory-dark-mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=radio-directory');
+  await expect(page.locator('.visual-radio-directory-example')).toHaveAttribute('data-production-ready', 'true');
   await expect(page.locator('body')).toHaveScreenshot('radio-directory-dark-mobile.png', { fullPage: true });
 });
 
 test('radio directory keeps Live actions in system headers and shows channel state', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/design-system.html?theme=dark&view=radio-directory');
+  await expect(page.locator('.visual-radio-directory-example')).toHaveAttribute('data-production-ready', 'true');
   const running = page.getByRole('link', { name: 'Open Parma in Live', exact: true });
   const stoppedRow = page.locator('.radio-directory-site-row').filter({
     has: page.getByRole('link', { name: 'Ottawa County', exact: true })
@@ -1706,11 +1709,13 @@ test('radio directory keeps Live actions in system headers and shows channel sta
   const runningRow = page.locator('.radio-directory-site-row').filter({
     has: page.getByRole('link', { name: 'Parma', exact: true })
   });
-  await expect(runningRow.locator('.radio-directory-live-state')).toHaveText('Running');
-  await expect(runningRow.locator('.radio-directory-live-state')).toHaveClass(/ui-status-success/);
+  await expect(runningRow.locator('.radio-directory-row-context')).toContainText('Running');
+  await expect(runningRow.locator('.radio-directory-quality-state')).toHaveText('Healthy');
+  await expect(runningRow.locator('.radio-directory-quality-state')).toHaveClass(/ui-pill-success/);
   await expect(stoppedRow.getByRole('link', { name: /Live/ })).toHaveCount(0);
-  await expect(stoppedRow.locator('.radio-directory-live-state')).toHaveText('Stopped');
-  await expect(stoppedRow.locator('.radio-directory-live-state')).toHaveClass(/ui-status-neutral/);
+  await expect(stoppedRow.locator('.radio-directory-row-context')).toContainText('Stopped');
+  await expect(stoppedRow.locator('.radio-directory-quality-state')).toHaveText('Stopped');
+  await expect(stoppedRow.locator('.radio-directory-quality-state')).toHaveClass(/ui-pill-neutral/);
   await running.focus();
   await expect(running).toBeFocused();
   await expect(running).toHaveAccessibleName('Open Parma in Live');

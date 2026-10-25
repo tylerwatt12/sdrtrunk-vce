@@ -11,9 +11,11 @@ for (const theme of ['light', 'dark']) {
       const workspace = page.locator('.visual-admin-navigation-example');
       const navigation = workspace.getByRole('navigation', { name: 'Administration sections' });
       const picker = navigation.getByLabel('Administration section', { exact: true });
-      await expect(navigation.locator('.ui-settings-nav-group')).toHaveCount(5);
-      await expect(navigation.locator('.ui-settings-nav-link')).toHaveCount(14);
-      await expect(navigation.locator('.ui-settings-nav-link svg')).toHaveCount(14);
+      await expect(navigation.locator('.ui-settings-nav-group')).toHaveCount(6);
+      await expect(navigation.locator('.ui-settings-nav-link')).toHaveCount(16);
+      await expect(navigation.locator('.ui-settings-nav-link svg')).toHaveCount(16);
+      await expect(navigation.getByRole('link', { name: 'Call matching', exact: true })).toHaveCount(1);
+      await expect(navigation.getByRole('link', { name: 'Tuner allocation', exact: true })).toHaveCount(1);
       await expect(navigation.locator('[aria-current="page"]')).toHaveText('Recording settings');
       if (device === 'desktop') {
         await expect(picker).toBeHidden();
@@ -21,7 +23,7 @@ for (const theme of ['light', 'dark']) {
       } else {
         await expect(picker).toBeVisible();
         await expect(navigation.getByRole('link', { name: 'Audio quality', exact: true })).toBeHidden();
-        await expect(picker.locator('optgroup')).toHaveCount(5);
+        await expect(picker.locator('optgroup')).toHaveCount(6);
       }
       await expect(page.locator('body')).toHaveScreenshot(`settings-workspace-${theme}-${device}.png`, { fullPage: true });
       const overflow = await workspace.evaluate((element) => element.scrollWidth > element.clientWidth);

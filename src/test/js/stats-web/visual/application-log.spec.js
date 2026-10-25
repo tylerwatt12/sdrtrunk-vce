@@ -43,7 +43,10 @@ async function openLog(page, options = {}) {
     const data = (value) => route.fulfill({ json: { data: value } });
     if (pathname === '/api/v1/auth/session') return data({ configured: true, authenticated: true,
       username: 'admin', tier: 'admin', primary: true,
+      guide_dismissal_scope: 'application-log-fixture',
       capabilities: { ...capabilities, 'admin-settings': options.allowed !== false } });
+    if (pathname === '/api/v1/me/tour-dismissals') return data({ version: 1,
+      dismissed: { welcome: 1, admin: 3 } });
     if (pathname === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
     if (pathname === '/api/v1/application-log') {
       state.requests.push(Object.fromEntries(url.searchParams));

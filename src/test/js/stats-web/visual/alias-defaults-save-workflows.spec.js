@@ -1,8 +1,13 @@
 'use strict';
 const { expect, test } = require('@playwright/test');
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`Call Handling Defaults pair the displayed settings with their own edit version in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    const preferences = structuredClone((await import(pathToFileURL(path.resolve(__dirname,
+      '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults);
+    preferences.appearance.theme = theme;
     await page.setViewportSize({ width, height: 850 });
     await page.addInitScript(() => {
       for (const id of ['welcome', 'channel-setup', 'aliases']) {
@@ -23,6 +28,9 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
         username: 'administrator', tier: 'admin', primary: true, csrf_token: 'fixture',
         guide_dismissal_scope: 'alias-defaults-fixture',
         capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true } });
+      if (path === '/api/v1/me/tour-dismissals') return data({ version: 1,
+        dismissed: { welcome: 1, 'channel-setup': 4, aliases: 5 } });
+      if (path === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
       if (path === '/api/v1/admin/alias-lists/1/defaults') {
         writes.push(request.postDataJSON());
         return data({ revision: 3, alias_list_id: 1 });

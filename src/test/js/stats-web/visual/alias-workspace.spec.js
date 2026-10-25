@@ -2,8 +2,11 @@
 
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 async function installEditor(page, query = 'list=1&aliasTab=configure', options = {}) {
+  const preferences = structuredClone((await import(pathToFileURL(path.resolve(__dirname,
+    '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults);
   await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases']) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-workspace-fixture:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 4 : 1}`, '1');
@@ -43,6 +46,9 @@ async function installEditor(page, query = 'list=1&aliasTab=configure', options 
     if (path === '/api/v1/auth/session') return send({ configured: true, authenticated: true,
       username: 'alias-admin', tier: 'admin', primary: true, csrf_token: 'fixture', guide_dismissal_scope: 'alias-workspace-fixture',
       capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: options.radio !== false, 'csv-export': true } });
+    if (path === '/api/v1/me/tour-dismissals') return send({ version: 1,
+      dismissed: { welcome: 1, 'channel-setup': 4, aliases: 5 } });
+    if (path === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
     if (request.method() !== 'GET' && path.startsWith('/api/v1/admin/aliases')) {
       const body = request.postDataJSON();
       writes.push({ path, method: request.method(), body });
