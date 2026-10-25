@@ -33,6 +33,34 @@ import org.junit.jupiter.api.Test;
 class SpectrumDiscoveryServiceTest
 {
     @Test
+    void completedStatusRepeatSaveAndDeleteNeverRequireOrCancelALaterSignalCheck() throws Exception
+    {
+        try(DirectoryFixture fixture = new DirectoryFixture())
+        {
+            var registry = (DiscoveryCompletionRegistry)field(fixture.service, "mCompletions").get(fixture.service);
+            String savedId = java.util.UUID.randomUUID().toString();
+            String configurationId = java.util.UUID.randomUUID().toString();
+            registry.retain(new SpectrumDiscoveryService.Snapshot(savedId, "running", null, "p25-phase1",
+                "prior-tuner", "prior-target", 770_500_000L, 1, null, null,
+                new SpectrumDiscoveryService.Saved(configurationId, 7, true, null), null, null,
+                RadioReferenceDiscoveryResolver.Result.manual(), DiscoveryAliasImportService.Result.EMPTY));
+            DirectoryWizard current = fixture.begin();
+            assertTrue(fixture.gateway.entered.await(2, TimeUnit.SECONDS));
+
+            assertEquals(configurationId, fixture.service.status(savedId).saved().configurationId());
+            assertEquals(configurationId, fixture.service.save(savedId, null).saved().configurationId(),
+                "a repeated completed save never reads its request or creates another channel");
+            fixture.service.cancel(savedId);
+            assertSame(current.wizard(), field(fixture.service, "mWizard").get(fixture.service));
+            assertFalse(current.future().isCancelled());
+            fixture.service.closeActiveSession();
+            assertTrue(current.future().isCancelled());
+            assertEquals(configurationId, fixture.service.status(savedId).saved().configurationId(),
+                "receiver signal cleanup cannot expire a saved result");
+        }
+    }
+
+    @Test
     void savedStartUnwrapsControlledTunerFailuresAndConfigurationBusy()
     {
         String detail = "The tuner changed; retry the saved channel";

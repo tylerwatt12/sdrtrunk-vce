@@ -1047,6 +1047,8 @@ class TunerSettingsServiceTest
         {
             var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
             assertTrue(service.verifyBrowse(tuner, lease.leaseId()));
+            assertTrue(service.ownsBrowse(tuner, lease.leaseId()));
+            assertFalse(service.ownsBrowse(tuner, "another-browser"));
             assertThrows(TunerSettingsService.SettingUnavailableException.class,
                 () -> service.browse(tuner, null));
             assertThrows(TunerSettingsService.SettingUnavailableException.class,
@@ -1057,11 +1059,15 @@ class TunerSettingsServiceTest
             assertTrue(renewed.expiresAtEpochMs() > lease.expiresAtEpochMs());
             service.releaseBrowse(tuner, lease.leaseId(), true).get(2, TimeUnit.SECONDS);
             assertTrue(tuner.isAvailableForAllocation());
+            assertFalse(service.ownsBrowse(tuner, lease.leaseId()));
             lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
             clock.addAndGet(31_000);
             assertFalse(service.verifyBrowse(tuner, lease.leaseId()));
+            assertTrue(service.ownsBrowse(tuner, lease.leaseId()),
+                "expired heartbeat does not transfer an owned lease before receiver restoration finishes");
             service.expireBrowsing();
             await(Duration.ofSeconds(2), tuner::isAvailableForAllocation);
+            assertFalse(service.ownsBrowse(tuner, lease.leaseId()));
         }
     }
 
@@ -1074,6 +1080,7 @@ class TunerSettingsServiceTest
             var lease = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
             tuner.setEnabled(false);
             assertFalse(service.verifyBrowse(tuner, lease.leaseId()));
+            assertFalse(service.ownsBrowse(tuner, lease.leaseId()), "a later operator generation owns the tuner");
             service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
             assertEquals(DiscoveredTuner.OperatorState.DISABLED, tuner.getOperatorState());
             assertFalse(tuner.hasTuner());
@@ -1217,11 +1224,61 @@ class TunerSettingsServiceTest
                 assertNull(service.transition(tuner));
                 assertEquals("failed", service.operation(tuner).state());
             }
+            AtomicInteger normalStarts = new AtomicInteger();
+            AtomicInteger currentCenterStarts = new AtomicInteger();
+            var savedStart = service.startSavedChannel(tuner, lease.leaseId(),
+                () -> currentCenterStarts.incrementAndGet(), () -> normalStarts.incrementAndGet());
+            assertThrows(ExecutionException.class, () -> savedStart.get(1, TimeUnit.SECONDS));
+            assertEquals(0, currentCenterStarts.get());
+            assertEquals(0, normalStarts.get(), "queue rejection must not bypass the owned handoff");
+            assertTrue(service.ownsBrowse(tuner, lease.leaseId()));
             release.countDown();
             await(Duration.ofSeconds(2), () -> executor.getQueue().isEmpty());
             service.releaseBrowse(tuner, lease.leaseId(), false).get(2, TimeUnit.SECONDS);
         }
         finally { release.countDown(); }
+    }
+
+    @Test
+    void savedStartFallsBackOutsideLifecycleLockOnlyAfterTheBrowseOwnerIsGone() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        AtomicInteger currentCenterStarts = new AtomicInteger();
+        AtomicInteger normalStarts = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            java.lang.reflect.Field field = TunerSettingsService.class.getDeclaredField("mLifecycleLock");
+            field.setAccessible(true);
+            Object lock = field.get(service);
+            assertEquals("normal", service.startSavedChannel(tuner, "former-lease", () ->
+            {
+                currentCenterStarts.incrementAndGet();
+                return "unexpected";
+            }, () ->
+            {
+                assertFalse(Thread.holdsLock(lock), "normal channel startup must not run under the settings monitor");
+                normalStarts.incrementAndGet();
+                return "normal";
+            }).get(1, TimeUnit.SECONDS));
+            assertEquals(0, currentCenterStarts.get());
+            assertEquals(1, normalStarts.get());
+        }
+    }
+
+    @Test
+    void savedStartNeverFallsBackAroundAnotherBrowsersOwnedReceiver() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        AtomicInteger starts = new AtomicInteger();
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var owner = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            assertThrows(TunerSettingsService.SettingUnavailableException.class, () ->
+                service.startSavedChannel(tuner, "another-browser", starts::incrementAndGet, starts::incrementAndGet));
+            assertEquals(0, starts.get());
+            assertTrue(service.ownsBrowse(tuner, owner.leaseId()));
+            service.releaseBrowse(tuner, owner.leaseId(), false).get(2, TimeUnit.SECONDS);
+        }
     }
 
     @Test

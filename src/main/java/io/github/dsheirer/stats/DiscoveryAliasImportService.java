@@ -14,8 +14,8 @@ import java.util.function.LongSupplier;
 /** Imports normal talkgroup aliases into lists explicitly used by a wizard, independently of its RF lease. */
 public final class DiscoveryAliasImportService
 {
-    private static final long RETENTION_MS = 900_000;
-    private static final int MAXIMUM_BATCHES = 16;
+    static final long RETENTION_MS = 900_000;
+    static final int MAXIMUM_BATCHES = 16;
     private final Operations mOperations;
     private final LongSupplier mClock;
     private final Map<String,RetainedBatch> mRetained = new LinkedHashMap<>();
@@ -65,6 +65,14 @@ public final class DiscoveryAliasImportService
             if(retained == null) throw new IllegalStateException("Alias import expired. Import aliases from RadioReference later.");
         }
         return importAliases(retained.batch(), aliasListId, () -> current(wizardId, retained));
+    }
+
+    /** Reads the existing import ledger without restarting work or extending its retention deadline. */
+    public synchronized Result retainedResult(String wizardId)
+    {
+        cleanup();
+        RetainedBatch retained = mRetained.get(wizardId);
+        return retained != null ? retained.batch().snapshot() : null;
     }
 
     public synchronized void clear() { mRetained.clear(); }

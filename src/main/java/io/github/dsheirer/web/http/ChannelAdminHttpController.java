@@ -14,6 +14,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelDefinition;
+import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
+import io.github.dsheirer.web.tuner.TunerAdministrationService;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
@@ -21,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.function.BooleanSupplier;
+import java.util.function.Predicate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -43,6 +46,7 @@ public final class ChannelAdminHttpController
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     private final ChannelAdministrationService mService;
     private final BooleanSupplier mVoiceDecryptionModuleLoaded;
+    private final ReceiverOperations mReceiverOperations;
 
     public ChannelAdminHttpController(ChannelAdministrationService service)
     {
@@ -52,9 +56,17 @@ public final class ChannelAdminHttpController
     public ChannelAdminHttpController(ChannelAdministrationService service,
                                       BooleanSupplier voiceDecryptionModuleLoaded)
     {
+        this(service, voiceDecryptionModuleLoaded, null);
+    }
+
+    public ChannelAdminHttpController(ChannelAdministrationService service,
+                                      BooleanSupplier voiceDecryptionModuleLoaded,
+                                      ReceiverOperations receiverOperations)
+    {
         mService = Objects.requireNonNull(service, "Channel administration service cannot be null");
         mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded,
             "Voice decryption module status cannot be null");
+        mReceiverOperations = receiverOperations;
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -284,6 +296,13 @@ public final class ChannelAdminHttpController
         requireMethod(exchange, "POST");
         ActionRequest request = readJson(exchange, ActionRequest.class);
         List<String> ids = required(request.configurationIds(), "configuration_ids");
+        if(request.receiver() != null)
+        {
+            if(request.action() != Action.START || ids.size() != 1)
+                throw error(400, "invalid_request", "A receiver handoff must start exactly one channel");
+            handleReceiverStart(exchange, ids.getFirst(), request.receiver());
+            return;
+        }
         switch(required(request.action(), "action"))
         {
             case START -> sendData(exchange, 200, mService.setProcessing(ids, true));
@@ -298,6 +317,69 @@ public final class ChannelAdminHttpController
                 requiredRevision(request.revision())));
         }
     }
+
+    /** The saved-channel action owns the complete transition; it never depends on an RF wizard. */
+    private void handleReceiverStart(HttpExchange exchange, String id, ReceiverRequest request) throws IOException, RequestException
+    {
+        if(mReceiverOperations == null)
+            throw error(503, "receiver_unavailable", "Receiver controls are unavailable");
+        if(!mReceiverOperations.authorized().test(exchange))
+            throw error(403, "forbidden", "Permission to manage receivers is required");
+        String tunerId = required(request.tunerId(), "tuner_id");
+        String leaseId = required(request.browseLeaseId(), "browse_lease_id");
+        if(tunerId.isBlank() || tunerId.length() > 80 || leaseId.isBlank() || leaseId.length() > 80)
+            throw error(400, "invalid_request", "The receiver session is invalid");
+        var selected = mReceiverOperations.tuners().find(tunerId);
+        if(selected == null) throw error(409, "tuner_browse_unavailable", "Selected receiver is unavailable");
+        var settings = mReceiverOperations.settings();
+        var current = mService.get(id);
+        // A lost successful response is harmless. Never release a newer browser's receiver ownership.
+        if(!settings.ownsBrowse(selected, leaseId) &&
+            current.processingState() == ChannelAdministrationService.ProcessingState.RUNNING)
+        {
+            sendData(exchange, 200, new ReceiverStartResult(mService.currentRevision(), List.of(
+                new ChannelAdministrationService.LifecycleResult(id, true, current.processingState(), null)),
+                new ReceiverResult(null, settings.previousChannelsNotResumed(selected))));
+            return;
+        }
+        ChannelAdministrationService.LifecycleResult result;
+        try
+        {
+            result = settings.startSavedChannel(selected, leaseId,
+                () -> mService.startAtCurrentCenter(id, selected),
+                () -> mService.setProcessing(List.of(id), true).results().getFirst()).join();
+        }
+        catch(RuntimeException failure)
+        {
+            String reason = TunerSettingsService.handoffFailureMessage(failure);
+            if(TunerSettingsService.unwrapHandoffFailure(failure) instanceof
+                ChannelAdministrationService.ConfigurationBusyException)
+                reason = "Channel configuration is busy. Try starting again.";
+            mLog.warn("Unable to start saved channel during receiver handoff",
+                TunerSettingsService.handoffFailureForLogging(failure));
+            result = new ChannelAdministrationService.LifecycleResult(id, false,
+                mService.get(id).processingState(), reason != null ? reason :
+                "The channel could not start. Check the receiver log for details and retry.");
+        }
+        sendData(exchange, 200, new ReceiverStartResult(mService.currentRevision(), List.of(result),
+            new ReceiverResult(settings.ownsBrowse(selected, leaseId) ? leaseId : null,
+                settings.previousChannelsNotResumed(selected))));
+    }
+
+    public record ReceiverOperations(TunerAdministrationService tuners, TunerSettingsService settings,
+                                     Predicate<HttpExchange> authorized)
+    {
+        public ReceiverOperations
+        {
+            Objects.requireNonNull(tuners);
+            Objects.requireNonNull(settings);
+            Objects.requireNonNull(authorized);
+        }
+    }
+
+    private record ReceiverResult(String browseLeaseId, List<TunerSettingsService.ChannelInfo> previousChannelsNotResumed) { }
+    private record ReceiverStartResult(long revision, List<ChannelAdministrationService.LifecycleResult> results,
+                                       ReceiverResult receiver) { }
 
     private static String itemId(String path) throws RequestException
     {
@@ -447,7 +529,8 @@ public final class ChannelAdminHttpController
     private record MoveRequest(Long revision, ChannelAdministrationService.Direction direction) {}
     private record SquelchPreviewRequest(PreviewAction action, String leaseId, Float noiseOpen, Float noiseClose,
                                          Integer hysteresisOpen, Integer hysteresisClose) {}
-    private record ActionRequest(Long revision, Action action, List<String> configurationIds) {}
+    private record ReceiverRequest(String tunerId, String browseLeaseId) { }
+    private record ActionRequest(Long revision, Action action, List<String> configurationIds, ReceiverRequest receiver) {}
     private enum PreviewAction { APPLY, RESTORE }
     private enum Action { START, STOP, ENABLE_AUTO_START, DISABLE_AUTO_START, CLONE, DELETE }
     private static final class RequestException extends Exception

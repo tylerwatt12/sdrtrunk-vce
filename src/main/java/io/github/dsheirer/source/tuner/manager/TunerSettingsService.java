@@ -564,8 +564,18 @@ public final class TunerSettingsService implements AutoCloseable
         synchronized(mLifecycleLock)
         {
             BrowseSession owner = browseOwner(tuner);
+            return ownsBrowse(tuner, leaseId) && owner.expiresAt > mClock.getAsLong();
+        }
+    }
+
+    /** Exact ownership can outlive the heartbeat while its bounded restoration is still pending. */
+    public boolean ownsBrowse(DiscoveredTuner tuner, String leaseId)
+    {
+        synchronized(mLifecycleLock)
+        {
+            BrowseSession owner = browseOwner(tuner);
             return !mClosing && !mClosed && owner != null && owner.target == tuner && Objects.equals(owner.id, leaseId) &&
-                owner.expiresAt > mClock.getAsLong() && owner.ownsModes();
+                owner.ownsModes();
         }
     }
 
@@ -586,6 +596,23 @@ public final class TunerSettingsService implements AutoCloseable
                                                  Supplier<T> start)
     {
         return endBrowse(tuner, leaseId, true, Objects.requireNonNull(start), hold, false);
+    }
+
+    /** Saved-channel start remains usable after browsing ends; a current owner still requires its exact handoff. */
+    public <T> CompletableFuture<T> startSavedChannel(DiscoveredTuner tuner, String leaseId,
+                                                      Supplier<T> currentCenterStart, Supplier<T> normalStart)
+    {
+        Objects.requireNonNull(tuner);
+        Objects.requireNonNull(leaseId);
+        Objects.requireNonNull(currentCenterStart);
+        Objects.requireNonNull(normalStart);
+        synchronized(mLifecycleLock)
+        {
+            ensureOpen();
+            if(browseOwner(tuner) != null) return handoffBrowse(tuner, leaseId, currentCenterStart);
+        }
+        // Ordinary allocation applies its own hardware gates, including any newer browse/probe ownership.
+        return CompletableFuture.completedFuture(normalStart.get());
     }
 
     private <T> CompletableFuture<T> endBrowse(DiscoveredTuner tuner, String leaseId, boolean handoff,

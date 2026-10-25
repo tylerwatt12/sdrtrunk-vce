@@ -41,14 +41,26 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.test.TestTunerController;
 import io.github.dsheirer.web.tuner.TunerAdministrationService;
+import io.github.dsheirer.web.http.ChannelAdminHttpController;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.nio.file.Path;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -147,8 +159,9 @@ class SpectrumDiscoveryHandoffIntegrationTest
             assertEquals(savedId, repeatedSave.saved().configurationId());
             assertEquals(aliasId, repeatedSave.saved().aliasListId());
             fixture.discovery.cancel(saved.sessionId());
-            assertThrows(IllegalStateException.class, () -> fixture.discovery.status(saved.sessionId()),
-                "Retry must not depend on a live RF wizard");
+            assertEquals(savedId, fixture.discovery.status(saved.sessionId()).saved().configurationId(),
+                "Acknowledging a saved result must not discard its completion or import targets");
+            assertNull(field(fixture.discovery, "mWizard"));
 
             fixture.controller.setMinimumFrequency(1);
             var retried = fixture.channels.setProcessing(List.of(savedId), true).results().getFirst();
@@ -165,6 +178,119 @@ class SpectrumDiscoveryHandoffIntegrationTest
             assertFalse(fixture.settings.verifyBrowse(fixture.tuner, fixture.lease.leaseId()));
             try(var released = fixture.settings.holdForProbe(fixture.tuner.getTuner())) { assertTrue(released.valid()); }
         }
+    }
+
+    @Test
+    void savedCompletionCannotExpireOrCancelANewerSignalCheck() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            var ready = fixture.takeoverAndIdentify();
+            Object oldWizard = field(fixture.discovery, "mWizard");
+            var saved = fixture.discovery.save(ready.sessionId(), request(ready));
+            assertNull(field(fixture.discovery, "mWizard"), "Saving must finish the temporary RF check");
+            Field oldDeadline = oldWizard.getClass().getDeclaredField("expiresAt");
+            oldDeadline.setAccessible(true);
+            oldDeadline.setLong(oldWizard, 0);
+            assertEquals(saved.saved(), fixture.discovery.status(saved.sessionId()).saved());
+
+            var newer = fixture.discovery.open(TunerAdministrationService.opaqueId(fixture.tuner),
+                857_600_000, "am", null);
+            Object newerWizard = field(fixture.discovery, "mWizard");
+            fixture.discovery.cancel(saved.sessionId());
+            assertSame(newerWizard, field(fixture.discovery, "mWizard"),
+                "A late close from the completed result must not cancel the next check");
+            assertEquals(saved.saved().configurationId(),
+                fixture.discovery.save(saved.sessionId(), request(ready)).saved().configurationId());
+            assertEquals(3, fixture.repository.load().channels().size());
+            assertEquals(newer.sessionId(), fixture.discovery.status(newer.sessionId()).sessionId());
+            fixture.discovery.cancel(newer.sessionId());
+            assertEquals(saved.saved(), fixture.discovery.status(saved.sessionId()).saved());
+            var importResult = fixture.discovery.importAliases(saved.sessionId(), saved.saved().aliasListId());
+            assertEquals(saved.saved().aliasListId(), importResult.targets().getFirst().aliasListId());
+        }
+    }
+
+    @Test
+    void normalChannelActionPerformsOwnedHandoffAndCannotReleaseAnotherBrowser() throws Exception
+    {
+        try(Fixture fixture = new Fixture(root))
+        {
+            var ready = fixture.takeoverAndIdentify();
+            fixture.controller.setMinimumFrequency(CONTROL_FREQUENCY + 1_000_000);
+            var saved = fixture.discovery.save(ready.sessionId(), request(ready));
+            assertFalse(saved.saved().running());
+            fixture.controller.setMinimumFrequency(1);
+            var lease = fixture.settings.browse(fixture.tuner, null, false).get(3, TimeUnit.SECONDS);
+            var allowed = new AtomicBoolean(true);
+            var controller = new ChannelAdminHttpController(fixture.channels, () -> false,
+                new ChannelAdminHttpController.ReceiverOperations(
+                    new TunerAdministrationService(fixture.tuners, fixture.diagnostics, fixture.settings),
+                    fixture.settings, exchange -> allowed.get()));
+            HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0), 0);
+            server.createContext(ChannelAdminHttpController.PATH, controller::handle);
+            server.start();
+            try(HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build())
+            {
+                URI actions = URI.create("http://127.0.0.1:" + server.getAddress().getPort() +
+                    ChannelAdminHttpController.ACTIONS_PATH);
+                String body = receiverStart(saved.saved().configurationId(), fixture.tuner, lease.leaseId());
+                assertEquals(400, post(client, actions, body.replace("\"START\"", "\"STOP\"")).statusCode());
+                assertEquals(400, post(client, actions, body.replace("\"tuner_id\":", "\"unexpected\":true,\"tuner_id\":")).statusCode());
+                assertTrue(fixture.settings.ownsBrowse(fixture.tuner, lease.leaseId()));
+                assertEquals(0, fixture.sources.getTunerChannelCount());
+                var started = post(client, actions, body);
+                assertEquals(200, started.statusCode(), started.body());
+                JsonNode result = new ObjectMapper().readTree(started.body()).path("data");
+                assertTrue(result.path("results").get(0).path("success").booleanValue(), started.body());
+                assertEquals("RUNNING", result.path("results").get(0).path("state").textValue());
+                assertTrue(result.path("receiver").path("browse_lease_id").isNull());
+                assertEquals(2, result.path("receiver").path("previous_channels_not_resumed").size());
+                fixture.assertPersistedAndRunning(saved.saved().configurationId(), saved.saved().aliasListId());
+                assertFalse(fixture.settings.ownsBrowse(fixture.tuner, lease.leaseId()));
+                assertEquals(1, fixture.sources.getTunerChannelCount());
+
+                // A repeated request after a lost successful response uses the saved channel's current state.
+                assertEquals(200, post(client, actions, body).statusCode());
+                assertEquals(3, fixture.repository.load().channels().size());
+                fixture.channels.setProcessing(List.of(saved.saved().configurationId()), false);
+                var another = fixture.settings.browse(fixture.tuner, null, false).get(3, TimeUnit.SECONDS);
+                var foreign = post(client, actions, body);
+                assertEquals(200, foreign.statusCode());
+                var failed = new ObjectMapper().readTree(foreign.body()).path("data");
+                assertFalse(failed.path("results").get(0).path("success").booleanValue());
+                assertTrue(failed.path("results").get(0).path("message").textValue().contains("another browser"));
+                assertTrue(fixture.settings.ownsBrowse(fixture.tuner, another.leaseId()));
+                assertEquals(0, fixture.sources.getTunerChannelCount());
+                allowed.set(false);
+                assertEquals(403, post(client, actions, receiverStart(saved.saved().configurationId(),
+                    fixture.tuner, another.leaseId())).statusCode());
+                assertTrue(fixture.settings.ownsBrowse(fixture.tuner, another.leaseId()));
+                fixture.settings.releaseBrowse(fixture.tuner, another.leaseId(), false).get(3, TimeUnit.SECONDS);
+                allowed.set(true);
+                var expiredOwner = post(client, actions, body);
+                assertEquals(200, expiredOwner.statusCode());
+                assertTrue(new ObjectMapper().readTree(expiredOwner.body()).path("data").path("results")
+                    .get(0).path("success").booleanValue(), expiredOwner.body());
+                assertEquals(1, fixture.sources.getTunerChannelCount(),
+                    "An ended former receiver session must fall back to normal Start in the same request");
+            }
+            finally { server.stop(0); }
+        }
+    }
+
+    private static String receiverStart(String id, DiscoveredTuner tuner, String leaseId)
+    {
+        return "{\"action\":\"START\",\"configuration_ids\":[\"" + id +
+            "\"],\"receiver\":{\"tuner_id\":\"" + TunerAdministrationService.opaqueId(tuner) +
+            "\",\"browse_lease_id\":\"" + leaseId + "\"}}";
+    }
+
+    private static HttpResponse<String> post(HttpClient client, URI uri, String body) throws Exception
+    {
+        return client.send(HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+            HttpResponse.BodyHandlers.ofString());
     }
 
     private static SpectrumDiscoveryService.SaveRequest request(SpectrumDiscoveryService.Snapshot ready)

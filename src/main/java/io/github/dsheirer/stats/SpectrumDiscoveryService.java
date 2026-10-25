@@ -6,6 +6,7 @@ import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.channel.ChannelDefinitionCodec;
 import io.github.dsheirer.channel.ChannelProtocolRegistry;
 import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.service.radioreference.RadioReferenceChannelNames;
 import io.github.dsheirer.source.tuner.Tuner;
@@ -24,7 +25,7 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** One short-lived spectrum wizard. All projection and configuration work stays off receiver callbacks. */
+/** One short-lived signal check; saved results are retained separately without receiver resources. */
 public final class SpectrumDiscoveryService implements AutoCloseable
 {
     private static final long IDLE_EXPIRY_MS = 30_000;
@@ -42,6 +43,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         (io.github.dsheirer.service.radioreference.RadioReferenceImportService)null);
     private final java.util.concurrent.ExecutorService mDirectoryWorker = SpectrumSearchService.directoryWorker("click-discovery-directory");
     private final ScheduledFuture<?> mExpiry;
+    private final DiscoveryCompletionRegistry mCompletions = new DiscoveryCompletionRegistry();
     private Wizard mWizard;
 
     SpectrumDiscoveryService(ChannelAdministrationService channels, TunerAdministrationService tuners,
@@ -172,6 +174,8 @@ public final class SpectrumDiscoveryService implements AutoCloseable
 
     public synchronized Snapshot status(String id)
     {
+        Snapshot completed = completed(id);
+        if(completed != null) return completed;
         Wizard wizard = requireWizard(id);
         wizard.expiresAt = Math.min(wizard.maximumExpiresAt, System.currentTimeMillis() + IDLE_EXPIRY_MS);
         return snapshot(wizard);
@@ -179,8 +183,9 @@ public final class SpectrumDiscoveryService implements AutoCloseable
 
     public synchronized Snapshot save(String id, SaveRequest request)
     {
+        Snapshot completed = completed(id);
+        if(completed != null) return completed;
         Wizard wizard = requireWizard(id);
-        if(wizard.saved != null) return snapshot(wizard);
         Snapshot current = snapshot(wizard);
         if(!"ready".equals(current.state())) throw new IllegalStateException("Complete identification before saving");
         SpectrumSearchService.requireDirectoryReady(List.of(wizard.directory));
@@ -216,14 +221,36 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             wizard.tuner.getTunerController().getUsableBandwidth() / 2L,
             wizard.tuner.getTunerController().getMiddleUnusableHalfBandwidth()))
             throw new IllegalArgumentException("The selected bandwidth extends outside the usable receiver window");
-        wizard.saved = saveEvidence != null ? mChannels.createTrunkedDiscovered(definition,saveEvidence,request.newAliasListName(),request.revision(),true) :
-            mChannels.createDiscovered(definition, identity, request.newAliasListName(), request.revision());
-        String aliasName = review.aliasLists().stream().filter(list -> list.id() == wizard.saved.aliasListId())
+        ChannelAdministrationService.DiscoveryCreated created;
+        try
+        {
+            created = saveEvidence != null ? mChannels.createTrunkedDiscovered(definition,saveEvidence,request.newAliasListName(),request.revision(),true) :
+                mChannels.createDiscovered(definition, identity, request.newAliasListName(), request.revision());
+        }
+        catch(ConfigurationManager.ConfigurationPublicationException failure)
+        {
+            // A committed configuration that could not publish requires a receiver restart. Its temporary RF
+            // check must end even though the original failure, including any committed IDs, remains the result.
+            try { wizard.close(); }
+            catch(RuntimeException | Error cleanupFailure) { failure.addSuppressed(cleanupFailure); }
+            finally { if(mWizard == wizard) mWizard = null; }
+            throw failure;
+        }
+        String aliasName = review.aliasLists().stream().filter(list -> list.id() == created.aliasListId())
             .map(ChannelAdministrationService.DiscoveryAliasList::name).findFirst()
             .orElseGet(() -> savedAliasListName(request.newAliasListName(), definition));
-        wizard.aliasImport.register(wizard.saved.aliasListId(), aliasName, definition.system(), wizard.directory);
+        wizard.aliasImport.register(created.aliasListId(), aliasName, definition.system(), wizard.directory);
         mAliasImporter.retain(wizard.id, wizard.aliasImport);
-        return startSaved(wizard);
+        try
+        {
+            Saved saved = startInitialSaved(wizard, created);
+            return mCompletions.retain(savedSnapshot(current, saved, wizard.aliasImport.snapshot()));
+        }
+        finally
+        {
+            try { wizard.close(); }
+            finally { if(mWizard == wizard) mWizard = null; }
+        }
     }
 
     static String savedAliasListName(String requestedName, ChannelDefinition definition)
@@ -253,13 +280,46 @@ public final class SpectrumDiscoveryService implements AutoCloseable
 
     public synchronized Snapshot start(String id)
     {
-        Wizard wizard = requireWizard(id);
-        return startSaved(wizard);
+        Snapshot completed = completed(id);
+        if(completed == null) throw new IllegalStateException("Save the channel before starting it");
+        Saved prior = completed.saved();
+        String leaseId = prior.browseLeaseId();
+        boolean running = false;
+        String error = null;
+        DiscoveredTuner selected = leaseId != null ? mTuners.find(completed.tunerId()) : null;
+        try
+        {
+            if(leaseId != null && mChannels.get(prior.configurationId()).processingState() !=
+                ChannelAdministrationService.ProcessingState.RUNNING)
+            {
+                if(selected == null)
+                    throw new TunerSettingsService.SettingUnavailableException("Selected tuner is unavailable");
+                requireSuccessfulStart(mSettings.startSavedChannel(selected, leaseId,
+                    () -> mChannels.startAtCurrentCenter(prior.configurationId(), selected),
+                    () -> mChannels.setProcessing(List.of(prior.configurationId()), true).results().getFirst()).join());
+            }
+            else if(leaseId == null)
+                requireSuccessfulStart(mChannels.setProcessing(List.of(prior.configurationId()), true).results().getFirst());
+            running = true;
+        }
+        catch(RuntimeException failure)
+        {
+            error = startFailureMessage(failure);
+            mLog.warn("Unable to start saved Spectrum channel: {}", error,
+                TunerSettingsService.handoffFailureForLogging(failure));
+        }
+        String retainedLease = selected != null && leaseId != null && mSettings.ownsBrowse(selected, leaseId) ? leaseId : null;
+        List<TunerSettingsService.ChannelInfo> previous = selected != null ? mSettings.previousChannelsNotResumed(selected) :
+            prior.previousChannelsNotResumed();
+        return mCompletions.retain(savedSnapshot(completed,
+            new Saved(prior.configurationId(), prior.aliasListId(), running, error, retainedLease, previous),
+            completed.aliasImport()));
     }
 
-    private Snapshot startSaved(Wizard wizard)
+    private Saved startInitialSaved(Wizard wizard, ChannelAdministrationService.DiscoveryCreated created)
     {
-        if(wizard.saved == null) throw new IllegalStateException("Save the channel before starting it");
+        boolean running = false;
+        String error = null;
         try
         {
             // Detach temporary sources while retaining this wizard's reservation until the allocation worker owns it.
@@ -271,26 +331,24 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             {
                 if(selected.getTuner() != wizard.tuner || !wizard.current())
                     throw new TunerSettingsService.SettingUnavailableException("The tuner changed; retry the saved channel");
-                return requireSuccessfulStart(mChannels.startAtCurrentCenter(wizard.saved.configurationId(), selected));
+                return mChannels.startAtCurrentCenter(created.configurationId(), selected);
             };
             if(wizard.browseLeaseId != null)
-                mSettings.handoffBrowse(selected, wizard.browseLeaseId, wizard.hold, start).join();
+                requireSuccessfulStart(mSettings.handoffBrowse(selected, wizard.browseLeaseId, wizard.hold, start).join());
             else
             {
                 if(wizard.hold == null) wizard.hold = mSettings.holdForProbe(wizard.tuner);
                 if(!wizard.hold.valid() || !wizard.current())
                     throw new TunerSettingsService.SettingUnavailableException("The tuner changed; retry the saved channel");
-                start.get();
+                requireSuccessfulStart(start.get());
             }
             wizard.browseLeaseId = null;
-            wizard.running = true;
-            wizard.startError = null;
+            running = true;
         }
         catch(RuntimeException exception)
         {
-            wizard.running = false;
-            wizard.startError = startFailureMessage(exception);
-            mLog.warn("Unable to start saved Spectrum channel: {}", wizard.startError,
+            error = startFailureMessage(exception);
+            mLog.warn("Unable to start saved Spectrum channel: {}", error,
                 TunerSettingsService.handoffFailureForLogging(exception));
         }
         finally
@@ -298,12 +356,27 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             // Admission or queue failure may leave the reservation with this caller rather than the handoff worker.
             wizard.releaseHold();
             DiscoveredTuner selected = mTuners.find(wizard.tunerId);
-            if(wizard.browseLeaseId != null && (selected == null || !mSettings.verifyBrowse(selected, wizard.browseLeaseId)))
+            if(wizard.browseLeaseId != null && (selected == null || !mSettings.ownsBrowse(selected, wizard.browseLeaseId)))
                 wizard.browseLeaseId = null;
-            wizard.previousChannelsNotResumed = selected == null ? List.of() :
-                List.copyOf(mSettings.previousChannelsNotResumed(selected));
         }
-        return snapshot(wizard);
+        DiscoveredTuner selected = mTuners.find(wizard.tunerId);
+        return new Saved(created.configurationId(), created.aliasListId(), running, error, wizard.browseLeaseId,
+            selected != null ? mSettings.previousChannelsNotResumed(selected) : List.of());
+    }
+
+    private Snapshot completed(String id)
+    {
+        Snapshot completed = mCompletions.get(id);
+        if(completed == null) return null;
+        var imported = mAliasImporter.retainedResult(id);
+        return imported != null ? savedSnapshot(completed, completed.saved(), imported) : completed;
+    }
+
+    private static Snapshot savedSnapshot(Snapshot source, Saved saved, DiscoveryAliasImportService.Result imported)
+    {
+        return new Snapshot(source.sessionId(), saved.running() ? "running" : "saved", source.reason(),
+            source.protocolId(), source.tunerId(), source.targetId(), source.frequencyHz(), source.expiresAtMs(),
+            source.probe(), null, saved, source.digitalProbe(), source.trunkedEvidence(), source.radioReference(), imported);
     }
 
     static ChannelAdministrationService.LifecycleResult requireSuccessfulStart(
@@ -332,6 +405,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
 
     public synchronized void cancel(String id)
     {
+        if(mCompletions.get(id) != null) return;
         Wizard wizard = requireWizard(id);
         wizard.close();
         mWizard = null;
@@ -344,8 +418,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
             wizard.probe != null ? wizard.probe.status() : null;
         var digital = detection != null ? detection.digital() :
             wizard.digitalProbe != null ? wizard.digitalProbe.status() : null;
-        String state = wizard.saved != null ? wizard.running ? "running" : "saved" :
-            wizard.automatic ? wizard.detectionFailure != null ? "failed" : detection == null ? "identifying" :
+        String state = wizard.automatic ? wizard.detectionFailure != null ? "failed" : detection == null ? "identifying" :
                 detection.evidence() != null ? "ready" : "inconclusive" :
             probe != null ? "running".equals(probe.state()) ? "identifying" : probe.state() :
             digital != null ? "running".equals(digital.state()) ? "identifying" : digital.state() : "ready";
@@ -359,7 +432,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
                 probe != null ? TrunkedDiscoveryEvidence.p25(probe,System.currentTimeMillis()) : digital != null ? digital.evidence() : null;
             if(wizard.evidence != null) resolveDirectory(wizard);
         }
-        if(wizard.saved == null && Set.of("identifying", "ready").contains(state) &&
+        if(Set.of("identifying", "ready").contains(state) &&
             (!wizard.current() || wizard.hold != null && !wizard.hold.valid() ||
             wizard.probe != null && "ready".equals(state) && "p25-phase1".equals(wizard.protocolId) && !wizard.probe.valid() ||
             wizard.digitalProbe != null && "ready".equals(state) && Set.of("dmr", "nxdn").contains(wizard.protocolId) && !wizard.digitalProbe.valid()))
@@ -375,9 +448,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
                 siteIdentity(probe), probe != null ? probe.selectedModulation() : null) : null;
         review = directoryReview(review, wizard.directory);
         return new Snapshot(wizard.id, state, reason, wizard.protocolId, wizard.tunerId, wizard.targetId,
-            wizard.frequencyHz, wizard.expiresAt, probe, review, wizard.saved != null ?
-                new Saved(wizard.saved.configurationId(), wizard.saved.aliasListId(), wizard.running,
-                    wizard.startError, wizard.browseLeaseId, wizard.previousChannelsNotResumed) : null,
+            wizard.frequencyHz, wizard.expiresAt, probe, review, null,
                 digital, wizard.evidence, wizard.directory, wizard.aliasImport.snapshot());
     }
 
@@ -454,6 +525,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         closeActiveSession();
         mDirectoryWorker.shutdownNow();
         mAliasImporter.clear();
+        mCompletions.clear();
     }
 
     public synchronized void closeActiveSession()
@@ -489,11 +561,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         String detectionFailure;
         io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.manual();
         TunerSettingsService.ProbeHold hold;
-        ChannelAdministrationService.DiscoveryCreated saved;
         final DiscoveryAliasImportService.Batch aliasImport = new DiscoveryAliasImportService.Batch();
-        boolean running;
-        String startError;
-        List<TunerSettingsService.ChannelInfo> previousChannelsNotResumed = List.of();
         Wizard(String tunerId, String targetId, long frequencyHz, String protocolId, String browseLeaseId, Tuner tuner)
         {
             this.tunerId = tunerId; this.targetId = targetId; this.frequencyHz = frequencyHz;

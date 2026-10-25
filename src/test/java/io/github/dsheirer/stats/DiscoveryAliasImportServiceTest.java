@@ -16,6 +16,47 @@ import org.junit.jupiter.api.Test;
 class DiscoveryAliasImportServiceTest
 {
     @Test
+    void retainedResultReadsTheCurrentLedgerWithoutStartingOrRepeatingAnImport()
+    {
+        FakeOperations operations = new FakeOperations();
+        var service = new DiscoveryAliasImportService(operations);
+        assertNull(service.retainedResult("missing"));
+        var batch = new DiscoveryAliasImportService.Batch();
+        batch.register(7, "County", "County", matched(10));
+        service.retain("wizard", batch);
+        assertEquals("pending", service.retainedResult("wizard").targets().getFirst().state());
+        assertTrue(operations.catalogs.isEmpty());
+        assertTrue(operations.applies.isEmpty());
+        operations.beforeApply = () -> assertEquals("importing",
+            service.retainedResult("wizard").targets().getFirst().state());
+        var imported = service.importAliases("wizard", 7);
+        assertEquals(imported, service.retainedResult("wizard"));
+        assertEquals(imported, service.retainedResult("wizard"));
+        assertEquals(imported, service.importAliases("wizard", 7));
+        assertEquals(List.of(10), operations.catalogs);
+        assertEquals(List.of(7L), operations.applies);
+        assertEquals(3, service.retainedResult("wizard").targets().getFirst().added());
+        service.clear();
+        assertNull(service.retainedResult("wizard"));
+    }
+
+    @Test
+    void readingRetainedResultsDoesNotExtendTheExistingImportDeadline()
+    {
+        AtomicLong clock = new AtomicLong(1000);
+        var service = new DiscoveryAliasImportService(new FakeOperations(), clock::get);
+        var batch = new DiscoveryAliasImportService.Batch();
+        batch.register(7, "County", "County", matched(10));
+        service.retain("wizard", batch);
+        clock.addAndGet(DiscoveryAliasImportService.RETENTION_MS - 1);
+        assertNotNull(service.retainedResult("wizard"));
+        service.retain("wizard", batch);
+        clock.incrementAndGet();
+        assertNull(service.retainedResult("wizard"));
+        assertThrows(IllegalStateException.class, () -> service.importAliases("wizard", 7));
+    }
+
+    @Test
     void sharedNativeSystemUsesAnyConfirmedSiteButConflictingDirectorySystemsStayUnavailable()
     {
         var selected = DiscoveryAliasImportService.groupDirectory(List.of(
