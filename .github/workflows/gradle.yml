@@ -17,14 +17,16 @@ permissions:
 
 jobs:
   check:
-    name: Full check (${{ matrix.os }})
+    name: Full check (${{ matrix.os }}, ${{ matrix.test_group }})
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        include:
+          - {os: ubuntu-latest, test_group: core}
+          - {os: ubuntu-latest, test_group: web}
+          - {os: windows-latest, test_group: core}
+          - {os: windows-latest, test_group: web}
+          - {os: macos-latest, test_group: all}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -67,18 +69,47 @@ jobs:
           path: ${{ runner.temp }}/radio-system-catalog
 
       - name: Run full check
+        id: full-check
         shell: bash
         env:
           RADIO_SYSTEM_CATALOG_FILE: ${{ inputs.radio_system_catalog_artifact != '' && format('{0}/radio-system-catalog/dsdplus.networks', runner.temp) || 'src/test/resources/radio-systems/dsdplus-fixture.networks' }}
         run: >-
           ./gradlew --no-configuration-cache clean check
           -PprojectVersion=local-dev -PupdateTrack=none -PupdateBuild=0
+          -PtestGroup=${{ matrix.test_group }}
           -PradioSystemCatalogFile="$RADIO_SYSTEM_CATALOG_FILE"
+      - name: Record application test timings
+        if: always()
+        shell: bash
+        env:
+          CHECK_RESULT: ${{ steps.full-check.outcome }}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, xml.etree.ElementTree as ET
+          suites = []
+          for path in sorted(pathlib.Path('build/test-results/test').glob('TEST-*.xml')):
+              suite = ET.parse(path).getroot()
+              suites.append({key: suite.attrib.get(key, '0') for key in
+                             ('name', 'tests', 'failures', 'errors', 'skipped', 'time')})
+          if os.environ['CHECK_RESULT'] == 'success' and not suites:
+              raise SystemExit('A successful application check must produce test results')
+          output = pathlib.Path('build/test-timings.json')
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(json.dumps(suites, indent=2) + '\n', encoding='utf-8')
+          PY
+      - name: Save application test timings
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: main-ci-test-timings-${{ matrix.os }}-${{ matrix.test_group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/test-timings.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Save Gradle failure reports
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: main-ci-gradle-failure-${{ matrix.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: main-ci-gradle-failure-${{ matrix.os }}-${{ matrix.test_group }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             build/test-results/test
             build/reports/tests/test
@@ -87,8 +118,12 @@ jobs:
           retention-days: 14
 
   visual:
-    name: Web design-system visual contract
+    name: Web design-system visual contract (${{ matrix.shard }}/3)
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@v7
       - name: Set up Node.js
@@ -101,12 +136,20 @@ jobs:
       - name: Install the pinned Chromium browser
         run: npx playwright install chromium
       - name: Compare design-system screenshots
-        run: npm run test:web-visual -- --workers=2
+        run: npm run test:web-visual -- --workers=2 --shard=${{ matrix.shard }}/3
+      - name: Save browser timings and results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-design-system-results-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: build/playwright-report/results.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload visual differences
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: web-design-system-visual-differences
+          name: web-design-system-visual-differences-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             build/playwright-results
             build/playwright-report

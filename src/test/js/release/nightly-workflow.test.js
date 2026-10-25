@@ -27,6 +27,15 @@ function literal(section, marker, indent) {
   return result.join('\n').trim();
 }
 
+function job(name, document = workflow) {
+  const marker = `\n  ${name}:\n`;
+  const start = document.indexOf(marker);
+  assert.notEqual(start, -1, `Missing workflow job: ${name}`);
+  const remaining = document.slice(start + marker.length);
+  const next = /\n  [a-z][a-z_-]+:\n/.exec(remaining);
+  return document.slice(start, next ? start + marker.length + next.index : undefined);
+}
+
 const operation = literal(step('Require an explicit publication choice'), '        run: |\n', 10);
 const bash = process.platform === 'win32' ? path.join(process.env.ProgramFiles, 'Git', 'bin', 'bash.exe') : 'bash';
 function operationAllowed(mode, confirmed, candidate, ref) {
@@ -304,14 +313,6 @@ function verifyRollingPublicationWiring() {
 }
 
 function verifyImmutableRadioSystemCatalogWiring() {
-  function job(name) {
-    const marker = `\n  ${name}:\n`;
-    const start = workflow.indexOf(marker);
-    assert.notEqual(start, -1, `Missing workflow job: ${name}`);
-    const remaining = workflow.slice(start + marker.length);
-    const next = /\n  [a-z][a-z_-]+:\n/.exec(remaining);
-    return workflow.slice(start, next ? start + marker.length + next.index : undefined);
-  }
   const catalog = job('catalog');
   assert.match(catalog, /if: \$\{\{ inputs\.mode == 'prepare' \}\}/);
   assert.equal((workflow.match(/python tools\/build\/fetch_dsdplus_networks\.py/g) || []).length, 1,
@@ -341,6 +342,45 @@ function verifyImmutableRadioSystemCatalogWiring() {
   assert.match(reusable, /-PradioSystemCatalogFile="\$RADIO_SYSTEM_CATALOG_FILE"/);
   assert.match(reusable, /src\/test\/resources\/radio-systems\/dsdplus-fixture\.networks/,
     'Ordinary CI must use the committed synthetic fixture instead of depending on the public wiki.');
+}
+
+function verifyParallelPreparationWiring() {
+  const reusable = fs.readFileSync(path.join(path.dirname(process.argv[2] || '.github/workflows/nightly.yml'),
+    'gradle.yml'), 'utf8').replace(/\r\n/g, '\n');
+  const application = job('check', reusable);
+  const groups = [...application.matchAll(/\{os: ([\w-]+), test_group: (\w+)\}/g)]
+    .map(([, os, group]) => `${os}:${group}`).sort();
+  assert.deepEqual(groups, ['ubuntu-latest:core', 'ubuntu-latest:web', 'windows-latest:core',
+    'windows-latest:web', 'macos-latest:all'].sort(),
+  'Every operating system must run its complete test partition on isolated runners.');
+  assert.match(application, /fail-fast: false/);
+  assert.match(application, /-PtestGroup=\$\{\{ matrix\.test_group \}\}/);
+  assert.match(application, /main-ci-gradle-failure-\$\{\{ matrix\.os \}\}-\$\{\{ matrix\.test_group \}\}/,
+    'Application report names must remain unique when one operating system has two jobs.');
+  const visual = job('visual', reusable);
+  const shards = visual.match(/shard: \[([^\]]+)\]/);
+  assert(shards, 'Browser shards must be explicit.');
+  assert.deepEqual(shards[1].split(',').map(value => Number(value.trim())), [1, 2, 3],
+    'Every browser shard must run exactly once.');
+  assert.match(visual, /runs-on: macos-15/);
+  assert.match(visual, /fail-fast: false/);
+  assert.match(visual, /npm run test:web-visual -- --workers=2 --shard=\$\{\{ matrix\.shard \}\}\/3/);
+  assert.doesNotMatch(visual, /--grep|--test-ignore|--update-snapshots|continue-on-error/,
+    'Sharding must retain the complete browser suite and fail on errors.');
+  assert.match(visual, /name: web-design-system-visual-differences-\$\{\{ matrix\.shard \}\}/);
+  assert.match(visual, /name: Save browser timings and results\n        if: always\(\)/);
+  const gate = job('gate', reusable);
+  assert.match(gate, /needs:\n      - check\n      - visual/);
+  assert.match(gate, /CHECK_RESULT: \$\{\{ needs\.check\.result \}\}/);
+  assert.match(gate, /VISUAL_RESULT: \$\{\{ needs\.visual\.result \}\}/);
+  assert.match(gate, /test "\$CHECK_RESULT" = "success" && test "\$VISUAL_RESULT" = "success"/,
+    'The Main CI gate must require every application group and browser shard.');
+  assert.match(job('package'), /needs: \[validate, catalog\]/,
+    'Packaging can overlap checks only after the same catalog has been prepared.');
+  assert.match(job('package'), /ref: \$\{\{ github\.sha \}\}/);
+  assert.match(job('smoke'), /needs: package/);
+  assert.match(job('ready'), /needs: \[validate, ci, package, smoke\]/,
+    'Overlapping work must never allow an untested candidate to become ready.');
 }
 
 function verifyPreparedCandidateRoundTrip() {
@@ -441,6 +481,7 @@ async function main() {
   await verifyGuardedCleanup();
   verifyRollingPublicationWiring();
   verifyImmutableRadioSystemCatalogWiring();
+  verifyParallelPreparationWiring();
   console.log('Nightly authorization, candidate verification, stable download staging and guarded rolling asset cleanup checks passed.');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; })

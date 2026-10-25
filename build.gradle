@@ -346,10 +346,19 @@ distributions {
     }
 }
 
+def testGroup = providers.gradleProperty('testGroup').orElse('all').get()
+if(!(testGroup in ['all', 'core', 'web'])) {
+    throw new GradleException("testGroup must be one of: all, core, web")
+}
+def webTestClassPatterns = ['io/github/dsheirer/stats/**', 'io/github/dsheirer/web/**']
+
 test {
     useJUnitPlatform()
     systemProperty 'java.io.tmpdir', layout.buildDirectory.dir('tmp/test').get().asFile.absolutePath
     jvmArgs = jvmArgsClasspath
+    // Separate CI runners partition whole classes; ordinary local checks retain the complete suite.
+    if(testGroup == 'web') include(webTestClassPatterns)
+    else if(testGroup == 'core') exclude(webTestClassPatterns)
 }
 
 def runtimeManifestClassPath = configurations.runtimeClasspath.elements.map { entries ->

@@ -89,7 +89,8 @@ jobs:
   package:
     name: Package candidate
     if: ${{ inputs.mode == 'prepare' }}
-    needs: [validate, ci]
+    # Packaging and native checks can run alongside CI; ready still requires every gate.
+    needs: [validate, catalog]
     #Build the pinned macOS ARM USB library locally; the JRE archives are still packaged for all six targets.
     runs-on: macos-15
     timeout-minutes: 45

@@ -15,13 +15,16 @@ async function setDockSize(player, size) {
 }
 
 async function expectPointerReachable(control) {
-  await control.scrollIntoViewIfNeeded();
-  await expect.poll(() => control.evaluate((element) => {
+  const reachable = (element) => {
     const rect = element.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     return rect.width > 0 && rect.height > 0 && rect.x >= 0 && rect.right <= innerWidth &&
       rect.y >= 0 && rect.bottom <= innerHeight && element.contains(hit);
-  }), { message: `${await control.textContent()} must receive pointer hits inside the viewport` }).toBe(true);
+  };
+  if (!await control.evaluate(reachable)) await control.scrollIntoViewIfNeeded();
+  await expect.poll(() => control.evaluate(reachable), {
+    message: `${await control.textContent()} must receive pointer hits inside the viewport`
+  }).toBe(true);
 }
 
 for (const theme of ['light', 'dark']) {

@@ -6,7 +6,11 @@ module.exports = defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['line'], ['html', { outputFolder: 'build/playwright-report', open: 'never' }]] : 'line',
+  reporter: process.env.CI ? [
+    ['line'],
+    ['html', { outputFolder: 'build/playwright-report', open: 'never' }],
+    ['json', { outputFile: 'build/playwright-report/results.json' }],
+  ] : 'line',
   snapshotPathTemplate: '{testDir}/__screenshots__/{testFilePath}/{arg}{ext}',
   expect: {
     toHaveScreenshot: {
