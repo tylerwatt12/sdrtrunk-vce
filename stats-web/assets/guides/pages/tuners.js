@@ -40,13 +40,20 @@ export function tunersSteps(documentValue, preparePlayer, preparePage) {
       'For permanent setups, locking a well-positioned window helps provide stable, consistent coverage. Many SDRs lose sensitivity near the edges, so keep your important frequencies comfortably inside the usable area.'
     ] },
     { id: 'gain', title: 'Adjust reception for your location',
-      paragraphs: ['Choose a gain preset for your antenna and local signals. Custom exposes the gain controls available on this receiver.'] },
-    { id: 'frequency-correction', title: 'Keep signals centered',
-      paragraphs: ['Auto PPM uses received frequency errors to correct the tuner. Use manual PPM correction when you want to set the adjustment yourself.'] },
+      paragraphs: ['Choose a gain preset for your antenna and local signals. Custom exposes the gain controls available on this receiver. VCE starts with a default gain setting for your tuner, so you may not need to adjust it.'] },
+    { id: 'frequency-correction', title: 'Correct frequency error',
+      paragraphs: [
+        'PPM correction compensates for frequency error in your SDR’s internal clock. Some older or inexpensive dongles need a substantial adjustment, especially models without a temperature-compensated crystal oscillator (TCXO). Their frequency can drift as the dongle warms up or the surrounding temperature changes.',
+        'For a large initial error, let the dongle warm up, turn off Automatic PPM correction, and adjust Frequency correction using a known signal. Once reception is working, turn automatic correction back on to follow smaller changes. VCE remembers the latest correction after restarting.'
+      ] },
     { id: 'frequency-limits-button', title: 'Choose where this tuner operates',
       paragraphs: ['Open Frequency limits to restrict the frequencies assigned to this tuner.'] },
-    { id: 'frequency-limits', title: 'Reserve a frequency range',
-      paragraphs: ['Set the lowest and highest frequencies this tuner may receive. Use these limits to keep a tuner working within your chosen range.'] },
+    { id: 'frequency-limits', title: 'Match each tuner to its antenna',
+      paragraphs: [
+        'Set the frequency range this tuner should handle. VCE keeps channels assigned to this tuner within that range.',
+        'For example, keep a tuner connected to a 700 MHz antenna on your 700 MHz systems, and another connected to an 800 MHz antenna on your 800 MHz systems. Include any additional bands each tuner should cover as a backup.',
+        'To favor a tuner for an individual channel, use Channel Setup → Source → Preferred Tuner.'
+      ] },
     { id: 'resume-button', title: 'Bring your channels back',
       paragraphs: ['Use Resume & go Live to bring back the channels VCE stopped for Setup.'] },
     { id: 'resume-channels', title: 'Resume reception',
