@@ -29,6 +29,7 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorPauseRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitorResumeRequest;
+import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -126,7 +127,8 @@ class MultiFrequencyTunerChannelSourceTest
         {
             @Override
             public Source getSource(TunerChannel tunerChannel, ChannelSpecification specification,
-                                    String preferredTuner, String threadName, SortedSet<TunerChannel> tunerChannels)
+                                    String preferredTuner, String threadName, SortedSet<TunerChannel> tunerChannels,
+                                    TunerAllocationContext allocationContext)
             {
                 return new TestTunerChannelSource(tunerChannel.getFrequency());
             }
@@ -351,7 +353,8 @@ class MultiFrequencyTunerChannelSourceTest
 
         @Override
         public Source getSource(TunerChannel tunerChannel, ChannelSpecification channelSpecification,
-                                String preferredTuner, String threadName, SortedSet<TunerChannel> tunerChannels)
+                                String preferredTuner, String threadName, SortedSet<TunerChannel> tunerChannels,
+                                TunerAllocationContext allocationContext)
         {
             mRequestCount.incrementAndGet();
 

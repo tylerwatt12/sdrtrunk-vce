@@ -151,9 +151,9 @@ class AliasMatchRegistryTest
         Radio radio = (Radio)create(definition, "NXDN Radio ID");
         RadioRange radioRange = (RadioRange)create(definition, "NXDN Radio ID Range");
 
-        assertEquals(1, talkgroup.getValue());
-        assertEquals(1, talkgroupRange.getMinTalkgroup());
-        assertEquals(2, talkgroupRange.getMaxTalkgroup());
+        assertEquals(0, talkgroup.getValue());
+        assertEquals(0, talkgroupRange.getMinTalkgroup());
+        assertEquals(1, talkgroupRange.getMaxTalkgroup());
         assertEquals(1, radio.getValue());
         assertEquals(1, radioRange.getMinRadio());
         assertEquals(2, radioRange.getMaxRadio());

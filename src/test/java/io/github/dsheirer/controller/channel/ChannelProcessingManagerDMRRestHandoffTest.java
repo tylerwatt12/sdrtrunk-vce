@@ -1766,9 +1766,11 @@ class ChannelProcessingManagerDMRRestHandoffTest
     {
         try
         {
-            Field field = JmbeAudioModule.class.getDeclaredField("mAudioCodec");
+            Field field = JmbeAudioModule.class.getDeclaredField("mCodecContext");
             field.setAccessible(true);
-            field.set(audioModule, codec);
+            var constructor = field.getType().getDeclaredConstructors()[0];
+            constructor.setAccessible(true);
+            field.set(audioModule, constructor.newInstance(codec, null));
         }
         catch(ReflectiveOperationException exception)
         {
