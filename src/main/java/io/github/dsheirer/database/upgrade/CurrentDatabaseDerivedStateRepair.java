@@ -35,6 +35,8 @@ import java.util.Set;
 final class CurrentDatabaseDerivedStateRepair
 {
     static final String STEP_ID = "reset-damaged-current-derived-state";
+    static final String RESET_SUBJECT = "bounded receiver activity and statistics rows";
+    static final String EMPTY_ALIAS_COUNTERS = "empty Alias Activity counters after discarded history";
     static final List<String> REPRODUCIBLE_TABLES = List.of(
         "receiver_activity_tone",
         "receiver_activity_tone_sequence",
@@ -111,6 +113,17 @@ final class CurrentDatabaseDerivedStateRepair
 
     static Inspection inspect(Connection connection) throws SQLException
     {
+        return inspect(connection, true);
+    }
+
+    /** Validate frozen protocol meanings without requiring current counter columns. */
+    static Inspection inspectHistorical(Connection connection, int sourceVersion) throws SQLException
+    {
+        return inspect(connection, sourceVersion >= 51);
+    }
+
+    private static Inspection inspect(Connection connection, boolean analogAliasProtocols) throws SQLException
+    {
         Set<String> damagedTables = new LinkedHashSet<>();
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("PRAGMA foreign_key_check"))
@@ -141,7 +154,7 @@ final class CurrentDatabaseDerivedStateRepair
             }
         }
 
-        if(!damagedTables.contains("alias_activity_summary") && invalidAliasActivitySummaryParity(connection))
+        if(!damagedTables.contains("alias_activity_summary") && invalidAliasActivitySummaryParity(connection, analogAliasProtocols))
         {
             damagedTables.add("alias_activity_summary");
         }
@@ -157,12 +170,32 @@ final class CurrentDatabaseDerivedStateRepair
 
         long resetRows = damagedTables.isEmpty() ? 0 :
             LegacyActivityReset.count(connection, repairTables(connection));
-        return new Inspection(damagedTables.size(), resetRows, invalidMetricBoundaryKeys);
+        long emptyAliasCounters = 0;
+        if(!damagedTables.isEmpty())
+        {
+            try(var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT count(*) FROM alias"))
+            {
+                if(rows.next()) emptyAliasCounters = rows.getLong(1);
+            }
+        }
+        return new Inspection(damagedTables.size(), resetRows, invalidMetricBoundaryKeys, emptyAliasCounters);
     }
 
     static Inspection repair(Connection connection) throws SQLException
     {
-        Inspection before = inspect(connection);
+        return repair(connection, true, true);
+    }
+
+    /** Discard damaged observations; the chain seeds empty Alias counters only after reaching the current schema. */
+    static Inspection discardDamagedHistoricalState(Connection connection, int sourceVersion) throws SQLException
+    {
+        return repair(connection, sourceVersion >= 51, false);
+    }
+
+    private static Inspection repair(Connection connection, boolean analogAliasProtocols, boolean seedCountersNow)
+        throws SQLException
+    {
+        Inspection before = inspect(connection, analogAliasProtocols);
         if(!before.requiresRepair())
         {
             return before;
@@ -171,7 +204,7 @@ final class CurrentDatabaseDerivedStateRepair
         if(before.damagedTables() > 0)
         {
             LegacyActivityReset.clear(connection, repairTables(connection));
-            AliasActivitySummaryMaintenance.resetAll(connection);
+            if(seedCountersNow) AliasActivitySummaryMaintenance.resetAll(connection);
             restartMetricBoundaries(connection, METRIC_BOUNDARY_KEYS);
         }
         else
@@ -179,12 +212,26 @@ final class CurrentDatabaseDerivedStateRepair
             restartMetricBoundaries(connection, before.invalidMetricBoundaryKeys());
         }
 
-        Inspection remaining = inspect(connection);
+        Inspection remaining = !seedCountersNow && before.damagedTables() > 0 ?
+            inspectDiscardedHistoricalState(connection) : inspect(connection, analogAliasProtocols);
         if(remaining.requiresRepair())
         {
             throw new SQLException("Current receiver-derived state reset did not remove every damaged row");
         }
         return before;
+    }
+
+    private static Inspection inspectDiscardedHistoricalState(Connection connection) throws SQLException
+    {
+        //Missing summary rows are intentional until the chain reaches the current schema.
+        for(String table: repairTables(connection))
+        {
+            try(var statement = connection.createStatement(); var rows = statement.executeQuery("SELECT 1 FROM " + table + " LIMIT 1"))
+            {
+                if(rows.next()) throw new SQLException("Discarded receiver history still contains rows");
+            }
+        }
+        return Inspection.none();
     }
 
     static DatabaseMigrationChain.StepPreflight preflight(Inspection inspection)
@@ -199,10 +246,13 @@ final class CurrentDatabaseDerivedStateRepair
     {
         return List.of(
             new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.RESET,
-                "bounded receiver activity and statistics rows", inspection.resetRows(),
-                "Discard the damaged receiver-derived component and its identity high-water marks while preserving " +
-                    "administrator configuration"),
-            metricBoundaryEffect(inspection));
+                RESET_SUBJECT, inspection.resetRows(),
+                "Discard damaged Activity, statistics, observed identities, site and receiver-health history; " +
+                    "preserve configuration, accounts and recordings, and start empty Alias counters after the update"),
+            metricBoundaryEffect(inspection),
+            new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.DEFAULT, EMPTY_ALIAS_COUNTERS,
+                inspection.emptyAliasCounters(),
+                "Start empty counters from saved Aliases after reaching the current format; do not reconstruct old observations"));
     }
 
     private static DatabaseMigrationEffect metricBoundaryEffect(Inspection inspection)
@@ -255,7 +305,7 @@ final class CurrentDatabaseDerivedStateRepair
      * still satisfy the table checks but no longer describe the owning Alias.  Require exactly one summary per Alias
      * with the configuration-derived owner and activity protocol.
      */
-    private static boolean invalidAliasActivitySummaryParity(Connection connection) throws SQLException
+    private static boolean invalidAliasActivitySummaryParity(Connection connection, boolean analogAliasProtocols) throws SQLException
     {
         try(Statement statement = connection.createStatement();
             ResultSet rows = statement.executeQuery("""
@@ -276,8 +326,8 @@ final class CurrentDatabaseDerivedStateRepair
                                    WHEN 'APCO25_PHASE2' THEN 1
                                    WHEN 'DMR' THEN 3
                                    WHEN 'NXDN' THEN 4
-                                   WHEN 'NBFM' THEN CASE WHEN configured.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 10 ELSE 0 END
-                                   WHEN 'AM' THEN CASE WHEN configured.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN 11 ELSE 0 END
+                                   WHEN 'NBFM' THEN CASE WHEN configured.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN %d ELSE 0 END
+                                   WHEN 'AM' THEN CASE WHEN configured.matcher_type IN ('TALKGROUP', 'TALKGROUP_RANGE') THEN %d ELSE 0 END
                                    ELSE 0
                                END
                                ELSE 0
@@ -291,7 +341,7 @@ final class CurrentDatabaseDerivedStateRepair
                         WHERE configured.id IS NULL
                         LIMIT 1
                     )
-                """))
+                """.formatted(analogAliasProtocols ? 10 : 0, analogAliasProtocols ? 11 : 0)))
         {
             if(!rows.next())
             {
@@ -415,11 +465,11 @@ final class CurrentDatabaseDerivedStateRepair
         }
     }
 
-    record Inspection(int damagedTables, long resetRows, List<String> invalidMetricBoundaryKeys)
+    record Inspection(int damagedTables, long resetRows, List<String> invalidMetricBoundaryKeys, long emptyAliasCounters)
     {
         Inspection
         {
-            if(damagedTables < 0 || resetRows < 0)
+            if(damagedTables < 0 || resetRows < 0 || emptyAliasCounters < 0)
             {
                 throw new IllegalArgumentException("Current derived-state repair counts must not be negative");
             }
@@ -428,7 +478,7 @@ final class CurrentDatabaseDerivedStateRepair
 
         static Inspection none()
         {
-            return new Inspection(0, 0, List.of());
+            return new Inspection(0, 0, List.of(), 0);
         }
 
         boolean requiresRepair()

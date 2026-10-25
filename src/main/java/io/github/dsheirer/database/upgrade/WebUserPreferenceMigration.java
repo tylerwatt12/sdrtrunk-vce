@@ -175,12 +175,12 @@ abstract class WebUserPreferenceMigration implements DatabaseMigrationStep
         return new UserInspection(List.copyOf(updates), defaultedUsers, rebasedRevisions, resetLayouts);
     }
 
-    private static List<DatabaseMigrationEffect> inspectRepairs(Connection connection) throws SQLException
+    private List<DatabaseMigrationEffect> inspectRepairs(Connection connection) throws SQLException
     {
         CurrentDatabaseBestEffortRepair.requireOnlyRepairableForeignKeys(connection);
         return repairEffects(ApplicationDatabaseMigrator.inspectCurrentPortablePreferenceRepairs(connection),
             CurrentDatabaseAdministrativeRepair.inspect(connection, false),
-            CurrentDatabaseBestEffortRepair.inspect(connection), CurrentDatabaseDerivedStateRepair.inspect(connection));
+            CurrentDatabaseBestEffortRepair.inspect(connection), CurrentDatabaseDerivedStateRepair.inspectHistorical(connection, mSourceVersion));
     }
 
     private List<DatabaseMigrationEffect> repair(Connection connection) throws SQLException
@@ -188,7 +188,7 @@ abstract class WebUserPreferenceMigration implements DatabaseMigrationStep
         CurrentDatabaseBestEffortRepair.requireOnlyRepairableForeignKeys(connection);
         return repairEffects(ApplicationDatabaseMigrator.repairCurrentPortablePreferences(connection),
             CurrentDatabaseAdministrativeRepair.repair(connection, false, preserveAccountTimestamps()),
-            CurrentDatabaseBestEffortRepair.repair(connection), CurrentDatabaseDerivedStateRepair.repair(connection));
+            CurrentDatabaseBestEffortRepair.repair(connection), CurrentDatabaseDerivedStateRepair.discardDamagedHistoricalState(connection, mSourceVersion));
     }
 
     private static List<DatabaseMigrationEffect> repairEffects(long portablePreferences,

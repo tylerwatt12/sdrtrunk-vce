@@ -74,7 +74,7 @@ final class Format28To29DatabaseMigration implements DatabaseMigrationStep
         //Inspect the old shape without changing it. Conversion is counted separately above.
         return new RepairReport(ApplicationDatabaseMigrator.inspectCurrentPortablePreferenceRepairs(connection),
             CurrentDatabaseAdministrativeRepair.inspect(connection, true),
-            CurrentDatabaseDerivedStateRepair.inspect(connection),
+            CurrentDatabaseDerivedStateRepair.inspectHistorical(connection, 28),
             CurrentDatabaseBestEffortRepair.inspect(connection));
     }
 
@@ -85,7 +85,7 @@ final class Format28To29DatabaseMigration implements DatabaseMigrationStep
         CurrentDatabaseAdministrativeRepair.Inspection administrative =
             CurrentDatabaseAdministrativeRepair.repair(connection, false);
         CurrentDatabaseBestEffortRepair.Inspection configuration = CurrentDatabaseBestEffortRepair.repair(connection);
-        CurrentDatabaseDerivedStateRepair.Inspection derived = CurrentDatabaseDerivedStateRepair.repair(connection);
+        CurrentDatabaseDerivedStateRepair.Inspection derived = CurrentDatabaseDerivedStateRepair.discardDamagedHistoricalState(connection, 28);
         return new RepairReport(preferences, administrative, derived, configuration);
     }
 

@@ -68,7 +68,7 @@ final class Format29To30DatabaseMigration implements DatabaseMigrationStep
         CurrentDatabaseBestEffortRepair.requireOnlyRepairableForeignKeys(connection);
         return new RepairReport(ApplicationDatabaseMigrator.inspectCurrentPortablePreferenceRepairs(connection),
             CurrentDatabaseAdministrativeRepair.inspect(connection, false),
-            CurrentDatabaseDerivedStateRepair.inspect(connection),
+            CurrentDatabaseDerivedStateRepair.inspectHistorical(connection, 29),
             CurrentDatabaseBestEffortRepair.inspect(connection));
     }
 
@@ -81,7 +81,7 @@ final class Format29To30DatabaseMigration implements DatabaseMigrationStep
         CurrentDatabaseBestEffortRepair.Inspection configuration =
             CurrentDatabaseBestEffortRepair.repair(connection);
         CurrentDatabaseDerivedStateRepair.Inspection derived =
-            CurrentDatabaseDerivedStateRepair.repair(connection);
+            CurrentDatabaseDerivedStateRepair.discardDamagedHistoricalState(connection, 29);
         return new RepairReport(portablePreferenceResets, administrative, derived, configuration);
     }
 

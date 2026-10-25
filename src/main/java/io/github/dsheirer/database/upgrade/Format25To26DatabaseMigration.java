@@ -114,7 +114,7 @@ final class Format25To26DatabaseMigration implements DatabaseMigrationStep
         CurrentDatabaseBestEffortRepair.requireOnlyRepairableForeignKeys(connection);
         return new RepairReport(ApplicationDatabaseMigrator.inspectCurrentPortablePreferenceRepairs(connection),
             CurrentDatabaseAdministrativeRepair.inspect(connection),
-            CurrentDatabaseDerivedStateRepair.inspect(connection),
+            CurrentDatabaseDerivedStateRepair.inspectHistorical(connection, 25),
             CurrentDatabaseBestEffortRepair.inspect(connection));
     }
 
@@ -129,7 +129,7 @@ final class Format25To26DatabaseMigration implements DatabaseMigrationStep
         //Historical migrations temporarily disable foreign keys. Repair configuration first so that any receiver
         //rows orphaned by a dropped channel are detected and cleared by the following derived-state sweep.
         CurrentDatabaseDerivedStateRepair.Inspection derived =
-            CurrentDatabaseDerivedStateRepair.repair(connection);
+            CurrentDatabaseDerivedStateRepair.discardDamagedHistoricalState(connection, 25);
         return new RepairReport(portablePreferenceResets, administrative, derived, configuration);
     }
 

@@ -292,6 +292,14 @@ public final class DatabaseMigrationChain
                 adoption.targetVersion(), adoption.effects()));
         }
 
+        if(source.version() < DatabaseFormatCatalog.CURRENT_VERSION &&
+            reports.stream().flatMap(report -> report.effects().stream()).anyMatch(effect ->
+                effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT &&
+                    effect.subject().equals(CurrentDatabaseDerivedStateRepair.EMPTY_ALIAS_COUNTERS) && effect.affectedRows() > 0))
+        {
+            //Discarded observations are never reconstructed. Only configuration seeds empty current counters.
+            io.github.dsheirer.stats.AliasActivitySummaryMaintenance.resetAll(connection);
+        }
         if(repairSelectedSource) DatabaseFormatCatalog.requireCurrent(connection);
         return new MigrationReport(source, detected, List.copyOf(reports));
     }

@@ -334,7 +334,9 @@ public final class DatabaseFormatCatalog
             "Add radio-system and saved-channel action/time indexes for bounded Activity filtering",
             "Add radio-system and saved-channel event-type/time indexes for bounded Activity filtering",
             "Add saved-channel source-ID and target-ID time indexes for conventional digital Activity filtering",
-            "Keep existing Activity retention, pruning, identity, and encryption behavior unchanged"));
+            "Keep existing Activity retention, pruning, identity, and encryption behavior unchanged",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_25 = new FormatDescriptor(25, "encrypted-traffic-channel-skip-v1",
         "Per-channel opt-in encrypted traffic-channel suppression", FORMAT_25_FINGERPRINT, Map.of(),
@@ -344,7 +346,9 @@ public final class DatabaseFormatCatalog
             "Repair, default, reset, or skip only recoverable format-24 row damage and report exact counts",
             "Treat an absent ignoreEncryptedCalls setting as disabled for P25, DMR, and NXDN channels",
             "Preserve an explicit existing NXDN encrypted-call suppression selection",
-            "Keep the saved preference unchanged when a loaded voice-decryption module overrides it at runtime"));
+            "Keep the saved preference unchanged when a loaded voice-decryption module overrides it at runtime",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_26 = new FormatDescriptor(26, "p25-radio-control-activity-v1",
         "Exact P25 radio inhibit and uninhibit Activity event format", FORMAT_26_FINGERPRINT, Map.of(),
@@ -354,7 +358,9 @@ public final class DatabaseFormatCatalog
             "Preserve every Activity event identity-member relationship and conventional Activity summary",
             "Repair recoverable direct format-25 row damage before rebuilding the Activity tables",
             "Allow exact radio uninhibit, radio inhibit, and their acknowledgement event types",
-            "Keep existing Activity action/time indexes, retention, pruning, identity, and encryption behavior unchanged"));
+            "Keep existing Activity action/time indexes, retention, pruning, identity, and encryption behavior unchanged",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_27 = new FormatDescriptor(27, "single-administrator-account-v1",
         "One fixed administrator and USER-only managed web accounts", FORMAT_27_FINGERPRINT, Map.of(),
@@ -362,7 +368,9 @@ public final class DatabaseFormatCatalog
         "src/test/java/io/github/dsheirer/database/upgrade/Format27TestDatabase.java", List.of(
             "Preserve every primary and managed account, password verifier, preference document, timestamp, and revision",
             "Keep the fixed primary administrator as the only ADMIN-tier account",
-            "Convert each non-primary ADMIN account to USER without changing its credential or preferences"));
+            "Convert each non-primary ADMIN account to USER without changing its credential or preferences",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_28 = new FormatDescriptor(28, "remote-p25-source-v1",
         "Saved remote P25 bitstream source configuration", FORMAT_28_FINGERPRINT, Map.of(),
@@ -372,7 +380,9 @@ public final class DatabaseFormatCatalog
             "Repair or default only recoverable direct format-27 damage and report exact counts",
             "Keep existing channels local; do not infer remote sender or feed identities",
             "Allow an explicitly configured P25 trunked channel to persist stable sender and feed UUIDs plus frequency",
-            "Keep connection, session, stream, and generation identifiers out of persisted configuration"));
+            "Keep connection, session, stream, and generation identifiers out of persisted configuration",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_29 = new FormatDescriptor(29, "recording-mode-setup-v1",
         "Dedicated recording-mode setup choice", FORMAT_29_FINGERPRINT, Map.of(),
@@ -380,7 +390,9 @@ public final class DatabaseFormatCatalog
         "src/test/java/io/github/dsheirer/database/upgrade/Format29TestDatabase.java", List.of(
             "Preserve the recording mode and every other usable portable preference unchanged",
             "Preserve existing wizard progress and carry over the new Recordings step",
-            "Show Managed Recordings as the recommended choice only during fresh setup"));
+            "Show Managed Recordings as the recommended choice only during fresh setup",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_30 = new FormatDescriptor(30, "encrypted-activity-indexes-v1",
         "Sparse encrypted Activity owner/time indexes", FORMAT_30_FINGERPRINT, Map.of(),
@@ -389,7 +401,9 @@ public final class DatabaseFormatCatalog
             "Preserve every retained Activity row and event ID unchanged",
             "Add sparse encrypted-only saved-channel and radio-system time indexes",
             "Keep clear and unfiltered Activity storage and indexes unchanged",
-            "Repair only bounded current-component damage when format 29 is the selected source"));
+            "Repair only bounded current-component damage when format 29 is the selected source",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_31 = new FormatDescriptor(31, "personal-theme-hue-preferences-v8",
         "Per-user original palette or custom theme hue", FORMAT_31_FINGERPRINT, Map.of(),
@@ -426,7 +440,9 @@ public final class DatabaseFormatCatalog
             "Preserve every administrator-owned configuration, credential, and personal setting unchanged",
             "Preserve retained history without guessing missing radio attribution or reception timestamps",
             "Apply corrected identity types, late conventional attribution, and fresh site-fact semantics to new observations",
-            "Keep database-generated references at their full SQLite width and classify future statistics drops"));
+            "Keep database-generated references at their full SQLite width and classify future statistics drops",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_35 = new FormatDescriptor(35, "source-name-display-preferences-v9",
         "Per-user Talker Alias, Source Alias, or combined source-name display", FORMAT_33_FINGERPRINT, Map.of(),
@@ -437,7 +453,9 @@ public final class DatabaseFormatCatalog
             "Allow each user to prefer Source Alias or show both distinct names",
             "Default only malformed or oversized per-user preference documents",
             "Rebase an unusable preference revision without discarding usable personal settings",
-            "Reset only the necessary cached table layouts if adding the choice exceeds the unchanged storage limit"));
+            "Reset only the necessary cached table layouts if adding the choice exceeds the unchanged storage limit",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_36 = new FormatDescriptor(36, "live-channel-sort-preferences-v10",
         "Per-user Live calls sorting method", FORMAT_33_FINGERPRINT, Map.of(),
@@ -501,7 +519,9 @@ public final class DatabaseFormatCatalog
             "Rebuild one existing target/time index with the complete target identity foreign-key values",
             "Keep the same index count, partial predicate, and Activity time/ID ordering",
             "Preserve every retained row, identity relationship, and allocator unchanged",
-            "Preserve every administrator-owned configuration, credential, and personal setting unchanged"));
+            "Preserve every administrator-owned configuration, credential, and personal setting unchanged",
+            "If selected-source Activity or statistics are damaged, discard that receiver-history component; " +
+                "preserve usable configuration, accounts and recordings"));
 
     private static final FormatDescriptor FORMAT_43 = new FormatDescriptor(43, "personal-live-row-density-v1",
         "Personal Live row density", FORMAT_43_FINGERPRINT, Map.of(),

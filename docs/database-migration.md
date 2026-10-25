@@ -59,6 +59,10 @@ Usable channels, aliases, accounts, credentials, and settings are preserved or c
 Some older activity, signal history, or cached information may be reset when it cannot be carried forward reliably;
 new reception rebuilds those observations. An unusable setting or configuration component may be repaired, defaulted,
 or skipped independently. The plan describes these possibilities and the final report names the actual effects.
+If an older import has damaged Activity or statistics, the import discards that saved receiver-history component
+instead of reconstructing it. Activity events, observed radios and systems, affiliations, learned site information,
+quality history and counters start over. Usable channels, aliases, lists, accounts and settings are retained.
+Recording files and the separate Managed Recordings catalog are not deleted or rebuilt by this reset.
 Dismissed page tours are saved with your web account and carried forward with the database, including across
 password resets. A browser with earlier local tour history can add that history when you sign in.
 
@@ -903,6 +907,17 @@ database; the migrator does not resume by trusting a partially changed working c
 ## Data Policy
 
 Migration support does not mean every historical value must survive. Each step classifies its affected data:
+
+Selected older imports that need the bounded receiver-derived repair discard the whole affected Activity/statistics
+component in foreign-key-safe order, including its allocator state. They keep each frozen table layout while the
+existing adjacent chain upgrades the empty tables. No historical counter, identity mapping or Activity row is
+reconstructed. Once the current schema is reached, saved Alias configuration seeds one empty counter row per Alias.
+Missing Alias summaries are also damage, even when no historical rows remain. Preflight declares the possible reset;
+completion counts the discarded rows and the empty Alias counters. Usable configuration, opaque credentials and
+recording files/catalogs remain outside this reset. The selected source remains unchanged, and failure before commit
+rolls back the destination so the same source can be retried. Healthy retained history continues through its declared
+adjacent preservation steps. This fixes the existing damaged-history repair policy without changing format 62 or its
+persisted meanings.
 
 | Data class | Required behavior |
 | --- | --- |
