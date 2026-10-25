@@ -307,6 +307,17 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     @Override
     public List<TrunkedSystem> p25SystemsBySystemId(int systemId) throws RadioReferenceGatewayException
     {
+        return p25SystemsBySystemId(systemId, false);
+    }
+
+    @Override
+    public List<TrunkedSystem> p25SystemsBySystemId(int systemId, boolean refresh) throws RadioReferenceGatewayException
+    {
+        return mSources.get(Source.P25_SYSTEMS, systemId, refresh, () -> List.copyOf(loadP25SystemsBySystemId(systemId)));
+    }
+
+    private List<TrunkedSystem> loadP25SystemsBySystemId(int systemId) throws RadioReferenceGatewayException
+    {
         try
         {
             return systems(client().p25SystemsBySystemId(systemId).getSystems());
@@ -425,7 +436,30 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         return mSources.get(Source.SYSTEM, systemId, refresh, () -> loadTrunkedSystemDetails(systemId, refresh));
     }
 
+    @Override
+    public TrunkedSystemDetails p25SystemSummary(int systemId) throws RadioReferenceGatewayException
+    {
+        SystemCore core = systemCore(systemId, false);
+        return core.details(systemTypes(false).getOrDefault(core.typeId(), ""), "", "");
+    }
+
     private TrunkedSystemDetails loadTrunkedSystemDetails(int systemId, boolean refresh) throws RadioReferenceGatewayException
+    {
+        SystemCore core = systemCore(systemId, refresh);
+        String type = systemTypes(refresh).getOrDefault(core.typeId(), "");
+        String flavor = mSources.get(Source.FLAVOR, core.flavorId(), refresh, () -> firstName(client().execute(
+            authorization -> GetFlavors.create(authorization, core.flavorId()), GetFlavorsResponse.class).getFlavors()));
+        String voice = mSources.get(Source.VOICE, core.voiceId(), refresh, () -> firstName(client().execute(
+            authorization -> GetVoices.create(authorization, core.voiceId()), GetVoicesResponse.class).getVoices()));
+        return core.details(type, flavor, voice);
+    }
+
+    private SystemCore systemCore(int systemId, boolean refresh) throws RadioReferenceGatewayException
+    {
+        return mSources.get(Source.SYSTEM_CORE, systemId, refresh, () -> loadSystemCore(systemId));
+    }
+
+    private SystemCore loadSystemCore(int systemId) throws RadioReferenceGatewayException
     {
         try
         {
@@ -437,15 +471,6 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             if(info == null)
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
 
-            String type = systemTypes(refresh).getOrDefault(info.getTypeId(), "");
-            String flavor = mSources.get(Source.FLAVOR, info.getFlavorId(), refresh, () -> firstName(client().execute(
-                authorization -> GetFlavors.create(authorization, info.getFlavorId()), GetFlavorsResponse.class)
-                .getFlavors()));
-            String voice = mSources.get(Source.VOICE, info.getVoiceId(), refresh, () -> firstName(client().execute(
-                authorization -> GetVoices.create(authorization, info.getVoiceId()), GetVoicesResponse.class)
-                .getVoices()));
-            String wacn = "";
-            String nativeSystemId = "";
             List<RadioNetworkIdentity> networks = new ArrayList<>();
 
             if(info.getRadioNetworks() != null)
@@ -458,19 +483,27 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
                             text(network.getModel())));
                     }
                 }
-                if(!networks.isEmpty())
-                {
-                    wacn = networks.getFirst().wacn();
-                    nativeSystemId = networks.getFirst().systemId();
-                }
             }
 
-            return new TrunkedSystemDetails(systemId, text(info.getName()), text(info.getCity()), type, flavor,
-                voice, wacn, nativeSystemId, networks);
+            return new SystemCore(systemId, text(info.getName()), text(info.getCity()), info.getTypeId(),
+                info.getFlavorId(), info.getVoiceId(), networks);
         }
         catch(RuntimeException exception)
         {
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+        }
+    }
+
+    private record SystemCore(int id, String name, String city, int typeId, int flavorId, int voiceId,
+                              List<RadioNetworkIdentity> networks)
+    {
+        private SystemCore { networks = List.copyOf(networks); }
+
+        private TrunkedSystemDetails details(String type, String flavor, String voice)
+        {
+            return new TrunkedSystemDetails(id, name, city, type, flavor, voice,
+                networks.isEmpty() ? "" : networks.getFirst().wacn(),
+                networks.isEmpty() ? "" : networks.getFirst().systemId(), networks);
         }
     }
 
@@ -678,6 +711,8 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         if(value instanceof Number || value instanceof Boolean || value instanceof Enum<?>) return 16;
         if(value instanceof AgencySource agency) return 32 + sourceWeight(agency.name()) + sourceWeight(agency.categories());
         if(value instanceof CountySource county) return 32 + sourceWeight(county.directory()) + sourceWeight(county.categories());
+        if(value instanceof SystemCore core)
+            return 96 + sourceWeight(core.name()) + sourceWeight(core.city()) + sourceWeight(core.networks());
         if(value instanceof java.util.Collection<?> items)
             return 32 + items.stream().mapToLong(item -> 8 + sourceWeight(item)).sum();
         if(value instanceof Map<?,?> items)

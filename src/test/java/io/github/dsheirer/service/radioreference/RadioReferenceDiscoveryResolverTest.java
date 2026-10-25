@@ -186,6 +186,9 @@ class RadioReferenceDiscoveryResolverTest
             assertTrue(resolver.resolve(null, P25).matched());
             assertTrue(resolver.resolve(999, P25).matched());
             assertEquals(List.of(2001, 2001), gateway.detailIds);
+            assertEquals(List.of(2001, 2001), gateway.summaryIds,
+                "P25 global discovery must request only the identity/name summary");
+            assertEquals(0, gateway.fullDetailReads.get());
             assertEquals(List.of(0x49F, 0x49F), gateway.p25SystemIds);
             assertEquals(0, gateway.searches.get());
         }
@@ -205,6 +208,9 @@ class RadioReferenceDiscoveryResolverTest
             assertEquals(0, gateway.searches.get());
             assertTrue(resolver.resolve(10, P25).matched());
             assertEquals(1, gateway.searches.get());
+            assertEquals(List.of(2001), gateway.summaryIds,
+                "P25 state fallback must use the same summary path as global discovery");
+            assertEquals(0, gateway.fullDetailReads.get());
             gateway.systems.put(2001, p25(2001, 3001, "BEE01", "49F", 2, 12, FREQUENCY));
             assertEquals("no_match", resolver.resolve(10, P25).state());
             gateway.systems.put(2001, p25(2001, 3001, "BEE00", "49F", 1, 12, FREQUENCY));
@@ -346,6 +352,8 @@ class RadioReferenceDiscoveryResolverTest
             assertEquals(List.of(2001), gateway.detailIds);
             assertEquals(1, gateway.searches.get());
             assertTrue(gateway.p25SystemIds.isEmpty());
+            assertTrue(gateway.summaryIds.isEmpty(), "DMR must retain full subtype metadata checks");
+            assertEquals(1, gateway.fullDetailReads.get());
         }
     }
 
@@ -725,6 +733,8 @@ class RadioReferenceDiscoveryResolverTest
         final List<Integer> p25SystemIds = new ArrayList<>();
         final Map<Integer,DiscoverySystem> systems = new java.util.LinkedHashMap<>();
         final List<Integer> detailIds = new ArrayList<>();
+        final List<Integer> summaryIds = new ArrayList<>();
+        final AtomicInteger fullDetailReads = new AtomicInteger();
         final List<Integer> siteIds = new ArrayList<>();
         final AtomicInteger searches = new AtomicInteger();
         volatile long delayMillis;
@@ -770,6 +780,16 @@ class RadioReferenceDiscoveryResolverTest
             return p25Candidates;
         }
         @Override public TrunkedSystemDetails trunkedSystemDetails(int id)
+        {
+            fullDetailReads.incrementAndGet();
+            return details(id);
+        }
+        @Override public TrunkedSystemDetails p25SystemSummary(int id)
+        {
+            summaryIds.add(id);
+            return details(id);
+        }
+        private TrunkedSystemDetails details(int id)
         {
             detailIds.add(id);
             return systems.containsKey(id) ? systems.get(id).system() : null;

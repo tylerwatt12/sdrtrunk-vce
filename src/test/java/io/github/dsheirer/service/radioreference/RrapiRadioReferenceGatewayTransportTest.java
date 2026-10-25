@@ -412,6 +412,7 @@ class RrapiRadioReferenceGatewayTransportTest
     {
         List<String> requests = new ArrayList<>();
         List<String> soapActions = new ArrayList<>();
+        var failNext = new java.util.concurrent.atomic.AtomicBoolean();
         String response = """
             <?xml version="1.0" encoding="utf-8"?>
             <SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/"
@@ -438,9 +439,10 @@ class RrapiRadioReferenceGatewayTransportTest
         try(TestHttpsServer server = new TestHttpsServer(exchange -> {
             requests.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
             soapActions.add(exchange.getRequestHeaders().getFirst("SOAPAction"));
-            byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
+            boolean fail = failNext.getAndSet(false);
+            byte[] bytes = (fail ? "failed" : response).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/xml;charset=UTF-8");
-            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.sendResponseHeaders(fail ? 500 : 200, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
         });
@@ -453,12 +455,21 @@ class RrapiRadioReferenceGatewayTransportTest
             assertEquals("State P25", candidate.name());
             assertEquals("Capital", candidate.city());
             assertEquals(1, candidate.typeId());
+            assertEquals(candidate, gateway.p25SystemsBySystemId(0x49F).getFirst());
+            assertEquals(1, requests.size(), "reopening a P25 discovery must reuse its native-system candidate source");
             gateway.p25SystemsBySystemId(0x00A);
+            failNext.set(true);
+            assertEquals(RadioReferenceGatewayException.Kind.HTTP_ERROR,
+                assertThrows(RadioReferenceGatewayException.class, () -> gateway.p25SystemsBySystemId(0x49F, true)).kind());
+            assertEquals(candidate, gateway.p25SystemsBySystemId(0x49F).getFirst(),
+                "a failed candidate refresh must keep the previous successful source");
+            assertEquals(3, requests.size());
+            assertEquals(candidate, gateway.p25SystemsBySystemId(0x49F, true).getFirst());
             assertThrows(RadioReferenceGatewayException.class, () -> gateway.p25SystemsBySystemId(0x1000));
         }
-        assertEquals(2, requests.size());
+        assertEquals(4, requests.size());
         assertTrue(requests.getFirst().contains("<sysid xsi:type=\"xsd:string\">49F</sysid>"));
-        assertTrue(requests.getLast().contains("<sysid xsi:type=\"xsd:string\">00A</sysid>"));
+        assertTrue(requests.get(1).contains("<sysid xsi:type=\"xsd:string\">00A</sysid>"));
         assertTrue(requests.getFirst().contains("xmlns:ns1=\"http://api.radioreference.com/soap2\""));
         assertTrue(requests.getFirst().contains(">rpc</style>"));
         assertFalse(requests.getFirst().contains("stid"));
@@ -590,16 +601,21 @@ class RrapiRadioReferenceGatewayTransportTest
         GetUserFeedBroadcastsResponse feedsResponse = new GetUserFeedBroadcastsResponse();
         feedsResponse.setUserFeedBroadcasts(List.of(nativeFeed));
 
-        List<String> responses = List.of(response(systemResponse), response(typesResponse),
+        String originalSystem = response(systemResponse);
+        system.setName("Updated system");
+        String updatedSystem = response(systemResponse);
+        List<String> responses = List.of(originalSystem, response(typesResponse),
             response(flavorsResponse), response(voicesResponse), response(sitesResponse),
             response(talkgroupsResponse), response(categoriesResponse), response(frequenciesResponse),
-            response(modesResponse), response(feedsResponse), response(systemResponse));
+            response(modesResponse), response(feedsResponse), originalSystem,
+            updatedSystem, "failed", updatedSystem, response(typesResponse), response(flavorsResponse), response(voicesResponse));
         AtomicInteger requestIndex = new AtomicInteger();
 
         try(TestHttpsServer server = new TestHttpsServer(exchange -> {
-            byte[] bytes = responses.get(requestIndex.getAndIncrement()).getBytes(StandardCharsets.UTF_8);
+            int index = requestIndex.getAndIncrement();
+            byte[] bytes = responses.get(index).getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "text/xml;charset=UTF-8");
-            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.sendResponseHeaders(index == 12 ? 500 : 200, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
         });
@@ -607,9 +623,18 @@ class RrapiRadioReferenceGatewayTransportTest
                 Duration.ofSeconds(2), 1024 * 1024);
             RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client))
         {
+            var summary = gateway.p25SystemSummary(6643);
+            assertEquals("State P25", summary.name());
+            assertEquals("Project 25", summary.type());
+            assertEquals("BEE00", summary.wacn());
+            assertEquals("49F", summary.systemId());
+            assertEquals("", summary.flavor());
+            assertEquals("", summary.voice());
+            assertEquals(2, requestIndex.get(), "P25 names and identity need only core system information and type labels");
             RadioReferenceGateway.TrunkedSystemDetails details = gateway.trunkedSystemDetails(6643);
             assertEquals("Project 25", details.type());
             assertEquals("Phase II", details.flavor());
+            assertEquals(4, requestIndex.get(), "the full import must add metadata without downloading core system information again");
             assertEquals("BEE00", details.wacn());
             assertEquals("49F", details.systemId());
             assertEquals(List.of(new RadioReferenceGateway.RadioNetworkIdentity("BEE00", "49F"),
@@ -647,6 +672,16 @@ class RrapiRadioReferenceGatewayTransportTest
                 "another system reuses type, flavor and voice metadata and fetches only its system information");
             assertEquals("Franklin Simulcast", gateway.sites(6643).getFirst().name(),
                 "lightweight site lookup must reuse the complete site source");
+            assertEquals(11, requestIndex.get());
+            assertEquals(RadioReferenceGatewayException.Kind.HTTP_ERROR,
+                assertThrows(RadioReferenceGatewayException.class, () -> gateway.trunkedSystemDetails(6643, true)).kind());
+            assertEquals(details, gateway.trunkedSystemDetails(6643),
+                "a failed full refresh must retain its last complete snapshot even after the core refresh succeeds");
+            assertEquals(13, requestIndex.get());
+            assertEquals("Updated system", gateway.trunkedSystemDetails(6643, true).name());
+            assertEquals("Updated system", gateway.p25SystemSummary(6643).name());
+            assertEquals("State P25", details.name(), "already reviewed details must remain immutable");
+            assertEquals(17, requestIndex.get(), "explicit full refresh must fetch core information and all metadata again");
         }
 
         assertEquals(responses.size(), requestIndex.get());
@@ -954,7 +989,7 @@ class RrapiRadioReferenceGatewayTransportTest
             {
                 RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client);
                 java.util.concurrent.Callable<List<?>> read = () -> switch(selectedOperation) {
-                    case 0 -> gateway.p25SystemsBySystemId(0x49F);
+                    case 0 -> gateway.p25SystemsBySystemId(0x49F, true);
                     case 1 -> gateway.searchStateFrequencies(10, 853.1625);
                     default -> gateway.trunkedSiteDetails(2001, true);
                 };

@@ -50,6 +50,12 @@ public interface RadioReferenceGateway extends AutoCloseable
         return List.of();
     }
 
+    default List<TrunkedSystem> p25SystemsBySystemId(int systemId, boolean refresh)
+        throws RadioReferenceGatewayException
+    {
+        return p25SystemsBySystemId(systemId);
+    }
+
     default List<Mode> modes() throws RadioReferenceGatewayException
     {
         return List.of();
@@ -81,6 +87,12 @@ public interface RadioReferenceGateway extends AutoCloseable
     default TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceGatewayException
     {
         return null;
+    }
+
+    /** P25 identity and names do not require flavor or voice descriptions; other protocols use full details. */
+    default TrunkedSystemDetails p25SystemSummary(int systemId) throws RadioReferenceGatewayException
+    {
+        return trunkedSystemDetails(systemId);
     }
 
     /** Explicit user refresh bypasses retained source data, while a failure keeps the previous successful value. */

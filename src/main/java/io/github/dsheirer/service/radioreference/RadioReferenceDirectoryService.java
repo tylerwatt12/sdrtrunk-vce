@@ -723,7 +723,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         {
             throw new RadioReferenceDirectoryException(RadioReferenceDirectoryException.Code.INVALID_REQUEST);
         }
-        return invokePremium(gateway -> frequencyDiscoverySystems(gateway, stateId, frequencyHz, identityFilter, catalog),
+        return invokePremium(gateway -> frequencyDiscoverySystems(gateway, stateId, frequencyHz, identityFilter, catalog, false),
             deadlineNanos, mDetailExecutor, catalog);
     }
 
@@ -790,7 +790,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 if(exception.kind() != RadioReferenceGatewayException.Kind.RESULT_SET_TOO_LARGE || fallbackStateId == null)
                     throw exception;
             }
-            return frequencyDiscoverySystems(gateway, fallbackStateId, frequencyHz, identityFilter, catalog);
+            return frequencyDiscoverySystems(gateway, fallbackStateId, frequencyHz, identityFilter, catalog, true);
         }, deadlineNanos, mDetailExecutor, catalog);
     }
 
@@ -799,7 +799,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
         throws RadioReferenceGatewayException
     {
         if(catalog != null && catalog.mP25Systems.containsKey(systemId))
-            return discoverySystemDetails(gateway, catalog.mP25Systems.get(systemId), identityFilter, catalog);
+            return discoverySystemDetails(gateway, catalog.mP25Systems.get(systemId), identityFilter, catalog, true);
         List<RadioReferenceGateway.TrunkedSystem> candidates = required(gateway.p25SystemsBySystemId(systemId));
         if(candidates != null && candidates.size() > MAXIMUM_REMOTE_ITEMS_SCANNED)
         {
@@ -813,14 +813,15 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 if(candidate != null && candidate.id() > 0) systemIds.add(candidate.id());
             }
         }
-        List<DiscoverySystem> result = discoverySystemDetails(gateway, systemIds, identityFilter, catalog);
+        List<DiscoverySystem> result = discoverySystemDetails(gateway, systemIds, identityFilter, catalog, true);
         if(catalog != null && catalog.mP25Systems.size() < DiscoveryCatalog.MAXIMUM_CATALOG_ENTRIES)
             catalog.mP25Systems.put(systemId, java.util.Collections.unmodifiableSet(new LinkedHashSet<>(systemIds)));
         return result;
     }
 
     private static List<DiscoverySystem> frequencyDiscoverySystems(RadioReferenceGateway gateway, int stateId,
-        long frequencyHz, Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, DiscoveryCatalog catalog)
+        long frequencyHz, Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, DiscoveryCatalog catalog,
+        boolean p25Summary)
         throws RadioReferenceGatewayException
     {
         List<RadioReferenceGateway.FrequencyResult> frequencies =
@@ -841,11 +842,12 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
                 }
             }
         }
-        return discoverySystemDetails(gateway, systemIds, identityFilter, catalog);
+        return discoverySystemDetails(gateway, systemIds, identityFilter, catalog, p25Summary);
     }
 
     private static List<DiscoverySystem> discoverySystemDetails(RadioReferenceGateway gateway, Set<Integer> systemIds,
-        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, DiscoveryCatalog catalog)
+        Predicate<RadioReferenceGateway.TrunkedSystemDetails> identityFilter, DiscoveryCatalog catalog,
+        boolean p25Summary)
         throws RadioReferenceGatewayException
     {
         if(systemIds.size() > MAXIMUM_DISCOVERY_SYSTEMS)
@@ -862,7 +864,7 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
             }
             DiscoverySystem cached = catalog == null ? null : catalog.mSystems.get(systemId);
             RadioReferenceGateway.TrunkedSystemDetails system = cached == null ?
-                gateway.trunkedSystemDetails(systemId) : cached.system();
+                p25Summary ? gateway.p25SystemSummary(systemId) : gateway.trunkedSystemDetails(systemId) : cached.system();
             if(system == null || system.id() != systemId)
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);

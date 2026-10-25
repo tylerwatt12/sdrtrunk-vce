@@ -226,7 +226,8 @@ final class RadioReferenceSourceCache implements AutoCloseable
 
     enum Source
     {
-        COUNTRIES, COUNTRY, STATE, COUNTY, AGENCY, MODES, SYSTEM_TYPES, SYSTEM, SITES, SUBCATEGORY, FLAVOR, VOICE
+        COUNTRIES, COUNTRY, STATE, COUNTY, AGENCY, MODES, SYSTEM_TYPES, SYSTEM_CORE, SYSTEM, P25_SYSTEMS,
+        SITES, SUBCATEGORY, FLAVOR, VOICE
     }
 
     private record Key(Source source, int id) {}

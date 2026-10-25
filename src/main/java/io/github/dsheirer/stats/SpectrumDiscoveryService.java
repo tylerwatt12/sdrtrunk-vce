@@ -362,10 +362,10 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         var resolver = mDirectory;
         if(resolver == null) return;
         wizard.directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.pending();
-        try { mDirectoryWorker.execute(() -> {
+        try { wizard.directoryFuture = mDirectoryWorker.submit(() -> {
             synchronized(SpectrumDiscoveryService.this) { if(mWizard != wizard || wizard.closed) return; }
             var result = resolver.resolve(wizard.stateId,SpectrumSearchService.directoryIdentity(wizard.evidence,wizard.frequencyHz));
-            synchronized(SpectrumDiscoveryService.this) { if(mWizard == wizard && !wizard.closed) { wizard.directory = result; wizard.evidence = DiscoveryDirectoryEnrichment.merge(wizard.evidence,result); } }
+            synchronized(SpectrumDiscoveryService.this) { if(mWizard == wizard && !wizard.closed && !Thread.currentThread().isInterrupted()) { wizard.directory = result; wizard.evidence = DiscoveryDirectoryEnrichment.merge(wizard.evidence,result); } }
         }); } catch(java.util.concurrent.RejectedExecutionException exception) { wizard.directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.manual("unavailable","RadioReference is busy. Review the on-air identity."); }
     }
 
@@ -438,6 +438,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         P25DiscoveryProbe autoP25Probe;
         DigitalTrunkedDiscoveryProbe autoDigitalProbe;
         Thread detectionWorker;
+        java.util.concurrent.Future<?> directoryFuture;
         TrunkedSignalDetector.Result detection;
         String detectionFailure;
         io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result directory = io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver.Result.manual();
@@ -462,6 +463,7 @@ public final class SpectrumDiscoveryService implements AutoCloseable
         @Override public void close()
         {
             closed = true;
+            if(directoryFuture != null) { directoryFuture.cancel(true); directoryFuture = null; }
             if(detectionWorker != null) detectionWorker.interrupt();
             if(probe != null) probe.close();
             if(digitalProbe != null) digitalProbe.close();
