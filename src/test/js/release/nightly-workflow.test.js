@@ -180,7 +180,7 @@ function verifyStagedDownloads() {
     assert.deepEqual(fs.readFileSync(path.join(published, name)), original.get(preparedName),
       `Published ZIP contents and embedded identity must match the tested candidate: ${name}`);
   }
-  const checksums = fs.readFileSync(path.join(published, 'SHA256SUMS'), 'utf8').trimEnd().split('\n')
+  const checksums = fs.readFileSync(path.join(published, 'SHA256SUMS'), 'utf8').trimEnd().split(/\r?\n/)
     .map(line => {
       const match = /^([0-9a-f]{64})  (.+)$/.exec(line);
       assert(match, `Invalid public checksum entry: ${line}`);
