@@ -48,7 +48,7 @@ async function installApplication(page, theme = 'light') {
 function tableParts(page, type) {
   const table = page.locator(`table[data-table-type="${type}"]`);
   const wrapper = table.locator('..');
-  const root = wrapper.locator('..');
+  const root = table.locator('xpath=ancestor::section[1]');
   return { table, wrapper, root, controls: root.locator('.ui-table-overflow-controls'),
     left: root.getByRole('button', { name: 'Scroll table left', exact: true }),
     right: root.getByRole('button', { name: 'Scroll table right', exact: true }) };
@@ -166,6 +166,8 @@ test('table keyboard scrolling leaves column-resizer arrows available and tracks
   await expect(parts.controls).toBeHidden();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(parts.controls).toBeVisible();
+  await expect.poll(() => page.evaluate(() => Math.max(document.documentElement.scrollWidth,
+    document.body.scrollWidth) - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   await expectNoHorizontalOverflow(page);
 });
 

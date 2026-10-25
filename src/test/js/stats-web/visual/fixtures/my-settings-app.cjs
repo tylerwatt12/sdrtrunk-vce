@@ -1,9 +1,11 @@
 'use strict';
 
 const { expect } = require('@playwright/test');
+const { tourHistoryFixture } = require('./tour-history.cjs');
 
 function session(username = 'listener') {
   return { configured: true, authenticated: username !== null, username,
+    guide_dismissal_scope: username === null ? null : `settings-${username}`,
     tier: username === null ? 'public' : 'user', primary: false,
     csrf_token: username === null ? null : 'fixture-only-token', capabilities: {
       'web-access': true, dashboard: true, credits: true, 'user-settings': username !== null,
@@ -25,11 +27,19 @@ async function openSettingsApp(page, options = {}) {
   second.appearance = { theme: 'dark', hue: 285 };
   const state = { session: session(), profiles: { listener, second }, revisions: { listener: 1, second: 1 },
     writes: [], pending: [], holdSaves: options.holdSaves === true, preferenceLoadFailures: 0 };
+  const tourHistories = new Map();
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
     const data = (value) => route.fulfill({ headers: { Date: new Date().toUTCString() }, json: { data: value } });
     if (pathname === '/api/v1/auth/session') return data(state.session);
+    if (pathname === '/api/v1/me/tour-dismissals') {
+      const account = state.session.username;
+      if (account === null) return route.fulfill({ status: 401,
+        json: { error: { message: 'Sign in to load guide history.' } } });
+      if (!tourHistories.has(account)) tourHistories.set(account, tourHistoryFixture({ welcome: 1, dashboard: 3 }));
+      return tourHistories.get(account)(route);
+    }
     if (pathname === '/api/v1/auth/logout') {
       state.session = session(null);
       return data(state.session);
@@ -61,6 +71,8 @@ async function openSettingsApp(page, options = {}) {
     if (pathname === '/api/v1/channel-catalog') return data({ revision: 1, channels: [] });
     if (pathname === '/api/v1/dashboard') return data({ call_activity: { totals: {}, buckets: [] },
       top_destinations: [], top_sources: [], source_activity_24h: [] });
+    if (pathname === '/api/v1/dashboard/main') return data({ quality: { current: [] },
+      directory: { systems: [], channels: [] } });
     return data({ rows: [], limit: 25, offset: 0, has_more: false, next_offset: null, total_count: 0 });
   });
   await page.goto('/app.html?view=settings');

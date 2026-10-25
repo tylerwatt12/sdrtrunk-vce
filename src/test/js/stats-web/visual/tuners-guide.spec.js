@@ -974,8 +974,12 @@ for (const theme of ['light', 'dark']) {
     const result = await inspectCoverageSvgText(page);
     fs.mkdirSync(evidence, { recursive: true });
     fs.writeFileSync(path.join(evidence, `coverage-svg-${theme}-360-hues.json`), `${JSON.stringify(result, null, 2)}\n`);
-    expect(result.labels).toBe(15);
-    expect(result.checked).toBe(15 * 361);
+    expect(result.geometry.map(label => label.text)).toEqual([
+      '855', '857', '859', '861', '863', 'Now', '6s', '12s', '18s', '24s',
+      'Frequency (MHz)', 'RTL-SDR 1', 'RTL-SDR 2'
+    ]);
+    expect(result.labels).toBe(13);
+    expect(result.checked).toBe(13 * 361);
     expect(result.geometry.filter(label => !label.outsidePlot), 'Each label has the actual solid modal paint behind it.').toEqual([]);
     expect(result.failures).toEqual([]);
     expect(result.worst.ratio).toBeGreaterThanOrEqual(4.5);

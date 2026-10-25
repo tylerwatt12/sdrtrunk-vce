@@ -537,8 +537,10 @@
 }
 
 .radioreference-status-filter {
+  min-width: 0;
   width: fit-content;
   max-width: 100%;
+  flex-wrap: wrap;
 }
 
 .radioreference-talkgroup-command-tools,
@@ -550,8 +552,13 @@
 
 .radioreference-talkgroup-command-tools {
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: var(--space-2);
   margin-left: auto;
+}
+
+.radioreference-talkgroup-table-tools {
+  flex: 0 0 auto;
 }
 
 .radioreference-system-body > .admin-form-message {

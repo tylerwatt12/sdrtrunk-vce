@@ -6,7 +6,7 @@ const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs')
 const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
-  test(`Radio activity keeps message definitions and count selection local in ${theme} ${width}px`, async ({ page }) => {
+  test(`Radio activity reuses message definitions and scopes source radios to the selected count in ${theme} ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const fixture = await installSiteStyleApplication(page, theme);
     let label = 'Receiver operation';
@@ -19,6 +19,12 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     });
     await page.route('**/api/v1/activity/actions?*', route => route.fulfill({ json: { data: {
       rows: [{ action: 'NEW_ACTION', observation_count: 12 }] } } }));
+    const radioQueries = [];
+    await page.route('**/api/v1/activity/radios?*', route => {
+      radioQueries.push(Object.fromEntries(new URL(route.request().url()).searchParams));
+      return route.fulfill({ json: { data: { rows: [], total_count: 0, limit: 100, offset: 0,
+        has_more: false, next_offset: null } } });
+    });
     const activityRequests = [];
     page.on('request', request => {
       const path = new URL(request.url()).pathname;
@@ -31,13 +37,21 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       `message-catalog-top-${theme}-${width}.png`) });
     const type = page.locator('.dashboard-activity-legend').getByRole('button', { name: /Receiver operation.*12/ });
     const requestsBeforeSelection = activityRequests.slice();
+    expect(requestsBeforeSelection.slice().sort()).toEqual([
+      '/api/v1/activity/actions', '/api/v1/activity/message-types'
+    ]);
     await type.click();
     await expect(type).toHaveAttribute('aria-pressed', 'true');
     await expect(page.locator('.dashboard-activity-center-count')).toHaveText('12');
     await expect(page.locator('.dashboard-activity-center-label')).toHaveText('Receiver operation');
-    await expect(page.locator('.dashboard-activity-view [data-table-type]')).toHaveCount(0);
-    expect(activityRequests).toEqual(requestsBeforeSelection);
-    expect(activityRequests.slice().sort()).toEqual(['/api/v1/activity/actions', '/api/v1/activity/message-types']);
+    await expect.poll(() => radioQueries).toEqual([
+      { range: '24h', action: 'NEW_ACTION', limit: '100', offset: '0' }
+    ]);
+    await expect(page.locator('.dashboard-activity-radio-host')).toContainText(
+      'No source radios were identified in saved receiver operation events.');
+    await expect(page.locator('.dashboard-activity-view table[data-table-type="dashboard-activity-radios"]')).toHaveCount(1);
+    expect(activityRequests).toEqual([...requestsBeforeSelection, '/api/v1/activity/radios']);
+    expect(definitionRequests).toBe(1);
     await page.getByText('Activity types and protocols', { exact: true }).click();
     const guide = page.locator('details.ui-explainer');
     await expect(guide).toContainText('The receiver heard a new operation.');

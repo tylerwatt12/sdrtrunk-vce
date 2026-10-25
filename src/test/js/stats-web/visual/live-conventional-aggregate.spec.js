@@ -306,7 +306,8 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
     await expandDetails.focus();
     await expandDetails.press('Enter');
     await expect.poll(() => app.latest().decode_messages?.scope).toBe('conventional');
-    await page.goto('/app.html?view=dashboard');
+    await page.getByRole('link', { name: 'VCE home', exact: true }).click();
+    await expect(page).toHaveURL(/view=dashboard/);
     await expect.poll(() => app.latest().decode_messages).toBeUndefined();
     expect(app.fixture.pageErrors).toEqual([]);
     expect(app.fixture.unexpected).toEqual([]);

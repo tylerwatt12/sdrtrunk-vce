@@ -152,7 +152,7 @@ test('Activity saved widths survive refresh and Reset restores the readable defa
   await expect.poll(() => state.preferences.tables.activity?.column_widths.channel).toBe(330);
   await page.reload();
   await expect(table.locator('thead [data-column="channel"]')).toHaveCSS('width', '330px');
-  await table.locator('..').locator('..').getByRole('button', { name: 'Choose table columns' }).click();
+  await table.locator('xpath=ancestor::section[1]').getByRole('button', { name: 'Choose table columns' }).click();
   await page.getByRole('button', { name: 'Reset this table', exact: true }).click();
   await expect.poll(() => state.preferences.tables.activity).toBeUndefined();
   await expect(table.locator('thead [data-column="channel"]')).toHaveCSS('width', '320px');

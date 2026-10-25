@@ -17,12 +17,15 @@ async function installTour(page, id, { theme = 'light', firstVisit = false } = {
     for (const version of [1, 2]) localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     if (!firstVisit) localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:3`, '1');
   }, { id, firstVisit });
-  const effects = { writes: [], samples: [], audio: [], sockets: [] };
+  const effects = { writes: [], tourHistory: [], samples: [], audio: [], sockets: [] };
   page.on('request', request => {
     const url = new URL(request.url());
     if (!url.pathname.startsWith('/api/v1/')) return;
-    if (!['GET', 'HEAD'].includes(request.method()) && url.pathname !== '/api/v1/live/multiplex/control')
-      effects.writes.push(`${request.method()} ${url.pathname}`);
+    if (!['GET', 'HEAD'].includes(request.method()) && url.pathname !== '/api/v1/live/multiplex/control') {
+      if (request.method() === 'PUT' && url.pathname === '/api/v1/me/tour-dismissals')
+        effects.tourHistory.push(request.postDataJSON());
+      else effects.writes.push(`${request.method()} ${url.pathname}`);
+    }
     if (/guide-map-|guide-p25-|guide-visualizer-|guide-network-|tour-map-|tour-p25-|p25:bee00:101|cafe2500|v1-[rg]-bee00-101/.test(decodeURIComponent(url.pathname + url.search + (request.postData() || ''))))
       effects.samples.push(`${request.method()} ${url.pathname}`);
     if (/\/audio(?:$|\/)/.test(url.pathname)) effects.audio.push(url.pathname);
@@ -42,6 +45,21 @@ async function startTour(page, id, first) {
 }
 function isolated(state, { allowExistingSockets = false } = {}) {
   expect(state.effects.writes).toEqual([]);
+  for (const update of state.effects.tourHistory) {
+    expect(Object.keys(update).sort()).toEqual(['dismissed', 'version']);
+    expect(update.version).toBe(1);
+    expect(update.dismissed).not.toBeNull();
+    expect(typeof update.dismissed).toBe('object');
+    expect(Array.isArray(update.dismissed)).toBe(false);
+    expect(Object.keys(update.dismissed).length).toBeLessThanOrEqual(64);
+    for (const [id, version] of Object.entries(update.dismissed)) {
+      expect(id).toMatch(/^[a-z][a-z0-9_-]{0,63}$/);
+      expect(Number.isInteger(version)).toBe(true);
+      expect(version).toBeGreaterThanOrEqual(1);
+      expect(version).toBeLessThanOrEqual(1_000_000);
+      expect(state.fixture.tourDismissals.dismissed[id]).toBeGreaterThanOrEqual(version);
+    }
+  }
   expect(state.effects.samples).toEqual([]);
   expect(state.effects.audio).toEqual([]);
   if (!allowExistingSockets) expect(state.effects.sockets).toEqual([]);

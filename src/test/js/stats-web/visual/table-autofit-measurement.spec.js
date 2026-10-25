@@ -106,7 +106,7 @@ test('Live event markers retain each measured column position', async ({ page })
   expect(result.marked.slice(1)).toEqual(result.baseline.slice(1));
 });
 
-test('column measurements retain workspace control sizing and clear cell width floors', async ({ page }) => {
+test('column measurements retain fixed catalog control sizing in both workspace densities and clear cell width floors', async ({ page }) => {
   await loadProductionMeasurement(page);
   const result = await page.evaluate(() => {
     const sizes = [];
@@ -139,7 +139,7 @@ test('column measurements retain workspace control sizing and clear cell width f
     expect(Math.abs(size.order - size.expected), size.density).toBeLessThanOrEqual(1);
     expect(size.frequency, size.density).toBeLessThan(100);
   }
-  expect(result[1].order).toBeGreaterThan(result[0].order);
+  expect(result[1].order).toBe(result[0].order);
 });
 
 test('rich content auto-fit preserves line breaks, controls and bounded long values', async ({ page }) => {

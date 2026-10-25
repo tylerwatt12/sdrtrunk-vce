@@ -5,7 +5,8 @@ for (const theme of ['light', 'dark']) {
     test(`shared loading rings ${theme} ${reducedMotion} stay visible and animate regardless of motion preference`, async ({ page }) => {
       await page.emulateMedia({ reducedMotion });
       await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
-      const rings = page.locator('.ui-feedback-loading, .visual-loading-actions .is-loading');
+      const messages = page.locator('.visual-section').filter({ has: page.getByRole('heading', { name: 'Messages', exact: true }) });
+      const rings = messages.locator('.ui-feedback-loading, .visual-loading-actions .is-loading');
       await expect(rings).toHaveCount(3);
       for (const ring of await rings.all()) {
         const before = await ring.evaluate((element) => {

@@ -1655,6 +1655,45 @@ test('explicit refresh bypasses source caches while ordinary filtering and tab r
   expect(await page.evaluate(() => window.radioReferenceVisual.calls.filter(([path]) => path.includes('/systems/sites/catalog?')).length)).toBe(2);
 });
 
+async function expectTalkgroupCommandsDoNotOverlap(page) {
+  const tools = page.locator('.radioreference-talkgroup-command-tools');
+  const controls = [
+    tools.getByRole('button', { name: 'Choose table columns' }),
+    tools.getByRole('button', { name: 'Refresh talkgroups from RadioReference' }),
+    tools.getByRole('button', { name: 'Import all system talkgroups' })
+  ];
+  const pane = await tools.boundingBox();
+  const boxes = [];
+  for (const control of controls) {
+    await expect(control).toBeVisible();
+    const box = await control.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(pane.x - 1);
+    expect(box.x + box.width).toBeLessThanOrEqual(pane.x + pane.width + 1);
+    expect(box.y).toBeGreaterThanOrEqual(pane.y - 1);
+    expect(box.y + box.height).toBeLessThanOrEqual(pane.y + pane.height + 1);
+    boxes.push(box);
+  }
+  for (let index = 0; index < boxes.length; index += 1) {
+    for (const other of boxes.slice(index + 1)) {
+      const box = boxes[index];
+      const overlapWidth = Math.min(box.x + box.width, other.x + other.width) - Math.max(box.x, other.x);
+      const overlapHeight = Math.min(box.y + box.height, other.y + other.height) - Math.max(box.y, other.y);
+      expect(overlapWidth <= 1 || overlapHeight <= 1).toBe(true);
+    }
+  }
+}
+
+for (const theme of ['light', 'dark']) {
+  test(`talkgroup command buttons remain separate in ${theme} at 320px`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await installWorkspace(page, theme);
+    await openSystem(page);
+    await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
+    await expectTalkgroupCommandsDoNotOverlap(page);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320);
+  });
+}
+
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
   test(`Different comparison remains readable in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -1664,6 +1703,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await page.getByLabel('Compare with Alias List').selectOption('7');
     await page.getByRole('button', { name: 'Different', exact: true }).click();
     await expect(page.locator('.radioreference-talkgroup-table tbody tr')).toHaveCount(1);
+    await expectTalkgroupCommandsDoNotOverlap(page);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
     await expect(page.locator('body')).toHaveScreenshot(`radioreference-different-${theme}-${width}.png`, {
       fullPage: true

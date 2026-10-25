@@ -1128,12 +1128,12 @@ test('search ignores an older renewal status error after a newer poll and contin
   await expect(dialog(page).getByRole('checkbox', { name: 'Select Observed before renewal', exact: true })).toBeVisible();
   state.delayNextJobStatus = true;
   state.failJobStatusAfterDelay = true;
-  await page.clock.fastForward(300);
+  await page.clock.runFor(300);
   await expect.poll(() => Boolean(state.releaseJobStatus)).toBe(true);
   state.customCandidates = state.customCandidates.map((candidate) => candidate.radio_reference.state === 'pending' ?
     { ...candidate, name: candidate.candidate_id === 'marcs-27' ? 'Latest MARCS control' : candidate.name,
       radio_reference: { state: 'matched', match: { rr_system_id: 123, system_name: ohioSystems.marcs } } } : candidate);
-  await page.clock.fastForward(800);
+  await page.clock.runFor(800);
   await expect(dialog(page).getByRole('checkbox', { name: 'Select Latest MARCS control', exact: true })).toBeVisible();
   await expect(review).toBeEnabled();
   const oldError = page.waitForResponse((response) => new URL(response.url()).pathname === `${searchPath}/search-a` &&

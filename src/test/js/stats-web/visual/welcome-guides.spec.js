@@ -8,8 +8,10 @@ const guide = page => page.locator('.ui-setup-guide');
 const next = page => guide(page).getByRole('button', { name: 'Next', exact: true });
 const welcomeKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1';
 
-async function openApplication(page, { theme = 'light', firstRun = false, view = 'channel-setup', replay = true, channelFailure = false } = {}) {
+async function openApplication(page, { theme = 'light', firstRun = false, view = 'channel-setup', replay = true,
+  channelFailure = false, completedGuides = {} } = {}) {
   const fixture = await installSiteStyleApplication(page, theme, undefined, { guides: firstRun });
+  Object.assign(fixture.tourDismissals.dismissed, completedGuides);
   const catalogResponse = channelFailure ? { status: 503, json: { error: { message: 'Channel catalog is temporarily unavailable.' } } } :
     { json: { data: { revision: 1, channels: [] } } };
   await page.route('**/api/v1/admin/channels', route => route.fulfill(catalogResponse));
@@ -137,11 +139,12 @@ for (const theme of ['light', 'dark']) {
 }
 
 test('first desktop visit remembers welcome dismissal and the URL can replay it', async ({ page }) => {
-  const fixture = await openApplication(page, { firstRun: true, replay: false, view: 'dashboard' });
+  const fixture = await openApplication(page, { firstRun: true, replay: false, view: 'dashboard', completedGuides: { dashboard: 3 } });
   await expect(guide(page)).toContainText('Welcome to sdrtrunk VCE');
   await guide(page).getByRole('button', { name: 'Close guide', exact: true }).click();
   await expect(guide(page)).toHaveCount(0);
   expect(await page.evaluate(key => localStorage.getItem(key), welcomeKey)).toBe('1');
+  await expect.poll(() => fixture.tourDismissals.dismissed.welcome).toBe(1);
   await page.reload();
   await expect(page.locator('#page-guide-button')).toBeVisible();
   await expect(guide(page)).toHaveCount(0);
@@ -168,7 +171,7 @@ for (const dismissal of ['Close guide', 'Escape', 'darkened area']) {
 }
 
 test('page help opens a fallback template and keeps keyboard focus inside the guide', async ({ page }) => {
-  const fixture = await openApplication(page, { replay: false, view: 'dashboard' });
+  const fixture = await openApplication(page, { replay: false, view: 'settings' });
   const help = page.locator('#page-guide-button');
   await help.click();
   await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
@@ -182,6 +185,7 @@ test('page help opens a fallback template and keeps keyboard focus inside the gu
   await expect(guide(page)).toHaveCount(0);
   await expect(help).toBeFocused();
   await help.click();
+  await expect(guide(page)).toHaveAttribute('data-guide-id', 'settings');
   await guide(page).getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(guide(page)).toContainText('Guide coming soon');
   await guide(page).getByRole('button', { name: 'Take the welcome tour', exact: true }).click();
@@ -216,7 +220,7 @@ test('the player spotlight restores a minimized listener without starting audio'
   page.on('request', request => {
     if (/\/api\/v1\/.*\/audio(?:\?|$)/.test(request.url())) audioRequests.push(request.url());
   });
-  const fixture = await openApplication(page, { replay: false, view: 'dashboard' });
+  const fixture = await openApplication(page, { replay: false, view: 'settings' });
   const player = page.locator('#audio-dock');
   await expect(player).toHaveAttribute('data-source', 'live');
   await expect(player).toHaveAttribute('data-state', 'minimal');

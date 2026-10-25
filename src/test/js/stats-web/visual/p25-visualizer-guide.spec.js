@@ -10,17 +10,25 @@ const evidence = process.env.P25_GUIDE_EVIDENCE || path.resolve(__dirname, '../.
 const sample = page => page.locator('.network-visualizer-layout[data-guide-example="network-visualizer"]');
 async function observeActualRenderer(page) {
   const filename = path.resolve(__dirname, '../../../../../stats-web/assets/features/network-visualizer/renderer.js');
-  const source = fs.readFileSync(filename, 'utf8').replace("\n  host.dataset.rendererState = 'ready';", `
+  let source = fs.readFileSync(filename, 'utf8');
+  const readyMarker = "\n  host.dataset.rendererState = 'ready';";
+  const suspensionMarker = '    guideSuspended = Boolean(value);';
+  expect(source.split(readyMarker)).toHaveLength(2);
+  expect(source.split(suspensionMarker)).toHaveLength(2);
+  source = source.replace(readyMarker, `
   window.p25TourScenes ||= [];
-  window.p25TourScenes.push({ host, inspect() {
+  window.p25TourScenes.push({ host, transitions: [], inspect() {
     const nodeTypes = [];
     graph.scene().traverse(value => { if (value.userData?.p25Node) nodeTypes.push(value.userData.p25Node.type); });
     return { nodeTypes, graphNodes: graph.graphData().nodes.length, graphLinks: graph.graphData().links.length,
       render: { ...graph.renderer().info.render }, suspended: guideSuspended,
       camera: { position: graph.camera().position.toArray(), target: graph.controls().target.toArray() },
+      transitions: this.transitions,
       labels: host.querySelectorAll('.network-visualizer-label').length };
   } });
-  host.dataset.rendererState = 'ready';`);
+  host.dataset.rendererState = 'ready';`).replace(suspensionMarker, suspensionMarker + `
+    window.p25TourScenes?.find(scene => scene.host === host)?.transitions.push({ suspended: guideSuspended,
+      camera: { position: graph.camera().position.toArray(), target: graph.controls().target.toArray() } });`);
   await page.route('**/assets/features/network-visualizer/renderer.js?*', route => route.fulfill({ contentType: 'text/javascript', body: source }));
 }
 async function openVisualizer(page, options = {}) {
@@ -97,8 +105,6 @@ for (const dismiss of ['Escape', 'Close guide', 'shade']) {
         canvas: content.querySelector('canvas'), children: [...content.childNodes] };
     });
     const storage = await nonGuideStorage(page);
-    const camera = dismiss === 'Escape' ? await page.locator('.network-visualizer-canvas').evaluate(host =>
-      window.p25TourScenes.find(scene => scene.host === host).inspect().camera) : null;
     const player = await page.locator('#audio-dock').evaluate(element => ({ ...element.dataset }));
     await page.locator('#page-guide-button').click(); await startTour(page, id, steps[0]);
     await goTo(page, 'manual-camera');
@@ -114,10 +120,16 @@ for (const dismiss of ['Escape', 'Close guide', 'shade']) {
       element.querySelector('canvas') === window.p25Original.canvas &&
       window.p25Original.children.every((node, index) => document.getElementById('content').childNodes[index] === node))).toBe(true);
     await expect(page.getByRole('button', { name: 'Manual', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    if (camera) {
-      const restored = await page.locator('.network-visualizer-canvas').evaluate(host =>
-        window.p25TourScenes.find(scene => scene.host === host).inspect().camera);
-      for (const part of ['position', 'target']) restored[part].forEach((value, index) => expect(value).toBeCloseTo(camera[part][index], 8));
+    //Compare the actual suspension/resume entry boundaries: resuming immediately renders an OrbitControls
+    //damping frame, but the guide must preserve the exact paused original camera until that normal frame.
+    const transitions = await page.locator('.network-visualizer-canvas').evaluate(host =>
+      window.p25TourScenes.find(scene => scene.host === host).inspect().transitions);
+    //The overview, three opening lessons, Back, and Next each own and release their sample page.
+    expect(transitions.map(value => value.suspended)).toEqual(Array.from({ length: 6 }, () => [true, false]).flat());
+    for (let pair = 0; pair < transitions.length; pair += 2) {
+      const [paused, resumed] = transitions.slice(pair, pair + 2).map(value => value.camera);
+      for (const part of ['position', 'target']) resumed[part].forEach((value, index) =>
+        expect(value).toBeCloseTo(paused[part][index], 8));
     }
     expect(await page.locator('#audio-dock').evaluate(element => ({ ...element.dataset }))).toEqual(player);
     expect(await nonGuideStorage(page)).toEqual(storage); isolated(state);

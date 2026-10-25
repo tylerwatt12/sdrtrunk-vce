@@ -160,7 +160,8 @@ for (const theme of ['light', 'dark']) {
 
       await page.goto(`/app.html?view=group-identity&${scope}&identity_key=${groupKey}`);
       await expect(page.locator('.entity-info-layout .ui-metric-grid')).toHaveCount(6);
-      const signaling = page.locator('.group-identity-signaling-totals');
+      const signaling = page.locator('.group-identity-activity-panels .ui-section')
+        .filter({ has: page.locator('.ui-section-title:text-is("Signaling activity")') });
       await expect(signaling.locator('.ui-metric-label')).toHaveText([
         'Active channel', 'Talkgroup affiliation', 'Registration', 'Denied'
       ]);

@@ -91,7 +91,8 @@ async function mockApplication(page, theme) {
       traffic_grant_age_out_milliseconds: 1_200, collection_enabled: true };
     else if (p === '/api/v1/live/multiplex/control') {
       if (request.postDataJSON()?.subscriptions?.p25_activity) await page.evaluate(() => window.mobileP25Frame?.('source_change', {
-        source_epoch: 'mobile-p25', sequence: 0, server_time_ms: Date.now(), collection_enabled: true }));
+        source_epoch: 'mobile-p25', sequence: 0, watermark_id: 16, history_generation: 0,
+        server_time_ms: Date.now(), collection_enabled: true }));
       data = { accepted: true };
     } else if (p === '/api/v1/activity') data = {
       rows: Number(url.searchParams.get('after_id')) > 0 ? [] : activity,

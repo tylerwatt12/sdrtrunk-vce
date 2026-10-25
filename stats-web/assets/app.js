@@ -15885,7 +15885,6 @@ function openSpectrumDiscoveryWizard(selection) {
   };
   const busy = (value) => {
     modal.setBusy(value);
-    directory.setBusy(value);
     actions.querySelectorAll('button').forEach((control) => { control.disabled = value; });
     stage.querySelectorAll('button').forEach((control) => { control.disabled = value; });
     stage.querySelectorAll('.spectrum-discovery-details-action').forEach((control) => { control.disabled = value; });
@@ -15897,6 +15896,8 @@ function openSpectrumDiscoveryWizard(selection) {
       disabledControls.forEach((disabled, control) => { if (control.isConnected) control.disabled = disabled; });
       disabledControls.clear();
     }
+    //The directory owns readiness that can change while the dialog is busy.
+    directory.setBusy(value);
     if (!value) { refreshSetupAction?.(); reviewBinding?.refreshActions?.(); }
   };
   const showError = (error, copy = 'This step could not finish. Try again.') => {

@@ -484,7 +484,7 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-test('chapter chooser releases its wide scrollable layout before the opening lesson', async ({ page }) => {
+test('chapter chooser releases its wide scrollable layout before the purpose lesson', async ({ page }) => {
   await installGuideHarness(page);
   await page.evaluate(async () => {
     const harness = window.guideHarness;
@@ -495,7 +495,7 @@ test('chapter chooser releases its wide scrollable layout before the opening les
   const guide = page.locator('.ui-setup-guide');
   await expect(guide).toHaveClass(/ui-setup-guide--choices/);
   await guide.getByRole('button', { name: 'Start tour', exact: true }).click();
-  await expect(guide).toHaveAttribute('data-guide-step', 'computer-open');
+  await expect(guide).toHaveAttribute('data-guide-step', 'computer-purpose');
   await expect(guide).not.toHaveClass(/ui-setup-guide--choices/);
   await expect(guide.locator('[data-guide-choice]')).toHaveCount(0);
   const size = await guide.boundingBox();
@@ -505,7 +505,7 @@ test('chapter chooser releases its wide scrollable layout before the opening les
 });
 
 
-test('a chosen chapter starts at its opener and Back returns to the common overview', async ({ page }) => {
+test('a chosen chapter starts with its purpose and Back returns to the common overview', async ({ page }) => {
   await installGuideHarness(page);
   await page.evaluate(async () => {
     const harness = window.guideHarness;
@@ -514,8 +514,8 @@ test('a chosen chapter starts at its opener and Back returns to the common overv
       {}, { initialStep: 1, onChoice() {} });
   });
   const guide = page.locator('.ui-setup-guide');
-  await expect(guide).toHaveAttribute('data-guide-step', 'recordings-open');
-  await expect(guide.locator('.ui-setup-guide-counter')).toHaveText('Step 1 of 3');
+  await expect(guide).toHaveAttribute('data-guide-step', 'recordings-purpose');
+  await expect(guide.locator('.ui-setup-guide-counter')).toHaveText('Step 1 of 2');
   await guide.getByRole('button', { name: 'Back', exact: true }).click();
   await expect(guide).toHaveAttribute('data-guide-step', 'overview');
   await expect(guide.locator('[data-guide-choice]')).toHaveCount(19);

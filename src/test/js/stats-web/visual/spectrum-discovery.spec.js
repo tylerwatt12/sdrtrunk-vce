@@ -43,7 +43,7 @@ function snapshot(protocolId, state) {
     .filter((field) => field.path.startsWith('settings.') && Object.hasOwn(field, 'default'))
     .map((field) => [field.path.substring(9), field.default]));
   if (digital) settings.channel_mode = 'TRUNKED';
-  return { session_id: 'discovery-a', state: state.saved ? state.running ? 'running' : 'saved' : state.phase || 'ready', reason: state.reason || null,
+  return { session_id: state.sessionId || 'discovery-a', state: state.saved ? state.running ? 'running' : 'saved' : state.phase || 'ready', reason: state.reason || null,
     protocol_id: state.automaticIdentifying && state.phase === 'identifying' ? 'auto' : protocolId,
     tuner_id: 'idle-a', target_id: 'target-a', frequency_hz: state.frequencyHz || 851012500,
     expires_at_ms: Date.now() + 30000,
@@ -294,9 +294,10 @@ async function install(page, state = {}) {
       state.protocolId = body.protocol_id === 'auto' ? state.detectedProtocolId || 'p25-phase1' : body.protocol_id;
       state.frequencyHz = body.frequency_hz;
       state.discoveryActive = true;
+      if (state.uniqueSessionIds) state.sessionId = `discovery-${state.sessionSequence = (state.sessionSequence || 0) + 1}`;
       return respond(snapshot(state.protocolId, state));
     }
-    if (path === '/api/v1/admin/spectrum-discovery/discovery-a') {
+    if (path === `/api/v1/admin/spectrum-discovery/${state.sessionId || 'discovery-a'}`) {
       if (request.method() === 'DELETE') {
         if (state.expiredCleanup) return route.fulfill({ status: 409, json: { error: {
           code: 'discovery_conflict', message: 'Channel discovery expired; begin again' } } });
@@ -1778,7 +1779,7 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
     const trigger = page.getByRole('button', { name: width < 600 ? 'More spectrum actions' : 'Display options', exact: true });
     await trigger.click();
     const panel = page.locator('.tuner-spectrum-options-panel');
-    await expect(panel.locator('.settings-card-title')).toHaveText(['Display', 'FFT', 'Waterfall', 'Spectrum performance']);
+    await expect(panel.locator('.settings-card-title')).toHaveText(['Spectrum performance', 'Display', 'FFT', 'Waterfall']);
     const display = panel.locator('.settings-card').filter({ has: page.getByRole('heading', { name: 'Display', exact: true }) });
     const choice = display.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true });
     await expect(panel.getByRole('checkbox', { name: 'Auto range display range on retune', exact: true })).toHaveCount(1);
@@ -1949,7 +1950,8 @@ test('the shared trunked detection path uses plain language and waits for explic
   await expect(dialog.getByLabel('System', { exact: true })).toBeHidden();
   await expect(dialog.getByLabel('Site', { exact: true })).toBeHidden();
   await expect(dialog.locator('summary').filter({ hasText: /^Additional labels \(optional\)$/ })).toBeVisible();
-  await expect(dialog.locator('summary').filter({ hasText: /^What is an Alias List\?$/ })).toBeVisible();
+  await expect(dialog.getByText('New Alias Lists use your Default listening list.', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('What is an Alias List?', { exact: true })).toHaveCount(0);
   expect(await dialog.innerText()).not.toMatch(/WACN|SysID|NAC/);
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeVisible();
 });
@@ -2169,7 +2171,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
 for (const protocolId of ['p25-phase1', 'dmr', 'nxdn']) {
   for (const phase of ['inconclusive', 'failed']) {
     test(`${phase} ${protocolId} detection releases the check and returns to the same setup choices`, async ({ page }) => {
-      const state = { phase };
+      const state = { phase, uniqueSessionIds: true };
       await install(page, state);
       await begin(page, protocolId);
       const dialog = wizard(page);
@@ -2179,14 +2181,15 @@ for (const protocolId of ['p25-phase1', 'dmr', 'nxdn']) {
         .toHaveAttribute('href', '/?view=channel-setup&create=1&frequency_hz=851012500');
       await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveCount(0);
       await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
-      expect(state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'DELETE')).toHaveLength(1);
+      expect(state.requests.filter(request => request.path.endsWith('/discovery-1') && request.method === 'DELETE')).toHaveLength(1);
       expect(state.requests.filter(request => request.path.endsWith('/save') || request.path.endsWith('/start'))).toHaveLength(0);
       state.phase = 'identifying';
       await dialog.getByRole('button', { name: 'Detect trunked system', exact: true }).click();
       await expect(dialog.getByRole('heading', { name: 'Checking this radio system…', exact: true })).toBeVisible();
       await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
       await expect(dialog).toHaveCount(0);
-      await expect.poll(() => state.requests.filter(request => request.path.endsWith('/discovery-a') && request.method === 'DELETE').length).toBe(2);
+      await expect.poll(() => state.requests.filter(request => request.path.startsWith('/api/v1/admin/spectrum-discovery/discovery-') &&
+        request.method === 'DELETE').map(request => request.path.split('/').pop())).toEqual(['discovery-1', 'discovery-2']);
       expect(state.requests.filter(request => request.path === '/api/v1/admin/spectrum-discovery' && request.method === 'POST')
         .map(request => request.body.protocol_id)).toEqual(['auto', 'auto']);
     });

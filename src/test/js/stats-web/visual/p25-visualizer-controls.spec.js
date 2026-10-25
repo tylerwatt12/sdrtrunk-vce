@@ -18,7 +18,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       label.dataset.signal = 'call';
       label.textContent = 'Dispatch · call activity';
       label.style.left = '50%';
-      label.style.top = '65%';
+      label.style.top = '82%';
       const title = document.createElement('div');
       title.className = 'network-visualizer-scope-title';
       const link = document.createElement('a');
@@ -63,6 +63,14 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     await link.focus();
     await expect(link).toBeFocused();
     expect(await inheritedColor()).toBe(true);
+    const geometry = await stage.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      const title = element.querySelector('.network-visualizer-scope-title').getBoundingClientRect();
+      const label = element.querySelector('.network-visualizer-label').getBoundingClientRect();
+      return { inside: label.left >= bounds.left && label.right <= bounds.right &&
+        label.top >= bounds.top && label.bottom <= bounds.bottom, separated: label.top >= title.bottom };
+    });
+    expect(geometry).toEqual({ inside: true, separated: true });
     await expect(stage).toHaveScreenshot(`network-visualizer-controls-${theme}-${width}.png`);
   });
 }

@@ -215,6 +215,8 @@ test('live and recording playback stop one another without clearing the recordin
   await openAudioApp(page);
   await chooseRecording(page, 0, 'Continue from here');
   await fullControls(page);
+  await selectPanel(page, 'Queue');
+  await expect(dock(page)).toContainText('ENG 5');
   await selectDockSource(dock(page), 'live');
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.audioTest.liveSources.filter((source) => source.active).length))

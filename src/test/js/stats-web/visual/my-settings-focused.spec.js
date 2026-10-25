@@ -24,9 +24,12 @@ for (const presentation of presentations) {
     await expect(status).toBeVisible();
     await expect(page.getByRole('form')).toHaveCount(1);
     const groups = status.locator('details');
-    await expect(groups).toHaveCount(5);
+    await expect(groups.locator('summary strong')).toHaveText([
+      'Tuners and radio data', 'USB connection', 'Channel decoding'
+    ]);
+    await expect(groups.locator('.ui-settings-count')).toHaveText(['3 of 3 shown', '2 of 2 shown', '3 of 3 shown']);
     for (const group of await groups.all()) await expect(group).not.toHaveAttribute('open');
-    await expect(status.locator('input[type="checkbox"]')).toHaveCount(27);
+    await expect(status.locator('input[type="checkbox"]')).toHaveCount(8);
     await expect(workspace).toHaveScreenshot(`focused-status-${presentation.name}.png`);
     await selectSettingsCategory(page, 'pages', 'Page preferences');
     await expect(page.getByRole('form')).toHaveCount(0);
@@ -75,7 +78,7 @@ test('all status issues remain editable and unknown saved choices survive a save
   const groups = editor.locator('details');
   for (const group of await groups.all()) await group.locator('summary').click();
   const controls = editor.getByRole('checkbox');
-  await expect(controls).toHaveCount(27);
+  await expect(controls).toHaveCount(8);
   for (const checkbox of await controls.all()) {
     await expect(checkbox).toBeVisible();
     await expect(checkbox).toBeEnabled();
@@ -83,7 +86,7 @@ test('all status issues remain editable and unknown saved choices survive a save
   }
   await editor.getByRole('button', { name: 'Save changes', exact: true }).click();
   await expect(editor.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
-  expect(state.profiles.listener.health_alerts.disabled_codes).toHaveLength(28);
+  expect(state.profiles.listener.health_alerts.disabled_codes).toHaveLength(9);
   expect(state.profiles.listener.health_alerts.disabled_codes).toContain('future-status-issue');
   expect(state.profiles.listener.appearance).toEqual({ theme: 'light', hue: null });
   expect(state.writes).toHaveLength(1);
@@ -121,6 +124,7 @@ test('leaving My Settings confirms a dirty draft and resumes accepted navigation
   await confirmation.getByRole('button', { name: 'Discard changes', exact: true }).click();
   await expect(page).toHaveURL(/view=dashboard/);
   await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
+  await expect(page.locator('.ui-setup-guide')).toHaveCount(0);
   await expect(page.locator('html[data-custom-hue]')).toHaveCount(0);
   expect(state.writes).toHaveLength(0);
 });

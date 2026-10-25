@@ -68,6 +68,8 @@ const additionalCases = [
     async (page) => {
       await page.locator('.dashboard-activity-legend-button[data-action="GRANT"]').click();
       await expect(page.locator('.dashboard-activity-radio-host')).toHaveAttribute('aria-busy', 'false');
+      await expect(page.locator('.dashboard-activity-radio-result tbody tr')).toHaveCount(1);
+      await expect(page.locator('.dashboard-activity-radio-result')).toContainText('Source radios 1–1 of 1');
     }],
   ['dashboard-inventory', 'view=dashboard&tab=inventory&alias_list_id=1',
     '.alias-coverage-table-section', 'Fire Dispatch', openAliasChannelScope],
@@ -91,6 +93,42 @@ const operationalFields = {
   'admin-audio-quality': ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio'],
   'admin-activity': ['stats_logging_enabled', 'stats_detailed_history_enabled', 'stats_logging_retention_days']
 };
+
+// Keep this full-page style sample compact. The shared fixture also serves the
+// dedicated Activity pagination tests, which deliberately provide 101 radios.
+async function installCompactActivityStyleSample(page, fixture) {
+  const now = Date.parse('2026-10-01T12:00:00Z');
+  await page.route('**/api/v1/activity/{actions,radios}*', async (route) => {
+    const pathname = new URL(route.request().url()).pathname;
+    fixture.requests.push(pathname);
+    expect(route.request().method()).toBe('GET');
+    if (pathname.endsWith('/actions')) return route.fulfill({ json: { data: { rows: [
+      { action: 'GRANT', observation_count: 12 }, { action: 'REGISTER', observation_count: 4 }
+    ] } } });
+    await route.fulfill({ json: { data: { rows: [{
+      radio_system_key: systemKey, system_name: systemName, channel_kind: 'TRUNKED',
+      native_id: 30914, radio_id: 30914, alias_name: 'Engine 4', observation_count: 10,
+      last_seen_ms: now, radio_system_entity_ref: { kind: 'radio_system', key: systemKey },
+      radio_entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: radioKey }
+    }], limit: 100, offset: 0, total_count: 1, has_more: false, next_offset: null,
+    action_observation_count: 12, retained_observation_count: 12,
+    identified_observation_count: 10, unknown_source_observation_count: 2 } } });
+  });
+}
+
+async function installNamedP25StyleSample(page, fixture) {
+  await page.route('**/api/v1/admin/p25-bandplan-overrides', async (route) => {
+    fixture.requests.push(new URL(route.request().url()).pathname);
+    expect(route.request().method()).toBe('GET');
+    const system = { protocol: 'P25', wacn: 1, system: 1, system_id: 1,
+      system_name: systemName, radio_system_key: systemKey,
+      radio_system_entity_ref: { kind: 'radio_system', key: systemKey },
+      system_identity: { key: systemKey, name: systemName, protocol: 'P25', wacn: 1, system_id: 1 } };
+    await route.fulfill({ json: { known_systems: [system], profiles: [{ ...system, rfss: 1, site: 2,
+      bands: [{ identifier: 0, type: 'FDMA', base_frequency: 851006250, bandwidth: 12500,
+        channel_spacing: 12500, transmit_offset: -45000000 }] }] } });
+  });
+}
 
 async function expectSuccessfulPage(page, fixture, name, selector, content) {
   const example = page.locator(selector);
@@ -234,12 +272,26 @@ for (const [name, query, selector, content, prepare] of cases) {
     test(`actual ${name} ${presentation.name}`, async ({ page }) => {
       await page.setViewportSize(presentation.viewport);
       const fixture = await installSiteStyleApplication(page, presentation.theme);
+      if (name === 'dashboard-activity') await installCompactActivityStyleSample(page, fixture);
+      if (name === 'admin-protocol-p25') await installNamedP25StyleSample(page, fixture);
       if (name === 'credits') await page.emulateMedia({ reducedMotion: 'reduce' });
       await page.goto(`/app.html?${query}`);
       if (prepare) await prepare(page);
       if (presentation.theme === 'dark') await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
       else await expect(page.locator('html')).not.toHaveAttribute('data-theme', 'dark');
       await expectSuccessfulPage(page, fixture, name, selector, content);
+      if (name === 'admin-protocol-p25') {
+        const title = page.locator('.p25-override-record .ui-record-card-title').first();
+        await expect(title.getByRole('link', { name: systemName, exact: true }))
+          .toHaveAttribute('href', /view=radio-system/);
+        if (presentation.viewport.width <= 390) {
+          expect(await title.evaluate((element) => {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return range.getClientRects().length;
+          })).toBeGreaterThan(1);
+        }
+      }
       await expectSharedTypography(page);
       await expectNoHorizontalOverflow(page);
       await auditPageContrast(page, `actual-${name}-${presentation.name}`);

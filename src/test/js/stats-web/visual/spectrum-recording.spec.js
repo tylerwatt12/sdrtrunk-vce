@@ -143,7 +143,7 @@ async function install(page, { tunerClass = 'recording_tuner', width = 1280, the
     const application = readFileSync(process.env.RECORDING_SPECTRUM_BASELINE_APP ||
       resolve(root, 'stats-web/assets/app.js'), 'utf8');
     // Expose the existing controller only in this isolated browser response; production source stays unchanged.
-    const original = '  refreshTargets();\n  return controller;\n}';
+    const original = '  controller.ready = refreshTargets();\n  return controller;\n}';
     expect(application).toContain(original);
     await route.fulfill({ contentType: 'text/javascript', body: application.replace(original,
       '  window.recordingSpectrumController = controller;\n' + original) });
@@ -166,6 +166,8 @@ async function install(page, { tunerClass = 'recording_tuner', width = 1280, the
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
+    if (path === '/api/v1/dashboard/main') return respond({ quality: { current: [] },
+      directory: { systems: [], channels: [] } });
     if (path === '/api/v1/admin/tuners') return respond({ tuners: [receiver] });
     if (path === '/api/v1/diagnostics/tuners') {
       const snapshot = { rows: receiver.spectrum_target_id ? [{ target_id: receiver.spectrum_target_id,
@@ -202,7 +204,7 @@ async function install(page, { tunerClass = 'recording_tuner', width = 1280, the
 }
 
 async function expectRenderedRecordingPlots(page) {
-  const plotPixels = await page.locator('.tuner-spectrum-fft canvas').evaluate((canvas) => {
+  const plotPixels = () => page.locator('.tuner-spectrum-fft canvas').evaluate((canvas) => {
     const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     let blueTrace = 0;
     for (let index = 0; index < pixels.length; index += 4) {
@@ -210,8 +212,8 @@ async function expectRenderedRecordingPlots(page) {
     }
     return blueTrace;
   });
-  expect(plotPixels).toBeGreaterThan(50);
-  const waterfallColors = await page.locator('.tuner-spectrum-waterfall canvas').evaluate((canvas) => {
+  await expect.poll(plotPixels).toBeGreaterThan(50);
+  const waterfallColors = () => page.locator('.tuner-spectrum-waterfall canvas').evaluate((canvas) => {
     const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     const colors = new Set();
     for (let index = 0; index < pixels.length; index += 4) {
@@ -219,7 +221,7 @@ async function expectRenderedRecordingPlots(page) {
     }
     return colors.size;
   });
-  expect(waterfallColors).toBeGreaterThan(1);
+  await expect.poll(waterfallColors).toBeGreaterThan(1);
 }
 
 for (const theme of ['light', 'dark']) {
@@ -407,10 +409,11 @@ test('a delayed old diagnostics response cannot strand a newly available recordi
   const state = await install(page, { targetAvailable: false, channelCount: 0, exposeController: true });
   await expect(page.locator('.spectrum-browse-status'))
     .toHaveText(process.env.RECORDING_SPECTRUM_BASELINE_APP ? 'Idle' : 'Waiting');
+  await page.evaluate(() => window.recordingSpectrumController.ready);
   // Start the old inventory request shortly before renewal, within the real request timeout.
   await page.clock.fastForward(9000);
   state.holdNextDiagnostics = true;
-  await page.evaluate(() => window.recordingSpectrumController.refreshTargets());
+  await page.evaluate(() => { void window.recordingSpectrumController.refreshTargets(); });
   await expect.poll(() => typeof state.releaseDiagnostics).toBe('function');
   const initialRequestCount = state.requests.filter(({ path }) => path === '/api/v1/diagnostics/tuners').length;
   state.receiver.spectrum_target_id = 'restarted-recording-target';
