@@ -776,9 +776,21 @@ class RrapiRadioReferenceGatewayTransportTest
             List<String> returns = List.of(
                 "<return xsi:type=\"SOAP-ENC:Array\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[0]\"/>",
                 "<return/>",
+                "<return xsi:nil=\"true\" xsi:type=\"SOAP-ENC:Array\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[0]\"/>",
+                "<return xsi:nil=\"1\" xsi:type=\"SOAP-ENC:Array\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[0]\"> \n </return>",
                 "",
                 "<return xsi:nil=\"true\"/>",
-                "<return xsi:type=\"SOAP-ENC:Array\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[1]\"/>");
+                "<return xsi:type=\"SOAP-ENC:Array\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[1]\"/>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[1]\"/>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[invalid]\"/>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[]\"/>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[-1]\"/>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[0][0]\"/>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[2147483648]\"/>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[0]\"><item/></return>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[1]\"><item/></return>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[0]\">unexpected</return>",
+                "<return xsi:nil=\"true\" SOAP-ENC:arrayType=\"tns:" + types[operation] + "[0]\"><![CDATA[unexpected]]></return>");
             AtomicInteger requestIndex = new AtomicInteger();
             int selectedOperation = operation;
             try(TestHttpsServer server = new TestHttpsServer(exchange -> {
@@ -799,9 +811,13 @@ class RrapiRadioReferenceGatewayTransportTest
                 };
                 assertEquals(List.of(), read.call());
                 assertEquals(List.of(), read.call(), "an untyped empty return is a valid empty array");
-                for(int malformed = 2; malformed < returns.size(); malformed++)
+                assertEquals(List.of(), read.call(),
+                    "RadioReference's nil-marked array with an explicit zero length is a valid empty result");
+                assertEquals(List.of(), read.call(), "the equivalent nil value 1 permits only whitespace content");
+                for(int malformed = 4; malformed < returns.size(); malformed++)
                     assertEquals(RadioReferenceGatewayException.Kind.INVALID_RESPONSE,
-                        assertThrows(RadioReferenceGatewayException.class, read::call).kind());
+                        assertThrows(RadioReferenceGatewayException.class, read::call,
+                            operations[operation] + ": " + returns.get(malformed)).kind(), returns.get(malformed));
             }
         }
     }

@@ -448,8 +448,9 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
     }
 
     /**
-     * The published SOAP contract returns an array in a required return part. An empty return is valid; a missing
-     * or nil return is not an empty search. Check the wire shape because the model maps all three to an empty list.
+     * The published SOAP contract returns an array in a required return part. RadioReference also marks some
+     * explicitly zero-length arrays as nil. Accept those only without items or text; an unqualified nil or missing
+     * return is not an empty search. Check the wire shape because the model maps these cases to an empty list.
      */
     private static void requireArrayReturn(byte[] xml) throws RadioReferenceGatewayException
     {
@@ -466,6 +467,7 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
             int declaredItems = -1;
             boolean inBody = false;
             boolean inReturn = false;
+            boolean nilReturn = false;
             while(reader.hasNext())
             {
                 int event = reader.next();
@@ -479,11 +481,11 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
                         returns++;
                         inReturn = true;
                         String nil = reader.getAttributeValue(XML_SCHEMA_INSTANCE_NAMESPACE, "nil");
-                        if("true".equalsIgnoreCase(nil) || "1".equals(nil)) throw invalidArrayReturn();
+                        nilReturn = "true".equalsIgnoreCase(nil) || "1".equals(nil);
                         String arrayType = reader.getAttributeValue("http://schemas.xmlsoap.org/soap/encoding/", "arrayType");
                         if(arrayType != null)
                         {
-                            var count = java.util.regex.Pattern.compile(".*\\[([0-9]+)]$").matcher(arrayType);
+                            var count = java.util.regex.Pattern.compile("[^\\[\\]]+\\[([0-9]+)]$").matcher(arrayType);
                             if(!count.matches()) throw invalidArrayReturn();
                             declaredItems = Integer.parseInt(count.group(1));
                         }
@@ -496,10 +498,12 @@ final class SecureRadioReferenceSoapClient implements AutoCloseable
                     if(depth == 2) inBody = false;
                     depth--;
                 }
-                else if(inReturn && depth == 4 && reader.isCharacters() && !reader.isWhiteSpace())
+                else if(inReturn && depth == 4 && (reader.isCharacters() || event == XMLStreamConstants.CDATA) &&
+                    !reader.isWhiteSpace())
                     throw invalidArrayReturn();
             }
-            if(returns != 1 || declaredItems >= 0 && declaredItems != items) throw invalidArrayReturn();
+            if(returns != 1 || declaredItems >= 0 && declaredItems != items ||
+                nilReturn && (declaredItems != 0 || items != 0)) throw invalidArrayReturn();
         }
         catch(XMLStreamException | RuntimeException exception) { throw invalidArrayReturn(); }
         finally

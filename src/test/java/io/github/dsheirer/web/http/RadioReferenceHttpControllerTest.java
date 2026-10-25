@@ -189,6 +189,21 @@ class RadioReferenceHttpControllerTest
                     .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
                         "channel", draft, "lookup_id", choices.path("lookup_id").asText(),
                         "candidate_id", "forged", "name", "Forged name"))))).statusCode());
+                gateway.namingFrequencyResults = List.of();
+                long unchangedRevision = channels.currentRevision();
+                Map<String,Object> weatherDraft = Map.of("protocol_id", "nbfm", "system", "NOAA", "site", "WX",
+                    "name", "WX5", "source", Map.of("frequencies_hz", List.of(162_500_000L)), "settings", Map.of());
+                HttpResponse<String> noMatchResponse = send(client, jsonRequest(origin, "/channels/enrichment/preview")
+                    .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                        Map.of("channel", weatherDraft, "state_id", 10)))));
+                assertEquals(200, noMatchResponse.statusCode());
+                JsonNode noMatch = data(noMatchResponse);
+                assertEquals("no_match", noMatch.path("state").asText());
+                assertEquals("No RadioReference record matches this frequency and radio type in the selected region.",
+                    noMatch.path("reason").asText());
+                assertFalse(noMatch.hasNonNull("preview_id"));
+                assertTrue(channels.catalog().channels().isEmpty());
+                assertEquals(unchangedRevision, channels.currentRevision());
                 // A remembered list is independent of bookmarking and is a suggestion on both response stages.
                 settings.savePreferredAliasList(2001, 12L);
                 gateway.namingFrequencyResults = null;
