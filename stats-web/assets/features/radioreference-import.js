@@ -1,6 +1,6 @@
 import { radioReferenceLocalityCache } from './radioreference-locality-cache.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
-import { createDiscoveryCompletion } from './discovery-radioreference.js?v=14';
+import { createDiscoveryCompletion } from './discovery-radioreference.js?v=15';
 import { spectrumSearchProtocolLabel } from './spectrum-search-data.js?v=1';
 
 const API_ROOT = '/api/v1/admin/radioreference';

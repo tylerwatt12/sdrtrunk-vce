@@ -914,7 +914,7 @@ if (view === 'spectrum-search') {
 }
 
 if (['spectrum-discovery', 'spectrum-search'].includes(view) && parameters.get('state') === 'complete') {
-  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=14');
+  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=15');
   const node = (tag, className = '', text = null) => {
     const element = document.createElement(tag);
     element.className = className;

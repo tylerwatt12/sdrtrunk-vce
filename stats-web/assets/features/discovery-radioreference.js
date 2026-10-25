@@ -219,6 +219,13 @@ export function discoverySnapshotIsCurrent(observed, value, { active = true, bus
   return active && !busy && !finished && observed === value;
 }
 
+export function discoveryCleanupAlreadyClosed(cause) {
+  return [404, 410].includes(Number(cause?.status)) ||
+    ['discovery_expired', 'spectrum_discovery_expired'].includes(String(cause?.code || '')) ||
+    Number(cause?.status) === 409 && cause?.code === 'discovery_conflict' &&
+      cause?.message === 'Channel discovery expired; begin again';
+}
+
 export function createDiscoveryRadioReferenceWait({ node }) {
   const element = node('div');
   const status = node('p', 'ui-feedback ui-feedback-loading', 'Looking up RadioReference names…');
@@ -260,7 +267,7 @@ export function discoveryRadioReferenceSystemUrl(value) {
 
 export function discoveryRadioReferenceResult(ui, value, existing = null) {
   const result = value?.radio_reference;
-  if (!result || ['login_required', 'premium_required'].includes(result.state)) return null;
+  if (!result?.state || ['manual', 'not_started', 'login_required', 'premium_required'].includes(result.state)) return null;
   const { node, anchor } = ui;
   const details = existing || node('details', 'ui-section-disclosure ui-section-disclosure-flat');
   if (!existing) details.append(node('summary', 'ui-section-summary', 'RadioReference'));

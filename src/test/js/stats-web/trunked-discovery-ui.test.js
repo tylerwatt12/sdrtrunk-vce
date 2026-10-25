@@ -9,7 +9,7 @@ async function main() {
   const assets = path.resolve(process.argv[2] || 'stats-web/assets');
   const { spectrumSearchGroupKey, spectrumSearchIdentityFacts, spectrumSearchSystemName } =
     await import(pathToFileURL(path.join(assets, 'features/spectrum-search-data.js')).href);
-  const { discoveryRadioReferenceResult, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent,
+  const { discoveryRadioReferenceResult, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed,
     createDiscoveryRadioReferenceWait, createDiscoveryCompletion, createDiscoveryTalkgroupAvailability, importDiscoveryAliases } =
     await import(pathToFileURL(path.join(assets, 'features/discovery-radioreference.js')).href);
   const { requestChannelAction, requestChannelAdminMutation } =
@@ -161,10 +161,14 @@ async function main() {
   assert.equal(matched.firstElementChild, summary);
   assert.match(JSON.stringify(matched), /Transit|radioreference.com/);
   assert.doesNotMatch(JSON.stringify(matched), /North|Channel|451|exact-frequency/);
-  for (const state of ['login_required', 'premium_required']) {
+  for (const state of ['manual', 'not_started', 'login_required', 'premium_required']) {
     assert.equal(discoveryRadioReferenceResult(ui, { radio_reference: { state } }), null,
-      'Results must never offer a late account connection prompt.');
+      'An unstarted lookup must remain quiet; results must not offer a late account connection prompt.');
   }
+  assert.equal(discoveryCleanupAlreadyClosed({ status: 409, code: 'discovery_conflict',
+    message: 'Channel discovery expired; begin again' }), true);
+  assert.equal(discoveryCleanupAlreadyClosed({ status: 409, code: 'discovery_conflict',
+    message: 'The selected tuner changed' }), false, 'Cleanup must not swallow real ownership conflicts.');
   const availabilityCalls = [];
   let availabilityRecovered = false;
   const availableTalkgroups = createDiscoveryTalkgroupAvailability(async (url, options) => {

@@ -33,13 +33,13 @@ import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=11';
+} from './features/alias-list-create.js?v=12';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
 import { createRecordingsFeature } from './features/recordings.js?v=58';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
-import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, createDiscoveryCompletion, createDiscoveryAliasListChoice, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=14';
+import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, createDiscoveryTalkgroupAvailability, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=15';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=1';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
@@ -8188,7 +8188,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : streaming ? [
       import('./features/streaming.js?v=14'), import('./guides/streaming-presentation.js?v=1')
     ] : [
-      import('./features/radioreference-import.js?v=37'), import('./guides/radioreference-presentation.js?v=1')
+      import('./features/radioreference-import.js?v=38'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
     const sample = (mapTour ? presentation.createMapGuideData : visualizerTour ? presentation.createNetworkVisualizerGuideData : topics ? presentation.createTopicsGuideData : scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
@@ -15701,7 +15701,7 @@ function openSpectrumDiscoveryWizard(selection) {
         method: 'DELETE', page: false, keepalive: true, timeoutMs: 3000
       });
     } catch (cause) {
-      if (!sessionNoLongerExists(cause)) {
+      if (!discoveryCleanupAlreadyClosed(cause)) {
         if (bestEffort) return false;
         throw cause;
       }
@@ -16409,6 +16409,7 @@ function openSpectrumDiscoveryWizard(selection) {
   const showComplete = () => {
     stopSetupPolling();
     const running = session.saved?.running === true;
+    const notResumed = session.saved?.previous_channels_not_resumed || [];
     showStep(4, 'Channel added');
     stage.append(createDiscoveryCompletion({ node, uiPill }, {
       channels: [{ name: reviewDraft?.name || session.review?.template?.name || 'Saved channel',
@@ -16417,10 +16418,18 @@ function openSpectrumDiscoveryWizard(selection) {
           Number(session.trunked_evidence.serving_frequency_hz) : selection.frequencyHz,
         protocol: radioLabel(), status: running ? 'running' : 'added',
         alias_list_id: session.saved?.alias_list_id, alias_list_name: savedAliasName,
-        alias_list_existing: savedAliasExisting }],
+        alias_list_existing: savedAliasExisting,
+        details: notResumed.length ? [['Previous channels not resumed',
+          notResumed.map((channel) => channel.name || channel.id).join(', ')]] : [] }],
       imports: wantsAliasImport ? aliasImportResult : null,
       receiver: selection.tunerName || selection.targetLabel
     }));
+    if (notResumed.length) {
+      const notice = node('p', 'ui-notice ui-notice-warning',
+        `${notResumed.length} previous ${notResumed.length === 1 ? 'channel remains' : 'channels remain'} stopped. `);
+      notice.append(anchor('Review in Tuners', href('tuners')), '.');
+      stage.append(notice);
+    }
     if (!running) stage.append(node('p', 'ui-notice ui-notice-warning', restartRequired ?
       'Your channel was saved, but VCE needs to restart before listening can start.' :
       'Your channel was added, but listening couldn’t start. You can try starting it again.'));
@@ -16433,6 +16442,11 @@ function openSpectrumDiscoveryWizard(selection) {
         busy(true);
         try {
           const configurationId = session.saved.configuration_id;
+          if (session.saved.browse_lease_id && !selection.prepareSavedStart)
+            throw new Error('Release this Spectrum receiver session before starting the saved channel.');
+          const released = await selection.prepareSavedStart?.(session.saved);
+          if (!current()) return;
+          if (released) session = { ...session, saved: { ...session.saved, ...released } };
           const result = await requestChannelAction(request, { action: 'START', configurationIds: [configurationId] });
           if (current()) {
             const outcome = result.results.find((entry) => entry.configuration_id === configurationId);
@@ -21112,22 +21126,25 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       button.setAttribute('aria-disabled', String(unavailable));
     }
   };
-  const releaseLease = async (suppressFailure = true) => {
-    window.clearTimeout(leaseTimer);
-    leaseTimer = null;
-    leaseRenewalRequested = false;
-    leaseRetrying = false;
-    const previous = lease;
+  const releaseLease = async (suppressFailure = true, { previous = lease, handoff = false } = {}) => {
+    if (lease?.lease_id === previous?.lease_id) {
+      window.clearTimeout(leaseTimer);
+      leaseTimer = null;
+      leaseRenewalRequested = false;
+      leaseRetrying = false;
+    }
     if (!previous?.lease_id) {
       lease = null;
       syncTakeoverActions();
       return;
     }
     try {
-      await requestSpectrumJson(leasePath(previous.tuner.id), {
-        method: 'DELETE', body: { lease_id: previous.lease_id }, page: false, keepalive: true
+      const result = await requestSpectrumJson(leasePath(previous.tuner.id), {
+        method: 'DELETE', body: { lease_id: previous.lease_id, ...(handoff ? { handoff: true } : {}) },
+        page: false, keepalive: true
       });
       if (lease?.lease_id === previous.lease_id) lease = null;
+      return result;
     } catch (error) {
       if (!suppressFailure) {
         if (!disposed && lease?.lease_id === previous.lease_id) {
@@ -21332,31 +21349,51 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     retuneFrequencyHz: () => liveTune.frequencyHz || Number(selectedTuner?.frequency_hz),
     retunePending: () => liveTune.busy,
     cancelRetune: () => { retuneCancelled = true; liveTune.cancel(); },
-    selectionContext: () => ({
-      tunerId: selectedTuner?.id || '', tunerName: selectedTuner?.name || '', browseLeaseId: lease?.lease_id || '',
-      setProbeActive: async (active) => {
-        if (active) liveTune.reset();
-        probeActive = active;
-        select.disabled = active;
-        syncTakeoverActions();
-        renderCenter();
-        await spectrum.setSuspended(active);
-      },
-      onSaved: (savedSession) => {
-        window.clearTimeout(leaseTimer);
-        lease = null;
-        probeActive = false;
-        select.disabled = false;
-        syncTakeoverActions();
-        if (savedSession.saved?.running) void chooseTuner(selectedTuner.id);
-        else {
+    selectionContext: () => {
+      const capturedLease = lease;
+      const capturedTunerId = selectedTuner?.id || '';
+      return {
+        tunerId: capturedTunerId, tunerName: selectedTuner?.name || '', browseLeaseId: capturedLease?.lease_id || '',
+        setProbeActive: async (active) => {
+          if (active) liveTune.reset();
+          probeActive = active;
+          select.disabled = active;
+          syncTakeoverActions();
           renderCenter();
-          setBrowseMessage(savedSession.saved?.restart_required ?
-            'Channel saved. Restart the receiver before listening.' :
-            'Channel saved. Try starting again in the wizard when the receiver is available.');
+          await spectrum.setSuspended(active);
+        },
+        prepareSavedStart: async (saved) => {
+          if (!saved?.browse_lease_id) return null;
+          if (saved.browse_lease_id !== capturedLease?.lease_id)
+            throw new Error('This Spectrum receiver session no longer belongs to this channel.');
+          const result = await releaseLease(false, { previous: capturedLease, handoff: true });
+          return { browse_lease_id: null,
+            ...(Array.isArray(result?.previous_channels_not_resumed) ?
+              { previous_channels_not_resumed: result.previous_channels_not_resumed } : {}) };
+        },
+        onSaved: (savedSession) => {
+          const retained = savedSession.saved?.browse_lease_id;
+          if (retained && retained === capturedLease?.lease_id && (!lease || lease.lease_id === retained)) {
+            lease = lease || capturedLease;
+            window.clearTimeout(leaseTimer);
+            leaseTimer = window.setTimeout(() => void renewLease(), 10_000);
+          } else if (lease?.lease_id === capturedLease?.lease_id) {
+            window.clearTimeout(leaseTimer);
+            lease = null;
+          }
+          probeActive = false;
+          select.disabled = false;
+          syncTakeoverActions();
+          if (savedSession.saved?.running) void chooseTuner(capturedTunerId);
+          else {
+            renderCenter();
+            setBrowseMessage(savedSession.saved?.restart_required ?
+              'Channel saved. Restart the receiver before listening.' :
+              'Channel saved. Try starting again in the wizard when the receiver is available.');
+          }
         }
-      }
-    })
+      };
+    }
   });
   const renewLease = async () => {
     window.clearTimeout(leaseTimer);
@@ -25914,7 +25951,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=40');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=41');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -29257,7 +29294,7 @@ function radioReferenceWorkspaceDependencies(overrides = {}) {
 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
-  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=37');
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=38');
   if (!renderIsCurrent(renderContext)) return;
   if (!beginPage(renderContext, radioReferencePageHeader())) return;
   const { page, loadingState, gate, workspace, workspaceHeader, accountStatus, settingsButton } =

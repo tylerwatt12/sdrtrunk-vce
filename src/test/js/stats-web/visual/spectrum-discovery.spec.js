@@ -76,7 +76,9 @@ function snapshot(protocolId, state) {
       suggested_alias_list_id: null, default_new_alias_list_name: state.defaultAliasName || (isP25 ? 'P25 B0001-123' : analogName)
     },
     saved: state.saved ? { configuration_id: 'channel-a', alias_list_id: state.savedAliasId || 41,
-      running: state.running === true, start_error: state.running ? null : 'Tuner capacity is in use.' } : null
+      running: state.running === true, start_error: state.running ? null : state.startError || 'Tuner capacity is in use.',
+      browse_lease_id: state.retainedBrowseLeaseId || null,
+      previous_channels_not_resumed: state.previousChannelsNotResumed || [] } : null
   };
 }
 
@@ -152,6 +154,12 @@ async function install(page, state = {}) {
   fixtureStates.set(page, state);
   const browseWillFail = state.failBrowseOnce === true;
   state.tuner = tuner();
+  const ownership = state.realSpectrumOwnership ? { nextLease: 0, active: null, stoppedChannels: 0 } : null;
+  if (ownership) {
+    state.ownership = ownership;
+    state.tuner.operator_state = 'live';
+    state.tuner.channel_count = 1;
+  }
   state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value = state.locked === true;
   state.requests = [];
   if (state.liveSpectrum) await installLiveSpectrumStream(page);
@@ -187,6 +195,42 @@ async function install(page, state = {}) {
       return respond({});
     }
     if (path.endsWith('/browse')) {
+      if (ownership) {
+        if (request.method() === 'DELETE') {
+          if (ownership.active && ownership.active.lease_id !== body.lease_id) return route.fulfill({ status: 409,
+            json: { error: { code: 'tuner_browse_unavailable', message: 'Spectrum tuner session belongs to another browser' } } });
+          if (ownership.active?.takeover) {
+            state.previousChannelsNotResumed = body.handoff && state.leavePreviousStopped ?
+              [{ id: 'previous-channel', name: 'Original distant receiver channel' }] : [];
+            state.tuner.channel_count = state.previousChannelsNotResumed.length ? 0 : ownership.stoppedChannels;
+            state.tuner.operator_state = 'live';
+          }
+          ownership.active = null;
+          return respond({ released: true, previous_channels_not_resumed: state.previousChannelsNotResumed || [] });
+        }
+        if (body.lease_id && body.lease_id !== ownership.active?.lease_id) return route.fulfill({ status: 410,
+          json: { error: { code: 'tuner_browse_expired', message: 'Spectrum tuner session expired' } } });
+        if (!body.lease_id) {
+          if (ownership.active) return route.fulfill({ status: 409, json: { error: {
+            code: 'tuner_browse_unavailable', message: 'Spectrum tuner session belongs to another browser' } } });
+          if (body.takeover) {
+            ownership.stoppedChannels = state.tuner.channel_count;
+            state.tuner.channel_count = 0;
+            state.tuner.operator_state = 'setup';
+          }
+          ownership.active = { lease_id: `owned-browse-${++ownership.nextLease}`, takeover: body.takeover === true };
+        }
+        const result = { ...ownership.active, expires_at_epoch_ms: Date.now() + 30000,
+          can_tune: ownership.active.takeover, tuner: structuredClone(state.tuner),
+          stopped_channels: ownership.active.takeover ? [{ id: 'previous-channel', name: 'Original distant receiver channel' }] : [] };
+        if (body.lease_id && state.delayOwnedRenewalOnce) {
+          state.delayOwnedRenewalOnce = false;
+          await new Promise((release) => { state.releaseOwnedRenewal = release; });
+          if (state.failDelayedOwnedRenewal) return route.fulfill({ status: 410, json: { error: {
+            code: 'tuner_browse_expired', message: 'Spectrum tuner session expired' } } });
+        }
+        return respond(result);
+      }
       if (request.method() === 'DELETE') return respond(null, 204);
       if (state.failBrowseOnce) {
         state.failBrowseOnce = false;
@@ -258,6 +302,8 @@ async function install(page, state = {}) {
     }
     if (path === '/api/v1/admin/spectrum-discovery/discovery-a') {
       if (request.method() === 'DELETE') {
+        if (state.expiredCleanup) return route.fulfill({ status: 409, json: { error: {
+          code: 'discovery_conflict', message: 'Channel discovery expired; begin again' } } });
         if (state.deferDeleteOnce) {
           state.deferDeleteOnce = false;
           await new Promise((release) => { state.releaseDelete = release; });
@@ -304,6 +350,23 @@ async function install(page, state = {}) {
       }
       state.saved = true;
       state.running = state.failStart !== true;
+      if (ownership) {
+        expect(body.browse_lease_id).toBe(ownership.active?.lease_id);
+        if (state.retainHandoffOnce) {
+          state.retainHandoffOnce = false;
+          state.retainedBrowseLeaseId = ownership.active.lease_id;
+          state.running = false;
+          state.startError = 'The receiver handoff is busy. Try again.';
+        } else {
+          state.retainedBrowseLeaseId = null;
+          ownership.active = null;
+          state.previousChannelsNotResumed = state.leavePreviousStopped ?
+            [{ id: 'previous-channel', name: 'Original distant receiver channel' }] : [];
+          state.tuner.channel_count = (state.running ? 1 : 0) +
+            (state.previousChannelsNotResumed.length ? 0 : ownership.stoppedChannels);
+          state.tuner.operator_state = 'live';
+        }
+      }
       state.savedAliasId = body.alias_list_id || 41;
       const hasTarget = !state.missingImportTarget && ['p25-phase1', 'dmr', 'nxdn'].includes(state.protocolId);
       state.aliasImports = { targets: hasTarget ? [{ alias_list_id: state.savedAliasId,
@@ -331,6 +394,8 @@ async function install(page, state = {}) {
       return respond(snapshot(state.protocolId, state));
     }
     if (path === '/api/v1/admin/channels/actions') {
+      if (ownership?.active?.takeover) return route.fulfill({ status: 409, json: { error: {
+        code: 'tuner_browse_unavailable', message: 'Receiver is still reserved by Spectrum' } } });
       state.running = true;
       state.tuner.channel_count = 1;
       state.tuner.operator_state = 'live';
@@ -361,6 +426,22 @@ async function begin(page, protocolId = 'p25-phase1') {
   await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
 }
 
+async function beginThroughSpectrumRail(page) {
+  await page.getByRole('button', { name: 'Setup', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Stop channels to tune?', exact: true });
+  await expect(confirmation).toBeVisible({ timeout: 5000 });
+  await confirmation.getByRole('button', { name: 'Stop channels and tune', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.spectrum-browse-panel .channel-diagnostic-overlay').first()).toBeHidden();
+  await page.locator('.spectrum-browse-panel').getByRole('img', { name: 'Tuner frequency spectrum', exact: true })
+    .click({ position: { x: 240, y: 80 } });
+  const add = page.locator('.spectrum-browse-control-rail').getByRole('button', {
+    name: 'Add channel or system', exact: true });
+  await expect(add).toBeEnabled();
+  await add.click();
+  await wizard(page).getByRole('button', { name: 'Detect trunked system', exact: true }).click();
+}
+
 async function review(page) {
   await wizard(page).getByRole('button', { name: 'Review channel', exact: true }).click();
   await expect(wizard(page).getByRole('heading', { name: 'Name your channel', exact: true })).toBeVisible();
@@ -368,6 +449,146 @@ async function review(page) {
 
 const importYes = 'Yes, import talkgroup names';
 const importNo = "No, I'll import these later";
+
+test('initial manual RadioReference state stays quiet until lookup starts and keeps real failures visible', async ({ page }) => {
+  await page.clock.install();
+  const state = { phase: 'identifying', directoryResult: { state: 'manual' } };
+  await install(page, state);
+  await begin(page);
+  await expect(wizard(page).locator('.spectrum-discovery-directory')).toBeHidden();
+  await expect(wizard(page).getByText('Directory names are unavailable.', { exact: true })).toHaveCount(0);
+  state.phase = 'ready';
+  state.directoryResult = { state: 'pending' };
+  await page.clock.fastForward(800);
+  const loading = wizard(page).getByRole('status').filter({ hasText: /^Looking up RadioReference names…$/ });
+  await expect(loading).toBeVisible();
+  await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeDisabled();
+  state.directoryResult = { state: 'unavailable' };
+  await page.clock.fastForward(800);
+  await expect(loading).toBeHidden();
+  await expect(wizard(page).getByRole('button', { name: 'Review channel', exact: true })).toBeEnabled();
+  const result = wizard(page).locator('.spectrum-discovery-directory details');
+  await expect(result).toBeVisible();
+  await result.locator('summary').click();
+  await expect(result).toContainText('RadioReference is unavailable. The on-air result is still available.');
+});
+
+test('expired discovery DELETE cleanup resumes promptly', async ({ page }) => {
+  await page.clock.install();
+  const state = {};
+  await install(page, state);
+  await begin(page);
+  await review(page);
+  await addDiscovery(page);
+  state.expiredCleanup = true;
+  await wizard(page).getByRole('button', { name: 'Done', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.discoveryProbeStates)).toEqual([true, false]);
+  expect(state.requests.filter((request) => request.method === 'DELETE' &&
+    request.path === '/api/v1/admin/spectrum-discovery/discovery-a')).toHaveLength(1);
+});
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+test(`real Spectrum rail takes over a running receiver and keeps the new channel running when previous channels stay stopped in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  const state = { theme, realSpectrumOwnership: true, liveSpectrum: true, leavePreviousStopped: true };
+  await install(page, state);
+  await beginThroughSpectrumRail(page);
+  await review(page);
+  await addDiscovery(page);
+  await expect(wizard(page).locator('.discovery-completion-status')).toHaveText('Running');
+  await expect.poll(() => state.ownership.active?.lease_id).toBe('owned-browse-3');
+  await expect(wizard(page)).toContainText('1 previous channel remains stopped.');
+  await expect(wizard(page).getByRole('link', { name: 'Review in Tuners', exact: true })).toBeVisible();
+  await expect(wizard(page).getByRole('link', { name: 'Review in Tuners', exact: true })).toHaveAttribute('href', '/?view=tuners');
+  await expect(wizard(page)).not.toContainText('listening couldn’t start');
+  await expect(wizard(page).locator('.discovery-completion-details')).toContainText('Original distant receiver channel');
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  expect(state.requests.find((request) => request.path.endsWith('/save')).body.browse_lease_id).toBe('owned-browse-2');
+  expect(await wizard(page).evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await wizard(page).screenshot({ path: testInfo.outputPath(`handoff-complete-${theme}-${width}.png`) });
+  await wizard(page).getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(wizard(page)).toHaveCount(0);
+  await expect(page.locator('.spectrum-browse-state')).not.toContainText('In use');
+});
+}
+
+test('real Spectrum rail retains a failed handoff and retries its exact lease after discovery expiry', async ({ page }) => {
+  await page.clock.install();
+  const state = { realSpectrumOwnership: true, liveSpectrum: true, retainHandoffOnce: true, leavePreviousStopped: true };
+  await install(page, state);
+  await beginThroughSpectrumRail(page);
+  await review(page);
+  await wizard(page).getByLabel('Channel name', { exact: true }).fill('My saved control');
+  await wizard(page).getByLabel('New Alias List name', { exact: true }).fill('My saved aliases');
+  await addDiscovery(page);
+  await expect(wizard(page).getByRole('button', { name: 'Try starting again', exact: true })).toBeEnabled();
+  expect(state.ownership.active.lease_id).toBe('owned-browse-2');
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  state.expiredStatus = true;
+  state.expiredCleanup = true;
+  await page.clock.fastForward(6 * 60_000);
+  await expect.poll(() => state.requests.some((request) => request.path.endsWith('/browse') &&
+    request.method === 'POST' && request.body.lease_id === 'owned-browse-2')).toBe(true);
+  await wizard(page).getByRole('button', { name: 'Try starting again', exact: true }).click();
+  await expect(wizard(page).locator('.discovery-completion-status')).toHaveText('Running');
+  await expect.poll(() => state.ownership.active?.lease_id).toBe('owned-browse-3');
+  const release = state.requests.findIndex((request) => request.path.endsWith('/browse') &&
+    request.method === 'DELETE' && request.body.lease_id === 'owned-browse-2');
+  const start = state.requests.findIndex((request) => request.path === '/api/v1/admin/channels/actions');
+  expect(release).toBeGreaterThan(-1);
+  expect(state.requests[release].body).toEqual({ lease_id: 'owned-browse-2', handoff: true });
+  expect(start).toBeGreaterThan(release);
+  expect(state.requests[start].body).toEqual({ action: 'START', configuration_ids: ['channel-a'] });
+  expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
+  await expect(wizard(page).locator('.discovery-completion-name')).toHaveText('My saved control');
+  await expect(wizard(page).locator('.discovery-completion-details')).toContainText('My saved aliases');
+  await expect(wizard(page)).toContainText('1 previous channel remains stopped.');
+  await wizard(page).getByRole('button', { name: 'Done', exact: true }).click();
+  await expect(page.locator('.spectrum-browse-state')).not.toContainText('In use');
+  expect(state.requests.filter((request) => request.method === 'DELETE' &&
+    request.path === '/api/v1/admin/spectrum-discovery/discovery-a')).toHaveLength(1);
+});
+
+for (const failure of [false, true]) {
+  test(`real Spectrum rail ignores a late old browse renewal ${failure ? 'error' : 'snapshot'} after handoff`, async ({ page }) => {
+    await page.clock.install();
+    const state = { realSpectrumOwnership: true, liveSpectrum: true,
+      delayOwnedRenewalOnce: false, failDelayedOwnedRenewal: failure };
+    await install(page, state);
+    await beginThroughSpectrumRail(page);
+    await review(page);
+    state.delayOwnedRenewalOnce = true;
+    await page.clock.fastForward(10100);
+    await expect.poll(() => typeof state.releaseOwnedRenewal).toBe('function');
+    await addDiscovery(page);
+    await expect(wizard(page).locator('.discovery-completion-status')).toHaveText('Running');
+    await expect.poll(() => state.ownership.active?.lease_id).toBe('owned-browse-3');
+    state.releaseOwnedRenewal();
+    await page.clock.fastForward(1000);
+    await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('button', { name: 'Retry browsing', exact: true })).toBeHidden();
+    await page.clock.fastForward(11000);
+    await expect.poll(() => state.requests.some((request) => request.path.endsWith('/browse') &&
+      request.method === 'POST' && request.body.lease_id === 'owned-browse-3')).toBe(true);
+    expect(state.ownership.active.lease_id).toBe('owned-browse-3');
+  });
+}
+
+test('real Spectrum rail refuses to release a different tab ownership before retrying a saved channel', async ({ page }) => {
+  const state = { realSpectrumOwnership: true, liveSpectrum: true, retainHandoffOnce: true };
+  await install(page, state);
+  await beginThroughSpectrumRail(page);
+  await review(page);
+  await addDiscovery(page);
+  await expect(wizard(page).getByRole('button', { name: 'Try starting again', exact: true })).toBeEnabled();
+  state.ownership.active = { lease_id: 'other-tab-lease', takeover: true };
+  await wizard(page).getByRole('button', { name: 'Try starting again', exact: true }).click();
+  await expect(wizard(page).getByRole('button', { name: 'Try starting again', exact: true })).toBeEnabled();
+  await expect(wizard(page)).toContainText('Spectrum tuner session belongs to another browser');
+  expect(state.ownership.active.lease_id).toBe('other-tab-lease');
+  expect(state.requests.filter((request) => request.path === '/api/v1/admin/channels/actions')).toHaveLength(0);
+  expect(state.requests.filter((request) => request.path.endsWith('/save'))).toHaveLength(1);
+});
 
 async function expectStepWordsFit(modal) {
   expect(await modal.evaluate((element) => [...element.querySelectorAll('.spectrum-discovery-progress li > span:last-child')]
