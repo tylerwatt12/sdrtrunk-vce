@@ -359,7 +359,7 @@ function verifyPreparedCandidateRoundTrip() {
       GITHUB_SHA: sha, GITHUB_REF: 'refs/heads/main' } });
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
-  const lines = fs.readFileSync(path.join(image, 'SHA256SUMS'), 'utf8').trim().split('\n');
+  const lines = fs.readFileSync(path.join(image, 'SHA256SUMS'), 'utf8').trim().split(/\r?\n/);
   assert.equal(lines.length, platforms.length + 3);
   for (const line of lines) {
     const [digest, name] = line.split('  ');
