@@ -97,12 +97,12 @@ public final class SdrTrunkDatabaseBootstrap
             else if(options.upgradeData() != null)
             {
                 var source = PreviousBuildLocator.resolveSelection(options.upgradeData()).orElseThrow(() ->
-                    new IOException("The selected location does not contain portable VCE data: " + options.upgradeData()));
+                    new IOException("Choose a previous VCE installation folder: " + options.upgradeData()));
                 var result = migrationService.importPrevious(source, normalized, System.out::println);
                 if(!result.helperOutput().isBlank()) System.out.println(result.helperOutput());
             }
             else throw new IOException("No portable VCE database exists at " + database +
-                ". Start once with --fresh, --import-xml <path>, or --upgrade-data <previous-folder-or-sqlite-file>. " +
+                ". Start once with --fresh, --import-xml <path>, or --upgrade-data <previous-folder>. " +
                 "New headless installations also require --admin-password-file <path>.");
             InitialAdminSetup.initializeNewProfile(database);
         }
@@ -230,6 +230,9 @@ public final class SdrTrunkDatabaseBootstrap
                 switch(args[x])
                 {
                     case "--fresh" -> fresh = true;
+                    case "--import-sqlite" -> throw new IllegalArgumentException(
+                        "SQLite file import is no longer available. Start VCE in a new folder and choose a " +
+                            "previous installation folder or XML playlist.");
                     case "--upgrade-current" -> upgradeCurrent = true;
                     case "--upgrade-managed-recordings" -> upgradeManagedRecordings = true;
                     case "--no-upgrade-backup" -> createUpgradeBackup = false;

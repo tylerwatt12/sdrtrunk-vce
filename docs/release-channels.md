@@ -30,7 +30,8 @@ Extract the ZIP into a new writable folder and run its **Start VCE** launcher. T
 
 Nightly receives completed work from the development line more often. It moves most receiver administration into
 the website, including Channels, Tuners, Streaming, and RadioReference. The local receiver window opens the website
-and provides setup, database import, file access, and debug recording.
+and provides local settings, file access, and debug recording. Setup runs at startup when needed; a completed
+healthy profile starts normally.
 
 A numbered Alpha may retain older desktop tools or omit newer browser and receiver features. Its release number
 and notes identify a fixed feature set; the Nightly page is updated as builds are published.
@@ -49,6 +50,10 @@ Before updating, back up the complete `data` folder. Extract the new package int
 **Bring my settings**, then select the previous installation folder. Review the import plan, completion report, and output
 locations before receiving resumes. The built-in import upgrades supported settings without a separate program.
 Existing recordings and logs are not copied; check their configured locations before removing the old installation.
+Standalone SQLite files are not import sources. XML playlists can initialize a new profile; they are not merged into
+an existing one. For older databases, the graphical history checkbox starts unchecked; select it to carry forward
+usable Activity and statistics. The graphical update-backup checkbox also starts unchecked, while headless upgrade
+commands keep their backup by default.
 
 See [portable setup and storage](portable-startup-and-storage.md) for the full workflow.
 

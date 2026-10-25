@@ -400,8 +400,9 @@ class ApplicationMigrationServiceTest
         Files.writeString(sourceRoot.resolve("modules/module-test.jar"), "must not be copied");
         Files.createDirectories(sourceRoot.resolve("vault"));
         Files.writeString(sourceRoot.resolve("vault/encryption-key-vault.sqlite"), "invalid and not selected");
-        PreviousBuildLocator.Selection selection = PreviousBuildLocator.resolveSelection(sourceDatabase)
-            .orElseThrow();
+        //Internal database-only engine coverage; public source selection accepts installation folders only.
+        PreviousBuildLocator.Selection selection = new PreviousBuildLocator.Selection(sourceDatabase,
+            PreviousBuildLocator.InputScope.DATABASE_FILE);
         Path targetRoot = mTemporaryFolder.resolve("database-only-target");
         AtomicReference<Path> receivedSourceRoot = new AtomicReference<>();
         AtomicReference<Path> receivedTargetRoot = new AtomicReference<>();

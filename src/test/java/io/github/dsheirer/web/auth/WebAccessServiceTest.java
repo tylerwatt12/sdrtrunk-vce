@@ -91,6 +91,37 @@ class WebAccessServiceTest
     }
 
     @Test
+    void verifiesTheCurrentPrimaryPasswordBeforeChangingPersistedCredentials() throws Exception
+    {
+        Path database = database();
+        WebAccessService service = new WebAccessService(database);
+        char[] original = "original admin password".toCharArray();
+        char[] replacement = "replacement admin password".toCharArray();
+        WebAccessAccount before = service.provisionOrResetPrimaryAdmin(original);
+        WebAccessSessionManager sessions = new WebAccessSessionManager();
+        WebAccessSession session = sessions.create(before).orElseThrow();
+        String persistedBefore = databaseText(database);
+
+        assertTrue(service.changePrimaryAdminPassword("incorrect password".toCharArray(), replacement).isEmpty());
+        assertEquals(persistedBefore, databaseText(database));
+        assertEquals(before, service.primaryAdmin().orElseThrow());
+        assertTrue(sessions.resolve(session.sessionId(), service).isPresent());
+        assertTrue(new WebAccessService(database).authenticate("admin", original).isPresent());
+        assertTrue(service.authenticate("admin", replacement).isEmpty());
+
+        WebAccessAccount changed = service.changePrimaryAdminPassword(original, replacement).orElseThrow();
+        assertEquals(before.id(), changed.id());
+        assertEquals(before.createdAtEpochMillis(), changed.createdAtEpochMillis());
+        assertEquals(before.authRevision() + 1, changed.authRevision());
+        assertTrue(changed.primaryAdmin());
+        assertTrue(sessions.resolve(session.sessionId(), service).isEmpty());
+        WebAccessService restarted = new WebAccessService(database);
+        assertTrue(restarted.authenticate("admin", original).isEmpty());
+        assertEquals(changed, restarted.authenticate("admin", replacement).orElseThrow());
+        assertFalse(databaseText(database).contains(new String(replacement)));
+    }
+
+    @Test
     void preservesAccountCreationAcrossPasswordRecoveryRestartAndPolicyChanges() throws Exception
     {
         Path database = database();

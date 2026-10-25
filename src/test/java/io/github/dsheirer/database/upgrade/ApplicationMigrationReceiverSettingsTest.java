@@ -31,7 +31,8 @@ class ApplicationMigrationReceiverSettingsTest
             Settings expected = configure(source);
             byte[] original = Files.readAllBytes(database(source));
             Path target = directory.resolve("target-" + folder);
-            var selection = PreviousBuildLocator.resolveSelection(folder ? source : database(source)).orElseThrow();
+            var selection = folder ? PreviousBuildLocator.resolveSelection(source).orElseThrow() :
+                new PreviousBuildLocator.Selection(database(source), PreviousBuildLocator.InputScope.DATABASE_FILE);
 
             var result = service().importPrevious(selection, target, null);
 

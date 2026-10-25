@@ -46,34 +46,24 @@ public final class SetupReadiness
             progress.set(SetupStep.RADIO_REFERENCE, SetupProgress.State.PENDING);
     }
 
-    /** Routine launch repairs stay brief; a completed migration also offers a missing directory location. */
-    static SetupStep nextStep(SetupProgress progress, SetupStep current, boolean limitedVisit,
-                              boolean jmbeNeeded, boolean benchmarkAllowed, boolean migrationCommitted)
+    /** A completed profile revisits only the settings required to start it. */
+    static SetupStep nextStep(SetupProgress progress, SetupStep current, boolean limitedVisit)
     {
         if(!limitedVisit) return progress.next(current);
-        for(SetupStep candidate: java.util.List.of(SetupStep.ADMINISTRATOR, SetupStep.WEB, SetupStep.JMBE,
-            SetupStep.RADIO_REFERENCE, SetupStep.CALIBRATION))
+        for(SetupStep candidate: java.util.List.of(SetupStep.ADMINISTRATOR, SetupStep.WEB))
         {
             if(candidate.ordinal() <= current.ordinal() || progress.isDone(candidate)) continue;
-            if(candidate == SetupStep.JMBE && !jmbeNeeded) continue;
-            if(candidate == SetupStep.RADIO_REFERENCE &&
-                (!migrationCommitted || progress.get(candidate) == SetupProgress.State.DEFERRED)) continue;
-            if(candidate == SetupStep.CALIBRATION && !benchmarkAllowed) continue;
             return candidate;
         }
         return SetupStep.REVIEW;
     }
 
-    /** A later launch offers outstanding work again, even if it was deferred in the completed session. */
-    static SetupStep initialStep(SetupProgress progress, boolean forced, boolean limitedVisit,
-                                 boolean jmbeNeeded, boolean benchmarkNeeded)
+    /** Interrupted setup resumes; a completed profile opens only its required repair. */
+    static SetupStep initialStep(SetupProgress progress, boolean limitedVisit)
     {
-        if(forced) return SetupStep.SOURCE;
         if(!progress.isDone(SetupStep.ADMINISTRATOR)) return SetupStep.ADMINISTRATOR;
         if(!progress.isDone(SetupStep.WEB)) return SetupStep.WEB;
         if(!limitedVisit) return progress.resumeAt();
-        if(jmbeNeeded) return SetupStep.JMBE;
-        if(benchmarkNeeded) return SetupStep.CALIBRATION;
         return SetupStep.REVIEW;
     }
 

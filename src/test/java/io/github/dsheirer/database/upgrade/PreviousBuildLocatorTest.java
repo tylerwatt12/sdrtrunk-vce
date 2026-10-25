@@ -21,7 +21,7 @@ class PreviousBuildLocatorTest
     Path mTemporaryFolder;
 
     @Test
-    void resolvesInstallDataApplicationAndDatabaseSelections() throws Exception
+    void resolvesInstallationFoldersAndApplicationsButRejectsStandaloneDatabases() throws Exception
     {
         Path installRoot = mTemporaryFolder.resolve("releases/sdrtrunk-vce-alpha-5");
         Path dataRoot = createPortableDataRoot(installRoot.resolve("data"));
@@ -31,8 +31,9 @@ class PreviousBuildLocatorTest
             PreviousBuildLocator.resolveSelection(installRoot).orElseThrow());
         assertSelection(dataRoot, PreviousBuildLocator.InputScope.PORTABLE_PROFILE,
             PreviousBuildLocator.resolveSelection(dataRoot).orElseThrow());
-        assertSelection(database, PreviousBuildLocator.InputScope.DATABASE_FILE,
-            PreviousBuildLocator.resolveSelection(database).orElseThrow());
+        byte[] databaseBefore = Files.readAllBytes(database);
+        assertTrue(PreviousBuildLocator.resolveSelection(database).isEmpty());
+        org.junit.jupiter.api.Assertions.assertArrayEquals(databaseBefore, Files.readAllBytes(database));
 
         Path application = Files.createDirectories(mTemporaryFolder.resolve("Applications/Receiver Alpha 5.app"));
         Path applicationData = createPortableDataRoot(application.resolveSibling("Receiver Alpha 5-data"));

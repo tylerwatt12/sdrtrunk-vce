@@ -13,11 +13,14 @@ the [documentation index](README.md).
 | --- | --- | --- |
 | Use a newer build with the same active VCE data folder | Review the **Update** offered during startup | The active database is updated in place. The optional backup checkbox starts unchecked. |
 | Bring a previous VCE installation into a new download | **Bring my settings**, then choose its folder | A checked copy of the database and its saved settings is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
-| Start a new installation from a VCE database file | **Bring my settings**, then choose the file | Only the selected database contents are imported. Neighboring files and saved output paths are not moved. |
-| Replace the settings in an installation you already use | **File → Import SQLite Database…**, or choose different settings in Setup Wizard | The whole application database is replaced after backing up the current one. This does not merge profiles. |
-| Add another supported XML playlist | Choose different settings in Setup Wizard, then select the playlist | Supported configuration is added; existing configuration is retained and conflicting imported names are renamed. |
+| Start a new installation from a supported XML playlist | **Bring my settings**, then choose the playlist | Supported channels, aliases, and streaming settings initialize the new profile; the XML source stays unchanged. |
 
-VCE database imports support recognized formats used by **Alpha 12 and later**, up to the format understood by the
+External imports are offered only before the destination has a database. Choose an installation folder, portable
+data folder, supported macOS `.app`, or XML playlist. Standalone SQLite selection, replacement of an existing profile,
+and XML merge into an existing profile are not public setup operations. Use the existing desktop and web settings
+for ordinary changes; see [Change settings after setup](portable-startup-and-storage.md#change-settings-after-setup).
+
+VCE profile imports support recognized database formats used by **Alpha 12 and later**, up to the format understood by the
 running build. Alpha 11 uses the same format as Alpha 12 and remains compatible. For an older database format, first
 open it in Alpha 12 and complete its update. Alpha and Nightly share one forward-only format history. An older build
 cannot open a database already updated to a newer format. The retired `webfirst` formats and unknown or unsafe layouts
@@ -30,19 +33,19 @@ checked. For a manual backup, stop VCE and copy the complete `data` folder, plus
 elsewhere. Keep the matching build if you may need to return to it. Close a previous installation before importing
 from it so its settings and supporting files stay consistent during review.
 
-The automatic recovery backup covers the SQLite database being updated or replaced. It does not include every
-recording, log, voice library, or vault file. Backup locations appear in the report; application database backups are
-under `data/database/backups`. The active-profile update checkbox starts unchecked; select it to keep a recovery
-copy. Database replacement and an XML merge into an existing profile always retain their recovery copy.
+The automatic recovery backup covers the SQLite database being updated. It does not include every recording, log,
+voice library, or vault file. Backup locations appear in the report; application database backups are under
+`data/database/backups`. Graphical update-backup checkboxes start unchecked; select one to keep a recovery copy.
+Headless upgrade commands keep their backup by default.
 
 ## Review, update, and check the result
 
-1. Choose the folder or file that holds your previous settings. A folder import is the most complete choice for
-   moving an existing VCE profile.
+1. For a new profile, choose the previous installation folder or supported XML playlist. A macOS application bundle
+   can also identify its portable profile.
 2. Review the selected source or the update shown for the active profile. Check
    the source, destination, and declared repairs, activity resets, or retired settings that may be removed.
-   When an older database needs updating, leave **Keep activity and statistics** selected for full migration,
-   or clear it to import configuration only.
+   When an older database needs updating, **Keep activity and statistics** starts unchecked for configuration-only
+   migration. Select it to carry forward usable history.
 3. Confirm the import or update. Receiving has not started, and the active data folder stays locked while the
    database work runs.
 4. Setup continues to the next needed step. The optional report gives actual preserved, repaired, defaulted,
@@ -51,19 +54,18 @@ copy. Database replacement and an XML merge into an existing profile always reta
    digital voice libraries, and channel auto-start selections before relying on the new installation.
 
 An active-profile update uses one transaction in the existing database. A failure before commit rolls back the
-changes. External imports and replacements update and validate a private copy, then install it only after the checks
-pass; the selected source stays unchanged. Replacement restarts into unfinished setup review so imported settings
-are checked before reception can start.
+changes. External profile imports update and validate a private copy, then install it only after the checks pass;
+the selected source stays unchanged. Imported settings are reviewed before reception can start.
 
 ### Choose how much to migrate
 
-For an older database, **Keep activity and statistics** is selected initially. It carries forward usable
-history through the supported updates; any required historical resets still apply and appear in the review.
-Clearing it keeps channels, aliases, lists, accounts, credentials, and settings while starting receiver
+For an older database, **Keep activity and statistics** starts unchecked in the graphical wizard. This keeps
+channels, aliases, lists, accounts, credentials, and settings while starting receiver
 Activity, statistics, learned observations, and alert history fresh. Old pending alert deliveries are discarded;
 notification topics, rules, and subscriptions remain. Account preferences, including dismissed guides, are kept.
 Recording audio and the separate Managed Recordings catalog are not deleted by either choice. An import still copies
-only the files described by its selected file/folder scope.
+only the files described by its profile scope. Selecting the checkbox opts into carrying forward usable history;
+required historical resets still apply and appear in the review. Headless migration retains its full-content default.
 
 Full migration can take a very long time. The review gives a broad planning range from the application database and
 its journal sizes, without scanning history just to estimate the duration. Database size cannot predict the work
@@ -94,8 +96,7 @@ Upgrading an older profile or importing its complete data folder imports their f
 has no saved value. The original files remain unchanged. The update removes retired application-managed
 voice-enhancement and continuous-gain choices; the selected JMBE library owns its audio processing and output format.
 Unused legacy model-selection files are not read or imported.
-A SQLite-only import preserves choices already stored in the selected database; it does not read neighboring JSON
-files. Choose the complete folder when moving settings that an older build still kept outside SQLite.
+Choose the complete folder so eligible settings that an older build kept outside SQLite can be inspected with it.
 
 An earlier format-53 update could create defaults without importing the old JSON files. A later update preserves
 those database choices because a default may also be an intentional selection. Explicit Application Migrator
@@ -108,9 +109,7 @@ event logs, streaming output, and the separate Managed Recordings catalog are no
 locations. They are not transferred by the application database import.
 
 For a folder import, saved paths inside the previous data folder are changed to the corresponding new locations.
-Shared folders outside it keep their paths. A SQLite-only import or replacement keeps stored paths unchanged and
-copies no neighboring files; the destination's existing non-database files stay in place. Check the effective output
-folders on **Review & finish**.
+Shared folders outside it keep their paths. Check the effective output folders on **Review & finish**.
 
 Managed Recordings has a separate audio library and catalog. Its supported older catalog can be updated independently
 before receiving starts, preserving the indexed calls. If that optional update fails, retry or continue receiving with
@@ -120,14 +119,13 @@ for backing up the audio and catalog together.
 ## If an update or import fails
 
 Keep the source and use **Copy error** or the expandable details to retain the reason. Close another instance if the
-data folder is already in use, free disk space if requested, or choose the correct source folder/file and review again.
+data folder is already in use, free disk space if requested, or choose the correct installation folder or playlist and
+review again.
 An unknown, newer, mixed, structurally incomplete, or physically damaged database is refused rather than guessed.
 Do not delete the database to bypass the error.
 
 An active-profile failure before commit can be retried after correcting the cause. A failed external import does not
-install a partial copy. Replacement attempts to restore its retained database backup if final installed-data checks
-fail; if a safe final state cannot be proven, VCE leaves the error and backup for recovery instead of restarting
-automatically.
+install a partial copy.
 
 After a successful active-profile update, any selected recovery backup remains for manual restoration. There is no automatic
 downgrade. If the report says the update completed with a cleanup warning, do not repeat it as if conversion failed.
@@ -143,6 +141,11 @@ catalog, complete format-2-to-current chain, deterministic format fixtures, and 
 implementation and maintenance requirements, not extra setup steps for listeners. Numbered Alpha distributions
 keep version-matched release notes; rolling Nightlies use their bundled current documentation and the migrator's
 preflight and completion reports.
+
+The database-file staging and replacement contracts below describe retained internal engine and safety-test
+boundaries. They are not public SQLite-file import support. User-selected sources are folders/applications or XML
+playlists for a new profile; `--upgrade-data` accepts folders/applications only. No running-application menu reopens
+setup or replaces its database.
 
 ## Support Boundary
 
@@ -308,8 +311,8 @@ preference revision is incremented; an unusable or revision-exhausted preference
 user and counted. This is a semantic-only version change with unchanged DDL and no new runtime migration path.
 
 The format 12-to-13 step adds the one bounded `setup_wizard` progress record described below. It preserves every
-existing setting and marks an upgraded profile as previously configured while still requiring runtime readiness
-checks for settings such as JMBE and the administrator account.
+existing setting and marks an upgraded profile as previously configured. Current startup checks required
+administrator and web readiness independently of optional setup choices.
 
 ## Shared Upgrade And Import Boundary
 
@@ -326,19 +329,17 @@ format and bounded configuration before showing the declared best-effort policy.
 checkbox starts unchecked. Headless command defaults are unchanged. External-source review uses its private snapshot
 and fuller checks. Neither review runs a throwaway
 migration; the completion report supplies the observed repair, reset, and skip counts.
-Source selection and review share the Your settings step, with explicit review headings. Success continues to the
-next needed setup step without a countdown. Errors remain compact and inline with expandable details and a Copy error action. Database
-replacement and startup errors use the same bounded, expandable, copyable presentation instead of message-sized
-dialogs. After promotion,
-Back can review the installed source/results but cannot replace the database. The separately confirmed post-setup
-SQLite replacement workflow is reached through **File > Import SQLite Database…** and uses that same setup
-boundary. It retains
-its existing service-stop, backup, validation, restart, and quit-blocking rules. Source review is inline;
-it does not reuse the new-install copy operation against an occupied data folder.
+Source selection and review share the Your settings step, with explicit review headings. External selection is
+available only for an empty destination. Success continues to the next needed setup step without a countdown.
+Errors remain compact and inline with expandable details and a Copy error action. After promotion, Back can review
+the installed source/results but cannot repeat the import. Completed profiles return to setup only for required
+administrator or web readiness, vault access, data-format preparation, or interrupted first setup. Optional JMBE and
+calibration work and unread release notes alone do not cause a new setup visit.
 
 Format 13 adds only the bounded `setup_wizard` record in `application_settings`. The adjacent 12-to-13 step preserves
 all existing configuration and marks existing installations previously configured; runtime readiness checks decide
-whether required setup work remains. New databases begin incomplete. Copy imports reset this record on the staged
+whether required startup work remains. Completed profiles do not reopen setup solely for optional JMBE or calibration
+work, or for unread release notes. New databases begin incomplete. Copy imports reset this record on the staged
 destination before validation/promotion, without changing the selected source. The record never stores credential
 drafts, hardware inventories, benchmark data, or transcripts. Its absence or malformed contents in format 13 are
 validation errors, not permission for startup to repair the database.
@@ -753,8 +754,8 @@ update without exposing their contents. Every other setting, retained observatio
 remains unchanged.
 
 Fresh format-53 creation installs the same records, and normal startup validates them without creating or repairing
-missing values. Folder imports, SQLite-file imports, and whole-database replacement carry these settings with the
-database contents. The table layout is unchanged, so the authoritative global marker distinguishes the semantic
+missing values. Folder imports and the retained internal SQLite-file migration and replacement engine carry these
+settings with the database contents. The table layout is unchanged, so the authoritative global marker distinguishes the semantic
 formats. Format 52 keeps its frozen populated fixture and signature; the adjacent migration, rollback, and retry
 checks reach the same exact format-53 contract.
 
@@ -773,8 +774,8 @@ SQLite defaults, and the table layout is unchanged. The authoritative format mar
 contract; populated format-53 fixtures remain frozen and supported.
 
 Folder approval binds the three eligible files, including their absence, to immutable validated input. Import refuses
-a source changed after review, and the bundled child reads only private staged copies. SQLite-file-only imports and
-replacement never read the source or destination's neighboring files. Malformed, oversized, symbolic-linked, or
+a source changed after review, and the bundled child reads only private staged copies. Internal SQLite-file migration
+and replacement never read the source or destination's neighboring files. Malformed, oversized, symbolic-linked, or
 unsupported eligible files refuse safely without displaying their contents or credentials. Original files are never
 rewritten, removed, or permission-adjusted. Completion reports imported and explicitly recovered setting counts.
 Upload-queue manifests, backup receipts, recordings, bundled resources, and diagnostic JSON are not these converted
@@ -910,8 +911,8 @@ adjacent format-10-to-11 step creates an empty relationship table without guessi
 all recording metadata, files, transcripts, tones, identifiers, counters and allocators. Deleting a recording cascades
 to its own source references. Deleting Activity or alert history does not delete a recording or its source references.
 The populated format-10 fixture remains frozen and supported. The main application database is independently at
-format 62; recording-catalog migrations do not change it. Recognized older catalogs are backed up
-and updated in one transaction at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
+format 62; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
 
@@ -967,8 +968,10 @@ and database services start. The Setup Wizard can already be visible at this poi
 
 1. Inspect the registered format, exact schema, and bounded required configuration. Unknown, mixed, newer, or
    unsupported formats are refused. SQLite reads committed WAL data and recovers an interrupted rollback journal.
-2. Review the selected scope and declared resets or drops. The graphical recovery-backup checkbox starts unchecked;
-   headless upgrade commands retain their default backup and accept `--no-upgrade-backup` to omit it.
+2. Review the selected scope and declared resets or drops. For an older database, the graphical history checkbox
+   starts unchecked for configuration-only migration; full retained history is opt-in. The graphical recovery-backup
+   checkbox also starts unchecked. Headless upgrade commands retain full content and their default backup, and
+   accept `--no-upgrade-backup` to omit that backup.
 3. Reserve the database writer with `BEGIN IMMEDIATE` and check the source format again. If selected, make one
    standalone SQLite-aware recovery snapshot before any changes. A backup failure aborts without changing data.
 4. Run the existing `N -> N+1 -> ... -> current` chain in the same transaction. The runner verifies every exact target
@@ -995,7 +998,7 @@ message is not success; success is reported only after `COMMIT` returns. Confirm
 completion navigation remain in the wizard. The backup setting applies to both application and optional catalog
 upgrades; each upgraded database gets one snapshot when selected.
 
-Explicit imports and replacement use a different ownership boundary, while reusing the same conversion chain. The
+Explicit profile imports and internal replacement use a different ownership boundary, while reusing the same conversion chain. The
 selected source and its containing folder need not be writable. After checking free space, copy its database and
 readable journal/WAL into private destination scratch space, recover that copy, fingerprint its registered format,
 and perform physical integrity checks. Verify the selected files unchanged and bind confirmation to the snapshot's
@@ -1005,17 +1008,13 @@ keys, then promote atomically. Cancelled or failed imports never promote partial
 current-profile backup and restores it if post-promotion validation fails. Normal application startup never repairs
 or migrates an existing schema.
 
-After setup, **File > Import SQLite Database…** provides an explicit database-only replacement workflow. It safely
-restarts into the pre-receiver setup boundary and first closes the receiver and its database-owning runtime services.
-The wizard preflights the selected source and shows a concise inline replacement review before confirmation. With the
-portable-data lock retained and setup preferences closed, it backs up the current active database, migrates a staged
-copy of the selected source, validates it, promotes it atomically, and starts a new application process. The source is
-never changed. Window close, Exit, and operating-system quit requests are refused while replacement is in progress.
-A successful replacement restarts into setup review. A failed replacement does not automatically relaunch the application when the final
-active-database state cannot be proven; the retained backup and error are left for explicit recovery. Replacement
-resets the existing bounded wizard-progress record on the staged copy before validation and promotion. Normal startup
-therefore returns to unfinished setup and review even if the imported source was setup-complete or the restart was
-interrupted. Old in-memory preferences are closed before replacement and are never reused to launch the new profile.
+Internal database replacement requires database-owning callers to close their services while retaining the portable
+lock. The retained engine backs up the active database, migrates a staged copy, validates it, and promotes atomically. The source and its
+neighboring files remain unchanged. A post-promotion validation failure attempts to restore the retained backup;
+when a safe active-database state cannot be proven, the error and backup remain for explicit recovery. Internal
+replacement resets the bounded wizard-progress record before final validation and promotion, so any subsequently
+started profile must review unfinished settings. Old in-memory preferences must not be reused. These invariants and
+their failure-injection tests remain even though there is no public menu, flag, or source-picker replacement flow.
 
 ## Input Scope
 
@@ -1025,17 +1024,15 @@ Remote Links settings and paging-tone choices already in the application databas
 The adjacent update removes retired voice-enhancement and continuous-gain choices and reports their counts.
 Remote Links network
 destinations and stable channel/sender identities are preserved without path remapping. An unavailable optional artifact is
-reported and skipped independently rather than discarding an otherwise valid migrated database. Selecting only
-`database/sdrtrunk.sqlite` migrates only values stored in SQLite. Preflight declares which optional artifact types the
-selected scope can attempt; completion reports what was copied, unavailable, or skipped. File-only migration must never
-imply that external artifacts were copied.
+reported and skipped independently rather than discarding an otherwise valid migrated database. Public selectors
+accept complete profile folders/applications only. Preflight declares which optional artifact types the selected
+profile can attempt; completion reports what was copied, unavailable, or skipped.
 
-The after-setup SQLite wizard import also has database-only scope. It replaces the active SQLite contents rather than
-merging rows, leaves the selected source and its neighboring files unchanged, and leaves the active data folder's
-existing non-database files in place. Its confirmation must identify both the selected source and active target and
-state these boundaries before replacement. Stored portable paths are not remapped for this database-only workflow. A
-markerless imported database is initialized as a newly imported profile: a usable primary administrator credential
-satisfies the administrator step, otherwise startup requires the operator to create one. Both cases require destination review.
+Internal database-only migration and replacement operate on values stored in SQLite. They leave source neighbors
+and the target's existing non-database files unchanged, do not remap stored paths, and must never imply that external
+artifacts were copied. Their approval identifies source, target, scope, and declared effects. A markerless internal
+import initializes destination setup review: a usable primary administrator credential satisfies the administrator
+step; otherwise startup requires a new one. These engine contracts do not expose standalone files in user setup.
 
 All graphical and headless entry points use the same inspector, registry, chain runner, validator, and report model.
 Do not add schema-specific launchers or separately maintained migration utilities.
@@ -1051,7 +1048,8 @@ every retained format from the Alpha 12 format-2 baseline and exercise:
   isolated while independent valid configuration survives;
 - the declared repairs, defaults, resets, drops, exact completion counts, and structural refusals for each step;
 - current-format no-op behavior and rejection of newer, unknown, mixed, tampered, and corrupt inputs;
-- migration from both SQLite-file and full portable-data inputs;
+- migration from internal SQLite-file inputs and public full portable-data inputs, plus refusal of standalone files
+  by public source selectors;
 - failure injection before and after each step, final validation failure, and atomic-promotion failure;
 - backup retention, unchanged sources, safe retry, and no partially promoted result; and
 - registry completeness: no gap, duplicate source, duplicate target, or missing format-2-to-current route.

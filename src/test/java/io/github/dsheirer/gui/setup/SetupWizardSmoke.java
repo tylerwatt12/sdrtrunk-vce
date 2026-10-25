@@ -30,7 +30,7 @@ public final class SetupWizardSmoke
                 createOlderCatalog(root);
                 Files.writeString(root.resolve("database/backups"), "unrelated file");
             }
-            else if(mode.equals("upgrade-configuration-only"))
+            else if(mode.equals("upgrade-configuration-only") || mode.equals("upgrade-full"))
                 io.github.dsheirer.database.upgrade.Format60TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
             else io.github.dsheirer.database.upgrade.Format30TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
             if(mode.equals("upgrade-with-catalog")) createOlderCatalog(root);
@@ -44,13 +44,17 @@ public final class SetupWizardSmoke
             },"wizard smoke driver");
             driver.setDaemon(true); driver.start();
         }
+        int status = 0;
         try
         {
-            var result=SetupWizard.run(System.getProperty("wizard.exercise", "").equals("revisit") ?
-                new String[0] : new String[]{"--setup-wizard"},root,null);
+            var result=SetupWizard.run(new String[]{"--setup-wizard"},root,null);
             if(result!=null) result.lock().close();
+            if(mode.startsWith("upgrade-") && !SetupProgress.read(root.resolve("database/sdrtrunk.sqlite")).isComplete())
+                throw new AssertionError("Exiting an automatic update reopened completed setup");
+            System.out.println("Wizard upgrade smoke passed: " + mode);
         }
-        finally { SqlitePreferencesFactory.shutdown(); System.exit(0); }
+        catch(Throwable failure) { status = 2; failure.printStackTrace(); }
+        finally { SqlitePreferencesFactory.shutdown(); System.exit(status); }
     }
 
     private static void createOlderCatalog(Path root) throws Exception
@@ -84,15 +88,6 @@ public final class SetupWizardSmoke
             else exerciseUpgrade(target, root, mode);
             return;
         }
-        if(mode.equals("revisit"))
-        {
-            await(target,SetupStep.CALIBRATION);
-            capture(target,root,"12-deferred-benchmark-next-launch");
-            click(target,"Skip this time"); await(target,SetupStep.REVIEW);
-            click(target,"Finish & launch");
-            awaitClosed(target);
-            return;
-        }
         capture(target,root,"01-source");
         if(mode.equals("theme") || mode.equals("import-theme"))
         {
@@ -111,9 +106,16 @@ public final class SetupWizardSmoke
                 Path historyDatabase=io.github.dsheirer.database.upgrade.PreviousBuildLocator.resolveSelection(Path.of(source))
                     .orElseThrow().database();
                 String estimate=io.github.dsheirer.database.upgrade.ApplicationMigrationEstimate.fullMigrationWarning(historyDatabase);
-                if(descendants(target).stream().anyMatch(MigrationContentChoices.class::isInstance) &&
-                    !hasVisibleText(target,estimate))
-                    throw new AssertionError("Folder review did not estimate from its database file");
+                javax.swing.SwingUtilities.invokeAndWait(() -> descendants(target).stream()
+                    .filter(MigrationContentChoices.class::isInstance).map(MigrationContentChoices.class::cast).findFirst().ifPresent(choices -> {
+                        if(choices.selectedContent()!=io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
+                            throw new AssertionError("Folder migration must start without history");
+                        var keep=descendants(choices).stream().filter(javax.swing.JCheckBox.class::isInstance)
+                            .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
+                        keep.doClick();
+                        if(!hasVisibleText(target,estimate)) throw new AssertionError("Folder estimate did not use its database file");
+                        keep.doClick();
+                    }));
             }
             clickPrimary(target); awaitAfterSource(target);
             if(mode.equals("import-only"))
@@ -233,19 +235,20 @@ public final class SetupWizardSmoke
     {
         Path database = root.resolve("database/sdrtrunk.sqlite");
         byte[] source = Files.readAllBytes(database);
+        long originalEvents = eventCount(database);
         javax.swing.JCheckBox[] backup = new javax.swing.JCheckBox[1];
         MigrationContentChoices[] content = new MigrationContentChoices[1];
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             content[0] = descendants(wizard).stream().filter(MigrationContentChoices.class::isInstance)
                 .map(MigrationContentChoices.class::cast).findFirst().orElseThrow();
-            if(content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.FULL)
-                throw new AssertionError("Full migration is not selected by default");
+            if(content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
+                throw new AssertionError("History must require an explicit selection");
             backup[0] = backupChoice(wizard);
             if(backup[0].isSelected()) throw new AssertionError("Upgrade backup must start unchecked");
         });
-        capture(wizard,root,"upgrade-full-ready");
+        capture(wizard,root,"upgrade-configuration-ready");
         javax.swing.SwingUtilities.invokeAndWait(() -> {
-            if(mode.equals("upgrade-configuration-only"))
+            if(mode.equals("upgrade-full"))
                 descendants(content[0]).stream().filter(javax.swing.JCheckBox.class::isInstance)
                     .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow().doClick();
             if(mode.equals("upgrade-backup") || mode.equals("upgrade-retry")) backup[0].doClick();
@@ -255,6 +258,9 @@ public final class SetupWizardSmoke
         if(mode.equals("upgrade-configuration-only") &&
             content[0].selectedContent()!=io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
             throw new AssertionError("Configuration-only selection did not stick");
+        if(mode.equals("upgrade-full") &&
+            content[0].selectedContent()!=io.github.dsheirer.database.upgrade.MigrationContent.FULL)
+            throw new AssertionError("Explicit full-history selection did not stick");
         capture(wizard,root,"upgrade-ready");
         clickPrimary(wizard);
         if(mode.equals("upgrade-with-catalog"))
@@ -291,6 +297,9 @@ public final class SetupWizardSmoke
                 io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.CURRENT_VERSION)
                 throw new AssertionError("Update did not reach the current format");
         }
+        if(mode.equals("upgrade-full") && eventCount(database)!=originalEvents ||
+            mode.equals("upgrade-configuration-only") && eventCount(database)!=0)
+            throw new AssertionError("The selected history choice was not applied");
         if(mode.equals("upgrade-backup"))
         {
             try(var files=Files.list(root.resolve("database/backups")))
@@ -330,6 +339,13 @@ public final class SetupWizardSmoke
     {
         return descendants(wizard).stream().filter(c -> c instanceof javax.swing.JCheckBox box && box.isShowing() &&
             box.getText().equals("Back up before updating")).map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
+    }
+
+    private static long eventCount(Path database) throws Exception
+    {
+        try(var connection=java.sql.DriverManager.getConnection("jdbc:sqlite:"+database);
+            var query=connection.createStatement();var rows=query.executeQuery("SELECT COUNT(*) FROM receiver_activity_event"))
+        { rows.next(); return rows.getLong(1); }
     }
 
     private static void clickPrimary(SetupWizard wizard) throws Exception

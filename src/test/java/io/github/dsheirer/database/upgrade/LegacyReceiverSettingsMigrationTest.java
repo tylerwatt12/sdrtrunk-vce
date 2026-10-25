@@ -70,7 +70,7 @@ class LegacyReceiverSettingsMigrationTest
         String malformedNeighbor = "{\"secret\":\"" + SYNTHETIC_SECRET + "\",broken";
         Files.writeString(source.resolve(REMOTE_FILE), malformedNeighbor);
         Path fileTarget = directory.resolve("file-target");
-        var file = PreviousBuildLocator.resolveSelection(database(source)).orElseThrow();
+        var file = new PreviousBuildLocator.Selection(database(source), PreviousBuildLocator.InputScope.DATABASE_FILE);
         var result = service.importPrevious(file, fileTarget, null);
         assertDefaults(fileTarget);
         assertFalse(result.helperOutput().contains(SYNTHETIC_SECRET));

@@ -860,7 +860,7 @@ class StatsWebServerServiceLifecycleTest
     }
 
     @Test
-    void preservesSessionsAcrossRebindRetainsWorkingListenerOnFailureAndRevokesPrimaryReset() throws Exception
+    void preservesSessionsAcrossRebindAndFailedPasswordChangeButRevokesSuccessfulChangeAndReset() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -980,13 +980,21 @@ class StatsWebServerServiceLifecycleTest
 
             try
             {
-                assertEquals(2, service.provisionOrResetPrimaryAdmin(replacementPassword).authRevision());
+                assertTrue(service.changePrimaryAdminPassword("incorrect password".toCharArray(),
+                    replacementPassword).isEmpty());
+                assertAuthenticated(client, origin(replacementPort), cookie, true);
+                assertEquals(2, service.changePrimaryAdminPassword("primary-admin-password".toCharArray(),
+                    replacementPassword).orElseThrow().authRevision());
             }
             finally
             {
                 Arrays.fill(replacementPassword, '\u0000');
             }
 
+            assertAuthenticated(client, origin(replacementPort), cookie, false);
+            cookie = login(client, origin(replacementPort), "replacement-admin-password");
+            assertAuthenticated(client, origin(replacementPort), cookie, true);
+            assertEquals(3, service.provisionOrResetPrimaryAdmin("recovered-admin-password".toCharArray()).authRevision());
             assertAuthenticated(client, origin(replacementPort), cookie, false);
         }
         finally
@@ -1004,6 +1012,73 @@ class StatsWebServerServiceLifecycleTest
             {
                 System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
             }
+        }
+    }
+
+    @Test
+    void changesLocalHttpsWithoutOpeningNetworkAccessAndRetainsHttpOnCertificateFailure() throws Exception
+    {
+        Path dataRoot = mTemporaryDirectory.resolve("local-https-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        Path assets = Files.createDirectories(mTemporaryDirectory.resolve("local-https-assets"));
+        Files.writeString(assets.resolve("index.html"), "<!doctype html><title>test</title>");
+        String previousAssetOverride = System.getProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+        System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, assets.toString());
+        int port = availableLoopbackPort();
+        TestApplicationPreference application = new TestApplicationPreference(port, false, false, true);
+        TestUserPreferences preferences = new TestUserPreferences(application, new TestDirectoryPreference(dataRoot));
+
+        try(StatsWebServerService service = StatsWebTestRuntime.start(preferences))
+        {
+            assertTrue(service.getRuntimeState().running());
+            assertFalse(service.getRuntimeState().https());
+            WebServerRuntimeState encrypted = service.setHttpsEnabled(true);
+            assertTrue(encrypted.running(), encrypted.statusMessage());
+            assertTrue(encrypted.https());
+            assertEquals(port, encrypted.port());
+            assertFalse(encrypted.anyIpEnabled());
+            assertFalse(application.isStatsWebServerAnyIpEnabled());
+            assertTrue(application.isStatsWebServerHttpsEnabled());
+            WebTlsMaterialService tls = service.getTlsMaterialService();
+            assertHttpsIndex(tls.validateInstalledMaterial(), port);
+
+            TlsMaterial replacement = new WebTlsMaterialService(mTemporaryDirectory.resolve("local-certificate"))
+                .generateSelfSigned("localhost", List.of("localhost", "127.0.0.1"));
+            WebServerRuntimeState activated = service.installAndActivateCustomCertificate(replacement).runtimeState();
+            assertTrue(activated.running(), activated.statusMessage());
+            assertFalse(activated.anyIpEnabled());
+            assertEquals(replacement.leafSha256Fingerprint(), activated.certificateFingerprint());
+            assertHttpsIndex(replacement, port);
+
+            assertFalse(service.setHttpsEnabled(false).https());
+            Files.delete(tls.privateKeyPath());
+            assertThrows(java.io.IOException.class, () -> service.setHttpsEnabled(true));
+            WebServerRuntimeState retained = service.getRuntimeState();
+            assertTrue(retained.running(), retained.statusMessage());
+            assertEquals(port, retained.port());
+            assertFalse(retained.https());
+            assertFalse(retained.anyIpEnabled());
+            assertFalse(application.isStatsWebServerHttpsEnabled());
+            assertFalse(application.isStatsWebServerAnyIpEnabled());
+            HttpResponse<String> response = HttpClient.newHttpClient().send(HttpRequest.newBuilder(origin(port))
+                .timeout(Duration.ofSeconds(10)).GET().build(), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode());
+            assertTrue(response.body().contains("<title>test</title>"));
+
+            application.setEnabled(false);
+            service.preferenceUpdated(PreferenceType.APPLICATION);
+            assertFalse(service.setHttpsEnabled(true).running());
+            assertTrue(application.isStatsWebServerHttpsEnabled());
+            assertFalse(application.isStatsWebServerAnyIpEnabled());
+        }
+        finally
+        {
+            if(previousAssetOverride == null)
+                System.clearProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY);
+            else
+                System.setProperty(StatsWebPath.ROOT_OVERRIDE_PROPERTY, previousAssetOverride);
         }
     }
 
@@ -1039,6 +1114,11 @@ class StatsWebServerServiceLifecycleTest
             assertTrue(state.running(), state.statusMessage());
             assertTrue(state.anyIpEnabled());
             assertTrue(state.https(), "Network access must ignore a stored plain-HTTP preference");
+            StatsWebServerService activeService = service;
+            assertThrows(IllegalArgumentException.class, () -> activeService.setHttpsEnabled(false));
+            assertEquals(state, service.getRuntimeState());
+            assertTrue(service.getRuntimeState().anyIpEnabled());
+            assertTrue(service.getRuntimeState().https());
             assertTrue(state.certificateFingerprint() != null && !state.certificateFingerprint().isBlank());
             WebTlsMaterialService tls = service.getTlsMaterialService();
             TlsMaterial material = tls.validateInstalledMaterial();
@@ -1442,6 +1522,12 @@ class StatsWebServerServiceLifecycleTest
         public boolean isStatsWebServerHttpsEnabled()
         {
             return mHttpsEnabled;
+        }
+
+        @Override
+        public void setStatsWebServerHttpsEnabled(boolean enabled)
+        {
+            mHttpsEnabled = enabled;
         }
 
         @Override

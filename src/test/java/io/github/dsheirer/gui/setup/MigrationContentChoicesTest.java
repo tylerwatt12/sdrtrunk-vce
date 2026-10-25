@@ -21,30 +21,28 @@ class MigrationContentChoicesTest
 {
     @TempDir Path temporary;
 
-    @Test void oneCheckedHistoryOptionShowsTheEstimateAndUncheckedExplainsTheLoss() throws Exception
+    @Test void historyRequiresAnExplicitSelectionAndExplainsTheLossBeforeItIsSelected() throws Exception
     {
         Path source = temporary.resolve("selected.sqlite");
         Files.writeString(source, "Size-only UI fixture");
         SwingUtilities.invokeAndWait(() -> {
             AtomicReference<MigrationContent> changed = new AtomicReference<>();
-            MigrationContentChoices choices = new MigrationContentChoices(source, MigrationContent.FULL, changed::set);
-            assertEquals(MigrationContent.FULL, choices.selectedContent());
+            MigrationContentChoices choices = new MigrationContentChoices(source, MigrationContent.CONFIGURATION_ONLY, changed::set);
+            assertEquals(MigrationContent.CONFIGURATION_ONLY, choices.selectedContent());
             JCheckBox keep = checkbox(choices);
             assertEquals("Keep activity and statistics", keep.getText());
-            assertTrue(keep.isSelected());
+            assertFalse(keep.isSelected());
             assertNull(changed.get(), "Rendering must not change the approved content");
             String copy = copy(choices);
-            assertTrue(copy.contains("Allow a few minutes."));
-            assertTrue(copy.contains("It may take longer."));
-            keep.doClick();
-            assertEquals(MigrationContent.CONFIGURATION_ONLY, choices.selectedContent());
-            assertEquals(MigrationContent.CONFIGURATION_ONLY, changed.get());
-            assertTrue(copy(choices).contains("Activity, statistics, and alert history start fresh."));
-            assertTrue(copy(choices).contains("Settings and recordings are kept."));
-            assertFalse(copy(choices).contains("It may take longer."));
+            assertTrue(copy.contains("Activity, statistics, and alert history start fresh."));
+            assertTrue(copy.contains("Settings and recordings are kept."));
             keep.doClick();
             assertEquals(MigrationContent.FULL, choices.selectedContent());
             assertEquals(MigrationContent.FULL, changed.get());
+            assertTrue(copy(choices).contains("It may take longer."));
+            keep.doClick();
+            assertEquals(MigrationContent.CONFIGURATION_ONLY, choices.selectedContent());
+            assertEquals(MigrationContent.CONFIGURATION_ONLY, changed.get());
             assertEquals(copy, copy(choices));
         });
         assertEquals("Size-only UI fixture", Files.readString(source));

@@ -9,29 +9,33 @@ channels, aliases, accounts, preferences, and other saved data. See the [documen
 
 ## Choose a starting point
 
-Launch VCE normally to open the Setup Wizard. A new installation offers **Start fresh** or **Bring my settings**.
-Choose a previous installation folder, saved database, or XML playlist; VCE checks the selection and shows what
-will be brought over before making changes.
+On first launch, VCE opens the Setup Wizard. A new installation offers **Start fresh** or **Bring my settings**.
+Choose a previous installation folder, supported macOS `.app`, or XML playlist; VCE checks the selection and shows
+what will be brought over before making changes. Standalone SQLite files are not accepted.
 
 | Your starting point | Choose | What to expect |
 | --- | --- | --- |
 | You are new to VCE | **Start fresh** | Create a new profile, then set up your administrator account, web access, audio, and radios. |
 | You already use VCE | **Bring my settings**, then choose its folder | Bring over its database and available voice libraries, optional modules, and encryption vault. |
-| You have a VCE database file | **Bring my settings**, then choose the file | Bring over settings and selected history. Other files and saved output paths are not moved. |
 | You use mainline sdrtrunk or an older XML playlist | **Bring my settings**, then choose the playlist | Bring over supported channels, aliases, and streaming settings. The XML file stays unchanged. |
 
-Review the selected source and import scope, then continue. An older database also offers **Keep activity and
-statistics**, selected initially. Clear it to keep configuration and start history fresh. Supported older macOS
-`.app` installations can also be selected.
+Review the selected source and import scope, then continue. For an older database, **Keep activity and statistics**
+starts unchecked: settings are kept while Activity, statistics, learned observations, and alert history start fresh.
+Select it to carry forward usable history through the supported updates. Any declared historical resets still apply.
+Neither choice deletes recording audio or its separate catalog.
 
 The previous installation stays unchanged. Keep it until you have checked the new installation and confirmed that
 your channels receive and your recordings or streams work as expected.
 
 ## Work through setup
 
-The wizard takes you through Your settings, Administrator, Web access, Digital audio, RadioReference,
+First setup takes you through Your settings, Administrator, Web access, Digital audio, RadioReference,
 Statistics & history, Recordings, Your radios, Optimize decoding, and Review & finish. Usable imported choices show
 **Carried over**. Continue skips those completed steps; select any step to review or change it.
+
+A healthy completed profile starts normally. Optional JMBE checks, decoding optimization, and unread release notes
+alone do not reopen setup. Interrupted first setup resumes; required data updates, administrator or web-access
+repairs, and a required vault unlock are handled before reception starts.
 
 - **Administrator:** Create the password for the fixed `admin` account if the imported profile does not already have
   a usable one. Imported accounts are retained when valid. Changing an existing administrator password requires
@@ -49,7 +53,7 @@ Statistics & history, Recordings, Your radios, Optimize decoding, and Review & f
 - **Statistics & history:** New profiles collect summary statistics. Saving individual activity events is optional.
   Time-based activity retention defaults to 30 days and can be set from 1 to 365 days. This does not control recording
   retention or ordinary log files; imported Off choices stay Off.
-- **Recordings:** Choose Managed Recordings for searchable call details and browser playback, or Basic Recordings for ordinary
+- **Recordings:** Choose Managed Recordings for searchable call details and browser playback, or Classic recordings for ordinary
   audio files. Imported recording choices are preserved. Review the recording folder before starting reception.
 - **Your radios:** A device marked **Detected** has been found; reception has not been tested. No hardware or a missing
   driver does not prevent completing setup. Use **Rescan** after connecting hardware or fixing its driver.
@@ -66,23 +70,25 @@ imports and updates continue to the next needed step; their report remains avail
 
 ## What an import brings over
 
-| Saved item | Copy an installation / data folder | Import a SQLite database only |
-| --- | --- | --- |
-| Channels, aliases, accounts, preferences, and application activity stored in the database | Imported, with any required conversion and declared repairs or resets | Imported, with the same conversion policy |
-| Remote Links pairing and connection settings and paging-tone detection | Imported from the database | Imported from the database |
-| Encryption vault, JMBE library in `jmbe`, and optional files in `modules` | Copied when present and usable; missing or skipped items appear in the report | Not copied |
-| Logs, call audio, event logs, screenshots, streaming output, and the separate Managed Recordings catalog | Not copied; stay at their existing locations | Not copied; stay at their existing locations |
-| Saved output and library paths inside the previous data folder | Changed to the matching location in the new data folder | Kept as stored |
-| Deliberately shared paths outside the previous data folder | Kept as stored | Kept as stored |
+| Saved item | Copy an installation / data folder |
+| --- | --- |
+| Channels, aliases, accounts, preferences, and selected application history | Imported, with any required conversion and declared repairs or resets |
+| Remote Links pairing and connection settings and paging-tone detection | Imported from the database, including eligible legacy settings kept with an older profile |
+| Encryption vault, JMBE library in `jmbe`, and optional files in `modules` | Copied when present and usable; missing or skipped items appear in the report |
+| Logs, call audio, event logs, screenshots, streaming output, and the separate Managed Recordings catalog | Not copied; stay at their existing locations |
+| Saved output and library paths inside the previous data folder | Changed to the matching location in the new data folder |
+| Deliberately shared paths outside the previous data folder | Kept as stored |
+
+XML import creates a new profile from supported channels, aliases, and streaming settings. It does not merge a
+playlist into an existing profile or replace an existing database.
 
 The migration plan names possible activity resets and retired settings that will be removed. The completion report
 gives the actual repair, reset, and skipped-item counts. Usable configuration is carried over; an unusable component
 may need to be set up again without preventing other settings from importing.
 
-A database-only import can still point to absolute folders in the previous installation. Relative paths resolve
-inside the new `data` folder. Check the folders on **Review & finish** before recording or streaming. If you need old
-call audio or logs in the new installation, keep and copy those files separately after stopping the applications;
-the settings import does not transfer them.
+Check the folders on **Review & finish** before recording or streaming. If you need old call audio or logs in the
+new installation, keep and copy those files separately after stopping the applications; the settings import does
+not transfer them.
 
 ## Update an existing profile
 
@@ -103,22 +109,33 @@ Keep separate data folders when comparing builds, and retain the older installat
 For a numbered Alpha, also read its version-matched release notes. See [Moving and updating VCE data](database-migration.md)
 for the support boundary and detailed conversion contract.
 
-## Review setup or import more settings later
+## Change settings after setup
 
-Use **Help → Setup Wizard…** and accept the restart prompt. Receiving stops while you review setup. Your current
-settings are selected automatically. Continue to review them, or choose different settings to inspect a saved file.
-An XML playlist adds supported configuration and renames conflicts. A database file replaces the application
-settings. Both operations show their scope before confirmation and retain a recovery copy of the current database.
+Use the running application's **Settings** button or the web interface. Setup is a startup workflow; there is no
+Help-menu wizard, SQLite-file import, or XML merge into an existing profile. To bring over another profile or
+playlist, start VCE in a new folder.
 
-**File → Import SQLite Database…** opens the same replacement flow. Review its warning and plan before confirming.
-VCE backs up the current database, updates and checks a private copy of the selected file, installs it, and restarts
-into setup review. The selected source is unchanged. Files beside it are not copied; the active `data` folder's
-non-database files remain in place, and stored paths are not remapped. An imported profile without a usable
-administrator account asks for a new password before reception starts.
+| Setting | Where to change it |
+| --- | --- |
+| Appearance | Desktop **Settings → Application → Appearance**, or web **My Settings** |
+| Primary administrator password and web access | Desktop **Settings → Stats & Web → Web Server** |
+| JMBE file, download/build, or update | Desktop **Settings → Decoder → JMBE Audio Library** |
+| RadioReference account and location | Web **RadioReference** |
+| Statistics, individual activity events, and activity retention | Web **Admin → Activity settings** |
+| Managed or Classic recording mode and Managed age retention | Web **Admin → Recording settings** |
+| Classic recording and other output folders | Desktop **Settings → File Storage → Directories** |
+| Radios | Web **Tuners** |
+| Channel auto-start | Web **Channels → Auto-start** |
+| Decoding optimization | Desktop **Settings → CPU → Vector Calibration** |
+| Unlock saved encryption keys | Desktop **View → Encryption Keys → Unlock Vault** |
+| Release notes | Desktop **Help → What's New** |
 
-Selecting a source or going Back does not import anything. After an import finishes, setup continues without
-offering to repeat it. A replacement that cannot establish a safe final state does not restart
-automatically; keep its error and reported recovery backup for troubleshooting.
+On **Web Server**, **Change Password** requires the current password; **Reset Password** provides explicit local
+account recovery. **Use HTTPS** can be changed locally and remains required for **Other devices**.
+
+JMBE setup remains local to the desktop application. The desktop statistics panel provides maintenance actions;
+collection and retention choices are in the web interface. The Managed recording folder is shown in Recording
+settings and is separate from the Classic output folder. Changing Classic's folder does not move the Managed library.
 
 ## Where files are stored and how to back them up
 
@@ -135,8 +152,9 @@ audio directory plus the separate `data/database/managed-recordings.sqlite` cata
 catalog when backing up that library. Managed recording retention is independent of activity retention; Classic
 recordings have no automatic retention.
 
-An older supported Managed Recordings catalog gets its own backed-up update before receiving starts. Its recording
-entries are preserved. If the catalog update fails, retry or choose **Continue without managed recordings**;
+An older supported Managed Recordings catalog gets its own update before receiving starts. Its recording entries
+are preserved; the graphical backup checkbox also starts unchecked for this update. If the catalog update fails,
+retry or choose **Continue without managed recordings**;
 ordinary receiving can continue while that library is unavailable. The retired `webfirst` catalog is unsupported.
 
 Only one VCE process can use a given `data` folder. If you see **already in use**, close the other instance before
@@ -158,12 +176,14 @@ Headless launches need an explicit starting option when the database is absent:
 ```text
 --fresh
 --import-xml <path>
---upgrade-data <previous-install-data-folder-or-sqlite-file>
+--upgrade-data <previous-installation-folder>
 ```
 
 Use only one of these options. Fresh creation and XML import create and validate a temporary current-format database
-before installing it. `--upgrade-data` imports a supported external folder or SQLite file with the same scope rules
-as graphical setup; it cannot replace a database already in the active data folder.
+before installing it. `--upgrade-data` accepts a supported previous installation folder, portable data folder, or
+macOS application bundle with the same profile scope as graphical setup. A standalone SQLite file is refused.
+These options apply only when the active data folder has no database; they cannot merge into or replace an existing
+profile. The retired `--import-sqlite` flag is refused rather than treated as a normal launch.
 
 For a new profile without a usable administrator credential, add:
 
@@ -185,9 +205,10 @@ omit that snapshot; this does not change the conversion or final checks.
 and administrator are prepared first. `--no-upgrade-backup` applies to these catalog updates too. A failed optional
 catalog update is reported and receiving can continue with Managed Recordings unavailable.
 
-Use `--server` to run without the local window, even when a desktop is available. Use `--setup-wizard` for a graphical
-setup review; it requires a desktop and cannot be combined with `--server`. Normal startup validates existing databases.
-Only the bundled Application Migrator changes their formats. The format catalog, adjacent conversion requirements,
+Use `--server` to run without the local window, even when a desktop is available. Graphical startup opens setup only
+when the profile needs it; `--setup-wizard` does not force a healthy completed profile back through optional pages
+and cannot be used with `--server`. Normal startup validates existing databases. Only the bundled Application Migrator
+changes their formats. The format catalog, adjacent conversion requirements,
 and historical data policies are retained in the [technical migration reference](database-migration.md#technical-migration-reference).
 
 </details>

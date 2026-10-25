@@ -10,9 +10,6 @@ import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import io.github.dsheirer.database.*;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
-import io.github.dsheirer.database.importer.LegacyPlaylistImportService;
-import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
-import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog;
 import io.github.dsheirer.gui.CopyableErrorDialog;
 import io.github.dsheirer.database.upgrade.*;
 import io.github.dsheirer.gui.theme.ThemeManager;
@@ -55,17 +52,15 @@ import static io.github.dsheirer.gui.setup.SetupProgress.State.*;
 public final class SetupWizard extends JDialog
 {
     public record Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels,
-                         SqliteDatabaseImportDialog.PreparedImport replacement, boolean openWebAfterSetup)
+                         boolean openWebAfterSetup)
     {
         public Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels)
-        { this(preferences, lock, startChannels, null, false); }
+        { this(preferences, lock, startChannels, false); }
     }
     private final Path root;
     private final Path database;
     private final Path managedRecordingCatalog;
     private final SdrTrunkDatabaseBootstrap.Options options;
-    private final boolean forced;
-    private final boolean databaseImportRequested;
     private PortableDataRootLock lock;
     private final boolean ownsLock;
     private UserPreferences preferences;
@@ -124,7 +119,6 @@ public final class SetupWizard extends JDialog
     private boolean startChannels = true;
     private boolean sourceCommitted;
     private boolean restartRequired;
-    private SqliteDatabaseImportDialog.PreparedImport replacement;
     private StatsWebServerService liveServer;
     private DatabaseMigrationChain.PreflightReport startupMigrationPlan;
     private boolean managedRecordingCatalogNeedsUpgrade;
@@ -132,7 +126,7 @@ public final class SetupWizard extends JDialog
     private boolean createUpgradeBackup;
     private boolean reviewingSource;
     private Path selectedSource;
-    private MigrationContent migrationContent = MigrationContent.FULL;
+    private MigrationContent migrationContent = MigrationContent.CONFIGURATION_ONLY;
 
     /** Retry an actual listener bind race in the same shell, before tuner activation or output workers start. */
     public static boolean ensureListener(UserPreferences preferences, StatsWebServerService server) throws Exception
@@ -141,13 +135,13 @@ public final class SetupWizard extends JDialog
         SetupWizard[] holder = new SetupWizard[1];
         Path root = io.github.dsheirer.portable.PortableApplicationPaths.getDataRoot();
         SetupProgress progress = SetupProgress.read(SdrTrunkDatabasePath.getDatabasePath(root));
-        progress.setComplete(false);
         progress.set(SetupStep.WEB, NEEDS_ATTENTION);
         progress.set(SetupStep.REVIEW, PENDING);
         progress.save(SdrTrunkDatabasePath.getDatabasePath(root));
         SwingUtilities.invokeAndWait(() -> {
             SetupWizard wizard = new SetupWizard(new String[]{"--setup-wizard"}, root, null);
             holder[0] = wizard; wizard.preferences = preferences; wizard.progress = progress; wizard.liveServer = server;
+            wizard.limitedVisit = progress.isComplete();
             wizard.showPage(SetupStep.WEB);
             wizard.fail(server.getRuntimeState().statusMessage());
             wizard.setVisible(true);
@@ -201,11 +195,6 @@ public final class SetupWizard extends JDialog
                     wizard.finished = true;
                     return new Result(wizard.preferences, wizard.lock, true);
                 }
-                if(setupVisitNeeded)
-                {
-                    wizard.progress.setComplete(false);
-                    wizard.save();
-                }
             }
             Throwable showInspectionFailure = inspectionFailure;
             SwingUtilities.invokeAndWait(() -> {
@@ -213,21 +202,17 @@ public final class SetupWizard extends JDialog
                 {
                     ThemeManager.getInstance().initialize(wizard.preferences);
                     SwingUtilities.updateComponentTreeUI(wizard);
-                    wizard.showPage(wizard.databaseImportRequested || wizard.managedRecordingCatalogNeedsUpgrade ?
+                    wizard.showPage(wizard.managedRecordingCatalogNeedsUpgrade ?
                         SetupStep.SOURCE : wizard.initialStep());
                 }
                 else wizard.showPage(SetupStep.SOURCE);
                 if(showInspectionFailure != null) wizard.fail(
                     "We couldn’t check your saved settings. Choose Check my settings to try again. Receiving hasn’t started.",
                     CopyableErrorDialog.message(showInspectionFailure));
-                if(wizard.databaseImportRequested && wizard.preferences != null)
-                {
-                    SwingUtilities.invokeLater(wizard::chooseSource);
-                }
                 wizard.setVisible(true);
             });
             return wizard.finished ? new Result(wizard.preferences, wizard.lock, wizard.startChannels,
-                wizard.replacement, wizard.replacement == null) : null;
+                true) : null;
         }
         finally
         {
@@ -248,12 +233,10 @@ public final class SetupWizard extends JDialog
         managedRecordingCatalog = database.resolveSibling("managed-recordings.sqlite");
         options = SdrTrunkDatabaseBootstrap.Options.parse(args);
         selectedSource = options.importXml() != null ? options.importXml() : options.upgradeData();
-        if(Files.isRegularFile(database) && options.upgradeData() != null)
-            throw new IllegalArgumentException("This profile already has a database. Use File → Import SQLite Database for explicitly confirmed replacement.");
+        if(Files.isRegularFile(database) && selectedSource != null)
+            throw new IllegalArgumentException("These settings are already in use. To bring settings from another installation, start VCE in a new folder.");
         if(!Files.isRegularFile(database) && options.upgradeCurrent())
             throw new IllegalArgumentException("--upgrade-current requires an existing portable database.");
-        databaseImportRequested = Arrays.asList(args).contains("--import-sqlite");
-        forced = Arrays.asList(args).contains("--setup-wizard") || databaseImportRequested;
         lock = existingLock;
         ownsLock = existingLock == null;
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
@@ -395,7 +378,7 @@ public final class SetupWizard extends JDialog
                 rr.getPreferredCountryId(), rr.getPreferredStateId());
         }
         firstRunGuideEligible = !progress.isComplete();
-        limitedVisit = progress.isComplete() && !forced;
+        limitedVisit = progress.isComplete();
         if(newPreferences) preferences.getApplicationPreference().setStatsLoggingEnabled(true);
         var app = preferences.getApplicationPreference();
         if(selectedTheme != null) app.setTheme(selectedTheme);
@@ -477,17 +460,13 @@ public final class SetupWizard extends JDialog
     private boolean needsVisit()
     {
         if(preferences == null) return true;
-        return forced || !progress.isComplete() || !progress.isDone(SetupStep.ADMINISTRATOR) || !progress.isDone(SetupStep.WEB) ||
-            !CalibrationManager.getInstance(preferences).isCalibrated() &&
-                !preferences.getVectorCalibrationPreference().isHideCalibrationDialog() ||
-            WhatsNewDialog.getPendingReleaseNotes().isPresent() || vaultLocked() || jmbeNeeded();
+        return !progress.isComplete() || !progress.isDone(SetupStep.ADMINISTRATOR) ||
+            !progress.isDone(SetupStep.WEB) || vaultLocked();
     }
 
     private SetupStep initialStep()
     {
-        return SetupReadiness.initialStep(progress, forced, limitedVisit, jmbeNeeded(),
-            !CalibrationManager.getInstance(preferences).isCalibrated() &&
-                !preferences.getVectorCalibrationPreference().isHideCalibrationDialog());
+        return SetupReadiness.initialStep(progress, limitedVisit);
     }
 
     private void showPage(SetupStep id)
@@ -495,7 +474,7 @@ public final class SetupWizard extends JDialog
         if(busy) return;
         closeRadioReferenceSetup();
         if(managedRecordingCatalogNeedsUpgrade) id = SetupStep.SOURCE;
-        else if(id == SetupStep.REVIEW && progress != null && progress.get(SetupStep.JMBE) == NEEDS_ATTENTION)
+        else if(!limitedVisit && id == SetupStep.REVIEW && progress != null && progress.get(SetupStep.JMBE) == NEEDS_ATTENTION)
             id = SetupStep.JMBE;
         reviewingSource = false;
         certificateGuideVisible = false;
@@ -537,7 +516,6 @@ public final class SetupWizard extends JDialog
         if(preferences != null)
         {
             notice("Your settings are ready", "Continue to review your setup.", true);
-            if(liveServer == null && !sourceCommitted) WizardStyles.quiet(button("Choose different settings", this::chooseSource));
             if(!migrationReport.isBlank()) details("Import report", migrationReport);
             return;
         }
@@ -571,7 +549,7 @@ public final class SetupWizard extends JDialog
         }
         ButtonGroup group = new ButtonGroup();
         WizardChoiceCard fresh = choice(group, "Start fresh", "Set up a new installation.", selectedSource == null);
-        WizardChoiceCard bring = choice(group, "Bring my settings", "Choose a previous VCE folder or a saved settings file.", selectedSource != null);
+        WizardChoiceCard bring = choice(group, "Bring my settings", "Choose a previous VCE folder or an XML playlist.", selectedSource != null);
         Runnable changed = () -> next.setText(fresh.isSelected() ? "Start setup" :
             selectedSource == null ? "Choose settings" : "Review settings");
         fresh.radio().addItemListener(e -> changed.run());
@@ -588,14 +566,13 @@ public final class SetupWizard extends JDialog
 
     private void chooseSource()
     {
-        if(busy || sourceCommitted || preferences != null && !persist()) return;
-        boolean foldersAllowed = !Files.isRegularFile(database);
+        if(busy || sourceCommitted || preferences != null) return;
         JFileChooser chooser = new JFileChooser(selectedSource == null ? null : selectedSource.toFile());
-        chooser.setDialogTitle(foldersAllowed ? "Choose settings file or folder" : "Choose settings file");
-        chooser.setFileSelectionMode(foldersAllowed ? JFileChooser.FILES_AND_DIRECTORIES : JFileChooser.FILES_ONLY);
+        chooser.setDialogTitle("Choose VCE folder or XML playlist");
+        chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
+        chooser.setAcceptAllFileFilterUsed(false);
         chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-            foldersAllowed ? "Saved settings (*.sqlite, *.xml)" : "Saved settings (*.sqlite, *.db, *.xml)",
-            foldersAllowed ? new String[]{"sqlite", "xml"} : new String[]{"sqlite", "db", "xml"}));
+            "VCE folders and XML playlists (*.xml)", "xml"));
         if(chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION)
             inspectSource(chooser.getSelectedFile().toPath());
     }
@@ -603,10 +580,11 @@ public final class SetupWizard extends JDialog
     private void inspectSource(Path input)
     {
         if(busy || sourceCommitted) return;
+        if(preferences != null || Files.isRegularFile(database))
+            throw new IllegalStateException("Settings can only be imported into a new installation.");
         selectedSource = input.toAbsolutePath().normalize();
         Path source = selectedSource;
-        boolean existing = Files.isRegularFile(database);
-        migrationContent = MigrationContent.FULL;
+        migrationContent = MigrationContent.CONFIGURATION_ONLY;
         //A different selection invalidates the old Proceed action before any inspection can fail.
         page.removeAll();
         title.setText("Choose settings");
@@ -619,45 +597,18 @@ public final class SetupWizard extends JDialog
         page.revalidate(); page.repaint();
         if(Files.isRegularFile(source) && source.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".xml"))
         {
-            if(existing)
-                job("Checking playlist…", null, () -> new LegacyPlaylistImportService(database).prepare(source), prepared ->
-                    reviewPlaylist(source, prepared.preview(), true, () -> job("Importing playlist…", null, () -> {
-                        var result = new LegacyPlaylistImportService(database).execute(prepared);
-                        sourceCommitted = true;
-                        readAutoStart();
-                        revalidateSettings();
-                        return LegacyPlaylistImportDialog.resultMessage(result);
-                    }, this::sourceReady)));
-            else
-                job("Checking playlist…", null, () -> LegacyXmlConfigurationImporter.prepare(source), prepared ->
-                    reviewPlaylist(source, prepared.preview(), false, () -> prepareProfile(() -> {
-                        LegacyXmlConfigurationImporter.importPlaylist(prepared, database);
-                        return "Playlist imported. The selected file is unchanged.";
-                    }, true)));
-            return;
-        }
-        if(existing)
-        {
-            if(Files.isDirectory(source)) throw new IllegalArgumentException(
-                "Choose a saved settings file. To copy a previous installation, open VCE in a new folder.");
-            job("Checking settings…", null, () -> SqliteDatabaseImportDialog.inspect(source, database), prepared ->
-                reviewSettings(source, source, "These settings will replace your current channels, aliases, accounts and preferences. " +
-                    "Recordings and other files stay in place. A backup is kept before replacement.",
-                    prepared.approval().plan(), false, "Replace settings and restart", () -> {
-                        replacement = new SqliteDatabaseImportDialog.PreparedImport(prepared.sourceDatabase(),
-                            prepared.approval().withContent(migrationContent));
-                        finished = true;
-                        dispose();
-                    }));
+            job("Checking playlist…", null, () -> LegacyXmlConfigurationImporter.prepare(source), prepared ->
+                reviewPlaylist(source, prepared.preview(), () -> prepareProfile(() -> {
+                    LegacyXmlConfigurationImporter.importPlaylist(prepared, database);
+                    return "Playlist imported. The selected file is unchanged.";
+                }, true)));
             return;
         }
         PreviousBuildLocator.Selection selection = PreviousBuildLocator.resolveSelection(source)
             .orElseThrow(() -> new IllegalArgumentException(
-                "No saved VCE settings were found. Choose a previous installation, a .sqlite file or an XML playlist."));
+                "No saved VCE settings were found. Choose a previous VCE folder or an XML playlist."));
         job("Checking settings…", null, () -> ApplicationMigrationService.readMigrationApproval(selection, root.getParent()), approval -> {
-            selectedScope = selection.portableProfile() ?
-                "Copies settings, saved keys and available voice tools. Recordings and logs are not copied." :
-                "Copies settings from this file. Other files and saved recording folders stay in place.";
+            selectedScope = "Copies settings, saved keys and available voice tools. Recordings and logs are not copied.";
             reviewSettings(selection.path(), selection.database(), selectedScope, approval.plan(), false, "Import settings", () -> {
                 var confirmed = approval.withContent(migrationContent);
                 prepareProfile(() -> ApplicationMigrationSuccessDialog.previousImportReport(
@@ -667,12 +618,10 @@ public final class SetupWizard extends JDialog
     }
 
     private void reviewPlaylist(Path source, io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview preview,
-                               boolean merging, Runnable proceed)
+                               Runnable proceed)
     {
-        String scope = preview.channelCount() + " channels, " + preview.aliasCount() + " aliases and " +
-            preview.streamCount() + " streaming configurations. " + (merging ?
-                "Adds to your current settings; " + preview.totalConflicts() + " conflicting names will be renamed. A backup is kept first." :
-                "Creates settings from this playlist. The selected file is unchanged.");
+        String scope = "Channels: " + preview.channelCount() + " · Aliases: " + preview.aliasCount() +
+            " · Streams: " + preview.streamCount() + ". The selected file stays unchanged.";
         reviewSettings(source, source, scope, null, false, "Import playlist", proceed);
     }
 
@@ -681,7 +630,8 @@ public final class SetupWizard extends JDialog
     {
         page.removeAll();
         title.setText("Review settings");
-        paragraph("Source: " + source.getFileName());
+        reviewingSource = !source.equals(database) && !source.equals(managedRecordingCatalog);
+        if(reviewingSource) paragraph("Source: " + source.getFileName());
         paragraph(scope);
         if(plan != null) migrationDetails(historyDatabase, plan);
         if(backupChoice)
@@ -692,7 +642,6 @@ public final class SetupWizard extends JDialog
             paragraph("Without a backup, you cannot return to the previous version.");
         }
         details("Source location", source.toString());
-        reviewingSource = !source.equals(database) && !source.equals(managedRecordingCatalog);
         if(reviewingSource) WizardStyles.quiet(button("Choose different settings", this::chooseSource));
         next.setText(caption);
         accept = proceed;
@@ -736,7 +685,6 @@ public final class SetupWizard extends JDialog
     {
         if(!report.isBlank())
             migrationReport = migrationReport.isBlank() ? report : migrationReport + "\n\n" + report;
-        progress.setComplete(false);
         progress.set(SetupStep.SOURCE, COMPLETE);
         if(!persist()) { restartRequired = true; updateNavigation(); return; }
         ThemeManager.getInstance().initialize(preferences);
@@ -1107,7 +1055,7 @@ public final class SetupWizard extends JDialog
         ButtonGroup group = new ButtonGroup();
         JRadioButton managed = card(group, "Managed Recordings · Recommended",
             "Searchable call details and browser playback, with optional age retention.", managedSelected);
-        card(group, "Basic Recordings",
+        card(group, "Classic recordings",
             "One folder for other software, such as Trunking Recorder.", !managedSelected);
         paragraph("Only future calls are affected. Existing Managed recordings stay searchable.");
         accept = () -> {
@@ -1191,13 +1139,6 @@ public final class SetupWizard extends JDialog
         return vault.hasVault() && !vault.isUnlocked() && vault.isPromptOnLaunch();
     }
 
-    private boolean jmbeNeeded()
-    {
-        return progress.get(SetupStep.JMBE) == NEEDS_ATTENTION ||
-            autoStartNeedsJmbe && !progress.isDone(SetupStep.JMBE) &&
-            preferences.getJmbeLibraryPreference().getAlertIfMissingLibraryRequired();
-    }
-
     private void reviewPage()
     {
         paragraph("Review your choices, then choose Finish & launch to start receiving.");
@@ -1240,7 +1181,7 @@ public final class SetupWizard extends JDialog
             startChannels = launchChannels.isSelected();
             if(!progress.isDone(SetupStep.ADMINISTRATOR)) throw new IllegalArgumentException("Complete administrator setup before launching.");
             if(vaultLocked()) throw new IllegalArgumentException("Unlock the vault or choose to continue without it for this run.");
-            job("Testing HTTPS listener and saving settings…", null, () -> {
+            job("Checking web access…", null, () -> {
                 save();
                 if(liveServer != null)
                 {
@@ -1430,8 +1371,7 @@ public final class SetupWizard extends JDialog
     }
     private SetupStep nextStep()
     {
-        return SetupReadiness.nextStep(progress, step, limitedVisit, jmbeNeeded(),
-            !preferences.getVectorCalibrationPreference().isHideCalibrationDialog(), sourceCommitted);
+        return SetupReadiness.nextStep(progress, step, limitedVisit);
     }
     private void deferCurrent() { progress.set(step,DEFERRED); if(persist()) showPage(nextStep()); }
     private void defer(String caption) { WizardStyles.quiet(button(caption,this::deferCurrent)); }

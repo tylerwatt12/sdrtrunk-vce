@@ -18,6 +18,7 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.google.common.eventbus.AllowConcurrentEvents;
 import com.google.common.eventbus.Subscribe;
 import com.sun.net.httpserver.Filter;
 import com.sun.net.httpserver.Headers;
@@ -109,6 +110,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -216,6 +218,8 @@ public class StatsWebServerService implements AutoCloseable
             TimeUnit.MINUTES);
     }
 
+    //Reconciliation owns the service monitor; avoid a second Guava lock when a setter posts preferences.
+    @AllowConcurrentEvents
     @Subscribe
     public void preferenceUpdated(PreferenceType preferenceType)
     {
@@ -239,6 +243,32 @@ public class StatsWebServerService implements AutoCloseable
     public synchronized WebServerRuntimeState reloadActiveListener()
     {
         return reconcileListener(true);
+    }
+
+    /** Changes encryption without changing which devices can connect, retaining the setting on activation failure. */
+    public synchronized WebServerRuntimeState setHttpsEnabled(boolean enabled) throws IOException
+    {
+        ensureOpen();
+        ApplicationPreference preference = mUserPreferences.getApplicationPreference();
+        if(!enabled && preference.isStatsWebServerAnyIpEnabled())
+        {
+            throw new IllegalArgumentException("Access from other devices requires HTTPS.");
+        }
+
+        boolean previous = preference.isStatsWebServerHttpsEnabled();
+        preference.setStatsWebServerHttpsEnabled(enabled);
+        WebServerRuntimeState state = reconcileListener(false);
+        RequestedConfiguration requested = new RequestedConfiguration(StatsWebPath.getAssetsPath(),
+            preference.getStatsWebServerPort(), preference.isStatsWebServerAnyIpEnabled(), enabled);
+        if(preference.isStatsWebServerEnabled() &&
+            (mListener == null || !mListener.configuration().requested().equals(requested)))
+        {
+            preference.setStatsWebServerHttpsEnabled(previous);
+            reconcileListener(false);
+            throw new IOException("The HTTPS setting could not be applied. The previous setting was kept.");
+        }
+
+        return state;
     }
 
     /**
@@ -281,6 +311,21 @@ public class StatsWebServerService implements AutoCloseable
         ensureAuthenticationServices();
         WebAccessAccount account = mWebAccessService.provisionOrResetPrimaryAdmin(password);
         mWebAuthenticationService.invalidateAccountSessions(WebAccessService.PRIMARY_ADMIN_USERNAME);
+        return account;
+    }
+
+    /** Verifies the current primary administrator password before changing it and signing out existing sessions. */
+    public synchronized Optional<WebAccessAccount> changePrimaryAdminPassword(char[] currentPassword,
+                                                                              char[] newPassword)
+        throws IOException, SQLException
+    {
+        ensureOpen();
+        ensureAuthenticationServices();
+        Optional<WebAccessAccount> account = mWebAccessService.changePrimaryAdminPassword(currentPassword, newPassword);
+        if(account.isPresent())
+        {
+            mWebAuthenticationService.invalidateAccountSessions(WebAccessService.PRIMARY_ADMIN_USERNAME);
+        }
         return account;
     }
 
@@ -446,7 +491,8 @@ public class StatsWebServerService implements AutoCloseable
     {
         ApplicationPreference preference = mUserPreferences.getApplicationPreference();
 
-        if(preference.isStatsWebServerEnabled() && preference.isStatsWebServerAnyIpEnabled() &&
+        if(preference.isStatsWebServerEnabled() &&
+            (preference.isStatsWebServerAnyIpEnabled() || preference.isStatsWebServerHttpsEnabled()) &&
             (!mRuntimeState.running() || !mRuntimeState.https() ||
                 !installed.leafSha256Fingerprint().equals(mRuntimeState.certificateFingerprint())))
         {

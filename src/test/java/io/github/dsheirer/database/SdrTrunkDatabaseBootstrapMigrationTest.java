@@ -163,7 +163,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
     }
 
     @Test
-    void upgradeDataWithDirectDatabaseSelectionImportsOnlyThatFile() throws Exception
+    void upgradeDataRejectsStandaloneDatabaseWithoutChangingSourceOrCreatingDatabase() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("database-file-import-source");
         Path sourceDatabase = createFormat2Database(sourceRoot, "Imported Database File");
@@ -177,20 +177,21 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         Path targetRoot = mTemporaryFolder.resolve("database-file-import-target");
         Path passwordFile = passwordFile("database-file-import-password.txt");
 
-        SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
+        IOException refusal = assertThrows(IOException.class, () -> SdrTrunkDatabaseBootstrap.run(
             new String[]{"--upgrade-data", sourceDatabase.toString(), "--admin-password-file",
                 passwordFile.toString()}, targetRoot, true,
-                ApplicationMigrationServiceTestSupport.createInProcess());
+                ApplicationMigrationServiceTestSupport.createInProcess()));
 
-        assertTrue(result.startApplication());
-        assertFalse(result.initializeNewPreferences());
+        assertTrue(refusal.getMessage().contains("Choose a previous VCE installation folder"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
-        Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
-        assertCurrentDatabase(targetDatabase);
-        assertEquals("Imported Database File", scalar(targetDatabase, "SELECT name FROM alias WHERE id=1"));
+        assertFormat(sourceDatabase, 2, "scan-lists-p25-v26", false);
+        assertFalse(Files.exists(SdrTrunkDatabasePath.getDatabasePath(targetRoot)));
         assertFalse(Files.exists(targetRoot.resolve("jmbe")));
         assertFalse(Files.exists(targetRoot.resolve("modules")));
-        assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(targetRoot)));
+        assertFalse(Files.exists(EncryptionKeyVaultPath.getVaultPath(targetRoot)));
+        assertEquals("must not be copied", Files.readString(sourceRoot.resolve("jmbe/jmbe-test.jar")));
+        assertEquals("must not be copied", Files.readString(sourceRoot.resolve("modules/module-test.jar")));
+        assertEquals("invalid unselected vault", Files.readString(EncryptionKeyVaultPath.getVaultPath(sourceRoot)));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 

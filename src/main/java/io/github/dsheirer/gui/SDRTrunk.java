@@ -24,11 +24,8 @@ import io.github.dsheirer.application.update.UpdateCheckResult;
 import io.github.dsheirer.application.update.UpdateCheckService;
 import io.github.dsheirer.database.SdrTrunkDatabaseBootstrap;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
-import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
-import io.github.dsheirer.database.upgrade.ApplicationMigrationSuccessDialog;
 import io.github.dsheirer.eventbus.MyEventBus;
-import io.github.dsheirer.gui.configuration.SqliteDatabaseImportDialog.PreparedImport;
 import io.github.dsheirer.gui.diagnostic.BasebandRecordingDialog;
 import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
 import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
@@ -36,7 +33,6 @@ import io.github.dsheirer.gui.theme.ThemeManager;
 import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
 import io.github.dsheirer.gui.whatsnew.WhatsNewDialog;
 import io.github.dsheirer.monitor.ResourceMonitor;
-import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.receiver.ReceiverRuntime;
 import io.github.dsheirer.receiver.ReceiverLaunchMode;
@@ -100,13 +96,11 @@ public class SDRTrunk
         "sdrtrunk.resource.status.update.icon.migration.1";
     private static final String BASE_WINDOW_NAME = "sdrtrunk.main.window";
     private static final String WINDOW_FRAME_IDENTIFIER = BASE_WINDOW_NAME + ".thin.shell.frame";
-    private static final String APPLICATION_MIGRATOR_TITLE = "VCE Application Migrator";
 
     private boolean mResourceStatusVisible;
     private final ReceiverRuntime mRuntime;
     private boolean mDesktopClosed;
     private StatsWebServerService mStatsWebServerService;
-    private ConfigurationManager mConfigurationManager;
     private JFrame mMainGui;
     private BasebandRecordingDialog mBasebandRecordingDialog;
     private JavaFxWindowManager mJavaFxWindowManager;
@@ -131,7 +125,6 @@ public class SDRTrunk
     private boolean mOpenWebAfterSetup;
     private JMenuItem mEncryptionKeysItem;
     private boolean mShutdownProcessed;
-    private volatile boolean mDatabaseReplacementInProgress;
     private final boolean mStartConfiguredChannels;
 
     /** Optional local setup/diagnostic shell over the same receiver used in server mode. */
@@ -140,7 +133,6 @@ public class SDRTrunk
     {
         mRuntime = runtime;
         mUserPreferences = userPreferences;
-        mConfigurationManager = runtime.configuration();
         mTunerManager = runtime.tuners();
         mStatsWebServerService = runtime.webServer();
         mStartConfiguredChannels = startConfiguredChannels;
@@ -258,14 +250,6 @@ public class SDRTrunk
         JMenu fileMenu = new JMenu("File");
         menuBar.add(fileMenu);
 
-        JMenuItem importSqliteDatabaseMenu = new JMenuItem("Import SQLite Database…");
-        importSqliteDatabaseMenu.addActionListener(event -> restartIntoSetupWizard(
-            "Restart to import a SQLite database? Receiving and streaming will stop while you choose, review, " +
-                "and migrate the database. Your active database will not be replaced unless you approve the " +
-                "migration plan.", "--setup-wizard", "--import-sqlite"));
-        fileMenu.add(importSqliteDatabaseMenu);
-        fileMenu.add(new JSeparator());
-
         JMenuItem exitMenu = new JMenuItem("Exit");
         exitMenu.addActionListener(event -> requestGuiShutdown());
 
@@ -334,12 +318,6 @@ public class SDRTrunk
         menuBar.add(diagnosticsMenu);
 
         JMenu helpMenu = new JMenu("Help");
-        JMenuItem setupWizardItem = new JMenuItem("Setup Wizard…");
-        setupWizardItem.addActionListener(event -> restartIntoSetupWizard(
-            "Restart into Setup Wizard? Receiving and streaming will stop until you finish setup. " +
-                "Your existing profile and accepted settings will be preserved.", "--setup-wizard"));
-        helpMenu.add(setupWizardItem);
-        helpMenu.add(new JSeparator());
         if(WhatsNewDialog.hasCurrent())
         {
             JMenuItem whatsNewItem = new JMenuItem("What's New");
@@ -487,82 +465,6 @@ public class SDRTrunk
         }
     }
 
-    /** Runs only at the pre-receiver startup boundary, after the wizard has detached all callbacks. */
-    private static int replaceSetupDatabase(PreparedImport prepared, Path dataRoot, PortableDataRootLock lock)
-    {
-        //No receiver services have been constructed. Keep the root lock until promotion and restart are complete.
-        if(Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.APP_QUIT_HANDLER))
-            Desktop.getDesktop().setQuitHandler((event, response) -> response.cancelQuit());
-        try
-        {
-            java.util.prefs.Preferences.userRoot().flush();
-            SqlitePreferencesFactory.shutdown();
-            ApplicationMigrationService.MigrationResult migration = ApplicationMigrationProgressDialog.run(null,
-                APPLICATION_MIGRATOR_TITLE, progress -> new ApplicationMigrationService()
-                    .replaceCurrentDatabase(prepared.sourceDatabase(), dataRoot, prepared.approval(), progress));
-            ApplicationMigrationSuccessDialog.show(null, APPLICATION_MIGRATOR_TITLE,
-                ApplicationMigrationSuccessDialog.replacementImportReport(migration, prepared.sourceDatabase()));
-        }
-        catch(Exception | LinkageError e)
-        {
-            CopyableErrorDialog.show(null, "SQLite Database Import Failed",
-                "The import could not finish safely. VCE will close without starting reception. Any completed " +
-                    "safety backup remains available in database/backups.", exceptionMessage(e));
-            //Do not release the lock or reopen stale preferences after an uncertain failure. The caller exits.
-            return 1;
-        }
-        try
-        {
-            lock.close();
-            //The staged database contains an unfinished review; normal startup must return to the wizard.
-            ApplicationRelauncher.relaunch();
-        }
-        catch(IOException e)
-        {
-            CopyableErrorDialog.show(null, "Restart Required",
-                "Your database was imported, but VCE could not restart. Start it manually to review the " +
-                    "imported settings before receiving.", exceptionMessage(e));
-        }
-        return 0;
-    }
-
-    private void flushConfigurationForDatabaseReplacement()
-    {
-        mConfigurationManager.flushConfiguration();
-    }
-
-    /** Stops receiver/database owners before starting any setup-time migration or replacement UI. */
-    private void restartIntoSetupWizard(String confirmation, String... arguments)
-    {
-        if(mDatabaseReplacementInProgress)
-        {
-            return;
-        }
-        if(JOptionPane.showConfirmDialog(mMainGui, confirmation, "Restart for setup",
-            JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION)
-        {
-            return;
-        }
-        try
-        {
-            mDatabaseReplacementInProgress = true;
-            mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
-            flushConfigurationForDatabaseReplacement();
-            processShutdown(false);
-            mRuntime.releaseDataRootLock();
-            ApplicationRelauncher.relaunch(arguments);
-            System.exit(0);
-        }
-        catch(Exception e)
-        {
-            mDatabaseReplacementInProgress = false;
-            mMainGui.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
-            CopyableErrorDialog.show(mMainGui, "Restart Required",
-                "Automatic restart failed. Close this process and start again with --setup-wizard.",
-                exceptionMessage(e));
-        }
-    }
-
     private static String exceptionMessage(Throwable throwable)
     {
         Throwable cause = throwable;
@@ -587,12 +489,6 @@ public class SDRTrunk
 
     private void requestGuiShutdown()
     {
-        if(mDatabaseReplacementInProgress)
-        {
-            Toolkit.getDefaultToolkit().beep();
-            return;
-        }
-
         try
         {
             processShutdown();
@@ -606,29 +502,12 @@ public class SDRTrunk
 
     private void processShutdown()
     {
-        processShutdown(true);
-    }
-
-    private void processShutdown(boolean releaseDataRootLock)
-    {
         synchronized(this)
         {
             if(mShutdownProcessed) return;
             mShutdownProcessed = true;
         }
-        try
-        {
-            if(releaseDataRootLock) mRuntime.close();
-            else mRuntime.closeForDatabaseReplacement();
-        }
-        catch(RuntimeException failure)
-        {
-            if(!releaseDataRootLock)
-            {
-                synchronized(this) { mShutdownProcessed = false; }
-            }
-            throw failure;
-        }
+        mRuntime.close();
     }
 
     private synchronized void closeDesktop()
@@ -665,13 +544,6 @@ public class SDRTrunk
         }
 
         desktop.setQuitHandler((quitEvent, quitResponse) -> {
-            if(mDatabaseReplacementInProgress)
-            {
-                Toolkit.getDefaultToolkit().beep();
-                quitResponse.cancelQuit();
-                return;
-            }
-
             try
             {
                 processShutdown();
@@ -1038,11 +910,6 @@ public class SDRTrunk
                     return;
                 }
                 dataRootLock = setup.lock();
-                if(setup.replacement() != null)
-                {
-                    System.exit(replaceSetupDatabase(setup.replacement(), dataRoot, dataRootLock));
-                    return;
-                }
                 userPreferences = setup.preferences();
                 startConfiguredChannels = setup.startChannels();
                 openWebAfterSetup = setup.openWebAfterSetup();

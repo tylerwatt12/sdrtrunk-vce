@@ -143,6 +143,28 @@ public final class WebAccessService
         return provisionOrResetPrimaryAdmin(password, WebUserPreferences.defaults());
     }
 
+    /** Changes the primary administrator password only after verifying the current password. */
+    public Optional<WebAccessAccount> changePrimaryAdminPassword(char[] currentPassword, char[] newPassword)
+        throws IOException, SQLException
+    {
+        char[] current = copyPassword(currentPassword);
+        mMutationLock.lock();
+        try
+        {
+            if(authenticate(PRIMARY_ADMIN_USERNAME, current).isEmpty())
+            {
+                return Optional.empty();
+            }
+
+            return Optional.of(provisionOrResetPrimaryAdmin(newPassword));
+        }
+        finally
+        {
+            mMutationLock.unlock();
+            Arrays.fill(current, '\u0000');
+        }
+    }
+
     /**
      * Local-only primary-administrator bootstrap with explicit preferences for a newly created account. Existing
      * administrators keep their stored preferences when their password is reset.

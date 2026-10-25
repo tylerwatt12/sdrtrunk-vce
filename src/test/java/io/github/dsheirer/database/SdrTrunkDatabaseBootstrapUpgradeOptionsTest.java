@@ -27,6 +27,18 @@ class SdrTrunkDatabaseBootstrapUpgradeOptionsTest
     }
 
     @Test
+    void retiredSqliteImportFlagIsRefusedInsteadOfStartingNormally()
+    {
+        for(String[] args: new String[][]{{"--import-sqlite"}, {"--setup-wizard", "--import-sqlite"}})
+        {
+            IllegalArgumentException refusal = assertThrows(IllegalArgumentException.class,
+                () -> SdrTrunkDatabaseBootstrap.Options.parse(args));
+            assertTrue(refusal.getMessage().contains("SQLite file import is no longer available"));
+            assertTrue(refusal.getMessage().contains("previous installation folder or XML playlist"));
+        }
+    }
+
+    @Test
     void backupOptOutCannotSilentlyApplyToARegularLaunchOrImport()
     {
         assertThrows(IllegalArgumentException.class,

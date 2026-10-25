@@ -34,35 +34,32 @@ class SetupProgressTest
         }
     }
 
-    @Test void completedProfileUpgradeOffersMissingLocationWithoutAddingRoutineLaunchWork()
+    @Test void completedProfileRepairSkipsOptionalWorkButRetainsRequiredSteps()
     {
         SetupProgress progress = new SetupProgress(true, false);
         SetupReadiness.prepareRadioReference(progress, true, -1, -1);
-        assertEquals(SetupStep.RADIO_REFERENCE,
-            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
-        assertEquals(SetupStep.REVIEW,
-            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, false));
-        progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
-        assertEquals(SetupStep.REVIEW,
-            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
-        progress.set(SetupStep.RADIO_REFERENCE, PENDING);
-        SetupReadiness.prepareRadioReference(progress, true, 2, 20);
-        assertEquals(SetupStep.REVIEW,
-            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
+        progress.set(SetupStep.JMBE, NEEDS_ATTENTION);
+        progress.set(SetupStep.CALIBRATION, PENDING);
+        assertEquals(SetupStep.REVIEW, SetupReadiness.initialStep(progress, true));
+        assertEquals(SetupStep.REVIEW, SetupReadiness.nextStep(progress, SetupStep.SOURCE, true));
+        progress.set(SetupStep.ADMINISTRATOR, NEEDS_ATTENTION);
+        assertEquals(SetupStep.ADMINISTRATOR, SetupReadiness.initialStep(progress, true));
+        progress.set(SetupStep.ADMINISTRATOR, COMPLETE);
+        progress.set(SetupStep.WEB, PENDING);
+        assertEquals(SetupStep.WEB, SetupReadiness.initialStep(progress, true));
+        assertEquals(SetupStep.WEB, SetupReadiness.nextStep(progress, SetupStep.ADMINISTRATOR, true));
     }
 
-    @Test void committedMigrationReopensAnOldDeferralButANewLocationSkipStillWorks()
+    @Test void migratedLocationReadinessRetainsAnExplicitNewDeferral()
     {
         SetupProgress progress = new SetupProgress(true, false);
         progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
         SetupReadiness.prepareMigratedRadioReferenceLocation(progress, 1, -1);
         SetupReadiness.prepareRadioReference(progress, true, 1, -1);
-        assertEquals(SetupStep.RADIO_REFERENCE,
-            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
+        assertEquals(PENDING, progress.get(SetupStep.RADIO_REFERENCE));
         progress.set(SetupStep.RADIO_REFERENCE, DEFERRED);
         //Back/Continue navigation does not rerun source initialization or reset this explicit choice.
-        assertEquals(SetupStep.REVIEW,
-            SetupReadiness.nextStep(progress, SetupStep.SOURCE, true, false, false, true));
+        assertEquals(SetupStep.REVIEW, SetupReadiness.nextStep(progress, SetupStep.SOURCE, true));
         SetupReadiness.prepareMigratedRadioReferenceLocation(progress, 1, 10);
         assertEquals(DEFERRED, progress.get(SetupStep.RADIO_REFERENCE));
     }

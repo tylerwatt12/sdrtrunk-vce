@@ -46,13 +46,12 @@ class SetupStartupBoundaryTest
         int autostart = main.indexOf("if(startConfiguredChannels) runtime.startConfiguredChannels(true);");
         assertTrue(serverActivation >= 0 && autostart > serverActivation);
         assertFalse(startup.contains("CoordinatedStartupDialog"));
-        assertTrue(main.indexOf("if(setup.replacement() != null)") < main.indexOf("new SDRTrunk("));
-        String replacement = startup.substring(startup.indexOf("private static int replaceSetupDatabase"),
-            startup.indexOf("private void flushConfigurationForDatabaseReplacement"));
-        assertTrue(replacement.indexOf("SqlitePreferencesFactory.shutdown()") < replacement.indexOf(".replaceCurrentDatabase("));
-        assertTrue(replacement.indexOf(".replaceCurrentDatabase(") < replacement.indexOf("lock.close()"));
-        assertTrue(replacement.contains("response.cancelQuit()"));
-        assertTrue(replacement.contains("return 1;"));
+        assertFalse(startup.contains("Import SQLite Database"));
+        assertFalse(startup.contains("new JMenuItem(\"Setup Wizard"));
+        assertFalse(startup.contains("restartIntoSetupWizard"));
+        assertFalse(startup.contains("replaceSetupDatabase"));
+        assertFalse(startup.contains(".replaceCurrentDatabase("));
+        assertFalse(startup.contains("mDatabaseReplacementInProgress"));
         String wizard=Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         for(String forbidden:new String[]{"new TunerManager", "ChannelProcessingManager", "JmbeEditorRequest", "ApplicationMigrationProgressDialog.run"})
             assertFalse(wizard.contains(forbidden),forbidden);
@@ -87,7 +86,7 @@ class SetupStartupBoundaryTest
         assertEquals(SetupStep.ADMINISTRATOR, progress.resumeAt());
         for(SetupStep step : SetupStep.values())
             if(step != SetupStep.HARDWARE && step != SetupStep.REVIEW) progress.set(step, SetupProgress.State.CARRIED_OVER);
-        assertEquals(SetupStep.REVIEW, SetupReadiness.initialStep(progress, false, false, false, false));
+        assertEquals(SetupStep.REVIEW, SetupReadiness.initialStep(progress, false));
     }
     @Test void digitalVoiceReadinessUsesConfigurationOnly()
     {
@@ -107,8 +106,9 @@ class SetupStartupBoundaryTest
         SetupProgress resumed = SetupProgress.decode(progress.encode());
         assertEquals(SetupProgress.State.NEEDS_ATTENTION, resumed.get(SetupStep.JMBE));
         assertEquals(SetupStep.JMBE,
-            SetupReadiness.nextStep(resumed, SetupStep.SOURCE, true, true, false, true));
-        assertEquals(SetupStep.JMBE, SetupReadiness.initialStep(resumed, false, true, true, false));
+            SetupReadiness.nextStep(resumed, SetupStep.SOURCE, false));
+        assertEquals(SetupStep.JMBE, SetupReadiness.initialStep(resumed, false));
+        assertEquals(SetupStep.REVIEW, SetupReadiness.initialStep(resumed, true));
         assertTrue(SetupReadiness.jmbeUpdateCheckPending(resumed, false));
         resumed.set(SetupStep.JMBE, SetupProgress.State.RUNNING);
         SetupProgress interrupted = SetupProgress.decode(resumed.encode());
@@ -150,17 +150,4 @@ class SetupStartupBoundaryTest
         assertEquals("Dispatch", SetupWizard.autoStartLabel("Dispatch"));
     }
 
-    @Test void completedSessionOffersDeferredBenchmarkOnNextLaunch()
-    {
-        SetupProgress progress = new SetupProgress(true, false);
-        progress.set(SetupStep.JMBE, SetupProgress.State.DEFERRED);
-        progress.set(SetupStep.CALIBRATION, SetupProgress.State.DEFERRED);
-        //The shell marks a newly opened session incomplete before choosing its initial page.
-        progress.setComplete(false);
-        assertEquals(SetupStep.CALIBRATION, SetupReadiness.initialStep(progress, false, true, false, true));
-        assertEquals(SetupStep.JMBE, SetupReadiness.initialStep(progress, false, true, true, true));
-        assertEquals(SetupStep.REVIEW, SetupReadiness.initialStep(progress, false, true, false, false));
-        assertEquals(SetupStep.SOURCE, SetupReadiness.initialStep(progress, true, true, true, true));
-        assertEquals(SetupStep.REVIEW, SetupReadiness.initialStep(progress, false, false, false, true));
-    }
 }

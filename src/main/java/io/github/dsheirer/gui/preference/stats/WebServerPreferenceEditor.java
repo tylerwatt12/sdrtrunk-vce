@@ -18,7 +18,6 @@ import io.github.dsheirer.preference.application.WebCertificateMode;
 import io.github.dsheirer.stats.StatsWebServerService;
 import io.github.dsheirer.stats.WebServerRuntimeState;
 import io.github.dsheirer.web.auth.Pbkdf2PasswordHasher;
-import io.github.dsheirer.web.auth.WebAccessAccount;
 import io.github.dsheirer.web.auth.WebAccessService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import io.github.dsheirer.web.network.WebNetworkAddressDiscovery;
@@ -84,6 +83,7 @@ public class WebServerPreferenceEditor extends HBox
     private WebTlsMaterialService mTlsMaterialService;
     private GridPane mEditorPane;
     private CheckBox mServerCheckBox;
+    private CheckBox mHttpsCheckBox;
     private RadioButton mLocalOnlyRadioButton;
     private RadioButton mNetworkRadioButton;
     private ToggleGroup mAccessModeToggleGroup;
@@ -96,6 +96,7 @@ public class WebServerPreferenceEditor extends HBox
     private Button mManageCertificateButton;
     private Label mAdminStatusLabel;
     private Button mConfigureAdminButton;
+    private Button mRecoverAdminButton;
     private ProgressIndicator mAdminProgressIndicator;
     private Timeline mRefreshTimeline;
     private Window mRefreshWindow;
@@ -176,15 +177,15 @@ public class WebServerPreferenceEditor extends HBox
             mEditorPane.add(new Label("Primary account"), 0, row);
             mEditorPane.add(getAdminStatusLabel(), 1, row++, 2, 1);
             mEditorPane.add(new Label("Password"), 0, row);
-            mEditorPane.add(new HBox(8, getConfigureAdminButton(), getAdminProgressIndicator()),
+            mEditorPane.add(new HBox(8, getConfigureAdminButton(), getRecoverAdminButton(), getAdminProgressIndicator()),
                 1, row++, 2, 1);
             Label adminHelp = new Label(
-                "The fixed admin password can be changed while the web interface is running. Existing admin " +
-                    "sessions are signed out after a change.");
+                "Changing or resetting the password signs out existing admin sessions.");
             adminHelp.setWrapText(true);
             mEditorPane.add(adminHelp, 0, row++, 3, 1);
 
             mEditorPane.add(sectionLabel("Security"), 0, row++, 3, 1);
+            mEditorPane.add(getHttpsCheckBox(), 0, row++, 3, 1);
             mEditorPane.add(new Label("Certificate"), 0, row);
             mEditorPane.add(getTlsStatusLabel(), 1, row++, 2, 1);
             mEditorPane.add(new Label("Certificate setup"), 0, row);
@@ -243,6 +244,22 @@ public class WebServerPreferenceEditor extends HBox
         }
 
         return mAccessModeToggleGroup;
+    }
+
+    private CheckBox getHttpsCheckBox()
+    {
+        if(mHttpsCheckBox == null)
+        {
+            mHttpsCheckBox = new CheckBox("Use HTTPS");
+            mHttpsCheckBox.setTooltip(new Tooltip("Required for access from other devices."));
+            mHttpsCheckBox.setOnAction(event -> {
+                if(!mUpdatingControls)
+                {
+                    setHttpsEnabled(mHttpsCheckBox.isSelected());
+                }
+            });
+        }
+        return mHttpsCheckBox;
     }
 
     private RadioButton getLocalOnlyRadioButton()
@@ -360,10 +377,21 @@ public class WebServerPreferenceEditor extends HBox
         if(mConfigureAdminButton == null)
         {
             mConfigureAdminButton = new Button("Set Password...");
-            mConfigureAdminButton.setOnAction(event -> showAdminCredentialDialog());
+            mConfigureAdminButton.setOnAction(event -> showAdminCredentialDialog(false));
         }
 
         return mConfigureAdminButton;
+    }
+
+    private Button getRecoverAdminButton()
+    {
+        if(mRecoverAdminButton == null)
+        {
+            mRecoverAdminButton = new Button("Reset Password...");
+            mRecoverAdminButton.setTooltip(new Tooltip("Local recovery if you have forgotten the password."));
+            mRecoverAdminButton.setOnAction(event -> showAdminCredentialDialog(true));
+        }
+        return mRecoverAdminButton;
     }
 
     private ProgressIndicator getAdminProgressIndicator()
@@ -484,7 +512,7 @@ public class WebServerPreferenceEditor extends HBox
 
     private void setServerEnabled(boolean enabled)
     {
-        if(enabled && mApplicationPreference.isStatsWebServerAnyIpEnabled() && !ensureNetworkTlsMaterial())
+        if(enabled && mApplicationPreference.isStatsWebServerAnyIpEnabled() && !ensureTlsMaterial())
         {
             mUpdatingControls = true;
             getServerCheckBox().setSelected(false);
@@ -520,7 +548,7 @@ public class WebServerPreferenceEditor extends HBox
 
     private void setNetworkAccessEnabled(boolean enabled)
     {
-        if(enabled && !ensureNetworkTlsMaterial())
+        if(enabled && !ensureTlsMaterial())
         {
             selectAccessMode(false);
             return;
@@ -530,7 +558,28 @@ public class WebServerPreferenceEditor extends HBox
         refreshRuntimeAndAddresses();
     }
 
-    private boolean ensureNetworkTlsMaterial()
+    private void setHttpsEnabled(boolean enabled)
+    {
+        try
+        {
+            if(mStatsWebServerService != null)
+            {
+                mStatsWebServerService.setHttpsEnabled(enabled);
+            }
+            else if(!enabled || ensureTlsMaterial())
+            {
+                mApplicationPreference.setStatsWebServerHttpsEnabled(enabled);
+            }
+        }
+        catch(Exception exception)
+        {
+            mLog.warn("Unable to change HTTPS", exception);
+            showError("HTTPS Not Changed", "The previous setting was kept. Check the certificate and try again.");
+        }
+        refreshRuntimeAndAddresses();
+    }
+
+    private boolean ensureTlsMaterial()
     {
         try
         {
@@ -569,12 +618,11 @@ public class WebServerPreferenceEditor extends HBox
         }
         catch(Exception exception)
         {
-            mLog.warn("Unable to prepare HTTPS for local network access", exception);
+            mLog.warn("Unable to prepare HTTPS", exception);
             showError("HTTPS Setup Failed",
                 effectiveCertificateMode() == WebCertificateMode.CUSTOM ?
-                    "The custom certificate is unavailable or invalid. Import a valid replacement before enabling " +
-                        "local network access." :
-                    "An automatic certificate could not be created. Local network access was not enabled.");
+                    "The custom certificate is unavailable or invalid. Import a valid replacement and try again." :
+                    "An automatic certificate could not be created. The setting was not changed.");
             return false;
         }
     }
@@ -660,6 +708,8 @@ public class WebServerPreferenceEditor extends HBox
         mUpdatingControls = true;
         getServerCheckBox().setSelected(configuredEnabled);
         selectAccessMode(configuredNetwork);
+        getHttpsCheckBox().setSelected(configuredNetwork || mApplicationPreference.isStatsWebServerHttpsEnabled());
+        getHttpsCheckBox().setDisable(configuredNetwork || mAdminOperationRunning);
 
         if(!getPortField().isFocused())
         {
@@ -1157,7 +1207,7 @@ public class WebServerPreferenceEditor extends HBox
         }, "Unable to read the primary administrator account.");
     }
 
-    private void showAdminCredentialDialog()
+    private void showAdminCredentialDialog(boolean recovery)
     {
         if(mAdminOperationRunning || !mAdminStatusKnown)
         {
@@ -1165,10 +1215,13 @@ public class WebServerPreferenceEditor extends HBox
         }
 
         Dialog<AdminPasswordInput> dialog = new Dialog<>();
-        dialog.setTitle(mAdminConfigured ? "Change Administrator Password" : "Set Administrator Password");
-        dialog.setHeaderText("Primary web administrator: " + WebAccessService.PRIMARY_ADMIN_USERNAME);
+        boolean changing = mAdminConfigured && !recovery;
+        dialog.setTitle(recovery ? "Reset Administrator Password" :
+            mAdminConfigured ? "Change Administrator Password" : "Set Administrator Password");
+        dialog.setHeaderText(recovery ? "Reset the forgotten admin password from this computer" :
+            "Primary web administrator: " + WebAccessService.PRIMARY_ADMIN_USERNAME);
         initializeOwner(dialog);
-        ButtonType saveButtonType = new ButtonType(mAdminConfigured ? "Change" : "Set",
+        ButtonType saveButtonType = new ButtonType(recovery ? "Reset" : changing ? "Change" : "Set",
             ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().addAll(saveButtonType, ButtonType.CANCEL);
 
@@ -1176,24 +1229,33 @@ public class WebServerPreferenceEditor extends HBox
         fields.setHgap(10);
         fields.setVgap(10);
         fields.setPadding(new Insets(10));
+        PasswordField currentField = new PasswordField();
         PasswordField passwordField = new PasswordField();
         passwordField.setPromptText(Pbkdf2PasswordHasher.MINIMUM_PASSWORD_CHARACTERS + "-" +
             Pbkdf2PasswordHasher.MAXIMUM_PASSWORD_CHARACTERS + " characters");
         PasswordField confirmField = new PasswordField();
         confirmField.setPromptText("Repeat password");
         Label validationLabel = wrappingLabel();
-        fields.add(new Label("Password"), 0, 0);
-        fields.add(passwordField, 1, 0);
-        fields.add(new Label("Confirm"), 0, 1);
-        fields.add(confirmField, 1, 1);
-        fields.add(validationLabel, 0, 2, 2, 1);
+        int row = 0;
+        if(changing)
+        {
+            fields.add(new Label("Current password"), 0, row);
+            fields.add(currentField, 1, row++);
+        }
+        fields.add(new Label("New password"), 0, row);
+        fields.add(passwordField, 1, row++);
+        fields.add(new Label("Confirm"), 0, row);
+        fields.add(confirmField, 1, row++);
+        fields.add(validationLabel, 0, row, 2, 1);
+        GridPane.setHgrow(currentField, Priority.ALWAYS);
         GridPane.setHgrow(passwordField, Priority.ALWAYS);
         GridPane.setHgrow(confirmField, Priority.ALWAYS);
         dialog.getDialogPane().setContent(fields);
 
         Button saveButton = (Button)dialog.getDialogPane().lookupButton(saveButtonType);
         saveButton.addEventFilter(ActionEvent.ACTION, event -> {
-            String validationMessage = validateAdminPassword(passwordField, confirmField);
+            String validationMessage = changing && currentField.getText().isEmpty() ?
+                "Enter the current password." : validateAdminPassword(passwordField, confirmField);
 
             if(validationMessage != null)
             {
@@ -1208,9 +1270,11 @@ public class WebServerPreferenceEditor extends HBox
             }
 
             char[] password = passwordField.getText().toCharArray();
+            char[] current = changing ? currentField.getText().toCharArray() : null;
+            currentField.clear();
             passwordField.clear();
             confirmField.clear();
-            return new AdminPasswordInput(password);
+            return new AdminPasswordInput(current, password);
         });
 
         Optional<AdminPasswordInput> result;
@@ -1221,11 +1285,12 @@ public class WebServerPreferenceEditor extends HBox
         }
         finally
         {
+            currentField.clear();
             passwordField.clear();
             confirmField.clear();
         }
 
-        result.ifPresent(this::provisionOrResetAdmin);
+        result.ifPresent(this::saveAdminPassword);
     }
 
     private static String validateAdminPassword(PasswordField passwordField, PasswordField confirmField)
@@ -1251,25 +1316,35 @@ public class WebServerPreferenceEditor extends HBox
         }
     }
 
-    private void provisionOrResetAdmin(AdminPasswordInput input)
+    private void saveAdminPassword(AdminPasswordInput input)
     {
         setAdminOperationRunning(true, "Securing and saving the administrator password...");
         runAdminOperation(() -> {
             try
             {
-                WebAccessAccount account = mStatsWebServerService != null ?
+                if(input.currentPassword() != null)
+                {
+                    return mStatsWebServerService != null ?
+                        mStatsWebServerService.changePrimaryAdminPassword(input.currentPassword(), input.password()) :
+                        new WebAccessService(mDatabasePath).changePrimaryAdminPassword(input.currentPassword(), input.password());
+                }
+                return Optional.of(mStatsWebServerService != null ?
                     mStatsWebServerService.provisionOrResetPrimaryAdmin(input.password()) :
-                    new WebAccessService(mDatabasePath).provisionOrResetPrimaryAdmin(input.password());
-                return account.username();
+                    new WebAccessService(mDatabasePath).provisionOrResetPrimaryAdmin(input.password()));
             }
             finally
             {
                 input.clear();
             }
-        }, username -> {
+        }, account -> {
+            if(account.isEmpty())
+            {
+                getAdminStatusLabel().setText("Current password is incorrect. Password was not changed.");
+                return;
+            }
             mAdminStatusKnown = true;
             mAdminConfigured = true;
-            getAdminStatusLabel().setText("Configured: " + username);
+            getAdminStatusLabel().setText("Configured: " + account.orElseThrow().username());
             getConfigureAdminButton().setText("Change Password...");
             updateAdminControlState();
         }, "Unable to save the administrator password.");
@@ -1334,6 +1409,10 @@ public class WebServerPreferenceEditor extends HBox
     private void updateAdminControlState()
     {
         getConfigureAdminButton().setDisable(mAdminOperationRunning || !mAdminStatusKnown);
+        getRecoverAdminButton().setVisible(mAdminConfigured);
+        getRecoverAdminButton().setManaged(mAdminConfigured);
+        getRecoverAdminButton().setDisable(mAdminOperationRunning || !mAdminStatusKnown);
+        getHttpsCheckBox().setDisable(mApplicationPreference.isStatsWebServerAnyIpEnabled() || mAdminOperationRunning);
     }
 
     private WebTlsMaterialService getTlsMaterialService()
@@ -1398,10 +1477,14 @@ public class WebServerPreferenceEditor extends HBox
         T get() throws Exception;
     }
 
-    private record AdminPasswordInput(char[] password)
+    private record AdminPasswordInput(char[] currentPassword, char[] password)
     {
         private void clear()
         {
+            if(currentPassword != null)
+            {
+                Arrays.fill(currentPassword, '\u0000');
+            }
             Arrays.fill(password, '\u0000');
         }
     }

@@ -31,9 +31,8 @@ import java.util.regex.Pattern;
  * immediate surroundings.
  *
  * <p>Discovery examines only the direct children beside the current installation and data roots. A selected path
- * may be an installation root, a portable data root, a macOS application bundle, or the global SQLite database
- * itself. A folder selection represents a complete portable profile, while a direct SQLite-file selection is kept
- * as a database-only input so that callers do not accidentally copy neighboring profile artifacts.</p>
+ * may be an installation root, a portable data root, or a macOS application bundle. A selection represents a
+ * complete portable profile; standalone database files are not accepted as user-selected import sources.</p>
  */
 public final class PreviousBuildLocator
 {
@@ -85,10 +84,9 @@ public final class PreviousBuildLocator
     }
 
     /**
-     * Resolves a user selection and retains whether the user selected a complete portable profile or only its SQLite
-     * database.
+     * Resolves a user-selected installation folder or application bundle to its complete portable profile.
      *
-     * @param selected installation root, data root, macOS application bundle, or sdrtrunk.sqlite file
+     * @param selected installation root, data root, or macOS application bundle
      * @return the normalized, explicitly scoped migration input when the selection identifies one
      */
     public static Optional<Selection> resolveSelection(Path selected)
@@ -99,12 +97,6 @@ public final class PreviousBuildLocator
         }
 
         Path normalized = normalize(selected);
-
-        if(isSqliteFileSelection(normalized))
-        {
-            return isInsideInternalStagingDirectory(normalized) ? Optional.empty() :
-                Optional.of(new Selection(normalized, InputScope.DATABASE_FILE));
-        }
 
         if(!Files.isDirectory(normalized))
         {
@@ -163,12 +155,6 @@ public final class PreviousBuildLocator
     private static boolean containsGlobalDatabase(Path dataRoot)
     {
         return dataRoot != null && Files.isRegularFile(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
-    }
-
-    private static boolean isSqliteFileSelection(Path path)
-    {
-        return Files.isRegularFile(path) && path.getFileName() != null &&
-            path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".sqlite");
     }
 
     private static boolean isMacApplication(Path path)
@@ -231,7 +217,7 @@ public final class PreviousBuildLocator
     }
 
     /**
-     * Scope explicitly selected for a previous-build import.
+     * Internal migration-engine scope. User-selected imports resolve only complete portable profiles.
      */
     public enum InputScope
     {
@@ -240,8 +226,9 @@ public final class PreviousBuildLocator
     }
 
     /**
-     * Normalized previous-build input. {@link #path()} is the selected database for {@code DATABASE_FILE} and the
-     * portable data root for {@code PORTABLE_PROFILE}.
+     * Normalized migration input. {@link #path()} is the engine-owned database for {@code DATABASE_FILE} and the
+     * portable data root for {@code PORTABLE_PROFILE}. Standalone database scope remains available to internal
+     * migration and replacement operations; {@link #resolveSelection(Path)} never selects that scope.
      */
     public record Selection(Path path, InputScope scope)
     {
