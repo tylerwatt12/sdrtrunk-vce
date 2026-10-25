@@ -151,9 +151,13 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await expect(page.getByRole('dialog')).toHaveCount(0);
     expect(await row.getAttribute('tabindex')).toBeNull();
     const actions = row.locator('.ui-action-row');
-    const cellBounds = await row.locator('td[data-column="action"]').boundingBox();
-    for (const control of await actions.locator('a, button').all()) {
-      const controlBounds = await control.boundingBox();
+    // The table's initial frame may restore scrolling after focus; compare one geometry sample.
+    const { cellBounds, controls } = await row.evaluate((element) => ({
+      cellBounds: element.querySelector('td[data-column="action"]').getBoundingClientRect().toJSON(),
+      controls: [...element.querySelectorAll('.ui-action-row a, .ui-action-row button')]
+        .map((control) => control.getBoundingClientRect().toJSON())
+    }));
+    for (const controlBounds of controls) {
       expect(controlBounds.x).toBeGreaterThanOrEqual(cellBounds.x);
       expect(controlBounds.x + controlBounds.width).toBeLessThanOrEqual(cellBounds.x + cellBounds.width);
     }

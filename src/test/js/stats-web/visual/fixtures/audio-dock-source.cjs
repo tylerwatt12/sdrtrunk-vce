@@ -2,13 +2,13 @@
 
 async function dockSourceControl(dock) {
   const picker = dock.getByRole('combobox', { name: 'Audio source', exact: true });
-  return await picker.isVisible() ? picker : dock.getByRole('group', { name: 'Audio source', exact: true });
+  await picker.waitFor({ state: 'visible' });
+  return picker;
 }
 
 async function selectDockSource(dock, source) {
-  const picker = dock.getByRole('combobox', { name: 'Audio source', exact: true });
-  if (await picker.isVisible()) await picker.selectOption(source);
-  else await dock.getByRole('button', { name: source === 'live' ? 'Live' : 'Recordings', exact: true }).click();
+  const picker = await dockSourceControl(dock);
+  await picker.selectOption(source);
 }
 
 module.exports = { dockSourceControl, selectDockSource };

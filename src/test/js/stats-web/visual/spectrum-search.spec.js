@@ -1123,12 +1123,19 @@ test('search ignores an older renewal status error after a newer poll and contin
   await dialog(page).getByRole('checkbox', { name: 'Select MARCS Cuyahoga control', exact: true }).check();
   const review = dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true });
   await expect(review).toBeDisabled();
+  // Pause wall-clock advancement so only the explicit steps below can start another poll.
+  state.delayNextBrowseRenew = true;
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   state.customCandidates[0].name = 'Observed before renewal';
   await page.clock.fastForward(9800);
   await expect(dialog(page).getByRole('checkbox', { name: 'Select Observed before renewal', exact: true })).toBeVisible();
+  // Hold the renewal before its status GET, while the virtual clock keeps the next poll pending.
+  // Otherwise network scheduling can make delayNextJobStatus hold that poll instead.
+  await page.clock.runFor(300);
+  await expect.poll(() => Boolean(state.releaseBrowseRenew)).toBe(true);
   state.delayNextJobStatus = true;
   state.failJobStatusAfterDelay = true;
-  await page.clock.runFor(300);
+  state.releaseBrowseRenew();
   await expect.poll(() => Boolean(state.releaseJobStatus)).toBe(true);
   state.customCandidates = state.customCandidates.map((candidate) => candidate.radio_reference.state === 'pending' ?
     { ...candidate, name: candidate.candidate_id === 'marcs-27' ? 'Latest MARCS control' : candidate.name,

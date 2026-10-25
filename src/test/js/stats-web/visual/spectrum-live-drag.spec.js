@@ -15,6 +15,7 @@ test.afterEach(async ({ page }) => {
   installedFixtures.get(page)?.releaseAll();
   installedFixtures.delete(page);
   await page.unrouteAll({ behavior: 'wait' });
+  if (!page.isClosed()) await page.evaluate(() => window.spectrumDragStream?.stop());
 });
 
 function tuner(centerHz) {
@@ -41,7 +42,9 @@ async function installLiveStream(page) {
     let controller = null;
     let sequence = 0;
     let generation = 0;
-    let activeParameters = {};
+    let clientId = null;
+    let sampleTimer = null;
+    let activeParameters = null;
     let receiverState = { centerHz: initialCenterHz, streamState: 'live', reason: null };
     const multiplex = (topic, kind, payload) => {
       const frame = new Uint8Array(16 + payload.byteLength);
@@ -85,7 +88,7 @@ async function installLiveStream(page) {
     const emit = (centerHz = receiverState.centerHz, parameters = activeParameters,
       { streamState = receiverState.streamState, reason = receiverState.reason, fftValues = null } = {}) => {
       receiverState = { centerHz, streamState, reason };
-      if (!controller || controller.desiredSize === null) return;
+      if (!controller || controller.desiredSize === null || !parameters) return;
       activeParameters = parameters;
       const state = {
         stream_state: streamState, center_frequency_hz: centerHz,
@@ -98,6 +101,8 @@ async function installLiveStream(page) {
         state.visible_end_frequency_hz = parameters.viewport_end_hz;
       }
       controller.enqueue(multiplex(5, 2, diagnostic(1, encoder.encode(JSON.stringify(state)), centerHz)));
+      window.spectrumDragStream.initialEmitted = true;
+      window.spectrumDragStream.emitted += 1;
       if (streamState !== 'live') return;
       fftValues ??= window.spectrumDragStream.fftValues;
       if (fftValues) {
@@ -121,7 +126,24 @@ async function installLiveStream(page) {
       }
       controller.enqueue(multiplex(5, 2, diagnostic(4, payload, centerHz, values.length, compact)));
     };
-    window.spectrumDragStream = { emit, opened: 0, cancelled: 0, initialEmitted: false };
+    const stopSamples = () => {
+      window.clearInterval(sampleTimer);
+      sampleTimer = null;
+    };
+    window.spectrumDragStream = {
+      emit, opened: 0, cancelled: 0, emitted: 0, initialEmitted: false,
+      subscribe(centerHz, parameters, subscriptionClientId) {
+        if (!controller || subscriptionClientId !== clientId) return;
+        stopSamples();
+        activeParameters = parameters || null;
+        if (!activeParameters) return;
+        emit(centerHz);
+        // Real subscribed receivers keep sending after inventory/lease refresh clears a plot.
+        sampleTimer = window.setInterval(() => emit(), 50);
+      },
+      updateReceiver(centerHz) { receiverState = { ...receiverState, centerHz }; },
+      stop() { stopSamples(); activeParameters = null; }
+    };
     document.addEventListener('pointerdown', (event) => {
       if (event.target.matches('.tuner-spectrum-canvas')) window.spectrumDragPointerId = event.pointerId;
     }, true);
@@ -130,9 +152,10 @@ async function installLiveStream(page) {
       const url = new URL(rawUrl, window.location.href);
       if (url.pathname !== '/api/v1/live/multiplex') return nativeFetch(input, options);
       generation += 1;
-      const streamGeneration = generation;
       let streamController = null;
-      let initialTimer = null;
+      stopSamples();
+      activeParameters = null;
+      clientId = url.searchParams.get('client_id');
       window.spectrumDragStream.opened += 1;
       window.spectrumDragStream.initialEmitted = false;
       const ready = multiplex(0, 1, encoder.encode(JSON.stringify({
@@ -142,15 +165,14 @@ async function installLiveStream(page) {
         start(value) {
           controller = streamController = value;
           controller.enqueue(ready);
-          initialTimer = window.setTimeout(() => {
-            if (controller !== streamController || generation !== streamGeneration) return;
-            window.spectrumDragStream.initialEmitted = true;
-            emit();
-          }, 50);
         },
         cancel() {
-          window.clearTimeout(initialTimer);
-          if (controller === streamController) controller = null;
+          if (controller === streamController) {
+            stopSamples();
+            activeParameters = null;
+            controller = null;
+            clientId = null;
+          }
           window.spectrumDragStream.cancelled += 1;
         }
       }), { status: 200, headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } }));
@@ -208,6 +230,7 @@ async function install(page) {
             message: 'Receiver rejected this tune. Try again.' } }) });
         else {
           state.centerHz = Math.round(body.value * 1000000);
+          await page.evaluate((centerHz) => window.spectrumDragStream.updateReceiver(centerHz), state.centerHz);
           await respond({});
         }
       } catch (_) { /* Navigation may abort the request under test. */ }
@@ -241,8 +264,9 @@ async function install(page) {
       const parameters = body.subscriptions?.tuner_diagnostics;
       state.controls.push(parameters);
       await respond({});
-      if (parameters && !page.isClosed()) await page.evaluate(({ centerHz, parameters }) =>
-        window.spectrumDragStream.emit(centerHz, parameters), { centerHz: state.centerHz, parameters });
+      if (!page.isClosed()) await page.evaluate(({ centerHz, parameters, clientId }) =>
+        window.spectrumDragStream.subscribe(centerHz, parameters, clientId),
+      { centerHz: state.centerHz, parameters, clientId: body.client_id });
       return;
     }
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
@@ -272,9 +296,9 @@ async function install(page) {
   await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
   await expect(page.getByRole('combobox', { name: 'Tuner', exact: true })).toBeEnabled();
-  // Lease selection/inventory refresh can clear the plots after the first control response.
-  // Wait for the producer's initial sample and the usable plots, rather than any transient Live badge.
+  // Require a continuing subscribed producer, then usable plots after lease/inventory refresh.
   await expect.poll(() => page.evaluate(() => window.spectrumDragStream.initialEmitted)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.spectrumDragStream.emitted)).toBeGreaterThan(1);
   await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
   await expect(page.locator('.tuner-spectrum-waterfall .channel-diagnostic-overlay')).toBeHidden();
   await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
@@ -789,8 +813,7 @@ test('retrying an expired lease during a held manual save restores editable cent
     await expect(center).toHaveJSProperty('inert', false);
     await expect(retry).toBeHidden();
     await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
-    // The retry's inventory refresh can clear the mock's earlier one-shot sample.
-    // Model the receiver's next STATE/FFT before exercising the restored live drag.
+    // Deliver the next receiver frame without advancing this lease test's clock.
     await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), state.centerHz);
     const canvas = plot(page);
     const gesture = await beginDrag(page, canvas);
