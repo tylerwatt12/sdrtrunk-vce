@@ -39,6 +39,7 @@ public final class AliasTransferCsv
      * export size: database-backed exports use {@link StreamingWriter} and have no row or byte ceiling.
      */
     public static final int MAX_BYTES = 128 * 1024 * 1024;
+    public static final int MAX_IMPORT_ROWS = 100_000;
     public static final List<String> HEADERS = List.of("format_version", "alias_list", "name", "description", "group",
         "color", "icon", "matcher_type", "protocol", "value", "minimum", "maximum", "text", "tones",
         "home_wacn", "home_system_id", "subscriber_id",
@@ -79,6 +80,9 @@ public final class AliasTransferCsv
                     " export. Keep the exported header row unchanged and save as comma-separated CSV.");
             for(CSVRecord row: parser)
             {
+                if(rows.size() >= MAX_IMPORT_ROWS)
+                    throw new IllegalArgumentException(
+                        "CSV must contain at most 100,000 aliases. Split it into smaller files and try again");
                 try
                 {
                     if(!row.isConsistent()) throw new IllegalArgumentException("Column count does not match header");

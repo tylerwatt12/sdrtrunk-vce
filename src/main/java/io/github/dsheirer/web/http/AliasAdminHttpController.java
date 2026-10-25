@@ -47,6 +47,7 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -442,14 +443,56 @@ public final class AliasAdminHttpController
 
             requireMethod(exchange, "POST");
             AliasImportService importer = new AliasImportService(mService);
-            TransferRequest request = readJson(exchange, TransferRequest.class,
-                MAXIMUM_ALIAS_TRANSFER_BODY_BYTES);
-            AliasTransferCsv.Format format = AliasTransferCsv.Format.valueOf(required(request.format(), "format"));
-            AliasImportService.Mode mode = AliasImportService.Mode.valueOf(required(request.mode(), "mode"));
-            if(request.csv() == null || request.csv().getBytes(java.nio.charset.StandardCharsets.UTF_8).length > AliasTransferCsv.MAX_BYTES)
-                throw invalid("CSV must be at most " + (AliasTransferCsv.MAX_BYTES / (1024 * 1024)) + " MiB");
+            String contentType = Objects.toString(exchange.getRequestHeaders().getFirst("Content-Type"), "");
+            boolean multipart = "multipart/form-data".equalsIgnoreCase(contentType.split(";", 2)[0].strip());
+            TransferRequest request;
+            AliasImportService.Mode mode;
+            List<AliasImportService.Input> inputs;
             var options = mService.options(listId);
-            var inputs = AliasTransferCsv.read(request.csv(), format, options.aliasList());
+            if(multipart)
+            {
+                try(var upload = new AliasTransferUpload(exchange.getRequestBody(), contentType, AliasTransferCsv.MAX_BYTES))
+                {
+                    try { request = OBJECT_MAPPER.readValue(upload.options(), TransferRequest.class); }
+                    catch(Exception failure) { throw invalid("Import settings could not be read. Reopen the import and try again"); }
+                    if(request == null || request.csv() != null) throw invalid("Select a CSV file and try again");
+                    AliasTransferCsv.Format format = AliasTransferCsv.Format.valueOf(required(request.format(), "format"));
+                    mode = AliasImportService.Mode.valueOf(required(request.mode(), "mode"));
+                    validateTransferAction(request);
+                    try(var reader = new InputStreamReader(upload.csv(), StandardCharsets.UTF_8.newDecoder()
+                        .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)))
+                    {
+                        inputs = AliasTransferCsv.read(reader, format, options.aliasList());
+                    }
+                    upload.finish();
+                }
+                catch(RequestException failure) { throw failure; }
+                catch(IOException failure)
+                {
+                    if(hasUploadCause(failure, AliasTransferUpload.TooLargeException.class))
+                        throw error(413, "request_too_large", "The alias import file or options are too large");
+                    throw invalid("The alias file could not be read. Select a UTF-8 CSV file and try again");
+                }
+                catch(IllegalArgumentException failure)
+                {
+                    if(hasUploadCause(failure, AliasTransferUpload.TooLargeException.class))
+                        throw error(413, "request_too_large", "The alias import file or options are too large");
+                    if(hasUploadCause(failure, AliasTransferUpload.InvalidUploadException.class) ||
+                        hasUploadCause(failure, java.nio.charset.CharacterCodingException.class))
+                        throw invalid("The alias file could not be read. Select a UTF-8 CSV file and try again");
+                    throw failure; // Preserve actionable CSV column/row validation just as the JSON route does.
+                }
+            }
+            else
+            {
+                request = readJson(exchange, TransferRequest.class, MAXIMUM_ALIAS_TRANSFER_BODY_BYTES);
+                AliasTransferCsv.Format format = AliasTransferCsv.Format.valueOf(required(request.format(), "format"));
+                mode = AliasImportService.Mode.valueOf(required(request.mode(), "mode"));
+                validateTransferAction(request);
+                if(request.csv() == null || request.csv().getBytes(StandardCharsets.UTF_8).length > AliasTransferCsv.MAX_BYTES)
+                    throw invalid("CSV must be at most " + (AliasTransferCsv.MAX_BYTES / (1024 * 1024)) + " MiB");
+                inputs = AliasTransferCsv.read(request.csv(), format, options.aliasList());
+            }
             var plan = importer.preview(listId, mode, inputs, request.defaults());
             var preview = plan.preview();
             if(preview.revision() != options.revision())
@@ -505,6 +548,20 @@ public final class AliasAdminHttpController
                 throw exception;
             }
         };
+    }
+
+    private static void validateTransferAction(TransferRequest request) throws RequestException
+    {
+        if(!"preview".equals(request.action()) && !"apply".equals(request.action()))
+            throw invalid("action must be preview or apply");
+        if(request.offset() != null && request.offset() < 0) throw invalid("Invalid preview offset");
+    }
+
+    private static boolean hasUploadCause(Throwable failure, Class<? extends Throwable> type)
+    {
+        for(Throwable cause = failure; cause != null; cause = cause.getCause())
+            if(type.isInstance(cause)) return true;
+        return false;
     }
 
     private record TransferRequest(String action, String format, String mode, String csv,

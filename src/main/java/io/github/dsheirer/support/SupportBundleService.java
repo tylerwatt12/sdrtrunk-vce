@@ -37,6 +37,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -48,8 +49,10 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -90,7 +93,7 @@ public final class SupportBundleService implements AutoCloseable
     private final Supplier<Map<String,Object>> mHealthSupplier;
     private final URI mUploadUri;
     private final HttpClient mHttpClient;
-    private final ExecutorService mWorker;
+    private final ThreadPoolExecutor mWorker;
     private final Map<String,Job> mJobs = new ConcurrentHashMap<>();
     private final AtomicBoolean mClosed = new AtomicBoolean();
 
@@ -109,7 +112,8 @@ public final class SupportBundleService implements AutoCloseable
         mHealthSupplier = healthSupplier != null ? healthSupplier : Map::of;
         mUploadUri = Objects.requireNonNull(uploadUri);
         mHttpClient = Objects.requireNonNull(httpClient);
-        mWorker = Executors.newSingleThreadExecutor(runnable -> {
+        mWorker = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(MAXIMUM_JOBS), runnable -> {
             Thread thread = new Thread(runnable, "support bundle worker");
             thread.setDaemon(true);
             thread.setPriority(Math.max(Thread.MIN_PRIORITY, Thread.NORM_PRIORITY - 2));
@@ -117,7 +121,7 @@ public final class SupportBundleService implements AutoCloseable
         });
     }
 
-    public String generate(Request request)
+    public synchronized String generate(Request request)
     {
         Objects.requireNonNull(request);
         requireOpen();
@@ -129,7 +133,10 @@ public final class SupportBundleService implements AutoCloseable
         String id = UUID.randomUUID().toString();
         Job job = new Job(id, request);
         mJobs.put(id, job);
-        mWorker.execute(() -> build(job));
+        synchronized(job)
+        {
+            job.task = mWorker.submit(() -> build(job));
+        }
         return id;
     }
 
@@ -142,17 +149,24 @@ public final class SupportBundleService implements AutoCloseable
     public void cancel(String id)
     {
         Job job = requireJob(id);
-        job.cancelled.set(true);
-        if(job.state == State.READY || job.state == State.FAILED || job.state == State.UPLOADED)
+        synchronized(job)
         {
-            deleteBundle(job);
-            job.state = State.CANCELLED;
-            job.message = "Report stopped.";
+            job.cancelled.set(true);
+            if(job.task != null)
+            {
+                job.task.cancel(true);
+                if(job.task instanceof Runnable queued) mWorker.remove(queued);
+            }
+            // The generator owns creation and closing of its output. Deleting before it opens the stream can
+            // recreate an untracked file; its finally block removes the output after the stream is closed.
+            if(!job.generatorOwnsOutput) deleteBundle(job);
+            update(job, State.CANCELLED, 0, "Report stopped.", "Report stopped");
         }
     }
 
-    public void submit(String id)
+    public synchronized void submit(String id)
     {
+        requireOpen();
         Job job = requireJob(id);
         synchronized(job)
         {
@@ -164,18 +178,22 @@ public final class SupportBundleService implements AutoCloseable
             job.progress = 99;
             job.message = "Sending report…";
             job.log("Sending report");
+            job.task = mWorker.submit(() -> upload(job));
         }
-        mWorker.execute(() -> upload(job));
     }
 
     public PreparedDownload download(String id)
     {
         Job job = requireJob(id);
-        if(job.state != State.READY || job.path == null || !Files.isRegularFile(job.path))
+        synchronized(job)
         {
-            throw new IllegalStateException("The report is not ready to download");
+            Path path = job.path;
+            if(job.state != State.READY || path == null || !Files.isRegularFile(path))
+            {
+                throw new IllegalStateException("The report is not ready to download");
+            }
+            return new PreparedDownload(path, job.fileName, job.bytes);
         }
-        return new PreparedDownload(job.path, job.fileName, job.bytes);
     }
 
     private void build(Job job)
@@ -183,7 +201,12 @@ public final class SupportBundleService implements AutoCloseable
         Path path = null;
         try
         {
-            update(job, State.GENERATING, 2, "Preparing report…", "Preparing report");
+            synchronized(job)
+            {
+                checkCancelled(job);
+                job.generatorOwnsOutput = true;
+                update(job, State.GENERATING, 2, "Preparing report…", "Preparing report");
+            }
             path = Files.createTempFile("sdrtrunk-vce-support-", ".zip");
             job.path = path;
             try(OutputStream file = Files.newOutputStream(path); ZipOutputStream zip = new ZipOutputStream(file))
@@ -250,12 +273,21 @@ public final class SupportBundleService implements AutoCloseable
             update(job, State.FAILED, 0, "The report could not be prepared. Try again.",
                 "Report preparation failed");
         }
+        finally
+        {
+            synchronized(job)
+            {
+                job.generatorOwnsOutput = false;
+                finishCancellation(job);
+            }
+        }
     }
 
     private void upload(Job job)
     {
         try
         {
+            checkCancelled(job);
             String boundary = "----sdrtrunk-vce-" + UUID.randomUUID();
             String disposition = "--" + boundary + "\r\n" +
                 "Content-Disposition: form-data; name=\"support_bundle\"; filename=\"" + job.fileName + "\"\r\n" +
@@ -275,6 +307,7 @@ public final class SupportBundleService implements AutoCloseable
             {
                 throw new IOException("The server did not accept the report (" + response.statusCode() + ")");
             }
+            checkCancelled(job);
             deleteBundle(job);
             update(job, State.UPLOADED, 100, "Report sent.", "Report sent");
         }
@@ -282,6 +315,10 @@ public final class SupportBundleService implements AutoCloseable
         {
             update(job, State.READY, 100, "The report could not be sent. Try again, or download it.",
                 "Report not sent");
+        }
+        finally
+        {
+            finishCancellation(job);
         }
     }
 
@@ -593,10 +630,28 @@ public final class SupportBundleService implements AutoCloseable
 
     private void update(Job job, State state, int progress, String message, String log)
     {
-        job.state = state;
-        job.progress = progress;
-        job.message = message;
-        job.log(log);
+        synchronized(job)
+        {
+            // Cancellation may interrupt a running network request or race the final successful write.
+            // A late worker completion must never make a stopped report downloadable or sendable again.
+            if(job.cancelled.get() && state != State.CANCELLED) return;
+            job.state = state;
+            job.progress = progress;
+            job.message = message;
+            job.log(log);
+        }
+    }
+
+    private void finishCancellation(Job job)
+    {
+        synchronized(job)
+        {
+            if(job.cancelled.get())
+            {
+                deleteBundle(job);
+                update(job, State.CANCELLED, 0, "Report stopped.", "Report stopped");
+            }
+        }
     }
 
     private static void checkCancelled(Job job) throws CancelledException
@@ -621,32 +676,51 @@ public final class SupportBundleService implements AutoCloseable
         long cutoff = System.currentTimeMillis() - Duration.ofHours(6).toMillis();
         mJobs.entrySet().removeIf(entry -> {
             Job job = entry.getValue();
-            if(job.createdAtMs >= cutoff) return false;
-            deleteBundle(job);
-            return true;
+            if(job.createdAtMs >= cutoff || !Set.of(State.READY, State.CANCELLED, State.FAILED, State.UPLOADED)
+                .contains(job.state)) return false;
+            return releaseRetiredOutput(job);
         });
+        // Keep recent retry/download status until space is needed. Completed disposable jobs must not prevent
+        // another report while ready downloads and queued/running work still count toward the admission bound.
+        for(Job job: mJobs.values().stream()
+            .filter(candidate -> Set.of(State.CANCELLED, State.FAILED, State.UPLOADED).contains(candidate.state))
+            .sorted(Comparator.comparingLong(candidate -> candidate.createdAtMs)).toList())
+        {
+            if(mJobs.size() < MAXIMUM_JOBS) break;
+            if(releaseRetiredOutput(job)) mJobs.remove(job.id, job);
+        }
+    }
+
+    private static boolean releaseRetiredOutput(Job job)
+    {
+        synchronized(job)
+        {
+            // Cancelled generation may still be draining an interrupted operation. Its task retains this Job
+            // and closes/removes the output in finally even after its status is evicted from the bounded map.
+            if(job.generatorOwnsOutput) return job.cancelled.get();
+            deleteBundle(job);
+            // Keep a failed file removal retryable, including a file still held by a downloading Windows client.
+            return job.path == null;
+        }
     }
 
     private static void deleteBundle(Job job)
     {
         Path path = job.path;
-        job.path = null;
         if(path != null)
         {
-            try { Files.deleteIfExists(path); }
+            // A running writer can still own the file on Windows. Retain the path so its finally block retries.
+            try { Files.deleteIfExists(path); job.path = null; }
             catch(IOException ignored) { }
         }
     }
 
     @Override
-    public void close()
+    public synchronized void close()
     {
         if(mClosed.compareAndSet(false, true))
         {
-            mJobs.values().forEach(job -> {
-                job.cancelled.set(true);
-                deleteBundle(job);
-            });
+            mJobs.keySet().forEach(this::cancel);
             mWorker.shutdownNow();
         }
     }
@@ -719,6 +793,8 @@ public final class SupportBundleService implements AutoCloseable
         private volatile Path path;
         private volatile String fileName;
         private volatile long bytes;
+        private Future<?> task;
+        private boolean generatorOwnsOutput;
         private Job(String id, Request request) { this.id = id; this.request = request; }
         private void log(String value)
         {

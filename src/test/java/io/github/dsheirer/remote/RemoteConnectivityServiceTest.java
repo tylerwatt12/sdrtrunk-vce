@@ -6,6 +6,8 @@
 package io.github.dsheirer.remote;
 
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasConfigurationSnapshot;
+import io.github.dsheirer.scanlist.ScanListConfiguration;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
@@ -318,9 +320,10 @@ class RemoteConnectivityServiceTest
     {
         try(Installation host = new Installation(mTemp.resolve("missing-alias-host")))
         {
-            List<AliasListDefinition> savedDefinitions =
-                List.copyOf(host.configuration.getAliasModel().aliasListDefinitions());
-            host.configuration.getAliasModel().replaceCommittedConfiguration(List.of(), List.of());
+            AliasConfigurationSnapshot saved = host.configuration.createDetachedAliasConfigurationSnapshot();
+            host.configuration.commitAndPublishAliasConfiguration(new AliasConfigurationSnapshot(List.of(), List.of(),
+                new ScanListConfiguration(saved.scanLists().scanLists(), Map.of(), Map.of(), Map.of())),
+                new ConfigurationManager.AliasConfigurationPublication(Set.of(), true, true, false));
             CreateSenderResult pair = host.remote.createSender(host.remote.snapshot().revision(),
                 new RemoteLinkAdministrationService.CreateSenderRequest("Receiver"));
             host.remote.start();
@@ -342,7 +345,29 @@ class RemoteConnectivityServiceTest
                 assertTrue(host.configuration.getChannelModel().getChannels().isEmpty());
                 assertTrue(sender.isOpen(), "missing Alias List must not disconnect an authenticated sender");
 
-                host.configuration.getAliasModel().replaceCommittedConfiguration(savedDefinitions, List.of());
+                var ownerField = ConfigurationManager.class.getDeclaredField("mConfigurationExecutor");
+                ownerField.setAccessible(true);
+                var owner = (java.util.concurrent.ThreadPoolExecutor)privateField(ownerField.get(host.configuration), "mExecutor");
+                CountDownLatch published = new CountDownLatch(1), release = new CountDownLatch(1);
+                var restored = host.configuration.submitConfigurationTask(() -> {
+                    host.configuration.commitAndPublishAliasConfiguration(saved,
+                        new ConfigurationManager.AliasConfigurationPublication(Set.of(), true, true, false));
+                    published.countDown();
+                    try { assertTrue(release.await(5, TimeUnit.SECONDS)); }
+                    catch(InterruptedException failure) { Thread.currentThread().interrupt(); throw new AssertionError(failure); }
+                });
+                try
+                {
+                    assertTrue(published.await(2, TimeUnit.SECONDS));
+                    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                    while(owner.getQueue().isEmpty() && System.nanoTime() < deadline) Thread.sleep(10);
+                    assertFalse(owner.getQueue().isEmpty(), "background setup must wait for the completed outer Alias publication");
+                    assertFalse(restored.isDone());
+                    assertTrue(host.remote.snapshot().senders().getFirst().feeds().stream()
+                        .allMatch(feed -> feed.channelConfigurationId() == null),
+                        "status remains readable and configured feeds remain unpublished while the owner is held");
+                }
+                finally { release.countDown(); restored.get(3, TimeUnit.SECONDS); }
                 await(() -> host.remote.snapshot().senders().getFirst().feeds().stream().anyMatch(feed ->
                     feedId.equals(feed.feedId()) && feed.channelConfigurationId() != null));
                 assertTrue(sender.offer(catalog), "later catalogs must keep the configured feed intact");

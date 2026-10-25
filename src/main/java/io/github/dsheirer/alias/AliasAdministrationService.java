@@ -156,7 +156,9 @@ public final class AliasAdministrationService
             }
             List<Alias> aliases = detached.stream().map(AliasEntry::alias).toList();
             if(!aliases.isEmpty()) saveAliasesTarget(aliases);
-            detached.forEach(entry -> scanListModel().replaceAliasMemberships(entry.alias().getId(), entry.scanListIds()));
+            Map<Long,Set<Long>> memberships = new LinkedHashMap<>();
+            detached.forEach(entry -> memberships.put(entry.alias().getId(), entry.scanListIds()));
+            replaceAliasMemberships(memberships, List.of());
             return new MutationTarget(null, deletions, aliases.size() + deletions.size(), aliases,
                 PublicationMode.ALIASES_THEN_SCAN_LISTS);
         });
@@ -628,7 +630,7 @@ public final class AliasAdministrationService
             List<Alias> deletedAliases = aliasesForList(definition);
             List<Long> deletedAliasIds = deletedAliases.stream().map(Alias::getId).toList();
             aliasModel().removeAliases(deletedAliases);
-            deletedAliasIds.forEach(scanListModel()::removeAlias);
+            replaceAliasMemberships(Map.of(), deletedAliasIds);
             scanListModel().removeAliasList(definition.getId());
             removeAliasListDefinition(definition);
 
@@ -872,6 +874,7 @@ public final class AliasAdministrationService
 
         MutationTarget target = saveAliasesTarget(requests.stream().map(PreparedAliasRequest::alias).toList());
         boolean membershipsChanged = false;
+        Map<Long,Set<Long>> replacements = new LinkedHashMap<>();
         for(PreparedAliasRequest request: requests)
         {
             Alias alias = request.alias();
@@ -879,10 +882,11 @@ public final class AliasAdministrationService
             {
                 Set<Long> memberships = request.creationRouting() == CreationRouting.INHERIT_DEFAULTS ?
                     inheritedScanListIds(alias) : validatedScanListIds(request.scanListIds());
-                scanListModel().replaceAliasMemberships(alias.getId(), memberships);
+                replacements.put(alias.getId(), memberships);
                 membershipsChanged |= !memberships.isEmpty();
             }
         }
+        replaceAliasMemberships(replacements, List.of());
         return membershipsChanged ? target.withPublication(PublicationMode.SCAN_LISTS_THEN_ALIASES) : target;
     }
 
@@ -988,8 +992,24 @@ public final class AliasAdministrationService
         {
             aliasIds.forEach(mMutationWorkspace.aliasesById()::remove);
         }
-        aliasIds.forEach(scanListModel()::removeAlias);
+        replaceAliasMemberships(Map.of(), aliasIds);
         return new MutationTarget(null, aliasIds, aliases.size(), PublicationMode.ALIASES_THEN_SCAN_LISTS);
+    }
+
+    /** Copies the detached membership configuration once for a whole alias command. */
+    private void replaceAliasMemberships(Map<Long,Set<Long>> replacements, Collection<Long> removed)
+    {
+        if(replacements.isEmpty() && removed.isEmpty()) return;
+        ScanListConfiguration current = scanListModel().configuration();
+        Map<Long,Set<Long>> memberships = new LinkedHashMap<>(current.aliasMemberships());
+        removed.forEach(memberships::remove);
+        replacements.forEach((aliasId, scanLists) ->
+        {
+            if(scanLists.isEmpty()) memberships.remove(aliasId);
+            else memberships.put(aliasId, scanLists);
+        });
+        scanListModel().replaceConfiguration(new ScanListConfiguration(current.scanLists(), memberships,
+            current.unmatchedAliasListMemberships(), current.newAliasListMemberships()));
     }
 
     private Catalog catalogOnConfigurationThread(boolean includeCounts)

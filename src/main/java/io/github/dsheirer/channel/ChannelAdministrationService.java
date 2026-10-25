@@ -80,7 +80,8 @@ public final class ChannelAdministrationService
     /** One web mutation or receiver lifecycle batch at a time; saturation fails without blocking request workers. */
     private final Semaphore mCommandAdmission = new Semaphore(1);
     private final Map<String,SquelchPreviewLease> mSquelchPreviews = new HashMap<>();
-    private volatile Catalog mCommittedCatalog = new Catalog(0, List.of());
+    private volatile CommittedConfiguration mCommittedConfiguration =
+        new CommittedConfiguration(new Catalog(0, List.of()), List.of());
     public ChannelAdministrationService(ConfigurationManager configurationManager)
     {
         this(configurationManager, new ChannelProtocolRegistry(), RadioSystemNameCatalog.bundled()::nameFor);
@@ -124,14 +125,27 @@ public final class ChannelAdministrationService
     {
         List<Channel> channels = List.copyOf(mConfigurationManager.getChannelModel().getChannels());
         Map<String,Integer> order = effectiveAutoStartOrder(channels);
-        mCommittedCatalog = new Catalog(revision(), channels.stream().map(channel ->
-            summary(channel, order.get(channel.getConfigurationId()))).toList());
+        mCommittedConfiguration = new CommittedConfiguration(new Catalog(revision(), channels.stream().map(channel ->
+            summary(channel, order.get(channel.getConfigurationId()))).toList()),
+            mConfigurationManager.getAliasModel().aliasListDefinitions().stream()
+                .map(definition -> new AliasListOption(definition.getId(), definition.getName(),
+                    definition.getFamily().name())).toList());
     }
 
     private Catalog committedCatalog()
     {
         //All administration adapters read the manager's one published configuration view.
-        return mConfigurationManager.getChannelAdministrationService().mCommittedCatalog;
+        return committedConfiguration().catalog();
+    }
+
+    private CommittedConfiguration committedConfiguration()
+    {
+        return mConfigurationManager.getChannelAdministrationService().mCommittedConfiguration;
+    }
+
+    private record CommittedConfiguration(Catalog catalog, List<AliasListOption> aliasLists)
+    {
+        private CommittedConfiguration { aliasLists = List.copyOf(aliasLists); }
     }
 
     /** Immutable committed configuration with current nonblocking receiver state. */
@@ -208,12 +222,12 @@ public final class ChannelAdministrationService
 
     public Options options()
     {
-        return onConfigurationThread(() -> new Options(revision(),
-            mConfigurationManager.getAliasModel().aliasListDefinitions().stream()
-                .map(definition -> new AliasListOption(definition.getId(), definition.getName(),
-                    definition.getFamily().name())).toList(),
+        requireInitialized();
+        CommittedConfiguration committed = committedConfiguration();
+        // Receiver hotplug state remains current; configuration choices come from one completed publication.
+        return new Options(committed.catalog().revision(), committed.aliasLists(),
             mConfigurationManager.getTunerManager() != null ?
-                mConfigurationManager.getTunerManager().getPreferredTunerNames() : List.of()));
+                mConfigurationManager.getTunerManager().getPreferredTunerNames() : List.of());
     }
 
     /**

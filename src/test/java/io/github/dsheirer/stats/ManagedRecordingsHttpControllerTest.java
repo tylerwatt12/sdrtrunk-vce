@@ -47,6 +47,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -160,6 +161,113 @@ class ManagedRecordingsHttpControllerTest
             mPreferences.getRecordPreference().setTranscriptionApiKey(mOriginalTranscriptionApiKey);
             mPreferences.getRecordPreference().setTranscriptionMinimumDurationMs(
                 mOriginalTranscriptionMinimumDurationMs);
+        }
+    }
+
+    @Test
+    void blockedRecordingRecountDoesNotHoldStatusBrowsingOrSettings() throws Exception
+    {
+        assertBlockedRecordingMaintenance("recount");
+    }
+
+    @Test
+    void blockedRecordingReindexDoesNotHoldStatusBrowsingOrSettings() throws Exception
+    {
+        assertBlockedRecordingMaintenance("reindex");
+    }
+
+    private void assertBlockedRecordingMaintenance(String operation) throws Exception
+    {
+        Session admin = login();
+        // A size mismatch makes either operation need the catalog writer after its first bounded file batch.
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mCatalog.databaseFile());
+            Statement writer = connection.createStatement())
+        {
+            writer.executeUpdate("UPDATE recording_call SET size_bytes=4 WHERE id=1");
+            writer.execute("BEGIN IMMEDIATE");
+            try
+            {
+                HttpResponse<String> accepted = send(mutation(ManagedRecordingsHttpController.ADMIN_PATH +
+                    "/" + operation, admin).POST(HttpRequest.BodyPublishers.noBody()));
+                assertEquals(202, accepted.statusCode(), accepted.body());
+                assertEquals("RUNNING", json(accepted).at("/data/state").textValue());
+                assertEquals(409, send(mutation(ManagedRecordingsHttpController.ADMIN_PATH + "/recount", admin)
+                    .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
+                assertRecordingNavigationRemainsAvailable(admin);
+                assertEquals("RUNNING", mMaintenance.status().state(), "The writer is still held by this test");
+            }
+            finally { writer.execute("ROLLBACK"); }
+        }
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        while("RUNNING".equals(mMaintenance.status().state()) && System.nanoTime() < deadline) Thread.sleep(10);
+        assertEquals("COMPLETED", mMaintenance.status().state());
+    }
+
+    @Test
+    void maximumRecordingDeletionLeavesStatusAndNavigationAvailableWhileTheWriterIsBlocked() throws Exception
+    {
+        Session admin = login();
+        Path root = mDirectory.resolve("recordings-managed");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mCatalog.databaseFile());
+            var insert = connection.prepareStatement("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms," +
+                "relative_path,size_bytes,protocol,call_type,voice_type) VALUES(?,1000,2000,1000,?,5,1,1,1)"))
+        {
+            for(int id = 2; id <= 100; id++)
+            {
+                String file = "bulk-" + id + ".mp3";
+                Files.write(root.resolve(file), new byte[]{'I', 'D', '3', 'x', 'y'});
+                insert.setInt(1, id);
+                insert.setString(2, file);
+                insert.addBatch();
+            }
+            insert.executeBatch();
+        }
+        String body = MAPPER.writeValueAsString(Map.of("ids", java.util.stream.IntStream.rangeClosed(1, 100)
+            .boxed().toList()));
+        CompletableFuture<HttpResponse<String>> deletion;
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mCatalog.databaseFile());
+            Statement writer = connection.createStatement())
+        {
+            writer.execute("BEGIN IMMEDIATE");
+            try
+            {
+                deletion = mClient.sendAsync(mutation(ManagedRecordingsHttpController.ADMIN_PATH + "/calls", admin)
+                    .method("DELETE", HttpRequest.BodyPublishers.ofString(body)).build(),
+                    HttpResponse.BodyHandlers.ofString());
+                long deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+                while(Files.exists(root.resolve("one.mp3")) && System.nanoTime() < deadline) Thread.sleep(10);
+                assertFalse(Files.exists(root.resolve("one.mp3")), "The delete reached the held catalog writer");
+                assertFalse(deletion.isDone());
+                assertRecordingNavigationRemainsAvailable(admin);
+                assertEquals(409, send(mutation(ManagedRecordingsHttpController.ADMIN_PATH + "/calls", admin)
+                    .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"ids\":[100]}"))).statusCode());
+                assertFalse(deletion.isDone(), "Navigation completed before the catalog writer was released");
+            }
+            finally { writer.execute("ROLLBACK"); }
+        }
+        HttpResponse<String> completed = deletion.get(5, TimeUnit.SECONDS);
+        assertEquals(200, completed.statusCode(), completed.body());
+        assertEquals(100, json(completed).at("/data/deleted").intValue());
+        try(var files = Files.list(root))
+        {
+            assertEquals(0, files.filter(Files::isRegularFile).count());
+        }
+    }
+
+    private void assertRecordingNavigationRemainsAvailable(Session admin) throws Exception
+    {
+        List<String> paths = List.of(ManagedRecordingsHttpController.ADMIN_PATH + "/status",
+            ManagedRecordingsHttpController.ADMIN_PATH + "/settings",
+            ManagedRecordingsHttpController.BROWSE_PATH + "/status",
+            ManagedRecordingsHttpController.BROWSE_PATH + "/calls?from_ms=0&to_ms=5000");
+        var reads = java.util.stream.IntStream.range(0, 20).mapToObj(index -> mClient.sendAsync(
+            request(paths.get(index % paths.size())).header("Cookie", admin.cookie()).GET().build(),
+            HttpResponse.BodyHandlers.ofString())).toList();
+        CompletableFuture.allOf(reads.toArray(CompletableFuture[]::new)).get(3, TimeUnit.SECONDS);
+        for(var read: reads)
+        {
+            HttpResponse<String> response = read.join();
+            assertEquals(200, response.statusCode(), response.body());
         }
     }
 

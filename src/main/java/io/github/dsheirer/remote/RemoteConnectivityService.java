@@ -384,8 +384,9 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     }
 
     @Override
-    public synchronized RemoteLinkSnapshot snapshot()
+    public RemoteLinkSnapshot snapshot()
     {
+        // Immutable settings and published/concurrent runtime projections make status independent of slow saves.
         Settings settings = mSettings;
         List<AliasListOption> aliases = mChannels.options().aliasLists().stream()
             .filter(alias -> "P25".equals(alias.family()))
@@ -751,7 +752,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private SenderSnapshot senderSnapshot(TrustedSender sender, List<AliasListOption> aliases)
     {
         PeerState peer = mPeers.get(sender.senderId());
-        boolean connected = peer != null && peer.connection != null && peer.connection.isOpen();
+        RemoteLinkTransport.Connection connection = peer != null ? peer.connection : null;
+        boolean connected = connection != null && connection.isOpen();
         SenderState state = sender.revoked() ? SenderState.REVOKED : connected ? SenderState.CONNECTED :
             peer != null && peer.lastSeenAtMs > 0 ? SenderState.DISCONNECTED : SenderState.WAITING;
         List<FeedSnapshot> feeds = feedsFor(sender, peer, connected, aliases);
@@ -821,7 +823,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                 TrustedSender sender = trusted(channel.remoteSenderId());
                 PeerState peer = mPeers.get(channel.remoteSenderId());
                 ObservedFeed feed = peer != null ? peer.feeds.get(channel.remoteFeedId()) : null;
-                boolean connected = peer != null && peer.connection != null && peer.connection.isOpen();
+                RemoteLinkTransport.Connection connection = peer != null ? peer.connection : null;
+                boolean connected = connection != null && connection.isOpen();
                 boolean ready = connected && feed != null && feed.present && channel.autoStart() &&
                     feed.advertisement.running() && isControlLive(channel.remoteSenderId(),
                         channel.remoteFeedId(), channel.channel());
@@ -846,8 +849,9 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     {
         if(!mActiveChains.containsKey(channel)) return false;
         PeerState peer = mPeers.get(senderId);
-        if(peer == null || peer.connection == null) return false;
-        String sessionId = peer.connection.sessionId();
+        RemoteLinkTransport.Connection connection = peer != null ? peer.connection : null;
+        if(connection == null) return false;
+        String sessionId = connection.sessionId();
         long now = System.nanoTime();
         return mOpenSources.values().stream().anyMatch(bound -> bound.open.control() &&
             feedId.equals(bound.open.feedId()) && sessionId.equals(bound.sessionId) &&
@@ -1379,7 +1383,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     {
         TrustedSender sender = trusted(senderId);
         if(sender == null || sender.revoked()) return;
-        List<AliasListOption> aliases = mChannels.options().aliasLists().stream()
+        // Alias listeners run inside publication. This existing background worker must observe its outer commit.
+        List<AliasListOption> aliases = mConfiguration.executeConfigurationTask(mChannels::options).aliasLists().stream()
             .filter(alias -> "P25".equals(alias.family()))
             .map(alias -> new AliasListOption(alias.id(), alias.name())).toList();
         AliasListOption alias = preferredAliasList(sender, aliases);

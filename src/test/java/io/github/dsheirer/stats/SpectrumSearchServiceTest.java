@@ -3,6 +3,8 @@ package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
@@ -12,11 +14,22 @@ import io.github.dsheirer.service.radioreference.RadioReferenceDiscoveryResolver
 import io.github.dsheirer.service.radioreference.RadioReferenceGateway;
 import io.github.dsheirer.service.radioreference.RadioReferenceGatewayException;
 import io.github.dsheirer.source.tuner.Tuner;
+import io.github.dsheirer.web.http.ApiHttpResponse;
+import io.github.dsheirer.web.http.SpectrumSearchHttpController;
+import io.github.dsheirer.web.http.WebRequestExecutor;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -30,6 +43,82 @@ class SpectrumSearchServiceTest
 {
     private static final long A = 770_100_000, B = 770_400_000, FAR = 774_100_000;
     private static final List<SpectrumSearchService.Range> RANGES = List.of(new SpectrumSearchService.Range(769_000_000, 775_000_000));
+
+    @Test
+    void maximumCandidateSaveKeepsHttpReviewAndCatalogAvailableAndRejectsDuplicateCommands() throws Exception
+    {
+        long[] frequencies = java.util.stream.IntStream.range(0, 32).mapToLong(index -> A + index * 150_000L).toArray();
+        try(Fixture fixture = new Fixture(frequencies))
+        {
+            fixture.check = (lease, frequency, cancelled) -> evidence(frequency,
+                (int)((frequency - A) / 150_000L) + 1, "C4FM", true);
+            var completed = fixture.complete(fixture.open().jobId());
+            assertEquals(32, completed.candidates().size());
+            fixture.channels.createEntered = new CountDownLatch(1);
+            fixture.channels.createRelease = new CountDownLatch(1);
+            HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            WebRequestExecutor executor = new WebRequestExecutor(64, () -> fail("Test HTTP capacity exhausted"));
+            server.setExecutor(executor);
+            SpectrumSearchHttpController controller = new SpectrumSearchHttpController(fixture.service);
+            server.createContext(SpectrumSearchHttpController.PATH, controller::handle);
+            server.start();
+            try(HttpClient client = HttpClient.newHttpClient())
+            {
+                ObjectMapper mapper = new ObjectMapper();
+                URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+                String path = SpectrumSearchHttpController.PATH + "/" + completed.jobId();
+                var request = saveRequest(completed, Map.of());
+                String body = mapper.writeValueAsString(ApiHttpResponse.normalizePayload(request));
+                var saveRequest = HttpRequest.newBuilder(origin.resolve(path + "/save"))
+                    .timeout(Duration.ofSeconds(5)).header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body)).build();
+                var save = client.sendAsync(saveRequest, HttpResponse.BodyHandlers.ofString());
+                assertTrue(fixture.channels.createEntered.await(2, TimeUnit.SECONDS));
+                var reads = java.util.stream.IntStream.range(0, 20).mapToObj(index -> client.sendAsync(
+                    HttpRequest.newBuilder(origin.resolve(index % 2 == 0 ? path : SpectrumSearchHttpController.PATH +
+                        "/catalog")).timeout(Duration.ofSeconds(3)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString())).toList();
+                CompletableFuture.allOf(reads.toArray(CompletableFuture[]::new)).get(3, TimeUnit.SECONDS);
+                for(int index = 0; index < reads.size(); index++)
+                {
+                    var read = reads.get(index).join();
+                    assertEquals(200, read.statusCode(), read.body());
+                    var data = mapper.readTree(read.body()).path("data");
+                    if(index % 2 == 0)
+                    {
+                        assertEquals(32, data.path("candidates").size());
+                        assertEquals("complete", data.path("phase").textValue());
+                        data.path("candidates").forEach(candidate -> assertFalse(candidate.path("saved").asBoolean()));
+                    }
+                    else assertTrue(data.path("tuners").isArray());
+                }
+                var duplicate = client.send(saveRequest, HttpResponse.BodyHandlers.ofString());
+                assertEquals(409, duplicate.statusCode(), duplicate.body());
+                assertEquals("search_conflict", mapper.readTree(duplicate.body()).at("/error/code").textValue());
+                assertFalse(save.isDone(), "All HTTP reads completed while the result batch was still held");
+                fixture.channels.createRelease.countDown();
+                var saved = save.get(3, TimeUnit.SECONDS);
+                assertEquals(200, saved.statusCode(), saved.body());
+                var result = mapper.readTree(saved.body()).path("data");
+                result.path("candidates").forEach(candidate -> assertTrue(candidate.path("saved").asBoolean(),
+                    candidate.toString()));
+                assertEquals(32, fixture.channels.definitions.size());
+                assertEquals(32, fixture.channels.identities.stream().distinct().count());
+                assertEquals(1, fixture.channels.createdAliases);
+                assertTrue(fixture.channels.starts.isEmpty());
+                var after = client.send(HttpRequest.newBuilder(origin.resolve(path)).GET().build(),
+                    HttpResponse.BodyHandlers.ofString());
+                assertEquals(200, after.statusCode(), after.body());
+                assertEquals(32, mapper.readTree(after.body()).at("/data/candidates").size());
+            }
+            finally
+            {
+                fixture.channels.createRelease.countDown();
+                server.stop(0);
+                executor.shutdownNow();
+            }
+        }
+    }
 
     @Test
     void completeEmptyFirstPassSkipsOnlySecondAcquisitionAndCompletesProgress() throws Exception

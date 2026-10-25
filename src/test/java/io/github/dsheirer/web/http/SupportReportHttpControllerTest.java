@@ -23,6 +23,9 @@ import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -32,6 +35,69 @@ class SupportReportHttpControllerTest
 
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void generatingReportsKeepHttpStatusAndNavigationResponsiveAndCanBeCancelled() throws Exception
+    {
+        CountDownLatch generating = new CountDownLatch(1);
+        CountDownLatch interrupted = new CountDownLatch(1);
+        try(SupportBundleService service = new SupportBundleService(mTemporaryDirectory.resolve("unused.sqlite"),
+            mTemporaryDirectory.resolve("logs"), () -> {
+                generating.countDown();
+                try { new CountDownLatch(1).await(); }
+                catch(InterruptedException exception) { interrupted.countDown(); }
+                return Map.of();
+            }); HttpClientHolder holder = start(service))
+        {
+            holder.server.createContext("/navigation", exchange -> {
+                try(exchange) { ApiHttpResponse.sendData(exchange, 200, Map.of("page", "receiver")); }
+            });
+            String body = """
+                {"title":"Receiver problem","email":"operator@example.com","category":"Other",
+                 "issue":"Something else","description":"Check the current status.",
+                 "steps":"Open Receiver status.","sections":["health"]}
+                """;
+            var created = holder.send(HttpRequest.newBuilder(holder.uri(""))
+                .header("Content-Type", "application/json").POST(HttpRequest.BodyPublishers.ofString(body)));
+            assertEquals(202, created.statusCode(), created.body());
+            String id = MAPPER.readTree(created.body()).at("/data/id").textValue();
+            assertTrue(generating.await(5, TimeUnit.SECONDS));
+            var creates = java.util.stream.IntStream.range(0, 12).mapToObj(index -> holder.client.sendAsync(
+                HttpRequest.newBuilder(holder.uri("")).header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(3)).POST(HttpRequest.BodyPublishers.ofString(body)).build(),
+                HttpResponse.BodyHandlers.ofString())).toList();
+            CompletableFuture.allOf(creates.toArray(CompletableFuture[]::new)).get(3, TimeUnit.SECONDS);
+            assertEquals(7, creates.stream().filter(create -> create.join().statusCode() == 202).count(),
+                "Concurrent submissions retain the eight-report admission bound");
+            assertEquals(5, creates.stream().filter(create -> create.join().statusCode() == 400).count());
+            for(var create: creates)
+            {
+                if(create.join().statusCode() == 202)
+                {
+                    String queued = MAPPER.readTree(create.join().body()).at("/data/id").textValue();
+                    var cancelled = holder.send(HttpRequest.newBuilder(holder.uri("/" + queued + "/cancel"))
+                        .POST(HttpRequest.BodyPublishers.noBody()));
+                    assertEquals("cancelled", MAPPER.readTree(cancelled.body()).at("/data/state").textValue());
+                }
+            }
+            var reads = java.util.stream.IntStream.range(0, 20).mapToObj(index -> holder.client.sendAsync(
+                HttpRequest.newBuilder(index % 2 == 0 ? holder.uri("/" + id) : holder.origin.resolve("/navigation"))
+                    .timeout(Duration.ofSeconds(3)).GET().build(), HttpResponse.BodyHandlers.ofString())).toList();
+            CompletableFuture.allOf(reads.toArray(CompletableFuture[]::new)).get(3, TimeUnit.SECONDS);
+            for(var read: reads) assertEquals(200, read.join().statusCode(), read.join().body());
+            var stopped = holder.send(HttpRequest.newBuilder(holder.uri("/" + id + "/cancel"))
+                .POST(HttpRequest.BodyPublishers.noBody()));
+            assertEquals(200, stopped.statusCode(), stopped.body());
+            assertEquals("cancelled", MAPPER.readTree(stopped.body()).at("/data/state").textValue());
+            assertTrue(interrupted.await(3, TimeUnit.SECONDS));
+            assertEquals(409, holder.send(HttpRequest.newBuilder(holder.uri("/" + id + "/download")).GET())
+                .statusCode());
+            assertEquals(409, holder.send(HttpRequest.newBuilder(holder.uri("/" + id + "/submit"))
+                .POST(HttpRequest.BodyPublishers.noBody())).statusCode());
+            var finalStatus = holder.send(HttpRequest.newBuilder(holder.uri("/" + id)).GET());
+            assertEquals("cancelled", MAPPER.readTree(finalStatus.body()).at("/data/state").textValue());
+        }
+    }
 
     @Test
     void createsPollsDownloadsAndCancelsBundle() throws Exception
@@ -104,19 +170,22 @@ class SupportReportHttpControllerTest
     {
         HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
         SupportReportHttpController controller = new SupportReportHttpController(service);
+        WebRequestExecutor executor = new WebRequestExecutor(64, () -> { });
+        server.setExecutor(executor);
         server.createContext(SupportReportHttpController.PATH, controller::handle);
         server.start();
         URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
-        return new HttpClientHolder(server, HttpClient.newHttpClient(), origin);
+        return new HttpClientHolder(server, HttpClient.newHttpClient(), origin, executor);
     }
 
-    private record HttpClientHolder(HttpServer server, HttpClient client, URI origin) implements AutoCloseable
+    private record HttpClientHolder(HttpServer server, HttpClient client, URI origin, WebRequestExecutor executor)
+        implements AutoCloseable
     {
         private URI uri(String suffix) { return origin.resolve(SupportReportHttpController.PATH + suffix); }
         private HttpResponse<String> send(HttpRequest.Builder request) throws Exception
         {
             return client.send(request.timeout(Duration.ofSeconds(10)).build(), HttpResponse.BodyHandlers.ofString());
         }
-        @Override public void close() { server.stop(0); }
+        @Override public void close() { server.stop(0); executor.shutdownNow(); }
     }
 }
