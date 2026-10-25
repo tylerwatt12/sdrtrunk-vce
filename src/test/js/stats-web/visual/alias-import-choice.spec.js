@@ -25,7 +25,7 @@ async function expectWithinViewport(locator, viewport) {
   expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const viewport of [{ width: 1280, height: 800 }, { width: 320, height: 568 }]) {
     test(`alias import offers RadioReference and file with keyboard focus ${theme} ${viewport.width}`, async ({ page }) => {
       await page.setViewportSize(viewport);

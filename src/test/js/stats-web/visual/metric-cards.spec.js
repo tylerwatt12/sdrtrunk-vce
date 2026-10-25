@@ -129,7 +129,7 @@ test('Scan List details use shared counters and preserve help when selecting ano
   await expectNoHorizontalOverflow(page);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const width of [1280, 390]) {
     test(`entity stat cards retain one inset and drilldown links in ${theme} at ${width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });

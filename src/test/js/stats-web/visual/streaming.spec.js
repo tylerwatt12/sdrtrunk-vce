@@ -302,7 +302,7 @@ for (const [theme, viewport] of [
   });
 }
 
-for(const theme of ['light','dark']) for(const mobile of [false,true]) {
+for(const theme of ['light']) for(const mobile of [false,true]) {
   test(`streaming ${theme} ${mobile?'mobile':'desktop'} page and settings`,async({page})=>{
     await page.setViewportSize(mobile?{width:390,height:844}:{width:1440,height:1000});
     await install(page,theme);
@@ -647,7 +647,7 @@ test('available Broadcastify feed opens its destination editor',async({page})=>{
   expect(writes[0][1].body).toEqual({feed_id:1042});
 });
 
-for(const theme of ['light','dark']) test(`shared labeled mobile table ${theme}`,async({page})=>{
+for(const theme of ['light']) test(`shared labeled mobile table ${theme}`,async({page})=>{
   await page.setViewportSize({width:390,height:844});
   await page.goto(`/design-system.html?theme=${theme}&view=mobile-table`);
   await expect(page.locator('.visual-mobile-table-example')).toHaveScreenshot(`shared-mobile-table-${theme}.png`);

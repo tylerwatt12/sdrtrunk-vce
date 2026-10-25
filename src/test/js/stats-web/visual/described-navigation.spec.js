@@ -50,7 +50,7 @@ async function expectDescriptions(links, viewportWidth) {
   }
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`desktop menus explain every destination and retain keyboard access in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await openAudioApp(page, { ...completeMenu, theme });

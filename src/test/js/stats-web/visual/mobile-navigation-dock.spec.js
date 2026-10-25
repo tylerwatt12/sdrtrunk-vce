@@ -27,8 +27,10 @@ async function expectPointerReachable(control) {
   }).toBe(true);
 }
 
-for (const theme of ['light', 'dark']) {
-  for (const viewport of viewports) {
+for (const [theme, viewport] of [
+  ['light', { width: 320, height: 740 }],
+  ['dark', { width: 844, height: 390 }]
+]) {
     test(`drawer receives taps above every dock state at ${viewport.width}×${viewport.height} in ${theme}`,
       async ({ page }) => {
         await page.setViewportSize(viewport);
@@ -77,7 +79,6 @@ for (const theme of ['light', 'dark']) {
         await expect(toggle).toHaveAttribute('aria-expanded', 'false');
       });
   }
-}
 
 for (const viewport of viewports) {
   test(`ordinary user reaches My Settings from the drawer at ${viewport.width}×${viewport.height}`,

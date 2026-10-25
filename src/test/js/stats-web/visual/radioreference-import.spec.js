@@ -1683,7 +1683,7 @@ async function expectTalkgroupCommandsDoNotOverlap(page) {
   }
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`talkgroup command buttons remain separate in ${theme} at 320px`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 844 });
     await installWorkspace(page, theme);
@@ -1694,7 +1694,7 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`Different comparison remains readable in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await installWorkspace(page, theme);

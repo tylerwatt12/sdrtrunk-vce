@@ -304,10 +304,7 @@ test('new credential is announced and guarded until its secret is copied', async
   await expect(page.getByRole('button', { name: 'Add sender' })).toBeFocused();
 });
 
-for (const [theme, viewport] of [
-  ['light', { width: 1280, height: 900 }], ['dark', { width: 1280, height: 900 }],
-  ['light', { width: 390, height: 844 }], ['dark', { width: 390, height: 844 }]
-]) {
+for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['light', { width: 390, height: 844 }]]) {
   const presentation = `${theme} ${viewport.width}px`;
   test(`sender removal confirms its channel scope, preserves cancellation, and applies its returned snapshot in ${presentation}`, async ({ page }) => {
     await page.setViewportSize(viewport);

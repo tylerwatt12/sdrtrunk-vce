@@ -30,9 +30,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("platform-filesystem")
 class ApplicationDatabaseMigratorOwnedProfileTest
 {
     private static final ObjectMapper MAPPER = new ObjectMapper();

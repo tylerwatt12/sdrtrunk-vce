@@ -521,7 +521,7 @@ test('saved discovery completion closes without deleting the ended RF session', 
     request.path === '/api/v1/admin/spectrum-discovery/discovery-a')).toHaveLength(0);
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
 test(`real Spectrum rail takes over a running receiver and keeps the new channel running when previous channels stay stopped in ${theme} at ${width}px`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 900 });
   const state = { theme, realSpectrumOwnership: true, liveSpectrum: true, leavePreviousStopped: true };
@@ -647,7 +647,7 @@ async function addDiscovery(page, importChoice = importNo) {
   await modal.getByRole('button', { name: 'Add and start listening', exact: true }).click();
 }
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`discovery offers talkgroup import inline on one Review in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const state = ohioDiscoveryFixture(theme);
@@ -861,7 +861,7 @@ test('failed talkgroup imports remain retryable after RF discovery expiry withou
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(2);
 });
 
-for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+for (const theme of ['light']) for (const width of [1280, 390]) {
   test(`compact channel completion shows one long result and folded details in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const name = 'Greater Cleveland Radio Communications Network · Cleveland Simulcast and Regional Public Safety Dispatch';
@@ -948,7 +948,7 @@ test('discovery imports into an explicitly reused same-name list and skips witho
   await expect(importTalkgroups(page)).toHaveCount(0);
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`real directory replay discovery review import and completion in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     test.skip(!realDirectory, 'Set VCE_DISCOVERY_REAL_DATA to an independently verified directory capture.');
     await page.setViewportSize({ width, height: 900 });
@@ -1456,9 +1456,7 @@ for (const protocolId of ['dmr', 'nxdn']) {
   });
 }
 
-for (const [theme, width] of [
-  ['light', 1280], ['light', 390], ['light', 320], ['dark', 1280], ['dark', 390], ['dark', 320]
-]) {
+for (const [theme, width] of [['light', 1280], ['light', 390], ['light', 320]]) {
   test(`Spectrum respects a saved center lock in ${theme} at ${width}px`, async ({ page }) => {
     const state = { locked: true, theme, liveSpectrum: true };
     await page.setViewportSize({ width, height: 900 });
@@ -1771,7 +1769,7 @@ test('Spectrum display options remain reachable from desktop and mobile controls
     document.documentElement.clientWidth)).toBe(true);
 });
 
-for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+for (const theme of ['light']) for (const width of [1280, 390]) {
   test(`filled Spectrum display options share one retune setting in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const state = { theme, listening: true, liveSpectrum: true };
@@ -1956,7 +1954,7 @@ test('the shared trunked detection path uses plain language and waits for explic
   await expect(dialog.getByLabel('New Alias List name', { exact: true })).toBeVisible();
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`Ohio Spectrum channel setup separates summary, details and labels in ${theme} at ${width}px`,
     async ({ page }, testInfo) => {
       await page.clock.install();

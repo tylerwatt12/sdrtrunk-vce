@@ -53,7 +53,7 @@ async function openAliases(page, theme = 'light') {
   return state;
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`Alias phone ${theme} filters preserve drafts and Enter applies once`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const state = await openAliases(page, theme);

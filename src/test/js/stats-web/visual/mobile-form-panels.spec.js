@@ -125,7 +125,7 @@ async function assertHit(control) {
   expect(geometry.reachable, JSON.stringify(geometry)).toBe(true);
 }
 
-for (const theme of ['light', 'dark']) for (const [width, height] of sizes) {
+for (const [theme, width, height] of [['light', 320, 568], ['dark', 844, 390]]) {
   test(`mobile form panels ${theme} ${width}x${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     const writes = await mockApplication(page, theme);

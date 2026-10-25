@@ -32,9 +32,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.prefs.Preferences;
 import java.util.zip.ZipInputStream;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("platform-filesystem")
 class WebDiagnosticLogServiceTest
 {
     @TempDir Path mDirectory;

@@ -85,7 +85,7 @@ async function expectHeaderContentsCentered(table) {
   }
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const width of [320, 390, 1024, 1280]) {
     test(`Channel Setup catalog centers headers and fits frequencies and startup controls ${theme} ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 844 });

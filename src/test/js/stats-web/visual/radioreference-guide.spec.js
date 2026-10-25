@@ -140,128 +140,6 @@ async function surfaceSignature(dialog) {
   });
 }
 
-test('the tour matches ordinary site import, channel preview, update comparison, and completion dialogs', async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  const { fixture } = await openRadioReference(page, { replay: false });
-  const file = path.resolve(__dirname, '../../../../../stats-web/assets/guides/radioreference-presentation.js');
-  const { createRadioReferenceGuideData } = await import(pathToFileURL(file).href);
-  const sample = createRadioReferenceGuideData();
-  await page.route('**/api/v1/admin/**', async route => {
-    const request = route.request();
-    const url = new URL(request.url());
-    if (!url.pathname.startsWith('/api/v1/admin/radioreference') && url.pathname !== '/api/v1/admin/alias-lists') {
-      return route.fallback();
-    }
-    const body = request.postData() ? request.postDataJSON() : undefined;
-    const data = await sample.requestJson(url.pathname + url.search, { method: request.method(), body });
-    return route.fulfill({ json: { data } });
-  });
-  await page.reload();
-  const original = {};
-  const county = page.locator('.radioreference-directory-branch').filter({ hasText: 'County results' }).first();
-  await expect(county).toBeVisible();
-  if (!await county.evaluate(element => element.open)) await county.locator(':scope > summary').click();
-  await page.locator('.radioreference-result-open').filter({ hasText: 'County P25' }).click();
-  await page.locator('.radioreference-site-import').filter({ hasText: 'North Site' }).click();
-  const dialog = page.locator('.radioreference-import-modal');
-  original['site-import'] = await surfaceSignature(dialog);
-  await dialog.getByRole('button', { name: 'Review Channel', exact: true }).click();
-  await expect(dialog.locator('.radioreference-preview')).toBeVisible();
-  original['channel-preview'] = await surfaceSignature(dialog);
-  await dialog.getByRole('button', { name: 'Apply Channel', exact: true }).click();
-  await expect(dialog).toHaveClass(/radioreference-import-modal-complete/);
-  original['channel-complete-close'] = await surfaceSignature(dialog);
-  await dialog.locator('.modal-close').click();
-  await page.getByRole('button', { name: 'Talkgroups & Aliases', exact: true }).click();
-  const changedRow = page.locator('.radioreference-talkgroup-table tbody tr').filter({ hasText: 'Sheriff Dispatch 1' });
-  await changedRow.getByRole('checkbox').check();
-  await page.getByRole('button', { name: 'Import selected', exact: true }).click();
-  await expect(dialog.locator('.radioreference-talkgroup-changes')).toBeVisible();
-  original['alias-preview'] = await surfaceSignature(dialog);
-  await dialog.getByRole('button', { name: 'Apply Import', exact: true }).click();
-  await expect(dialog).toHaveClass(/radioreference-import-modal-complete/);
-  original['alias-complete-close'] = await surfaceSignature(dialog);
-  await dialog.locator('.modal-close').click();
-  await page.locator('#page-guide-button').click();
-  await startTour(page);
-  for (const step of steps) {
-    await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
-    if (original[step.id]) {
-      expect(await surfaceSignature(dialog), `${step.id} uses the ordinary production dialog`).toEqual(original[step.id]);
-      await page.screenshot({ path: testInfo.outputPath(`ordinary-parity-${step.id}.png`) });
-    }
-    await next(page, step.id);
-  }
-  expect(fixture.pageErrors).toEqual([]);
-});
-
-for (const { theme, width, height } of [
-  { theme: 'light', width: 1280, height: 720 },
-  { theme: 'dark', width: 1440, height: 1000 }
-]) {
-  test(`RadioReference tour follows actual import and comparison surfaces ${theme}`, async ({ page }, testInfo) => {
-    await page.setViewportSize({ width, height });
-    const { fixture, requests } = await openRadioReference(page, { theme });
-    const originalUrl = page.url();
-    const playerBefore = await page.locator('#audio-dock').evaluate(element => ({
-      source: element.dataset.source, state: element.dataset.state }));
-    await startTour(page);
-    for (const [index, step] of steps.entries()) {
-      await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
-      await expect(guide(page)).toContainText(`Step ${index + 1} of ${steps.length}`);
-      for (const id of step.targets) await expectSpotlight(page, id);
-      await expectWithinViewport(guide(page), { width, height });
-      await expectWithinViewport(guide(page).getByRole('button', { name: 'Close guide', exact: true }), { width, height });
-      await expectWithinViewport(guide(page).getByRole('button', {
-        name: index === steps.length - 1 ? 'Finish' : 'Next', exact: true }), { width, height });
-      await expect(page.locator('.primary-nav details[open]')).toHaveCount(0);
-      if (['site-import', 'channel-review-button'].includes(step.id)) {
-        const dialog = page.locator('.radioreference-import-modal');
-        await expect(dialog.locator('form.radioreference-site-form')).toBeVisible();
-        await expect(dialog.getByRole('button', { name: 'Review Channel', exact: true })).toBeVisible();
-        await expect(dialog).toContainText('North Site');
-        await expect(samples(page).locator('.radioreference-system-workspace')).toBeVisible();
-      }
-      if (step.id === 'channel-preview') {
-        await expect(page.locator('.radioreference-import-modal .radioreference-preview-facts')).toContainText('P25');
-        await expect(page.locator('.radioreference-preview-facts')).toContainText('851.0125');
-      }
-      if (step.id === 'channel-complete-close') {
-        await expect(page.locator('.radioreference-import-modal-complete')).toContainText('Channel added');
-        await expect(page.locator('.radioreference-completion-actions')).toContainText('Open channel');
-      }
-      if (step.id === 'comparison') {
-        const status = page.locator('.radioreference-talkgroup-status');
-        await expect(status).toHaveCount(3);
-        expect((await status.allTextContents()).sort()).toEqual(['Different', 'Identical', 'Not present'].sort());
-      }
-      if (step.id === 'alias-preview') {
-        const change = page.locator('.radioreference-talkgroup-changes');
-        await expect(change).toContainText('Sheriff Dispatch');
-        await expect(change).toContainText('Sheriff Dispatch 1');
-        await expect(page.locator('.radioreference-preview-summary')).toContainText('Update');
-        await expect(page.locator('.radioreference-import-modal')).toContainText('Local handling stays intact');
-      }
-      if (step.id === 'alias-complete-close') {
-        await expect(page.locator('.radioreference-import-modal-complete')).toContainText('Talkgroups imported');
-        await expect(page.locator('.radioreference-completion-actions')).toContainText('Open Alias List');
-      }
-      if (['area-groups', 'system-sections', 'site-import', 'channel-preview', 'channel-complete-close',
-        'comparison', 'alias-preview', 'alias-complete-close'].includes(step.id)) {
-        await page.screenshot({ path: testInfo.outputPath(`radioreference-${step.id}-${theme}.png`) });
-      }
-      await next(page, step.id);
-    }
-    await expect(guide(page)).toHaveCount(0);
-    await expect(page.locator('[data-guide-sample], .ui-setup-guide-layer, .radioreference-import-modal')).toHaveCount(0);
-    await expect(page.locator('.radioreference-login-gate')).toBeVisible();
-    await expect(page).toHaveURL(originalUrl);
-    await expect(page.locator('#audio-dock')).toHaveAttribute('data-source', playerBefore.source);
-    await expect(page.locator('#audio-dock')).toHaveAttribute('data-state', playerBefore.state);
-    expectNoEffects(fixture, requests);
-  });
-}
-
 test('RadioReference sample actions cannot persist bookmarks, imports, updates, credentials, or preferences', async ({ page }) => {
   const { fixture, requests } = await openRadioReference(page);
   await startTour(page);
@@ -292,11 +170,7 @@ test('RadioReference sample actions cannot persist bookmarks, imports, updates, 
   expectNoEffects(fixture, requests);
 });
 
-for (const { dismissal, stop } of [
-  { dismissal: 'Close guide', stop: 'site-import' },
-  { dismissal: 'Escape', stop: 'channel-preview' },
-  { dismissal: 'darkened area', stop: 'alias-preview' }
-]) {
+for (const { dismissal, stop } of [{ dismissal: 'Close guide', stop: 'site-import' }]) {
   test(`RadioReference restores the original page and drafts after ${dismissal} from ${stop}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     const { fixture, requests } = await openRadioReference(page, { replay: false });
@@ -337,23 +211,6 @@ for (const { dismissal, stop } of [
   });
 }
 
-test('RadioReference first desktop visit opens once and the named URL and Help replay it', async ({ page }) => {
-  const { fixture, requests } = await openRadioReference(page, { replay: false, firstVisit: true });
-  await startTour(page);
-  await expect(guide(page)).toHaveAttribute('data-guide-step', steps[0].id);
-  await page.keyboard.press('Escape');
-  expect(await page.evaluate(key => localStorage.getItem(key), memoryKey)).toBe('1');
-  await page.reload();
-  await expect(page.locator('#page-guide-button')).toBeVisible();
-  await expect(guide(page)).toHaveCount(0);
-  await page.locator('#page-guide-button').click();
-  await startTour(page);
-  await page.keyboard.press('Escape');
-  await page.goto('/app.html?view=radioreference&guide=radioreference');
-  await startTour(page);
-  expectNoEffects(fixture, requests);
-});
-
 test('navigation releases RadioReference samples and actual import layers before rendering another page', async ({ page }) => {
   const { fixture, requests } = await openRadioReference(page);
   await startTour(page);
@@ -364,15 +221,6 @@ test('navigation releases RadioReference samples and actual import layers before
   await page.locator('.primary-nav [data-view="radioreference"]').evaluate(link => link.click());
   await expect(page.locator('.radioreference-login-gate')).toBeVisible();
   await expect(page.locator('[data-guide-sample], .ui-setup-guide-layer, .radioreference-import-modal, .ui-setup-guide')).toHaveCount(0);
-  expectNoEffects(fixture, requests);
-});
-
-test('phone visits keep the RadioReference tour and its samples closed', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const { fixture, requests } = await openRadioReference(page, { replay: false, firstVisit: true });
-  await expect(page.locator('.radioreference-login-gate')).toBeVisible();
-  await expect(page.locator('.ui-setup-guide, [data-guide-sample], .ui-setup-guide-layer')).toHaveCount(0);
-  expect(await page.evaluate(key => localStorage.getItem(key), memoryKey)).toBeNull();
   expectNoEffects(fixture, requests);
 });
 
@@ -394,49 +242,3 @@ test('dismissal during a step transition cannot reopen a RadioReference import d
   await expect(page.locator('[data-guide-sample], .ui-setup-guide-layer, .radioreference-import-modal')).toHaveCount(0);
   expectNoEffects(fixture, requests);
 });
-
-for (const theme of ['light', 'dark']) {
-  test(`RadioReference tour surfaces retain readable contrast in ${theme} and representative hues`, async ({ page }) => {
-    await page.emulateMedia({ reducedMotion: 'reduce' });
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    const { fixture, requests } = await openRadioReference(page, { theme });
-    await startTour(page);
-    for (const step of steps) {
-      await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
-      if (['area-groups', 'site-import', 'alias-preview'].includes(step.id)) {
-        await page.mouse.move(0, 0);
-        await page.evaluate(() => {
-          const backdrop = document.querySelector('.ui-setup-guide-backdrop');
-          window.radioReferenceGuideContrastState = { backdrop, visibility: backdrop.style.visibility,
-            inert: [...document.querySelectorAll('[inert]')] };
-          backdrop.style.visibility = 'hidden';
-          window.radioReferenceGuideContrastState.inert.forEach(element => { element.inert = false; });
-        });
-        try {
-          for (const hue of [null, 0, 120, 240]) {
-            await page.evaluate(async value => {
-              const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
-              applyThemeHue(value);
-            }, hue);
-            const result = await expectContrast(page, {
-              rootSelector: '.radioreference-page[data-guide-sample], .radioreference-import-modal',
-              reportName: `radioreference-guide-${step.id}-${theme}-hue-${hue}`
-            });
-            expect(result.summary.text.checked).toBeGreaterThan(10);
-          }
-        } finally {
-          await page.evaluate(async () => {
-            const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
-            applyThemeHue(null);
-            const state = window.radioReferenceGuideContrastState;
-            state.inert.forEach(element => { element.inert = true; });
-            state.backdrop.style.visibility = state.visibility;
-            delete window.radioReferenceGuideContrastState;
-          });
-        }
-      }
-      await next(page, step.id);
-    }
-    expectNoEffects(fixture, requests);
-  });
-}

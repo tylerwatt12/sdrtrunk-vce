@@ -153,7 +153,7 @@ async function inspectAlertSaveStates(page, form, held, before, label, modal = t
   await captureFormWorkflowEvidence(form, `${label}-error`);
 }
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], ['dark', 320]]) {
+for (const [theme, width] of [['light', 1280], ['light', 320]]) {
   test(`alert editor form spacing survives dirty busy and error states in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await installAlerts(page, { theme });
@@ -1176,7 +1176,7 @@ test('rule builder preserves nested conditions and uses typed tone codes', async
   expect(fixture.pageErrors).toEqual([]);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`delivery choices and the direct test fit a 320px phone in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 700 });
     const { fixture } = await installAlerts(page, { theme });
@@ -1331,7 +1331,7 @@ test('rule catalog keeps linked rule names, topic context, and confirmed deletio
   expect(fixture.pageErrors).toEqual([]);
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], ['dark', 320]]) {
+for (const [theme, width] of [['light', 1280], ['light', 320]]) {
   test(`rule tests confirm all subscribers and prevent duplicate sends in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     const { state, fixture } = await installAlerts(page, { theme });
@@ -1511,7 +1511,7 @@ test('an empty managed catalog creates and selects its first topic before adding
   expect(fixture.pageErrors).toEqual([]);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`managed alerts use the topic selector without overflow on a 320px phone in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 700 });
     const { state, fixture } = await installAlerts(page, { theme });

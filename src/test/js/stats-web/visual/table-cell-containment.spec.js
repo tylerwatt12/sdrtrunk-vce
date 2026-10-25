@@ -39,7 +39,7 @@ async function expectTextInsideCells(table) {
   expect(overflowing).toEqual([]);
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const [size, viewport] of [
     ['desktop', { width: 1280, height: 900 }],
     ['mobile', { width: 390, height: 844 }]

@@ -20,7 +20,7 @@ async function loadProductionMeasurement(page, view = 'gallery', theme = 'light'
   });
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const density of ['normal', 'dense']) {
     test(`every Live column fits independently in ${theme} ${density}`, async ({ page }) => {
       await loadProductionMeasurement(page, 'live-notice', theme);

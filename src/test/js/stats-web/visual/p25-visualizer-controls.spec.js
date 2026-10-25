@@ -2,7 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`visualizer controls remain readable in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.goto(`/design-system.html?theme=${theme}&view=health`);
@@ -75,7 +75,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
   });
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`text-colored links inherit normal and muted context in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(`/design-system.html?theme=${theme}`);

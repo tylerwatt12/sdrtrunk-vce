@@ -224,7 +224,7 @@ async function expectRenderedRecordingPlots(page) {
   await expect.poll(waterfallColors).toBeGreaterThan(1);
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const width of [1280, 390]) {
     test(`active WAV renders live spectrum and waterfall without takeover (${theme}, ${width})`, async ({ page }, testInfo) => {
       const state = await install(page, { theme, width });

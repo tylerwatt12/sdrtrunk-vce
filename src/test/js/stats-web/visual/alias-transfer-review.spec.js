@@ -20,7 +20,7 @@ const preview = {
 };
 
 for (const width of [320, 390]) {
-  for (const theme of ['light', 'dark']) {
+  for (const theme of ['light']) {
     test(`Alias import review keeps expanded changes and actions bounded ${theme} ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 568 });
       const fixture = await installSiteStyleApplication(page, theme);

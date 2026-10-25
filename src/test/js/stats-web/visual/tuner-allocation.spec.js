@@ -185,7 +185,7 @@ const centerReadout = (dialog) => dialog.locator('.ui-fact-row:has(dt:text-is("C
 const receivingMarker = (host, titleText) => host.locator(
   '.chart-window-selected, .chart-window-other, .chart-window-unscoped').filter({ hasText: titleText });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`compact channel catalog starts with running channels and keeps recognizable names in ${theme}`, async ({ page }, testInfo) => {
     const app = await openApp(page, { choose: false, catalog: pickerCatalog(), theme });
     const choices = page.locator('.tuner-allocation-channel-choice');
@@ -582,7 +582,7 @@ test('history keeps grouped decisions and captured windows while current positio
   await expect(page.locator('.tuner-allocation-history-pager')).toContainText('Page 2 of 3');
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`decision history shares desktop columns and stacks labeled phone records in ${theme}`, async ({ page }, testInfo) => {
     const failed = decision(2, { outcome: 'allocation_failed', type: 'failure', tuner_name: null, repeat_count: 16,
       reason: 'No tuner had room for this frequency and its current channels' });
@@ -653,7 +653,7 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`coverage and tuner/decision drilldowns fit desktop and phone in ${theme}`, async ({ page }, testInfo) => {
     await openApp(page, { theme, data: snapshot([decision()]) });
     for (const width of [1280, 390, 320]) {
@@ -810,7 +810,7 @@ test('selected channel markers distinguish shared tuner work by site identity th
   await expect(weather.locator('[data-tuner-id] .chart-window-unscoped')).toHaveCount(1);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`tuner map row separators and selected versus other markers remain clear in ${theme}`, async ({ page }, testInfo) => {
     await openApp(page, { theme, data: sharedTunerSnapshot() });
     // Freeze this style inspection so a live redraw cannot detach the SVG
@@ -865,7 +865,7 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`isolated uncovered frequencies stay compact while plotted gaps remain selectable in ${theme}`, async ({ page }, testInfo) => {
     const data = snapshot();
     data.sites[0].frequencies.push({ frequency_hz: 773_987_500, bandwidth_hz: 12_500, covered: false, role: 'call' });

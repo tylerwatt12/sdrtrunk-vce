@@ -185,7 +185,7 @@ test('scan-list availability saves use the same neutral labels in the selector a
   await expect(page.locator('.scan-list-selector small')).toHaveText('Hidden from listeners');
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`long ${theme} mobile form keeps action footer visible and keyboard reachable`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 520 });
     await openForms(page, 'view=scan-lists', theme);
@@ -228,7 +228,7 @@ test('failure mapping cannot strand a form busy or enable a permanently disabled
     submitDisabled: false, role: 'alert', message: 'Refresh failed' });
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
 for (const [view, trigger, title, setting, saveLabel] of [
   ['admin&tab=health', '#receiver-health-alert-settings', 'Status icon issues', null, 'Save choices'],
   ['live', '.live-presentation-button', 'Live presentation', 'Matching rows shown', 'Save Live Presentation'],

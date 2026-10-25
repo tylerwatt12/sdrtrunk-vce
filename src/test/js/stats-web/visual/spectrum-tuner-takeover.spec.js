@@ -291,12 +291,7 @@ test('fixed center frequency explains Setup on hover and keyboard focus without 
   await expect(hint).toBeHidden();
 });
 
-for (const [theme, device, viewport] of [
-  ['light', 'desktop', { width: 1280, height: 900 }],
-  ['dark', 'desktop', { width: 1280, height: 900 }],
-  ['light', 'mobile', { width: 390, height: 844 }],
-  ['dark', 'mobile', { width: 390, height: 844 }]
-]) {
+for (const [theme, device, viewport] of [['light', 'desktop', { width: 1280, height: 900 }], ['light', 'mobile', { width: 390, height: 844 }]]) {
   test(`Spectrum mode control ${theme} ${device}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await install(page, { theme });

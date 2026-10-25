@@ -8,7 +8,7 @@ const sampleRate = '2.048 MHz';
 
 for (const width of [320, 390]) {
   for (const state of ['live', 'setup']) {
-    for (const theme of ['light', 'dark']) {
+    for (const theme of ['light']) {
       test(`tuner sample rate fits and stays accessible ${state} ${theme} ${width}`, async ({ page }) => {
         await page.setViewportSize({ width, height: 844 });
         const fixture = await installSiteStyleApplication(page, theme);

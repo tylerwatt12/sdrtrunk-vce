@@ -50,9 +50,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("platform-filesystem")
 class ApplicationMigrationServiceTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();

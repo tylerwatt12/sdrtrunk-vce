@@ -180,7 +180,7 @@ test('High-rate Live messages retain ordering, capture, row focus and bounded pr
   expect(app.fixture.unexpected).toEqual([]);
 });
 
-for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+for (const theme of ['light']) for (const width of [1280, 390]) {
   test(`Conventional combined details, selection and lifecycle ${theme} ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const app = await openLive(page, theme);

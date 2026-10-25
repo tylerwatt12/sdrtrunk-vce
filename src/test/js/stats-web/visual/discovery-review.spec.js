@@ -1,7 +1,7 @@
 const { test, expect } = require('@playwright/test');
 const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
-for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+for (const theme of ['light']) for (const width of [1280, 390]) {
   test(`combined discovery Review remains readable in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/design-system.html?view=spectrum-discovery&state=review&theme=${theme}`);

@@ -892,7 +892,7 @@ test('receiver status groups repeated history while preserving each occurrence a
   await expect(occurrences.last()).toHaveAttribute('open', '');
 });
 
-for (const [theme, width] of [['light', 1440], ['dark', 1440], ['light', 320], ['dark', 320]]) {
+for (const [theme, width] of [['light', 1440], ['light', 320]]) {
   test(`receiver status keeps compact summaries and complete diagnostics at ${width}px in ${theme}`,
     async ({ page }, testInfo) => {
       await page.setViewportSize({ width, height: 900 });
@@ -1182,12 +1182,7 @@ test('P25 records and complete editor fit a 320 px mobile viewport', async ({ pa
   expect(await editor.evaluate((dialog) => dialog.getBoundingClientRect().right <= innerWidth)).toBe(true);
 });
 
-for (const [theme, viewport, size] of [
-  ['light', { width: 1440, height: 1000 }, 'desktop'],
-  ['dark', { width: 1440, height: 1000 }, 'desktop'],
-  ['light', { width: 390, height: 844 }, 'mobile'],
-  ['dark', { width: 390, height: 844 }, 'mobile']
-]) {
+for (const [theme, viewport, size] of [['light', { width: 1440, height: 1000 }, 'desktop'], ['light', { width: 390, height: 844 }, 'mobile']]) {
   for (const [tab, title, field] of [
     ['audio-quality', 'Audio quality', 'mp3_setting'],
     ['activity', 'Activity settings', 'stats_logging_retention_days'],

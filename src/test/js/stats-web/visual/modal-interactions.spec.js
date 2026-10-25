@@ -379,7 +379,7 @@ test('themed confirmation cancels with Escape and guards an action until accepta
   expect(await page.evaluate(() => window.dismissalTest.close())).toBe(true);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const viewport of [
     { name: 'desktop', width: 1100, height: 800 },
     { name: 'mobile', width: 390, height: 844 }

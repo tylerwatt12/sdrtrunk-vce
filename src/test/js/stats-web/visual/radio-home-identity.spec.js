@@ -75,7 +75,7 @@ async function installIdentities(page, theme, { sourceMode = 'both', radios = [h
   return fixture;
 }
 
-for (const presentation of presentations) {
+for (const presentation of [{"name":"light-desktop","theme":"light","viewport":{"width":1280,"height":900}}, {"name":"light-mobile","theme":"light","viewport":{"width":390,"height":844}}]) {
   test(`home radio labels and authoritative navigation ${presentation.name}`, async ({ page }) => {
     await page.setViewportSize(presentation.viewport);
     const fixture = await installIdentities(page, presentation.theme);

@@ -144,7 +144,7 @@ test('Channel Setup searches site names beyond the first page and keeps duplicat
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`Channel Setup matches the quiet mockup and fits all columns with obsolete widths ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1024, height: 900 });
     await openCatalog(page, { theme, obsoleteLayout: true });

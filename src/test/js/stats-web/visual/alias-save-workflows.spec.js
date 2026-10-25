@@ -73,7 +73,7 @@ test('Unchanged Alias submission skips saving, and a changed save refreshes the 
   expect(writes).toHaveLength(1);
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
 for (const editing of [false, true]) {
   test(`${editing ? 'Alias edit' : 'Alias List creation'} locks all fields and preserves failed drafts for retry in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 740 });

@@ -348,11 +348,11 @@ function verifyParallelPreparationWiring() {
   const reusable = fs.readFileSync(path.join(path.dirname(process.argv[2] || '.github/workflows/nightly.yml'),
     'gradle.yml'), 'utf8').replace(/\r\n/g, '\n');
   const application = job('check', reusable);
-  const groups = [...application.matchAll(/\{os: ([\w-]+), test_group: (\w+)\}/g)]
+  const groups = [...application.matchAll(/\{os: ([\w-]+), test_group: ([\w-]+)\}/g)]
     .map(([, os, group]) => `${os}:${group}`).sort();
-  assert.deepEqual(groups, ['ubuntu-latest:core', 'ubuntu-latest:web', 'windows-latest:core',
-    'windows-latest:web', 'macos-latest:all'].sort(),
-  'Every operating system must run its complete test partition on isolated runners.');
+  assert.deepEqual(groups, ['ubuntu-latest:core', 'ubuntu-latest:migrations', 'ubuntu-latest:activity',
+    'ubuntu-latest:web', 'ubuntu-latest:http', 'windows-latest:platform-filesystem'].sort(),
+  'Run the complete Java partition once and retain Windows filesystem regressions.');
   assert.match(application, /fail-fast: false/);
   assert.match(application, /-PtestGroup=\$\{\{ matrix\.test_group \}\}/);
   assert.match(application, /main-ci-gradle-failure-\$\{\{ matrix\.os \}\}-\$\{\{ matrix\.test_group \}\}/,
@@ -370,11 +370,19 @@ function verifyParallelPreparationWiring() {
   assert.match(visual, /name: web-design-system-visual-differences-\$\{\{ matrix\.shard \}\}/);
   assert.match(visual, /name: Save browser timings and results\n        if: always\(\)/);
   const gate = job('gate', reusable);
-  assert.match(gate, /needs:\n      - check\n      - visual/);
+  assert.match(gate, /needs:\n      - check\n      - visual\n      - contracts/);
   assert.match(gate, /CHECK_RESULT: \$\{\{ needs\.check\.result \}\}/);
   assert.match(gate, /VISUAL_RESULT: \$\{\{ needs\.visual\.result \}\}/);
-  assert.match(gate, /test "\$CHECK_RESULT" = "success" && test "\$VISUAL_RESULT" = "success"/,
-    'The Main CI gate must require every application group and browser shard.');
+  assert.match(gate, /CONTRACT_RESULT: \$\{\{ needs\.contracts\.result \}\}/);
+  assert.match(gate, /test "\$CHECK_RESULT" = "success" && test "\$VISUAL_RESULT" = "success" && test "\$CONTRACT_RESULT" = "success"/,
+    'The Main CI gate must require every application group, browser shard and direct contract job.');
+  const contracts = job('contracts', reusable);
+  assert.match(contracts, /runs-on: ubuntu-latest/);
+  assert.match(contracts, /run: node src\/test\/js\/stats-web\/run-contracts\.js/,
+    'Pure JavaScript contracts run directly, without a Java subprocess wrapper.');
+  assert.match(contracts, /run: node src\/test\/js\/release\/nightly-workflow\.test\.js/);
+  assert.match(contracts, /python -m unittest discover -s tools\/release/);
+  assert.match(contracts, /python -m unittest discover -s tools\/build/);
   assert.match(job('package'), /needs: \[validate, catalog\]/,
     'Packaging can overlap checks only after the same catalog has been prepared.');
   assert.match(job('package'), /ref: \$\{\{ github\.sha \}\}/);

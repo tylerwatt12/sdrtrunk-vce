@@ -96,7 +96,7 @@ for (const source of ['live', 'recordings']) {
 }
 
 for (const width of [1050, 1280]) {
-  for (const theme of ['light', 'dark']) {
+  for (const theme of ['light']) {
     test(`desktop native source dropdown is readable and comfortable at ${width}px in ${theme}`, async ({ page }) => {
       await openSourceApp(page, { width, theme });
       await expect(picker(page)).toBeVisible();

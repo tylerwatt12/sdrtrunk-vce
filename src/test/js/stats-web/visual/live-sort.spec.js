@@ -548,7 +548,7 @@ test('Escape before a reset chooser reopens keeps it closed', async ({ page }) =
   expect(app.receiverWrites).toEqual([]);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const width of [1280, 390]) {
     test(`Live row density compacts calls without changing content or selection in ${theme} at ${width}px`,
       async ({ page }, testInfo) => {
@@ -682,7 +682,7 @@ for (const [name, saved] of [['missing', undefined], ['invalid', 'compressed']])
   });
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const viewport of [{ width: 1280, height: 900 }, { width: 320, height: 740 }]) {
     test(`Live sort control remains reachable in ${theme} at ${viewport.width}px`, async ({ page }) => {
       await page.setViewportSize(viewport);

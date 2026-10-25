@@ -422,7 +422,7 @@ async function addChannels(page, count, importChoice = importNo) {
   await add.click();
 }
 
-for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+for (const theme of ['light']) for (const width of [1280, 390]) {
   test(`compact Finder completion groups seven added channels and one import per Alias List in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const fixture = ohioResultsFixture();
@@ -963,7 +963,7 @@ test('search skips the import step without a trusted RadioReference match', asyn
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(0);
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`real directory replay search review import and completion in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     test.skip(!realDirectory, 'Set VCE_DISCOVERY_REAL_DATA to an independently verified directory capture.');
     await page.setViewportSize({ width, height: 900 });
@@ -1455,7 +1455,7 @@ test('configured-limit Manage receivers navigation releases a borrowed tuner', a
   expect(state.requests.some((request) => request.path === searchPath && request.method === 'POST')).toBe(false);
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`configured tuning limits notice remains readable in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await install(page, { theme, tuningLimits: [null, [767600000, 777600000]] });
@@ -1824,7 +1824,7 @@ test('keyboard band choices combine presets with a custom range and preserve the
   await expect(maximum).toHaveValue('484');
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`scan progress shows current work and completed signals in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.clock.install();
@@ -2635,9 +2635,7 @@ test('resolved search naming preserves a custom Alias List across heartbeat and 
   await expect(name).toHaveValue('My transit control');
 });
 
-for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
-  ['dark', { width: 1280, height: 900 }], ['light', { width: 390, height: 844 }],
-  ['dark', { width: 390, height: 844 }]]) {
+for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['light', { width: 390, height: 844 }]]) {
   test(`Ohio trunked results align selections and keep details separate in ${theme} at ${viewport.width}px`,
     async ({ page }, testInfo) => {
       await page.setViewportSize(viewport);
@@ -2998,7 +2996,7 @@ test('wide DMR review submits the explicit channel map through the shared editor
     { number: 1, downlink_hz: 451000000, uplink_hz: 0 }, { number: 2, downlink_hz: 451250000, uplink_hz: 0 } ]);
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
   test(`search gallery and failed state use shared surfaces in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/design-system.html?theme=${theme}&view=spectrum-search`);

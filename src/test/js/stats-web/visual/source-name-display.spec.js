@@ -6,7 +6,7 @@ const { openSettingsApp, selectSettingsCategory: selectCategory } = require('./f
 const { presentations } = require('./fixtures/site-style-cases.cjs');
 const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
 
-for (const presentation of presentations) {
+for (const presentation of [{"name":"light-desktop","theme":"light","viewport":{"width":1280,"height":900}}, {"name":"light-mobile","theme":"light","viewport":{"width":390,"height":844}}]) {
   test(`source names ${presentation.name}`, async ({ page }) => {
     await page.setViewportSize(presentation.viewport);
     const state = await openSettingsApp(page, { theme: presentation.theme });

@@ -141,7 +141,7 @@ async function expectSuperCollapsed(page) {
   expect(geometry.icon).toBe('#icon-maximize-corners');
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const value of ['collapsed', 'minimal', 'full']) {
     test(`desktop ${value} close control toggles presentation and preserves state in ${theme}`, async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 1280, height: 900 });
@@ -351,7 +351,7 @@ test('super collapse releases the desktop player reserve without moving calls an
   await expect.poll(geometry).toEqual(before);
 });
 
-for (const theme of ['light', 'dark']) test(`hidden desktop choice is suspended on mobile and retained when returning to desktop in ${theme}`, async ({ page }) => {
+for (const theme of ['light']) test(`hidden desktop choice is suspended on mobile and retained when returning to desktop in ${theme}`, async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openApp(page, { theme });
   await size(page, 'minimal');

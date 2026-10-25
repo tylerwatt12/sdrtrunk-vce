@@ -347,18 +347,39 @@ distributions {
 }
 
 def testGroup = providers.gradleProperty('testGroup').orElse('all').get()
-if(!(testGroup in ['all', 'core', 'web'])) {
-    throw new GradleException("testGroup must be one of: all, core, web")
+def testGroups = ['all', 'core', 'migrations', 'activity', 'web', 'http', 'platform-filesystem']
+if(!(testGroup in testGroups)) {
+    throw new GradleException("testGroup must be one of: ${testGroups.join(', ')}")
 }
 def webTestClassPatterns = ['io/github/dsheirer/stats/**', 'io/github/dsheirer/web/**']
+def migrationTestClassPatterns = ['io/github/dsheirer/database/upgrade/**']
+def activityTestClassPatterns = ['io/github/dsheirer/stats/activity/**']
+def statsHttpTestClassPatterns = ['io/github/dsheirer/stats/**/*Http*Test*']
 
 test {
-    useJUnitPlatform()
+    useJUnitPlatform {
+        if(testGroup == 'platform-filesystem') includeTags('platform-filesystem')
+    }
     systemProperty 'java.io.tmpdir', layout.buildDirectory.dir('tmp/test').get().asFile.absolutePath
     jvmArgs = jvmArgsClasspath
     // Separate CI runners partition whole classes; ordinary local checks retain the complete suite.
-    if(testGroup == 'web') include(webTestClassPatterns)
-    else if(testGroup == 'core') exclude(webTestClassPatterns)
+    if(testGroup == 'core') {
+        exclude(webTestClassPatterns + migrationTestClassPatterns)
+    }
+    else if(testGroup == 'migrations') {
+        include(migrationTestClassPatterns)
+    }
+    else if(testGroup == 'activity') {
+        include(activityTestClassPatterns)
+    }
+    else if(testGroup == 'web') {
+        include('io/github/dsheirer/stats/**')
+        exclude(activityTestClassPatterns + statsHttpTestClassPatterns)
+    }
+    else if(testGroup == 'http') {
+        include(['io/github/dsheirer/web/**'] + statsHttpTestClassPatterns)
+        exclude(activityTestClassPatterns)
+    }
 }
 
 def runtimeManifestClassPath = configurations.runtimeClasspath.elements.map { entries ->

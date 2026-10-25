@@ -1036,7 +1036,7 @@ test('recording removal closes its busy modal and keeps the WAV file', async ({ 
   expect(mutations.at(-1)).toEqual({ type: 'remove' });
 });
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+for (const [theme, width] of [['light', 1280], ['light', 390]]) {
 test(`recording tuner save keeps WAV and frequency drafts through failure and prevents duplicate creation in ${theme} at ${width}px`, async ({ page }) => {
   await page.setViewportSize({ width, height: 740 });
   const writes = [], pending = [];

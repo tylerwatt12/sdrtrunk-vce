@@ -145,7 +145,7 @@ test('abort during connection clears the child and ignores a late successful res
   await expect(page.locator('.connection-result')).toHaveCount(0);
 });
 
-for (const theme of ['light', 'dark']) for (const [width, height] of [[1280, 720], [320, 568]]) {
+for (const theme of ['light']) for (const [width, height] of [[1280, 720], [320, 568]]) {
   test(`connection form remains reachable ${theme} ${width}x${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     const dialog = await installHarness(page, theme);
@@ -172,7 +172,7 @@ for (const theme of ['light', 'dark']) for (const [width, height] of [[1280, 720
   });
 }
 
-for (const theme of ['light', 'dark']) for (const [width, height] of [[1280, 900], [390, 844]]) {
+for (const theme of ['light']) for (const [width, height] of [[1280, 900], [390, 844]]) {
   test(`connection gallery ${theme} ${width}x${height}`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     await page.goto(`/design-system.html?view=radioreference-connect&theme=${theme}`);

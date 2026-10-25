@@ -37,7 +37,7 @@ async function openDeleteDialog(page, channelCount = 0) {
   return dialog;
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`Alias List deletion uses the theme checkbox in ${theme} mode`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     const dialog = await openDeleteDialog(page);

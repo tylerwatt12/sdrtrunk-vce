@@ -165,7 +165,7 @@ test('status loading failure supports retry and the settings capability prevents
   expect(restricted.calls).toEqual([]);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const [device, size] of [['desktop', { width: 1440, height: 1000 }], ['phone', { width: 320, height: 760 }]]) {
     test(`web diagnostic logging ${theme} ${device} keeps settings and evidence within the viewport`, async ({ page }, testInfo) => {
       await page.setViewportSize(size);

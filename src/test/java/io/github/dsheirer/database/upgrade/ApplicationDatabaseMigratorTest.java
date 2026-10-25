@@ -45,9 +45,11 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.UUID;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+@Tag("platform-filesystem")
 class ApplicationDatabaseMigratorTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();

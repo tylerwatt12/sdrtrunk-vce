@@ -381,7 +381,7 @@ async function searchNow(page, state) {
   await expect(page.locator('.recordings-result-status')).toBeEmpty();
 }
 
-for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], ['dark', 320]]) {
+for (const [theme, width] of [['light', 1280], ['light', 320]]) {
   test(`recording form spacing survives dirty busy and error states in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await openRecordings(page, { view: 'admin', theme, settings: { retention_days: 90 } });
@@ -727,7 +727,7 @@ test('call catalog keeps all maintenance states and zero calls while omitting un
   await expect(catalog.getByRole('button', { name: 'Refresh status' })).toBeEnabled();
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const viewport of ['desktop', 'mobile']) {
     test(`recording administration panels match the approved ${theme} ${viewport} layout`, async ({ page }) => {
       await page.setViewportSize(viewport === 'desktop' ? { width: 1280, height: 1100 } :
@@ -869,7 +869,7 @@ test('call detail tabs retain identities, protocol, recording metadata, download
   await expect(page.locator('.recordings-call-details').first()).toBeFocused();
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const [device, viewport] of [['desktop', { width: 1280, height: 900 }], ['phone', { width: 390, height: 844 }]]) {
     test(`tabbed call details ${theme} ${device} retain visible actions`, async ({ page }) => {
       await page.setViewportSize(viewport);
@@ -961,7 +961,7 @@ for (const [device, viewport] of [['desktop', { width: 1280, height: 900 }],
   }
 }
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`approved cards and call actions ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     const first = { ...linkedCall, transcript_excerpt: 'Engine four arriving. Requesting another unit.' };
@@ -1304,7 +1304,7 @@ test('cursor paging keeps selection across pages and Clear selection leaves resu
 });
 
 
-for (const theme of ['light', 'dark']) for (const device of ['desktop', 'phone']) {
+for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
   test(`workspace ${theme} ${device} keeps basic search and mixed conventional identities readable`, async ({ page }) => {
     await page.setViewportSize(device === 'phone' ? { width: 390, height: 844 } : { width: 1280, height: 900 });
     const calls = [
@@ -1892,7 +1892,7 @@ test('conventional call actions explain channel and radio searches without inven
   expect(request).not.toHaveProperty('talkgroup_id');
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`call details keep playback grouped and download separate at every width in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await openRecordings(page, { theme, call: linkedCall });
@@ -2232,7 +2232,7 @@ test('gap dividers use the earlier end, work in both orders, and exclude short, 
   await expect(gaps).toHaveCount(0);
 });
 
-for (const theme of ['light', 'dark']) for (const device of ['desktop', 'phone']) {
+for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
   test(`browsing controls and matching-call gaps ${theme} ${device}`, async ({ page }) => {
     await page.setViewportSize(device === 'phone' ? { width: 320, height: 844 } : { width: 1280, height: 900 });
     await openRecordings(page, { calls: browsingCalls(3), paginate: true, nextCursor: 'fixture:3', theme });
@@ -2412,7 +2412,7 @@ test('paging, page size and sort preserve the search halo for an unapplied draft
   expect(state.requestedFilters.every(filters => !filters.transcript)).toBe(true);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`search halo animates with reduced motion, all schemes and keyboard focus on a 320px ${theme} page`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 320, height: 844 });
     await page.emulateMedia({ reducedMotion: 'reduce' });

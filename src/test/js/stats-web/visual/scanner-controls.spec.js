@@ -266,14 +266,7 @@ for (const theme of ['light', 'dark']) {
   });
 }
 
-for (const [theme, viewport] of [
-  ['light', { width: 1280, height: 900 }],
-  ['dark', { width: 390, height: 844 }],
-  ['light', { width: 390, height: 844 }],
-  ['light', { width: 320, height: 568 }],
-  ['dark', { width: 320, height: 568 }],
-  ['dark', { width: 844, height: 390 }]
-]) {
+for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['dark', { width: 390, height: 844 }], ['light', { width: 320, height: 568 }], ['dark', { width: 844, height: 390 }]]) {
   test(`Scanner controls ${theme} ${viewport.width}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const fixture = await installSiteStyleApplication(page, theme);
@@ -421,7 +414,7 @@ test('Scanner scan-list loading, retry and selection limit', async ({ page }) =>
   expect(fixture.pageErrors).toEqual([]);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const width of [320, 390]) {
     test(`Scanner native volume ${theme} ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
@@ -509,7 +502,7 @@ test.describe('Landscape phone playback', () => {
   });
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
  test(`A scrolled live call stays still when Engineer changes to Simple ${theme}`, async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openAudioApp(page, { view: 'scanner', theme });

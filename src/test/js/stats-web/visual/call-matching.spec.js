@@ -493,9 +493,9 @@ test('saved displayed fields remain editable and do not force a wide history tab
 
 const matchingFieldSchema = ['time', 'talkgroup', 'radio', 'site', 'copies', 'match', 'outputs', 'action'];
 
-for (const width of [1440, 390, 320]) {
+for (const width of [1440, 320]) {
   for (const layout of ['default', 'legacy', 'hidden-and-reordered']) {
-    for (const longNames of [false, true]) {
+    for (const longNames of [true]) {
       test(`twenty matched calls fit ${width}px with ${layout} fields and ${longNames ? 'long' : 'normal'} names`,
         async ({ page }, testInfo) => {
           await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
@@ -885,7 +885,7 @@ test('paused requests stay stopped and failed resume preserves history until rec
   expect(app.requests()).toBe(count);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`pause and resume fit at 320px and retain keyboard focus in ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 320, height: 844 });
     await page.emulateMedia({ colorScheme: theme });

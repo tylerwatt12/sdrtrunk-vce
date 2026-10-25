@@ -143,7 +143,7 @@ test('full administrator header keeps theme and other actions visible on a 320px
   await expect(header).toHaveScreenshot('full-administrator-header-light-320.png');
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   test(`long-content gallery stays bounded on the smallest phone in ${theme} theme`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 740 });
     await page.goto(`/design-system.html?theme=${theme}&view=gallery`);

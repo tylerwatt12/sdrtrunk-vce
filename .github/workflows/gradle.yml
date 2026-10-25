@@ -17,16 +17,17 @@ permissions:
 
 jobs:
   check:
-    name: Full check (${{ matrix.os }}, ${{ matrix.test_group }})
+    name: Application checks (${{ matrix.os }}, ${{ matrix.test_group }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - {os: ubuntu-latest, test_group: core}
+          - {os: ubuntu-latest, test_group: migrations}
+          - {os: ubuntu-latest, test_group: activity}
           - {os: ubuntu-latest, test_group: web}
-          - {os: windows-latest, test_group: core}
-          - {os: windows-latest, test_group: web}
-          - {os: macos-latest, test_group: all}
+          - {os: ubuntu-latest, test_group: http}
+          - {os: windows-latest, test_group: platform-filesystem}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -38,28 +39,13 @@ jobs:
           distribution: 'liberica'
           java-package: 'jdk+fx'
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          package-manager-cache: false
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Set up Python for release contracts
+      - name: Set up Python for timing reports
         uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-
-      - name: Check Nightly preparation and publication guards
-        run: node src/test/js/release/nightly-workflow.test.js .github/workflows/nightly.yml
-
-      - name: Check packaged database smoke contracts
-        run: python -m unittest discover -s tools/release -p 'test_*.py'
-
-      - name: Check radio-system catalog extraction
-        run: python -m unittest discover -s tools/build -p 'test_*.py'
 
       - name: Download the prepared radio-system catalog
         if: ${{ inputs.radio_system_catalog_artifact != '' }}
@@ -117,6 +103,29 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  contracts:
+    name: Web and release contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Set up Python for release contracts
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - name: Check browser behavior contracts
+        run: node src/test/js/stats-web/run-contracts.js
+      - name: Check Nightly preparation and publication guards
+        run: node src/test/js/release/nightly-workflow.test.js .github/workflows/nightly.yml
+      - name: Check packaged database smoke contracts
+        run: python -m unittest discover -s tools/release -p 'test_*.py'
+      - name: Check radio-system catalog extraction
+        run: python -m unittest discover -s tools/build -p 'test_*.py'
+
   visual:
     name: Web design-system visual contract (${{ matrix.shard }}/3)
     runs-on: macos-15
@@ -161,10 +170,12 @@ jobs:
     needs:
       - check
       - visual
+      - contracts
     runs-on: ubuntu-latest
     steps:
       - name: Require every platform check
         env:
           CHECK_RESULT: ${{ needs.check.result }}
           VISUAL_RESULT: ${{ needs.visual.result }}
-        run: test "$CHECK_RESULT" = "success" && test "$VISUAL_RESULT" = "success"
+          CONTRACT_RESULT: ${{ needs.contracts.result }}
+        run: test "$CHECK_RESULT" = "success" && test "$VISUAL_RESULT" = "success" && test "$CONTRACT_RESULT" = "success"

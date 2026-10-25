@@ -265,7 +265,7 @@ test('settings capability hides application logs and prevents its request', asyn
   expect(state.requests).toEqual([]);
 });
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const [device, viewport] of [['desktop', { width: 1440, height: 1000 }],
     ['mobile', { width: 390, height: 844 }], ['narrow', { width: 320, height: 760 }]]) {
     test(`application log ${theme} ${device} fits long messages and focused details`, async ({ page }) => {

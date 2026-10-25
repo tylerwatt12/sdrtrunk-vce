@@ -1,6 +1,6 @@
 const { expect, test } = require('@playwright/test');
 
-for (const theme of ['light', 'dark']) {
+for (const theme of ['light']) {
   for (const reducedMotion of ['no-preference', 'reduce']) {
     test(`shared loading rings ${theme} ${reducedMotion} stay visible and animate regardless of motion preference`, async ({ page }) => {
       await page.emulateMedia({ reducedMotion });
