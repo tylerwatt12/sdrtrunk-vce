@@ -149,3 +149,46 @@ test('Alias import preview and apply provide pending feedback without losing the
   expect(requests.map(request => request.action)).toEqual(['preview', 'apply']);
   expect(fixture.pageErrors).toEqual([]);
 });
+
+test('server import row-limit rejection preserves the file and options for another preview', async ({ page }) => {
+  const fixture = await installSiteStyleApplication(page);
+  const requests = [];
+  await page.route('**/api/v1/admin/alias-lists/1/transfer', async route => {
+    const request = transferOptions(route.request());
+    requests.push(request);
+    if (requests.length === 1) return route.fulfill({ status: 400, json: { error: {
+      code: 'invalid_request',
+      message: 'CSV must contain at most 100,000 aliases. Split it into smaller files and try again'
+    } } });
+    return route.fulfill({ json: { data: preview } });
+  });
+  await page.goto('/app.html?view=aliases&list=1&aliasTab=configure');
+  await page.locator('.alias-transfer-import-button').click();
+  await page.getByRole('button', { name: 'Import from a file', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Import aliases into County Public Safety', exact: true });
+  await expect(modal).toContainText('Up to 100,000 aliases and 128 MiB');
+  const file = modal.locator('input[type="file"]');
+  await file.setInputFiles({ name: 'talkgroups.csv', mimeType: 'text/csv',
+    buffer: Buffer.from('Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category\n' +
+      '1202,4B2,Fireground 2,D,County fireground,Fire-Tac,Fire\n') });
+  await modal.getByRole('button', { name: 'Continue', exact: true }).click();
+  const replacement = modal.getByRole('radio', { name: 'Replace this list’s aliases', exact: false });
+  await replacement.check();
+  await modal.getByText('Optional: override defaults for this import', { exact: true }).click();
+  const recording = modal.getByRole('combobox', { name: 'Recording', exact: true });
+  await recording.selectOption('true');
+  const review = modal.getByRole('button', { name: 'Review import', exact: true });
+  await review.click();
+  await expect(modal).toContainText('CSV must contain at most 100,000 aliases. Split it into smaller files and try again');
+  await expect(file).toHaveValue(/talkgroups.csv/);
+  await expect(replacement).toBeChecked();
+  await expect(recording).toHaveValue('true');
+  await expect(review).toBeEnabled();
+  await expect(modal).not.toHaveAttribute('aria-busy', 'true');
+  await review.click();
+  await expect(modal.locator('.alias-transfer-row')).toHaveCount(3);
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toEqual(requests[1]);
+  expect(requests[1]).toMatchObject({ mode: 'REPLACE', defaults: { recordable: true }, action: 'preview' });
+  expect(fixture.pageErrors).toEqual([]);
+});

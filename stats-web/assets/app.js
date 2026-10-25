@@ -6609,7 +6609,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const fileDrop = node('label', 'alias-transfer-file-drop');
   const filePrompt = node('strong', '', 'Drop a CSV file here');
   const fileAction = node('span', 'ui-button ui-button-secondary alias-transfer-file-action', 'Choose CSV file');
-  const fileStatus = node('span', 'muted', 'VCE alias exports and RadioReference talkgroup CSV files are supported.');
+  const fileStatus = node('span', 'muted', 'VCE or RadioReference CSV · Up to 100,000 aliases and 128 MiB');
   fileDrop.append(file, filePrompt, node('span', 'muted', 'or'), fileAction, fileStatus);
   const sourceSection = node('section', 'alias-transfer-section ui-surface-inset');
   sourceSection.append(node('h3', '', 'Choose a source file'), fileDrop, formatField);
@@ -6914,11 +6914,11 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     formatField.hidden = true;
     fileDrop.classList.remove('has-file');
     filePrompt.textContent = 'Drop a CSV file here';
-    fileStatus.textContent = 'VCE alias exports and RadioReference talkgroup CSV files are supported.';
+    fileStatus.textContent = 'VCE or RadioReference CSV · Up to 100,000 aliases and 128 MiB';
     invalidate();
     if (!selected) return;
     if (selected.size > ALIAS_TRANSFER_IMPORT_MAX_BYTES) {
-      errorHost.replaceChildren(node('div', 'error', 'Choose a CSV file no larger than 128 MiB.'));
+      errorHost.replaceChildren(node('div', 'error', 'Choose a CSV file with at most 100,000 aliases and no larger than 128 MiB.'));
       fileStatus.textContent = `${selected.name} · ${number(selected.size)} bytes`;
       return;
     }
@@ -7157,7 +7157,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     try {
       const selected = file.files?.[0];
       if(!selected || selected.size > ALIAS_TRANSFER_IMPORT_MAX_BYTES) {
-        throw new Error('Select a CSV file no larger than 128 MiB.');
+        throw new Error('Choose a CSV file with at most 100,000 aliases and no larger than 128 MiB.');
       }
       request = { format: format.value, mode: mode.value, file: selected, defaults: format.value === 'RADIOREFERENCE' ? {
         recordable: record.value === '' ? null : record.value === 'true', scan_lists: scans.value(),
