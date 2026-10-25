@@ -82,12 +82,8 @@ public final class RadioReferenceImportService
     private final Map<String,RemoteCatalog> mTalkgroupCatalogs = new LinkedHashMap<>();
     private final Map<Integer,RemoteCatalog> mSystemTalkgroupCatalogs = new LinkedHashMap<>();
     private final Map<Integer,List<RemoteTalkgroup>> mRawTalkgroups = new LinkedHashMap<>();
-    private final Map<Integer,TrunkedSystemDetails> mSystemDetails = new LinkedHashMap<>();
-    private final Map<Integer,List<TrunkedSiteDetails>> mSiteCatalogs = new LinkedHashMap<>();
     private final Map<Integer,CompletableFuture<RemoteCatalog>> mTalkgroupLoads = new HashMap<>();
     private final Map<Integer,CompletableFuture<List<RemoteTalkgroup>>> mRawTalkgroupLoads = new HashMap<>();
-    private final Map<Integer,CompletableFuture<TrunkedSystemDetails>> mSystemLoads = new HashMap<>();
-    private final Map<Integer,CompletableFuture<List<TrunkedSiteDetails>>> mSiteLoads = new HashMap<>();
     private long mSessionGeneration;
 
     public RadioReferenceImportService(RadioReferenceDirectoryService directory,
@@ -757,12 +753,8 @@ public final class RadioReferenceImportService
         mTalkgroupCatalogs.clear();
         mSystemTalkgroupCatalogs.clear();
         mRawTalkgroups.clear();
-        mSystemDetails.clear();
-        mSiteCatalogs.clear();
         cancelCatalogLoads(mTalkgroupLoads);
         cancelCatalogLoads(mRawTalkgroupLoads);
-        cancelCatalogLoads(mSystemLoads);
-        cancelCatalogLoads(mSiteLoads);
         mPendingTalkgroups.clear();
         mPendingChannels.clear();
         mPendingEnrichments.clear();
@@ -1295,20 +1287,19 @@ public final class RadioReferenceImportService
         throws RadioReferenceDirectoryException
     {
         positive(systemId, "system_id");
-        return cachedCatalog(systemId, refresh, mSystemDetails, mSystemLoads, () -> {
-            TrunkedSystemDetails system = mDirectory.trunkedSystemDetails(systemId);
-            if(system == null || system.id() != systemId)
-                throw new IllegalArgumentException("RadioReference system was not found");
-            return system;
-        });
+        requireCatalogSession();
+        TrunkedSystemDetails system = mDirectory.trunkedSystemDetails(systemId, refresh);
+        if(system == null || system.id() != systemId)
+            throw new IllegalArgumentException("RadioReference system was not found");
+        return system;
     }
 
     public List<TrunkedSiteDetails> siteCatalog(int systemId, boolean refresh)
         throws RadioReferenceDirectoryException
     {
         positive(systemId, "system_id");
-        return cachedCatalog(systemId, refresh, mSiteCatalogs, mSiteLoads,
-            () -> List.copyOf(mDirectory.allTrunkedSites(systemId)));
+        requireCatalogSession();
+        return List.copyOf(mDirectory.allTrunkedSites(systemId, refresh));
     }
 
     private <T> T cachedCatalog(int systemId, boolean refresh, Map<Integer,T> values,
@@ -1439,23 +1430,12 @@ public final class RadioReferenceImportService
 
     private TrunkedSystemDetails requireSystem(int systemId) throws RadioReferenceDirectoryException
     {
-        requireCatalogSession();
-        TrunkedSystemDetails system;
-        synchronized(this) { system = mSystemDetails.get(systemId); }
-        if(system == null) system = mDirectory.trunkedSystemDetails(systemId);
-        if(system == null || system.id() != systemId)
-        {
-            throw new IllegalArgumentException("RadioReference system was not found");
-        }
-        return system;
+        return systemDetails(systemId, false);
     }
 
     private TrunkedSiteDetails requireSite(int systemId, int siteId) throws RadioReferenceDirectoryException
     {
-        requireCatalogSession();
-        List<TrunkedSiteDetails> sites;
-        synchronized(this) { sites = mSiteCatalogs.get(systemId); }
-        if(sites == null) sites = mDirectory.allTrunkedSites(systemId);
+        List<TrunkedSiteDetails> sites = siteCatalog(systemId, false);
         return sites.stream().filter(site -> site.id() == siteId)
             .findFirst().orElseThrow(() -> new IllegalArgumentException("RadioReference site was not found"));
     }
@@ -1847,8 +1827,12 @@ public final class RadioReferenceImportService
             return RadioReferenceDiscoveryResolver.Result.manual("unavailable", "RadioReference lookup is unavailable.");
         }
         TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceDirectoryException;
+        default TrunkedSystemDetails trunkedSystemDetails(int systemId, boolean refresh)
+            throws RadioReferenceDirectoryException { return trunkedSystemDetails(systemId); }
         List<TrunkedSiteDetails> allTrunkedSites(int systemId)
             throws RadioReferenceDirectoryException;
+        default List<TrunkedSiteDetails> allTrunkedSites(int systemId, boolean refresh)
+            throws RadioReferenceDirectoryException { return allTrunkedSites(systemId); }
         BoundedPage<RemoteTalkgroup> talkgroups(int systemId, Integer categoryId, String search, int offset, int limit)
             throws RadioReferenceDirectoryException;
         List<RemoteTalkgroup> allTalkgroups(int systemId) throws RadioReferenceDirectoryException;
@@ -1902,6 +1886,8 @@ public final class RadioReferenceImportService
 
         @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId)
             throws RadioReferenceDirectoryException { return service.trunkedSystemDetails(systemId); }
+        @Override public TrunkedSystemDetails trunkedSystemDetails(int systemId, boolean refresh)
+            throws RadioReferenceDirectoryException { return service.trunkedSystemDetails(systemId, refresh); }
         @Override public RadioReferenceDiscoveryResolver.Result resolveP25Identity(Integer stateId,
             RadioReferenceDiscoveryResolver.Identity identity)
         {
@@ -1909,6 +1895,8 @@ public final class RadioReferenceImportService
         }
         @Override public List<TrunkedSiteDetails> allTrunkedSites(int systemId)
             throws RadioReferenceDirectoryException { return service.allTrunkedSites(systemId); }
+        @Override public List<TrunkedSiteDetails> allTrunkedSites(int systemId, boolean refresh)
+            throws RadioReferenceDirectoryException { return service.allTrunkedSites(systemId, refresh); }
         @Override public BoundedPage<RemoteTalkgroup> talkgroups(int systemId, Integer categoryId, String search,
             int offset, int limit) throws RadioReferenceDirectoryException
             { return service.talkgroups(systemId, categoryId, search, offset, limit); }

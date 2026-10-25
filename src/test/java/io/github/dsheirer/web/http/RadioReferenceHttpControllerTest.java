@@ -229,7 +229,7 @@ class RadioReferenceHttpControllerTest
     }
 
     @Test
-    void catalogRoutesReuseSourcePerSystemRefreshExplicitlyAndDiscardFailedReplacementSessions() throws Exception
+    void catalogRoutesKeepReviewedTalkgroupsAndForwardSourceFreshnessAndRefreshToTheGateway() throws Exception
     {
         Path dataRoot = mTemporaryDirectory.resolve("catalog-http-data");
         SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
@@ -312,10 +312,12 @@ class RadioReferenceHttpControllerTest
                     }
                     data(send(client, request(origin, path + "?system_id=2001&refresh=true").GET()));
                 }
-                assertEquals(2, gateway.systemReads.get(2001).get());
-                assertEquals(1, gateway.systemReads.get(2002).get());
-                assertEquals(2, gateway.siteReads.get(2001).get());
-                assertEquals(1, gateway.siteReads.get(2002).get());
+                assertEquals(5, gateway.systemReads.get(2001).get());
+                assertEquals(3, gateway.systemReads.get(2002).get());
+                assertEquals(3, gateway.siteReads.get(2001).get());
+                assertEquals(2, gateway.siteReads.get(2002).get());
+                assertEquals(1, gateway.systemRefreshes.get(), "explicit system refresh must reach the shared source");
+                assertEquals(1, gateway.siteRefreshes.get(), "explicit site refresh must reach the shared source");
 
                 for(String path: List.of("/systems/talkgroups/catalog", "/systems/details", "/systems/sites/catalog"))
                 {
@@ -682,6 +684,8 @@ class RadioReferenceHttpControllerTest
         private final Map<Integer,AtomicInteger> siteReads = new ConcurrentHashMap<>();
         private final Map<Integer,AtomicInteger> talkgroupReads = new ConcurrentHashMap<>();
         private final Map<Integer,AtomicInteger> categoryReads = new ConcurrentHashMap<>();
+        private final AtomicInteger systemRefreshes = new AtomicInteger();
+        private final AtomicInteger siteRefreshes = new AtomicInteger();
         private volatile String alphaTag = "Dispatch";
         private volatile boolean emptyTalkgroups;
         private List<FrequencyResult> namingFrequencyResults;
@@ -769,12 +773,26 @@ class RadioReferenceHttpControllerTest
         }
 
         @Override
+        public TrunkedSystemDetails trunkedSystemDetails(int systemId, boolean refresh)
+        {
+            if(refresh) systemRefreshes.incrementAndGet();
+            return trunkedSystemDetails(systemId);
+        }
+
+        @Override
         public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId)
         {
             siteReads.computeIfAbsent(systemId, ignored -> new AtomicInteger()).incrementAndGet();
             return List.of(new TrunkedSiteDetails(3001, systemId, 12, "Franklin Simulcast", 100, 0, 12,
                 "34C", 0, "", false,
                 List.of(new TrunkedSiteChannel(853_162_500L, 1, "1", "c", "", true, false))));
+        }
+
+        @Override
+        public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId, boolean refresh)
+        {
+            if(refresh) siteRefreshes.incrementAndGet();
+            return trunkedSiteDetails(systemId);
         }
 
         @Override

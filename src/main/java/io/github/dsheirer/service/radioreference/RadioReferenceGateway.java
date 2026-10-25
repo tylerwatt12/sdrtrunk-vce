@@ -83,10 +83,21 @@ public interface RadioReferenceGateway extends AutoCloseable
         return null;
     }
 
+    /** Explicit user refresh bypasses retained source data, while a failure keeps the previous successful value. */
+    default TrunkedSystemDetails trunkedSystemDetails(int systemId, boolean refresh) throws RadioReferenceGatewayException
+    {
+        return trunkedSystemDetails(systemId);
+    }
+
     /** Loads complete site and channel details used by the configuration importer. */
     default List<TrunkedSiteDetails> trunkedSiteDetails(int systemId) throws RadioReferenceGatewayException
     {
         return List.of();
+    }
+
+    default List<TrunkedSiteDetails> trunkedSiteDetails(int systemId, boolean refresh) throws RadioReferenceGatewayException
+    {
+        return trunkedSiteDetails(systemId);
     }
 
     /** Loads the complete talkgroup catalog for one trunked system. */

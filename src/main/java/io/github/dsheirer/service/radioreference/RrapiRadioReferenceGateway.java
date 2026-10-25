@@ -48,6 +48,7 @@ import io.github.dsheirer.rrapi.type.AgencyInfo;
 import io.github.dsheirer.rrapi.type.CountyInfo;
 import io.github.dsheirer.rrapi.type.StateInfo;
 import io.github.dsheirer.rrapi.type.UserInfo;
+import io.github.dsheirer.service.radioreference.RadioReferenceSourceCache.Source;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -61,7 +62,8 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
 {
     static final String APPLICATION_KEY = "88969092";
     private volatile SecureRadioReferenceSoapClient mClient;
-    private Map<Integer,String> mSystemTypes;
+    private final RadioReferenceSourceCache mSources = new RadioReferenceSourceCache(64, 16L * 1024 * 1024,
+        java.time.Duration.ofMinutes(5), RrapiRadioReferenceGateway::sourceWeight, System::nanoTime);
 
     RrapiRadioReferenceGateway(String userName, char[] password) throws RadioReferenceGatewayException
     {
@@ -89,10 +91,14 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     }
 
     @Override
-    public synchronized Map<Integer,String> systemTypes() throws RadioReferenceGatewayException
+    public Map<Integer,String> systemTypes() throws RadioReferenceGatewayException
     {
-        if(mSystemTypes == null)
-        {
+        return systemTypes(false);
+    }
+
+    private Map<Integer,String> systemTypes(boolean refresh) throws RadioReferenceGatewayException
+    {
+        return mSources.get(Source.SYSTEM_TYPES, 0, refresh, () -> {
             try
             {
                 Map<Integer,String> types = new LinkedHashMap<>();
@@ -100,21 +106,15 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
                 if(response.getTypes() != null)
                 {
                     for(io.github.dsheirer.rrapi.type.Type type: response.getTypes())
-                    {
-                        if(type != null && type.getTypeId() > 0)
-                        {
-                            types.put(type.getTypeId(), text(type.getName()));
-                        }
-                    }
+                        if(type != null && type.getTypeId() > 0) types.put(type.getTypeId(), text(type.getName()));
                 }
-                mSystemTypes = Map.copyOf(types);
+                return Map.copyOf(types);
             }
             catch(RuntimeException exception)
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
             }
-        }
-        return mSystemTypes;
+        });
     }
 
     @Override
@@ -150,6 +150,11 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     @Override
     public List<Country> countries() throws RadioReferenceGatewayException
     {
+        return mSources.get(Source.COUNTRIES, 0, false, () -> List.copyOf(loadCountries()));
+    }
+
+    private List<Country> loadCountries() throws RadioReferenceGatewayException
+    {
         try
         {
             List<Country> countries = new ArrayList<>();
@@ -175,6 +180,11 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     @Override
     public CountryDirectory country(int countryId) throws RadioReferenceGatewayException
     {
+        return mSources.get(Source.COUNTRY, countryId, false, () -> loadCountry(countryId));
+    }
+
+    private CountryDirectory loadCountry(int countryId) throws RadioReferenceGatewayException
+    {
         try
         {
             GetCountryInfoResponse response =
@@ -186,6 +196,8 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
             }
+            if(info.getCountryId() != countryId)
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
 
             List<State> states = new ArrayList<>();
 
@@ -209,6 +221,11 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     @Override
     public StateDirectory state(int stateId) throws RadioReferenceGatewayException
     {
+        return mSources.get(Source.STATE, stateId, false, () -> loadState(stateId));
+    }
+
+    private StateDirectory loadState(int stateId) throws RadioReferenceGatewayException
+    {
         try
         {
             GetStateInfoResponse response =
@@ -220,6 +237,8 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             {
                 throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
             }
+            if(info.getStateId() != stateId)
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
 
             List<County> counties = new ArrayList<>();
 
@@ -243,25 +262,7 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     @Override
     public CountyDirectory county(int countyId) throws RadioReferenceGatewayException
     {
-        try
-        {
-            GetCountyInfoResponse response =
-                client().execute(authorization -> GetCountyInfo.create(authorization, countyId),
-                    GetCountyInfoResponse.class);
-            CountyInfo info = response.getCountyInfo();
-
-            if(info == null)
-            {
-                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
-            }
-
-            return new CountyDirectory(new County(info.getCountyId(), info.getName(), info.getHeader()),
-                systems(info.getSystems()), agencies(info.getAgencies()));
-        }
-        catch(RuntimeException exception)
-        {
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
-        }
+        return countySource(countyId).directory();
     }
 
     @Override
@@ -319,6 +320,11 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     @Override
     public List<Mode> modes() throws RadioReferenceGatewayException
     {
+        return mSources.get(Source.MODES, 0, false, () -> List.copyOf(loadModes()));
+    }
+
+    private List<Mode> loadModes() throws RadioReferenceGatewayException
+    {
         try
         {
             GetModesResponse response = client().execute(GetModes::create, GetModesResponse.class);
@@ -328,7 +334,7 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             {
                 for(io.github.dsheirer.rrapi.type.Mode mode: response.getModes())
                 {
-                    modes.add(new Mode(mode.getModeId(), mode.getName()));
+                    if(mode != null) modes.add(new Mode(mode.getModeId(), text(mode.getName())));
                 }
             }
 
@@ -343,113 +349,83 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     @Override
     public List<Site> sites(int systemId) throws RadioReferenceGatewayException
     {
-        try
-        {
-            GetSitesResponse response = client().execute(authorization -> GetSites.create(authorization, systemId),
-                GetSitesResponse.class, SecureRadioReferenceService.SITES_REQUEST_TIMEOUT);
-            List<Site> sites = new ArrayList<>();
-
-            if(response.getSites() != null)
-            {
-                for(io.github.dsheirer.rrapi.type.Site site: response.getSites())
-                {
-                    List<SiteChannel> channels = new ArrayList<>();
-
-                    if(site.getSiteFrequencies() != null)
-                    {
-                        for(io.github.dsheirer.rrapi.type.SiteFrequency frequency: site.getSiteFrequencies())
-                        {
-                            channels.add(new SiteChannel(frequency.getFrequency(), frequency.getUse(),
-                                frequency.isPrimaryControlChannel(), frequency.isAlternateControlChannel()));
-                        }
-                    }
-
-                    sites.add(new Site(site.getSiteId(), site.getSystemId(), site.getSiteNumber(),
-                        site.getDescription(), site.getCountyId(), channels));
-                }
-            }
-
-            return sites;
-        }
-        catch(RuntimeException exception)
-        {
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
-        }
+        return trunkedSiteDetails(systemId).stream().map(site -> new Site(site.id(), site.systemId(), site.number(),
+            site.name(), site.countyId(), site.channels().stream().map(channel -> new SiteChannel(
+                channel.frequencyHz() / 1_000_000.0, channel.use(), channel.primaryControl(), channel.alternateControl()))
+                .toList())).toList();
     }
 
     @Override
     public List<FrequencyCategory> agencyFrequencyCategories(int agencyId) throws RadioReferenceGatewayException
     {
-        try
-        {
-            return categories(agencyInfo(agencyId).getCategories());
-        }
-        catch(RuntimeException exception)
-        {
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
-        }
+        return agencySource(agencyId).categories();
     }
 
     @Override
     public List<FrequencyCategory> countyFrequencyCategories(int countyId) throws RadioReferenceGatewayException
     {
-        try
-        {
-            return categories(countyInfo(countyId).getCategories());
-        }
-        catch(RuntimeException exception)
-        {
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
-        }
+        return countySource(countyId).categories();
     }
 
     @Override
     public ConventionalCatalog conventionalCatalog(DetailKind ownerKind, int ownerId)
         throws RadioReferenceGatewayException
     {
-        try
+        if(ownerKind == DetailKind.COUNTY)
         {
-            if(ownerKind == DetailKind.COUNTY)
-            {
-                CountyInfo county = countyInfo(ownerId);
-                return new ConventionalCatalog(county.getName(), "", "", categories(county.getCategories()));
-            }
-            if(ownerKind == DetailKind.AGENCY)
-            {
-                AgencyInfo agency = agencyInfo(ownerId);
-                String county = agency.getCountyId() > 0 ? countyInfo(agency.getCountyId()).getName() : "";
-                return new ConventionalCatalog(county, agency.getName(), "", categories(agency.getCategories()));
-            }
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+            CountySource county = countySource(ownerId);
+            return new ConventionalCatalog(county.directory().county().name(), "", "", county.categories());
         }
-        catch(RuntimeException exception)
+        if(ownerKind == DetailKind.AGENCY)
         {
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
+            AgencySource agency = agencySource(ownerId);
+            String county = agency.countyId() > 0 ? countySource(agency.countyId()).directory().county().name() : "";
+            return new ConventionalCatalog(county, agency.name(), "", agency.categories());
         }
+        throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
     }
 
-    private AgencyInfo agencyInfo(int agencyId) throws RadioReferenceGatewayException
+    private AgencySource agencySource(int agencyId) throws RadioReferenceGatewayException
     {
-        GetAgencyInfoResponse response = client().execute(
-            authorization -> GetAgencyInfo.create(authorization, agencyId), GetAgencyInfoResponse.class);
-        AgencyInfo info = response.getAgencyInfo();
-        if(info == null || info.getAgencyId() != agencyId)
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
-        return info;
+        return mSources.get(Source.AGENCY, agencyId, false, () -> {
+            GetAgencyInfoResponse response = client().execute(
+                authorization -> GetAgencyInfo.create(authorization, agencyId), GetAgencyInfoResponse.class);
+            AgencyInfo info = response.getAgencyInfo();
+            if(info == null || info.getAgencyId() != agencyId)
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+            return new AgencySource(info.getName(), info.getCountyId(), List.copyOf(categories(info.getCategories())));
+        });
     }
 
-    private CountyInfo countyInfo(int countyId) throws RadioReferenceGatewayException
+    private CountySource countySource(int countyId) throws RadioReferenceGatewayException
     {
-        GetCountyInfoResponse response = client().execute(
-            authorization -> GetCountyInfo.create(authorization, countyId), GetCountyInfoResponse.class);
-        CountyInfo info = response.getCountyInfo();
-        if(info == null || info.getCountyId() != countyId)
-            throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
-        return info;
+        return mSources.get(Source.COUNTY, countyId, false, () -> {
+            GetCountyInfoResponse response = client().execute(
+                authorization -> GetCountyInfo.create(authorization, countyId), GetCountyInfoResponse.class);
+            CountyInfo info = response.getCountyInfo();
+            if(info == null || info.getCountyId() != countyId)
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.INVALID_LOCATION);
+            return new CountySource(new CountyDirectory(new County(info.getCountyId(), info.getName(), info.getHeader()),
+                systems(info.getSystems()), agencies(info.getAgencies())), List.copyOf(categories(info.getCategories())));
+        });
     }
+
+    private record AgencySource(String name, int countyId, List<FrequencyCategory> categories) {}
+    private record CountySource(CountyDirectory directory, List<FrequencyCategory> categories) {}
 
     @Override
     public TrunkedSystemDetails trunkedSystemDetails(int systemId) throws RadioReferenceGatewayException
+    {
+        return trunkedSystemDetails(systemId, false);
+    }
+
+    @Override
+    public TrunkedSystemDetails trunkedSystemDetails(int systemId, boolean refresh) throws RadioReferenceGatewayException
+    {
+        return mSources.get(Source.SYSTEM, systemId, refresh, () -> loadTrunkedSystemDetails(systemId, refresh));
+    }
+
+    private TrunkedSystemDetails loadTrunkedSystemDetails(int systemId, boolean refresh) throws RadioReferenceGatewayException
     {
         try
         {
@@ -459,19 +435,15 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             io.github.dsheirer.rrapi.type.SystemInformation info = response.getSystemInformation();
 
             if(info == null)
-            {
-                return null;
-            }
+                throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
 
-            String type = firstName(client().execute(
-                authorization -> GetTypes.create(authorization, info.getTypeId()), GetTypesResponse.class)
-                .getTypes());
-            String flavor = firstName(client().execute(
+            String type = systemTypes(refresh).getOrDefault(info.getTypeId(), "");
+            String flavor = mSources.get(Source.FLAVOR, info.getFlavorId(), refresh, () -> firstName(client().execute(
                 authorization -> GetFlavors.create(authorization, info.getFlavorId()), GetFlavorsResponse.class)
-                .getFlavors());
-            String voice = firstName(client().execute(
+                .getFlavors()));
+            String voice = mSources.get(Source.VOICE, info.getVoiceId(), refresh, () -> firstName(client().execute(
                 authorization -> GetVoices.create(authorization, info.getVoiceId()), GetVoicesResponse.class)
-                .getVoices());
+                .getVoices()));
             String wacn = "";
             String nativeSystemId = "";
             List<RadioNetworkIdentity> networks = new ArrayList<>();
@@ -504,6 +476,17 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
 
     @Override
     public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId) throws RadioReferenceGatewayException
+    {
+        return trunkedSiteDetails(systemId, false);
+    }
+
+    @Override
+    public List<TrunkedSiteDetails> trunkedSiteDetails(int systemId, boolean refresh) throws RadioReferenceGatewayException
+    {
+        return mSources.get(Source.SITES, systemId, refresh, () -> List.copyOf(loadTrunkedSiteDetails(systemId)));
+    }
+
+    private List<TrunkedSiteDetails> loadTrunkedSiteDetails(int systemId) throws RadioReferenceGatewayException
     {
         try
         {
@@ -632,7 +615,12 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     }
 
     @Override
-    public List<ConventionalFrequency> subcategoryFrequencies(int subCategoryId)
+    public List<ConventionalFrequency> subcategoryFrequencies(int subCategoryId) throws RadioReferenceGatewayException
+    {
+        return mSources.get(Source.SUBCATEGORY, subCategoryId, false, () -> List.copyOf(loadSubcategoryFrequencies(subCategoryId)));
+    }
+
+    private List<ConventionalFrequency> loadSubcategoryFrequencies(int subCategoryId)
         throws RadioReferenceGatewayException
     {
         try
@@ -640,19 +628,8 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
             GetSubCategoryFrequenciesResponse response = client().execute(
                 authorization -> GetSubCategoryFrequenciesRequest.create(authorization, subCategoryId),
                 GetSubCategoryFrequenciesResponse.class);
-            GetModesResponse modesResponse = client().execute(GetModes::create, GetModesResponse.class);
             Map<Integer,String> modes = new LinkedHashMap<>();
-
-            if(modesResponse.getModes() != null)
-            {
-                for(io.github.dsheirer.rrapi.type.Mode mode: modesResponse.getModes())
-                {
-                    if(mode != null)
-                    {
-                        modes.put(mode.getModeId(), text(mode.getName()));
-                    }
-                }
-            }
+            for(Mode mode: modes()) modes.put(mode.id(), mode.name());
 
             List<ConventionalFrequency> frequencies = new ArrayList<>();
 
@@ -692,6 +669,30 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
         {
             throw new RadioReferenceGatewayException(RadioReferenceGatewayException.Kind.UNAVAILABLE);
         }
+    }
+
+    private static long sourceWeight(Object value)
+    {
+        if(value == null) return 8;
+        if(value instanceof String text) return 32L + 2L * text.length();
+        if(value instanceof Number || value instanceof Boolean || value instanceof Enum<?>) return 16;
+        if(value instanceof AgencySource agency) return 32 + sourceWeight(agency.name()) + sourceWeight(agency.categories());
+        if(value instanceof CountySource county) return 32 + sourceWeight(county.directory()) + sourceWeight(county.categories());
+        if(value instanceof java.util.Collection<?> items)
+            return 32 + items.stream().mapToLong(item -> 8 + sourceWeight(item)).sum();
+        if(value instanceof Map<?,?> items)
+            return 32 + items.entrySet().stream().mapToLong(item -> 32 + sourceWeight(item.getKey()) + sourceWeight(item.getValue())).sum();
+        if(value instanceof Record)
+        {
+            long bytes = 32;
+            try
+            {
+                for(var field: value.getClass().getRecordComponents()) bytes += sourceWeight(field.getAccessor().invoke(value));
+                return bytes;
+            }
+            catch(ReflectiveOperationException exception) { throw new IllegalArgumentException("Unsupported RadioReference source projection"); }
+        }
+        throw new IllegalArgumentException("Unsupported RadioReference source projection");
     }
 
     private static String firstName(List<?> values)
@@ -817,6 +818,7 @@ final class RrapiRadioReferenceGateway implements RadioReferenceGateway
     {
         SecureRadioReferenceSoapClient client = mClient;
         mClient = null;
+        mSources.close();
 
         if(client != null)
         {

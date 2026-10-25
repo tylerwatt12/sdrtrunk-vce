@@ -50,9 +50,9 @@ import java.util.function.Predicate;
  * <p>Short directory operations and slow detail operations use separate bounded executors, so a large system
  * lookup cannot prevent region selection. Every operation has one total caller deadline that includes
  * queue time.  A timeout cancels the future and interrupts the worker, but cannot force an upstream library call that
- * ignores interruption to stop.  {@link #runtimeStatus()} exposes whether remote work remains.  Results are
- * request-local unless an explicit, bounded discovery workflow retains an immutable catalog. No directory results
- * are written to a database.</p>
+ * ignores interruption to stop.  {@link #runtimeStatus()} exposes whether remote work remains. Complete immutable
+ * source snapshots can be shared briefly within the authenticated gateway; discovery workflows retain
+ * their own reviewed catalogs. No directory results are written to a database.</p>
  */
 public final class RadioReferenceDirectoryService implements AutoCloseable
 {
@@ -950,9 +950,21 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public RadioReferenceGateway.TrunkedSystemDetails trunkedSystemDetails(int systemId, Duration remainingBudget)
         throws RadioReferenceDirectoryException
     {
+        return trunkedSystemDetails(systemId, remainingBudget, false);
+    }
+
+    public RadioReferenceGateway.TrunkedSystemDetails trunkedSystemDetails(int systemId, boolean refresh)
+        throws RadioReferenceDirectoryException
+    {
+        return trunkedSystemDetails(systemId, DEFAULT_DETAIL_REQUEST_DEADLINE, refresh);
+    }
+
+    private RadioReferenceGateway.TrunkedSystemDetails trunkedSystemDetails(int systemId, Duration remainingBudget,
+        boolean refresh) throws RadioReferenceDirectoryException
+    {
         validateId(systemId);
         RadioReferenceGateway.TrunkedSystemDetails details = invokePremiumDetail(
-            gateway -> gateway.trunkedSystemDetails(systemId), Math.min(positiveNanos(remainingBudget, "remainingBudget"),
+            gateway -> gateway.trunkedSystemDetails(systemId, refresh), Math.min(positiveNanos(remainingBudget, "remainingBudget"),
                 DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos()));
 
         if(details == null || details.id() != systemId)
@@ -979,9 +991,21 @@ public final class RadioReferenceDirectoryService implements AutoCloseable
     public List<RadioReferenceGateway.TrunkedSiteDetails> allTrunkedSites(int systemId, Duration remainingBudget)
         throws RadioReferenceDirectoryException
     {
+        return allTrunkedSites(systemId, remainingBudget, false);
+    }
+
+    public List<RadioReferenceGateway.TrunkedSiteDetails> allTrunkedSites(int systemId, boolean refresh)
+        throws RadioReferenceDirectoryException
+    {
+        return allTrunkedSites(systemId, DEFAULT_DETAIL_REQUEST_DEADLINE, refresh);
+    }
+
+    private List<RadioReferenceGateway.TrunkedSiteDetails> allTrunkedSites(int systemId, Duration remainingBudget,
+        boolean refresh) throws RadioReferenceDirectoryException
+    {
         validateId(systemId);
         List<RadioReferenceGateway.TrunkedSiteDetails> source = invokePremiumDetail(
-            gateway -> gateway.trunkedSiteDetails(systemId), Math.min(positiveNanos(remainingBudget, "remainingBudget"),
+            gateway -> gateway.trunkedSiteDetails(systemId, refresh), Math.min(positiveNanos(remainingBudget, "remainingBudget"),
                 DEFAULT_DETAIL_REQUEST_DEADLINE.toNanos()));
         enforceImportBound(source == null ? 0 : source.size());
 

@@ -553,7 +553,7 @@ class RadioReferenceImportServiceTest
     }
 
     @Test
-    void sourceCatalogsAreReusedUntilExplicitRefreshAndCurrentAliasFieldsStayComplete() throws Exception
+    void reviewedTalkgroupCatalogsStayStableAndSiteSourceFreshnessBelongsToTheDirectory() throws Exception
     {
         try(Fixture fixture = new Fixture(mTemporaryFolder))
         {
@@ -585,16 +585,17 @@ class RadioReferenceImportServiceTest
                 "unchanged fields must be supplied alongside changed fields");
             fixture.importer.siteCatalog(10, false);
             fixture.directory.site = site("Renamed site", "C4FM", List.of(channel(852_100_000L, "d", true, false)));
-            assertEquals("Central Simulcast", fixture.importer.siteCatalog(10, false).getFirst().name());
-            assertEquals(1, fixture.directory.siteCatalogReads);
+            assertEquals("Renamed site", fixture.importer.siteCatalog(10, false).getFirst().name());
+            assertEquals(2, fixture.directory.siteCatalogReads,
+                "the importer must leave ordinary source freshness to the shared gateway cache");
             assertEquals("Renamed site", fixture.importer.siteCatalog(10, true).getFirst().name());
-            assertEquals(2, fixture.directory.siteCatalogReads);
+            assertEquals(3, fixture.directory.siteCatalogReads);
             fixture.importer.clearSessionData();
             assertThrows(IllegalArgumentException.class, () -> fixture.importer.talkgroupCatalog(10, listId,
                 fresh.catalogId()));
             fixture.importer.siteCatalog(10, false);
             fixture.importer.talkgroupCatalog(10, listId, null);
-            assertEquals(3, fixture.directory.siteCatalogReads);
+            assertEquals(4, fixture.directory.siteCatalogReads);
             assertEquals(3, fixture.directory.catalogReads);
         }
     }

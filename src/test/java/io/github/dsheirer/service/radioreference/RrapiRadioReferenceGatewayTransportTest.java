@@ -236,7 +236,7 @@ class RrapiRadioReferenceGatewayTransportTest
         county.setCategories(List.of(category));
         GetCountyInfoResponse countyResponse = new GetCountyInfoResponse();
         countyResponse.setCountyInfo(county);
-        List<String> responses = List.of(response(agencyResponse), response(countyResponse), response(countyResponse));
+        List<String> responses = List.of(response(agencyResponse), response(countyResponse));
         AtomicInteger requests = new AtomicInteger();
         try(TestHttpsServer server = new TestHttpsServer(exchange -> {
             exchange.getRequestBody().readAllBytes();
@@ -259,7 +259,152 @@ class RrapiRadioReferenceGatewayTransportTest
             assertEquals("", countyCatalog.agencyName());
             assertEquals(agencyCatalog.categories(), countyCatalog.categories());
         }
-        assertEquals(3, requests.get(), "Agency context uses two bounded owner reads; county context needs one");
+        assertEquals(2, requests.get(), "Agency and county contexts must share the same complete county source");
+    }
+
+    @Test
+    void directoryFrequencyPagingAndPreviewReadsShareStateOwnerModesAndSiteSources() throws Exception
+    {
+        UserInfo user = new UserInfo();
+        user.setUserName("test-user");
+        user.setExpirationDate("Never - Test");
+        GetUserDataResponse account = new GetUserDataResponse();
+        account.setUserInfo(user);
+        StateInfo state = new StateInfo();
+        state.setStateId(39);
+        state.setName("Ohio");
+        state.setCounties(List.of());
+        state.setAgencies(List.of());
+        state.setSystems(List.of());
+        GetStateInfoResponse stateResponse = new GetStateInfoResponse();
+        stateResponse.setStateInfo(state);
+        SubCategory subcategory = new SubCategory();
+        subcategory.setSubCategoryId(444);
+        subcategory.setName("Fire");
+        Category category = new Category();
+        category.setName("Public Safety");
+        category.setSubCategories(List.of(subcategory));
+        CountyInfo county = new CountyInfo();
+        county.setCountyId(100);
+        county.setName("County");
+        county.setCategories(List.of(category));
+        county.setAgencies(List.of());
+        county.setSystems(List.of());
+        GetCountyInfoResponse countyResponse = new GetCountyInfoResponse();
+        countyResponse.setCountyInfo(county);
+        io.github.dsheirer.rrapi.type.Frequency frequency = new io.github.dsheirer.rrapi.type.Frequency();
+        frequency.setFrequencyId(77);
+        frequency.setDownlink(155.25);
+        frequency.setDescription("Fire Dispatch");
+        frequency.setAlphaTag("FD");
+        frequency.setMode("4");
+        frequency.setSubCategoryId(444);
+        frequency.setTags(List.of());
+        var second = new io.github.dsheirer.rrapi.type.Frequency();
+        second.setFrequencyId(78);
+        second.setDownlink(155.35);
+        second.setMode("4");
+        second.setSubCategoryId(444);
+        second.setTags(List.of());
+        GetSubCategoryFrequenciesResponse frequencies = new GetSubCategoryFrequenciesResponse();
+        frequencies.setFrequencies(List.of(frequency, second));
+        io.github.dsheirer.rrapi.type.Mode mode = new io.github.dsheirer.rrapi.type.Mode();
+        mode.setModeId(4);
+        mode.setName(" FMN ");
+        GetModesResponse modes = new GetModesResponse();
+        modes.setModes(List.of(mode));
+        List<String> responses = List.of(response(account), response(stateResponse), rpcFrequencyResponse(),
+            rpcFrequencyResponse(), response(countyResponse), response(frequencies), response(modes),
+            response(frequencies), sharedSiteResponse("Original site"));
+        AtomicInteger requests = new AtomicInteger();
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            int request = requests.getAndIncrement();
+            byte[] bytes = (request < responses.size() ? responses.get(request) : "unexpected request")
+                .getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(request < responses.size() ? 200 : 500, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+            SecureRadioReferenceSoapClient transport = client(server.endpoint(), server.sslContext(),
+                Duration.ofSeconds(2), 1024 * 1024);
+            RadioReferenceDirectoryService directory = new RadioReferenceDirectoryService((name, password) ->
+                new RrapiRadioReferenceGateway(transport)))
+        {
+            assertEquals(RadioReferenceDirectoryService.AccountState.VALID_PREMIUM,
+                directory.login("test-user", "dummy-password".toCharArray()).state());
+            directory.searchStateFrequencies(39, 853_162_500L, 0, 1);
+            directory.searchStateFrequencies(39, 853_262_500L, 0, 1);
+            assertEquals(4, requests.get(), "different frequencies share StateInfo but each performs its exact search");
+            directory.conventionalCategories(RadioReferenceGateway.DetailKind.COUNTY, 100, 0, 10);
+            var first = directory.conventionalFrequencies(RadioReferenceGateway.DetailKind.COUNTY, 100, 444, "", 0, 1);
+            var next = directory.conventionalFrequencies(RadioReferenceGateway.DetailKind.COUNTY, 100, 444, "", 1, 1);
+            assertEquals(77, first.items().getFirst().id());
+            assertEquals(78, next.items().getFirst().id());
+            assertEquals("FMN", first.items().getFirst().mode());
+            assertEquals(new RadioReferenceChannelNames("County", "Fire", "Fire Dispatch"), first.names().get(77));
+            // These are the two authoritative source reads performed by the normal conventional preview.
+            var selected = directory.conventionalFrequenciesById(444, List.of(77)).getFirst();
+            assertEquals(first.names().get(77), directory.conventionalNames(RadioReferenceGateway.DetailKind.COUNTY,
+                100, 444, selected));
+            var details = directory.frequencyDetails(155_250_000L, null, 0, 444, 0, 100, "4");
+            assertEquals("FMN", details.modeName());
+            assertEquals("Fire", details.subCategory());
+            assertEquals(7, requests.get(), "paging, preview and naming must reuse owner, frequency and modes sources");
+            directory.conventionalFrequencies(445, "", 0, 1);
+            assertEquals(8, requests.get(), "another subcategory fetches only its frequency rows and reuses mode labels");
+            directory.frequencyDetails(853_162_500L, 6643, 12, 0, 0, 100, "");
+            assertEquals("Original site", directory.allTrunkedSites(6643).getFirst().name());
+            assertEquals(9, requests.get(), "lightweight frequency detail and complete importer sites share GetSites");
+        }
+    }
+
+    @Test
+    void siteRefreshReachesTheWireAndFailureKeepsThePreviousSharedSource() throws Exception
+    {
+        List<String> responses = List.of(sharedSiteResponse("Original site"), "failed", sharedSiteResponse("Updated site"));
+        AtomicInteger requests = new AtomicInteger();
+        try(TestHttpsServer server = new TestHttpsServer(exchange -> {
+            int request = requests.getAndIncrement();
+            byte[] bytes = responses.get(request).getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(request == 1 ? 500 : 200, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+            RrapiRadioReferenceGateway gateway = new RrapiRadioReferenceGateway(client(server.endpoint(),
+                server.sslContext(), Duration.ofSeconds(2), 1024 * 1024)))
+        {
+            assertEquals("Original site", gateway.sites(6643).getFirst().name());
+            assertEquals("Original site", gateway.trunkedSiteDetails(6643).getFirst().name());
+            assertEquals(1, requests.get());
+            assertEquals(RadioReferenceGatewayException.Kind.HTTP_ERROR,
+                assertThrows(RadioReferenceGatewayException.class, () -> gateway.trunkedSiteDetails(6643, true)).kind());
+            assertEquals("Original site", gateway.sites(6643).getFirst().name());
+            assertEquals(2, requests.get(), "a failed refresh must not discard the successful source");
+            assertEquals("Updated site", gateway.trunkedSiteDetails(6643, true).getFirst().name());
+            assertEquals("Updated site", gateway.sites(6643).getFirst().name());
+            assertEquals(3, requests.get());
+        }
+    }
+
+    private static String sharedSiteResponse(String name) throws Exception
+    {
+        io.github.dsheirer.rrapi.type.SiteFrequency frequency = new io.github.dsheirer.rrapi.type.SiteFrequency();
+        frequency.setFrequency(853.1625);
+        frequency.setUse("c");
+        Site site = new Site();
+        site.setSiteId(3001);
+        site.setSystemId(6643);
+        site.setSiteNumber(12);
+        site.setDescription(name);
+        site.setCountyId(100);
+        site.setRectangles(List.of());
+        site.setSiteLicenses(List.of());
+        site.setSiteFrequencies(List.of(frequency));
+        site.setBandplans(List.of());
+        GetSitesResponse sites = new GetSitesResponse();
+        sites.setSites(List.of(site));
+        return response(sites);
     }
 
     @Test
@@ -448,7 +593,7 @@ class RrapiRadioReferenceGatewayTransportTest
         List<String> responses = List.of(response(systemResponse), response(typesResponse),
             response(flavorsResponse), response(voicesResponse), response(sitesResponse),
             response(talkgroupsResponse), response(categoriesResponse), response(frequenciesResponse),
-            response(modesResponse), response(feedsResponse), response(typesResponse));
+            response(modesResponse), response(feedsResponse), response(systemResponse));
         AtomicInteger requestIndex = new AtomicInteger();
 
         try(TestHttpsServer server = new TestHttpsServer(exchange -> {
@@ -498,6 +643,10 @@ class RrapiRadioReferenceGatewayTransportTest
             assertEquals("Project 25", gateway.systemTypes().get(1));
             assertEquals("Project 25", gateway.systemTypes().get(1),
                 "Directory type labels should reuse the first type-catalog request");
+            assertEquals("Project 25", gateway.trunkedSystemDetails(6644).type(),
+                "another system reuses type, flavor and voice metadata and fetches only its system information");
+            assertEquals("Franklin Simulcast", gateway.sites(6643).getFirst().name(),
+                "lightweight site lookup must reuse the complete site source");
         }
 
         assertEquals(responses.size(), requestIndex.get());
@@ -807,7 +956,7 @@ class RrapiRadioReferenceGatewayTransportTest
                 java.util.concurrent.Callable<List<?>> read = () -> switch(selectedOperation) {
                     case 0 -> gateway.p25SystemsBySystemId(0x49F);
                     case 1 -> gateway.searchStateFrequencies(10, 853.1625);
-                    default -> gateway.trunkedSiteDetails(2001);
+                    default -> gateway.trunkedSiteDetails(2001, true);
                 };
                 assertEquals(List.of(), read.call());
                 assertEquals(List.of(), read.call(), "an untyped empty return is a valid empty array");
@@ -819,6 +968,8 @@ class RrapiRadioReferenceGatewayTransportTest
                         assertThrows(RadioReferenceGatewayException.class, read::call,
                             operations[operation] + ": " + returns.get(malformed)).kind(), returns.get(malformed));
             }
+            assertEquals(returns.size(), requestIndex.get(),
+                "every valid and malformed wire response must reach the transport validator for " + operations[operation]);
         }
     }
 
