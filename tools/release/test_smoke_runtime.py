@@ -1,4 +1,4 @@
-"""Isolated, hardware-free contracts for release smoke USB, target and SQLite checks."""
+"""Isolated, hardware-free contracts for release smoke web, USB, target and SQLite checks."""
 from contextlib import closing
 import importlib.util
 import inspect
@@ -10,11 +10,113 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+import urllib.error
 
 
 SPEC = importlib.util.spec_from_file_location("smoke_runtime", Path(__file__).with_name("smoke-runtime.py"))
 SMOKE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(SMOKE)
+
+
+class SmokeWebRuntimeTest(unittest.TestCase):
+    def setUp(self):
+        self.work = tempfile.TemporaryDirectory()
+        self.addCleanup(self.work.cleanup)
+        self.web_root = Path(self.work.name) / "stats-web"
+        (self.web_root / "assets").mkdir(parents=True)
+        self.index = ('<!doctype html><html><head><meta name="sdrtrunk-web-revision" content="538">'
+                      '<link rel="canonical" href="__VCE_PUBLIC_ORIGIN__/">'
+                      '</head><body>VCE</body></html>').encode("utf-8")
+        self.javascript = b"// packaged application\n" + b"const packaged = true;\n" * 60
+        (self.web_root / "index.html").write_bytes(self.index)
+        (self.web_root / "assets" / "app.js").write_bytes(self.javascript)
+        self.process = mock.Mock()
+        self.process.poll.return_value = None
+        self.port = 12345
+
+    def response(self, body, status=200):
+        response = mock.MagicMock()
+        response.status = status
+        response.read.return_value = body
+        response.__enter__.return_value = response
+        return response
+
+    def test_logger_free_startup_requires_the_packaged_revision_and_served_javascript(self):
+        # The server substitutes the public origin in HTML but serves JavaScript bytes unchanged.
+        served_index = self.index.replace(b"__VCE_PUBLIC_ORIGIN__", b"http://127.0.0.1:12345")
+        opener = mock.Mock()
+        opener.open.side_effect = [self.response(served_index), self.response(self.javascript)]
+        with mock.patch.object(SMOKE.urllib.request, "build_opener", return_value=opener), \
+             mock.patch.object(SMOKE.time, "sleep") as pause:
+            SMOKE.check_web_runtime(self.process, self.port, self.web_root)
+        self.assertEqual([mock.call("http://127.0.0.1:12345/", timeout=2),
+                          mock.call("http://127.0.0.1:12345/assets/app.js", timeout=10)],
+                         opener.open.call_args_list)
+        self.assertEqual(2, self.process.poll.call_count)
+        pause.assert_not_called()
+
+    def test_wrong_html_revision_or_status_reaches_the_existing_startup_deadline(self):
+        for body, status in ((b"<html>unrelated server</html>", 200),
+                             (self.index.replace(b'content="538"', b'content="537"'), 200),
+                             (self.index, 503)):
+            with self.subTest(body=body, status=status):
+                opener = mock.Mock()
+                opener.open.return_value = self.response(body, status)
+                with mock.patch.object(SMOKE.urllib.request, "build_opener", return_value=opener), \
+                     mock.patch.object(SMOKE.time, "monotonic", side_effect=(0.0, 0.0, 120.0)), \
+                     mock.patch.object(SMOKE.time, "sleep") as pause:
+                    with self.assertRaisesRegex(RuntimeError, "did not serve its web interface"):
+                        SMOKE.check_web_runtime(self.process, self.port, self.web_root)
+                opener.open.assert_called_once_with("http://127.0.0.1:12345/", timeout=2)
+                pause.assert_called_once_with(0.5)
+
+    def test_missing_revision_in_packaged_index_fails_closed(self):
+        (self.web_root / "index.html").write_text("<html>missing assets</html>", encoding="utf-8")
+        with mock.patch.object(SMOKE.urllib.request, "build_opener") as build_opener:
+            with self.assertRaisesRegex(RuntimeError, "index does not declare its revision"):
+                SMOKE.check_web_runtime(self.process, self.port, self.web_root)
+        build_opener.assert_not_called()
+
+    def test_launcher_exit_before_or_during_readiness_fails(self):
+        for polls, requests in (((7,), 0), ((None, 7), 2)):
+            with self.subTest(polls=polls):
+                self.process.poll.side_effect = polls
+                self.process.returncode = 7
+                opener = mock.Mock()
+                opener.open.side_effect = [self.response(self.index), self.response(self.javascript)]
+                with mock.patch.object(SMOKE.urllib.request, "build_opener", return_value=opener):
+                    with self.assertRaisesRegex(RuntimeError, r"launcher exited early \(7\)"):
+                        SMOKE.check_web_runtime(self.process, self.port, self.web_root)
+                self.assertEqual(requests, opener.open.call_count)
+
+    def test_missing_short_or_other_javascript_is_not_readiness(self):
+        for body, status in ((self.javascript, 404), (b"", 200), (b"x" * 999, 200),
+                             (b"x" * len(self.javascript), 200)):
+            with self.subTest(status=status, size=len(body)):
+                opener = mock.Mock()
+                opener.open.side_effect = [self.response(self.index), self.response(body, status)]
+                with mock.patch.object(SMOKE.urllib.request, "build_opener", return_value=opener):
+                    with self.assertRaisesRegex(RuntimeError, "JavaScript was not served"):
+                        SMOKE.check_web_runtime(self.process, self.port, self.web_root)
+
+    def test_javascript_connection_failure_is_not_readiness(self):
+        for error in (urllib.error.URLError("unserved asset"), TimeoutError("asset timed out")):
+            with self.subTest(error=error):
+                opener = mock.Mock()
+                opener.open.side_effect = [self.response(self.index), error]
+                with mock.patch.object(SMOKE.urllib.request, "build_opener", return_value=opener):
+                    with self.assertRaises(type(error)):
+                        SMOKE.check_web_runtime(self.process, self.port, self.web_root)
+
+    def test_starting_server_can_recover_from_a_connection_failure(self):
+        opener = mock.Mock()
+        opener.open.side_effect = [urllib.error.URLError("not started"),
+                                   self.response(self.index), self.response(self.javascript)]
+        with mock.patch.object(SMOKE.urllib.request, "build_opener", return_value=opener), \
+             mock.patch.object(SMOKE.time, "sleep") as pause:
+            SMOKE.check_web_runtime(self.process, self.port, self.web_root)
+        self.assertEqual(3, self.process.poll.call_count)
+        pause.assert_called_once_with(0.5)
 
 
 class SmokeRuntimeTest(unittest.TestCase):

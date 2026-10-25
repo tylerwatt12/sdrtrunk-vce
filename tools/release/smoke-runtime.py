@@ -162,6 +162,35 @@ def stop(process):
     process.wait(timeout=30)
 
 
+def check_web_runtime(process, port, web_root):
+    deadline = time.monotonic() + 120
+    index = (web_root / "index.html").read_text(encoding="utf-8")
+    revision = re.search(r'<meta name="sdrtrunk-web-revision" content="[A-Za-z0-9._-]{1,64}">', index)
+    if revision is None:
+        raise RuntimeError("Packaged web index does not declare its revision")
+    expected_javascript = (web_root / "assets" / "app.js").read_bytes()
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"Packaged launcher exited early ({process.returncode}); see receiver.log")
+        try:
+            with opener.open(f"http://127.0.0.1:{port}/", timeout=2) as response:
+                body = response.read().decode("utf-8")
+                if response.status == 200 and revision.group() in body:
+                    break
+        except (urllib.error.URLError, TimeoutError):
+            pass
+        time.sleep(0.5)
+    else:
+        raise RuntimeError("Packaged receiver did not serve its web interface; see receiver.log")
+    with opener.open(f"http://127.0.0.1:{port}/assets/app.js", timeout=10) as response:
+        javascript = response.read()
+        if response.status != 200 or len(javascript) < 1000 or javascript != expected_javascript:
+            raise RuntimeError("Packaged web JavaScript was not served")
+    if process.poll() is not None:
+        raise RuntimeError(f"Packaged launcher exited early ({process.returncode}); see receiver.log")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--archive", required=True, type=Path)
@@ -252,26 +281,7 @@ def main():
         process = subprocess.Popen(command, cwd=installation, env=env, stdout=log,
                                    stderr=subprocess.STDOUT, start_new_session=os.name != "nt")
         try:
-            deadline = time.monotonic() + 120
-            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-            while time.monotonic() < deadline:
-                if process.poll() is not None:
-                    raise RuntimeError(f"Packaged launcher exited early ({process.returncode}); see receiver.log")
-                try:
-                    with opener.open(f"http://127.0.0.1:{port}/", timeout=2) as response:
-                        body = response.read().decode("utf-8")
-                        started = "starting main application headless" in (
-                            evidence / "receiver.log").read_text(encoding="utf-8", errors="replace")
-                        if response.status == 200 and "sdrtrunk-web-revision" in body and started:
-                            break
-                except (urllib.error.URLError, TimeoutError):
-                    pass
-                time.sleep(0.5)
-            else:
-                raise RuntimeError("Packaged receiver did not serve its web interface; see receiver.log")
-            with opener.open(f"http://127.0.0.1:{port}/assets/app.js", timeout=10) as response:
-                if response.status != 200 or len(response.read()) < 1000:
-                    raise RuntimeError("Packaged web JavaScript was not served")
+            check_web_runtime(process, port, installation / "stats-web")
         finally:
             stop(process)
     check_database_after_stop(database, target_format)
