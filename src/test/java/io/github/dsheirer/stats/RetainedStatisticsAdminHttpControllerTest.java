@@ -371,10 +371,10 @@ class RetainedStatisticsAdminHttpControllerTest
         target.put("parts", List.of("summary", "buckets"));
         HttpResponse<String> response = preview(login(), target);
         assertEquals(200, response.statusCode(), response.body());
-        assertEquals(5, json(response).at("/data/counts_by_part/summary").longValue(),
-            "Channel call totals and both radio/talkgroup summaries are counted together");
+        assertEquals(6, json(response).at("/data/counts_by_part/summary").longValue(),
+            "Channel call totals, radio/talkgroup summaries and the analog reset boundary are counted together");
         assertEquals(1, json(response).at("/data/counts_by_part/buckets").longValue());
-        assertEquals(6, json(response).at("/data/rows_total").longValue());
+        assertEquals(7, json(response).at("/data/rows_total").longValue());
         assertFalse(json(response).at("/data/counts_by_part").has("issi_assignment_history"));
     }
 
