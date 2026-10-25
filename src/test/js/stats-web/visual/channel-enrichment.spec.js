@@ -2,6 +2,7 @@
 const { expect, test } = require('@playwright/test');
 const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
 const manifest = require('../../../../../src/main/resources/channel-protocols.json');
+const noMatchReason = 'No RadioReference record matches this frequency and radio type in the selected region.';
 
 function template(protocolId) {
   const profile = manifest.profiles.find(entry => entry.id === protocolId);
@@ -53,7 +54,8 @@ async function openEditor(page, options = {}) {
       const body = request.postDataJSON();
       state.previews.push(body);
       if (state.mode !== 'choose_record' && state.mode !== 'matched') return respond({
-        state: state.mode, reason: 'No matching RadioReference record was found.', changes: [] });
+        state: state.mode, reason: state.mode === 'no_match' ? noMatchReason :
+          'No matching RadioReference record was found.', changes: [] });
       if (!body.candidate_id && state.mode === 'choose_record') return respond({ state: 'choose_record', lookup_id: 'lookup-1', candidates: [
         { candidate_id: 'record-1', name: names.name, context: 'LC SE FDISP · Lorain County · FMN', protocol_id: 'nbfm' },
         { candidate_id: 'record-2', name: 'Other dispatch', context: 'OTHER · Neighbor County · FMN', protocol_id: 'nbfm' }
@@ -145,13 +147,57 @@ test('lookup failures allow retry and cancellation without altering a dirty pare
   const state = await openEditor(page, { mode: 'no_match' });
   await state.editor.getByLabel('Name', { exact: true }).fill('Keep my name');
   const preview = await state.openPreview();
-  await expect(preview.getByText('No matching RadioReference record was found.')).toBeVisible();
+  await expect(preview.getByText(noMatchReason, { exact: true })).toBeVisible();
   await expect(preview.getByRole('button', { name: 'Use these names' })).toBeDisabled();
   state.mode = 'matched';
   await preview.getByRole('button', { name: 'Look up again' }).click();
   await expect(preview.getByRole('button', { name: 'Use these names' })).toBeEnabled();
   await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('Keep my name');
+  expect(state.writes).toHaveLength(0);
+});
+
+test('empty NBFM 162.500 MHz lookup in Ohio shows no match and preserves the new channel draft', async ({ page }, testInfo) => {
+  const state = await openEditor(page, { create: true, mode: 'no_match' });
+  await state.editor.locator('.channel-protocol-select select').selectOption('nbfm');
+  const frequency = state.editor.locator('[data-channel-path="source.frequencies_hz"] input').first();
+  await frequency.fill('162.5');
+  await state.editor.getByLabel('System', { exact: true }).fill('Local weather');
+  await state.editor.getByLabel('Site', { exact: true }).fill('My area');
+  await state.editor.getByLabel('Name', { exact: true }).fill('Weather 162.500');
+  const settings = await state.editor.locator('[data-channel-path^="settings."]').evaluateAll(controls =>
+    controls.map(control => [control.dataset.channelPath, control.type === 'checkbox' ? control.checked : control.value]));
+
+  const preview = await state.openPreview();
+  const noMatch = preview.getByText(noMatchReason, { exact: true });
+  await expect(noMatch).toBeVisible();
+  await expect(preview).not.toContainText(/unavailable|lookup failed/i);
+  await expect(preview.getByRole('button', { name: 'Use these names', exact: true })).toBeDisabled();
+  await expect(preview.getByRole('button', { name: 'Look up again', exact: true })).toBeEnabled();
+  await expect(preview.getByLabel('RadioReference state or province')).toHaveValue('39');
+  await preview.screenshot({ path: testInfo.outputPath('empty-frequency-result.png') });
+  expect(state.previews).toHaveLength(1);
+  expect(state.previews[0].state_id).toBe(39);
+  expect(state.previews[0].channel.protocol_id).toBe('nbfm');
+  expect(state.previews[0].channel.source.frequencies_hz).toEqual([162500000]);
+  expect(state.previews[0]).not.toHaveProperty('configuration_id');
+
+  await preview.getByRole('button', { name: 'Look up again', exact: true }).click();
+  await expect.poll(() => state.previews.length).toBe(2);
+  await expect(noMatch).toBeVisible();
+  await expect(preview.getByRole('button', { name: 'Use these names', exact: true })).toBeDisabled();
+  await expect(preview.getByRole('button', { name: 'Look up again', exact: true })).toBeEnabled();
+  await preview.getByRole('button', { name: 'Cancel', exact: true }).click();
+
+  await expect(preview).toHaveCount(0);
+  await expect(state.editor.getByLabel('System', { exact: true })).toHaveValue('Local weather');
+  await expect(state.editor.getByLabel('Site', { exact: true })).toHaveValue('My area');
+  await expect(state.editor.getByLabel('Name', { exact: true })).toHaveValue('Weather 162.500');
+  await expect(frequency).toHaveValue('162.5');
+  await expect(state.editor.getByLabel('Alias List', { exact: true })).toHaveValue('1');
+  expect(await state.editor.locator('[data-channel-path^="settings."]').evaluateAll(controls =>
+    controls.map(control => [control.dataset.channelPath, control.type === 'checkbox' ? control.checked : control.value]))).toEqual(settings);
+  await expect(state.editor.getByRole('button', { name: 'Create channel', exact: true })).toBeEnabled();
   expect(state.writes).toHaveLength(0);
 });
 
