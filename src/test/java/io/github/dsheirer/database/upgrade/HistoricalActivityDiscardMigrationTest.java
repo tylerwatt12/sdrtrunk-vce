@@ -149,6 +149,15 @@ class HistoricalActivityDiscardMigrationTest
                     "VALUES(9001,9000,'Analog parity','TALKGROUP','NBFM',1)");
                 statement.executeUpdate("INSERT INTO alias_activity_summary(alias_id,alias_list_id,protocol_code," +
                     "metrics_state,updated_at_ms) VALUES(9001,9000," + (version < 51 ? "0,'unsupported'" : "10,'not_collected'") + ",1000)");
+                //Frozen fixtures need not retain detailed events. Seed a valid observation explicitly so that
+                //the discard and rollback proof always covers real history in both selected source formats.
+                statement.execute("PRAGMA foreign_keys=ON");
+                statement.executeUpdate("INSERT INTO receiver_channel(configuration_id,first_seen_ms,last_seen_ms) " +
+                    "SELECT configuration_id,1000,2000 FROM configuration_channel " +
+                    "WHERE NOT EXISTS(SELECT 1 FROM receiver_channel) ORDER BY id LIMIT 1");
+                assertEquals(1, statement.executeUpdate("INSERT INTO receiver_activity_event(channel_id,observed_at_ms," +
+                    "action_code,event_type_code) SELECT id,2000,12,57 FROM receiver_channel ORDER BY id LIMIT 1"));
+                long retainedEventId = scalar(connection, "SELECT last_insert_rowid()");
                 assertEquals(0, CurrentDatabaseDerivedStateRepair.inspectHistorical(connection, version).damagedTables(),
                     "The selected format's valid analog meaning must not discard healthy history");
                 long originalEvents = scalar(connection, "SELECT count(*) FROM receiver_activity_event");
@@ -167,6 +176,8 @@ class HistoricalActivityDiscardMigrationTest
                 assertEquals(10, scalar(connection, "SELECT protocol_code FROM alias_activity_summary WHERE alias_id=9001"));
                 connection.rollback();
                 assertEquals(originalEvents, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+                assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE id=" + retainedEventId +
+                    " AND observed_at_ms=2000 AND action_code=12 AND event_type_code=57"));
             }
         }
     }
