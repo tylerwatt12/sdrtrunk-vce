@@ -2920,6 +2920,76 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void mainExcludesRemovedOwnersBeforeLimitingButRetainedQualityAndDetailsRemainReadable() throws Exception
+    {
+        seedMainOwnershipQuality();
+        var channel = new ChannelAdministrationService.ChannelSummary(P25_CHANNEL_A, "p25-phase1", "P25", "TRUNKED",
+            "Shared P25", "North", "Z current", List.of(851012500L),
+            ChannelAdministrationService.ProcessingState.RUNNING, 1, 71, "County A", true,
+            null, null, 851012500L, "active-control");
+        Map<String,Object> response = mDatabase.dashboardMain(List.of(channel));
+        List<Map<String,Object>> quality = rowsFrom(map(response, "quality"), "current");
+        assertEquals(List.of(P25_CHANNEL_A), quality.stream().map(row -> row.get("configuration_id")).toList(),
+            "The retained owner sorts first, so it must be excluded before the one-current-owner limit");
+        assertEquals(97, number(quality.getFirst().get("decode_health_pct")));
+        List<Map<String,Object>> systems = rowsFrom(map(response, "directory"), "systems");
+        assertEquals(List.of(P25_CHANNEL_A), rowsFrom(systems.getFirst(), "children").stream()
+            .map(row -> row.get("configuration_id")).toList());
+
+        Map<String,Object> retained = mDatabase.channelDetail(P25_CHANNEL_B, request("/"));
+        assertEquals("A retained", map(retained, "channel").get("name"));
+        Map<String,Object> retainedQuality = mDatabase.channelQuality(P25_CHANNEL_B,
+            request("/?range=1h&include_history=true"));
+        Map<String,Object> retainedChannel = rowsFrom(retainedQuality, "channels").getFirst();
+        assertEquals(P25_CHANNEL_B, retainedChannel.get("configuration_id"));
+        assertEquals(91, number(retainedChannel.get("decode_health_pct")));
+        assertFalse(rowsFrom(retainedChannel, "series").isEmpty());
+        String export = new String(mDatabase.csvExport("signal-health", request("/")).content(), StandardCharsets.UTF_8);
+        assertTrue(export.contains("A retained"), "Historical export scope must remain unchanged");
+    }
+
+    @Test
+    void mainWithNoConfigurationDoesNotLoadRetainedChannelQuality() throws Exception
+    {
+        seedMainOwnershipQuality();
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM configuration.configuration_channel");
+        }
+        Map<String,Object> response = mDatabase.dashboardMain(List.of());
+        assertTrue(rowsFrom(map(response, "quality"), "current").isEmpty());
+        assertTrue(rowsFrom(map(response, "directory"), "systems").isEmpty());
+        assertTrue(rowsFrom(map(response, "directory"), "channels").isEmpty());
+        assertEquals("A retained", map(mDatabase.channelDetail(P25_CHANNEL_B, request("/")), "channel").get("name"));
+        assertEquals(1, rowsFrom(mDatabase.channelQuality(P25_CHANNEL_B, request("/?range=1h")), "channels").size());
+    }
+
+    private void seedMainOwnershipQuality() throws Exception
+    {
+        long now = System.currentTimeMillis();
+        try(Connection connection = openFixture(); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE configuration.configuration_channel SET name=CASE " +
+                "WHEN configuration_id='" + P25_CHANNEL_A + "' THEN 'Z current' ELSE 'A retained' END");
+            statement.executeUpdate("""
+                UPDATE main.receiver_channel SET
+                    (channel_kind, decoder_type, system_name, site_name, name, alias_list_id, primary_frequency_hz) =
+                    (SELECT channel_kind, decoder_type, system_name, site_name, name, alias_list_id, primary_frequency_hz
+                     FROM configuration.configuration_channel configured
+                     WHERE configured.configuration_id=receiver_channel.configuration_id)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_control_channel_quality(channel_id,frequency_hz,bucket_start_ms,observed_at_ms,
+                    signal_dbfs,average_signal_dbfs,minimum_signal_dbfs,maximum_signal_dbfs,decode_health_pct,
+                    valid_frames,invalid_frames,corrected_bits,sync_loss_bits,dropped_bits,last_valid_decode_ms)
+                VALUES (71,851012500,%1$d,%1$d,-45,-46,-50,-42,97,100,2,3,4,5,%1$d),
+                       (72,852012500,%1$d,%1$d,-52,-53,-58,-49,91,200,2,3,4,5,%1$d)
+                """.formatted(now));
+            statement.executeUpdate("DELETE FROM configuration.configuration_channel WHERE configuration_id<>'" + P25_CHANNEL_A + "'");
+        }
+    }
+
+    @Test
     void mainUsesOnlyCardFieldsAndPreservesNamesAliasesAndCurrentFrequencies() throws Exception
     {
         long now = System.currentTimeMillis();

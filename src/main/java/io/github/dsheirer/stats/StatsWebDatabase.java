@@ -1852,6 +1852,13 @@ class StatsWebDatabase
     private static List<Map<String,Object>> querySignalHealthExport(Connection connection, int limit)
         throws SQLException
     {
+        return querySignalHealthExport(connection, limit, "configuration_channel");
+    }
+
+    private static List<Map<String,Object>> querySignalHealthExport(Connection connection, int limit,
+                                                                   String channelOwnerView)
+        throws SQLException
+    {
         List<Map<String,Object>> rows = queryRows(connection, """
             SELECT site.*, quality.frequency_hz AS quality_frequency_hz,
                 quality.observed_at_ms AS last_observed_ms, quality.signal_dbfs,
@@ -1872,7 +1879,7 @@ class StatsWebDatabase
                 )
             ORDER BY lower(coalesce(site.name, site.configuration_id)), site.configuration_id
             LIMIT ?
-            """.formatted(qualityChannelSelect()), limit);
+            """.formatted(qualityChannelSelect(channelOwnerView)), limit);
         long now = System.currentTimeMillis();
 
         for(Map<String,Object> row: rows)
@@ -2098,7 +2105,7 @@ class StatsWebDatabase
             queryRows(connection, """
                 SELECT config.configuration_id, system.system_key AS radio_system_key,
                     system.protocol_code
-                FROM configuration_channel config
+                FROM configured_channel config
                 LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
                 LEFT JOIN radio_system system ON system.id = channel.radio_system_id
                 """).forEach(channel -> configured.put(String.valueOf(channel.get("configuration_id")), channel));
@@ -2163,7 +2170,8 @@ class StatsWebDatabase
                 system.put("alias_lists", List.copyOf(aliases.values()));
             });
 
-            List<Map<String,Object>> quality = querySignalHealthExport(connection, Math.max(1, configured.size()))
+            List<Map<String,Object>> quality = querySignalHealthExport(connection, Math.max(1, configured.size()),
+                "configured_channel")
                 .stream().filter(row -> "TRUNKED".equals(row.get("channel_kind"))).toList();
             quality.forEach(row -> {
                 Map<String,Object> current = byConfiguration.get(row.get("configuration_id"));
@@ -7360,6 +7368,12 @@ class StatsWebDatabase
      */
     private static String qualityChannelSelect()
     {
+        return qualityChannelSelect("configuration_channel");
+    }
+
+    /** Selects an internal owner view before ordering/limiting; retained drilldowns keep their historical default. */
+    private static String qualityChannelSelect(String channelOwnerView)
+    {
         return """
             SELECT channel.id AS channel_id, config.configuration_id, config.channel_kind,
                 p25.nac, p25.rfss,
@@ -7382,12 +7396,12 @@ class StatsWebDatabase
                 trunked.observed_ran AS ran,
                 system.address_domain_code,
                 system.id AS radio_system_id, system.system_key AS radio_system_key
-            FROM configuration_channel config
+            FROM %s config
             LEFT JOIN receiver_channel channel ON channel.configuration_id = config.configuration_id
             LEFT JOIN radio_system system ON system.id = channel.radio_system_id
             LEFT JOIN p25_site_snapshot p25 ON p25.channel_id = channel.id
             LEFT JOIN trunked_site_snapshot trunked ON trunked.channel_id = channel.id
-            """.formatted(RADIO_SYSTEM_IDENTITY_PROJECTION_SQL);
+            """.formatted(RADIO_SYSTEM_IDENTITY_PROJECTION_SQL, channelOwnerView);
     }
 
     private static String trunkedSiteSelect()
