@@ -794,8 +794,12 @@ async function verifyScanListDialogVersionSnapshot() {
     const elements = [];
     const writes = [];
     const element = (tag, _className = '', textContent = '') => {
+      const attributes = new Map();
       const value = { tag, textContent, disabled: false, handlers: {},
-        append() {}, replaceChildren() {}, setAttribute() {},
+        classList: { add() {}, remove() {} },
+        append() {}, replaceChildren() {}, setAttribute: (key, value) => attributes.set(key, value),
+        getAttribute: (key) => attributes.get(key) ?? null, removeAttribute: (key) => attributes.delete(key),
+        querySelectorAll: () => elements.filter((item) => ['button', 'input', 'select'].includes(item.tag)),
         addEventListener(type, handler) { this.handlers[type] = handler; } };
       elements.push(value);
       return value;
@@ -806,7 +810,10 @@ async function verifyScanListDialogVersionSnapshot() {
       finishAliasMutation: async () => {},
       requestJson: async (url, options) => { writes.push({ url, body: options.body }); return {}; } };
     vm.createContext(probe);
-    vm.runInContext(`${functionSource('function openScanListMemberRemoveModal(scanList)')}
+    const actionSource = fs.readFileSync(path.resolve(path.dirname(applicationPath),
+      'core/action-workflows.js'), 'utf8').replaceAll('export function ', 'function ');
+    vm.runInContext(`${actionSource}
+      ${functionSource('function openScanListMemberRemoveModal(scanList)')}
       ${functionSource('function fullScanListMembershipRequest(editRevision, operation, aliasListId = null)')}
       ${functionSource('function openFullScanListMembershipModal(scanList, operation, presentation = null)')}`, probe);
     const scanList = { id: 7, name: 'County', alias_count: 2, edit_revision: 'opened-memberships' };

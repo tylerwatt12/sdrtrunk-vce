@@ -369,6 +369,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['ligh
     await confirmation.getByRole('button', { name: 'Remove sender', exact: true }).click();
     await expect.poll(() => app.removals()).toBe(1);
     await expect(editor).toHaveAttribute('aria-busy', 'true');
+    await expect(editor.locator('.ui-feedback-loading')).toHaveText('Removing sender…');
     await expect(remove).toBeDisabled();
     await expect(editor.getByRole('button', { name: 'Save sender' })).toBeDisabled();
     await expect(name).toBeDisabled();

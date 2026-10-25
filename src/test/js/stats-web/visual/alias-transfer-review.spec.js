@@ -100,3 +100,44 @@ for (const width of [320, 390]) {
     });
   }
 }
+
+
+test('Alias import preview and apply provide pending feedback without losing the reviewed draft', async ({ page }) => {
+  const fixture = await installSiteStyleApplication(page);
+  const held = [];
+  const requests = [];
+  await page.route('**/api/v1/admin/alias-lists/1/transfer', async route => {
+    const request = route.request().postDataJSON();
+    requests.push(request);
+    await new Promise(resolve => held.push(resolve));
+    if (request.action === 'preview') return route.fulfill({ json: { data: preview } });
+    return route.fulfill({ status: 409, json: { error: { code: 'stale_revision',
+      message: 'Saved aliases changed' } } });
+  });
+  await page.goto('/app.html?view=aliases&list=1&aliasTab=configure');
+  await page.locator('.alias-transfer-import-button').click();
+  await page.getByRole('dialog', { name: 'How would you like to import aliases?', exact: true })
+    .getByRole('button', { name: 'Import from a file', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Import aliases into County Public Safety', exact: true });
+  await modal.locator('input[type="file"]').setInputFiles({ name: 'talkgroups.csv', mimeType: 'text/csv',
+    buffer: Buffer.from('Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category\n' +
+      '1202,4B2,Fireground 2,D,County fireground,Fire-Tac,Fire\n') });
+  await modal.getByRole('button', { name: 'Continue', exact: true }).click();
+  await modal.getByRole('button', { name: 'Review import', exact: true }).click();
+  await expect(modal.locator('.ui-feedback-loading')).toHaveText('Checking import changes…');
+  await expect(modal).toHaveAttribute('aria-busy', 'true');
+  await page.keyboard.press('Escape');
+  await expect(modal).toBeVisible();
+  await expect.poll(() => held.length).toBe(1);
+  held.shift()();
+  const apply = modal.getByRole('button', { name: 'Import 2 changes', exact: true });
+  await apply.click();
+  await expect(modal.locator('.ui-feedback-loading')).toHaveText('Importing aliases…');
+  await expect(apply).toBeDisabled();
+  await expect.poll(() => held.length).toBe(1);
+  held.shift()();
+  await expect(modal).toContainText('Saved aliases changed. Preview again before retrying.');
+  await expect(modal.locator('input[type="file"]')).toHaveValue(/talkgroups.csv/);
+  expect(requests.map(request => request.action)).toEqual(['preview', 'apply']);
+  expect(fixture.pageErrors).toEqual([]);
+});

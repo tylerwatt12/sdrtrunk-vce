@@ -508,6 +508,9 @@ test('associated ISSI cleanup target stays fixed during submission and retry', a
   await confirm.click();
   await expect(confirm).toBeDisabled();
   await expect(dialog).toHaveAttribute('aria-busy', 'true');
+  await expect(dialog.locator('.ui-feedback-loading')).toContainText('Starting deletion…');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
   await expect.poll(() => requests.writes.length).toBe(1);
   requests.releaseDeletion();
   await expect(dialog.getByText('Cleanup unavailable')).toBeVisible();

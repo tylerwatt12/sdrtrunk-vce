@@ -273,6 +273,10 @@ for (const [theme, viewport] of [
     await page.evaluate(() => { window.streamingTest.holdWrite = true; });
     await modal.getByRole('button', { name: creating ? 'Add destination' : 'Save and reconnect', exact: true }).click();
     await expect(modal.getByLabel('Name', { exact: true })).toBeDisabled();
+    await expect(modal.locator('.ui-feedback-loading')).toHaveText(creating ? 'Adding destination…' : 'Saving destination…');
+    await expect(modal).toHaveAttribute('aria-busy', 'true');
+    await page.keyboard.press('Escape');
+    await expect(modal).toBeVisible();
     await expectStreamingWorkflowGeometry(modal);
     await expectStableFormWorkflowInsets(modal.locator('.streaming-editor'), before);
     await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-${creating ? 'new' : 'existing'}-${theme}-saving`);
@@ -290,6 +294,7 @@ for (const [theme, viewport] of [
       await page.evaluate(() => { window.streamingTest.holdWrite = true; });
       await modal.getByRole('button', { name: 'Save assignments', exact: true }).click();
       await expect(modal.getByRole('checkbox', { name: 'Send Dispatch 1 to this destination', exact: true })).toBeDisabled();
+      await expect(modal.locator('.ui-feedback-loading')).toHaveText('Saving alias assignments…');
       await expectStreamingWorkflowGeometry(modal);
       await expectStableFormWorkflowInsets(modal.locator('.streaming-editor'), aliasesBefore);
       await captureFormWorkflowEvidence(modal.locator('.streaming-editor'), `streaming-aliases-${theme}-saving`);

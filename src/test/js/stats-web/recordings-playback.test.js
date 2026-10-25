@@ -60,7 +60,8 @@ const call = (id, start = id * 1000) => ({ id, start_ms: start, duration_ms: 30_
 async function main() {
   const modulePath = path.resolve(process.argv[2] || path.resolve(__dirname,
     '../../../../stats-web/assets/features/recordings.js'));
-  const source = fs.readFileSync(modulePath, 'utf8');
+  const source = fs.readFileSync(modulePath, 'utf8').replace('../core/action-workflows.js?v=1',
+    pathToFileURL(path.resolve(path.dirname(modulePath), '../core/action-workflows.js')).href);
   const labelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/system-labels.js')).href;
   const radioLabelsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/radio-labels.js')).href;
   const sourceNamesUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/source-names.js')).href;

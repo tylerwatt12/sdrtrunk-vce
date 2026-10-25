@@ -943,7 +943,7 @@ export function createRetainedStatisticsWorkspace(deps) {
       if (confirm.disabled || !modal) return;
       modal.setBusy(true);
       confirm.disabled = true;
-      errorHost.replaceChildren();
+      errorHost.replaceChildren(feedback(resetActivity ? 'Starting activity reset…' : 'Starting deletion…', 'loading'));
       try {
         requestId ||= crypto.randomUUID();
         const response = await requestJson(`${ROOT}/deletions`, {
@@ -1056,7 +1056,7 @@ export function createRetainedStatisticsWorkspace(deps) {
       if (confirm.disabled || !modal) return;
       modal.setBusy(true);
       confirm.disabled = true;
-      errorHost.replaceChildren();
+      errorHost.replaceChildren(feedback('Starting deletion…', 'loading'));
       try {
         if (!submittedTarget) {
           submittedTarget = targetForRemoval(row, includeChannelHistory);
@@ -1126,6 +1126,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     state.jobActionPending = true;
     state.jobRequest += 1;
     drawJob();
+    jobNotice.append(feedback(action === 'cancel' ? 'Requesting cleanup stop…' : 'Resuming cleanup…', 'loading'));
     try {
       const response = await requestJson(`${ROOT}/deletions/${encodeURIComponent(state.job.job_id)}/${action}`,
         { method: 'POST', body: {}, signal, timeoutMs: 30000 });

@@ -8,6 +8,7 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '../../../..');
 const node = process.env.NODE_BINARY || process.execPath;
 const contracts = [
+  ["bulk action workflows", "action-workflows.test.js", "stats-web/assets/core/action-workflows.js"],
   ["admin system status", "admin-system-status.test.js", "stats-web/assets/app.js"],
   ["application log", "application-log.test.js", "stats-web/assets/core/application-log.js"],
   ["web diagnostic log", "web-diagnostic-log.test.js", "stats-web/assets/features/web-diagnostic-log.js"],

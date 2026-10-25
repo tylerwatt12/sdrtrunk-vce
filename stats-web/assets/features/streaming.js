@@ -1,3 +1,5 @@
+import { createActionWorkflow } from '../core/action-workflows.js?v=1';
+
 const ROOT = '/api/v1/admin/streaming';
 const POLL_MS = 3000;
 
@@ -188,7 +190,7 @@ export function createStreamingWorkspace(deps) {
         localMessage.replaceChildren(feedback(result.message, result.success ? 'success' : 'error'));
         localMessage.hidden = false;
       }
-    }));
+    }, 'Testing connection…'));
     const cancel = markGuide(button('Cancel', modal.close), 'add-cancel');
     const remove = button('Delete destination', () => void removeDestination());
     remove.classList.remove('ui-button-secondary');
@@ -269,20 +271,28 @@ export function createStreamingWorkspace(deps) {
     aliasesPanel.append(aliasQuery, aliasTableRegion, aliasPager,
       node('p', 'muted', 'These are the same assignments shown in the Alias Editor. Only your explicit changes are saved, up to 500 per save.'));
 
-    function setBusy(value) {
-      busy = value; modal.setBusy(value);
-      content.querySelectorAll('button,input,select,summary').forEach(control => {
-        if (value) { control.dataset.wasDisabled = String(Boolean(control.disabled)); control.disabled = true; }
-        else { control.disabled = control.dataset.wasDisabled === 'true'; delete control.dataset.wasDisabled; }
-      });
-      if (!value) syncButtons();
-    }
-    async function run(operation) {
+    const actionWorkflow = createActionWorkflow({ surface: content, modal, feedback: localMessage,
+      renderFeedback: (state, text) => {
+        localMessage.replaceChildren(...(text ? [feedback(text, state)] : []));
+        localMessage.hidden = !text;
+      } });
+    async function run(operation, pending = 'Updating destination…') {
       if (busy || !alive) return;
-      setBusy(true); localMessage.replaceChildren(); localMessage.hidden = true; reload.hidden = true;
-      try { await operation(); }
-      catch (error) { if (alive && error.name !== 'AbortError') { showError(localMessage, error); reload.hidden = error.code !== 'stale_revision'; } }
-      finally { if (alive) setBusy(false); }
+      busy = true;
+      reload.hidden = true;
+      try {
+        await actionWorkflow.run(operation, { pending, success: null,
+          onSuccess: () => {
+            if (localMessage.firstElementChild?.classList.contains('ui-feedback-loading')) {
+              localMessage.replaceChildren(); localMessage.hidden = true;
+            }
+          }, onError: (error, message) => {
+            if (alive && error.name !== 'AbortError') {
+              showError(localMessage, { message }); reload.hidden = error.code !== 'stale_revision';
+            }
+          } });
+      } catch (_) { /* The editor retains the draft and actionable feedback. */ }
+      finally { busy = false; if (alive) syncButtons(); }
     }
     function syncButtons() {
       if (!definition) return;
@@ -399,6 +409,9 @@ export function createStreamingWorkspace(deps) {
       if (!id || !alive || busy) return;
       const sequence = ++aliasSequence;
       searchButton.disabled = true;
+      aliasRows.setAttribute('aria-busy', 'true');
+      localMessage.replaceChildren(feedback('Loading aliases…', 'loading'));
+      localMessage.hidden = false;
       drawAliasPager(true);
       try {
         const query = new URLSearchParams({ q: aliasSearch.value, assigned: assignedOnly.value, offset: aliasOffset, limit: 50 });
@@ -432,8 +445,11 @@ export function createStreamingWorkspace(deps) {
           controller: aliasTableController, presentation: guideMode }));
         syncPageToggle();
         aliasCount.textContent = `${formatNumber(result.total)} ${result.total === 1 ? 'alias' : 'aliases'}`;
+        localMessage.replaceChildren(); localMessage.hidden = true;
       } catch (error) { if (alive && error.name !== 'AbortError') { showError(localMessage, error); reload.hidden = error.code !== 'stale_revision'; } }
-      finally { if (alive && sequence === aliasSequence) { searchButton.disabled = false; drawAliasPager(); } }
+      finally { if (alive && sequence === aliasSequence) {
+        searchButton.disabled = false; aliasRows.removeAttribute('aria-busy'); drawAliasPager();
+      } }
     }
     function drawStatus(row) {
       if (!row) { statusPanel.replaceChildren(feedback('Destination no longer exists.', 'error')); return; }
@@ -481,7 +497,7 @@ export function createStreamingWorkspace(deps) {
         }
         if (!alive) return;
         dirty();
-      });
+      }, activeTab === 'aliases' ? 'Saving alias assignments…' : id ? 'Saving destination…' : 'Adding destination…');
       if (alive && activeTab === 'aliases' && !aliasLoaded) await loadAliases();
     }
     async function removeDestination() {
@@ -500,10 +516,11 @@ export function createStreamingWorkspace(deps) {
         if (!await confirmAction(`Delete ${definition.settings.name}? This removes its saved connection settings.`, {
           title: 'Delete streaming destination', confirmLabel: 'Delete destination'
         }) || !alive) return;
+        actionWorkflow.showFeedback('loading', 'Deleting destination…');
         await write(`/${id}`, 'DELETE', { edit_revision: editRevision }, requestOptions);
         modal.setDirty(false); settingsDirty = assignmentDirty = false;
         modal.setBusy(false); modal.close();
-      });
+      }, 'Checking destination usage…');
     }
     try {
       options = await read('/options', requestOptions);
@@ -518,7 +535,7 @@ export function createStreamingWorkspace(deps) {
       providerControl.addEventListener('change', () => void run(async () => {
         definition = await read(`/templates/${providerControl.value}`, requestOptions);
         if (alive) renderFields();
-      }));
+      }, 'Loading provider settings…'));
       settingsPanel.append(formField('Provider', uiSelectFrame(providerControl)), fields, advanced, warning);
       tabs = uiSegmentedControl([{ value: 'settings', label: 'Settings' }, { value: 'aliases', label: 'Aliases' },
         { value: 'status', label: 'Status' }], initialTab, value => perform(() => switchTab(value)));
@@ -615,29 +632,18 @@ export function createStreamingWorkspace(deps) {
           const cardMessage = node('div');
           cardMessage.setAttribute('role', 'status');
           const cardActions = node('footer', 'streaming-feed-card-actions ui-action-row');
+          const workflow = createActionWorkflow({ surface: body, feedback: cardMessage, modal,
+            controls: () => body.querySelectorAll('button') });
           const add = button(row.configured ? 'Already added' : 'Add feed', async () => {
-            modal.setBusy(true);
-            body.querySelectorAll('button').forEach(control => {
-              control.dataset.wasDisabled = String(control.disabled);
-              control.disabled = true;
-            });
-            cardMessage.replaceChildren();
+            if (add.disabled) return;
             try {
-              const saved = await write('/feeds', 'POST', { feed_id: row.id },
-                { signal: abort.signal, page: false });
-              if (alive) { modal.setBusy(false); modal.close(); void openEditor(saved.configuration_id); }
-            } catch (error) {
-              if (alive && error.name !== 'AbortError') {
-                cardMessage.replaceChildren(feedback(error.message || 'The feed could not be added', 'error'));
-                modal.setBusy(false);
-                body.querySelectorAll('button').forEach(control => {
-                  control.disabled = control.dataset.wasDisabled === 'true';
-                  delete control.dataset.wasDisabled;
-                });
-              }
-            }
-          }, !row.configured);
-          add.classList.add('streaming-feed-add');
+              await workflow.run(() => write('/feeds', 'POST', { feed_id: row.id },
+                { signal: abort.signal, page: false }), { pending: 'Adding feed…',
+                onSuccess: (saved) => {
+                  if (alive) { modal.setBusy(false); modal.close(); void openEditor(saved.configuration_id); }
+                } });
+            } catch (_) { /* Preserve the feed list and its recovery feedback. */ }
+          });
           add.disabled = row.configured;
           cardActions.append(add);
           card.append(header, facts, cardMessage, cardActions);

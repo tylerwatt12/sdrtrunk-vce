@@ -4,6 +4,7 @@ import { formatSourceName } from '../core/source-names.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { callAudioDetailGroups } from '../core/call-audio-details.js?v=7';
 import { createFormWorkflow } from '../core/form-workflows.js?v=6';
+import { createActionWorkflow } from '../core/action-workflows.js?v=1';
 import { createRecordingsGuideData, RECORDINGS_GUIDE_CALL_ID } from '../guides/recordings-data.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';
@@ -1755,27 +1756,25 @@ export function createRecordingsFeature(deps) {
     const status = node('div', 'recordings-form-status');
     status.setAttribute('role', 'status');
     const cancel = button(node, 'Cancel', () => modal.close());
+    const workflow = createActionWorkflow({ surface: body, feedback: status,
+      modal: { setBusy: value => modal?.setBusy(value) } });
     const remove = button(node, 'Delete recordings', async () => {
-      remove.disabled = true;
-      modal.setBusy(true);
-      status.replaceChildren(makeNotice('Deleting selected calls…', 'loading'));
+      if (remove.disabled) return;
       try {
-        await requestJson(`${ADMIN}/calls`, { method: 'DELETE',
-          body: { ids: ids.map((id) => Number(id)) }, page: false });
-        if (player && ids.includes(String(player.current?.id))) resetAudio();
-        else if (player) {
-          player.queue = player.queue.filter((row) => !ids.includes(String(row.id)));
-          drawQueue();
-        }
-        ids.forEach((id) => selection.delete(id));
-        modal.setBusy(false);
-        modal.close();
-        void renderSearchPage();
-      } catch (error) {
-        modal.setBusy(false);
-        remove.disabled = false;
-        status.replaceChildren(makeNotice(error.message || 'Calls could not be deleted.', 'error'));
-      }
+        await workflow.run(() => requestJson(`${ADMIN}/calls`, { method: 'DELETE',
+          body: { ids: ids.map((id) => Number(id)) }, page: false }), {
+          pending: `Deleting ${ids.length} ${ids.length === 1 ? 'recording' : 'recordings'}…`,
+          onSuccess: () => {
+            if (player && ids.includes(String(player.current?.id))) resetAudio();
+            else if (player) {
+              player.queue = player.queue.filter((row) => !ids.includes(String(row.id)));
+              drawQueue();
+            }
+            ids.forEach((id) => selection.delete(id));
+            modal.setBusy(false); modal.close();
+            void renderSearchPage();
+          } });
+      } catch (_) { /* Keep selected recordings available for recovery. */ }
     }, 'ui-button ui-button-danger');
     body.append(status, modalFooter(cancel, remove));
     const modal = openReadOnlyModal('Delete recordings', body, { id: 'delete-recordings',
@@ -2546,22 +2545,18 @@ export function createRecordingsFeature(deps) {
     status.setAttribute('role', 'status');
     let modal;
     const cancel = button(node, 'Cancel', () => modal?.close());
+    const workflow = createActionWorkflow({ surface: body, feedback: status,
+      modal: { setBusy: value => modal?.setBusy(value) } });
     const confirm = button(node, confirmLabel, async () => {
-      confirm.disabled = true;
-      cancel.disabled = true;
-      modal.setBusy(true);
+      if (confirm.disabled) return;
       try {
-        await perform();
-        modal.setBusy(false);
-        modal.close();
-      } catch (error) {
-        onError?.(error);
-        status.replaceChildren(makeNotice(error.message || `${title} could not be completed. Try again.`, 'error'));
-      } finally {
-        modal.setBusy(false);
-        confirm.disabled = false;
-        cancel.disabled = false;
-      }
+        await workflow.run(perform, { pending: `${title}…`,
+          onSuccess: () => { modal.setBusy(false); modal.close(); },
+          onError: (error, message) => {
+            onError?.(error);
+            status.replaceChildren(makeNotice(message, 'error'));
+          } });
+      } catch (_) { /* Keep the confirmation and its recovery feedback open. */ }
     }, danger ? 'ui-button ui-button-danger' : 'ui-button ui-button-primary');
     body.append(node('p', '', description), ...details, status, modalFooter(cancel, confirm));
     modal = openReadOnlyModal(title, body, { id: 'recordings-administration-action' });

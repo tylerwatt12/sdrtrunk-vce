@@ -469,7 +469,8 @@ export function createRemoteLinksWorkspace(deps) {
         localMessage.hidden = !text;
         if (state === 'error') showError(localMessage, { message: text });
         else localMessage.replaceChildren(...(text ? [state === 'status' ?
-          node('div', 'ui-form-state', text) : notice(text)] : []));
+          node('div', 'ui-form-state', text) : state === 'loading' ?
+            node('div', 'ui-feedback ui-feedback-loading', text) : notice(text)] : []));
       } });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -627,6 +628,9 @@ export function createRemoteLinksWorkspace(deps) {
         if (!await confirmAction(`Remove ${sender.display_name || sender.sender_id}? This removes the sender and all of its remote channels from this receiver.`, {
           title: 'Remove trusted sender', confirmLabel: 'Remove sender'
         }) || !editor.modal.dialog.isConnected) return;
+        editor.message.hidden = false;
+        editor.message.setAttribute('role', 'status');
+        editor.message.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Removing sender…'));
         const result = await write(`/senders/${pathPart(sender.sender_id)}`, 'DELETE',
           { revision: snapshot.revision });
         editor.modal.setDirty(false); editor.modal.setBusy(false);

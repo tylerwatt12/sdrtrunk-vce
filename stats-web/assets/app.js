@@ -14,6 +14,7 @@ import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p
 import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
+import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
 import { createGuideController } from './guides/controller.js?v=37';
@@ -37,7 +38,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=58';
+import { createRecordingsFeature } from './features/recordings.js?v=59';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=16';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -1930,7 +1931,7 @@ function exportCsvLink(dataset, context = {}, options = {}) {
   link.setAttribute('download', '');
   link.setAttribute('aria-label', label);
   link.title = label;
-  if (options.loading) {
+  if (options.loading !== false) {
     let activeController = null;
     const reset = (errorMessage = '') => {
       link.classList.remove('is-loading');
@@ -1938,6 +1939,8 @@ function exportCsvLink(dataset, context = {}, options = {}) {
       link.replaceChildren(iconGlyph('icon-share'));
       link.setAttribute('aria-label', label);
       link.title = errorMessage || label;
+      if (errorMessage) openReadOnlyModal('CSV export unavailable',
+        node('div', 'ui-feedback ui-feedback-error', errorMessage));
     };
     link.addEventListener('click', (event) => {
       event.preventDefault();
@@ -1969,7 +1972,7 @@ function exportCsvLink(dataset, context = {}, options = {}) {
           const objectUrl = URL.createObjectURL(blob);
           download.href = objectUrl;
           download.download = exportCsvFileName(response, `${dataset}.csv`);
-          download.style.display = 'none';
+          download.className = 'visually-hidden';
           document.body.append(download);
           download.click();
           download.remove();
@@ -5269,23 +5272,18 @@ async function openAliasListDeleteModal(selectedList) {
     checkbox.disabled = assignedChannels > 0;
     checkbox.addEventListener('change', () => { remove.disabled = assignedChannels > 0 || !checkbox.checked; });
     cancel.addEventListener('click', modal.close);
+    const workflow = createActionWorkflow({ surface: body, feedback: errorHost, modal });
     remove.addEventListener('click', async () => {
-      remove.disabled = true;
-      modal.setBusy(true);
+      if (remove.disabled) return;
       try {
-        const result = await requestJson(`/api/v1/admin/alias-lists/${id}`, {
-          method: 'DELETE', body: { revision: Number(impact.revision), confirmed: true }
-        });
-        await finishAliasMutation(modal, result, { list: null, aliasTab: null });
-      } catch (error) {
-        aliasMutationError(errorHost, error, () => {
-          modal.setDirty(false);
-  closeReadOnlyModal(true);
-          openAliasListDeleteModal(selectedList);
-        });
-        modal.setBusy(false);
-        remove.disabled = false;
-      }
+        await workflow.run(() => requestJson(`/api/v1/admin/alias-lists/${id}`, {
+          method: 'DELETE', body: { revision: Number(impact.revision), confirmed: true }, page: false
+        }), { pending: 'Deleting Alias List…',
+          onSuccess: (result) => finishAliasMutation(modal, result, { list: null, aliasTab: null }),
+          onError: (error) => aliasMutationError(errorHost, error, () => {
+            modal.setDirty(false); closeReadOnlyModal(true); openAliasListDeleteModal(selectedList);
+          }) });
+      } catch (_) { /* The inline error preserves the current confirmation. */ }
     });
     body.append(confirm, errorHost, aliasModalFooter(cancel, remove));
     modal.content.replaceChildren(body);
@@ -5959,22 +5957,17 @@ function openAliasDeleteModal(id, name, editRevision) {
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
+  const workflow = createActionWorkflow({ surface: body, feedback: errorHost, modal });
   remove.addEventListener('click', async () => {
-    remove.disabled = true;
-    modal.setBusy(true);
+    if (remove.disabled) return;
     try {
-      const result = await requestJson(`/api/v1/admin/aliases/${id}`, {
-        method: 'DELETE', body: { edit_revision: editRevision }
-      });
-      await finishAliasMutation(modal, result);
-    } catch (error) {
-      aliasMutationError(errorHost, error, () => {
-  closeReadOnlyModal(true);
-        render();
-      });
-      modal.setBusy(false);
-      remove.disabled = false;
-    }
+      await workflow.run(() => requestJson(`/api/v1/admin/aliases/${id}`, {
+        method: 'DELETE', body: { edit_revision: editRevision }, page: false
+      }), { pending: 'Deleting alias…', onSuccess: (result) => finishAliasMutation(modal, result),
+        onError: (error) => aliasMutationError(errorHost, error, () => {
+          closeReadOnlyModal(true); render();
+        }) });
+    } catch (_) { /* The inline error preserves the current confirmation. */ }
   });
 }
 
@@ -6258,7 +6251,7 @@ function openAliasBulkModal(kind, presentation = null) {
         ...(icon.value ? { icon_name: icon.value } : {}) };
     };
   } else if (kind === 'delete') {
-    submitLabel = `Delete ${number(ids.length)} Aliases`;
+    submitLabel = `Delete ${number(ids.length)} ${ids.length === 1 ? 'Alias' : 'Aliases'}`;
     const confirm = node('label', 'alias-confirm-check');
     const checkbox = node('input', 'ui-selection-check');
     checkbox.type = 'checkbox';
@@ -6280,47 +6273,43 @@ function openAliasBulkModal(kind, presentation = null) {
     'ui-button ui-button-primary', submitLabel);
   submit.type = 'submit';
   form.append(errorHost, aliasModalFooter(cancel, submit));
-  const modal = openReadOnlyModal(`${kind === 'delete' ? 'Delete' : 'Bulk'} · ${number(ids.length)} aliases`, form, {
+  const modal = openReadOnlyModal(`${kind === 'delete' ? 'Delete' : 'Bulk'} · ${number(ids.length)} ${ids.length === 1 ? 'alias' : 'aliases'}`, form, {
     id: `bulk-alias-${kind}`, className: 'alias-editor-modal alias-bulk-modal', guideTarget: guide
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
   form.addEventListener('input', () => { if (!guide) modal.setDirty(true); });
   form.addEventListener('change', () => { if (!guide) modal.setDirty(true); });
+  const workflow = createActionWorkflow({ surface: form, feedback: errorHost, modal });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (guide) return;
-    errorHost.replaceChildren();
+    if (guide || workflow.isBusy()) return;
+    let change;
+    try { change = readChange(); }
+    catch (error) { aliasMutationError(errorHost, error); return; }
     try {
-      const change = readChange();
-      submit.disabled = true;
-      modal.setBusy(true);
-      let result;
-      if (kind === 'scan-lists') {
-        result = await requestJson(`/api/v1/admin/scan-lists/${change.scan_list_id}/members`, {
-          method: 'PUT', body: {
-            edit_revision: (options.scan_lists || []).find((row) =>
-              Number(row.id) === change.scan_list_id)?.edit_revision,
-            operation: change.operation,
-            alias_ids: ids
-          }, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
-        });
-      } else {
+      await workflow.run(async () => {
+        if (kind === 'scan-lists') {
+          return requestJson(`/api/v1/admin/scan-lists/${change.scan_list_id}/members`, {
+            method: 'PUT', body: {
+              edit_revision: (options.scan_lists || []).find((row) =>
+                Number(row.id) === change.scan_list_id)?.edit_revision,
+              operation: change.operation, alias_ids: ids
+            }, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS, page: false
+          });
+        }
         Object.assign(payload, change);
-        result = await requestJson('/api/v1/admin/aliases/bulk', {
-          method: 'POST', body: payload, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
+        return requestJson('/api/v1/admin/aliases/bulk', {
+          method: 'POST', body: payload, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS, page: false
         });
-      }
-      await finishAliasMutation(modal, result, kind === 'move' ? { list: payload.alias_list_id } : {});
-    } catch (error) {
-      aliasMutationError(errorHost, error, () => {
-        modal.setDirty(false);
-  closeReadOnlyModal(true);
-        render();
-      });
-      submit.disabled = false;
-      modal.setBusy(false);
-    }
+      }, { pending: kind === 'delete' ? `Deleting ${number(ids.length)} ${ids.length === 1 ? 'alias' : 'aliases'}…` :
+          `Updating ${number(ids.length)} ${ids.length === 1 ? 'alias' : 'aliases'}…`,
+        onSuccess: (result) => finishAliasMutation(modal, result,
+          kind === 'move' ? { list: payload.alias_list_id } : {}),
+        onError: (error) => aliasMutationError(errorHost, error, () => {
+          modal.setDirty(false); closeReadOnlyModal(true); render();
+        }) });
+    } catch (_) { /* Keep the selected aliases and draft available for recovery. */ }
   });
   return modal;
 }
@@ -6366,27 +6355,18 @@ function openScanListMemberRemoveModal(scanList) {
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
+  const workflow = createActionWorkflow({ surface: body, feedback: message, modal });
   remove.addEventListener('click', async () => {
     if (remove.disabled) return;
-    remove.disabled = true;
-    modal.setBusy(true);
-    message.textContent = 'Removing aliases…';
     try {
-      const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
-        method: 'PUT', body: {
-          edit_revision: editRevision, operation: 'remove', alias_ids: ids
-        }, timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS
-      });
-      await finishAliasMutation(modal, result);
-    } catch (error) {
-      aliasMutationError(message, error, () => {
-        modal.setDirty(false);
-  closeReadOnlyModal(true);
-        render();
-      });
-      remove.disabled = false;
-      modal.setBusy(false);
-    }
+      await workflow.run(() => requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
+        method: 'PUT', body: { edit_revision: editRevision, operation: 'remove', alias_ids: ids },
+        timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS, page: false
+      }), { pending: 'Removing aliases…', onSuccess: (result) => finishAliasMutation(modal, result),
+        onError: (error) => aliasMutationError(message, error, () => {
+          modal.setDirty(false); closeReadOnlyModal(true); render();
+        }) });
+    } catch (_) { /* The inline error preserves the selection. */ }
   });
   modal.focus?.(remove);
 }
@@ -6438,32 +6418,25 @@ function openFullScanListMembershipModal(scanList, operation, presentation = nul
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
+  const workflow = createActionWorkflow({ surface: form, feedback: message, modal });
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    if (guide) return;
+    if (guide || workflow.isBusy()) return;
     const selectedAliasListId = adding ? Number(aliasList.value) : null;
     if (adding && (!Number.isInteger(selectedAliasListId) || selectedAliasListId <= 0)) {
       message.replaceChildren(node('div', 'error', 'Choose an alias list.'));
       return;
     }
-    submit.disabled = true;
-    modal.setBusy(true);
-    message.textContent = adding ? 'Adding aliases…' : 'Removing memberships…';
     try {
-      const result = await requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
-        method: 'PUT', body: fullScanListMembershipRequest(editRevision, operation,
-          selectedAliasListId)
-      });
-      await finishAliasMutation(modal, result);
-    } catch (error) {
-      aliasMutationError(message, error, () => {
-        modal.setDirty(false);
-        closeReadOnlyModal(true);
-        render();
-      });
-      submit.disabled = false;
-      modal.setBusy(false);
-    }
+      await workflow.run(() => requestJson(`/api/v1/admin/scan-lists/${scanList.id}/members`, {
+        method: 'PUT', body: fullScanListMembershipRequest(editRevision, operation, selectedAliasListId),
+        page: false
+      }), { pending: adding ? 'Adding aliases…' : 'Removing memberships…',
+        onSuccess: (result) => finishAliasMutation(modal, result),
+        onError: (error) => aliasMutationError(message, error, () => {
+          modal.setDirty(false); closeReadOnlyModal(true); render();
+        }) });
+    } catch (_) { /* Keep the membership draft available for recovery. */ }
   });
   modal.focus?.(adding ? aliasList : submit);
   return modal;
@@ -7040,7 +7013,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
       exportButton.classList.add('disabled');
       exportButton.setAttribute('aria-disabled', 'true');
       exportPanel.querySelectorAll('input').forEach((control) => { control.disabled = true; });
-      errorHost.replaceChildren(node('div', 'status', 'Preparing the activity report…'));
+      errorHost.replaceChildren(node('div', 'status ui-feedback ui-feedback-loading', 'Preparing the activity report…'));
       void (async () => {
         let failureMessage = 'The activity report could not be downloaded. Try again.';
         try {
@@ -7095,7 +7068,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     exportButton.classList.add('disabled');
     exportButton.setAttribute('aria-disabled', 'true');
     exportPanel.querySelectorAll('input').forEach((control) => { control.disabled = true; });
-    errorHost.replaceChildren(node('div', 'status',
+    errorHost.replaceChildren(node('div', 'status ui-feedback ui-feedback-loading',
       'Preparing the complete CSV. The browser download will begin after every alias has been validated.'));
     exportStartPoll = window.setInterval(() => {
       if (attempt !== activeExportAttempt || readyExportAttempt(attempt, token)) return;
@@ -7106,11 +7079,12 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     }, 100);
   });
   const loadPreview = async (offset = 0) => {
-    setBusy(true); errorHost.replaceChildren();
+    setBusy(true); errorHost.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Checking import changes…'));
     try {
       const response = await requestJson(endpoint, { method: 'POST', timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS,
         body: { ...request, action: 'preview', offset } });
       preview = response; confirm.checked = false;
+      errorHost.replaceChildren();
       destination.textContent = response.source_list ?
         `From ${response.source_list} into ${response.destination_list}` :
         `Importing into ${response.destination_list}`;
@@ -7157,7 +7131,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
       apply.textContent = changed ? `Import ${number(changed)} change${changed === 1 ? '' : 's'}` : 'Finish import';
       setStep(3);
       updateApply();
-    } catch(error) { preview = null; errorHost.append(node('div', 'error', error.message)); }
+    } catch(error) { preview = null; errorHost.replaceChildren(node('div', 'error', error.message)); }
     finally { setBusy(false); }
   };
   const invalidateChangedOption = (event) => {
@@ -7169,13 +7143,16 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   form.addEventListener('change', invalidateChangedOption);
   confirm.addEventListener('change', updateApply);
   form.addEventListener('submit', async (event) => {
-    event.preventDefault(); errorHost.replaceChildren();
+    event.preventDefault();
+    if (busy) return;
+    errorHost.replaceChildren();
     try {
       const selected = file.files?.[0];
       if(!selected || selected.size > ALIAS_TRANSFER_IMPORT_MAX_BYTES) {
         throw new Error('Select a CSV file no larger than 128 MiB.');
       }
       setBusy(true);
+      errorHost.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Reading alias file…'));
       request = { format: format.value, mode: mode.value, csv: await selected.text(), defaults: format.value === 'RADIOREFERENCE' ? {
         recordable: record.value === '' ? null : record.value === 'true', scan_lists: scans.value(),
         streams: streams.value()
@@ -7185,7 +7162,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   });
   apply.addEventListener('click', async () => {
     if(apply.disabled) return;
-    setBusy(true); errorHost.replaceChildren();
+    setBusy(true); errorHost.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Importing aliases…'));
     try {
       const result = await requestJson(endpoint, { method: 'POST', timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS,
         body: { ...request, action: 'apply', revision: preview.revision, digest: preview.digest,
@@ -7196,7 +7173,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
       openReadOnlyModal('Alias import complete', node('p', '',
         `${counts.added} added · ${counts.updated} updated · ${counts.deleted} deleted · ${counts.unchanged} unchanged`));
     } catch(error) {
-      preview = null; errorHost.append(node('div', 'error', `${error.message}. Preview again before retrying.`));
+      preview = null; errorHost.replaceChildren(node('div', 'error', `${error.message}. Preview again before retrying.`));
       setBusy(false);
     }
   });
@@ -8186,7 +8163,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : tuners ? [
       Promise.resolve(null), import('./guides/tuners-presentation.js?v=1')
     ] : streaming ? [
-      import('./features/streaming.js?v=14'), import('./guides/streaming-presentation.js?v=1')
+      import('./features/streaming.js?v=15'), import('./guides/streaming-presentation.js?v=1')
     ] : [
       import('./features/radioreference-import.js?v=39'), import('./guides/radioreference-presentation.js?v=1')
     ]);
@@ -10181,30 +10158,39 @@ async function requestJson(path, options = {}) {
   if (options.csrf !== false && !['GET', 'HEAD', 'OPTIONS'].includes(method) && accessSession.csrfToken) {
     headers.set('X-CSRF-Token', accessSession.csrfToken);
   }
-  const { response, result } = await timedFetch(path, {
-    ...options, method, headers,
-    body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
-    keepalive: options.keepalive === true
-  }, async (response, signal) => {
-    options.onResponse?.(response);
-    let result = null;
-    reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'));
-    const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
-    if (response.status !== 204) {
-      if (contentType.includes('json')) result = await response.json().catch((error) => {
-        if (signal.aborted) throw error;
-        return null;
-      });
-      else {
-        const message = await response.text().catch((error) => {
+  let response, result;
+  try {
+    ({ response, result } = await timedFetch(path, {
+      ...options, method, headers,
+      body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
+      keepalive: options.keepalive === true
+    }, async (response, signal) => {
+      options.onResponse?.(response);
+      let result = null;
+      reloadForWebClientRevision(response.headers.get('X-Sdrtrunk-Web-Revision'));
+      const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
+      if (response.status !== 204) {
+        if (contentType.includes('json')) result = await response.json().catch((error) => {
           if (signal.aborted) throw error;
-          return '';
+          return null;
         });
-        result = message ? { error: message } : null;
+        else {
+          const message = await response.text().catch((error) => {
+            if (signal.aborted) throw error;
+            return '';
+          });
+          result = message ? { error: message } : null;
+        }
       }
+      return { response, result };
+    }));
+  } catch (error) {
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      error.outcomeUnknown = true;
+      error.message = actionFailureMessage(error);
     }
-    return { response, result };
-  });
+    throw error;
+  }
   if (!response.ok) {
     const failure = result?.error && typeof result.error === 'object' ? result.error : result;
     const fallback = typeof result?.error === 'string' ? result.error : 'The receiver could not complete the request.';
@@ -10221,6 +10207,9 @@ async function requestJson(path, options = {}) {
     error.status = response.status;
     error.code = 'invalid_response';
     error.path = path;
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+      error.outcomeUnknown = true; error.message = actionFailureMessage(error);
+    }
     throw error;
   }
   const data = Array.isArray(result.data) ? { rows: result.data, ...(result.meta || {}) } :
@@ -25275,17 +25264,26 @@ function channelAdminFrequency(row) {
   return value;
 }
 
+function channelMutationPending(options = {}) {
+  const action = options.body?.action;
+  const count = options.body?.configuration_ids?.length;
+  const verb = { DELETE: 'Deleting', START: 'Starting', STOP: 'Stopping', CLONE: 'Cloning',
+    ENABLE_AUTO_START: 'Enabling auto-start for', DISABLE_AUTO_START: 'Disabling auto-start for' }[action];
+  return verb ? `${verb} ${count || 'selected'} ${count === 1 ? 'channel' : 'channels'}…` :
+    'Saving channel changes…';
+}
+
 async function channelAdminMutation(path, options, statusHost, onSuccess = renderChannelSetup) {
-  try {
-    statusHost?.replaceChildren();
-    const result = await requestChannelAdminMutation(requestJson, path, options);
-    statusHost?.replaceChildren();
-    await onSuccess?.(result);
-    return result;
-  } catch (error) {
-    statusHost?.replaceChildren(node('span', 'ui-status ui-status-danger', error.message));
-    throw error;
-  }
+  const surface = statusHost || content;
+  const catalog = surface.closest('.channel-admin-catalog');
+  const workflow = createActionWorkflow({ surface, feedback: statusHost,
+    controls: () => catalog?.querySelectorAll('.channel-selection-bar button, .channel-order-controls button, ' +
+      '.channel-edit-name, .channel-creation-actions button') || [] });
+  return workflow.run(() => requestChannelAdminMutation(requestJson, path, { page: false, ...options }),
+    { pending: channelMutationPending(options), success: null, onSuccess: async (result) => {
+      workflow.showFeedback('status', '');
+      if (surface.isConnected) await onSuccess?.(result);
+    } });
 }
 
 function asyncControlFocusGuard(control) {
@@ -26141,7 +26139,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
         if (guideSampleData.isActive('channel-catalog')) return;
         const ids = [...selected];
         if (!ids.length) return;
-        if (confirmMessage && !await confirmAction(confirmMessage.replace('{count}', String(ids.length)), {
+        if (confirmMessage && !await confirmAction(confirmMessage.replace('{count}', String(ids.length)).replace('{channels}', ids.length === 1 ? 'channel' : 'channels'), {
           title: 'Delete selected channels', confirmLabel: `Delete ${ids.length} ${ids.length === 1 ? 'channel' : 'channels'}`
         })) return;
         if (!statusHost.isConnected) return;
@@ -26159,7 +26157,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     selectedBar.append(selectedSummary, hiddenSummary,
       startSelected, action('Stop', 'icon-stop', 'STOP'),
       enableAutoStart, disableAutoStart, cloneSelected,
-      action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected channel(s)?', true), clearSelection);
+      action('Delete', 'icon-trash', 'DELETE', 'Delete {count} selected {channels}? Their saved activity and recordings follow their retention settings.', true), clearSelection);
 
     const filteredRows = () => {
       if (guideSampleData.isActive('channel-catalog')) return displayedCatalog().channels || [];
@@ -26222,9 +26220,17 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
         previous: { enabled: pageIndex > 0, onClick: () => { pageIndex -= 1; draw(); } },
         next: { enabled: offset + pageSize < state.visibleRows.length, onClick: () => { pageIndex += 1; draw(); } } });
       updateSelection();
+      createActionWorkflow({ surface: statusHost }).refreshControls();
     };
     search.addEventListener('input', () => { pageIndex = 0; draw(); });
     draw({ rebuild: true, revealId: revealId || route.get('channel') });
+    wrapper.addEventListener('click', (event) => {
+      if (statusHost.getAttribute('aria-busy') === 'true' && event.target.closest(
+          '.channel-selection-bar button, .channel-order-controls button, .channel-edit-name, ' +
+          '.channel-creation-actions button')) {
+        event.preventDefault(); event.stopImmediatePropagation();
+      }
+    }, true);
     wrapper.append(catalogHeader, statusHost, selectedBar, tableHost, navigation);
     updateSelection();
     let samplePageIndex = null;
@@ -26242,7 +26248,8 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
 
     let refreshInFlight = false;
     pageInterval(async () => {
-      if (refreshInFlight || autoStartMoveInFlight || !renderIsCurrent(renderContext) ||
+      if (refreshInFlight || autoStartMoveInFlight || statusHost.getAttribute('aria-busy') === 'true' ||
+          !renderIsCurrent(renderContext) ||
           !wrapper.isConnected || document.hidden) return;
       refreshInFlight = true;
       try {
@@ -31664,7 +31671,7 @@ function streamingPageSurface(workspace) {
 
 async function renderStreaming() {
   const renderContext = captureRenderContext();
-  const { createStreamingWorkspace } = await import('./features/streaming.js?v=14');
+  const { createStreamingWorkspace } = await import('./features/streaming.js?v=15');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createStreamingWorkspace(streamingWorkspaceDependencies({ signal: renderContext.signal }));
   const surface = streamingPageSurface(workspace);
@@ -31678,7 +31685,7 @@ async function renderStreaming() {
 
 async function renderAdminRemoteLinks(renderContext) {
   const { requestJson } = administrationRequestDependencies(renderContext);
-  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=20');
+  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=21');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createRemoteLinksWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconGlyph, remoteOriginIcon, createFormWorkflow,
@@ -35599,7 +35606,7 @@ async function renderAdmin(options = {}) {
   }
   else if (active === 'transcription') await recordingWorkspace.renderAdminTranscription();
   else if (active === 'retained-statistics') {
-    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=12');
+    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=13');
     if (!renderIsCurrent(renderContext)) return;
     content.append(createRetainedStatisticsWorkspace({
       node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost, browsingWorkflows,
