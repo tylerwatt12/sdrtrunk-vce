@@ -36,6 +36,7 @@ import java.util.Map;
 public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
+    public static final int MINIMUM_SUPPORTED_VERSION = 2;
     public static final int CURRENT_VERSION = 62;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
@@ -43,7 +44,7 @@ public final class DatabaseFormatCatalog
         "p25_activity_schema_version", "trunked_site_schema_version", "dmr_activity_schema_version");
     private static final List<String> RETIRED_FORMAT_15_METADATA_KEYS = retiredFormat15MetadataKeys();
 
-    private static final String FORMAT_1_FINGERPRINT =
+    private static final String RETIRED_FORMAT_1_FINGERPRINT =
         "ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a";
     private static final String FORMAT_2_FINGERPRINT =
         "38294d5173dbaa550b7818006f09b9d2b83fe3c2bae1ba15b6c56416d8fd69dc";
@@ -105,22 +106,11 @@ public final class DatabaseFormatCatalog
     private static final String FORMAT_44_FINGERPRINT = "c2d192d86163383407e72d50491d0cbc804ec8765239461fbf8f23f93f910e2e";
     private static final String FORMAT_45_FINGERPRINT = "4e2d76530ef91009959cbf0d19fc0008e2798380d4464002e79dfc59152202ff";
 
-    private static final FormatDescriptor FORMAT_1 = descriptor(1, "alpha8-shared",
-        "Shared Alpha 8, Alpha 9, and Alpha 10 database format", FORMAT_1_FINGERPRINT,
-        new SubsystemVersions(4, 2, 2, 2, 24, 2, 1),
-        List.of("Alpha8", "Alpha9", "Alpha10", "diagnostics builds",
-            "successful nightly publications through 2026-08-03"),
-        "src/test/java/io/github/dsheirer/database/upgrade/Format1TestDatabase.java",
-        List.of(
-            "Preserve supported configuration while resetting P25 affiliation history",
-            "Convert eligible catch-all aliases to list-level unmatched behavior",
-            "Drop retired fully-qualified alias matchers and their dependent stream routes",
-            "Retain playback enablement while dropping retired numeric priority ordering",
-            "Reset reproducible trunked-identity evidence; live traffic rebuilds current state"));
     private static final FormatDescriptor FORMAT_2 = descriptor(2, "scan-lists-p25-v26",
         "Scan-list and protocol-neutral identity database format", FORMAT_2_FINGERPRINT,
         new SubsystemVersions(6, 2, 2, 2, 26, 2, 1),
-        List.of("b131d0927", "6b3500f4c", "successful nightly publications 2026-08-19 through 2026-08-25"),
+        List.of("Alpha12 (971e4caf341e6a672ad4aa6995bc26459c83a574)", "Alpha11", "b131d0927", "6b3500f4c",
+            "successful nightly publications 2026-08-19 through 2026-08-25"),
         "src/test/java/io/github/dsheirer/database/upgrade/Format2TestDatabase.java",
         List.of(
             "Preserve administrator-owned configuration and reset reproducible receiver activity",
@@ -687,7 +677,7 @@ public final class DatabaseFormatCatalog
             "Require the format marker for this unchanged-DDL semantic contract"));
 
     private static final List<FormatDescriptor> FORMATS =
-        List.of(FORMAT_1, FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
+        List.of(FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
@@ -747,6 +737,11 @@ public final class DatabaseFormatCatalog
 
         if(candidates == null)
         {
+            if(RETIRED_FORMAT_1_FINGERPRINT.equals(fingerprint))
+            {
+                throw new FormatRejectionException("This VCE database predates Alpha 12. Open it in Alpha 12 and " +
+                    "complete the update before using this build.");
+            }
             String knownState = KNOWN_UNSUPPORTED_FINGERPRINTS.get(fingerprint);
 
             if(knownState != null)

@@ -17,10 +17,11 @@ the [documentation index](README.md).
 | Replace the settings in an installation you already use | **File → Import SQLite Database…**, or **Help → Setup Wizard… → Replace settings from a SQLite database** | The whole application database is replaced after backing up the current one. This does not merge profiles. |
 | Add another supported XML playlist | **Help → Setup Wizard… → Import a legacy XML playlist** | Supported configuration is added; existing configuration is retained and conflicting imported names are renamed. |
 
-VCE database imports support recognized formats from **Alpha 8 onward**, up to the format understood by the running
-build. Alpha and Nightly share one forward-only format history. An older build cannot open a database already updated
-to a newer format. Pre-Alpha 8 databases, the retired `webfirst` formats, and unknown or unsafe layouts are unsupported.
-The selected database's structure determines compatibility; its filename or release label does not.
+VCE database imports support recognized formats used by **Alpha 12 and later**, up to the format understood by the
+running build. Alpha 11 uses the same format as Alpha 12 and remains compatible. For an older database format, first
+open it in Alpha 12 and complete its update. Alpha and Nightly share one forward-only format history. An older build
+cannot open a database already updated to a newer format. The retired `webfirst` formats and unknown or unsafe layouts
+are unsupported. The selected database's structure determines compatibility; its filename or release label does not.
 
 ## Before you begin
 
@@ -116,16 +117,17 @@ Returning to an older build requires its compatible older data or backup.
 <summary>Format catalog, historical conversion policies, execution guarantees, and required tests</summary>
 
 The following is the implementation contract for the bundled Application Migrator. It records the global format
-catalog, complete Alpha 8-to-current chain, deterministic format fixtures, and safety integration. These are
+catalog, complete format-2-to-current chain, deterministic format fixtures, and safety integration. These are
 implementation and maintenance requirements, not extra setup steps for listeners. Numbered Alpha distributions
 keep version-matched release notes; rolling Nightlies use their bundled current documentation and the migrator's
 preflight and completion reports.
 
 ## Support Boundary
 
-The migrator supports every distinct sdrtrunk-vce database format distributed or deployed from Alpha 8 through the
-format used by the running build. `main`, alpha, and nightly are build channels over one database-format sequence;
-they are not separate migration tracks. Each previously distributed format must have a catalog entry and fixture;
+The migrator supports every distinct sdrtrunk-vce database format from format 2, used by the latest published
+Alpha 12, through the format used by the running build. `main`, alpha, and nightly are build channels over one
+database-format sequence; they are not separate migration tracks. Each retained distributed format must have a catalog
+entry and fixture;
 omitting it from the catalog does not make it an allowed support exception.
 
 - A valid exact current-format database is accepted without mutation. A structurally exact current database with
@@ -134,9 +136,11 @@ omitting it from the catalog does not make it an allowed support exception.
 - A structurally recognized older format is migrated forward through the linear chain. Recoverable row-level damage
   does not disqualify the whole database: each configuration component is preserved, repaired, defaulted, or skipped
   independently and the completion report gives non-secret counts.
-- Alpha 8, Alpha 9, and Alpha 10 share one verified legacy format signature and therefore enter at the same baseline.
-- Pre-Alpha 8, retired `webfirst`, unknown, mixed, structurally partial, and physically corrupt layouts are refused
-  without changing the source.
+- Alpha 11 and Alpha 12 share the exact format-2 signature and therefore enter at the same supported baseline.
+- Format 1, used by Alpha 8, Alpha 9 and Alpha 10, is retired. Its conversion is available in Alpha 12; this build
+  refuses it without changing the source and directs the operator to update with Alpha 12 first.
+- Older, retired `webfirst`, unknown, mixed, structurally partial, and physically corrupt layouts are refused without
+  changing the source.
 - Migration is forward-only. A build must refuse a database whose format is newer than it understands.
 
 Support is based on database structure, not a release label, filename, timestamp, or build number. This matters for
@@ -144,7 +148,7 @@ nightly builds, which may not contain durable release provenance.
 
 ## Legacy Inventory Gate
 
-The retained legacy inventory comes from the audit of Alpha 8-and-later release tags, recoverable nightly and
+The historical inventory came from the audit of Alpha release tags, recoverable nightly and
 schema-changing commits, archived artifacts, and available deployed database samples. The runtime format catalog is
 also the checked-in legacy manifest; do not create a second hand-copied inventory. Each legacy entry records:
 
@@ -156,15 +160,15 @@ also the checked-in legacy manifest; do not create a second hand-copied inventor
 
 Several builds may reference one entry when they are structurally and semantically indistinguishable. Tests enumerate
 the catalog entries and their fixtures directly. If a known distributed build cannot be reconstructed or matched to a
-safe signature, record it as unresolved and obtain an exact database sample; do not claim complete Alpha 8+ support or
-guess a route until the entry is resolved.
+safe signature, record it as unresolved and obtain an exact database sample; do not claim complete retained-format
+support or guess a route until the entry is resolved.
 
-The replacement audit recovered six formats from successful Alpha 8-or-newer alpha, nightly, and main builds: the
+The original replacement audit recovered six formats from successful alpha, nightly, and main builds: the
 shared Alpha 8/9/10 and early-nightly baseline, the scan-list/P25-v26 format, the P25-v27 site-projection format, the
 P25-v28 logical-call/site-observation format, the normalized web-user/saved-channel-identity format, and the current
 canonical conventional-context identity format. The runtime catalog is the sole exact inventory of their
 fingerprints, subsystem metadata, source references, fixtures, and data policies; this document intentionally does
-not duplicate those values.
+not duplicate those values. Format 1 is now retired; the retained catalog starts at format 2.
 
 Seven intermediate schema fingerprints are source-recoverable, but the nightly workflow failed before packaging them.
 They are cataloged as known unsupported developer states so the inspector can give a precise refusal instead of
@@ -187,7 +191,7 @@ damaged derived metadata without guessing a schema. Markerless legacy formats st
 fingerprint candidates and are accepted only when their structure, subsystem metadata, and critical disambiguating
 invariants identify one safe source format; an ambiguous markerless state is refused.
 
-Legacy Alpha 8-or-newer databases that predate the global marker are admitted through the format registry. A signature
+Supported legacy databases that predate the global marker are admitted through the format registry. A signature
 combines the complete schema fingerprint with exact subsystem metadata and critical structural/data invariants. A
 unique signature may still contain independently repairable row damage. When several semantic formats share one
 schema, their metadata and disambiguating invariants must identify exactly one source; the migrator refuses an
@@ -196,12 +200,12 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 1 (Alpha 8 family) -> format 2 -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
 reaches the target. There is no release graph, alpha/nightly branch, path-cost planner, or second migration-history
-table. A target build retains every step back to the Alpha 8 baseline.
+table. A target build retains every step back to the format-2 baseline; the retired format-1-to-2 step is not bundled.
 
 The format 2-to-3 step resets all receiver-derived activity, counters, identity caches, site observations, and quality
 history instead of projecting old observations into the updated schema. Live traffic rebuilds those reproducible rows
@@ -1017,7 +1021,7 @@ Do not add schema-specific launchers or separately maintained migration utilitie
 ## Required Tests
 
 The retained fixture set is per database format, not per release label. It must include exact, populated examples for
-every distinct Alpha 8-or-newer format and exercise:
+every retained format from the Alpha 12 format-2 baseline and exercise:
 
 - every adjacent step and every supported source format through the current target;
 - preservation of representative valid administrator configuration and credentials without secret disclosure;
@@ -1028,14 +1032,15 @@ every distinct Alpha 8-or-newer format and exercise:
 - migration from both SQLite-file and full portable-data inputs;
 - failure injection before and after each step, final validation failure, and atomic-promotion failure;
 - backup retention, unchanged sources, safe retry, and no partially promoted result; and
-- registry completeness: no gap, duplicate source, duplicate target, or missing Alpha 8-to-current route.
+- registry completeness: no gap, duplicate source, duplicate target, or missing format-2-to-current route.
 
 Tests compare the migrated database to the same exact current format signature used by normal startup validation. A
-release cannot claim Alpha 8+ compatibility unless all retained source fixtures pass against its exact target build.
+release cannot claim retained-format compatibility unless all retained source fixtures pass against its exact target
+build.
 
 ## Explicit Non-Goals
 
-The migration chain does not support pre-Alpha 8 databases, down-migration, the retired `webfirst` managed-recording
+The migration chain does not support pre-format-2 databases, down-migration, the retired `webfirst` managed-recording
 catalog, or perfect preservation of expensive derived history. It does not reintroduce retired product features. An
 older build is recovered by reopening or restoring the preserved older data, not by converting a newer database
 backward.

@@ -229,10 +229,11 @@ Alias v5 fingerprint is therefore a known unsupported developer state, not a gue
 from that state was actually deployed, retain it with its matching `build_info.txt`; adding support requires an exact
 deployed fixture and an explicit adjacent step.
 
-The first published later format is Alias v6/P25 v26 (global format 2). The global format 1-to-2 step creates the
-`Default` Scan List, maps every retained Alias whose effective priority is not `-1` into it, maps each converted
-unmatched-talkgroup catch-all whose priority is not `-1` to the same list, and removes the retired priority columns. Normal startup remains
-validation-only; the bundled Application Migrator runs this and every later registered step. See
+The first published later format is Alias v6/P25 v26 (global format 2), also used by Alpha 12. Alpha 12's historical
+format-1-to-2 conversion creates the `Default` Scan List, maps retained Aliases and converted unmatched-talkgroup
+catch-alls with an effective priority other than `-1` into it, and removes the retired priority columns. Current builds
+start at format 2; older databases must first be updated with Alpha 12. Normal startup remains validation-only, and the
+bundled Application Migrator runs the retained format-2-to-current chain. See
 [Database Migration Contract](database-migration.md).
 
 The following global format 2-to-3 step (formerly P25 v26-to-v27) creates missing canonical factory Alias Lists and their

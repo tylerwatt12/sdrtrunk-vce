@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 public final class DatabaseMigrationChain
 {
     private static final List<DatabaseMigrationStep> ORDERED_STEPS = List.of(
-        new Format1To2DatabaseMigration(), new Format2To3DatabaseMigration(),
+        new Format2To3DatabaseMigration(),
         new Format3To4DatabaseMigration(), new Format4To5DatabaseMigration(),
         new Format5To6DatabaseMigration(), new Format6To7DatabaseMigration(),
         new Format7To8DatabaseMigration(), new Format8To9DatabaseMigration(),

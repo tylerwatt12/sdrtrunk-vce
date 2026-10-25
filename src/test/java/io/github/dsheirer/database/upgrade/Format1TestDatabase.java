@@ -17,7 +17,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 
-/** Exact global format 1 schema emitted by published Alpha 8, Alpha 9, and Alpha 10 builds. */
+/** Retired format-1 refusal fixture and shared historical schema helpers. Never a supported migration source. */
 public final class Format1TestDatabase
 {
     private static final String ACTION_COUNTS = """
@@ -114,7 +114,7 @@ public final class Format1TestDatabase
 
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
 
-            if(!DatabaseFormatCatalog.requireVersion(1).fingerprint().equals(fingerprint))
+            if(!"ef9197c7cee7261cdda03a395b6552754f3607f6c0053acbe21c273e4242ce3a".equals(fingerprint))
             {
                 throw new IllegalStateException(
                     "Global format 1 fixture fingerprint mismatch: " + fingerprint);

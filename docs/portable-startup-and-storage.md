@@ -95,8 +95,9 @@ incompatible with the previous build. Its recovery backup remains for manual res
 switch the database back after a completed update. A healthy database already at this build's format needs no update
 or upgrade backup.
 
-Alpha and Nightly share one forward-only database history. Supported VCE sources start at Alpha 8; you do not need
-to install every intervening build. An older build cannot open a database already converted to a newer format.
+Alpha and Nightly share one forward-only database history. Supported VCE sources start with the format used by
+Alpha 12; Alpha 11 has that same format and remains compatible. Update older formats with Alpha 12 first. You do not
+need every intervening build after that. An older build cannot open a database already converted to a newer format.
 Keep separate data folders when comparing builds, and retain the older installation or a backup for going back.
 For a numbered Alpha, also read its version-matched release notes. See [Moving and updating VCE data](database-migration.md)
 for the support boundary and detailed conversion contract.

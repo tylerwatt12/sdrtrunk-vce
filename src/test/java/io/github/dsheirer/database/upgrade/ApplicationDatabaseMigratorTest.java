@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.database.upgrade;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -18,7 +19,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
-import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.InitialAdminSetup;
@@ -1112,9 +1112,9 @@ class ApplicationDatabaseMigratorTest
     @Test
     void preservesOpaqueWebCredentialsWithoutReportingSecrets() throws Exception
     {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        char[] adminPassword = "format-one-admin-secret".toCharArray();
-        char[] listenerPassword = "format-one-listener-secret".toCharArray();
+        Path database = Format2TestDatabase.create(newStagedDatabase());
+        char[] adminPassword = "format-two-admin-secret".toCharArray();
+        char[] listenerPassword = "format-two-listener-secret".toCharArray();
         LegacyWebAccessTestData.storePrimaryAdminAndUser(database, adminPassword, "listener",
             listenerPassword, AccessTier.USER);
 
@@ -1133,231 +1133,59 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void migratesExactPublishedAlpha8Alpha9Alpha10LayoutThroughEveryAdjacentStep() throws Exception
+    void migratesMarkedLatestAlphaFormat2AndThenLeavesCurrentUnchanged() throws Exception
     {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9MigrationCases(database);
-        Path sourceRoot = mTemporaryFolder.resolve("alpha9-source").toAbsolutePath();
-        Path targetRoot = mTemporaryFolder.resolve("alpha10-target").toAbsolutePath();
-
-        try(Connection connection = open(database); var statement = connection.prepareStatement("""
-            INSERT INTO application_settings(key, settings_json, updated_at_ms)
-            VALUES ('portable_java_preferences_v1', ?, 1)
-            """))
-        {
-            statement.setString(1, OBJECT_MAPPER.writeValueAsString(java.util.Map.of("directories",
-                java.util.Map.of("directory.recording", sourceRoot.resolve("recordings").toString()))));
-            statement.executeUpdate();
-        }
-
-        CommandResult result = run(database, sourceRoot, targetRoot);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("COMPLETED STEP: 1 -> 2 [format-1-to-2]"));
-        assertTrue(result.output().contains("TRANSFORM unmatched-talkgroup catch-all aliases: 4 row(s)"));
-        assertTrue(result.output().contains("DROP retired fully-qualified talkgroup aliases: 1 row(s)"));
-        assertTrue(result.output().contains("DROP retired fully-qualified radio aliases: 1 row(s)"));
-        assertTrue(result.output().contains(
-            "DROP broadcast routes attached to retired fully-qualified aliases: 2 row(s)"));
-        assertTrue(result.output().contains("RESET P25 affiliation history: 3 row(s)"));
-        assertTrue(result.output().contains("live P25 traffic rebuilds current state"));
-        assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
-        assertTrue(result.output().contains("COMPLETED STEP: 3 -> 4 [format-3-to-4]"));
-        assertTrue(result.output().contains("COMPLETED STEP: 4 -> 5 [format-4-to-5]"));
-        assertTrue(result.output().contains("COMPLETED STEP: 5 -> 6 [format-5-to-6]"));
-        assertTrue(result.output().contains("COMPLETED STEP: 6 -> 7 [format-6-to-7]"));
-        assertTrue(result.error().isEmpty());
-
+        Path database = Format2TestDatabase.create(newStagedDatabase());
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            assertNull(metadata(connection, "alias_schema_version"));
-            assertNull(metadata(connection, "p25_activity_schema_version"));
-            assertEquals("Default:1:1", scalar(connection, """
-                SELECT name || ':' || published || ':' || is_default
-                FROM scan_list
-                """));
-            assertEquals("1:1|2:0|5:1|6:0|7:1", scalar(connection, """
-                SELECT group_concat(policy, '|')
-                FROM (
-                    SELECT id || ':' || unmatched_talkgroup_record_enabled AS policy
-                    FROM alias_list
-                    WHERE id IN (1, 2, 5, 6, 7)
-                    ORDER BY id
-                )
-                """));
-            assertEquals("Default P25:P25|Default DMR:DMR|Default NXDN:NXDN|Default Analog:NBFM",
-                scalar(connection, """
-                    SELECT group_concat(value, '|')
-                    FROM (
-                        SELECT name || ':' || family AS value
-                        FROM alias_list
-                        WHERE name IN ('Default P25', 'Default DMR', 'Default NXDN', 'Default Analog')
-                        ORDER BY id
-                    )
-                    """));
-            assertEquals("103|104|105|106|107|111|112|113", scalar(connection, """
-                SELECT group_concat(alias_id, '|')
-                FROM (
-                    SELECT alias_id FROM alias_scan_list_membership ORDER BY alias_id
-                )
-                """));
-            assertEquals("5|6|7|12|13|14", scalar(connection, """
-                SELECT group_concat(alias_list_id, '|')
-                FROM (
-                    SELECT alias_list_id
-                    FROM alias_list_unmatched_talkgroup_scan_list_membership
-                    ORDER BY alias_list_id
-                )
-                """));
-            assertEquals("Safe Stream", scalar(connection, """
-                SELECT json_extract(provider.config_json, '$.name')
-                FROM alias_list_unmatched_talkgroup_stream route
-                JOIN configuration_broadcast_stream provider
-                  ON provider.configuration_id=route.broadcast_configuration_id
-                WHERE route.alias_list_id=1
-                """));
-            assertEquals("5:Phase 2 Stream|6:DMR Stream|7:NXDN Stream", scalar(connection, """
-                SELECT group_concat(route, '|')
-                FROM (
-                    SELECT unmatched.alias_list_id || ':' ||
-                           json_extract(provider.config_json, '$.name') AS route
-                    FROM alias_list_unmatched_talkgroup_stream unmatched
-                    JOIN configuration_broadcast_stream provider
-                      ON provider.configuration_id=unmatched.broadcast_configuration_id
-                    WHERE unmatched.alias_list_id IN (5, 6, 7)
-                    ORDER BY unmatched.alias_list_id
-                )
-                """));
-            assertEquals("9", scalar(connection, "SELECT COUNT(*) FROM alias"));
-            assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM alias
-                WHERE matcher_type IN (
-                    'P25_FULLY_QUALIFIED_TALKGROUP', 'P25_FULLY_QUALIFIED_RADIO_ID'
-                )
-                """));
-            assertEquals("Keep this appearance", scalar(connection,
-                "SELECT description FROM alias WHERE id=104"));
-            assertEquals("Keep Group|7|Keep Icon", scalar(connection, """
-                SELECT (SELECT group_name FROM alias WHERE id=111) || '|' ||
-                       (SELECT color FROM alias WHERE id=112) || '|' ||
-                       (SELECT icon_name FROM alias WHERE id=113)
-                """));
-            assertEquals("3", scalar(connection, """
-                SELECT COUNT(*) FROM alias WHERE id IN (105, 106, 107)
-                """));
-            assertEquals("1", scalar(connection, """
-                SELECT COUNT(*) FROM alias_broadcast_channel route
-                JOIN configuration_broadcast_stream provider
-                  ON provider.configuration_id=route.broadcast_configuration_id
-                WHERE route.id=203 AND route.alias_id=103
-                  AND json_extract(provider.config_json, '$.name')='Retained Stream'
-                """));
-            assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM alias_broadcast_channel
-                WHERE id IN (201, 202)
-                """));
-            assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM sqlite_schema WHERE name IN (
-                    'trunked_identity_scope', 'trunked_identity_scope_context',
-                    'trunked_identity_summary', 'trunked_radio_talkgroup_summary',
-                    'trunked_radio_presence_lifecycle',
-                    'p25_zero_local_fq_talkgroup_summary',
-                    'receiver_context', 'p25_control_channel_quality'
-                )
-                """));
-            assertEquals("0", scalar(connection, """
-                SELECT
-                    (SELECT COUNT(*) FROM radio_system) +
-                    (SELECT COUNT(*) FROM receiver_channel) +
-                    (SELECT COUNT(*) FROM radio_system_identity_summary) +
-                    (SELECT COUNT(*) FROM trunked_radio_group_summary) +
-                    (SELECT COUNT(*) FROM trunked_radio_affiliation) +
-                    (SELECT COUNT(*) FROM trunked_radio_channel_presence) +
-                    (SELECT COUNT(*) FROM trunked_radio_channel_presence_clear) +
-                    (SELECT COUNT(*) FROM p25_site_snapshot) +
-                    (SELECT COUNT(*) FROM trunked_control_channel_quality)
-                """));
-            assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM sqlite_schema
-                WHERE name IN ('p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup')
-                """));
-            assertNull(metadata(connection, "trunked_identity_metrics_started_at_ms"));
-            assertTrue(Long.parseLong(metadata(connection, "radio_system_metrics_started_at_ms")) > 0);
-            assertEquals("Preserved Channel", scalar(connection,
-                "SELECT name FROM configuration_channel WHERE id=77"));
-            assertEquals("78:Default P25|79:Default P25|80:Default P25|81:Default DMR|" +
-                "82:Default NXDN|83:Default Analog|84:Default Analog", scalar(connection, """
-                SELECT group_concat(value, '|')
-                FROM (
-                    SELECT channel.id || ':' || COALESCE(list.name, 'NULL') AS value
-                    FROM configuration_channel channel
-                    LEFT JOIN alias_list list ON list.id=channel.alias_list_id
-                    WHERE channel.id BETWEEN 78 AND 85
-                    ORDER BY channel.id
-                )
-                """));
-            assertEquals("0", scalar(connection, """
-                SELECT COUNT(*) FROM configuration_channel
-                WHERE json_type(config_json, '$.aliasListName') IS NOT NULL
-                """));
-            assertEquals("0", scalar(connection,
-                "SELECT COUNT(*) FROM configuration_channel WHERE id=85"));
-            assertEquals("{\"preserved\":true}", scalar(connection, """
-                SELECT settings_json FROM application_settings WHERE key='migration-sentinel'
-                """));
-            JsonNode preferences = OBJECT_MAPPER.readTree(scalar(connection, """
-                SELECT settings_json FROM application_settings WHERE key='portable_java_preferences_v1'
-                """));
-            assertEquals(targetRoot.resolve("recordings").toString(),
-                preferences.path("directories").path("directory.recording").asText());
-            assertEquals("ok", scalar(connection, "PRAGMA quick_check"));
-            assertEquals("0", scalar(connection, "SELECT COUNT(*) FROM pragma_foreign_key_check"));
-
-            long insertedId;
-            try(ResultSet resultSet = statement.executeQuery("""
-                INSERT INTO alias(alias_list_id, name, matcher_type, protocol, value)
-                VALUES (1, 'Sequence Check', 'TALKGROUP', 'APCO25', 99)
-                RETURNING id
-                """))
-            {
-                assertTrue(resultSet.next());
-                insertedId = resultSet.getLong(1);
-            }
-            assertTrue(insertedId > 900, "Retired high-water alias IDs must not be reused");
-
-            long insertedSystemId;
-            try(ResultSet resultSet = statement.executeQuery("""
-                INSERT INTO radio_system(
-                    system_key, protocol_code, address_domain_code, p25_wacn, p25_system_id,
-                    first_seen_ms, last_seen_ms
-                ) VALUES ('p25:bee00:348', 1, 0, 781824, 840, 10000, 10000)
-                RETURNING id
-                """))
-            {
-                assertTrue(resultSet.next());
-                insertedSystemId = resultSet.getLong(1);
-            }
-            assertTrue(insertedSystemId > 0, "A new radio system must be writable after the reset");
+            DatabaseFormatCatalog.stamp(connection, 2);
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(100,1,'Retained Alpha Alias','TALKGROUP','APCO25',43)");
+            insertFormat2Channel(connection, 77, "Retained Alpha Channel", DecoderType.P25_PHASE1, 851012500);
+            assertTrue(DatabaseFormatCatalog.inspect(connection).markerPresent());
         }
-
-        Path exactCurrent = mTemporaryFolder.resolve("exact-current.sqlite");
-        SdrTrunkTestDatabase.create(exactCurrent);
-        try(Connection migrated = open(database); Connection current = open(exactCurrent))
+        CommandResult result = run(database);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
+        assertFalse(result.output().contains("format-1-to-2"));
+        assertTrue(result.output().contains("COMPLETED STEP: 2 -> 3 [format-2-to-3]"));
+        assertEquals("Retained Alpha Alias", scalar(database, "SELECT name FROM alias WHERE id=100"));
+        assertEquals("Retained Alpha Channel:851012500", scalar(database,
+            "SELECT name || ':' || primary_frequency_hz FROM configuration_channel WHERE id=77"));
+        assertEquals("{\"preserved\":true}", scalar(database,
+            "SELECT settings_json FROM application_settings WHERE key='format-3-preserve-sentinel'"));
+        try(Connection connection = open(database))
         {
-            assertEquals(SqliteSchemaValidator.fingerprint(current), SqliteSchemaValidator.fingerprint(migrated),
-                "The complete Alpha 8/Alpha 9/Alpha 10 chain must produce the exact current schema, not a " +
-                    "compatibility layout");
+            DatabaseFormatCatalog.requireCurrent(connection);
+            assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
         }
+        byte[] current = Files.readAllBytes(database);
+        CommandResult unchanged = run(database);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, unchanged.exitCode(), unchanged.error());
+        assertTrue(unchanged.output().contains("Database is already at current format"));
+        assertArrayEquals(current, Files.readAllBytes(database));
     }
 
     @Test
-    void refusesAlpha9VersionStampsOnTheWrongSchema() throws Exception
+    void refusesRetiredFormat1WithoutChangingTheSelectedDatabase() throws Exception
     {
         Path database = Format1TestDatabase.create(newStagedDatabase());
+        byte[] original = Files.readAllBytes(database);
+        CommandResult result = run(database);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_UNSUPPORTED_VERSION, result.exitCode(), result.error());
+        assertTrue(result.error().contains("predates Alpha 12"), result::error);
+        assertTrue(result.error().contains("Open it in Alpha 12"), result::error);
+        assertFalse(result.output().contains("COMPLETED STEP"), result::output);
+        assertArrayEquals(original, Files.readAllBytes(database));
+    }
+
+    @Test
+    void refusesLatestAlphaVersionStampsOnTheWrongSchema() throws Exception
+    {
+        Path database = Format2TestDatabase.create(newStagedDatabase());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("CREATE TABLE unexpected_alpha9_object(id INTEGER PRIMARY KEY)");
+            statement.executeUpdate("CREATE TABLE unexpected_alpha12_object(id INTEGER PRIMARY KEY)");
         }
 
         CommandResult result = run(database);
@@ -1366,21 +1194,20 @@ class ApplicationDatabaseMigratorTest
         assertTrue(result.error().contains("Unrecognized SQLite database schema fingerprint"));
         try(Connection connection = open(database))
         {
-            assertEquals("4", metadata(connection, "alias_schema_version"));
-            assertEquals("24", metadata(connection, "p25_activity_schema_version"));
+            assertEquals("6", metadata(connection, "alias_schema_version"));
+            assertEquals("26", metadata(connection, "p25_activity_schema_version"));
         }
     }
 
     @Test
-    void alpha9MigrationPreservesWrongFamilyFactoryNameCollisionUnderAUniqueName() throws Exception
+    void format2MigrationPreservesWrongFamilyFactoryNameCollisionUnderAUniqueName() throws Exception
     {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
+        Path database = Format2TestDatabase.create(newStagedDatabase());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO alias_list(id, name, family)
-                VALUES (1, 'Default P25', 'DMR')
+                UPDATE alias_list SET family='DMR' WHERE id=1
                 """);
         }
 
@@ -1396,39 +1223,14 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void dropsLegacyP25QualifiersWhileRetainingTheAlias() throws Exception
+    void format2MigrationAssignsDefaultsToBlankAliasListNames() throws Exception
     {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
+        Path database = Format2TestDatabase.create(newStagedDatabase());
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("INSERT INTO alias_list(id, name, family) VALUES (1, 'Qualified', 'P25')");
-            statement.executeUpdate("""
-                INSERT INTO alias(
-                    id, alias_list_id, name, matcher_type, protocol, value, wacn, p25_system_id
-                ) VALUES (1, 1, 'Unexpected Qualifier', 'TALKGROUP', 'APCO25', 43, 781824, 840)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("DROP legacy P25 qualifier values: 1 row(s)"));
-        assertEquals("1", scalar(database, """
-            SELECT COUNT(*) FROM alias
-            WHERE id=1 AND name='Unexpected Qualifier' AND matcher_type='TALKGROUP'
-              AND protocol='APCO25' AND value=43
-            """));
-    }
-
-    @Test
-    void alpha9MigrationAssignsDefaultsToBlankAliasListNames() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9MigrationCases(database);
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
+            insertFormat2Channel(connection, 78, "P25 Phase 1", DecoderType.P25_PHASE1, 851012500);
+            insertFormat2Channel(connection, 81, "DMR", DecoderType.DMR, 451000000);
             statement.executeUpdate("""
                 UPDATE configuration_channel
                 SET alias_list_name = '', config_json = json_set(config_json, '$.aliasListName', '')
@@ -1458,40 +1260,6 @@ class ApplicationDatabaseMigratorTest
             SELECT COUNT(*) FROM configuration_channel
             WHERE id IN (78, 81) AND json_type(config_json, '$.aliasListName') IS NOT NULL
             """));
-    }
-
-    @Test
-    void resetsAlpha9AffiliationHistoryWithoutRequiringIdentityScopes() throws Exception
-    {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)
-                VALUES (70, 781824, 840, 1000, 2000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (70, 1800001, 43, 2000)
-                """);
-        }
-
-        CommandResult result = run(database);
-
-        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.exitCode(), result.error());
-        assertTrue(result.output().contains("RESET P25 affiliation history: 1 row(s)"));
-        assertTrue(result.error().isEmpty());
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM radio_system"));
-        assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_radio_affiliation"));
-        assertEquals("0", scalar(database, """
-            SELECT COUNT(*) FROM sqlite_schema
-            WHERE name IN (
-                'p25_system', 'p25_radio_affiliation', 'idx_p25_radio_affiliation_talkgroup',
-                'trunked_identity_scope', 'trunked_identity_summary'
-            )
-            """));
-        assertEquals("ok", scalar(database, "PRAGMA quick_check"));
     }
 
     @Test
@@ -1694,7 +1462,7 @@ class ApplicationDatabaseMigratorTest
     @Test
     void refusesIntermediateP25Version25WithoutChangingIt() throws Exception
     {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
+        Path database = Format2TestDatabase.create(newStagedDatabase());
 
         try(Connection connection = open(database))
         {
@@ -1708,7 +1476,7 @@ class ApplicationDatabaseMigratorTest
         assertEquals("25", metadata(database, "p25_activity_schema_version"));
         assertEquals("1", scalar(database, """
             SELECT COUNT(*) FROM sqlite_schema
-            WHERE type='table' AND name='p25_radio_affiliation'
+            WHERE type='table' AND name='trunked_radio_affiliation'
             """));
     }
 
@@ -1749,15 +1517,16 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void alpha9MalformedPortablePreferencesDoNotBlockTheReleaseMigration() throws Exception
+    void format2MalformedPortablePreferencesDoNotBlockTheReleaseMigration() throws Exception
     {
-        Path database = Format1TestDatabase.create(newStagedDatabase());
-        insertAlpha9MigrationCases(database);
-        Path source = mTemporaryFolder.resolve("alpha9-rollback-source").toAbsolutePath();
-        Path target = mTemporaryFolder.resolve("alpha9-rollback-target").toAbsolutePath();
+        Path database = Format2TestDatabase.create(newStagedDatabase());
+        Path source = mTemporaryFolder.resolve("format2-rollback-source").toAbsolutePath();
+        Path target = mTemporaryFolder.resolve("format2-rollback-target").toAbsolutePath();
 
         try(Connection connection = open(database); Statement statement = connection.createStatement())
         {
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value) " +
+                "VALUES(100,1,'Retained With Malformed Preference','TALKGROUP','APCO25',43)");
             statement.executeUpdate("""
                 INSERT INTO application_settings(key, settings_json, updated_at_ms)
                 VALUES ('portable_java_preferences_v1', '{invalid', 1)
@@ -1773,7 +1542,9 @@ class ApplicationDatabaseMigratorTest
         {
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals("9", scalar(connection, "SELECT COUNT(*) FROM alias"));
+            assertEquals("Retained With Malformed Preference", scalar(connection,
+                "SELECT name FROM alias WHERE id=100"));
+            assertEquals("1", scalar(connection, "SELECT COUNT(*) FROM alias"));
             assertEquals("1", scalar(connection, """
                 SELECT json_valid(settings_json) FROM application_settings
                 WHERE key='portable_java_preferences_v1'
@@ -1934,249 +1705,23 @@ class ApplicationDatabaseMigratorTest
             error.toString(StandardCharsets.UTF_8));
     }
 
-    private static void insertAlpha9MigrationCases(Path database) throws Exception
+    private static void insertFormat2Channel(Connection connection, int id, String name,
+                                             DecoderType decoderType, long frequency) throws Exception
     {
-        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        try(var insert = connection.prepareStatement("""
+            INSERT INTO configuration_channel(id,sort_order,name,radres_guid,decoder_type,source_type,
+                primary_frequency_hz,frequency_count,config_json)
+            VALUES(?,?,?,?,?,'TUNER',?,1,?)
+            """))
         {
-            statement.executeUpdate("""
-                INSERT INTO alias_list(id, name, family) VALUES
-                    (1, 'Safe', 'P25'),
-                    (2, 'Styled', 'P25'),
-                    (3, 'Ambiguous', 'P25'),
-                    (4, 'Stream As', 'P25'),
-                    (5, 'Phase 2', 'P25'),
-                    (6, 'DMR', 'DMR'),
-                    (7, 'NXDN', 'NXDN'),
-                    (8, 'Group Styled', 'P25'),
-                    (9, 'Color Styled', 'P25'),
-                    (10, 'Icon Styled', 'P25'),
-                    (11, 'Default P25', 'P25')
-                """);
-            statement.executeUpdate("""
-                INSERT INTO alias(
-                    id, alias_list_id, name, description, color, record_enabled, priority,
-                    matcher_type, protocol, value, min_value, max_value, wacn, p25_system_id
-                ) VALUES
-                    (100, 1, 'Safe Catchall', NULL, 0, 1, -1,
-                        'TALKGROUP_RANGE', 'APCO25', NULL, 0, 65535, NULL, NULL),
-                    (800, 1, 'Retired FQ Talkgroup', NULL, 0, 0, 10,
-                        'P25_FULLY_QUALIFIED_TALKGROUP', 'APCO25', 42, NULL, NULL, 781824, 840),
-                    (900, 1, 'Retired FQ Radio', NULL, 0, 0, 10,
-                        'P25_FULLY_QUALIFIED_RADIO_ID', 'APCO25', 1800001, NULL, NULL, 781824, 840),
-                    (103, 1, 'Retained Talkgroup', NULL, 0, 1, 5,
-                        'TALKGROUP', 'APCO25', 43, NULL, NULL, NULL, NULL),
-                    (114, 2, 'Do Not Listen', NULL, 0, 0, -1,
-                        'TALKGROUP', 'APCO25', 44, NULL, NULL, NULL, NULL),
-                    (104, 2, 'Styled Catchall', 'Keep this appearance', 0, 1, 8,
-                        'TALKGROUP_RANGE', 'APCO25', NULL, 0, 65535, NULL, NULL),
-                    (105, 3, 'Ambiguous A', NULL, 0, 1, 8,
-                        'TALKGROUP_RANGE', 'APCO25', NULL, 0, 65535, NULL, NULL),
-                    (106, 3, 'Ambiguous B', NULL, 0, 1, 8,
-                        'TALKGROUP_RANGE', 'APCO25_PHASE2', NULL, 1, 65535, NULL, NULL),
-                    (107, 4, 'Stream As Catchall', NULL, 0, 1, 8,
-                        'TALKGROUP_RANGE', 'APCO25', NULL, 0, 65535, NULL, NULL),
-                    (108, 5, 'Phase 2 Catchall', NULL, 0, 1, 4,
-                        'TALKGROUP_RANGE', 'APCO25_PHASE2', NULL, 1, 65535, NULL, NULL),
-                    (109, 6, 'DMR Catchall', NULL, 0, 0, 6,
-                        'TALKGROUP_RANGE', 'DMR', NULL, 1, 16777215, NULL, NULL),
-                    (110, 7, 'NXDN Catchall', NULL, 0, 1, 9,
-                        'TALKGROUP_RANGE', 'NXDN', NULL, 1, 65535, NULL, NULL),
-                    (111, 8, 'Group Catchall', NULL, 0, 1, 8,
-                        'TALKGROUP_RANGE', 'APCO25', NULL, 0, 65535, NULL, NULL),
-                    (112, 9, 'Color Catchall', NULL, 7, 1, 8,
-                        'TALKGROUP_RANGE', 'APCO25', NULL, 0, 65535, NULL, NULL),
-                    (113, 10, 'Icon Catchall', NULL, 0, 1, 8,
-                        'TALKGROUP_RANGE', 'APCO25', NULL, 0, 65535, NULL, NULL)
-                """);
-            statement.executeUpdate("UPDATE alias SET stream_as_talkgroup=999 WHERE id=107");
-            statement.executeUpdate("UPDATE alias SET group_name='Keep Group' WHERE id=111");
-            statement.executeUpdate("UPDATE alias SET icon_name='Keep Icon' WHERE id=113");
-            statement.executeUpdate("""
-                INSERT INTO alias_broadcast_channel(id, alias_id, channel_name) VALUES
-                    (200, 100, 'Safe Stream'),
-                    (201, 800, 'Retired Talkgroup Stream'),
-                    (202, 900, 'Retired Radio Stream'),
-                    (203, 103, 'Retained Stream'),
-                    (204, 108, 'Phase 2 Stream'),
-                    (205, 109, 'DMR Stream'),
-                    (206, 110, 'NXDN Stream')
-                """);
-            insertBroadcastProvider(connection, 0, "Safe Stream", 7200);
-            insertBroadcastProvider(connection, 1, "Retained Stream", 7201);
-            insertBroadcastProvider(connection, 2, "Phase 2 Stream", 7202);
-            insertBroadcastProvider(connection, 3, "DMR Stream", 7203);
-            insertBroadcastProvider(connection, 4, "NXDN Stream", 7204);
-            statement.executeUpdate("""
-                INSERT INTO configuration_channel(
-                    id, sort_order, system_name, site_name, name, alias_list_name,
-                    decoder_type, source_type, primary_frequency_hz, frequency_count, config_json
-                ) VALUES
-                    (77, 1, 'Preserved System', 'Preserved Site', 'Preserved Channel', 'Safe',
-                        'P25_PHASE1', 'TUNER', 851012500, 1, '{"preserved":true}'),
-                    (78, 2, 'P25', 'Phase 1', 'P25 Phase 1', NULL,
-                        'P25_PHASE1', 'TUNER', 851012500, 1, '{}'),
-                    (79, 3, 'P25', 'Phase 2', 'P25 Phase 2', NULL,
-                        'P25_PHASE2', 'TUNER', 851012500, 1, '{}'),
-                    (80, 4, 'P25', 'Conventional', 'P25 Conventional', NULL,
-                        'P25_CONVENTIONAL', 'TUNER', 155000000, 1, '{}'),
-                    (81, 5, 'DMR', 'Trunked', 'DMR', NULL,
-                        'DMR', 'TUNER', 451000000, 1, '{}'),
-                    (82, 6, 'NXDN', 'Trunked', 'NXDN', NULL,
-                        'NXDN', 'TUNER', 452000000, 1, '{}'),
-                    (83, 7, 'Analog', 'NBFM', 'NBFM', NULL,
-                        'NBFM', 'TUNER', 453000000, 1, '{}'),
-                    (84, 8, 'Analog', 'AM', 'AM', NULL,
-                        'AM', 'TUNER', 118500000, 1, '{}'),
-                    (85, 9, 'Retired', 'MPT', 'MPT', NULL,
-                        'MPT1327', 'TUNER', 454000000, 1, '{}')
-                """);
-            updateChannelJson(connection, 77, "Preserved Channel", "Preserved System", "Preserved Site", "Safe",
-                DecoderType.P25_PHASE1, 851012500);
-            updateChannelJson(connection, 78, "P25 Phase 1", "P25", "Phase 1", null,
-                DecoderType.P25_PHASE1, 851012500);
-            updateChannelJson(connection, 79, "P25 Phase 2", "P25", "Phase 2", null,
-                DecoderType.P25_PHASE2, 851012500);
-            updateChannelJson(connection, 80, "P25 Conventional", "P25", "Conventional", null,
-                DecoderType.P25_CONVENTIONAL, 155000000);
-            updateChannelJson(connection, 81, "DMR", "DMR", "Trunked", null,
-                DecoderType.DMR, 451000000);
-            updateChannelJson(connection, 82, "NXDN", "NXDN", "Trunked", null,
-                DecoderType.NXDN, 452000000);
-            updateChannelJson(connection, 83, "NBFM", "Analog", "NBFM", null,
-                DecoderType.NBFM, 453000000);
-            updateChannelJson(connection, 84, "AM", "Analog", "AM", null,
-                DecoderType.AM, 118500000);
-            updateChannelJson(connection, 85, "MPT", "Retired", "MPT", null,
-                DecoderType.MPT1327, 454000000);
-            statement.executeUpdate("""
-                UPDATE configuration_channel
-                SET radres_guid = CASE id
-                    WHEN 77 THEN '00000000-0000-4000-8000-000000000077'
-                    WHEN 78 THEN '00000000-0000-4000-8000-000000000078'
-                    WHEN 79 THEN '00000000-0000-4000-8000-000000000079'
-                    WHEN 82 THEN '00000000-0000-4000-8000-000000000082'
-                    WHEN 85 THEN '00000000-0000-4000-8000-000000000085'
-                END
-                WHERE id IN (77, 78, 79, 82, 85)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO application_settings(key, settings_json, updated_at_ms)
-                VALUES ('migration-sentinel', '{"preserved":true}', 1000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_control_channel_quality(
-                    guid, frequency_hz, bucket_start_ms, observed_at_ms, signal_dbfs,
-                    decode_health_pct, valid_frames, invalid_frames, corrected_bits,
-                    sync_loss_bits, dropped_bits, last_valid_decode_ms
-                ) VALUES (
-                    'preserved-quality', 851012500, 1000, 2000, -72.5,
-                    92.5, 100, 3, 4, 5, 6, 1900
-                )
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_site_snapshot(
-                    guid, first_seen_ms, last_seen_ms, observation_count
-                ) VALUES ('preserved-site', 1000, 2000, 2)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_site_channel(
-                    guid, channel_key, descriptor, callsign, confirmed_at_ms
-                ) VALUES ('preserved-site', '12-345', '12-345', 'PRESERVED', 2000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_site_channel_summary(
-                    guid, channel_key, descriptor, first_seen_ms, last_seen_ms, observation_count
-                ) VALUES ('preserved-site', '12-345', '12-345', 1000, 2000, 2)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_system(system_key, wacn, system_id, first_seen_ms, last_seen_ms)
-                VALUES (50, 781824, 840, 1000, 9000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO receiver_context(
-                    id, context_key, guid, kind_code, protocol_code, channel_name, alias_list_name,
-                    decoder, first_seen_ms, last_seen_ms, system_key, nac, rfss, site,
-                    primary_frequency_hz, current_control_hz
-                ) VALUES (
-                    50, 'preserved-context', 'preserved-guid', 1, 1, 'Preserved Channel', 'Safe',
-                    'P25-1', 1000, 9000, 50, 801, 1, 2, 851012500, 851012500
-                )
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope(
-                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES (50, 'p25:BEE00:348', 1, 1, 0, 50, 1000, 9000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope_context(context_id, scope_id, first_seen_ms, last_seen_ms)
-                VALUES (50, 50, 1000, 9000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO receiver_context(
-                    id, context_key, guid, kind_code, protocol_code, channel_name, decoder,
-                    first_seen_ms, last_seen_ms, primary_frequency_hz
-                ) VALUES
-                    (900, 'preserved-dmr', 'preserved-dmr-guid', 1, 3, 'Preserved DMR', 'DMR',
-                        1000, 9000, 451000000),
-                    (901, 'preserved-nxdn', 'preserved-nxdn-guid', 1, 4, 'Preserved NXDN', 'NXDN',
-                        1000, 9000, 452000000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope(
-                    scope_id, scope_token, protocol_code, scope_kind_code, identity_domain_code,
-                    p25_system_key, first_seen_ms, last_seen_ms
-                ) VALUES
-                    (900, 'context:dmr:preserved', 3, 2, 0, NULL, 1000, 9000),
-                    (901, 'context:nxdn:preserved', 4, 2, 1, NULL, 1000, 9000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_scope_context(context_id, scope_id, first_seen_ms, last_seen_ms)
-                VALUES (900, 900, 1000, 9000), (901, 901, 1000, 9000)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_identity_summary(
-                    scope_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms, call_count
-                ) VALUES
-                    (50, 1, 43, 1000, 9000, 7),
-                    (50, 1, 999, 1000, 9000, 2),
-                    (900, 1, 321, 1000, 9000, 4),
-                    (900, 2, 765432, 1000, 9000, 4),
-                    (901, 1, 432, 1000, 9000, 3),
-                    (901, 2, 1234, 1000, 9000, 3)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO trunked_radio_talkgroup_summary(
-                    scope_id, radio_id, talkgroup_id, target_kind_code,
-                    first_seen_ms, last_seen_ms, call_count
-                ) VALUES
-                    (50, 1800001, 43, 1, 1000, 9000, 4),
-                    (900, 765432, 321, 1, 1000, 9000, 4),
-                    (901, 1234, 432, 1, 1000, 9000, 3)
-                """);
-            statement.executeUpdate("""
-                INSERT INTO p25_radio_affiliation(system_key, radio_id, talkgroup_id, updated_at_ms)
-                VALUES (50, 1800001, 43, 8000),
-                       (50, 1800002, 44, 8500),
-                       (50, 1800003, 43, 9000)
-                """);
-            statement.executeUpdate("""
-                UPDATE database_metadata SET value='1234'
-                WHERE key='trunked_identity_metrics_started_at_ms'
-                """);
-        }
-    }
-
-    private static void updateChannelJson(Connection connection, int id, String name, String system, String site,
-                                          String aliasListName, DecoderType decoderType, long frequency)
-        throws Exception
-    {
-        try(var statement = connection.prepareStatement(
-            "UPDATE configuration_channel SET config_json=? WHERE id=?"))
-        {
-            statement.setString(1, channelJson(name, system, site, aliasListName, decoderType, frequency));
-            statement.setInt(2, id);
-            assertEquals(1, statement.executeUpdate());
+            insert.setInt(1, id);
+            insert.setInt(2, id);
+            insert.setString(3, name);
+            insert.setString(4, "00000000-0000-4000-8000-%012d".formatted(id));
+            insert.setString(5, decoderType.name());
+            insert.setLong(6, frequency);
+            insert.setString(7, channelJson(name, "Alpha System", "Alpha Site", null, decoderType, frequency));
+            assertEquals(1, insert.executeUpdate());
         }
     }
 
@@ -2193,39 +1738,6 @@ class ApplicationDatabaseMigratorTest
         source.setFrequency(frequency);
         channel.setSourceConfiguration(source);
         return OBJECT_MAPPER.writeValueAsString(channel);
-    }
-
-    private static void insertBroadcastProvider(Connection connection, int sortOrder, String name, int systemId)
-        throws Exception
-    {
-        BroadcastConfiguration configuration = new RdioScannerConfiguration();
-        configuration.setName(name);
-        configuration.setHost("http://127.0.0.1");
-        configuration.setPort(3200 + sortOrder);
-        configuration.setEnabled(true);
-        ((RdioScannerConfiguration)configuration).setApiKey("format-chain-fixture-" + sortOrder);
-        ((RdioScannerConfiguration)configuration).setSystemID(systemId);
-        ObjectNode payload = OBJECT_MAPPER.valueToTree(configuration);
-        payload.remove("configurationId");
-
-        try(var insert = connection.prepareStatement("""
-            INSERT INTO configuration_broadcast_stream (
-                sort_order, name, server_type, enabled, host, port, delay_ms,
-                maximum_recording_age_ms, config_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """))
-        {
-            insert.setInt(1, sortOrder);
-            insert.setString(2, name);
-            insert.setString(3, configuration.getBroadcastServerType().name());
-            insert.setInt(4, 1);
-            insert.setString(5, configuration.getHost());
-            insert.setInt(6, configuration.getPort());
-            insert.setLong(7, configuration.getDelay());
-            insert.setLong(8, configuration.getMaximumRecordingAge());
-            insert.setString(9, OBJECT_MAPPER.writeValueAsString(payload));
-            insert.executeUpdate();
-        }
     }
 
     private static Connection open(Path database) throws Exception

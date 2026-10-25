@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.database.upgrade;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -44,12 +45,13 @@ class DatabaseFormatCatalogTest
     {
         Set<String> ids = new HashSet<>();
         Set<String> fixtures = new HashSet<>();
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.formats().size());
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - DatabaseFormatCatalog.MINIMUM_SUPPORTED_VERSION + 1,
+            DatabaseFormatCatalog.formats().size());
 
         for(int index = 0; index < DatabaseFormatCatalog.formats().size(); index++)
         {
             DatabaseFormatCatalog.FormatDescriptor descriptor = DatabaseFormatCatalog.formats().get(index);
-            assertEquals(index + 1, descriptor.version());
+            assertEquals(index + DatabaseFormatCatalog.MINIMUM_SUPPORTED_VERSION, descriptor.version());
             assertTrue(ids.add(descriptor.id()), "Duplicate format id: " + descriptor.id());
             assertTrue(fixtures.add(descriptor.fixtureResource()),
                 "Duplicate format fixture: " + descriptor.fixtureResource());
@@ -97,11 +99,12 @@ class DatabaseFormatCatalogTest
         assertTrue(DatabaseFormatCatalog.requireVersion(31).migrationPolicy().stream()
             .anyMatch(policy -> policy.contains("custom integer hue from 0 through 359")));
 
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, DatabaseMigrationChain.steps().size());
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - DatabaseFormatCatalog.MINIMUM_SUPPORTED_VERSION,
+            DatabaseMigrationChain.steps().size());
         for(int index = 0; index < DatabaseMigrationChain.steps().size(); index++)
         {
             DatabaseMigrationChain.StepDescriptor step = DatabaseMigrationChain.steps().get(index);
-            assertEquals(index + 1, step.sourceVersion());
+            assertEquals(index + DatabaseFormatCatalog.MINIMUM_SUPPORTED_VERSION, step.sourceVersion());
             assertEquals(step.sourceVersion() + 1, step.targetVersion());
             assertFalse(step.id().isBlank());
             assertFalse(step.declaredEffects().isEmpty());
@@ -147,20 +150,19 @@ class DatabaseFormatCatalogTest
     }
 
     @Test
-    void exactFormat1LegacyFixtureIsRecognizedWithoutMarker() throws Exception
+    void exactRetiredFormat1IsRefusedWithoutChangingItsBytes() throws Exception
     {
-        Path database = Format1TestDatabase.create(mTemporaryFolder.resolve("format-1.sqlite"));
-
+        Path database = Format1TestDatabase.create(mTemporaryFolder.resolve("retired-format-1.sqlite"));
+        byte[] before = java.nio.file.Files.readAllBytes(database);
         try(Connection connection = open(database))
         {
-            DatabaseFormatCatalog.DetectedFormat detected = DatabaseFormatCatalog.inspect(connection);
-            assertEquals(1, detected.version());
-            assertEquals("alpha8-shared", detected.id());
-            assertFalse(detected.markerPresent());
-            assertTrue(detected.requiresMigration());
-            assertEquals(DatabaseFormatCatalog.requireVersion(1).fingerprint(),
-                SqliteSchemaValidator.fingerprint(connection));
+            SQLException strict = assertThrows(SQLException.class, () -> DatabaseFormatCatalog.inspect(connection));
+            assertTrue(strict.getMessage().contains("predates Alpha 12"), strict::getMessage);
+            SQLException migration = assertThrows(SQLException.class,
+                () -> DatabaseFormatCatalog.inspectForMigration(connection));
+            assertTrue(migration.getMessage().contains("Open it in Alpha 12"), migration::getMessage);
         }
+        assertArrayEquals(before, java.nio.file.Files.readAllBytes(database));
     }
 
     @Test
@@ -783,7 +785,7 @@ class DatabaseFormatCatalogTest
     @Test
     void refusesMetadataMismatchEvenWhenTheSchemaFingerprintMatches() throws Exception
     {
-        Path database = Format1TestDatabase.create(mTemporaryFolder.resolve("metadata-mismatch.sqlite"));
+        Path database = Format2TestDatabase.create(mTemporaryFolder.resolve("metadata-mismatch.sqlite"));
         updateMetadata(database, "alias_schema_version", "5");
 
         try(Connection connection = open(database))
@@ -800,7 +802,7 @@ class DatabaseFormatCatalogTest
     {
         Path database = mTemporaryFolder.resolve("marker-mismatch.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        updateMetadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "1");
+        updateMetadata(database, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "2");
 
         try(Connection connection = open(database))
         {
@@ -845,7 +847,7 @@ class DatabaseFormatCatalogTest
     @Test
     void refusesMissingRequiredMetricsTimestamp() throws Exception
     {
-        Path database = Format1TestDatabase.create(mTemporaryFolder.resolve("missing-metrics.sqlite"));
+        Path database = Format2TestDatabase.create(mTemporaryFolder.resolve("missing-metrics.sqlite"));
         updateMetadata(database, "trunked_identity_metrics_started_at_ms", "0");
 
         try(Connection connection = open(database))

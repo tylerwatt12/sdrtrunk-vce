@@ -179,9 +179,9 @@ class SqliteIdentityRepairTest
     }
 
     @Test
-    void fullFormatOneMigrationToleratesDuplicateAndNullLegacySequences() throws Exception
+    void fullFormatTwoMigrationToleratesDuplicateAndNullLegacySequences() throws Exception
     {
-        Path database = Format1TestDatabase.create(stagedDatabase("format-one-sequences"));
+        Path database = Format2TestDatabase.create(stagedDatabase("format-two-sequences"));
         try(Connection connection = open(database))
         {
             execute(connection, "DELETE FROM sqlite_sequence WHERE name='alias'");
@@ -201,27 +201,6 @@ class SqliteIdentityRepairTest
             assertTrue(number(connection,
                 "SELECT coalesce((SELECT seq FROM sqlite_sequence WHERE name='alias'), 0)") <
                 SqliteIdentityRepair.JSON_SAFE_INTEGER_MAXIMUM);
-        }
-    }
-
-    @Test
-    void formatOneStepDefensivelyCollapsesDuplicateSequenceRowsOnItsOwn() throws Exception
-    {
-        Path database = Format1TestDatabase.create(mTemporaryFolder.resolve("direct-format-one.sqlite"));
-        try(Connection connection = open(database))
-        {
-            execute(connection, "DELETE FROM sqlite_sequence WHERE name='alias'");
-            execute(connection, "INSERT INTO sqlite_sequence(name, seq) VALUES " +
-                "('alias', NULL), ('alias', 500), ('alias', " + Long.MAX_VALUE + ")");
-            execute(connection, "PRAGMA foreign_keys=OFF");
-            connection.setAutoCommit(false);
-
-            new Format1To2DatabaseMigration().migrate(connection);
-
-            assertEquals(1, number(connection,
-                "SELECT COUNT(*) FROM sqlite_sequence WHERE name='alias'"));
-            assertEquals(500, number(connection, "SELECT seq FROM sqlite_sequence WHERE name='alias'"));
-            connection.rollback();
         }
     }
 

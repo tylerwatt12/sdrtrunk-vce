@@ -63,41 +63,41 @@ class ApplicationMigrationServiceTest
     Path mTemporaryFolder;
 
     @Test
-    void readsExactFormat1AndCurrentCatalogPlans() throws Exception
+    void readsExactFormat2AndCurrentCatalogPlans() throws Exception
     {
-        Path format1Database = Format1TestDatabase.create(
-            SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("format-1-plan")));
-        DatabaseMigrationChain.PreflightReport format1Plan =
-            ApplicationMigrationService.readMigrationPlan(format1Database);
-        assertFormat(format1Plan.source(), 1, "alpha8-shared", false);
-        assertEquals(DatabaseFormatCatalog.current(), format1Plan.target());
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format1Plan.steps().size());
-        assertEquals(1, format1Plan.steps().getFirst().sourceVersion());
-        assertEquals(2, format1Plan.steps().getFirst().targetVersion());
+        Path format2Database = Format2TestDatabase.create(
+            SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("format-2-plan")));
+        DatabaseMigrationChain.PreflightReport format2Plan =
+            ApplicationMigrationService.readMigrationPlan(format2Database);
+        assertFormat(format2Plan.source(), 2, "scan-lists-p25-v26", false);
+        assertEquals(DatabaseFormatCatalog.current(), format2Plan.target());
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, format2Plan.steps().size());
+        assertEquals(2, format2Plan.steps().getFirst().sourceVersion());
+        assertEquals(3, format2Plan.steps().getFirst().targetVersion());
         assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1,
-            format1Plan.steps().get(format1Plan.steps().size() - 2).sourceVersion());
-        assertEquals("repair-portable-preferences", format1Plan.steps().getLast().id());
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format1Plan.steps().getLast().sourceVersion());
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format1Plan.steps().getLast().targetVersion());
-        assertTrue(format1Plan.steps().get(1).effects().stream()
+            format2Plan.steps().get(format2Plan.steps().size() - 2).sourceVersion());
+        assertEquals("repair-portable-preferences", format2Plan.steps().getLast().id());
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format2Plan.steps().getLast().sourceVersion());
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, format2Plan.steps().getLast().targetVersion());
+        assertTrue(format2Plan.steps().get(0).effects().stream()
             .anyMatch(effect -> "unassigned channel Alias Lists".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(2).effects().stream()
+        assertTrue(format2Plan.steps().get(1).effects().stream()
             .anyMatch(effect -> "receiver-derived activity and counters".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(3).effects().stream()
+        assertTrue(format2Plan.steps().get(2).effects().stream()
             .anyMatch(effect -> "web accounts".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(4).effects().stream()
+        assertTrue(format2Plan.steps().get(3).effects().stream()
             .anyMatch(effect -> "receiver-derived activity and counters".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(5).effects().stream()
+        assertTrue(format2Plan.steps().get(4).effects().stream()
             .anyMatch(effect -> "per-user browser preference documents".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(6).effects().stream()
+        assertTrue(format2Plan.steps().get(5).effects().stream()
             .anyMatch(effect -> "per-user receiver-health alert settings".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(7).effects().stream()
+        assertTrue(format2Plan.steps().get(6).effects().stream()
             .anyMatch(effect -> "per-user Live presentation settings".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(8).effects().stream()
+        assertTrue(format2Plan.steps().get(7).effects().stream()
             .anyMatch(effect -> "P25 bandplan overrides".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(9).effects().stream()
+        assertTrue(format2Plan.steps().get(8).effects().stream()
             .anyMatch(effect -> "missing factory Alias Lists".equals(effect.subject())));
-        assertTrue(format1Plan.steps().get(10).effects().stream()
+        assertTrue(format2Plan.steps().get(9).effects().stream()
             .anyMatch(effect -> "per-user idle FFT channel markers".equals(effect.subject())));
 
         Path currentDatabase = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("current-plan"));
@@ -135,25 +135,25 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void migratesExactFormat1ProfileWithSafetyBackup() throws Exception
+    void migratesExactFormat2ProfileWithSafetyBackup() throws Exception
     {
-        Path dataRoot = mTemporaryFolder.resolve("format-1-data");
+        Path dataRoot = mTemporaryFolder.resolve("format-2-data");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
-        Format1TestDatabase.create(database);
-        insertAlias(database, "Retained Format 1 Alias");
+        Format2TestDatabase.create(database);
+        insertAlias(database, "Retained Format 2 Alias");
 
         ApplicationMigrationService.MigrationResult result =
             inProcessMigrationService().migrateCurrent(dataRoot, null);
 
         assertFalse(result.importedPreviousProfile());
-        assertFormat(result.sourceFormat(), 1, "alpha8-shared", false);
+        assertFormat(result.sourceFormat(), 2, "scan-lists-p25-v26", false);
         assertEquals(result.sourceFormat(), result.sourcePlan().source());
-        assertTrue(result.helperOutput().contains("Migrated database format 1 [alpha8-shared]"));
+        assertTrue(result.helperOutput().contains("Migrated database format 2 [scan-lists-p25-v26]"));
         assertNotNull(result.safetyBackup());
-        assertEquals("4", scalar(result.safetyBackup(), """
+        assertEquals("6", scalar(result.safetyBackup(), """
             SELECT value FROM database_metadata WHERE key='alias_schema_version'
             """));
-        assertEquals("24", scalar(result.safetyBackup(), """
+        assertEquals("26", scalar(result.safetyBackup(), """
             SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
             """));
         assertEquals(1, count(result.safetyBackup(), "alias"));
@@ -163,12 +163,12 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
-    void importsExactFormat1ProfileThroughMigrateExistingWithoutChangingSource() throws Exception
+    void importsExactFormat2ProfileThroughMigrateExistingWithoutChangingSource() throws Exception
     {
-        Path sourceRoot = mTemporaryFolder.resolve("format-1-import-source");
+        Path sourceRoot = mTemporaryFolder.resolve("format-2-import-source");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        Format1TestDatabase.create(sourceDatabase);
-        insertAlias(sourceDatabase, "Imported Format 1 Alias");
+        Format2TestDatabase.create(sourceDatabase);
+        insertAlias(sourceDatabase, "Imported Format 2 Alias");
         Path sourceJmbe = Files.createDirectories(sourceRoot.resolve("jmbe/nested")).resolve("jmbe-test.jar");
         Path sourceModule = Files.createDirectories(sourceRoot.resolve("modules")).resolve("module-test.jar");
         Files.write(sourceJmbe, new byte[] {1, 2, 3});
@@ -176,25 +176,25 @@ class ApplicationMigrationServiceTest
         Path sourceVault = createValidVault(sourceRoot);
         byte[] sourceHash = sha256(sourceDatabase);
         byte[] sourceVaultHash = sha256(sourceVault);
-        Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("format-1-import-target"));
+        Path targetRoot = Files.createDirectory(mTemporaryFolder.resolve("format-2-import-target"));
 
         ApplicationMigrationService.MigrationResult result = new ApplicationMigrationService()
             .importPrevious(sourceRoot, targetRoot, null);
 
         assertTrue(result.importedPreviousProfile());
         assertEquals(PreviousBuildLocator.InputScope.PORTABLE_PROFILE, result.inputScope());
-        assertFormat(result.sourceFormat(), 1, "alpha8-shared", false);
+        assertFormat(result.sourceFormat(), 2, "scan-lists-p25-v26", false);
         assertEquals(result.sourceFormat(), result.sourcePlan().source());
-        assertTrue(result.helperOutput().contains("Migrated database format 1 [alpha8-shared]"));
+        assertTrue(result.helperOutput().contains("Migrated database format 2 [scan-lists-p25-v26]"));
         Path targetDatabase = SdrTrunkDatabasePath.getDatabasePath(targetRoot);
         assertCurrentFormat(targetDatabase);
-        assertEquals("Imported Format 1 Alias", scalar(targetDatabase,
+        assertEquals("Imported Format 2 Alias", scalar(targetDatabase,
             "SELECT name FROM alias WHERE id=1"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
-        assertEquals("4", scalar(sourceDatabase, """
+        assertEquals("6", scalar(sourceDatabase, """
             SELECT value FROM database_metadata WHERE key='alias_schema_version'
             """));
-        assertEquals("24", scalar(sourceDatabase, """
+        assertEquals("26", scalar(sourceDatabase, """
             SELECT value FROM database_metadata WHERE key='p25_activity_schema_version'
             """));
         assertArrayEquals(Files.readAllBytes(sourceJmbe),
@@ -449,7 +449,7 @@ class ApplicationMigrationServiceTest
 
         Path sourceRoot = mTemporaryFolder.resolve("selected-old-database");
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(sourceRoot);
-        Format1TestDatabase.create(sourceDatabase);
+        Format2TestDatabase.create(sourceDatabase);
         insertAlias(sourceDatabase, "Imported Old Alias");
         Files.createDirectories(sourceRoot.resolve("jmbe"));
         Files.writeString(sourceRoot.resolve("jmbe/not-imported.jar"), "source neighbor");
@@ -463,8 +463,8 @@ class ApplicationMigrationServiceTest
 
         assertFalse(result.importedPreviousProfile());
         assertEquals(PreviousBuildLocator.InputScope.DATABASE_FILE, result.inputScope());
-        assertFormat(result.sourceFormat(), 1, "alpha8-shared", false);
-        assertTrue(result.helperOutput().contains("Migrated database format 1 [alpha8-shared]"));
+        assertFormat(result.sourceFormat(), 2, "scan-lists-p25-v26", false);
+        assertTrue(result.helperOutput().contains("Migrated database format 2 [scan-lists-p25-v26]"));
         assertNotNull(result.safetyBackup());
         assertEquals("Previous Active Alias", scalar(result.safetyBackup(),
             "SELECT name FROM alias WHERE id=1"));
@@ -543,7 +543,7 @@ class ApplicationMigrationServiceTest
 
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("selected-admin-source"));
-        Format1TestDatabase.create(sourceDatabase);
+        Format2TestDatabase.create(sourceDatabase);
         char[] password = "retained alpha administrator".toCharArray();
         LegacyWebAccessTestData.storePrimaryAdmin(sourceDatabase, password);
 
@@ -566,7 +566,7 @@ class ApplicationMigrationServiceTest
 
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(
             mTemporaryFolder.resolve("selected-helper-failure-source"));
-        Format1TestDatabase.create(sourceDatabase);
+        Format2TestDatabase.create(sourceDatabase);
         insertAlias(sourceDatabase, "Never Installed");
         byte[] sourceHash = sha256(sourceDatabase);
         AtomicReference<Path> stagedDatabase = new AtomicReference<>();
@@ -999,14 +999,14 @@ class ApplicationMigrationServiceTest
     @Test
     void startupUsesLightweightPlanForOlderFormatsAndFullyInspectsSuspectFormats() throws Exception
     {
-        Path older = Format1TestDatabase.create(
+        Path older = Format2TestDatabase.create(
             SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("older-startup")));
         DatabaseMigrationChain.PreflightReport startupPlan =
             ApplicationMigrationService.readStartupPlan(older);
         DatabaseMigrationChain.PreflightReport reviewPlan =
             ApplicationMigrationService.readMigrationPlan(older);
-        assertFormat(startupPlan.source(), 1, "alpha8-shared", false);
-        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 1, startupPlan.steps().size());
+        assertFormat(startupPlan.source(), 2, "scan-lists-p25-v26", false);
+        assertEquals(DatabaseFormatCatalog.CURRENT_VERSION - 2, startupPlan.steps().size());
         assertFalse(startupPlan.steps().stream().anyMatch(step ->
             "repair-portable-preferences".equals(step.id())));
         assertTrue(reviewPlan.steps().stream().anyMatch(step ->

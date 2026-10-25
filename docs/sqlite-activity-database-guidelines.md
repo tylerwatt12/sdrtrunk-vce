@@ -779,7 +779,7 @@ Schema and query changes must include tests that cover:
 
 - the global format bump, expected prior and target format signatures, adjacent migration step, and populated
   prior-format fixture for every persisted schema or semantic change;
-- schema validation, every registered Alpha 8-or-newer source-to-current route, and Application Migrator behavior;
+- schema validation, every registered format-2-or-newer source-to-current route, and Application Migrator behavior;
 - duplicate-event/output suppression and aggregate correctness;
 - radio-system and saved-channel ownership isolation;
 - bounded ranges, pagination, and chart point limits;
