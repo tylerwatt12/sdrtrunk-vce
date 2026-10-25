@@ -1798,9 +1798,11 @@
 
   <main class="content visual-frequency-window-example">
     <section class="ui-section">
-      <div class="ui-section-title"><div class="tuner-allocation-site-heading"><div class="ui-heading-group ui-heading-group-quiet"><strong>Albany County Simulcast</strong><small class="muted">Albany/Schenectady Counties</small></div><span class="ui-status">9 / 11 in windows</span></div></div>
-      <div class="ui-section-body">
-        <div class="tuner-allocation-map">
+      <div class="ui-section-title"><div class="tuner-allocation-site-heading"><strong>Tuner windows</strong><span class="ui-status">9 of 12 within windows</span></div></div>
+      <div class="ui-section-body tuner-allocation-details">
+        <section class="tuner-allocation-map ui-surface ui-surface-soft" role="group" aria-label="Frequency range 851–861 MHz">
+        <header class="ui-surface-heading"><div class="ui-heading-group"><h3>851–861 MHz</h3><p>9 of 11 known frequencies within current windows</p></div></header>
+        <div class="ui-section-body">
         <div class="tuner-allocation-window-row chart-window-map-row chart-window-map-ruler tuner-allocation-ruler-row"><span class="muted">Frequency · MHz</span><div class="tuner-allocation-plot">
         <svg class="chart-frequency-windows chart-frequency-window-row" width="100%" height="32" role="img" aria-label="Frequency ruler from 851 to 861 MHz">
           <text class="chart-axis-label" x="0" y="16">851 MHz</text><text class="chart-axis-label" x="50%" y="16" text-anchor="middle">856 MHz</text><text class="chart-axis-label" x="100%" y="16" text-anchor="end">861 MHz</text>
@@ -1853,13 +1855,18 @@
           <line class="chart-window-highlight" x1="30.375%" x2="30.375%" y1="0" y2="44"/>
         </svg>
         </div></div>
-        </div>
         <div class="chart-window-legend" aria-label="Receiving window key">
           <span><svg viewBox="0 0 20 16" aria-hidden="true"><rect class="chart-window-band chart-window-map-band" x="1" y="4" width="18" height="8" rx="2"/></svg>Window</span>
           <span><svg class="chart-window-legend-pair" viewBox="0 0 32 16" aria-hidden="true"><path class="chart-window-control" d="M7 2l6 6-6 6-6-6Z"/><circle class="chart-window-call" cx="24" cy="8" r="4.5"/></svg>Selected channel</span>
           <span><svg viewBox="0 0 20 16" aria-hidden="true"><circle class="chart-window-other" cx="10" cy="8" r="6"/></svg>Other channels</span>
           <span><svg viewBox="0 0 20 16" aria-hidden="true"><path class="chart-window-outside" d="M10 2l6 12h-12Z"/></svg>Outside windows</span>
         </div>
+        </div>
+        </section>
+        <section class="ui-notice ui-notice-warning ui-heading-group" aria-label="Outside current windows">
+          <div class="ui-heading-group"><h3>Outside current windows</h3><small>3 known frequencies</small></div>
+          <div class="tuner-allocation-frequency-list"><button type="button" class="ui-button ui-button-secondary" aria-pressed="false">773.98750 MHz</button><button type="button" class="ui-button ui-button-secondary" aria-pressed="false">853.73750 MHz</button><button type="button" class="ui-button ui-button-secondary" aria-pressed="true">854.03750 MHz</button></div>
+        </section>
       </div>
     </section>
     <section class="ui-section"><div class="ui-section-title">Receiving windows now</div><div class="ui-table-wrap">

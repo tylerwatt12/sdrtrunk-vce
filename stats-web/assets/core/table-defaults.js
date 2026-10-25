@@ -52,6 +52,10 @@ const RETAINED_BANDS = {
 };
 
 const TABLE_DEFAULTS = Object.freeze({
+  'tuner-allocation-decisions': {
+    widths: { outcome: 165, site: 200, time: 135, reason: 320, action: 128 },
+    grow: ['site', 'reason']
+  },
   'alerts-manage-rules': {
     widths: { name: 290, activity: 170, timing: 155, enabled: 95, actions: 180 },
     grow: ['name', 'activity', 'timing']

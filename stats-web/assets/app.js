@@ -5,7 +5,7 @@ import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js?v=5';
-import * as tableDefaults from './core/table-defaults.js?v=29';
+import * as tableDefaults from './core/table-defaults.js?v=30';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -34714,12 +34714,12 @@ function tunerAllocationMapLegend(hasUnscoped = false) {
 
 function tunerAllocationSiteMap(site, snapshot, state, openTuner, tableBuilder = table) {
   const coverage = uiStatus(Number(site.knownFrequencyCount) > 0 ?
-    `${number(site.coveredFrequencyCount)} / ${number(site.knownFrequencyCount)} in windows` : 'No known frequencies',
+    `${number(site.coveredFrequencyCount)} of ${number(site.knownFrequencyCount)} within windows` : 'No known frequencies',
     Number(site.coveredFrequencyCount) < Number(site.knownFrequencyCount) ? 'warning' : 'neutral');
   const header = node('div', 'tuner-allocation-site-heading');
   header.append(node('strong', '', 'Tuner windows'), coverage);
   if (site.status === 'stopped') header.append(uiStatus('Stopped', 'neutral'));
-  const body = node('div', 'ui-section-body');
+  const body = node('div', 'ui-section-body tuner-allocation-details');
   const panel = section('', body);
   panel.firstElementChild.append(header);
   panel.classList.add('tuner-allocation-site');
@@ -34740,27 +34740,33 @@ function tunerAllocationSiteMap(site, snapshot, state, openTuner, tableBuilder =
     return button;
   };
   const groups = tunerAllocationMapGroups(snapshot.tuners, site.frequencies || []);
-  groups.forEach((group, index) => {
-    if (index > 0) {
-      const gapHz = group.start - groups[index - 1].end;
-      const gap = node('p', 'ui-section-note tuner-allocation-band-gap',
-        `Gap · ${number(Math.round(gapHz / 10_000) / 100)} MHz`);
-      gap.dataset.gapHz = String(gapHz);
-      body.append(gap);
-    }
-    const map = node('div', 'tuner-allocation-map');
+  const plottedGroups = groups.filter((group) => group.tuners.length || group.frequencies.some((item) => item.covered));
+  if (plottedGroups.length > 1) body.append(node('p', 'ui-section-note', 'Each range uses its own frequency scale.'));
+  plottedGroups.forEach((group) => {
+    const map = node('section', 'ui-surface ui-surface-soft tuner-allocation-map');
     map.dataset.bandStartHz = String(group.start);
     map.dataset.bandEndHz = String(group.end);
     map.setAttribute('role', 'group');
-    map.setAttribute('aria-label', `Frequency range ${(group.minimum / 1_000_000).toFixed(2)} to ${(group.maximum / 1_000_000).toFixed(2)} MHz`);
-    if (groups.length > 1) map.append(node('p', 'ui-label muted',
-      `${(group.minimum / 1_000_000).toFixed(2)}–${(group.maximum / 1_000_000).toFixed(2)} MHz`));
+    const precision = group.maximum - group.minimum < 1_000_000 ? 3 : 2;
+    const range = `${(group.minimum / 1_000_000).toFixed(precision)}–${(group.maximum / 1_000_000).toFixed(precision)} MHz`;
+    map.setAttribute('aria-label', `Frequency range ${range}`);
+    const heading = node('header', 'ui-surface-heading');
+    const headingCopy = node('div', 'ui-heading-group');
+    const count = group.frequencies.length;
+    const covered = group.frequencies.filter((item) => item.covered).length;
+    const summary = !count ? 'No known frequencies in this range' : covered === count ?
+      `${number(count)} known ${count === 1 ? 'frequency' : 'frequencies'} · All within current windows` :
+      `${number(covered)} of ${number(count)} known ${count === 1 ? 'frequency' : 'frequencies'} within current windows`;
+    headingCopy.append(node('h3', '', range), node('p', '', summary));
+    heading.append(headingCopy);
+    const mapBody = node('div', 'ui-section-body');
+    map.append(heading, mapBody);
     const addPlot = (label, kind, tuner = null) => {
       const row = node('div', `tuner-allocation-window-row chart-window-map-row tuner-allocation-${kind}-row${kind === 'ruler' ? ' chart-window-map-ruler' : ''}`);
       if (tuner) row.dataset.tunerId = String(tuner.id);
       const host = node('div', 'tuner-allocation-plot');
       row.append(label, host);
-      map.append(row);
+      mapBody.append(row);
       plots.push(() => tunerAllocationMapPlot(host, group, kind, tuner, state.highlight, site.id));
     };
     addPlot(node('span', 'muted', 'Frequency · MHz'), 'ruler');
@@ -34771,6 +34777,8 @@ function tunerAllocationSiteMap(site, snapshot, state, openTuner, tableBuilder =
         node('small', 'ui-label muted', `Center ${tunerAllocationFrequency(tuner.frequencyHz)}`));
       addPlot(label, 'tuner', tuner);
     });
+    mapBody.append(tunerAllocationMapLegend(snapshot.tuners.some((tuner) =>
+      (tuner.receiving || []).some((item) => tunerAllocationReceptionScope(item, site.id) === 'unscoped'))));
     body.append(map);
   });
   const unknown = snapshot.tuners.filter((tuner) => !(Number(tuner.frequencyHz) > 0));
@@ -34779,13 +34787,16 @@ function tunerAllocationSiteMap(site, snapshot, state, openTuner, tableBuilder =
     row.append(tunerButton(tuner), node('span', 'muted', 'No receiving window available'));
     body.append(row);
   });
-  if (groups.length) body.append(tunerAllocationMapLegend(snapshot.tuners.some((tuner) =>
-    (tuner.receiving || []).some((item) => tunerAllocationReceptionScope(item, site.id) === 'unscoped'))));
-  else body.append(node('p', 'ui-section-note', 'No current receiving windows or known frequencies.'));
+  if (!groups.length) body.append(node('p', 'ui-section-note', 'No current receiving windows or known frequencies.'));
   const outside = (site.frequencies || []).filter((item) => !item.covered);
   if (outside.length) {
-    const gaps = node('div', 'ui-notice ui-notice-warning tuner-allocation-frequency-list');
-    gaps.append(node('span', '', `${number(outside.length)} known ${outside.length === 1 ? 'frequency' : 'frequencies'} outside windows`));
+    const gaps = node('section', 'ui-notice ui-notice-warning ui-heading-group');
+    gaps.setAttribute('aria-label', 'Outside current windows');
+    const gapHeading = node('div', 'ui-heading-group');
+    gapHeading.append(node('h3', '', 'Outside current windows'),
+      node('small', '', `${number(outside.length)} known ${outside.length === 1 ? 'frequency' : 'frequencies'}`));
+    const gapFrequencies = node('div', 'tuner-allocation-frequency-list');
+    gaps.append(gapHeading, gapFrequencies);
     outside.forEach((item) => {
       const button = node('button', 'ui-button ui-button-secondary', tunerAllocationFrequency(item.frequencyHz));
       button.type = 'button';
@@ -34798,7 +34809,7 @@ function tunerAllocationSiteMap(site, snapshot, state, openTuner, tableBuilder =
         gaps.querySelectorAll('button').forEach((action) => action.setAttribute('aria-pressed', String(Number(action.dataset.highlight) === state.highlight)));
         plots.forEach((draw) => draw());
       });
-      gaps.append(button);
+      gapFrequencies.append(button);
     });
     body.append(gaps);
   }
@@ -35212,21 +35223,21 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
   const historyController = {};
   const historyActions = sectionActionHost();
   const historyColumns = [
-    { id: 'time', label: 'Time', render: (decision) => stackedDateTime(decision.lastTimestamp || decision.timestamp) || '—' },
+    { id: 'outcome', label: 'What happened', render: (decision) => {
+      const label = node('div', 'ui-heading-group ui-heading-group-quiet');
+      label.append(node('strong', '', tunerAllocationOutcome(decision.outcome)));
+      if (Number(decision.repeatCount) > 1) label.append(node('small', 'muted', `${number(decision.repeatCount)} requests`));
+      return label;
+    } },
     { id: 'site', label: 'Site / tuner', render: (decision) => {
       const label = node('div', 'ui-heading-group ui-heading-group-quiet');
       label.append(node('strong', '', decision.siteName || 'Unknown channel'));
       if (decision.tunerName) label.append(node('small', 'muted', decision.tunerName));
       return label;
     } },
-    { id: 'outcome', label: 'What happened', className: 'ui-record-title', render: (decision) => {
-      const label = node('div', 'ui-heading-group ui-heading-group-quiet');
-      label.append(node('strong', '', tunerAllocationOutcome(decision.outcome)));
-      if (Number(decision.repeatCount) > 1) label.append(node('small', 'muted', `${number(decision.repeatCount)} requests`));
-      return label;
-    } },
+    { id: 'time', label: 'Time', render: (decision) => stackedDateTime(decision.lastTimestamp || decision.timestamp) || '—' },
     { id: 'reason', label: 'Why', render: (decision) => decision.reason || '—' },
-    { id: 'action', label: '', fullLabel: 'View decision', essential: true, className: 'ui-record-action', render: (decision) => {
+    { id: 'action', label: 'Details', fullLabel: 'View decision', essential: true, render: (decision) => {
       const button = node('button', 'ui-button ui-button-secondary tuner-allocation-decision-details', 'Details');
       button.type = 'button';
       button.dataset.decisionId = String(decision.decisionId);
@@ -35246,9 +35257,8 @@ async function renderAdminTunerAllocation(renderContext = captureRenderContext()
     } }
   ];
   const history = table([], historyColumns, 'Loading tuner decisions…', {
-    type: 'tuner-allocation-decisions', layoutMenuHost: historyActions, controller: historyController, sortable: false, recordList: true,
-    tableClass: 'ui-record-list-compact tuner-allocation-history-list',
-    recordListOrder: ['outcome', 'action', 'site', 'time', 'reason'], rowKey: (decision) => decision.decisionId
+    type: 'tuner-allocation-decisions', layoutMenuHost: historyActions, controller: historyController, sortable: false, mobileCards: true,
+    tableClass: 'ui-data-table-quiet tuner-allocation-history-list', rowKey: (decision) => decision.decisionId
   });
   const historyPager = node('div', 'tuner-allocation-history-pagination');
   const historyPanel = section('Decision history', fragment(history, historyPager,

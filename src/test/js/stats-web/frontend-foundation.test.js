@@ -1597,7 +1597,7 @@ async function main() {
   assert.match(tunerAllocationRenderer, /tunerAllocationSiteMap\(site, latest, state, openTuner, table\)/);
   assert.match(functionBinding(appSource, 'tunerAllocationSiteMap'), /type: 'tuner-allocation-frequencies'/);
   assert.match(tunerAllocationRenderer, /type: 'tuner-allocation-decisions'/);
-  assert.match(tunerAllocationRenderer, /recordList: true/);
+  assert.match(tunerAllocationRenderer, /mobileCards: true/);
   assert.match(tunerAllocationRenderer, /sortable: false/);
   assert.match(tunerAllocationRenderer, /tunerAllocationHistoryPage\(decisions, historyPage\)/);
   // Audit direct calls and the production table factories used by isolated examples.
