@@ -44,6 +44,7 @@ async function installLiveStream(page) {
     let clientId = null;
     let sampleTimer = null;
     let activeParameters = null;
+    let periodicSamplesHeld = false;
     let retired = false;
     let receiverState = { centerHz: initialCenterHz, streamState: 'live', reason: null };
     const multiplex = (topic, kind, payload) => {
@@ -132,14 +133,15 @@ async function installLiveStream(page) {
     };
     window.spectrumDragStream = {
       emit, opened: 0, cancelled: 0, emitted: 0, initialEmitted: false,
+      holdPeriodicSamples(held) { periodicSamplesHeld = held === true; },
       subscribe(centerHz, parameters, subscriptionClientId) {
         if (retired || !controller || subscriptionClientId !== clientId) return;
         stopSamples();
         activeParameters = parameters || null;
         if (!activeParameters) return;
-        emit(centerHz);
+        if (!periodicSamplesHeld) emit(centerHz);
         // Real subscribed receivers keep sending after inventory/lease refresh clears a plot.
-        sampleTimer = window.setInterval(() => emit(), 50);
+        sampleTimer = window.setInterval(() => { if (!periodicSamplesHeld) emit(); }, 50);
       },
       updateReceiver(centerHz) { receiverState = { ...receiverState, centerHz }; },
       stop() { stopSamples(); activeParameters = null; }
@@ -443,10 +445,18 @@ test('Live and Setup retain manual settings and automatic minimum on the same ce
     await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), INITIAL_CENTER_HZ);
     await expect(range).toHaveText(`FFT and waterfall: ${manual}`);
   }
+  // Keep the subscription live while this assertion controls the exact next FFT boundary.
+  await page.evaluate(() => window.spectrumDragStream.holdPeriodicSamples(true));
+  const beforeAutomaticFrame = await page.evaluate(() => window.spectrumDragStream.emitted);
   await choice.locator('..').click();
   await expect(range).toHaveText(`FFT and waterfall: ${manual}`);
+  expect(await page.evaluate(() => window.spectrumDragStream.emitted)).toBe(beforeAutomaticFrame);
   await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), INITIAL_CENTER_HZ);
   await expect(range).toHaveText(automatic);
+  expect(await page.evaluate(() => window.spectrumDragStream.emitted)).toBe(beforeAutomaticFrame + 1);
+  await page.evaluate(() => window.spectrumDragStream.holdPeriodicSamples(false));
+  await expect.poll(() => page.evaluate(() => window.spectrumDragStream.emitted))
+    .toBeGreaterThan(beforeAutomaticFrame + 1);
 });
 
 test('compact strength frames retain numeric hover after changing the waterfall display range', async ({ page }) => {

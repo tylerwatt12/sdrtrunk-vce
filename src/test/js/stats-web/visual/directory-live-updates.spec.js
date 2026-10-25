@@ -96,9 +96,13 @@ test('Directory polling preserves cards, rows, reading geometry, and focused lin
   await page.evaluate(() => window.directoryObserver.disconnect());
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    expect(await directory.locator('.radio-directory-system-card').evaluateAll(elements => elements.every(element =>
-      element.scrollWidth <= element.clientWidth && element.scrollHeight <= element.clientHeight))).toBe(true);
+    // Viewport changes precede responsive media callbacks; read the resulting geometry together.
+    await expect.poll(() => directory.evaluate(element => ({
+      pageFits: document.documentElement.scrollWidth <= innerWidth,
+      cardsFit: [...element.querySelectorAll('.radio-directory-system-card')].every(card =>
+        card.scrollWidth <= card.clientWidth && card.scrollHeight <= card.clientHeight)
+    })), { message: 'The resized page and Directory cards stay within their exact bounds' })
+      .toEqual({ pageFits: true, cardsFit: true });
   }
   expect(unexpected).toEqual([]);
   expect(pageErrors).toEqual([]);

@@ -110,8 +110,10 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 844, height: 390 }
 test('short desktop menus scroll their final destination into reach', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 360 });
   await openAudioApp(page, completeMenu);
+  await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
   const group = page.locator('#primary-navigation [data-nav-group="listen"]');
   await group.locator(':scope > summary').focus();
+  await expect(group).toHaveAttribute('open');
   const last = group.getByRole('link', { name: 'P25 Visualizer', exact: true });
   await last.scrollIntoViewIfNeeded();
   const panel = group.locator('.nav-group-links');
