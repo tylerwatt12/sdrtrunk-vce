@@ -120,6 +120,8 @@ class SmokeWebRuntimeTest(unittest.TestCase):
 
 
 class SmokeRuntimeTest(unittest.TestCase):
+    PAIR_ID = "93ee9be5-065e-434d-9292-d70a08db23a9"
+
     def setUp(self):
         self.work = tempfile.TemporaryDirectory()
         self.addCleanup(self.work.cleanup)
@@ -130,7 +132,114 @@ class SmokeRuntimeTest(unittest.TestCase):
         with closing(sqlite3.connect(path)) as connection, connection:
             connection.execute("CREATE TABLE database_metadata(key TEXT PRIMARY KEY, value TEXT)")
             connection.execute("INSERT INTO database_metadata VALUES('database_format_version', ?)", (str(version),))
+            if version >= 63:
+                connection.executemany("INSERT INTO database_metadata VALUES(?,?)", [
+                    ("database_role", "configuration"), ("configuration_history_pair_id", self.PAIR_ID)])
+        if version >= 63:
+            with closing(sqlite3.connect(SMOKE.activity_database(path))) as connection, connection:
+                connection.execute("CREATE TABLE database_metadata(key TEXT PRIMARY KEY, value TEXT)")
+                connection.executemany("INSERT INTO database_metadata VALUES(?,?)", [
+                    ("database_format_version", str(version)), ("database_role", "activity"),
+                    ("configuration_history_pair_id", self.PAIR_ID)])
         return path
+
+    def test_pair_uses_canonical_or_private_stage_companion_names(self):
+        for name, companion in (("sdrtrunk.sqlite", "activity.sqlite"),
+                                (".sdrtrunk.sqlite.migration-stage", ".sdrtrunk.sqlite.migration-stage.activity.sqlite")):
+            self.assertEqual(self.root / companion, SMOKE.activity_database(self.root / name))
+        SMOKE.check_database(self.database(63), 63)
+
+    def test_owned_connections_are_query_only_and_cannot_create_a_missing_file(self):
+        database = self.database(63)
+        with closing(SMOKE.open_owned_database(database)) as connection:
+            self.assertEqual((1,), connection.execute("PRAGMA query_only").fetchone())
+            with self.assertRaisesRegex(sqlite3.OperationalError, "readonly"):
+                connection.execute("DELETE FROM database_metadata")
+        missing = self.root / "missing.sqlite"
+        with self.assertRaisesRegex(RuntimeError, "missing or is not an ordinary file"):
+            SMOKE.open_owned_database(missing)
+        self.assertFalse(missing.exists())
+
+    def test_missing_or_linked_companion_is_refused_without_creating_a_replacement(self):
+        database = self.database(63)
+        history = SMOKE.activity_database(database)
+        history.unlink()
+        with self.assertRaisesRegex(RuntimeError, "missing or is not an ordinary file"):
+            SMOKE.check_database(database, 63)
+        self.assertFalse(history.exists())
+        try:
+            history.symlink_to(self.root / "missing-target.sqlite")
+        except OSError:
+            return  # Windows runners may lack symbolic-link privileges; missing-file refusal is still exercised.
+        with self.assertRaisesRegex(RuntimeError, "missing or is not an ordinary file"):
+            SMOKE.check_database(database, 63)
+        self.assertTrue(history.is_symlink())
+        self.assertFalse(history.resolve().exists())
+
+    def test_swapped_roles_invalid_configuration_identity_and_mismatched_pair_are_refused(self):
+        database = self.database(63)
+        history = SMOKE.activity_database(database)
+        for config_role, config_pair, history_role, history_pair in (
+                ("activity", self.PAIR_ID, "configuration", self.PAIR_ID),
+                ("configuration", "invalid", "activity", "invalid"),
+                ("configuration", self.PAIR_ID, "configuration", self.PAIR_ID),
+                ("configuration", self.PAIR_ID, "activity", "06f6c9c9-7d6d-42c3-ad3c-19952839a55d")):
+            for path, role, pair in ((database, config_role, config_pair), (history, history_role, history_pair)):
+                with closing(sqlite3.connect(path)) as connection, connection:
+                    connection.execute("UPDATE database_metadata SET value=? WHERE key='database_role'", (role,))
+                    connection.execute("UPDATE database_metadata SET value=? WHERE key='configuration_history_pair_id'", (pair,))
+            with self.subTest(config_role=config_role, history_role=history_role, pair=history_pair), \
+                 self.assertRaisesRegex(RuntimeError, "identity is invalid|identities do not match"):
+                SMOKE.check_database(database, 63)
+
+    def test_missing_configuration_role_and_wrong_companion_format_are_refused(self):
+        database = self.database(63)
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("DELETE FROM database_metadata WHERE key='database_role'")
+        with self.assertRaisesRegex(RuntimeError, "configuration identity is invalid"):
+            SMOKE.check_database(database, 63)
+        with closing(sqlite3.connect(database)) as connection, connection:
+            connection.execute("INSERT INTO database_metadata VALUES('database_role','configuration')")
+        with closing(sqlite3.connect(SMOKE.activity_database(database))) as connection, connection:
+            connection.execute("UPDATE database_metadata SET value='62' WHERE key='database_format_version'")
+        with self.assertRaisesRegex(RuntimeError, "Expected database format 63"):
+            SMOKE.check_database(database, 63)
+
+    def test_corrupt_activity_and_invalid_activity_foreign_keys_fail_the_pair(self):
+        database = self.database(63)
+        history = SMOKE.activity_database(database)
+        with closing(sqlite3.connect(history)) as connection, connection:
+            connection.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY)")
+            connection.execute("CREATE TABLE child(parent_id INTEGER REFERENCES parent(id))")
+            connection.execute("INSERT INTO child VALUES(1)")
+        with self.assertRaisesRegex(RuntimeError, "foreign-key check"):
+            SMOKE.check_database(database, 63)
+        history.write_bytes(b"invalid SQLite history")
+        with self.assertRaises(sqlite3.DatabaseError):
+            SMOKE.check_database(database, 63)
+
+    def test_retained_history_counts_read_the_activity_file(self):
+        database = self.database(63)
+        with closing(sqlite3.connect(SMOKE.activity_database(database))) as connection, connection:
+            for index, table in enumerate(("receiver_channel", "receiver_activity_event", "radio_system", "alias_activity_summary"), 1):
+                connection.execute(f'CREATE TABLE "{table}"(id INTEGER)')
+                connection.executemany(f'INSERT INTO "{table}" VALUES(?)', [(value,) for value in range(index)])
+        self.assertEqual({"receiver_channel": 1, "receiver_activity_event": 2, "radio_system": 3,
+                          "alias_activity_summary": 4}, SMOKE.retained_history_counts(database))
+
+    def test_snapshot_and_exact_validation_delegate_to_the_bundled_helper(self):
+        database = self.root / "sdrtrunk.sqlite"
+        staged = self.root / ".sdrtrunk.sqlite.migration-stage"
+        options = ["-Djava.awt.headless=true"]
+        with mock.patch.object(SMOKE, "run") as run:
+            SMOKE.snapshot_database("java", options, "helper:bundled", database, staged,
+                                    cwd=self.root, env={}, log=self.root / "snapshot.log")
+            SMOKE.validate_pair("java", options, "helper:bundled", staged,
+                                cwd=self.root, env={}, log=self.root / "pair.log")
+        self.assertEqual(["java", *options, "-cp", "helper:bundled", "SmokeProfile", "--snapshot",
+                          str(database), str(staged)], run.call_args_list[0].args[0])
+        self.assertEqual(["java", *options, "-cp", "helper:bundled", "SmokeProfile", "--validate", str(staged)],
+                         run.call_args_list[1].args[0])
 
     def test_target_metadata_supports_later_catalog_versions_without_python_edits(self):
         metadata = self.root / "target-format.txt"

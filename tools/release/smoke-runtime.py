@@ -80,8 +80,27 @@ def read_target_format(metadata):
     return int(value)
 
 
-def check_database(database, expected_format, *, timeout=5):
-    with closing(sqlite3.connect(database, timeout=timeout)) as connection:
+def activity_database(database):
+    return database.with_name("activity.sqlite" if database.name == "sdrtrunk.sqlite" else
+                              database.name + ".activity.sqlite")
+
+
+def open_owned_database(database, *, timeout=5):
+    if database.is_symlink() or not database.is_file():
+        raise RuntimeError("Profile database is missing or is not an ordinary file")
+    # These files belong to the isolated smoke profile. Existing-only mode can open a closed WAL-header database
+    # on platforms where read-only SQLite cannot create its journals; query_only prevents application writes.
+    connection = sqlite3.connect(database.resolve().as_uri() + "?mode=rw", uri=True, timeout=timeout)
+    try:
+        connection.execute("PRAGMA query_only=ON")
+        return connection
+    except Exception:
+        connection.close()
+        raise
+
+
+def check_single_database(database, expected_format, *, timeout):
+    with closing(open_owned_database(database, timeout=timeout)) as connection:
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise RuntimeError("Profile failed SQLite integrity check")
         if connection.execute("PRAGMA foreign_key_check").fetchall():
@@ -90,6 +109,37 @@ def check_database(database, expected_format, *, timeout=5):
             "SELECT value FROM database_metadata WHERE key='database_format_version'").fetchone()
         if version != (str(expected_format),):
             raise RuntimeError(f"Expected database format {expected_format}, found {version!r}")
+        return dict(connection.execute("SELECT key,value FROM database_metadata WHERE key IN "
+            "('database_role','configuration_history_pair_id')"))
+
+
+def check_database(database, expected_format, *, timeout=5):
+    metadata = check_single_database(database, expected_format, timeout=timeout)
+    if expected_format >= 63:
+        pair = metadata.get("configuration_history_pair_id", "")
+        if metadata.get("database_role") != "configuration" or not re.fullmatch(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", pair):
+            raise RuntimeError("Profile configuration identity is invalid")
+        history = check_single_database(activity_database(database), expected_format, timeout=timeout)
+        if history.get("database_role") != "activity" or history.get("configuration_history_pair_id") != pair:
+            raise RuntimeError("Profile configuration/activity identities do not match")
+
+
+def snapshot_database(java, options, helper_classpath, database, staged, *, cwd, env, log):
+    run([str(java), *options, "-cp", helper_classpath, "SmokeProfile", "--snapshot", str(database), str(staged)],
+        cwd=cwd, env=env, log=log)
+
+
+def validate_pair(java, options, helper_classpath, database, *, cwd, env, log):
+    run([str(java), *options, "-cp", helper_classpath, "SmokeProfile", "--validate", str(database)],
+        cwd=cwd, env=env, log=log)
+
+
+def retained_history_counts(database, *, separated=True):
+    history = activity_database(database) if separated else database
+    with closing(open_owned_database(history)) as connection:
+        return {table: connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
+                for table in ("receiver_channel", "receiver_activity_event", "radio_system", "alias_activity_summary")}
 
 
 def check_database_after_stop(database, expected_format):
@@ -113,7 +163,7 @@ def check_database_after_stop(database, expected_format):
 
 
 def retained_counts(database):
-    with closing(sqlite3.connect(database)) as connection:
+    with closing(open_owned_database(database)) as connection:
         return {table: connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
                 for table in ("configuration_channel", "configuration_broadcast_stream", "alias", "web_user")}
 
@@ -248,13 +298,18 @@ def main():
     database = profile / "database" / "sdrtrunk.sqlite"
     target_format = read_target_format(target_metadata)
     check_database(database, target_format)
+    expected_history = retained_history_counts(database) if target_format >= 63 else None
     staged = database.with_name(".sdrtrunk.sqlite.migration-" + str(uuid.uuid4()))
-    with closing(sqlite3.connect(database)) as source, closing(sqlite3.connect(staged)) as destination:
-        source.backup(destination)
+    snapshot_database(java, options, str(classes) + os.pathsep + classpath, database, staged,
+                      cwd=installation, env=env, log=evidence / "current-snapshot.log")
     run([str(java), *options, "-cp", classpath,
          "io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", str(staged)],
         cwd=installation, env=env, log=evidence / "migrator.log")
     check_database(staged, target_format)
+    validate_pair(java, options, str(classes) + os.pathsep + classpath, staged,
+                  cwd=installation, env=env, log=evidence / "current-pair.log")
+    if expected_history is not None and retained_history_counts(staged) != expected_history:
+        raise RuntimeError("Packaged current-format migration changed retained history counts")
     # This schema comes from the actual previously published format-20 runtime, with synthetic data only.
     legacy = work / "published-format20.sqlite"
     resource = (Path(__file__).resolve().parents[2] / "src/test/resources/io/github/dsheirer/database/upgrade"
@@ -263,14 +318,19 @@ def main():
     check_database(legacy, 20)
     legacy_bytes = legacy.read_bytes()
     expected_counts = retained_counts(legacy)
+    expected_legacy_history = retained_history_counts(legacy, separated=False)
     migrated = database.with_name(".sdrtrunk.sqlite.migration-" + str(uuid.uuid4()))
     shutil.copyfile(legacy, migrated)
     run([str(java), *options, "-cp", classpath,
          "io.github.dsheirer.database.upgrade.ApplicationDatabaseMigrator", str(migrated)],
         cwd=installation, env=env, log=evidence / f"format20-to{target_format}.log")
     check_database(migrated, target_format)
+    validate_pair(java, options, str(classes) + os.pathsep + classpath, migrated,
+                  cwd=installation, env=env, log=evidence / "migrated-pair.log")
     if retained_counts(migrated) != expected_counts or legacy.read_bytes() != legacy_bytes:
         raise RuntimeError("Packaged format-20 upgrade changed retained counts or the selected source")
+    if retained_history_counts(migrated) != expected_legacy_history:
+        raise RuntimeError("Packaged format-20 upgrade changed the fixture's preserved history counts")
     launcher = installation / ({"nt": "Start VCE.bat"}.get(os.name) or
                                ("Start VCE.command" if os.sys.platform == "darwin" else "Start VCE.sh"))
     env["JAVA_OPTS"] = " ".join(f'"{option}"' for option in options)
@@ -285,6 +345,8 @@ def main():
         finally:
             stop(process)
     check_database_after_stop(database, target_format)
+    validate_pair(java, options, str(classes) + os.pathsep + classpath, database,
+                  cwd=installation, env=env, log=evidence / "stopped-pair.log")
     with archive.open("rb") as source:
         digest = hashlib.file_digest(source, "sha256").hexdigest()
     print(f"PASS: {archive.name}: bundled Java and USB discovery, fresh format {target_format} profile, format 20-to-{target_format} migration, native launcher and web assets")
