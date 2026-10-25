@@ -719,7 +719,10 @@ public final class WebDiagnosticLogService implements AutoCloseable
             {
                 BasicFileAttributes currentAttributes = Files.readAttributes(current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
                 if(!currentAttributes.isRegularFile()) throw new IOException("Unsafe log file");
-                if(mOutput != null && !Objects.equals(mOutputFileKey, currentAttributes.fileKey())) closeOutput();
+                //Windows provides no file key. Reopen an unverifiable writer during maintenance so a moved or
+                //replaced current file cannot leave subsequent records attached to the retired file.
+                if(mOutput != null && (mOutputFileKey == null || currentAttributes.fileKey() == null ||
+                    !Objects.equals(mOutputFileKey, currentAttributes.fileKey()))) closeOutput();
                 LocalDate fileDay = mOutputDay != null ? mOutputDay : Files.getLastModifiedTime(current,
                     LinkOption.NOFOLLOW_LINKS).toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
                 if(!day.equals(fileDay) || incomingBytes > 0 && Files.size(current) + incomingBytes > mRotationBytes)

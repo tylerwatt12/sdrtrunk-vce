@@ -1,0 +1,4 @@
+# Preserve exact schema-fixture bytes and source contracts across operating systems.
+*.java text eol=lf
+*.js text eol=lf
+/src/test/resources/database/*.sql text eol=lf

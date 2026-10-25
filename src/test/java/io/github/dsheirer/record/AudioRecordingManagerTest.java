@@ -288,14 +288,21 @@ class AudioRecordingManagerTest
         }
         finally
         {
-            manager.stop(); scheduler.shutdownNow();
-            io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.getInstance().close();
-            preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
-            preferences.getMP3Preference().setAudioSampleRate(originalRate);
-            setPortableDataRoot(originalDataRoot);
-            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
-            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
-            preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            try
+            {
+                manager.stop(); scheduler.shutdownNow();
+                preferences.getRecordPreference().setAudioRecordFormat(originalFormat);
+                preferences.getMP3Preference().setAudioSampleRate(originalRate);
+                setPortableDataRoot(originalDataRoot);
+                if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
+                else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+                preferences.getDirectoryPreference().setDirectoryRecording(originalDirectory);
+            }
+            finally
+            {
+                //Preference notifications can reload the library; release its Windows file handle last.
+                io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader.getInstance().close();
+            }
         }
     }
 

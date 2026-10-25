@@ -287,9 +287,9 @@ public final class ApplicationDatabaseMigrator
         {
             throw new IOException("The owned profile stage must be an ordinary database file.");
         }
-        requireSingleFilesystemLinkWhenSupported(database);
         requireApplicationStage(database);
         requireOwnedCompleteProfileStage(database, relocation);
+        requireSingleFilesystemLinkWhenSupported(database);
         output.println("Checking the owned complete-profile copy's schema and configuration.");
         output.println("Whole-file physical-integrity, derived-history, and foreign-key sweeps are not run " +
             "for this owned copy; use explicit maintenance for those checks.");
@@ -337,6 +337,11 @@ public final class ApplicationDatabaseMigrator
             !database.toRealPath().getParent().equals(physicalTarget.resolve("database")))
         {
             throw new IOException("The owned profile stage must be inside the target data root's database directory.");
+        }
+        Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(source);
+        if(Files.exists(sourceDatabase, LinkOption.NOFOLLOW_LINKS) && Files.isSameFile(database, sourceDatabase))
+        {
+            throw new IOException("The owned profile stage must be a separate file from the source database.");
         }
     }
 
