@@ -8157,7 +8157,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : visualizerTour ? [
       import('./features/network-visualizer/index.js?v=58'), import('./guides/network-visualizer-presentation.js?v=1')
     ] : topics ? [
-      import('./features/alerts.js?v=22'), import('./guides/topics-presentation.js?v=1')
+      import('./features/alerts.js?v=23'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
       Promise.resolve(null), import('./guides/scanner-presentation.js?v=2')
     ] : main ? [
@@ -31723,7 +31723,7 @@ function alertsWorkspaceDependencies(renderContext, view, overrides = {}) {
 }
 
 async function alertsWorkspace(renderContext, view, overrides = {}) {
-  const { createAlertsWorkspace } = await import('./features/alerts.js?v=22');
+  const { createAlertsWorkspace } = await import('./features/alerts.js?v=23');
   if (!renderIsCurrent(renderContext)) return;
   return createAlertsWorkspace(alertsWorkspaceDependencies(renderContext, view, overrides));
 }

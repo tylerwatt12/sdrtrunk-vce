@@ -1305,6 +1305,69 @@ test('topic management keeps selection, public navigation, built-in protection, 
   expect(fixture.pageErrors).toEqual([]);
 });
 
+for (const [kind, theme, width] of [['topic', 'light', 1280], ['rule', 'dark', 320]]) {
+  test(`pending ${kind} deletion stays scoped, retries and ignores navigation in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { state, fixture } = await installAlerts(page, { theme });
+    state.rules.push({ id: 'dispatch', name: 'Dispatch activity', topic_id: 'fire', enabled: true, trigger: 'call',
+      conditions: { op: 'all', items: [] }, timing: { mode: 'immediate' }, schedule: { mode: 'always' },
+      cooldown_minutes: 15, repeat_key: 'rule', click_action: 'details', title_template: 'Dispatch is active', body_template: '{radio} transmitted.' });
+    const target = `/api/v1/admin/alerts/${kind === 'topic' ? 'topics/fire' : 'rules/dispatch'}`;
+    const pending = [];
+    let requests = 0;
+    await page.route('**' + target, route => {
+      requests++;
+      return new Promise(resolve => pending.push(async failed => {
+        if (!failed) {
+          if (kind === 'topic') state.topics = state.topics.filter(topic => topic.id !== 'fire');
+          else state.rules = [];
+          state.revision++;
+        }
+        await route.fulfill(failed ? { status: 503, json: { error: { message: 'Deletion could not be saved. Try again.' } } } :
+          { json: { data: state } }).catch(() => {});
+        resolve();
+      }));
+    });
+    await page.goto('/app.html?view=alerts');
+    const remove = () => page.getByRole('button', { name: kind === 'topic' ?
+      'Delete topic: Fire activity' : 'Delete rule: Dispatch activity', exact: true });
+    const accept = async () => {
+      await remove().click();
+      await page.getByRole('alertdialog').getByRole('button', { name: kind === 'topic' ? 'Delete topic' : 'Delete rule', exact: true }).click();
+    };
+    await accept();
+    await expect.poll(() => pending.length).toBe(1);
+    await expect(page.locator('.alerts-content')).toHaveAttribute('aria-busy', 'true');
+    await expect(page.locator('.alerts-workspace .ui-feedback-loading')).toHaveText(
+      kind === 'topic' ? 'Deleting topic…' : 'Deleting alert rule…');
+    await expect(remove()).toBeDisabled();
+    await expect(remove()).toHaveClass(/is-loading/);
+    await expect(remove()).toHaveAttribute('aria-busy', 'true');
+    await auditScreenshot(page, `pending-${kind}-delete-${theme}`, false);
+    await remove().dispatchEvent('click');
+    expect(requests).toBe(1);
+    await selectManagedTopic(page, 'Weather operations');
+    await expect(page.locator('.alerts-management-main').getByRole('heading', { name: 'Weather operations', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Delete topic: Weather operations', exact: true })).toBeDisabled();
+    await pending.shift()(true);
+    await expect(page.locator('.alerts-workspace').getByRole('alert')).toContainText('Deletion could not be saved. Try again.');
+    await expect(page.getByRole('button', { name: 'Delete topic: Weather operations', exact: true })).toBeEnabled();
+    await selectManagedTopic(page, 'Fire activity');
+    await accept();
+    await expect.poll(() => pending.length).toBe(1);
+    const navigation = page.getByRole('button', { name: 'Open navigation', exact: true });
+    if (await navigation.isVisible()) await navigation.click();
+    await page.locator('#primary-navigation [data-nav-group="listen"] > summary').click();
+    await page.locator('#primary-navigation a[data-view="live"]').click();
+    await pending.shift()(false);
+    await expect(page.locator('.alerts-workspace')).toHaveCount(0);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(new URL(page.url()).searchParams.get('view')).toBe('live');
+    expect(requests).toBe(2);
+    expect(fixture.pageErrors).toEqual([]);
+  });
+}
+
 test('rule catalog keeps linked rule names, topic context, and confirmed deletion', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
   state.rules.push({ id: 'dispatch', name: 'Dispatch activity', topic_id: 'fire', enabled: true, trigger: 'call',

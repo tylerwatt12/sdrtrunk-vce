@@ -1,3 +1,4 @@
+import { createActionWorkflow } from '../core/action-workflows.js?v=1';
 import { ALERT_TRIGGERS, ALERT_PROTOCOL_FAMILIES, ALERT_FIELDS, ALERT_OPERATORS, ALERT_TEMPLATE_FIELDS, cloneAlert,
   newAlertRule, newAlertCondition, alertRuleDescription,
   alertSourceChoices, alertActivityChoices, alertToneChoices, alertActionLabel, alertPopupAction,
@@ -42,6 +43,9 @@ export function createAlertsWorkspace(deps) {
   let cleanupPublicHistory = null;
   let directConnection = { state: 'none' };
   let ruleTestBusy = false;
+  let deletionConfirming = false;
+  const deletionWorkflow = createActionWorkflow({ surface: body, feedback,
+    controls: () => body.querySelectorAll('[data-alert-delete]') });
   let activeTopic = selectedTopic;
   let topicQuery = '';
   let ruleQuery = '';
@@ -130,7 +134,8 @@ export function createAlertsWorkspace(deps) {
   }
   function catalogDelete(label, action) {
     const control = iconButton('icon-trash', label, 'ui-button ui-button-secondary ui-icon-button ui-button-danger-quiet');
-    control.addEventListener('click', action);
+    control.setAttribute('data-alert-delete', '');
+    control.addEventListener('click', () => action(control));
     return control;
   }
   function catalogRuleActions(rule) {
@@ -141,7 +146,7 @@ export function createAlertsWorkspace(deps) {
     const actions = node('div', 'alerts-catalog-action-row');
     const edit = iconButton('icon-edit', 'Edit alert rule: ' + rule.name);
     edit.addEventListener('click', () => void editRule(rule));
-    actions.append(edit, test, catalogDelete('Delete rule: ' + rule.name, () => void deleteRule(rule)));
+    actions.append(edit, test, catalogDelete('Delete rule: ' + rule.name, control => void deleteRule(rule, control)));
     return actions;
   }
   function catalogPublicTopic(topic) {
@@ -154,6 +159,7 @@ export function createAlertsWorkspace(deps) {
     return control;
   }
   function replaceSnapshot(value, preferredTopic = activeTopic) {
+    if (disposed) return;
     snapshot = { ...value, enabled: value.enabled ?? snapshot?.enabled };
     notifyPushState(snapshot);
     if (activeTopic !== preferredTopic) onTopicSelected?.(preferredTopic);
@@ -326,7 +332,7 @@ export function createAlertsWorkspace(deps) {
     if (topic) {
       const edit = button('Edit topic', () => void editTopic(topic)); edit.id = 'alerts-topic-edit'; edit.prepend(iconGlyph('icon-edit'));
       footer.append(edit);
-      if (!topic.built_in) footer.append(catalogDelete('Delete topic: ' + topic.name, () => void deleteTopic(topic)));
+      if (!topic.built_in) footer.append(catalogDelete('Delete topic: ' + topic.name, control => void deleteTopic(topic, control)));
     } else footer.hidden = true;
     rail.append(railHeader, search, items, mobile, footer);
     const main = node('div', 'alerts-management-main');
@@ -400,6 +406,7 @@ export function createAlertsWorkspace(deps) {
         next: { enabled: ruleOffset + visible.length < rows.length,
           onClick: () => { ruleOffset += PAGE_SIZE; renderRules(); } }
       }));
+      deletionWorkflow.refreshControls();
     };
     ruleSearch.addEventListener('input', () => { ruleQuery = ruleSearch.value; ruleOffset = 0; renderRules(); });
     rulesPanel.append(contents, count); main.append(rulesPanel);
@@ -407,18 +414,32 @@ export function createAlertsWorkspace(deps) {
     renderRules();
   }
 
-  async function deleteTopic(topic) {
-    if (!await confirmAction(`Delete “${topic.name}” and its alert rules? Existing subscriptions to this topic will stop.`,
-      { title: 'Delete topic', confirmLabel: 'Delete topic', tone: 'danger' })) return;
-    try { replaceSnapshot(await write(ADMIN + '/topics/' + encodeURIComponent(topic.id), 'DELETE', { revision: snapshot.revision })); }
-    catch (error) { showError(error); }
+  async function deleteCatalogItem(kind, item, control) {
+    if (disposed || deletionConfirming || deletionWorkflow.isBusy()) return;
+    deletionConfirming = true;
+    try {
+      const topic = kind === 'topic';
+      if (!await confirmAction(topic ?
+        `Delete “${item.name}” and its alert rules? Existing subscriptions to this topic will stop.` :
+        `Delete “${item.name}”? This rule will stop publishing alerts.`,
+      { title: topic ? 'Delete topic' : 'Delete alert rule',
+        confirmLabel: topic ? 'Delete topic' : 'Delete rule', tone: 'danger' }) || disposed) return;
+      control.classList.add('is-loading');
+      control.setAttribute('aria-busy', 'true');
+      await deletionWorkflow.run(() => write(ADMIN + (topic ? '/topics/' : '/rules/') +
+        encodeURIComponent(item.id), 'DELETE', { revision: snapshot.revision }), {
+        pending: topic ? 'Deleting topic…' : 'Deleting alert rule…',
+        onSuccess: value => { if (!disposed) replaceSnapshot(value); }
+      });
+    } catch { /* The shared action workflow retains the failure and recovery guidance. */ }
+    finally {
+      deletionConfirming = false;
+      control.classList.remove('is-loading');
+      control.removeAttribute('aria-busy');
+    }
   }
-  async function deleteRule(rule) {
-    if (!await confirmAction(`Delete “${rule.name}”? This rule will stop publishing alerts.`,
-      { title: 'Delete alert rule', confirmLabel: 'Delete rule', tone: 'danger' })) return;
-    try { replaceSnapshot(await write(ADMIN + '/rules/' + encodeURIComponent(rule.id), 'DELETE', { revision: snapshot.revision })); }
-    catch (error) { showError(error); }
-  }
+  const deleteTopic = (topic, control) => deleteCatalogItem('topic', topic, control);
+  const deleteRule = (rule, control) => deleteCatalogItem('rule', rule, control);
 
   async function testRule(rule, control) {
     if (ruleTestBusy || disposed) return;
