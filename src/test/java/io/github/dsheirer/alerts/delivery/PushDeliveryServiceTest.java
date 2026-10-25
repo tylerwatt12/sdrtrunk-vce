@@ -18,6 +18,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
@@ -230,6 +235,154 @@ class PushDeliveryServiceTest
         }
     }
 
+    @Test void slowEnrollmentDoesNotBlockLocalChangesAndCannotOutliveDeregistration() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("slow-enroll.sqlite"));
+            ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor())
+        {
+            String key = f.push.publicKey(); f.hold("POST", "/enrollments");
+            var enrollment = requests.submit(() -> f.push.enroll(List.of("fire"), JSON.createObjectNode()));
+            assertTrue(f.entered.await(2, TimeUnit.SECONDS));
+            try
+            {
+                requests.submit(() -> {
+                    f.push.updateDevice(f.tokenB, List.of());
+                    assertEquals(key, f.push.publicKey());
+                    assertEquals(2, f.service.devices().size());
+                    return null;
+                }).get(1, TimeUnit.SECONDS);
+                requests.submit(() -> { f.push.deregister(); return null; }).get(2, TimeUnit.SECONDS);
+            }
+            finally { f.release.countDown(); }
+            assertInstanceOf(IllegalStateException.class,
+                assertThrows(ExecutionException.class, () -> enrollment.get(2, TimeUnit.SECONDS)).getCause());
+            assertTrue(f.service.pendingEnrollments(100).isEmpty());
+            assertTrue(f.service.devices().isEmpty());
+            assertEquals("deregistered", f.push.registration().get("status"));
+        }
+    }
+
+    @Test void slowDisconnectCannotRevokeAReconnectedDeviceOrBlockOtherDeviceSettings() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("slow-disconnect.sqlite"));
+            ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor())
+        {
+            String key = f.push.publicKey(); f.hold("DELETE", "/devices/" + REMOTE_A);
+            var disconnect = requests.submit(() -> { f.push.disconnect(f.tokenA); return null; });
+            assertTrue(f.entered.await(2, TimeUnit.SECONDS));
+            String replacementToken = PublicAccessVerifier.token();
+            try
+            {
+                requests.submit(() -> {
+                    f.push.updateDevice(f.tokenB, List.of());
+                    assertEquals(key, f.push.publicKey());
+                    var old = f.push.managedDevice(f.tokenA);
+                    f.service.saveDevice(new AlertDevice(old.id(), old.name(), old.method(), old.remoteDeviceId(),
+                        old.endpoint(), old.p256dh(), old.auth(), PushDeliveryService.hashToken(replacementToken), old.topicIds(), false));
+                    return null;
+                }).get(1, TimeUnit.SECONDS);
+            }
+            finally { f.release.countDown(); }
+            disconnect.get(2, TimeUnit.SECONDS);
+            assertEquals("phone-a", f.push.managedDevice(replacementToken).id());
+            assertThrows(SecurityException.class, () -> f.push.managedDevice(f.tokenA));
+            assertEquals(List.of(), f.push.managedDevice(f.tokenB).topicIds());
+        }
+    }
+
+    @Test void successfulDeviceDisconnectSurvivesAConcurrentFailedSenderDisconnect() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("disconnect-after-sender-failure.sqlite"));
+            ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor())
+        {
+            f.hold("DELETE", "/devices/" + REMOTE_A);
+            var disconnect = requests.submit(() -> { f.push.disconnect(f.tokenA); return null; });
+            assertTrue(f.entered.await(2, TimeUnit.SECONDS));
+            try
+            {
+                f.registrationStatusCode.set(503);
+                assertThrows(RadioResolvePushClient.GatewayException.class, f.push::deregister);
+                assertEquals("approved", f.push.registration().get("status"));
+                assertEquals("phone-a", f.push.managedDevice(f.tokenA).id());
+            }
+            finally { f.release.countDown(); }
+            disconnect.get(2, TimeUnit.SECONDS);
+            assertThrows(SecurityException.class, () -> f.push.managedDevice(f.tokenA));
+            assertEquals("phone-b", f.push.managedDevice(f.tokenB).id());
+            assertEquals("approved", f.push.registration().get("status"));
+        }
+    }
+
+    @Test void slowDeregistrationLeavesReadsAndLocalDeviceSettingsAvailable() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("slow-deregister.sqlite"));
+            ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor())
+        {
+            String key = f.push.publicKey(); f.hold("DELETE", "/senders/me");
+            var disconnect = requests.submit(() -> { f.push.deregister(); return null; });
+            assertTrue(f.entered.await(2, TimeUnit.SECONDS));
+            try
+            {
+                requests.submit(() -> {
+                    assertEquals(key, f.push.publicKey());
+                    assertEquals("approved", f.push.registration().get("status"));
+                    f.push.updateDevice(f.tokenB, List.of());
+                    assertFalse(f.push.ready());
+                    assertThrows(IllegalStateException.class, f.push::register);
+                    return null;
+                }).get(1, TimeUnit.SECONDS);
+            }
+            finally { f.release.countDown(); }
+            disconnect.get(2, TimeUnit.SECONDS);
+            assertEquals("deregistered", f.push.registration().get("status"));
+            assertTrue(f.service.devices().isEmpty());
+        }
+    }
+
+    @Test void lateStatusResponseCannotRestoreDisconnectedCredentialsAndFailureReleasesAdmission() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("late-status.sqlite"));
+            ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor())
+        {
+            f.hold("GET", "/senders/me");
+            var status = requests.submit(f.push::refreshRegistration);
+            assertTrue(f.entered.await(2, TimeUnit.SECONDS));
+            try { requests.submit(() -> { f.push.deregister(); return null; }).get(2, TimeUnit.SECONDS); }
+            finally { f.release.countDown(); }
+            status.get(2, TimeUnit.SECONDS);
+            assertEquals("deregistered", f.push.registration().get("status"));
+            f.push.register();
+            f.registrationStatusCode.set(503);
+            assertThrows(RadioResolvePushClient.GatewayException.class, f.push::deregister);
+            assertTrue(f.push.ready());
+            f.registrationStatusCode.set(200);
+            f.push.deregister();
+            assertEquals("deregistered", f.push.registration().get("status"));
+        }
+    }
+
+    @Test void lateUpdatePollCannotRestorePairingOrAdvanceDisconnectedCredentials() throws Exception
+    {
+        try(Fixture f = new Fixture(directory.resolve("late-updates.sqlite"));
+            ExecutorService requests = Executors.newVirtualThreadPerTaskExecutor())
+        {
+            String token = PublicAccessVerifier.token(); long now = System.currentTimeMillis();
+            f.service.saveEnrollment(new AlertEnrollment("pending-phone", "c".repeat(32), PushDeliveryService.hashToken(token),
+                List.of("fire"), now, now + 900_000, "pending", "", "", ""));
+            f.updates = JSON.valueToTree(Map.of("cursor", "9", "updates", List.of(Map.of(
+                "type", "enrollment_completed", "enrollment_id", "c".repeat(32), "device_id", REMOTE_A))));
+            f.hold("GET", "/updates");
+            var poll = requests.submit(() -> { f.push.relayTick(); return null; });
+            assertTrue(f.entered.await(2, TimeUnit.SECONDS));
+            try { requests.submit(() -> { f.push.deregister(); return null; }).get(2, TimeUnit.SECONDS); }
+            finally { f.release.countDown(); }
+            poll.get(2, TimeUnit.SECONDS);
+            assertTrue(f.service.devices().isEmpty());
+            assertEquals("cancelled", f.service.enrollment("pending-phone").orElseThrow().status());
+            assertEquals("0", new PushCredentialStore(directory.resolve("late-updates.sqlite")).get().updateCursor());
+        }
+    }
+
     @Test void registrationSavesTheRequestedNameWithoutUnnecessaryRevisionChanges() throws Exception
     {
         try(Fixture f = new Fixture(directory.resolve("register-name.sqlite")))
@@ -281,9 +434,13 @@ class PushDeliveryServiceTest
     private static final class Fixture implements AutoCloseable
     {
         final TopicAlertService service; final PushDeliveryService push; final HttpServer server;
-        final List<JsonNode> requests = new ArrayList<>(); final AtomicInteger alertStatus = new AtomicInteger(202), httpCalls = new AtomicInteger();
+        final List<JsonNode> requests = new java.util.concurrent.CopyOnWriteArrayList<>(); final AtomicInteger alertStatus = new AtomicInteger(202), httpCalls = new AtomicInteger();
         final AtomicInteger registrationStatusCode = new AtomicInteger(200), updatesStatusCode = new AtomicInteger(200);
         final String tokenA = PublicAccessVerifier.token(), tokenB = PublicAccessVerifier.token();
+        final ExecutorService serverExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        final CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        volatile String heldMethod = "", heldPath = "";
+        void hold(String method, String path) { heldPath = path; heldMethod = method; }
         JsonNode registrationRequest;
         JsonNode updates = JSON.valueToTree(Map.of("cursor", "0", "updates", List.of()));
         Fixture(Path database) throws Exception
@@ -299,8 +456,15 @@ class PushDeliveryServiceTest
             service.saveDevice(new AlertDevice("phone-b", "Phone B", "proxy", REMOTE_B, "", "", "", PushDeliveryService.hashToken(tokenB), List.of("fire"), false));
             var credentials = new PushCredentialStore(database); credentials.prepareRegistration(); credentials.registration("sender-fixture", "approved");
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.setExecutor(serverExecutor);
             server.createContext("/", exchange -> {
                 httpCalls.incrementAndGet(); Object response; int status = 200;
+                if(heldMethod.equals(exchange.getRequestMethod()) && heldPath.equals(exchange.getRequestURI().getPath()))
+                {
+                    entered.countDown();
+                    try { if(!release.await(5, TimeUnit.SECONDS)) throw new java.io.IOException("Fixture response was not released"); }
+                    catch(InterruptedException exception) { Thread.currentThread().interrupt(); throw new java.io.IOException(exception); }
+                }
                 if(exchange.getRequestURI().getPath().equals("/alerts"))
                 {
                     requests.add(JSON.readTree(exchange.getRequestBody())); status = alertStatus.get();
@@ -329,6 +493,6 @@ class PushDeliveryServiceTest
             while(service.pendingDeliveries(10).isEmpty() && System.nanoTime() < until) Thread.sleep(10);
             assertEquals(2, service.pendingDeliveries(10).size()); return service.pendingDeliveries(10).getFirst();
         }
-        public void close() { push.close(); service.close(); server.stop(0); }
+        public void close() { release.countDown(); push.close(); service.close(); server.stop(0); serverExecutor.close(); }
     }
 }

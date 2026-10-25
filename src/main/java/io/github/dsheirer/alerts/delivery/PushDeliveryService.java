@@ -42,6 +42,9 @@ public final class PushDeliveryService implements AutoCloseable
         Thread thread = new Thread(task, "RadioResolve push status"); thread.setDaemon(true); return thread;
     });
     private volatile boolean mClosed;
+    private volatile boolean mDeregistering;
+    /** Invalidates remote responses begun before a disconnect, even when that request later fails. */
+    private long mRelayGeneration;
 
     public PushDeliveryService(Path database, TopicAlertService alerts) throws Exception
     {
@@ -73,9 +76,10 @@ public final class PushDeliveryService implements AutoCloseable
     {
         PushCredentialStore.Credentials credentials;
         String requestedLabel;
+        long generation;
         synchronized(this)
         {
-            if(mClosed) throw new IllegalStateException("Notifications are unavailable");
+            requireRelayAvailable();
             var current = mAlerts.configuration();
             var push = current.push();
             var requested = new PushSettings(push.enabled(), push.mode(), push.siteUrl(), senderLabel != null ? senderLabel : push.senderLabel());
@@ -83,13 +87,13 @@ public final class PushDeliveryService implements AutoCloseable
                 mAlerts.updateConfiguration(new io.github.dsheirer.alerts.TopicAlertConfiguration(current.revision(), requested, current.topics(), current.rules(), current.builtinActionButtonEnabled()), current.revision());
             requestedLabel = requested.senderLabel();
             credentials = mCredentials.prepareRegistration();
+            generation = mRelayGeneration;
         }
         JsonNode result = mGateway.register(credentials.installationId(), requestedLabel,
             credentials.apiKey());
         synchronized(this)
         {
-            if(!mClosed && credentials.apiKey().equals(mCredentials.get().apiKey()) &&
-                !"deregistered".equals(mCredentials.get().registrationStatus()))
+            if(currentRelay(credentials, generation))
                 mCredentials.registration(result.path("sender_id").asText(), result.path("status").asText("pending"));
         }
         return registration();
@@ -97,32 +101,74 @@ public final class PushDeliveryService implements AutoCloseable
 
     public Map<String,Object> refreshRegistration() throws Exception
     {
-        var credentials = mCredentials.get();
-        if(credentials.apiKey().isEmpty() || "deregistered".equals(credentials.registrationStatus())) return registration();
+        PushCredentialStore.Credentials credentials;
+        long generation;
+        synchronized(this)
+        {
+            credentials = mCredentials.get();
+            generation = mRelayGeneration;
+            if(mClosed || mDeregistering || credentials.apiKey().isEmpty() ||
+                "deregistered".equals(credentials.registrationStatus())) return registration();
+        }
         JsonNode result = mGateway.status(credentials.apiKey());
         synchronized(this)
         {
-            if(!mClosed && credentials.apiKey().equals(mCredentials.get().apiKey()) &&
-                !"deregistered".equals(mCredentials.get().registrationStatus()))
+            if(currentRelay(credentials, generation))
                 mCredentials.registration(result.path("sender_id").asText(), result.path("status").asText("pending"));
         }
         return registration();
     }
 
-    public synchronized void deregister() throws Exception
+    public void deregister() throws Exception
     {
-        var credentials = mCredentials.get();
-        if(!credentials.apiKey().isEmpty()) mGateway.deregister(credentials.apiKey());
-        mCredentials.registration(credentials.senderId(), "deregistered");
-        for(AlertDevice device: mAlerts.devices()) if("proxy".equals(device.method())) mAlerts.unsubscribe(device.id());
-        List<AlertEnrollment> pending;
-        while(!(pending = mAlerts.pendingEnrollments(100)).isEmpty())
-            for(AlertEnrollment enrollment: pending) mAlerts.saveEnrollment(copyEnrollment(enrollment, "cancelled", ""));
+        PushCredentialStore.Credentials credentials;
+        long generation;
+        synchronized(this)
+        {
+            requireRelayAvailable();
+            mDeregistering = true;
+            generation = ++mRelayGeneration;
+            credentials = mCredentials.get();
+        }
+        try
+        {
+            if(!credentials.apiKey().isEmpty()) mGateway.deregister(credentials.apiKey());
+            synchronized(this)
+            {
+                if(mClosed || generation != mRelayGeneration ||
+                    !credentials.apiKey().equals(mCredentials.get().apiKey())) return;
+                mCredentials.registration(credentials.senderId(), "deregistered");
+                for(AlertDevice device: mAlerts.devices())
+                    if("proxy".equals(device.method())) mAlerts.unsubscribe(device.id());
+                List<AlertEnrollment> pending;
+                while(!(pending = mAlerts.pendingEnrollments(100)).isEmpty())
+                    for(AlertEnrollment enrollment: pending)
+                        mAlerts.saveEnrollment(copyEnrollment(enrollment, "cancelled", ""));
+            }
+        }
+        finally
+        {
+            synchronized(this) { mDeregistering = false; }
+        }
+    }
+
+    private void requireRelayAvailable()
+    {
+        if(mClosed) throw new IllegalStateException("Notifications are unavailable");
+        if(mDeregistering) throw new IllegalStateException("The cloud connection is being disconnected. Try again shortly.");
+    }
+
+    /** Called under the state monitor before a remote response may change current credentials. */
+    private boolean currentRelay(PushCredentialStore.Credentials credentials, long generation)
+    {
+        return !mClosed && !mDeregistering && generation == mRelayGeneration &&
+            credentials.apiKey().equals(mCredentials.get().apiKey()) &&
+            !"deregistered".equals(mCredentials.get().registrationStatus());
     }
 
     public String publicKey() throws Exception { return directKeys().publicKey(); }
 
-    private synchronized WebPushCodec.Keys directKeys() throws Exception
+    private WebPushCodec.Keys directKeys() throws Exception
     {
         if(mClosed) throw new IllegalStateException("Notifications are unavailable");
         return mCredentials.directKeys();
@@ -132,35 +178,45 @@ public final class PushDeliveryService implements AutoCloseable
     {
         PushSettings push = mAlerts.configuration().push();
         return !mClosed && push.enabled() && ("direct".equals(push.mode()) ||
-            "approved".equals(mCredentials.get().registrationStatus()));
+            !mDeregistering && "approved".equals(mCredentials.get().registrationStatus()));
     }
 
-    public synchronized Map<String,Object> enroll(List<String> topics, JsonNode subscription) throws Exception
+    public Map<String,Object> enroll(List<String> topics, JsonNode subscription) throws Exception
     {
-        if(!ready()) throw new IllegalStateException("Notifications are not ready. Ask the administrator to finish push setup.");
-        requireTopics(topics, List.of());
-        String token = PublicAccessVerifier.token(), hash = hashToken(token);
-        String id = UUID.randomUUID().toString();
-        if("direct".equals(mAlerts.configuration().push().mode()))
+        PushCredentialStore.Credentials credentials;
+        PushSettings requestedPush;
+        long generation;
+        String token, hash, id;
+        synchronized(this)
         {
-            String endpoint = subscription.path("endpoint").asText();
-            String p256dh = subscription.path("keys").path("p256dh").asText();
-            String auth = subscription.path("keys").path("auth").asText();
-            DirectWebPushSender.validateEndpoint(endpoint);
-            WebPushCodec.validateSubscription(p256dh, auth);
-            AlertDevice existing = mAlerts.devices().stream().filter(device -> "direct".equals(device.method()) && endpoint.equals(device.endpoint())).findFirst().orElse(null);
-            if(existing != null && (!p256dh.equals(existing.p256dh()) || !auth.equals(existing.auth())))
-                throw new IllegalArgumentException("This browser subscription is already connected. Reconnect it from Notification settings.");
-            if(existing != null) id = existing.id();
-            boolean expired = existing != null && existing.subscriptionExpired();
-            mAlerts.saveDevice(new AlertDevice(id, "This browser", "direct", "", endpoint, p256dh, auth, hash,
-                topics, expired));
-            return Map.of("device_id", id, "manage_token", token, "status", expired ? "reconnect_required" : "connected", "mode", "direct");
+            if(!ready()) throw new IllegalStateException("Notifications are not ready. Ask the administrator to finish push setup.");
+            requireTopics(topics, List.of());
+            token = PublicAccessVerifier.token(); hash = hashToken(token);
+            id = UUID.randomUUID().toString();
+            if("direct".equals(mAlerts.configuration().push().mode()))
+            {
+                String endpoint = subscription.path("endpoint").asText();
+                String p256dh = subscription.path("keys").path("p256dh").asText();
+                String auth = subscription.path("keys").path("auth").asText();
+                DirectWebPushSender.validateEndpoint(endpoint);
+                WebPushCodec.validateSubscription(p256dh, auth);
+                AlertDevice existing = mAlerts.devices().stream().filter(device -> "direct".equals(device.method()) && endpoint.equals(device.endpoint())).findFirst().orElse(null);
+                if(existing != null && (!p256dh.equals(existing.p256dh()) || !auth.equals(existing.auth())))
+                    throw new IllegalArgumentException("This browser subscription is already connected. Reconnect it from Notification settings.");
+                if(existing != null) id = existing.id();
+                boolean expired = existing != null && existing.subscriptionExpired();
+                mAlerts.saveDevice(new AlertDevice(id, "This browser", "direct", "", endpoint, p256dh, auth, hash,
+                    topics, expired));
+                return Map.of("device_id", id, "manage_token", token, "status", expired ? "reconnect_required" : "connected", "mode", "direct");
+            }
+            credentials = mCredentials.get();
+            requestedPush = mAlerts.configuration().push();
+            generation = mRelayGeneration;
         }
         // Validate the local enrollment before creating a remote pairing session.
         long now = System.currentTimeMillis();
         new AlertEnrollment(id, "pending", hash, topics, now, now + 900_000, "pending", "", "", "");
-        JsonNode remote = mGateway.createEnrollment(mCredentials.get().apiKey());
+        JsonNode remote = mGateway.createEnrollment(credentials.apiKey());
         AlertEnrollment enrollment = new AlertEnrollment(id, remote.path("id").asText(), hash, topics,
             now, remote.path("expires_at_ms").asLong(now + 900_000), "pending", "",
             remote.path("enrollment_url").asText(), remote.path("code").asText());
@@ -169,7 +225,14 @@ public final class PushDeliveryService implements AutoCloseable
             enrollmentUrl.getUserInfo() != null || enrollmentUrl.getPort() != -1 ||
             !enrollmentUrl.getPath().startsWith("/vce-push/"))
             throw new java.io.IOException("RadioResolve returned an invalid enrollment address");
-        mAlerts.saveEnrollment(enrollment);
+        synchronized(this)
+        {
+            if(!currentRelay(credentials, generation) || !ready() ||
+                !requestedPush.equals(mAlerts.configuration().push()))
+                throw new IllegalStateException("Notification settings changed. Start a new subscription.");
+            requireTopics(topics, List.of());
+            mAlerts.saveEnrollment(enrollment);
+        }
         return Map.of("id", id, "manage_token", token, "status", "pending", "mode", "proxy",
                 "enrollment_url", remote.path("enrollment_url").asText(), "code", enrollment.remoteEnrollmentId() + "." + enrollment.code(),
             "expires_at_ms", enrollment.expiresAtMs());
@@ -223,11 +286,27 @@ public final class PushDeliveryService implements AutoCloseable
             old.subscriptionExpired() && unchanged));
     }
 
-    public synchronized void disconnect(String token) throws Exception
+    public void disconnect(String token) throws Exception
     {
-        AlertDevice device = managedDevice(token);
-        if("proxy".equals(device.method())) mGateway.disconnect(mCredentials.get().apiKey(), device.remoteDeviceId());
-        mAlerts.unsubscribe(device.id());
+        AlertDevice device;
+        PushCredentialStore.Credentials credentials;
+        synchronized(this)
+        {
+            device = managedDevice(token);
+            credentials = mCredentials.get();
+        }
+        if("proxy".equals(device.method())) mGateway.disconnect(credentials.apiKey(), device.remoteDeviceId());
+        synchronized(this)
+        {
+            if(mClosed) return;
+            AlertDevice current = mAlerts.device(device.id()).orElse(null);
+            // A reconnected device owns a new management token; an old request cannot revoke it.
+            if(current == null || !current.manageTokenHash().equals(device.manageTokenHash()) ||
+                !current.method().equals(device.method()) || !current.remoteDeviceId().equals(device.remoteDeviceId())) return;
+            // A failed sender disconnect does not revoke this successfully completed device request.
+            if("proxy".equals(device.method()) && !credentials.apiKey().equals(mCredentials.get().apiKey())) return;
+            mAlerts.unsubscribe(device.id());
+        }
     }
 
     private void requireTopics(List<String> ids, List<String> existing)
@@ -297,7 +376,7 @@ public final class PushDeliveryService implements AutoCloseable
 
     void relayTick()
     {
-        if(mClosed || mCredentials.get().apiKey().isEmpty() || "deregistered".equals(mCredentials.get().registrationStatus())) return;
+        if(mClosed || mDeregistering || mCredentials.get().apiKey().isEmpty() || "deregistered".equals(mCredentials.get().registrationStatus())) return;
         try
         {
             refreshRegistration(); pollUpdates();
@@ -497,12 +576,17 @@ public final class PushDeliveryService implements AutoCloseable
 
     private void pollUpdates() throws Exception
     {
-        var credentials = mCredentials.get();
+        PushCredentialStore.Credentials credentials;
+        long generation;
+        synchronized(this)
+        {
+            credentials = mCredentials.get(); generation = mRelayGeneration;
+            if(!currentRelay(credentials, generation)) return;
+        }
         JsonNode result = mGateway.updates(credentials.apiKey(), credentials.updateCursor());
         synchronized(this)
         {
-            if(mClosed || !credentials.apiKey().equals(mCredentials.get().apiKey()) ||
-                "deregistered".equals(mCredentials.get().registrationStatus())) return;
+            if(!currentRelay(credentials, generation)) return;
             for(JsonNode update: result.path("updates"))
             {
                 String type = update.path("type").asText();
@@ -560,5 +644,9 @@ public final class PushDeliveryService implements AutoCloseable
         return MessageDigest.isEqual(hash.getBytes(StandardCharsets.US_ASCII), hashToken(token).getBytes(StandardCharsets.US_ASCII));
     }
 
-    @Override public synchronized void close() { mClosed = true; mWorker.shutdownNow(); mRelayWorker.shutdownNow(); mGateway.close(); mDirect.close(); }
+    @Override public void close()
+    {
+        synchronized(this) { mClosed = true; mRelayGeneration++; }
+        mWorker.shutdownNow(); mRelayWorker.shutdownNow(); mGateway.close(); mDirect.close();
+    }
 }

@@ -10,6 +10,9 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,6 +20,52 @@ class TopicAlertStoreTest
 {
     @TempDir Path mDirectory;
     private static final long NOW = 1_797_000_000_000L;
+
+    @Test void heldConfigurationWriterDoesNotBlockCommittedAlertReads() throws Exception
+    {
+        Path path = mDirectory.resolve("read-isolation.sqlite"); TopicAlertStore store = store(path);
+        var phone = device("phone", "remote-phone", "a"); store.saveDevice(phone);
+        assertTrue(store.publish(topic(), "rule", "Rule", new AlertEvent("call", NOW, "call", Map.of()),
+            "Title", "Body", "details", List.of(phone), NOW));
+        String alertId = store.history(null, 1, 0).get("items") instanceof List<?> rows ?
+            (String)((Map<?,?>)rows.getFirst()).get("id") : "";
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread writer = null;
+        try(Connection held = SdrTrunkDatabase.open(path); Statement sql = held.createStatement())
+        {
+            sql.execute("BEGIN IMMEDIATE");
+            writer = Thread.ofPlatform().start(() -> {
+                try { store.markDeviceExpired(phone.id(), true); } catch(Throwable exception) { failure.set(exception); }
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while(java.util.Arrays.stream(writer.getStackTrace()).noneMatch(frame ->
+                frame.getClassName().equals("org.sqlite.core.NativeDB") && frame.getMethodName().contains("step")))
+            {
+                if(System.nanoTime() >= deadline) throw new AssertionError("The fixture mutation did not reach SQLite");
+                Thread.sleep(5);
+            }
+            CompletableFuture<Void> reads = CompletableFuture.runAsync(() -> {
+                try
+                {
+                    for(int index = 0; index < 20; index++)
+                    {
+                        assertEquals(1, store.devices().size());
+                        assertFalse(store.device(phone.id()).orElseThrow().subscriptionExpired());
+                        assertEquals(phone.id(), store.findDeviceByTokenHash(phone.manageTokenHash()).orElseThrow().id());
+                        assertEquals(1, store.history(null, 10, 0).get("total"));
+                        assertTrue(store.historyItem(alertId).isPresent());
+                        assertEquals("Fire", store.configuration().topics().stream().filter(t -> t.id().equals("fire")).findFirst().orElseThrow().name());
+                    }
+                }
+                catch(Exception exception) { throw new RuntimeException(exception); }
+            });
+            try { reads.get(2, TimeUnit.SECONDS); }
+            finally { sql.execute("ROLLBACK"); }
+        }
+        finally { if(writer != null) writer.join(2000); }
+        assertNull(failure.get());
+        assertTrue(store.device(phone.id()).orElseThrow().subscriptionExpired());
+    }
 
     @Test void exactSourcePersistsWithAlertButNeverEntersPublicHistoryOrDelivery() throws Exception
     {

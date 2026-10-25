@@ -33,9 +33,9 @@ public final class TopicAlertStore
 
     public TopicAlertStore(Path path) { mPath = path.toAbsolutePath().normalize(); }
 
-    public synchronized TopicAlertConfiguration configuration() throws IOException, SQLException
+    public TopicAlertConfiguration configuration() throws IOException, SQLException
     {
-        try(Connection connection = open()) { return configuration(connection); }
+        try(Connection connection = openRead()) { return configuration(connection); }
     }
 
     private TopicAlertConfiguration configuration(Connection connection) throws IOException, SQLException
@@ -127,9 +127,9 @@ public final class TopicAlertStore
         }
     }
 
-    public synchronized List<AlertDevice> devices() throws SQLException
+    public List<AlertDevice> devices() throws SQLException
     {
-        try(Connection connection = open(); Statement query = connection.createStatement(); ResultSet rows = query.executeQuery("SELECT * FROM topic_alert_device ORDER BY id LIMIT " + (MAXIMUM_DEVICES + 1)))
+        try(Connection connection = openRead(); Statement query = connection.createStatement(); ResultSet rows = query.executeQuery("SELECT * FROM topic_alert_device ORDER BY id LIMIT " + (MAXIMUM_DEVICES + 1)))
         {
             List<AlertDevice> result = new ArrayList<>(); while(rows.next()) result.add(device(connection, rows));
             if(result.size() > MAXIMUM_DEVICES) throw new IllegalArgumentException("Maximum of " + MAXIMUM_DEVICES + " notification devices exceeded");
@@ -138,9 +138,9 @@ public final class TopicAlertStore
     }
 
     /** Indexed membership lookup; only the topic being delivered is needed by the alert worker. */
-    synchronized List<AlertDevice> devicesForTopic(String topicId, String method) throws SQLException
+    List<AlertDevice> devicesForTopic(String topicId, String method) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement("SELECT v.* FROM topic_alert_membership membership JOIN topic_alert_device v ON v.id=membership.device_id WHERE membership.topic_id=? AND v.method=? AND v.subscription_expired=0 ORDER BY membership.device_id LIMIT " + (MAXIMUM_DEVICES + 1)))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement("SELECT v.* FROM topic_alert_membership membership JOIN topic_alert_device v ON v.id=membership.device_id WHERE membership.topic_id=? AND v.method=? AND v.subscription_expired=0 ORDER BY membership.device_id LIMIT " + (MAXIMUM_DEVICES + 1)))
         {
             query.setString(1, topicId); query.setString(2, method);
             List<AlertDevice> result = new ArrayList<>();
@@ -151,7 +151,7 @@ public final class TopicAlertStore
     }
 
     /** Latest receiver assignments; no retained-event scan and no lookup on decoder callbacks. */
-    public synchronized Map<String,SystemFact> currentSystemFacts() throws SQLException
+    public Map<String,SystemFact> currentSystemFacts() throws SQLException
     {
         try(Connection connection = openHistory(); Statement query = connection.createStatement(); ResultSet rows = query.executeQuery("""
             SELECT receiver.configuration_id,system.system_key,receiver.last_seen_ms
@@ -168,13 +168,13 @@ public final class TopicAlertStore
     }
     public record SystemFact(String systemKey, long lastSeenMs) {}
 
-    public synchronized Optional<AlertDevice> device(String id) throws SQLException { return findDevice("id", id); }
-    public synchronized Optional<AlertDevice> findDeviceByTokenHash(String hash) throws SQLException { return findDevice("manage_token_hash", hash); }
-    public synchronized Optional<AlertDevice> byRemoteDeviceId(String id) throws SQLException { return findDevice("remote_device_id", id); }
+    public Optional<AlertDevice> device(String id) throws SQLException { return findDevice("id", id); }
+    public Optional<AlertDevice> findDeviceByTokenHash(String hash) throws SQLException { return findDevice("manage_token_hash", hash); }
+    public Optional<AlertDevice> byRemoteDeviceId(String id) throws SQLException { return findDevice("remote_device_id", id); }
 
     private Optional<AlertDevice> findDevice(String column, String value) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement("SELECT * FROM topic_alert_device WHERE " + column + "=?"))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement("SELECT * FROM topic_alert_device WHERE " + column + "=?"))
         {
             query.setString(1, value); try(ResultSet rows = query.executeQuery()) { return rows.next() ? Optional.of(device(connection, rows)) : Optional.empty(); }
         }
@@ -331,21 +331,21 @@ public final class TopicAlertStore
         }
     }
 
-    public synchronized Optional<AlertEnrollment> enrollment(String id) throws SQLException { return findEnrollment("id", id); }
-    public synchronized Optional<AlertEnrollment> findEnrollmentByTokenHash(String id) throws SQLException { return findEnrollment("manage_token_hash", id); }
-    public synchronized Optional<AlertEnrollment> byRemoteEnrollmentId(String id) throws SQLException { return findEnrollment("remote_enrollment_id", id); }
+    public Optional<AlertEnrollment> enrollment(String id) throws SQLException { return findEnrollment("id", id); }
+    public Optional<AlertEnrollment> findEnrollmentByTokenHash(String id) throws SQLException { return findEnrollment("manage_token_hash", id); }
+    public Optional<AlertEnrollment> byRemoteEnrollmentId(String id) throws SQLException { return findEnrollment("remote_enrollment_id", id); }
     private Optional<AlertEnrollment> findEnrollment(String column, String value) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement("SELECT * FROM topic_alert_enrollment WHERE " + column + "=?"))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement("SELECT * FROM topic_alert_enrollment WHERE " + column + "=?"))
         {
             query.setString(1, value); try(ResultSet rows = query.executeQuery()) { return rows.next() ? Optional.of(enrollment(connection, rows)) : Optional.empty(); }
         }
     }
 
-    public synchronized List<AlertEnrollment> pendingEnrollments(int limit) throws SQLException
+    public List<AlertEnrollment> pendingEnrollments(int limit) throws SQLException
     {
         long now = System.currentTimeMillis();
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement("SELECT * FROM topic_alert_enrollment WHERE status='pending' AND expires_at_ms>? ORDER BY expires_at_ms,id LIMIT ?"))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement("SELECT * FROM topic_alert_enrollment WHERE status='pending' AND expires_at_ms>? ORDER BY expires_at_ms,id LIMIT ?"))
         {
             query.setLong(1, now); query.setInt(2, Math.clamp(limit, 1, 100));
             List<AlertEnrollment> result = new ArrayList<>(); try(ResultSet rows = query.executeQuery()) { while(rows.next()) result.add(enrollment(connection, rows)); }
@@ -486,14 +486,14 @@ public final class TopicAlertStore
         }
     }
 
-    public synchronized List<AlertDelivery> pendingDeliveries(int limit) throws SQLException
+    public List<AlertDelivery> pendingDeliveries(int limit) throws SQLException
     {
         return pendingDeliveries(limit, System.currentTimeMillis());
     }
 
-    synchronized List<AlertDelivery> pendingDeliveries(int limit, long now) throws SQLException
+    List<AlertDelivery> pendingDeliveries(int limit, long now) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.state IN ('pending','retry') AND d.next_at_ms<=? AND m.expires_at_ms>? AND t.visible=1 AND t.enabled=1 AND v.subscription_expired=0 ORDER BY d.next_at_ms,d.id LIMIT ?"))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.state IN ('pending','retry') AND d.next_at_ms<=? AND m.expires_at_ms>? AND t.visible=1 AND t.enabled=1 AND v.subscription_expired=0 ORDER BY d.next_at_ms,d.id LIMIT ?"))
         {
             query.setLong(1, now); query.setLong(2, now); query.setInt(3, Math.clamp(limit, 1, 100));
             List<AlertDelivery> result = new ArrayList<>(); try(ResultSet rows = query.executeQuery()) { while(rows.next()) result.add(delivery(rows)); }
@@ -501,17 +501,17 @@ public final class TopicAlertStore
         }
     }
 
-    public synchronized Optional<AlertDelivery> delivery(long id) throws SQLException
+    public Optional<AlertDelivery> delivery(long id) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.id=?"))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.id=?"))
         {
             query.setLong(1, id); try(ResultSet rows = query.executeQuery()) { return rows.next() ? Optional.of(delivery(rows)) : Optional.empty(); }
         }
     }
 
-    public synchronized List<AlertDelivery> deliveriesForAlert(String alertId) throws SQLException
+    public List<AlertDelivery> deliveriesForAlert(String alertId) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.alert_id=? ORDER BY d.id LIMIT " + (MAXIMUM_DEVICES + 1)))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.alert_id=? ORDER BY d.id LIMIT " + (MAXIMUM_DEVICES + 1)))
         {
             query.setString(1, alertId); List<AlertDelivery> result = new ArrayList<>();
             try(ResultSet rows = query.executeQuery()) { while(rows.next()) result.add(delivery(rows)); }
@@ -520,9 +520,9 @@ public final class TopicAlertStore
         }
     }
 
-    public synchronized Optional<AlertDelivery> deliveryForRemote(String alertId, String remoteDeviceId) throws SQLException
+    public Optional<AlertDelivery> deliveryForRemote(String alertId, String remoteDeviceId) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.alert_id=? AND d.remote_device_id=? AND d.remote_device_id<>''"))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement(deliverySelect() + " WHERE d.alert_id=? AND d.remote_device_id=? AND d.remote_device_id<>''"))
         {
             query.setString(1, alertId); query.setString(2, remoteDeviceId);
             try(ResultSet rows = query.executeQuery()) { return rows.next() ? Optional.of(delivery(rows)) : Optional.empty(); }
@@ -592,12 +592,12 @@ public final class TopicAlertStore
         }
     }
 
-    public synchronized Map<String,Object> history(List<String> topicIds, int limit, int offset) throws SQLException
+    public Map<String,Object> history(List<String> topicIds, int limit, int offset) throws SQLException
     {
         limit = Math.clamp(limit, 1, 100); offset = Math.clamp(offset, 0, MAXIMUM_MESSAGES);
         if(topicIds != null && topicIds.isEmpty()) return Map.of("items", List.of(), "total", 0, "limit", limit, "offset", offset);
         String filter = topicIds == null ? "" : " WHERE m.topic_id IN (" + placeholders(topicIds.size()) + ") AND t.visible=1";
-        try(Connection connection = open())
+        try(Connection connection = openRead())
         {
             List<Map<String,Object>> items = new ArrayList<>(); int total;
             try(PreparedStatement query = connection.prepareStatement("SELECT count(*) FROM topic_alert_message m JOIN topic_alert_topic t ON t.id=m.topic_id" + filter))
@@ -617,9 +617,9 @@ public final class TopicAlertStore
     }
 
     /** Public detail lookup uses the opaque message primary key and current topic visibility. */
-    public synchronized Optional<Map<String,Object>> historyItem(String id) throws SQLException
+    public Optional<Map<String,Object>> historyItem(String id) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(historySelect() + " WHERE m.id=? AND t.visible=1"))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement(historySelect() + " WHERE m.id=? AND t.visible=1"))
         {
             query.setString(1, id);
             try(ResultSet rows = query.executeQuery()) { return rows.next() ? Optional.of(historyItem(rows)) : Optional.empty(); }
@@ -627,9 +627,9 @@ public final class TopicAlertStore
     }
 
     /** Private exact-call reference; deliberately excluded from public history and every delivery payload. */
-    public synchronized Optional<String> sourceCallUuid(String alertId) throws SQLException
+    public Optional<String> sourceCallUuid(String alertId) throws SQLException
     {
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement("SELECT m.source_call_uuid FROM topic_alert_message m JOIN topic_alert_topic t ON t.id=m.topic_id WHERE m.id=? AND t.visible=1"))
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement("SELECT m.source_call_uuid FROM topic_alert_message m JOIN topic_alert_topic t ON t.id=m.topic_id WHERE m.id=? AND t.visible=1"))
         {
             query.setString(1, alertId);
             try(ResultSet rows = query.executeQuery())
@@ -640,13 +640,13 @@ public final class TopicAlertStore
     }
 
     /** Bounded exact-source lookup. Hidden and removed topics never become related-alert destinations. */
-    public synchronized List<Map<String,Object>> historyBySourceCallReferences(List<String> sources) throws SQLException
+    public List<Map<String,Object>> historyBySourceCallReferences(List<String> sources) throws SQLException
     {
         if(sources == null || sources.isEmpty()) return List.of();
         if(sources.size() > 128) throw new IllegalArgumentException("Too many source call references");
         List<String> references = sources.stream().map(io.github.dsheirer.audio.call.SourceCallReference::canonical).distinct().toList();
         if(references.contains(null)) throw new IllegalArgumentException("A source call reference is required");
-        try(Connection connection = open(); PreparedStatement query = connection.prepareStatement(historySelect() +
+        try(Connection connection = openRead(); PreparedStatement query = connection.prepareStatement(historySelect() +
             " WHERE m.source_call_uuid IN (" + placeholders(references.size()) + ") AND t.visible=1 ORDER BY m.created_at_ms DESC,m.id LIMIT 100"))
         {
             for(int index = 0; index < references.size(); index++) query.setString(index + 1, references.get(index));
@@ -707,6 +707,27 @@ public final class TopicAlertStore
     {
         try { return SdrTrunkDatabase.openHistoryRead(mPath); }
         catch(IOException exception) { throw new SQLException("Receiver observations are unavailable",exception); }
+    }
+
+    /** Pure reads use their own snapshot and never wait for the serialized mutation monitor. */
+    private Connection openRead() throws SQLException
+    {
+        Connection connection = open();
+        try
+        {
+            try(Statement statement = connection.createStatement())
+            {
+                statement.execute("PRAGMA busy_timeout=250");
+                statement.execute("PRAGMA query_only=ON");
+            }
+            connection.setAutoCommit(false);
+            return connection;
+        }
+        catch(SQLException failure)
+        {
+            try { connection.close(); } catch(SQLException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
     }
 
     private Connection open() throws SQLException

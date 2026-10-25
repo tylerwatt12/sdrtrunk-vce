@@ -31,6 +31,9 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.slf4j.LoggerFactory;
@@ -40,6 +43,62 @@ class TopicAlertsHttpControllerTest
 {
     private static final ObjectMapper JSON = new ObjectMapper();
     @TempDir Path mDirectory;
+
+    @Test void heldAlertSaveLeavesActualHttpCatalogSetupAndHistoryResponsive() throws Exception
+    {
+        try(Fixture f = new Fixture(mDirectory.resolve("held-alert-save.sqlite")))
+        {
+            f.login();
+            var topic = new AlertTopic("fire", "Fire", "", true, true, false);
+            f.service.saveTopic(topic, f.service.configuration().revision());
+            var current = f.service.configuration();
+            f.service.updateConfiguration(new TopicAlertConfiguration(current.revision(),
+                new TopicAlertConfiguration.PushSettings(true, "direct", "https://vce.example", "VCE"),
+                current.topics(), current.rules()), current.revision());
+            f.push.publicKey();
+            new io.github.dsheirer.alerts.TopicAlertStore(f.database).publish(topic, "rule", "Rule",
+                new io.github.dsheirer.alerts.AlertEvent("call", 1000, "call", Map.of()), "Call", "Body", "details",
+                List.of(), System.currentTimeMillis());
+            AtomicReference<Throwable> failure = new AtomicReference<>();
+            Thread writer = null;
+            try(var held = SdrTrunkDatabase.open(f.database); var sql = held.createStatement())
+            {
+                sql.execute("BEGIN IMMEDIATE");
+                writer = Thread.ofPlatform().start(() -> {
+                    try { f.service.saveTopic(new AlertTopic("fire", "Changed", "", true, true, false), f.service.configuration().revision()); }
+                    catch(Throwable exception) { failure.set(exception); }
+                });
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+                while(java.util.Arrays.stream(writer.getStackTrace()).noneMatch(frame ->
+                    frame.getClassName().equals("org.sqlite.core.NativeDB") && frame.getMethodName().contains("step")))
+                {
+                    if(System.nanoTime() >= deadline) throw new AssertionError("The fixture save did not reach SQLite");
+                    Thread.sleep(5);
+                }
+                try
+                {
+                    CompletableFuture.runAsync(() -> {
+                        try
+                        {
+                            for(int index = 0; index < 20; index++)
+                                for(String path: List.of("/api/v1/admin/alerts/topics", "/api/v1/admin/alerts/config",
+                                    "/api/v1/alerts/topics", "/api/v1/alerts/history"))
+                                {
+                                    var response = f.send("GET", path, null, null, false);
+                                    assertEquals(200, response.statusCode(), response.body());
+                                    assertFalse(response.body().contains("Changed"));
+                                }
+                        }
+                        catch(Exception exception) { throw new RuntimeException(exception); }
+                    }).get(3, TimeUnit.SECONDS);
+                }
+                finally { sql.execute("ROLLBACK"); }
+            }
+            finally { if(writer != null) writer.join(2000); }
+            assertNull(failure.get());
+            assertTrue(f.send("GET", "/api/v1/admin/alerts/topics", null, null, false).body().contains("Changed"));
+        }
+    }
 
     @Test void relatedCallsUseCurrentSessionCapabilitiesWithoutGivingNotificationTokensAudioAccess() throws Exception
     {
@@ -412,6 +471,7 @@ class TopicAlertsHttpControllerTest
     {
         final TopicAlertService service; final PushDeliveryService push; final HttpServer server;
         final WebAccessService access; final Path database;
+        final WebRequestExecutor requestExecutor = new WebRequestExecutor(32, () -> { });
         final HttpClient client = HttpClient.newHttpClient(); final WebRequestSecurity security;
         final List<String> resolvedSources = new java.util.ArrayList<>();
         boolean optionsUnavailable;
@@ -448,6 +508,7 @@ class TopicAlertsHttpControllerTest
                     "recordings", recordingsAllowed ? List.of(Map.of("id", 34)) : List.of());
             });
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            server.setExecutor(requestExecutor);
             new WebSessionHttpController(access, authentication, security).register(server);
             server.createContext(TopicAlertsHttpController.ADMIN_PATH, security.protectApi(WebCapability.ADMIN_SETTINGS, controller::handleAdmin));
             server.createContext(TopicAlertsHttpController.PUBLIC_PATH, controller::handlePublic);
@@ -475,6 +536,6 @@ class TopicAlertsHttpControllerTest
             JsonNode parsed = JSON.readTree(response.body());
             return parsed.has("data") ? parsed.path("data") : parsed;
         }
-        public void close() { server.stop(0); security.close(); push.close(); service.close(); }
+        public void close() { server.stop(0); requestExecutor.shutdownNow(); security.close(); push.close(); service.close(); }
     }
 }

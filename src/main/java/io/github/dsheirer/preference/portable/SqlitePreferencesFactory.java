@@ -150,6 +150,24 @@ public class SqlitePreferencesFactory implements PreferencesFactory
             return new SqlitePreferences(this, name, mRootName);
         }
 
+        /** The store persists the complete tree; do not retain AbstractPreferences' node lock during I/O. */
+        @Override
+        public void sync() throws BackingStoreException
+        {
+            synchronized(lock)
+            {
+                if(isRemoved()) throw new IllegalStateException("Node has been removed");
+            }
+            sStore.sync();
+        }
+
+        @Override
+        public void flush() throws BackingStoreException
+        {
+            // AbstractPreferences permits flushing a removed node. The complete store already contains its removal.
+            sStore.flush();
+        }
+
         @Override
         protected void syncSpi() throws BackingStoreException
         {
@@ -179,6 +197,8 @@ public class SqlitePreferencesFactory implements PreferencesFactory
         });
         private Map<String,Map<String,String>> mValues;
         private ScheduledFuture<?> mPendingWrite;
+        private final Object mPersistenceLock = new Object();
+        private long mChangeRevision;
         private boolean mDirty;
         private boolean mClosed;
 
@@ -252,52 +272,68 @@ public class SqlitePreferencesFactory implements PreferencesFactory
             return children.toArray(String[]::new);
         }
 
-        synchronized void sync() throws BackingStoreException
+        void sync() throws BackingStoreException
         {
-            flush();
-
-            try
+            synchronized(mPersistenceLock)
             {
-                mValues = read();
-            }
-            catch(IOException | SQLException e)
-            {
-                throw new BackingStoreException(e);
+                flush();
+                long revision;
+                synchronized(this)
+                {
+                    // A change accepted during the flush still belongs to the in-memory owner.
+                    if(mDirty) return;
+                    revision = mChangeRevision;
+                }
+                try
+                {
+                    Map<String,Map<String,String>> saved = read();
+                    synchronized(this)
+                    {
+                        if(mChangeRevision == revision && !mDirty) mValues = saved;
+                    }
+                }
+                catch(IOException | SQLException e)
+                {
+                    throw new BackingStoreException(e);
+                }
             }
         }
 
-        synchronized void flush() throws BackingStoreException
+        void flush() throws BackingStoreException
         {
-            if(!mDirty)
+            synchronized(mPersistenceLock)
             {
-                return;
-            }
-
-            try
-            {
-                write();
-                mDirty = false;
-            }
-            catch(IOException | SQLException e)
-            {
-                throw new BackingStoreException(e);
+                Map<String,Map<String,String>> snapshot = new TreeMap<>();
+                long revision;
+                synchronized(this)
+                {
+                    if(!mDirty) return;
+                    mValues.forEach((path, values) -> snapshot.put(path, new TreeMap<>(values)));
+                    revision = mChangeRevision;
+                }
+                try
+                {
+                    write(snapshot);
+                    synchronized(this)
+                    {
+                        if(mChangeRevision == revision) mDirty = false;
+                    }
+                }
+                catch(IOException | SQLException e)
+                {
+                    throw new BackingStoreException(e);
+                }
             }
         }
 
-        synchronized void close()
+        void close()
         {
-            if(mClosed)
+            synchronized(this)
             {
-                return;
+                if(mClosed) return;
+                mClosed = true;
+                if(mPendingWrite != null) mPendingWrite.cancel(false);
             }
-
-            mClosed = true;
-
-            if(mPendingWrite != null)
-            {
-                mPendingWrite.cancel(false);
-            }
-
             try
             {
                 flush();
@@ -306,27 +342,40 @@ public class SqlitePreferencesFactory implements PreferencesFactory
             {
                 System.err.println("Unable to save portable VCE preferences: " + e.getMessage());
             }
-
             mWriter.shutdown();
         }
 
         private void changed()
         {
             mDirty = true;
-
+            mChangeRevision++;
             if(!mClosed && (mPendingWrite == null || mPendingWrite.isDone()))
             {
-                mPendingWrite = mWriter.schedule(() -> {
-                    try
-                    {
-                        flush();
-                    }
-                    catch(BackingStoreException e)
-                    {
-                        System.err.println("Unable to save portable VCE preferences: " + e.getMessage());
-                    }
-                }, WRITE_DELAY_MILLISECONDS, TimeUnit.MILLISECONDS);
+                scheduleWrite();
             }
+        }
+
+        /** Called with the state monitor held; persistence never retains that monitor. */
+        private void scheduleWrite()
+        {
+            mPendingWrite = mWriter.schedule(() -> {
+                try
+                {
+                    flush();
+                }
+                catch(BackingStoreException e)
+                {
+                    System.err.println("Unable to save portable VCE preferences: " + e.getMessage());
+                }
+                finally
+                {
+                    synchronized(this)
+                    {
+                        mPendingWrite = null;
+                        if(mDirty && !mClosed) scheduleWrite();
+                    }
+                }
+            }, WRITE_DELAY_MILLISECONDS, TimeUnit.MILLISECONDS);
         }
 
         private Map<String,Map<String,String>> read() throws IOException, SQLException
@@ -352,9 +401,9 @@ public class SqlitePreferencesFactory implements PreferencesFactory
             return new HashMap<>();
         }
 
-        private void write() throws IOException, SQLException
+        private void write(Map<String,Map<String,String>> values) throws IOException, SQLException
         {
-            String json = mObjectMapper.writeValueAsString(new TreeMap<>(mValues));
+            String json = mObjectMapper.writeValueAsString(values);
 
             try(Connection connection = SdrTrunkDatabase.open(mDatabasePath);
                 PreparedStatement statement = connection.prepareStatement("""

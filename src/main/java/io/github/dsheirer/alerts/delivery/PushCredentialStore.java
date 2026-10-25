@@ -14,7 +14,7 @@ public final class PushCredentialStore
 {
     private static final String KEY = "alerts.push.credentials";
     private final ApplicationSettingsStore mSettings;
-    private Credentials mCredentials;
+    private volatile Credentials mCredentials;
 
     public PushCredentialStore(Path database) throws IOException, SQLException
     {
@@ -22,7 +22,7 @@ public final class PushCredentialStore
         mCredentials = mSettings.load(KEY, Credentials.class).orElse(Credentials.empty());
     }
 
-    public synchronized Credentials get() { return mCredentials; }
+    public Credentials get() { return mCredentials; }
 
     public synchronized Credentials prepareRegistration() throws IOException, SQLException
     {
@@ -51,7 +51,15 @@ public final class PushCredentialStore
             old.directPublicKey(), old.directPrivateKey()));
     }
 
-    public synchronized WebPushCodec.Keys directKeys() throws IOException, SQLException, GeneralSecurityException
+    public WebPushCodec.Keys directKeys() throws IOException, SQLException, GeneralSecurityException
+    {
+        Credentials current = mCredentials;
+        if(!current.directPrivateKey().isEmpty())
+            return new WebPushCodec.Keys(current.directPublicKey(), current.directPrivateKey());
+        return createDirectKeys();
+    }
+
+    private synchronized WebPushCodec.Keys createDirectKeys() throws IOException, SQLException, GeneralSecurityException
     {
         if(mCredentials.directPrivateKey().isEmpty())
         {
