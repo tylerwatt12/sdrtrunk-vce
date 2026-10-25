@@ -8,6 +8,14 @@ const protocols = require(resolve(root, 'src/main/resources/channel-protocols.js
 const INITIAL_CENTER_HZ = 851012500;
 const SAMPLE_RATE_HZ = 10000000;
 const frequencyPath = '/api/v1/admin/tuners/idle-a/settings/frequency_mhz';
+const installedFixtures = new WeakMap();
+
+test.afterEach(async ({ page }) => {
+  // Release deliberate network gates before draining callbacks while the page is still available.
+  installedFixtures.get(page)?.releaseAll();
+  installedFixtures.delete(page);
+  await page.unrouteAll({ behavior: 'wait' });
+});
 
 function tuner(centerHz) {
   return {
@@ -259,6 +267,7 @@ async function install(page) {
     state.tunes.forEach((record) => record.release());
     state.browses.forEach((record) => record.release?.());
   };
+  installedFixtures.set(page, state);
   await page.goto('/app.html?view=tuner-spectrum');
   await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
   await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
@@ -780,6 +789,9 @@ test('retrying an expired lease during a held manual save restores editable cent
     await expect(center).toHaveJSProperty('inert', false);
     await expect(retry).toBeHidden();
     await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
+    // The retry's inventory refresh can clear the mock's earlier one-shot sample.
+    // Model the receiver's next STATE/FFT before exercising the restored live drag.
+    await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), state.centerHz);
     const canvas = plot(page);
     const gesture = await beginDrag(page, canvas);
     const deltaHz = await moveDrag(page, gesture, 0.55);

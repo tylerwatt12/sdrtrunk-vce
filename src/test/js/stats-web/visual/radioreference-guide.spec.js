@@ -49,6 +49,11 @@ async function openRadioReference(page, { theme = 'light', replay = true, firstV
   });
   await page.goto(`/app.html?view=radioreference${replay ? '&guide=radioreference' : ''}`);
   await expect(page.getByRole('heading', { name: 'RadioReference', exact: true })).toBeVisible();
+  if (replay) {
+    // The replay request is consumed after the page renders, before the guide overview opens.
+    await expect(page).toHaveURL(new URL('/?view=radioreference', page.url()).href);
+    await expect(guide(page)).toHaveAttribute('data-guide-step', 'overview');
+  }
   return { fixture, requests };
 }
 
