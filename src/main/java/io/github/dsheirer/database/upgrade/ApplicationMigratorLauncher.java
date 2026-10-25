@@ -30,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 public final class ApplicationMigratorLauncher
 {
     private static final String APPLICATION_MIGRATOR_CLASS = ApplicationDatabaseMigrator.class.getName();
-    private static final Duration PROCESS_TIMEOUT = Duration.ofMinutes(30);
+    private static final Duration PROCESS_TIMEOUT = Duration.ofHours(24);
     private static final int MAX_CAPTURED_OUTPUT_BYTES = 1024 * 1024;
     private static final byte[] TRUNCATION_NOTICE =
         "\n[Application Migrator output truncated; final diagnostics follow]\n".getBytes(StandardCharsets.UTF_8);
@@ -59,7 +59,13 @@ public final class ApplicationMigratorLauncher
     public static String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
         throws IOException, InterruptedException
     {
-        return run(stagedDatabase, sourceDataRoot, targetDataRoot, false);
+        return run(stagedDatabase, sourceDataRoot, targetDataRoot, MigrationContent.FULL);
+    }
+
+    public static String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot, MigrationContent content)
+        throws IOException, InterruptedException
+    {
+        return run(stagedDatabase, sourceDataRoot, targetDataRoot, false, false, content);
     }
 
     /**
@@ -101,6 +107,14 @@ public final class ApplicationMigratorLauncher
                               boolean completeProfileCopy, boolean ownedCompleteProfileCopy)
         throws IOException, InterruptedException
     {
+        return run(stagedDatabase, sourceDataRoot, targetDataRoot, completeProfileCopy, ownedCompleteProfileCopy,
+            MigrationContent.FULL);
+    }
+
+    private static String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
+                              boolean completeProfileCopy, boolean ownedCompleteProfileCopy, MigrationContent content)
+        throws IOException, InterruptedException
+    {
         Path normalized = stagedDatabase.toAbsolutePath().normalize();
 
         if(!Files.isRegularFile(normalized))
@@ -109,7 +123,7 @@ public final class ApplicationMigratorLauncher
         }
 
         return runMigrator(command(normalized, sourceDataRoot, targetDataRoot, completeProfileCopy,
-            ownedCompleteProfileCopy));
+            ownedCompleteProfileCopy, content));
     }
 
     private static String runMigrator(List<String> command) throws IOException, InterruptedException
@@ -288,6 +302,15 @@ public final class ApplicationMigratorLauncher
     static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
                                 boolean completeProfileCopy, boolean ownedCompleteProfileCopy) throws IOException
     {
+        return command(stagedDatabase, sourceDataRoot, targetDataRoot, completeProfileCopy, ownedCompleteProfileCopy,
+            MigrationContent.FULL);
+    }
+
+    static List<String> command(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
+                                boolean completeProfileCopy, boolean ownedCompleteProfileCopy, MigrationContent content)
+        throws IOException
+    {
+        java.util.Objects.requireNonNull(content, "Migration contents cannot be null");
         if((sourceDataRoot == null) != (targetDataRoot == null))
         {
             throw new IOException("Both source and target data roots are required for portable path relocation.");
@@ -336,6 +359,7 @@ public final class ApplicationMigratorLauncher
             command.add(ownedCompleteProfileCopy ? "--owned-complete-profile-copy" : "--complete-profile-copy");
         }
 
+        if(content == MigrationContent.CONFIGURATION_ONLY) command.add("--configuration-only");
         return List.copyOf(command);
     }
 }

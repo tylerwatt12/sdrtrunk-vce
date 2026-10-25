@@ -12,6 +12,7 @@
 package io.github.dsheirer.database.upgrade;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -72,6 +73,26 @@ class ApplicationMigratorLauncherTest
         assertThrows(IOException.class, () -> ApplicationMigratorLauncher.command(database, source, target, false, true));
         assertThrows(IOException.class, () -> ApplicationMigratorLauncher.command(database, null, null, true, true));
         assertThrows(IOException.class, () -> ApplicationMigratorLauncher.runOwnedCompleteProfileCopy(database, null, target));
+    }
+
+    @Test
+    void propagatesExplicitContentsWithoutChangingFileOrProfileScope() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("stage database.sqlite");
+        for(int scope = 0; scope < 4; scope++)
+        {
+            Path source = scope == 0 ? null : mTemporaryFolder.resolve("old data");
+            Path target = scope == 0 ? null : mTemporaryFolder.resolve("new data");
+            boolean complete = scope >= 2, owned = scope == 3;
+            var defaults = ApplicationMigratorLauncher.command(database, source, target, complete, owned);
+            assertFalse(defaults.contains("--configuration-only"));
+            assertEquals(defaults, ApplicationMigratorLauncher.command(database, source, target, complete, owned,
+                MigrationContent.FULL));
+            var expected = new java.util.ArrayList<>(defaults);
+            expected.add("--configuration-only");
+            assertEquals(expected, ApplicationMigratorLauncher.command(database, source, target, complete, owned,
+                MigrationContent.CONFIGURATION_ONLY));
+        }
     }
 
     @Test

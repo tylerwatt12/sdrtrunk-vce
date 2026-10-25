@@ -15,6 +15,9 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasMatchRegistry;
+import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
 import io.github.dsheirer.controller.channel.Channel;
@@ -147,6 +150,7 @@ final class CurrentDatabaseBestEffortRepair
         reassignUnusableChannelAliasLists(connection, analysis.clearedChannelAliasLists(),
             analysis.aliasLists().invalidRowIds());
         deleteAliasActivitySummaries(connection, analysis.aliases().invalidRowIds());
+        deleteCanonicalAliasLinks(connection, analysis.aliases().invalidRowIds());
         deleteRows(connection, "alias", analysis.aliases().invalidRowIds());
         deleteRows(connection, "alias_list", analysis.aliasLists().invalidRowIds());
         deleteRows(connection, "scan_list", analysis.scanLists().invalidRowIds());
@@ -920,6 +924,7 @@ final class CurrentDatabaseBestEffortRepair
     private static AliasInspection inspectAliases(Connection connection, Set<Long> invalidAliasListRows)
         throws SQLException
     {
+        Set<Long> canonicalSubscriberAliases = requireCanonicalSubscriberAliases(connection, invalidAliasListRows);
         List<Long> invalid = new ArrayList<>();
         Map<Long,AliasRepair> repairs = new LinkedHashMap<>();
         String sql = """
@@ -996,7 +1001,7 @@ final class CurrentDatabaseBestEffortRepair
                     long aliasId = requirePositiveId(rows.getObject("id"));
                     String name = boundedNonBlankText(rows, "name") ? rows.getString("name") :
                         "Recovered Alias " + aliasId;
-                    Format14To15DatabaseMigration.AliasMatcherFields matcher = requireValidAlias(rows);
+                    Format14To15DatabaseMigration.AliasMatcherFields matcher = requireValidAlias(rows, canonicalSubscriberAliases);
                     AliasOptionalFields optionalFields = aliasOptionalFields(rows);
                     if(!boundedNonBlankText(rows, "name") || matcher.defaultedFieldCount() > 0 ||
                         optionalFields.defaultedFieldCount() > 0)
@@ -1013,7 +1018,8 @@ final class CurrentDatabaseBestEffortRepair
         return new AliasInspection(List.copyOf(invalid), Map.copyOf(repairs), repairs.size());
     }
 
-    private static Format14To15DatabaseMigration.AliasMatcherFields requireValidAlias(ResultSet row)
+    private static Format14To15DatabaseMigration.AliasMatcherFields requireValidAlias(ResultSet row,
+        Set<Long> canonicalSubscriberAliases)
         throws SQLException, IOException
     {
         if(!positiveInteger(row.getObject("id")) || !positiveInteger(row.getObject("alias_list_id")) ||
@@ -1036,7 +1042,94 @@ final class CurrentDatabaseBestEffortRepair
         {
             throw new IOException("Alias has an unusable family");
         }
+        if("P25_SUBSCRIBER_IDENTITY".equals(row.getString("matcher_type")))
+        {
+            //This current matcher did not exist in frozen format 15. Its indexed canonical relationship, payload,
+            //family and tuple bounds were checked above; never send it through the historical type whitelist.
+            if(!canonicalSubscriberAliases.contains(row.getLong("id")))
+                throw new SQLException("Canonical P25 subscriber Alias has no valid stored identity relationship");
+            return new Format14To15DatabaseMigration.AliasMatcherFields("P25_SUBSCRIBER_IDENTITY",
+                null, null, null, null, null, null, null, 0);
+        }
         return Format14To15DatabaseMigration.inspectAliasMatcher(row, family, "Saved Alias");
+    }
+
+    /** Checks only configured canonical matchers, using indexed relationships instead of walking observed identities. */
+    private static Set<Long> requireCanonicalSubscriberAliases(Connection connection, Set<Long> invalidAliasListRows)
+        throws SQLException
+    {
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='alias_p25_subscriber_identity'"))
+        {
+            if(!rows.next()) return Set.of(); //Historical formats before canonical matchers use their frozen validator.
+        }
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery("""
+            SELECT 1 FROM alias_p25_subscriber_identity link
+            LEFT JOIN alias ON alias.id=link.alias_id WHERE alias.id IS NULL LIMIT 1
+            """))
+        {
+            if(rows.next()) throw new SQLException("Canonical P25 subscriber Alias relationship has no saved Alias");
+        }
+        Set<Long> valid = new HashSet<>();
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery("""
+            SELECT alias.id,owner.rowid AS owner_rowid,
+                   CASE WHEN typeof(owner.family)='text' AND length(CAST(owner.family AS BLOB))<=32
+                        THEN owner.family END AS family,
+                   CASE WHEN typeof(alias.matcher_type)='text' AND length(CAST(alias.matcher_type AS BLOB))<=64
+                        THEN alias.matcher_type END AS matcher_type,
+                   CASE WHEN typeof(link.p25_subscriber_identity_id)='integer'
+                        THEN link.p25_subscriber_identity_id END AS p25_subscriber_identity_id,
+                   identity.id AS identity_id,
+                   CASE WHEN typeof(identity.home_wacn)='integer' THEN identity.home_wacn END AS home_wacn,
+                   CASE WHEN typeof(identity.home_system_id)='integer' THEN identity.home_system_id END AS home_system_id,
+                   CASE WHEN typeof(identity.subscriber_id)='integer' THEN identity.subscriber_id END AS subscriber_id,
+                   typeof(alias.protocol) AS protocol_type,typeof(alias.value) AS value_type,
+                   typeof(alias.min_value) AS min_value_type,typeof(alias.max_value) AS max_value_type,
+                   typeof(alias.text_value) AS text_value_type,typeof(alias.numeric_value) AS numeric_value_type,
+                   typeof(alias.tone_sequence) AS tone_sequence_type
+            FROM alias
+            LEFT JOIN alias_list owner ON owner.id=alias.alias_list_id
+            LEFT JOIN alias_p25_subscriber_identity link ON link.alias_id=alias.id
+            LEFT JOIN p25_subscriber_identity identity ON identity.id=link.p25_subscriber_identity_id
+            WHERE alias.matcher_type='P25_SUBSCRIBER_IDENTITY' OR link.alias_id IS NOT NULL
+            """))
+        {
+            while(rows.next())
+            {
+                //The existing bounded component policy independently skips an unusable/missing Alias List and
+                //its Aliases. Their canonical links are deleted explicitly with those rows while FKs are relaxed.
+                //Do not let this extra matcher check turn that established isolation into a whole-file refusal.
+                if(rows.getObject("owner_rowid") == null || invalidAliasListRows.contains(rows.getLong("owner_rowid")))
+                    continue;
+                //The ordinary Alias inspection separately isolates JSON-unsafe Alias IDs and deletes their links.
+                //Here validate SQLite identity/relationship integrity without preempting that bounded repair.
+                Object aliasId = rows.getObject("id");
+                if(!(aliasId instanceof Number id) || id.longValue() <= 0 ||
+                    !positiveInteger(rows.getObject("identity_id")) ||
+                    !positiveInteger(rows.getObject("p25_subscriber_identity_id")) ||
+                    !positiveInteger(rows.getObject("owner_rowid")) ||
+                    !"P25_SUBSCRIBER_IDENTITY".equals(rows.getString("matcher_type")) ||
+                    !"P25".equals(rows.getString("family")))
+                    throw new SQLException("Canonical P25 subscriber Alias has an invalid owner or identity relationship");
+                for(String column: List.of("protocol", "value", "min_value", "max_value", "text_value",
+                    "numeric_value", "tone_sequence"))
+                {
+                    if(!"null".equals(rows.getString(column + "_type")))
+                        throw new SQLException("Canonical P25 subscriber Alias has unexpected ordinary matcher fields");
+                }
+                Object wacn = rows.getObject("home_wacn"), system = rows.getObject("home_system_id"),
+                    subscriber = rows.getObject("subscriber_id");
+                if(!(wacn instanceof Number w) || !(system instanceof Number y) || !(subscriber instanceof Number r) ||
+                    w.longValue() < 0 || w.longValue() > 0xFFFFF || y.longValue() < 0 || y.longValue() > 0xFFF ||
+                    r.longValue() < 1 || r.longValue() > 0xFFFFFC)
+                    throw new SQLException("Canonical P25 subscriber Alias has an invalid stored subscriber tuple");
+                P25Subscriber matcher = new P25Subscriber(w.intValue(), y.intValue(), r.intValue());
+                if(!AliasMatchRegistry.isOperational(new AliasListDefinition("Saved Alias", AliasListFamily.P25), matcher))
+                    throw new SQLException("Canonical P25 subscriber Alias is not supported by the current matcher registry");
+                valid.add(rows.getLong("id"));
+            }
+        }
+        return Set.copyOf(valid);
     }
 
     private static AliasOptionalFields aliasOptionalFields(ResultSet row) throws SQLException
@@ -1688,6 +1781,27 @@ final class CurrentDatabaseBestEffortRepair
             {
                 statement.setLong(1, rowId);
                 statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    /** Historical transactions relax foreign keys, so explicitly emulate the canonical Alias link cascade. */
+    private static void deleteCanonicalAliasLinks(Connection connection, List<Long> aliasRowIds) throws SQLException
+    {
+        if(aliasRowIds.isEmpty()) return;
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name='alias_p25_subscriber_identity'"))
+        {
+            if(!rows.next()) return;
+        }
+        try(var statement = connection.prepareStatement("""
+            DELETE FROM alias_p25_subscriber_identity WHERE alias_id=(SELECT id FROM alias WHERE rowid=?)
+            """))
+        {
+            for(long rowId: aliasRowIds)
+            {
+                statement.setLong(1, rowId); statement.addBatch();
             }
             statement.executeBatch();
         }

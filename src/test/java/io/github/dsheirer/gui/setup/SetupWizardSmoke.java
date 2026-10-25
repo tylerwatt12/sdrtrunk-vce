@@ -34,6 +34,8 @@ public final class SetupWizardSmoke
                 }
                 Files.writeString(root.resolve("database/backups"), "unrelated file");
             }
+            else if(mode.equals("upgrade-configuration-only"))
+                io.github.dsheirer.database.upgrade.Format60TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
             else io.github.dsheirer.database.upgrade.Format30TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
             if(mode.equals("upgrade-retry")) Files.writeString(root.resolve("database/backups"), "unrelated file");
         }
@@ -210,7 +212,12 @@ public final class SetupWizardSmoke
         Path database = root.resolve("database/sdrtrunk.sqlite");
         byte[] source = Files.readAllBytes(database);
         javax.swing.JCheckBox[] checkbox = new javax.swing.JCheckBox[1];
+        MigrationContentChoices[] content = new MigrationContentChoices[1];
         javax.swing.SwingUtilities.invokeAndWait(() -> {
+            content[0] = descendants(wizard).stream().filter(MigrationContentChoices.class::isInstance)
+                .map(MigrationContentChoices.class::cast).findFirst().orElseThrow();
+            if(content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.FULL)
+                throw new AssertionError("Full migration is not selected by default");
             checkbox[0] = descendants(wizard).stream()
                 .filter(component -> component instanceof javax.swing.JCheckBox box && box.isShowing() &&
                     box.getText().equals("Create a recovery backup first"))
@@ -220,12 +227,24 @@ public final class SetupWizardSmoke
                 button.isShowing() && (button.getText().contains("Check safely") || button.getText().contains("Skip safety"))))
                 throw new AssertionError("Upgrade still requires the discarded safety-review workflow");
         });
+        capture(wizard, root, "upgrade-full-ready");
+        if(mode.equals("upgrade-configuration-only"))
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                descendants(content[0]).stream().filter(component -> component instanceof javax.swing.JRadioButton radio &&
+                    radio.getAccessibleContext().getAccessibleName().equals("Configuration only"))
+                    .map(component -> (javax.swing.JRadioButton)component).findFirst().orElseThrow().doClick();
+                if(content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
+                    throw new AssertionError("Configuration-only selection did not stick");
+            });
         capture(wizard, root, "upgrade-ready");
         openUpgradeConfirmation(wizard);
         answerUpgradeConfirmation("Cancel");
         await(wizard, SetupStep.SOURCE);
         if(!java.util.Arrays.equals(source, Files.readAllBytes(database)))
             throw new AssertionError("Cancelling confirmation changed the database");
+        if(mode.equals("upgrade-configuration-only") &&
+            content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
+            throw new AssertionError("Cancelling confirmation lost the selected migration content");
         if(mode.equals("upgrade-no-backup"))
             javax.swing.SwingUtilities.invokeAndWait(() -> checkbox[0].doClick());
         openUpgradeConfirmation(wizard);
@@ -247,10 +266,11 @@ public final class SetupWizardSmoke
         }
         try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            if(io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.requireCurrent(connection).version() != 31)
+            if(io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.requireCurrent(connection).version() !=
+                io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.CURRENT_VERSION)
                 throw new AssertionError("Update did not reach the current format");
         }
-        if(mode.equals("upgrade-backup"))
+        if(mode.equals("upgrade-backup") || mode.equals("upgrade-configuration-only"))
         {
             try(var files = Files.list(root.resolve("database/backups")))
             {

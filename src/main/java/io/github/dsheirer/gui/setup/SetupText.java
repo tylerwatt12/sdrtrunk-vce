@@ -6,9 +6,9 @@ import javax.swing.JTextArea;
 import javax.swing.text.View;
 
 /** Wrapping, selectable prose whose height is recalculated when a wizard page narrows. */
-final class SetupText extends JTextArea
+public final class SetupText extends JTextArea
 {
-    SetupText(String value) { super(value); }
+    public SetupText(String value) { super(value); }
     @Override public Dimension getPreferredSize()
     {
         if(getParent()==null || getParent().getWidth()<=0 || getUI()==null) return super.getPreferredSize();

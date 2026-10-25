@@ -134,6 +134,7 @@ public final class SetupWizard extends JDialog
     private boolean managedRecordingCatalogNeedsUpgrade;
     private String managedRecordingCatalogReport = "";
     private boolean createUpgradeBackup = true;
+    private MigrationContent migrationContent = MigrationContent.FULL;
     private Set<String> availableLegacyRecovery = Set.of();
     private boolean legacyRecoveryUnavailable;
 
@@ -594,13 +595,13 @@ public final class SetupWizard extends JDialog
                 return;
             }
             notice("Your settings need an update", "This build needs to update the database before receiving starts.", false);
-            migrationDetails(startupMigrationPlan);
+            migrationDetails(database, startupMigrationPlan);
             LegacyRecoveryChoices recovery = appendLegacyRecoveryChoices();
             upgradeBackupChoice();
             next.setText("Update");
             accept = () -> {
                 Map<String,String> selected = recovery.selectedDefaults();
-                confirmMigration(() -> migrate(null, false, false, null, selected));
+                confirmMigration(migrationContent, () -> migrate(null, false, false, null, selected));
             };
             return;
         }
@@ -643,6 +644,7 @@ public final class SetupWizard extends JDialog
             if(xml.isSelected()) { migrate(input, false, true, null); return; }
             var selection = PreviousBuildLocator.resolveSelection(input).orElseThrow(() -> new IllegalArgumentException("No supported portable database found at this location."));
             if(folder.isSelected() != selection.portableProfile()) throw new IllegalArgumentException("The selected path does not match the chosen folder/file import scope.");
+            migrationContent = MigrationContent.FULL;
             job("Inspecting source…", null, () -> ApplicationMigrationService.readMigrationApproval(
                 selection, root.getParent()), approval -> {
                 DatabaseMigrationChain.PreflightReport plan = approval.plan();
@@ -651,10 +653,10 @@ public final class SetupWizard extends JDialog
                 paragraph("Import from: " + selection.path());
                 selectedScope = selection.portableProfile() ? "Your saved settings will be copied, along with your encryption vault, digital voice library and optional tools when available. Folders inside the old data folder will point to this installation. Recordings and logs are not copied; shared folders outside it stay unchanged." : "Only the database contents will be copied. Your vault, digital voice library and other files stay where they are. Saved output folders will not be changed — review them before starting reception.";
                 notice("What will be carried over",selectedScope,false);
-                migrationDetails(plan);
+                migrationDetails(selection.database(), plan);
                 button("Choose a different source", () -> showPage(SetupStep.SOURCE));
                 next.setText("Confirm import");
-                accept = () -> migrate(input, false, false, approval);
+                accept = () -> migrate(input, false, false, approval.withContent(migrationContent));
                 page.revalidate();
             });
         };
@@ -774,6 +776,7 @@ public final class SetupWizard extends JDialog
                          ApplicationMigrationService.ApprovedMigrationPlan approved,
                          Map<String,String> selectedRecovery)
     {
+        MigrationContent selectedContent = approved == null ? migrationContent : approved.content();
         job("Preparing your profile…", null, () -> {
             String report;
             if(fresh) { SdrTrunkDatabaseBootstrap.createFresh(database); report = "New profile created."; }
@@ -783,8 +786,8 @@ public final class SetupWizard extends JDialog
                 ApplicationMigrationService service = new ApplicationMigrationService();
                 if(source == null)
                     report = ApplicationMigrationSuccessDialog.currentDatabaseReport(selectedRecovery.isEmpty() ?
-                        service.migrateCurrent(root, createUpgradeBackup, this::migrationProgress) :
-                        service.migrateCurrent(root, createUpgradeBackup, selectedRecovery, this::migrationProgress));
+                        service.migrateCurrent(root, createUpgradeBackup, selectedContent, this::migrationProgress) :
+                        service.migrateCurrent(root, createUpgradeBackup, selectedRecovery, selectedContent, this::migrationProgress));
                 else
                 {
                     var selected = PreviousBuildLocator.resolveSelection(source).orElseThrow();
@@ -819,9 +822,16 @@ public final class SetupWizard extends JDialog
 
     private void confirmMigration(Runnable update)
     {
+        confirmMigration(MigrationContent.FULL, update);
+    }
+
+    private void confirmMigration(MigrationContent content, Runnable update)
+    {
         int selected = JOptionPane.showOptionDialog(this,
             (createUpgradeBackup ? "A recovery copy will be kept before updating. " :
                 "No recovery copy will be kept. ") +
+                (content == MigrationContent.CONFIGURATION_ONLY ?
+                    "Past activity, statistics, and alert history will start fresh. Recordings will be kept. " : "") +
                 "The previous VCE version cannot reopen the updated database. Continue?",
             "Update saved data?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
             new Object[]{"Update", "Cancel"}, "Cancel");
@@ -1795,21 +1805,49 @@ public final class SetupWizard extends JDialog
     {
         append(new WizardDisclosure(caption,message)); append(Box.createVerticalStrut(16));
     }
-    private void migrationDetails(DatabaseMigrationChain.PreflightReport plan)
+    private void migrationDetails(Path source, DatabaseMigrationChain.PreflightReport plan)
     {
+        JPanel changes = stack();
+        if(MigrationContentChoices.isAvailable(plan))
+        {
+            paragraph("What would you like to keep?");
+            append(new MigrationContentChoices(source, migrationContent, selected -> {
+                migrationContent = selected;
+                migrationDetails(changes, plan.withContent(selected));
+                page.revalidate(); page.repaint();
+            }));
+            append(Box.createVerticalStrut(16));
+        }
+        else migrationContent = MigrationContent.FULL;
+        migrationDetails(changes, plan.withContent(migrationContent));
+        append(changes);
+    }
+
+    private void migrationDetails(JPanel target, DatabaseMigrationChain.PreflightReport plan)
+    {
+        target.removeAll();
         if(plan.requiresMigration())
         {
-            notice("What stays", "Usable supported channels, aliases, and streaming settings are migrated " +
-                "independently. A broken item in one area won't discard usable items in another.", false);
-            if(plan.steps().stream().flatMap(step -> step.effects().stream())
+            addTo(target, noticePanel("What stays", "Usable supported channels, aliases, and streaming settings are migrated " +
+                "independently. A broken item in one area won't discard usable items in another.", false));
+            target.add(Box.createVerticalStrut(20));
+            if(plan.content() == MigrationContent.CONFIGURATION_ONLY || plan.steps().stream().flatMap(step -> step.effects().stream())
                 .anyMatch(SetupWizard::resetsReceiverActivity))
-                paragraph("Activity history and statistics will start fresh. Radio-system and site information will be learned again as receiving resumes.");
+            {
+                addTo(target, text("Activity history and statistics will start fresh. Radio-system and site information will be learned again as receiving resumes."));
+                target.add(Box.createVerticalStrut(12));
+            }
             if(plan.steps().stream().flatMap(step -> step.effects().stream())
                 .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP))
-                paragraph("Unusable components may be skipped, and retired state may be removed. Expand the " +
-                    "details below to see the full list of changes.");
+            {
+                addTo(target, text("Unusable components may be skipped, and retired state may be removed. Expand the " +
+                    "details below to see the full list of changes."));
+                target.add(Box.createVerticalStrut(12));
+            }
         }
-        details("Technical details",ApplicationMigrationService.describePlan(plan));
+        addTo(target, new WizardDisclosure("Technical details",ApplicationMigrationService.describePlan(plan)));
+        target.add(Box.createVerticalStrut(16));
+        target.revalidate(); target.repaint();
     }
     private static boolean resetsReceiverActivity(DatabaseMigrationEffect effect)
     {

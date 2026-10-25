@@ -225,7 +225,7 @@ class ApplicationMigrationServiceTest
         Path targetRoot = mTemporaryFolder.resolve("invalid-optional-vault-target");
         List<String> progress = new ArrayList<>();
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, source, target) -> "mandatory database complete");
+            (staged, source, target, content) -> "mandatory database complete");
 
         ApplicationMigrationService.MigrationResult result =
             service.importPrevious(sourceRoot, targetRoot, progress::add);
@@ -257,7 +257,7 @@ class ApplicationMigrationServiceTest
         }
         Path targetRoot = mTemporaryFolder.resolve("unsupported-vault-target");
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, source, target) -> "mandatory database complete");
+            (staged, source, target, content) -> "mandatory database complete");
 
         ApplicationMigrationService.MigrationResult result =
             service.importPrevious(sourceRoot, targetRoot, ignored -> { });
@@ -293,7 +293,7 @@ class ApplicationMigrationServiceTest
         Files.writeString(sourceModule, "module-content");
         Path targetRoot = mTemporaryFolder.resolve("optional-symlink-target");
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, source, target) -> "mandatory database complete");
+            (staged, source, target, content) -> "mandatory database complete");
 
         ApplicationMigrationService.MigrationResult result =
             service.importPrevious(sourceRoot, targetRoot, null);
@@ -332,7 +332,7 @@ class ApplicationMigrationServiceTest
                 "This environment can still read a mode-000 file");
             Path targetRoot = mTemporaryFolder.resolve("optional-unreadable-target");
             ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-                (staged, source, target) -> "mandatory database complete");
+                (staged, source, target, content) -> "mandatory database complete");
 
             ApplicationMigrationService.MigrationResult result =
                 service.importPrevious(sourceRoot, targetRoot, null);
@@ -366,7 +366,7 @@ class ApplicationMigrationServiceTest
             Files.createDirectories(destination.getParent());
             Files.writeString(destination, "incomplete mandatory snapshot");
             throw new IOException("forced mandatory database snapshot failure");
-        }, (staged, source, target) ->
+        }, (staged, source, target, content) ->
         {
             helperRan.set(true);
             return "must not run";
@@ -406,7 +406,7 @@ class ApplicationMigrationServiceTest
         AtomicReference<Path> receivedSourceRoot = new AtomicReference<>();
         AtomicReference<Path> receivedTargetRoot = new AtomicReference<>();
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, source, target) ->
+            (staged, source, target, content) ->
             {
                 receivedSourceRoot.set(source);
                 receivedTargetRoot.set(target);
@@ -571,7 +571,7 @@ class ApplicationMigrationServiceTest
         byte[] sourceHash = sha256(sourceDatabase);
         AtomicReference<Path> stagedDatabase = new AtomicReference<>();
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, source, target) ->
+            (staged, source, target, content) ->
             {
                 stagedDatabase.set(staged);
                 Files.writeString(Path.of(staged + "-journal"), "forced journal");
@@ -690,7 +690,7 @@ class ApplicationMigrationServiceTest
                     throw new IOException("Could not create the staged format-14 fixture", e);
                 }
             },
-            (staged, source, target) ->
+            (staged, source, target, content) ->
             {
                 helperRan.set(true);
                 return "must not run";
@@ -1500,10 +1500,10 @@ class ApplicationMigrationServiceTest
         SdrTrunkTestDatabase.create(database);
         AtomicReference<Path> stagedPath = new AtomicReference<>();
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, from, to) ->
+            (staged, from, to, content) ->
             {
                 stagedPath.set(staged);
-                return ApplicationMigrationServiceTestSupport.runMigratorInProcess(staged, from, to);
+                return ApplicationMigrationServiceTestSupport.runMigratorInProcess(staged, from, to, content);
             }, promoted ->
             {
                 SdrTrunkDatabaseStartup.validateGlobalDatabase(promoted);
@@ -1538,7 +1538,7 @@ class ApplicationMigrationServiceTest
         Path sidecar = Path.of(database + "-wal");
         ApplicationMigrationService service = new ApplicationMigrationService(
             SqliteDatabaseSnapshot::create,
-            (staged, from, to) -> "migration helper complete",
+            (staged, from, to, content) -> "migration helper complete",
             promoted ->
             {
                 Files.writeString(Path.of(promoted + "-wal"), "forced active sidecar");
@@ -1602,7 +1602,7 @@ class ApplicationMigrationServiceTest
                 Files.writeString(Path.of(destination + "-shm"), "partial shm");
                 throw new IOException("forced snapshot failure");
             },
-            (staged, source, target) -> "must not run");
+            (staged, source, target, content) -> "must not run");
 
         IOException exception = assertThrows(IOException.class, () -> service.migrateCurrent(dataRoot, null));
 
@@ -1629,7 +1629,7 @@ class ApplicationMigrationServiceTest
                 Files.createDirectories(destination.getParent());
                 Files.copy(source, destination);
             },
-            (staged, source, target) ->
+            (staged, source, target, content) ->
             {
                 try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + staged);
                     Statement statement = connection.createStatement())
@@ -1661,7 +1661,7 @@ class ApplicationMigrationServiceTest
         byte[] sourceHash = sha256(sourceDatabase);
         Path targetRoot = mTemporaryFolder.resolve("invalid-config-target");
         ApplicationMigrationService service = new ApplicationMigrationService(SqliteDatabaseSnapshot::create,
-            (staged, source, target) ->
+            (staged, source, target, content) ->
             {
                 try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + staged);
                     Statement statement = connection.createStatement())

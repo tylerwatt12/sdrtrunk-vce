@@ -102,7 +102,7 @@ class SetupLegacyRecoveryChoicesTest
         String source = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         assertTrue(source.contains("ApplicationMigrationService.availableRecoveryKeys(wizard.root)"));
         assertTrue(source.contains("selectedRecovery.isEmpty() ?"));
-        assertTrue(source.contains("service.migrateCurrent(root, createUpgradeBackup, selectedRecovery, this::migrationProgress)"));
+        assertTrue(source.contains("service.migrateCurrent(root, createUpgradeBackup, selectedRecovery, selectedContent, this::migrationProgress)"));
         assertTrue(source.contains("new Object[]{\"Recover selected settings\", \"Cancel\"}, \"Cancel\""));
         assertTrue(source.contains("readMigrationApproval(\n                selection, root.getParent())"));
         assertFalse(source.contains("readMigrationApproval(\n                selection.database(), root.getParent())"));

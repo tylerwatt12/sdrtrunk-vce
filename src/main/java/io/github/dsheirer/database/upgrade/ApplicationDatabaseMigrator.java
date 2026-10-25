@@ -38,6 +38,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -92,7 +93,8 @@ public final class ApplicationDatabaseMigrator
     private static final Pattern STAGED_DATA_ROOT =
         Pattern.compile("^\\..+\\.migration-" + UUID_PATTERN + "$");
     private static final String USAGE = "Usage: ApplicationDatabaseMigrator <staged-database-path> " +
-        "[<source-data-root> <target-data-root> [--complete-profile-copy|--owned-complete-profile-copy]]";
+        "[<source-data-root> <target-data-root> [--complete-profile-copy|--owned-complete-profile-copy]] " +
+        "[--configuration-only]";
 
     private ApplicationDatabaseMigrator()
     {
@@ -120,6 +122,14 @@ public final class ApplicationDatabaseMigrator
         {
             output.println(USAGE);
             return EXIT_SUCCESS;
+        }
+
+        MigrationContent content = MigrationContent.FULL;
+        if(args != null)
+        {
+            List<String> arguments = new ArrayList<>(java.util.Arrays.asList(args));
+            if(arguments.remove("--configuration-only")) content = MigrationContent.CONFIGURATION_ONLY;
+            args = arguments.toArray(String[]::new);
         }
 
         if(args == null || (args.length != 1 && args.length != 3 &&
@@ -151,11 +161,11 @@ public final class ApplicationDatabaseMigrator
         {
             if(args.length == 4 && "--owned-complete-profile-copy".equals(args[3]))
             {
-                migrateOwnedCompleteProfileCopy(database, relocation, output);
+                migrateOwnedCompleteProfileCopy(database, relocation, output, content);
             }
             else
             {
-                migrate(database, relocation, output);
+                migrate(database, relocation, output, content);
             }
             return EXIT_SUCCESS;
         }
@@ -203,6 +213,14 @@ public final class ApplicationDatabaseMigrator
                                                 Map<String,String> recoveryDefaults)
         throws IOException, SQLException
     {
+        return migrateInPlace(database, progress, backup, recoveryDefaults, MigrationContent.FULL);
+    }
+
+    static InPlaceMigrationResult migrateInPlace(Path database, Consumer<String> progress, BackupAction backup,
+                                                Map<String,String> recoveryDefaults, MigrationContent content)
+        throws IOException, SQLException
+    {
+        Objects.requireNonNull(content, "Migration contents cannot be null");
         Path normalized = database.toAbsolutePath().normalize();
         Consumer<String> listener = progress == null ? ignored -> { } : progress;
         if(Files.isSymbolicLink(normalized) || !Files.isRegularFile(normalized, LinkOption.NOFOLLOW_LINKS))
@@ -227,7 +245,7 @@ public final class ApplicationDatabaseMigrator
             {
                 throw new SQLException(exception.getMessage(), exception);
             }
-            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planInPlace(connection, source);
+            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
             Set<String> legacyKeys = source.version() <= 52 ? LegacyReceiverSettingsMigration.missingKeys(connection) :
                 recoveryDefaults.keySet();
             LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.capture(
@@ -243,7 +261,7 @@ public final class ApplicationDatabaseMigrator
             if(!recoveryDefaults.isEmpty())
                 output.println("Explicitly selected legacy receiver settings recovery: " + recoveryDefaults.size() + " setting(s).");
             MigrationSummary migration = migrateInTransaction(connection, source, null, normalized, true, listener, backup,
-                legacy, recoveryDefaults);
+                legacy, recoveryDefaults, content);
             printCompletion(output, migration);
             output.println("RESULT: In-place application database update complete.");
             return new InPlaceMigrationResult(plan, bytes.toString(StandardCharsets.UTF_8));
@@ -280,7 +298,7 @@ public final class ApplicationDatabaseMigrator
      * The caller retains the complete original installation. External imports retain the strict staged path below.
      */
     private static void migrateOwnedCompleteProfileCopy(Path database, DataRootRelocation relocation,
-                                                        PrintStream output)
+                                                        PrintStream output, MigrationContent content)
         throws IOException, SQLException, UnsupportedDatabaseFormatException
     {
         if(Files.isSymbolicLink(database) || !Files.isRegularFile(database, LinkOption.NOFOLLOW_LINKS))
@@ -298,14 +316,14 @@ public final class ApplicationDatabaseMigrator
         {
             SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
             DatabaseFormatCatalog.DetectedFormat source = requireSupportedFormat(connection);
-            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planInPlace(connection, source);
+            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
             printPreflight(output, plan, relocation);
             Set<String> legacyKeys = source.version() <= 52 ? LegacyReceiverSettingsMigration.missingKeys(connection) :
                 Set.of();
             LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.capture(
                 database.getParent().getParent(), legacyKeys);
             MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, true,
-                ignored -> { }, null, legacy, Map.of());
+                ignored -> { }, null, legacy, Map.of(), content);
             //The transaction has checked the exact final schema, required settings and configuration before COMMIT.
             //Finalize this private stage for atomic promotion without scanning retained history again.
             finalizeStagedDatabase(connection);
@@ -345,7 +363,7 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
-    private static void migrate(Path database, DataRootRelocation relocation, PrintStream output)
+    private static void migrate(Path database, DataRootRelocation relocation, PrintStream output, MigrationContent content)
         throws IOException, SQLException, UnsupportedDatabaseFormatException
     {
         if(Files.isSymbolicLink(database))
@@ -369,7 +387,7 @@ public final class ApplicationDatabaseMigrator
             DatabaseFormatCatalog.DetectedFormat source = requireSupportedFormat(connection);
             output.println("Detected database format " + source.version() + " [" + source.id() + "]: " +
                 source.description() + (source.markerPresent() ? "." : " (legacy layout without global marker)."));
-            DatabaseMigrationChain.PreflightReport preflight = requireSupportedPreflight(connection, source);
+            DatabaseMigrationChain.PreflightReport preflight = requireSupportedPreflight(connection, source).withContent(content);
             printPreflight(output, preflight, relocation);
 
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
@@ -393,7 +411,7 @@ public final class ApplicationDatabaseMigrator
 
             output.println("Pre-migration checks passed. Updating the staged database.");
             MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, false,
-                ignored -> { }, null, legacy, Map.of());
+                ignored -> { }, null, legacy, Map.of(), content);
             //The transaction already completed the full schema, row, foreign-key and quick checks before COMMIT.
             //Finalizing the private stage changes only journal state; do not rescan the same retained history here.
             finalizeStagedDatabase(connection);
@@ -475,7 +493,7 @@ public final class ApplicationDatabaseMigrator
     private static MigrationSummary migrateInTransaction(Connection connection,
             DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation, Path database,
             boolean inPlace, Consumer<String> progress, BackupAction backup,
-            LegacyReceiverSettingsMigration.Snapshot legacy, Map<String,String> recoveryDefaults)
+            LegacyReceiverSettingsMigration.Snapshot legacy, Map<String,String> recoveryDefaults, MigrationContent content)
         throws IOException, SQLException
     {
         MigrationSummary committed = null;
@@ -513,6 +531,12 @@ public final class ApplicationDatabaseMigrator
                 {
                     progress.accept("Creating the database backup");
                     backup.run();
+                }
+                Long discardedHistoryRows = null;
+                if(content == MigrationContent.CONFIGURATION_ONLY)
+                {
+                    progress.accept("Discarding saved receiver Activity, statistics and alert history");
+                    discardedHistoryRows = MigrationActivityReset.discard(connection);
                 }
                 int recoveredLegacySettings = legacy.recoverSelected(connection, recoveryDefaults);
                 int[] importedLegacySettings = {0};
@@ -557,6 +581,15 @@ public final class ApplicationDatabaseMigrator
                         if(step.sourceVersion() == 52)
                             importedLegacySettings[0] = legacy.importMissing(connection);
                     });
+                if(discardedHistoryRows != null)
+                {
+                    DatabaseMigrationChain.StepReport reset = MigrationActivityReset.finish(connection,
+                        expectedSource.version(), discardedHistoryRows);
+                    List<DatabaseMigrationChain.StepReport> reports = new ArrayList<>();
+                    reports.add(reset); reports.addAll(chainReport.steps());
+                    chainReport = new DatabaseMigrationChain.MigrationReport(chainReport.source(), chainReport.target(),
+                        List.copyOf(reports));
+                }
                 if(inPlace)
                 {
                     //All historical layouts have now reached current configuration semantics. Repair this bounded
@@ -606,7 +639,7 @@ public final class ApplicationDatabaseMigrator
                     portablePreferences.rebasedDirectories(),
                     portablePreferences.resetEntries(), rebasedRecordingTunerPaths,
                     administrativeRepair, currentRepair, derivedStateRepair,
-                    identityRepair, chainReport, importedLegacySettings[0], recoveredLegacySettings);
+                    identityRepair, chainReport, importedLegacySettings[0], recoveredLegacySettings, content);
                 statement.execute("COMMIT");
                 transactionOpen = false;
                 committed = summary;
@@ -1103,6 +1136,7 @@ public final class ApplicationDatabaseMigrator
             scope = "portable-profile import; supported stored paths may be remapped within the copied profile.";
         }
         output.println("Migration scope: " + scope);
+        output.println("Migration contents: " + report.content().displayName() + ".");
         output.println("Migration plan: format " + report.source().version() + " [" + report.source().id() +
             "] -> format " + report.target().version() + " [" + report.target().id() + "] through " +
             report.steps().size() + " step(s).");
@@ -1110,6 +1144,7 @@ public final class ApplicationDatabaseMigrator
 
     private static void printCompletion(PrintStream output, MigrationSummary migration)
     {
+        output.println("Migration contents: " + migration.content().displayName() + ".");
         output.println("Legacy receiver settings imported from profile JSON: " + migration.importedLegacySettings() + ".");
         output.println("Explicitly selected legacy receiver settings recovered: " + migration.recoveredLegacySettings() + ".");
         output.println("Original legacy settings files were left unchanged.");
@@ -1474,7 +1509,7 @@ public final class ApplicationDatabaseMigrator
                                     CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair,
                                     SqliteIdentityRepair.Inspection identityRepair,
                                     DatabaseMigrationChain.MigrationReport chainReport, int importedLegacySettings,
-                                    int recoveredLegacySettings)
+                                    int recoveredLegacySettings, MigrationContent content)
     {
     }
 

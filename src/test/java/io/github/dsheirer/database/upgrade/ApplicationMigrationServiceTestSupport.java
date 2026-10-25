@@ -26,8 +26,19 @@ public final class ApplicationMigrationServiceTestSupport
     static String runMigratorInProcess(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
         throws IOException
     {
+        return runMigratorInProcess(stagedDatabase, sourceDataRoot, targetDataRoot, MigrationContent.FULL);
+    }
+
+    static String runMigratorInProcess(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot,
+                                        MigrationContent content) throws IOException
+    {
         String[] arguments = sourceDataRoot == null ? new String[] {stagedDatabase.toString()} :
             new String[] {stagedDatabase.toString(), sourceDataRoot.toString(), targetDataRoot.toString()};
+        if(content == MigrationContent.CONFIGURATION_ONLY)
+        {
+            arguments = java.util.Arrays.copyOf(arguments, arguments.length + 1);
+            arguments[arguments.length - 1] = "--configuration-only";
+        }
         ByteArrayOutputStream captured = new ByteArrayOutputStream();
 
         try(PrintStream output = new PrintStream(captured, true, StandardCharsets.UTF_8))

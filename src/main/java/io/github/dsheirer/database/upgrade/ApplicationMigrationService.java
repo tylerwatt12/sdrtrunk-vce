@@ -211,7 +211,7 @@ public final class ApplicationMigrationService
             mExternalSnapshotter.create(sourceDatabase, stagedDatabase);
             FileAccessAttributeSnapshot.restrictSensitiveFile(stagedDatabase);
             ApprovedMigrationPlan stagedPlan = readPrivateApprovedMigrationPlan(stagedDatabase,
-                mExternalSnapshotsAreCanonical);
+                mExternalSnapshotsAreCanonical).withContent(expectedPlan.content());
             requireApprovedPlan(expectedPlan, stagedPlan, "source database selected after confirmation");
             DatabaseMigrationChain.PreflightReport sourcePlan = stagedPlan.plan();
 
@@ -233,8 +233,8 @@ public final class ApplicationMigrationService
 
             listener.update("Updating database");
             String helperOutput = inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE ?
-                mMigrationRunner.run(stagedDatabase, sourceRoot, targetRoot) :
-                mMigrationRunner.run(stagedDatabase, null, null);
+                mMigrationRunner.run(stagedDatabase, sourceRoot, targetRoot, expectedPlan.content()) :
+                mMigrationRunner.run(stagedDatabase, null, null, expectedPlan.content());
             LegacyReceiverSettingsMigration.removeStage(stageRoot);
 
             listener.update("Checking updated data");
@@ -385,7 +385,7 @@ public final class ApplicationMigrationService
             mExternalSnapshotter.create(source, staged);
             FileAccessAttributeSnapshot.restrictSensitiveFile(staged);
             ApprovedMigrationPlan stagedPlan = readPrivateApprovedMigrationPlan(staged,
-                mExternalSnapshotsAreCanonical);
+                mExternalSnapshotsAreCanonical).withContent(expectedPlan.content());
             requireApprovedPlan(expectedPlan, stagedPlan, "SQLite database selected after confirmation");
             DatabaseMigrationChain.PreflightReport sourcePlan = stagedPlan.plan();
 
@@ -402,7 +402,7 @@ public final class ApplicationMigrationService
             moveAtomically(stagedBackup, backup);
 
             listener.update("Updating selected database copy");
-            String helperOutput = mMigrationRunner.run(staged, null, null);
+            String helperOutput = mMigrationRunner.run(staged, null, null, expectedPlan.content());
             InitialAdminSetup.initializeNewProfile(staged);
             //Commit the review requirement with the replacement, not after promotion or only in restart arguments.
             io.github.dsheirer.gui.setup.SetupProgress.replacementReview().save(staged);
@@ -492,7 +492,14 @@ public final class ApplicationMigrationService
     public MigrationResult migrateCurrent(Path dataRoot, boolean createBackup, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
-        return migrateCurrent(dataRoot, createBackup, Map.of(), progress);
+        return migrateCurrent(dataRoot, createBackup, Map.of(), MigrationContent.FULL, progress);
+    }
+
+    public MigrationResult migrateCurrent(Path dataRoot, boolean createBackup, MigrationContent content,
+                                           ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
+        return migrateCurrent(dataRoot, createBackup, Map.of(), content, progress);
     }
 
     /** Returns only labels' stable keys; callers must explicitly offer recovery, never infer user intent from defaults. */
@@ -506,6 +513,14 @@ public final class ApplicationMigrationService
         Map<String,String> expectedLegacyDefaults, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
+        return migrateCurrent(dataRoot, createBackup, expectedLegacyDefaults, MigrationContent.FULL, progress);
+    }
+
+    public MigrationResult migrateCurrent(Path dataRoot, boolean createBackup,
+        Map<String,String> expectedLegacyDefaults, MigrationContent content, ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
+        Objects.requireNonNull(content, "Migration contents cannot be null");
         Map<String,String> recovery = Map.copyOf(Objects.requireNonNull(expectedLegacyDefaults));
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot.toAbsolutePath().normalize());
@@ -534,7 +549,7 @@ public final class ApplicationMigrationService
                     requireNoSidecars(incomplete, "The recovery backup must be a standalone SQLite snapshot.");
                     moveAtomically(incomplete, backup);
                     backedUp.set(true);
-                } : null, recovery);
+                } : null, recovery, content);
             String backupReport = backedUp.get() ? "Recovery backup retained: " + backup :
                 createBackup ? "No recovery backup was needed; the database was already current." :
                     "WARNING: Recovery backup skipped by operator choice.";
@@ -931,7 +946,8 @@ public final class ApplicationMigrationService
                 "eligible stored paths.";
         }
 
-        StringBuilder description = new StringBuilder("format ")
+        StringBuilder description = new StringBuilder("Contents: ").append(plan.content().displayName())
+            .append("\n\nformat ")
             .append(plan.source().version()).append(" [").append(plan.source().id()).append("] to format ")
             .append(plan.target().version()).append(" [").append(plan.target().id()).append("]");
 
@@ -1686,7 +1702,7 @@ public final class ApplicationMigrationService
     @FunctionalInterface
     interface MigrationRunner
     {
-        String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot)
+        String run(Path stagedDatabase, Path sourceDataRoot, Path targetDataRoot, MigrationContent content)
             throws IOException, InterruptedException;
     }
 
@@ -1756,6 +1772,17 @@ public final class ApplicationMigrationService
         public DatabaseMigrationChain.PreflightReport plan()
         {
             return mPlan;
+        }
+
+        public MigrationContent content()
+        {
+            return mPlan.content();
+        }
+
+        /** Rebinds only the declared contents; the reviewed source hash and legacy-settings snapshot stay intact. */
+        public ApprovedMigrationPlan withContent(MigrationContent content)
+        {
+            return new ApprovedMigrationPlan(mPlan.withContent(content), mSourceContentSha256, mLegacyReceiverSettings);
         }
 
         private String sourceContentSha256()

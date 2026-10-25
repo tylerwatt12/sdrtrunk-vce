@@ -88,7 +88,10 @@ class SetupStartupBoundaryTest
         String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         String sourcePage = wizard.substring(wizard.indexOf("private void sourcePage()"),
             wizard.indexOf("private void migrate(Path source"));
-        assertTrue(sourcePage.contains("migrationDetails(startupMigrationPlan)"));
+        assertTrue(sourcePage.contains("migrationDetails(database, startupMigrationPlan)"));
+        assertTrue(sourcePage.contains("migrationDetails(selection.database(), plan)"));
+        assertTrue(sourcePage.contains("approval.withContent(migrationContent)"));
+        assertTrue(wizard.contains("private MigrationContent migrationContent = MigrationContent.FULL"));
         assertTrue(sourcePage.contains("upgradeBackupChoice()"));
         assertTrue(sourcePage.contains("next.setText(\"Update\")"));
         assertTrue(wizard.contains("private boolean createUpgradeBackup = true"));
@@ -97,7 +100,7 @@ class SetupStartupBoundaryTest
         assertFalse(wizard.contains("Need the receiver back sooner?"));
         assertFalse(wizard.contains("Faster update available"));
         assertFalse(wizard.contains("Skip backup & safety checks"));
-        assertTrue(wizard.contains("service.migrateCurrent(root, createUpgradeBackup, this::migrationProgress)"));
+        assertTrue(wizard.contains("service.migrateCurrent(root, createUpgradeBackup, selectedContent, this::migrationProgress)"));
         assertTrue(wizard.contains("elapsedLabel(System.nanoTime() - operationStartedNanos)"));
     }
 

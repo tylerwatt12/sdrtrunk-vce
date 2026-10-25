@@ -18,6 +18,7 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -347,8 +348,34 @@ public final class DatabaseMigrationChain
     }
 
     public record PreflightReport(DatabaseFormatCatalog.DetectedFormat source,
-                                  DatabaseFormatCatalog.FormatDescriptor target, List<StepPreflight> steps)
+                                  DatabaseFormatCatalog.FormatDescriptor target, List<StepPreflight> steps,
+                                  MigrationContent content)
     {
+        public PreflightReport(DatabaseFormatCatalog.DetectedFormat source,
+                               DatabaseFormatCatalog.FormatDescriptor target, List<StepPreflight> steps)
+        {
+            this(source, target, steps, MigrationContent.FULL);
+        }
+
+        public PreflightReport
+        {
+            steps = List.copyOf(steps);
+            Objects.requireNonNull(content, "Migration contents cannot be null");
+        }
+
+        /** Pure review choice: no database copy, inspection or mutation occurs when the user changes selection. */
+        public PreflightReport withContent(MigrationContent selected)
+        {
+            Objects.requireNonNull(selected, "Migration contents cannot be null");
+            if(selected == MigrationContent.CONFIGURATION_ONLY && source.version() >= target.version())
+                throw new IllegalArgumentException("Configuration-only import requires an older database that needs an update.");
+            List<StepPreflight> declared = new ArrayList<>();
+            if(selected == MigrationContent.CONFIGURATION_ONLY)
+                declared.add(MigrationActivityReset.preflight(source.version()));
+            steps.stream().filter(step -> !MigrationActivityReset.STEP_ID.equals(step.id())).forEach(declared::add);
+            return new PreflightReport(source, target, declared, selected);
+        }
+
         public boolean requiresMigration()
         {
             return source.requiresMigration() || !steps.isEmpty();

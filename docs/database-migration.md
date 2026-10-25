@@ -42,6 +42,8 @@ database.
    moving an existing VCE profile.
 2. Select **Review import** for an external source, or review the update plan shown for the active profile. Check
    the source, destination, and declared repairs, activity resets, or retired settings that may be removed.
+   When an older database needs updating, choose **Configuration only** or
+   **Configuration, activity, and statistics** before confirming.
 3. Confirm the import or update. Receiving has not started, and the active data folder stays locked while the
    database work runs.
 4. Read the completion report. It gives the actual preserved, repaired, defaulted, reset, and skipped-item counts.
@@ -53,6 +55,27 @@ An active-profile update uses one transaction in the existing database. A failur
 changes. External imports and replacements update and validate a private copy, then install it only after the checks
 pass; the selected source stays unchanged. Replacement restarts into unfinished setup review so imported settings
 are checked before reception can start.
+
+### Choose how much to migrate
+
+For an older database, **Configuration, activity, and statistics** is selected initially. It carries forward usable
+history through the supported updates; any required historical resets still apply and appear in the review.
+**Configuration only** keeps channels, aliases, lists, accounts, credentials, and settings while starting receiver
+Activity, statistics, learned observations, and alert history fresh. Old pending alert deliveries are discarded;
+notification topics, rules, and subscriptions remain. Account preferences, including dismissed guides, are kept.
+Recording audio and the separate Managed Recordings catalog are not deleted by either choice. An import still copies
+only the files described by its selected file/folder scope.
+
+Full migration can take a very long time. The review gives a broad planning range from the application database and
+its journal sizes, without scanning history just to estimate the duration. Database size cannot predict the work
+reliably: the source format, history contents, storage speed, backup, and validation can make the actual time much
+longer. The estimate is not a countdown or deadline. Configuration-only avoids converting retained history, but
+copying, the selected recovery backup, and required safety checks can still take time. It does not compact the
+database or promise a smaller file.
+
+Both choices use the same supported format chain and retain the same backup, source-integrity, transaction, and
+promotion protections. An external source stays unchanged. Configuration-only is an explicit choice for an older
+database; it is not offered as an automatic reset of an already-current profile.
 
 ## What is kept, copied, or reset
 

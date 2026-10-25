@@ -14,9 +14,14 @@ package io.github.dsheirer.gui.configuration;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationService;
 import io.github.dsheirer.database.upgrade.ApplicationMigrationProgressDialog;
 import io.github.dsheirer.database.upgrade.DatabaseMigrationChain;
+import io.github.dsheirer.database.upgrade.MigrationContent;
 import io.github.dsheirer.gui.CopyableErrorDialog;
+import io.github.dsheirer.gui.setup.MigrationContentChoices;
+import io.github.dsheirer.gui.setup.SetupPage;
+import io.github.dsheirer.gui.setup.SetupText;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.Window;
 import java.nio.file.Files;
@@ -32,6 +37,7 @@ import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import javax.swing.UIManager;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.text.DefaultCaret;
 
 /** Selects, preflights, and confirms replacement of the active profile from a standalone SQLite database. */
 public final class SqliteDatabaseImportDialog
@@ -74,11 +80,12 @@ public final class SqliteDatabaseImportDialog
                     progress.update("Checking the selected SQLite database");
                     return ApplicationMigrationService.readMigrationApproval(source, activeDatabase.getParent());
                 });
+            ImportReview review = confirmationPanel(source, activeDatabase, approval.plan());
             Object[] options = {"Replace Database and Restart", "Cancel"};
             int choice = JOptionPane.showOptionDialog(parent,
-                confirmationPanel(source, activeDatabase, approval.plan()), TITLE,
+                review.panel(), TITLE,
                 JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
-            return choice == 0 ? new PreparedImport(source, approval) : null;
+            return choice == 0 ? new PreparedImport(source, approval.withContent(review.content())) : null;
         }
         catch(Exception e)
         {
@@ -88,8 +95,8 @@ public final class SqliteDatabaseImportDialog
         }
     }
 
-    private static JPanel confirmationPanel(Path source, Path activeDatabase,
-                                            DatabaseMigrationChain.PreflightReport plan)
+    static ImportReview confirmationPanel(Path source, Path activeDatabase,
+                                         DatabaseMigrationChain.PreflightReport plan)
     {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
@@ -98,10 +105,48 @@ public final class SqliteDatabaseImportDialog
         panel.add(warning);
         panel.add(Box.createVerticalStrut(12));
 
-        JTextArea details = new JTextArea(
+        JTextArea details = new SetupText(confirmationText(source, activeDatabase, plan));
+        //Read-only plan updates must not scroll past the choices to reveal the text caret.
+        if(details.getCaret() instanceof DefaultCaret caret) caret.setUpdatePolicy(DefaultCaret.NEVER_UPDATE);
+        details.setAlignmentX(Component.LEFT_ALIGNMENT);
+        details.setEditable(false);
+        details.setOpaque(false);
+        details.setLineWrap(true);
+        details.setWrapStyleWord(true);
+        details.setRows(17);
+        details.setColumns(68);
+        details.setCaretPosition(0);
+        JPanel body = new SetupPage();
+        body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
+        MigrationContentChoices choices = null;
+        if(MigrationContentChoices.isAvailable(plan))
+        {
+            choices = new MigrationContentChoices(source, MigrationContent.FULL, selected -> {
+                details.setText(confirmationText(source, activeDatabase, plan.withContent(selected)));
+                details.setCaretPosition(0);
+            });
+            body.add(choices);
+            body.add(Box.createVerticalStrut(12));
+        }
+        body.add(details);
+        JScrollPane scroll = new JScrollPane(body);
+        Dimension size = details.getPreferredSize();
+        scroll.setPreferredSize(new Dimension(Math.min(720, size.width + 24), Math.min(480, size.height + 24)));
+        panel.add(scroll);
+        return new ImportReview(panel, choices);
+    }
+
+    private static String confirmationText(Path source, Path activeDatabase,
+                                           DatabaseMigrationChain.PreflightReport plan)
+    {
+        return
             "The active database will be completely replaced after the selected file is copied, migrated, and " +
                 "validated. This includes channels, aliases, web users and password verifiers, preferences, and " +
-                "other compatible data stored in SQLite. Reproducible activity or statistics data may be reset " +
+                "other compatible data stored in SQLite. " +
+                (plan.content() == MigrationContent.CONFIGURATION_ONLY ?
+                    "Past activity, statistics, and alert history will start fresh. Recording files and the " +
+                        "separate Managed Recordings catalog are kept. " : "") +
+                "Reproducible activity or statistics data may be reset " +
                 "when it cannot be converted safely. The current database will first be retained as a " +
                 "timestamped safety backup.\n\n" +
                 "Only data inside the selected SQLite file will be imported. Its neighboring vault, JMBE library, " +
@@ -113,16 +158,12 @@ public final class SqliteDatabaseImportDialog
                 "into setup to review the imported settings before receiving resumes." +
                 "\n\nSelected SQLite database:\n" + source +
                 "\n\nActive database to replace:\n" + activeDatabase.toAbsolutePath().normalize() +
-                "\n\nRequired database changes:\n" + ApplicationMigrationService.describePlan(plan));
-        details.setEditable(false);
-        details.setOpaque(false);
-        details.setLineWrap(true);
-        details.setWrapStyleWord(true);
-        details.setRows(17);
-        details.setColumns(68);
-        details.setCaretPosition(0);
-        panel.add(new JScrollPane(details));
-        return panel;
+                "\n\nRequired database changes:\n" + ApplicationMigrationService.describePlan(plan);
+    }
+
+    record ImportReview(JPanel panel, MigrationContentChoices choices)
+    {
+        MigrationContent content() { return choices == null ? MigrationContent.FULL : choices.selectedContent(); }
     }
 
     static JTextArea warningNotice()

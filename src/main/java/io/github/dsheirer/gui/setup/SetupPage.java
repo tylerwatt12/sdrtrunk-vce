@@ -6,7 +6,7 @@ import javax.swing.JPanel;
 import javax.swing.Scrollable;
 
 /** Reflow page content at the viewport width; small screens scroll vertically, never clip controls horizontally. */
-final class SetupPage extends JPanel implements Scrollable
+public final class SetupPage extends JPanel implements Scrollable
 {
     public Dimension getPreferredScrollableViewportSize() { return new Dimension(580,420); }
     public int getScrollableUnitIncrement(Rectangle visible,int orientation,int direction) { return 18; }
