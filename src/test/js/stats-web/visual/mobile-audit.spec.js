@@ -108,6 +108,7 @@ for (const width of [320, 390, 430]) {
     const queueBounds = await queue.boundingBox();
     expect(queueBounds.x).toBeGreaterThanOrEqual(0);
     expect(queueBounds.x + queueBounds.width).toBeLessThanOrEqual(width);
+    expect(queueBounds.y).toBeGreaterThanOrEqual(transportBounds.y + transportBounds.height);
     expect(queueBounds.height).toBeLessThanOrEqual(280);
     expect(await queue.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await queue.focus();
@@ -118,7 +119,8 @@ for (const width of [320, 390, 430]) {
     await expect.poll(async () => {
       const last = await queue.locator('li').last().boundingBox();
       const controls = await transport.boundingBox();
-      return last.y + last.height <= controls.y;
+      // Scanner's inline playback controls precede the call details and queue.
+      return last.y >= controls.y + controls.height;
     }).toBe(true);
   });
 }
@@ -127,6 +129,10 @@ test('full administrator header keeps theme and other actions visible on a 320px
   await page.setViewportSize({ width: 320, height: 740 });
   await page.goto('/design-system.html?theme=light&view=app-chrome');
   const header = page.locator('.visual-app-chrome-example .topbar');
+  const navigation = page.locator('.visual-app-chrome-example .navigation-toggle');
+  if (await navigation.getAttribute('aria-expanded') === 'true') await navigation.click();
+  await expect(navigation).toHaveAttribute('aria-expanded', 'false');
+  await expect(header.locator('.header-controls button:visible')).not.toHaveCount(0);
   for (const control of await header.locator('.header-controls a, .header-controls button:visible').all()) {
     await expectWithin(control, header);
     expect((await control.boundingBox()).x + (await control.boundingBox()).width)

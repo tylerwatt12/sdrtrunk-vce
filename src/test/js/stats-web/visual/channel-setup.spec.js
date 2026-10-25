@@ -679,8 +679,8 @@ test('startup-order view moves keyed rows without replacing the page or losing p
   await expect(search).toBeFocused();
   await expect.poll(async () => (await orderHighlightEvents(delayedRow))[0] || null).toMatchObject({
     type: 'added',
-    animationName: 'none',
-    animationDuration: '0s'
+    animationName: 'channel-order-row-highlight',
+    animationDuration: '1s'
   });
   expect((await orderHighlightEvents(delayedRow))[0].backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
   await expect.poll(async () => (await orderHighlightEvents(delayedRow)).map((event) => event.type))

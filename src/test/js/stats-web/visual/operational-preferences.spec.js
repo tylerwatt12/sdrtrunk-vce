@@ -6,14 +6,6 @@ const { pathToFileURL } = require('node:url');
 
 let defaultPreferences;
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    for (const account of ['admin', 'listener']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:${account}:operational-preferences:welcome:1`, '1');
-    }
-  });
-});
-
 test.beforeAll(async () => {
   const file = path.resolve(__dirname, '../../../../../stats-web/assets/core/preference-schema.js');
   defaultPreferences = (await import(pathToFileURL(file).href)).defaults;
@@ -43,6 +35,8 @@ function preferences() {
 }
 
 async function openApp(page, tier = 'admin', summaryEnabled = true) {
+  const history = { version: 1, dismissed: { welcome: 1, admin: 3, dashboard: 3 } };
+  const personalPreferences = structuredClone(defaultPreferences);
   let current = preferences();
   current.settings.stats_logging_enabled = summaryEnabled;
   const writes = [];
@@ -57,8 +51,14 @@ async function openApp(page, tier = 'admin', summaryEnabled = true) {
           'admin-recordings': tier === 'admin',
           'receiver-health': tier === 'admin',
           'admin-users': tier === 'admin', 'admin-access': tier === 'admin', credits: true } } } });
+    } else if (pathname === '/api/v1/me/tour-dismissals') {
+      if (route.request().method() === 'PUT') {
+        for (const [id, version] of Object.entries(route.request().postDataJSON().dismissed))
+          history.dismissed[id] = Math.max(history.dismissed[id] || 0, version);
+      }
+      await route.fulfill({ json: { data: history } });
     } else if (pathname === '/api/v1/me/preferences') {
-      await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
+      await route.fulfill({ json: { revision: 1, preferences: personalPreferences } });
     } else if (pathname === '/api/v1/status') {
       statusRequests += 1;
       const enabled = current.settings.stats_logging_enabled;
@@ -69,6 +69,8 @@ async function openApp(page, tier = 'admin', summaryEnabled = true) {
       } } });
     } else if (pathname === '/api/v1/admin/operational-preferences') {
       await route.fulfill({ json: current });
+    } else if (pathname === '/api/v1/admin/paging-tone-detection') {
+      await route.fulfill({ json: { revision: '1'.repeat(64), enabled: true, status: 'ready' } });
     } else if (pathname.startsWith('/api/v1/admin/operational-preferences/')) {
       const field = pathname.split('/').at(-1);
       const value = JSON.parse(route.request().postData() || '{}').value;
@@ -85,7 +87,8 @@ async function openApp(page, tier = 'admin', summaryEnabled = true) {
     }
   });
   await page.goto('/app.html?view=admin&tab=operations');
-  return { writes, current: () => current, statusRequests: () => statusRequests, changeServer: (change) => {
+  return { writes, current: () => current, statusRequests: () => statusRequests,
+    setTheme: (theme) => { personalPreferences.appearance.theme = theme; }, changeServer: (change) => {
     current = { ...current, revision: 'c'.repeat(64), settings: { ...current.settings, ...change } };
   } };
 }
@@ -111,6 +114,7 @@ test('saved statistics notice explains Off and clears after saving On', async ({
 });
 
 async function openCurrentStatus(page, tab = 'health') {
+  const history = { version: 1, dismissed: { welcome: 1, admin: 3, dashboard: 3 } };
   const requests = { status: 0, health: 0 };
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
@@ -120,6 +124,12 @@ async function openCurrentStatus(page, tab = 'health') {
         guide_dismissal_scope: 'operational-preferences',
         capabilities: { dashboard: true, 'admin-settings': true, 'receiver-health': true,
           'admin-users': true, 'admin-access': true, credits: true } } } });
+    } else if (pathname === '/api/v1/me/tour-dismissals') {
+      if (route.request().method() === 'PUT') {
+        for (const [id, version] of Object.entries(route.request().postDataJSON().dismissed))
+          history.dismissed[id] = Math.max(history.dismissed[id] || 0, version);
+      }
+      await route.fulfill({ json: { data: history } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: defaultPreferences } });
     } else if (pathname === '/api/v1/status') {
@@ -147,6 +157,10 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
   const app = await openApp(page);
   const workspace = page.locator('.operational-preferences');
   await expect(workspace).toBeVisible();
+  await expect(workspace).toHaveClass(/settings-page-form/);
+  await expect(workspace.locator('.operational-preference-lane')).toHaveCount(2);
+  await expect(workspace.getByText('Calls & audio', { exact: true })).toBeVisible();
+  await expect(workspace.getByText('Activity history', { exact: true })).toBeVisible();
   await expect(workspace.locator('.settings-card')).toHaveCount(4);
   await expect(workspace.getByRole('button', { name: 'Save', exact: true })).toHaveCount(0);
   const patch = workspace.locator('form[data-preference="patch_group_streaming_option"]');
@@ -172,16 +186,24 @@ test('administrator edits one receiver preference at a time', async ({ page }) =
 });
 
 test('receiver settings read as separate output and activity workflows', async ({ page }) => {
-  await openApp(page);
+  const app = await openApp(page);
+  await page.goto('/app.html?view=admin&tab=audio-quality');
+  await expect(page).toHaveURL(/view=admin&tab=audio-quality$/);
+  await expect(page.getByRole('heading', { level: 1, name: 'Audio quality', exact: true })).toBeVisible();
+  const navigation = page.getByRole('navigation', { name: 'Administration sections', exact: true });
+  const picker = navigation.getByRole('combobox', {
+    name: 'Administration section', exact: true, includeHidden: true
+  });
+  await expect(picker).toBeHidden();
+  await expect(picker).toHaveValue('audio-quality');
+  await expect(navigation.getByRole('link', { name: 'Audio quality', exact: true }))
+    .toHaveAttribute('aria-current', 'page');
   const workspace = page.locator('.operational-preferences');
-  const section = page.locator('.admin-settings-content > .section');
-  await expect(workspace).toHaveClass(/settings-page-form/);
-  await expect(section.locator('.admin-workflow-note')).toHaveCount(0);
-  await expect(section.locator(':scope > .ui-section-title')
-    .getByRole('button', { name: 'Reload saved settings' })).toBeVisible();
-  await expect(workspace.locator('.operational-preference-lane')).toHaveCount(2);
-  await expect(workspace.getByText('Calls & audio', { exact: true })).toBeVisible();
-  await expect(workspace.getByText('Activity history', { exact: true })).toBeVisible();
+  await expect(workspace).toHaveClass(/operational-preferences-focused/);
+  await expect(workspace.locator('form[data-preference]')).toHaveCount(3);
+  await expect(workspace.getByRole('button', { name: 'Reload saved settings', exact: true })).toBeVisible();
+  await expect(page.locator('[data-paging-tone-detection] input')).toBeEnabled();
+  await expect(page.locator('[data-paging-tone-detection] [role=alert]')).toBeHidden();
   const mp3Setting = workspace.locator('form[data-preference="mp3_setting"] select');
   const mp3Format = workspace.locator('form[data-preference="mp3_input_audio_format"] select');
   await expect(mp3Setting).toHaveValue('CBR_16');
@@ -191,12 +213,23 @@ test('receiver settings read as separate output and activity workflows', async (
   await expect(workspace.getByText('Unsaved changes', { exact: true })).toHaveCount(0);
   await page.waitForLoadState('networkidle');
   await page.evaluate(() => window.scrollTo(0, 0));
-  await expect(page.locator('main')).toHaveScreenshot('admin-operations-light-desktop.png');
+  await expect(page).toHaveScreenshot('audio-quality-light-desktop.png', { fullPage: true });
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.emulateMedia({ colorScheme: 'dark' });
+  app.setTheme('dark');
+  await page.goto('/app.html?view=admin&tab=activity');
+  await expect(page).toHaveURL(/view=admin&tab=activity$/);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.getByRole('heading', { level: 1, name: 'Activity settings', exact: true })).toBeVisible();
+  await expect(picker).toBeVisible();
+  await expect(picker).toHaveValue('activity');
+  await expect(workspace.locator('form[data-preference]')).toHaveCount(3);
+  await expect(workspace.locator('form[data-preference="stats_logging_enabled"] input')).toBeChecked();
+  await expect(workspace.locator('form[data-preference="stats_detailed_history_enabled"] input')).not.toBeChecked();
+  await expect(workspace.locator('form[data-preference="stats_logging_retention_days"] input')).toHaveValue('30');
+  await expect(workspace.getByText('Unsaved changes', { exact: true })).toHaveCount(0);
   await page.evaluate(() => window.scrollTo(0, 0));
-  await expect(page.locator('main')).toHaveScreenshot('admin-operations-dark-mobile.png');
+  await expect(page).toHaveScreenshot('activity-settings-dark-mobile.png', { fullPage: true });
 });
 
 test('administration navigation becomes a complete compact picker on mobile', async ({ page }) => {
@@ -215,7 +248,7 @@ test('administration navigation becomes a complete compact picker on mobile', as
   await expect(select).toHaveValue('audio-quality');
   await expect(navigation.locator('.admin-settings-branch:visible')).toHaveCount(0);
   expect(await select.locator('option').evaluateAll((options) => options.map((option) => option.value)))
-    .toEqual(['health', 'application-log', 'web-diagnostic-log', 'support', 'remote-support', 'call-matching', 'tuner-allocation', 'recordings', 'audio-quality', 'transcription',
+    .toEqual(['computer', 'health', 'application-log', 'web-diagnostic-log', 'support', 'remote-support', 'call-matching', 'tuner-allocation', 'recordings', 'audio-quality', 'transcription',
       'push-setup',
       'activity', 'retained-statistics', 'remote-links', 'protocol-p25', 'display', 'users', 'access']);
 

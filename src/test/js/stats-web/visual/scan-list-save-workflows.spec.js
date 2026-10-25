@@ -1,14 +1,20 @@
 'use strict';
 const { expect, test } = require('@playwright/test');
+const { resolve } = require('node:path');
+const { pathToFileURL } = require('node:url');
+
+let defaults;
+test.beforeAll(async () => {
+  defaults = (await import(pathToFileURL(resolve(__dirname,
+    '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults;
+});
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`Scan List saves use the selected list version and preserve conflicting drafts in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
-    await page.addInitScript(() => {
-      for (const [id, version] of [['welcome', 1], ['scan-lists', 7]]) {
-        localStorage.setItem(`sdrtrunk-vce-guide:v1:administrator:scan-list-save-fixture:${id}:${version}`, '1');
-      }
-    });
+    const history = { version: 1, dismissed: { welcome: 1, 'scan-lists': 7 } };
+    let preferences = structuredClone(defaults), preferenceRevision = 1;
+    preferences.appearance.theme = theme;
     let revision = 1;
     const writes = [];
     const lists = [
@@ -24,6 +30,20 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
         username: 'administrator', tier: 'admin', primary: true, csrf_token: 'fixture',
         guide_dismissal_scope: 'scan-list-save-fixture',
         capabilities: { 'admin-aliases': true, 'admin-channels': true, radio: true } });
+      if (path === '/api/v1/me/tour-dismissals') {
+        if (request.method() === 'PUT') {
+          for (const [id, version] of Object.entries(request.postDataJSON().dismissed))
+            history.dismissed[id] = Math.max(history.dismissed[id] || 0, version);
+        }
+        return data(history);
+      }
+      if (path === '/api/v1/me/preferences') {
+        if (request.method() === 'PUT') {
+          preferences = request.postDataJSON();
+          preferenceRevision++;
+        }
+        return route.fulfill({ json: { revision: preferenceRevision, preferences } });
+      }
       if (path === '/api/v1/admin/scan-lists/2' && request.method() === 'PUT') {
         const body = request.postDataJSON();
         writes.push(body);

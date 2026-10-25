@@ -17,7 +17,7 @@ test('style matrix includes every registered gallery composition', () => {
 
 test('trunked results gallery keeps every group and selection when shared signal details open', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto('/design-system.html?view=spectrum-search&theme=light');
+  await page.goto('/design-system.html?view=spectrum-search&theme=light&directory=ready');
   const search = page.locator('.spectrum-search-modal');
   const allMarcs = search.getByRole('checkbox', { name: 'Select all channels in Ohio MARCS-IP: Multi-Agency Radio Communications', exact: true });
   await expect(allMarcs).toHaveJSProperty('indeterminate', true);
@@ -96,9 +96,17 @@ for (const view of galleryViews) {
         await expect(example.locator('[data-visual-admin-navigation]')).toContainText('Decisions engine');
         await expect(example.locator('[data-visual-admin-navigation]')).toContainText('Tuner allocation');
       }
+      if (view === 'spectrum-search') {
+        await expect(example.locator('[role="status"][aria-busy="true"]')).toBeVisible();
+        await expect(example.locator('[data-visual-search-review]')).toBeDisabled();
+      }
       if (view === 'focus') await page.locator('#visual-focus-target').focus();
       if (view === 'setup-guide') {
         await expect(page.locator('.visual-setup-guide-example')).toHaveAttribute('data-ready', 'true');
+        const guide = page.locator('.ui-setup-guide');
+        await expect(guide.getByRole('button', { name: 'Start tour', exact: true })).toBeInViewport({ ratio: 1 });
+        await expect(guide.locator('.ui-setup-guide-footer')).toBeInViewport({ ratio: 1 });
+        await expect(guide.getByRole('button', { name: 'Close guide', exact: true })).toBeInViewport({ ratio: 1 });
         const dismiss = await page.getByRole('button', { name: 'Close guide', exact: true }).boundingBox();
         for (const action of await page.locator('.channel-creation-actions > button').all()) {
           const bounds = await action.boundingBox();
@@ -141,7 +149,10 @@ for (const view of galleryViews) {
       await expectNoHorizontalOverflow(page);
       await expectContrast(page, { rootSelector: gallerySelector(view), reportName: `gallery-${view}-${presentation.name}` });
       if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
-        if (view === 'scanner' && presentation.viewport.width <= 680) {
+        if (view === 'setup-guide') {
+          // The overview is fixed to the viewport and can extend beyond the normal-flow body.
+          await expect(page).toHaveScreenshot(`${view}-${presentation.name}.png`);
+        } else if (view === 'scanner' && presentation.viewport.width <= 680) {
           await expect(page).toHaveScreenshot(`${view}-${presentation.name}.png`, { fullPage: true });
         } else {
           await expect(example).toHaveScreenshot(`${view}-${presentation.name}.png`);

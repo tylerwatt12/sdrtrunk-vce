@@ -2,14 +2,6 @@ const { expect, test } = require('@playwright/test');
 const { resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
-test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['tuners', 3]]) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:tuners-native-tests:${id}:${version}`, '1');
-    }
-  });
-});
-
 function setting(id, label, group, kind, value, overrides = {}) {
   return { id, label, group, kind, value, scope: 'tuner', availability: 'live', editable: true,
     dependencies: [], ...overrides };
@@ -77,6 +69,7 @@ function updateSetting(state, id, value) {
 }
 
 async function mockTuners(page, mutations, state = {}) {
+  const history = { version: 1, dismissed: { welcome: 1, tuners: 3 } };
   if (!state.currentTuner && !Array.isArray(state.tuners)) state.currentTuner = operatorTuner();
   const preferenceModule = await import(pathToFileURL(resolve(__dirname,
     '../../../../..', 'stats-web/assets/core/preference-schema.js')).href);
@@ -93,6 +86,14 @@ async function mockTuners(page, mutations, state = {}) {
         csrf_token: 'test-token', capabilities: {
           'admin-tuners': true, 'tuner-spectrum': true, 'dashboard': true, 'web-access': true
         } });
+      return;
+    }
+    if (path === '/api/v1/me/tour-dismissals') {
+      if (request.method() === 'PUT') {
+        for (const [id, version] of Object.entries(body().dismissed))
+          history.dismissed[id] = Math.max(history.dismissed[id] || 0, version);
+      }
+      await respond(history);
       return;
     }
     if (path === '/api/v1/me/preferences') {

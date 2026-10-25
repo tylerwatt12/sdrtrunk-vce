@@ -1,6 +1,7 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const { tourHistoryFixture } = require('./fixtures/tour-history.cjs');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -31,6 +32,7 @@ const call = {
 };
 
 async function openRecordings(page, options = {}) {
+  const tourHistory = tourHistoryFixture({ welcome: 1, recordings: 4 });
   // Exercise recording searches without covering their controls with onboarding.
   await page.addInitScript(() => {
     for (const [id, version] of [['welcome', 1], ['recordings', 4]]) {
@@ -44,6 +46,7 @@ async function openRecordings(page, options = {}) {
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const key = url.pathname;
+    if (key === '/api/v1/me/tour-dismissals') return tourHistory(route);
     if (key === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: 'admin', tier: 'admin', primary: true,

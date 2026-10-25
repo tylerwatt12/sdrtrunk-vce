@@ -22,10 +22,7 @@ function scoped(sourceKind, dataType, parts, extra = {}) {
 }
 
 async function openStatistics(page, options = {}) {
-  await page.addInitScript(() => {
-    localStorage.setItem('sdrtrunk-vce-guide:v1:admin:account-1-100:welcome:1', '1');
-    localStorage.setItem('sdrtrunk-vce-guide:v1:admin:account-1-100:admin:3', '1');
-  });
+  const history = { version: 1, dismissed: { welcome: 1, admin: 3 } };
   const requests = { results: [], sources: [], previews: [], writes: [], actions: [], polls: [] };
   let currentJob = options.largeJob ? { job_id: 'job-1', state: 'running',
     rows_deleted: 80_000, rows_total: 213_000, cutoff_ms: 1_780_000_000_000,
@@ -107,6 +104,12 @@ async function openStatistics(page, options = {}) {
         username: 'admin', tier: 'admin', primary: true, guide_dismissal_scope: 'account-1-100',
         capabilities: { 'admin-settings': true, 'receiver-health': true, radio: true,
           'admin-aliases': true } }) });
+    } else if (pathname === '/api/v1/me/tour-dismissals') {
+      if (route.request().method() === 'PUT') {
+        for (const [id, version] of Object.entries(route.request().postDataJSON().dismissed))
+          history.dismissed[id] = Math.max(history.dismissed[id] || 0, version);
+      }
+      await route.fulfill({ json: { data: history } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences: { ...defaultPreferences,
         appearance: { hue: null, theme: options.theme || 'light' } } } });

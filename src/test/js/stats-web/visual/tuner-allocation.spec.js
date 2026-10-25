@@ -592,9 +592,15 @@ for (const theme of ['light', 'dark']) {
     await page.getByRole('button', { name: 'Pause tuner allocation monitor' }).click();
     await page.getByRole('button', { name: 'Decision history', exact: true }).click();
     const history = page.locator('table[data-table-type="tuner-allocation-decisions"]');
+    await page.evaluate(() => document.fonts.ready);
     for (const width of [1440, 1280]) {
       await page.setViewportSize({ width, height: 900 });
       await expect(history.locator('thead')).toBeVisible();
+      // Preferred column widths are refitted by the table's ResizeObserver.
+      await expect.poll(() => history.evaluate((table) => {
+        const wrapper = table.closest('.ui-table-wrap');
+        return wrapper.scrollWidth - wrapper.clientWidth;
+      })).toBeLessThanOrEqual(1);
       expect(await history.locator('thead th').evaluateAll((cells) => cells.map((cell) => cell.dataset.column)))
         .toEqual(['outcome', 'site', 'time', 'reason', 'action']);
       const columns = await history.evaluate((table) => ({

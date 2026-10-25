@@ -1,4 +1,5 @@
 const { expect, test } = require('@playwright/test');
+const { tourHistoryFixture } = require('./fixtures/tour-history.cjs');
 const { resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -150,6 +151,7 @@ async function installLiveStream(page) {
 }
 
 async function install(page) {
+  const tourHistory = tourHistoryFixture({ welcome: 1, tuners: 3, 'tuner-spectrum': 5, dashboard: 3 });
   await page.addInitScript(() => {
     for (const [id, version] of [['welcome', 1], ['tuners', 3], ['tuner-spectrum', 5]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:spectrum-drag-tests:${id}:${version}`, '1');
@@ -169,6 +171,9 @@ async function install(page) {
     state.requests.push({ path, method, body });
     const respond = (data, status = 200) => route.fulfill({ status, contentType: 'application/json',
       body: JSON.stringify({ data }) });
+    if (path === '/api/v1/me/tour-dismissals') return tourHistory(route);
+    if (path === '/api/v1/dashboard/main') return respond({ quality: { current: [] },
+      directory: { systems: [], channels: [] } });
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
       tier: 'admin', username: 'admin', guide_dismissal_scope: 'spectrum-drag-tests', csrf_token: 'test-token', capabilities: {
         'web-access': true, dashboard: true, 'tuner-spectrum': true, 'admin-tuners': true,

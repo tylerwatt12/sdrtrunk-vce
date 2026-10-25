@@ -83,7 +83,7 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } });
     } else if (pathname === '/api/v1/me/tour-dismissals') {
-      await data({ version: 1, dismissed: { welcome: 1, admin: 3, 'channel-setup': 4 } });
+      await data({ version: 1, dismissed: { welcome: 1, admin: 3, 'channel-setup': 4, streaming: 3 } });
     } else if (pathname === '/api/v1/remote-support') {
       if (remoteSupportFailure) {
         remoteSupportFailure = false;

@@ -953,12 +953,19 @@ if (view === 'spectrum-search') {
   const groups = [...workspace.querySelectorAll('.spectrum-search-system-group')];
   const count = workspace.querySelector('[data-visual-search-count]');
   const review = workspace.querySelector('[data-visual-search-review]');
+  const directoryPending = parameters.get('directory') !== 'ready';
+  const directoryStatus = workspace.querySelector('[role="status"][aria-busy="true"]');
+  directoryStatus.parentElement.hidden = !directoryPending;
+  if (!directoryPending) {
+    workspace.querySelector('.spectrum-search-system-directory p').textContent =
+      'No matching RadioReference record was found. The detected names will be used.';
+  }
   const rowCheck = row => row.querySelector('.spectrum-search-channel-check');
   const updateSelection = () => {
     const selected = rows.filter(row => rowCheck(row).checked).length;
     count.textContent = `${selected} selected`;
     review.textContent = selected ? `Review ${selected} ${selected === 1 ? 'channel' : 'channels'}` : 'Review selected';
-    review.disabled = selected === 0;
+    review.disabled = selected === 0 || directoryPending;
     groups.forEach(group => {
       const available = [...group.querySelectorAll('.spectrum-search-channel-check')].filter(check => !check.disabled);
       const chosen = available.filter(check => check.checked).length;

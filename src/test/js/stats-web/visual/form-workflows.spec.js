@@ -61,10 +61,13 @@ async function openForms(page, view, theme = 'light', scanList = {}) {
       return route.fulfill({ json: state.receiver });
     }
     if (pathname === '/api/v1/admin/receiver-settings') return route.fulfill({ json: state.receiver });
-    if (pathname === '/api/v1/receiver-health') return data({
-      started_at_ms: Date.now() - 3_600_000, generated_at_ms: Date.now(),
-      summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
-      active: [], resolved: [], measurements: [] });
+    if (pathname === '/api/v1/receiver-health') {
+      const now = Date.now();
+      return route.fulfill({ headers: { Date: new Date(now).toUTCString() }, json: { data: {
+        started_at_ms: now - 3_600_000, generated_at_ms: now,
+        summary: { severity: 'healthy', active_count: 0, warning_count: 0, critical_count: 0 },
+        active: [], resolved: [], measurements: [] } } });
+    }
     if (pathname === '/api/v1/admin/spectrum-snap-presets') return route.fulfill({ json: {
       revision: 9, country_code: 'US', country_label: 'United States',
       countries: [{ code: 'US', label: 'United States' }], scopes: [] } });

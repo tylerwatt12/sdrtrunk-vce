@@ -417,7 +417,7 @@ test('slow polling has one request in flight and navigation aborts it', async ({
   expect(app.requests()).toBe(2);
   await page.locator('[data-nav-group="settings"] > summary').click();
   await page.getByRole('link', { name: 'About' }).click();
-  await expect(page.getByRole('heading', { name: 'Credits & Licensing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'About VCE' })).toBeVisible();
   release();
   await page.waitForTimeout(1300);
   expect(app.requests()).toBe(2);
@@ -879,7 +879,7 @@ test('paused requests stay stopped and failed resume preserves history until rec
   await page.getByRole('button', { name: 'Pause call matching monitor', exact: true }).click();
   await page.locator('[data-nav-group="settings"] > summary').click();
   await page.getByRole('link', { name: 'About', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Credits & Licensing' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'About VCE' })).toBeVisible();
   const count = app.requests();
   await page.waitForTimeout(1300);
   expect(app.requests()).toBe(count);

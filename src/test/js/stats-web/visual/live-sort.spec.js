@@ -1,6 +1,7 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const { tourHistoryFixture } = require('./fixtures/tour-history.cjs');
 const path = require('node:path');
 const { writeFileSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -45,6 +46,7 @@ function densitySnapshot() {
 }
 
 async function openLive(page, theme = 'light', presentation = {}, liveSnapshot = snapshot) {
+  const tourHistory = tourHistoryFixture({ welcome: 1, live: 3 });
   await page.addInitScript(() => {
     for (const [id, version] of [['welcome', 1], ['live', 3]])
       localStorage.setItem(`sdrtrunk-vce-guide:v1:operator:live-regression-fixture:${id}:${version}`, '1');
@@ -102,6 +104,7 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
   await page.route('**/api/v1/**', async (route) => {
     const request = route.request();
     const pathname = new URL(request.url()).pathname;
+    if (pathname === '/api/v1/me/tour-dismissals') return tourHistory(route);
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: 'operator', tier: 'admin', primary: true, guide_dismissal_scope: 'live-regression-fixture',
@@ -126,6 +129,8 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
       await route.fulfill({ json: { revision, preferences } });
     } else if (pathname === '/api/v1/live/multiplex/control') {
       await route.fulfill({ json: { data: { accepted: true } } });
+    } else if (pathname === '/api/v1/scan-lists') {
+      await route.fulfill({ json: { data: { revision: 1, scan_lists: [] } } });
     } else {
       if (request.method() !== 'GET') receiverWrites.push(pathname);
       await route.fulfill({ status: 404, json: { error: { message: 'Unavailable' } } });
@@ -592,11 +597,11 @@ for (const theme of ['light', 'dark']) {
         await testInfo.attach('Row density geometry', { path: geometryPath, contentType: 'application/json' });
         await page.screenshot({ path: testInfo.outputPath('live-dense.png') });
         expect(app.preferences().presentation.live_row_density).toBe('dense');
-        expect(app.writes[0].version).toBe(11);
+        expect(app.writes[0].version).toBe(defaultPreferences.version);
         expect(app.preferences().presentation.source_name_display).toBe('both');
         if (theme === 'light' && width === 1280) {
           const dock = page.locator('#audio-dock');
-          const handle = dock.getByRole('button', { name: 'Change audio player size', exact: true });
+          const handle = dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
           for (const [key, size] of [['Home', 'collapsed'], ['ArrowUp', 'minimal'], ['End', 'full']]) {
             await handle.press(key);
             await expect(dock).toHaveAttribute('data-state', size);

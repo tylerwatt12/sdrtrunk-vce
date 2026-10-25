@@ -1,4 +1,5 @@
 const { expect, test } = require('@playwright/test');
+const { tourHistoryFixture } = require('./fixtures/tour-history.cjs');
 const { resolve } = require('node:path');
 const { readFileSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
@@ -107,6 +108,7 @@ function snapshot(state) {
 }
 
 async function install(page, state = {}) {
+  const tourHistory = tourHistoryFixture({ welcome: 1, 'channel-setup': 4, tuners: 3, 'tuner-spectrum': 5 });
   fixtureStates.set(page, state);
   state.requests = [];
   if (state.directoryConfiguration === undefined && state.customCandidates?.some((candidate) =>
@@ -145,6 +147,7 @@ async function install(page, state = {}) {
     const respond = (value, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify({ data: value }) });
     const fail = (message, code = 'unavailable', status = 503) => route.fulfill({ status, contentType: 'application/json',
       body: JSON.stringify({ error: { message, code } }) });
+    if (path === '/api/v1/me/tour-dismissals') return tourHistory(route);
     if (path === '/api/v1/auth/session') return respond({ configured: true, authenticated: true, tier: 'admin',
       guide_dismissal_scope: 'spectrum-search-fixture',
       csrf_token: 'test-token', capabilities: { 'web-access': true, dashboard: true, 'tuner-spectrum': true,
@@ -1841,7 +1844,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     expect(await loading.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
     await dialog(page).screenshot({ path: testInfo.outputPath('checking-progress.png') });
     await page.emulateMedia({ reducedMotion: 'reduce' });
-    expect(await loading.evaluate((element) => getComputedStyle(element, '::before').animationName)).toBe('none');
+    expect(await loading.evaluate((element) => getComputedStyle(element, '::before').animationName))
+      .toBe('ui-feedback-spin');
 
     state.progress.current_frequency_hz = 0;
     await page.clock.fastForward(800);
@@ -1914,7 +1918,8 @@ test('a duplicate created during review remains non-retryable and points to Chan
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   await addChannels(page);
-  await expect(dialog(page)).toContainText('1 channel was already in Channels.');
+  await expect(dialog(page).locator('.discovery-completion-status')).toHaveText(['Already added']);
+  await expect(dialog(page).getByRole('heading', { level: 2, name: '0 channels added', exact: true })).toBeVisible();
   await expect(dialog(page).getByRole('link', { name: 'Open Channels' })).toHaveAttribute('href', /view=channel-setup/);
   await expect(dialog(page).getByRole('button', { name: /Retry adding/ })).toHaveCount(0);
   expect(state.requests.some((request) => request.path.endsWith('/start'))).toBe(false);
@@ -1958,7 +1963,9 @@ test('search bounds and terminal failures explain the required action without op
   state.reason = 'This search reached its time limit. Choose a smaller range.';
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
   await expect(dialog(page).locator('.spectrum-discovery-stage > .ui-notice')).toHaveText(state.reason);
-  await expect(dialog(page)).toContainText('Nothing has been added');
+  await expect(dialog(page).getByRole('button', { name: 'Try another search', exact: true })).toBeVisible();
+  await expect(dialog(page).getByRole('button', { name: /^Details for / })).toHaveCount(0);
+  expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
 });
 
 test('failed-row review edits only unsaved channels', async ({ page }) => {
@@ -2184,6 +2191,7 @@ test('requires a choice for ambiguous alias groups and preserves drafts after st
   await addChannels(page);
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
   await dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)').selectOption('22');
+  await dialog(page).getByRole('button', { name: 'Customize', exact: true }).click();
   await dialog(page).getByLabel('Channel name for 773.08125 MHz').fill('My North Control');
   await addChannels(page);
   await expect(dialog(page)).toContainText('Saved choices changed');
@@ -2259,7 +2267,8 @@ test('no idle receiver, failed search and empty results provide an actionable ne
   await expect(dialog(page).getByRole('button', { name: 'Find signals', exact: true })).toBeEnabled();
   state.phase = 'failed';
   await dialog(page).getByRole('button', { name: 'Find signals', exact: true }).click();
-  await expect(dialog(page)).toContainText('Nothing has been added');
+  await expect(dialog(page).getByRole('heading', { name: 'Search stopped', exact: true })).toBeVisible();
+  expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
   await expect(dialog(page).getByRole('checkbox')).toHaveCount(0);
   await dialog(page).getByRole('button', { name: 'Try another search' }).click();
   state.phase = 'complete';

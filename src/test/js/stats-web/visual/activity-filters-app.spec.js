@@ -67,6 +67,12 @@ async function openActivity(page, options = {}) {
       await respond({ stats_logging: { summary_configured: true, detailed_history_configured: true,
         summary_active: true, detailed_history_active: true, state: 'RUNNING' },
       database: { detailed_history_available: true } });
+    } else if (pathname === '/api/v1/activity/message-types') {
+      await respond([
+        ['ACTION', 4, 'CALL', 'Call'], ['EVENT', 7, 'CALL_GROUP', 'Group call'],
+        ['ACTION', 24, 'TONE', 'Tone'], ['EVENT', 62, 'TONE', 'Tone']
+      ].map(([definition_kind, code, name, label]) => ({ definition_kind, code, name, label,
+        p25: true, dmr: true, nxdn: true, sort_order: code })));
     } else if (pathname === '/api/v1/channel-catalog') {
       await respond({ revision: 1, channels: [] });
     } else if (pathname === radioSystemPath) {
@@ -451,7 +457,7 @@ test('call tones preserve group call types and filter independently with alias c
   ] });
   await showActivityColumns(page, ['tones']);
   const row = page.locator('tr[data-id="18"]');
-  await expect(row.locator('[data-column="event"]')).toHaveText('Call Group');
+  await expect(row.locator('[data-column="event"]')).toHaveText('Group call');
   await expect(row.locator('[data-column="action"]')).toHaveText('Call');
   await expect(row.locator('[data-column="tones"]')).toContainText('Audio detection');
   await expect(row.locator('[data-column="tones"]')).toContainText('593.75 Hz · 1020 ms · at 80 ms');
@@ -463,7 +469,7 @@ test('call tones preserve group call types and filter independently with alias c
   await expect(page.locator('tr[data-id="19"] [data-column="tones"]')).toContainText('Encoded');
   await expect(page.locator('tr[data-id="19"] [data-column="tones"]')).toContainText('TONE 600 · 600 Hz · 120 ms');
   await expect(page.locator('tr[data-id="19"] [data-column="tones"]')).toContainText('TONE 700 · 700 Hz · 240 ms');
-  await expect(page.locator('tr[data-id="20"] [data-column="event"]')).toHaveText('Paging tones');
+  await expect(page.locator('tr[data-id="20"] [data-column="event"]')).toHaveText('Tone');
   await expect(row.locator('[data-column="event"]')).not.toContainText('99%');
   await expect(row.locator('[data-column="event"]')).not.toContainText('p25_pcm_tone_v1');
   await toneScreenshot(page, 'activity-tones-light-desktop');
