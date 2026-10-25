@@ -748,13 +748,16 @@ class DiagnosticTransportTest
 
     private static void awaitInitialization(TunerDiagnosticService.TunerFftProcessor processor)
     {
+        long configuration = processor.configuration();
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
 
-        while(processor.initializationThread() == null && System.nanoTime() < deadline)
+        // The worker records its thread before clearing ingress; only the applied revision means it is ready for samples.
+        while(processor.appliedConfiguration() != configuration && System.nanoTime() < deadline)
         {
             Thread.onSpinWait();
         }
 
+        assertEquals(configuration, processor.appliedConfiguration(), "tuner diagnostic configuration did not initialize");
         assertTrue(processor.initializationThread() != null, "tuner diagnostic FFT did not initialize");
     }
 }
