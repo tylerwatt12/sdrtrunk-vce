@@ -267,8 +267,9 @@ test('Live streamed row updates keep the horizontal position and bounded pane he
   await expect(controls).toBeVisible();
   const start = await position(wrapper);
   await controls.getByRole('button', { name: 'Scroll table right' }).click();
-  await expect.poll(async () => Math.abs((await position(wrapper)).left -
-    Math.min(start.maximum, start.width * 0.8))).toBeLessThanOrEqual(1);
+  // The configured 1x browser rounds the final smooth-scroll offset to a CSS pixel.
+  const finalLeft = Math.round(Math.min(start.maximum, start.width * 0.8));
+  await expect.poll(async () => (await position(wrapper)).left).toBe(finalLeft);
   const before = await position(wrapper);
   const pane = page.locator('.live-details');
   const height = (await pane.boundingBox()).height;

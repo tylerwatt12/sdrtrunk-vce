@@ -15,7 +15,6 @@ test.afterEach(async ({ page }) => {
   installedFixtures.get(page)?.releaseAll();
   installedFixtures.delete(page);
   await page.unrouteAll({ behavior: 'wait' });
-  if (!page.isClosed()) await page.evaluate(() => window.spectrumDragStream?.stop());
 });
 
 function tuner(centerHz) {
@@ -36,7 +35,7 @@ function tuner(centerHz) {
 
 // Use the application's multiplex and diagnostic decoders, including real STATE and FFT payloads.
 async function installLiveStream(page) {
-  await page.addInitScript(({ initialCenterHz, sampleRateHz }) => {
+  await page.addInitScript(({ initialCenterHz, sampleRateHz, frequencyPath }) => {
     const nativeFetch = window.fetch.bind(window);
     const encoder = new TextEncoder();
     let controller = null;
@@ -45,6 +44,7 @@ async function installLiveStream(page) {
     let clientId = null;
     let sampleTimer = null;
     let activeParameters = null;
+    let retired = false;
     let receiverState = { centerHz: initialCenterHz, streamState: 'live', reason: null };
     const multiplex = (topic, kind, payload) => {
       const frame = new Uint8Array(16 + payload.byteLength);
@@ -88,7 +88,7 @@ async function installLiveStream(page) {
     const emit = (centerHz = receiverState.centerHz, parameters = activeParameters,
       { streamState = receiverState.streamState, reason = receiverState.reason, fftValues = null } = {}) => {
       receiverState = { centerHz, streamState, reason };
-      if (!controller || controller.desiredSize === null || !parameters) return;
+      if (retired || !controller || controller.desiredSize === null || !parameters) return;
       activeParameters = parameters;
       const state = {
         stream_state: streamState, center_frequency_hz: centerHz,
@@ -133,7 +133,7 @@ async function installLiveStream(page) {
     window.spectrumDragStream = {
       emit, opened: 0, cancelled: 0, emitted: 0, initialEmitted: false,
       subscribe(centerHz, parameters, subscriptionClientId) {
-        if (!controller || subscriptionClientId !== clientId) return;
+        if (retired || !controller || subscriptionClientId !== clientId) return;
         stopSamples();
         activeParameters = parameters || null;
         if (!activeParameters) return;
@@ -144,13 +144,31 @@ async function installLiveStream(page) {
       updateReceiver(centerHz) { receiverState = { ...receiverState, centerHz }; },
       stop() { stopSamples(); activeParameters = null; }
     };
+    window.addEventListener('pagehide', () => {
+      retired = true;
+      window.spectrumDragStream.stop();
+    });
     document.addEventListener('pointerdown', (event) => {
       if (event.target.matches('.tuner-spectrum-canvas')) window.spectrumDragPointerId = event.pointerId;
     }, true);
-    window.fetch = (input, options = {}) => {
+    window.fetch = async (input, options = {}) => {
       const rawUrl = typeof input === 'string' || input instanceof URL ? String(input) : input.url;
       const url = new URL(rawUrl, window.location.href);
-      if (url.pathname !== '/api/v1/live/multiplex') return nativeFetch(input, options);
+      if (url.pathname !== '/api/v1/live/multiplex') {
+        const method = String(options.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+        const control = url.pathname === '/api/v1/live/multiplex/control' && method === 'POST';
+        const tune = url.pathname === frequencyPath && method === 'PUT';
+        const body = control || tune ? JSON.parse(options.body ??
+          (input instanceof Request ? await input.clone().text() : '{}')) : null;
+        const response = await nativeFetch(input, options);
+        // Apply responses only while their issuing document is still active.
+        if (response.ok && !retired) {
+          if (control) window.spectrumDragStream.subscribe(receiverState.centerHz,
+            body.subscriptions?.tuner_diagnostics, body.client_id);
+          if (tune) window.spectrumDragStream.updateReceiver(Math.round(body.value * 1000000));
+        }
+        return response;
+      }
       generation += 1;
       let streamController = null;
       stopSamples();
@@ -177,7 +195,7 @@ async function installLiveStream(page) {
         }
       }), { status: 200, headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } }));
     };
-  }, { initialCenterHz: INITIAL_CENTER_HZ, sampleRateHz: SAMPLE_RATE_HZ });
+  }, { initialCenterHz: INITIAL_CENTER_HZ, sampleRateHz: SAMPLE_RATE_HZ, frequencyPath });
 }
 
 async function install(page) {
@@ -190,7 +208,8 @@ async function install(page) {
   const preferences = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
   const state = { centerHz: INITIAL_CENTER_HZ, requests: [], tunes: [], controls: [],
-    browses: [], holdNextBrowse: false, failNextBrowse: false };
+    browses: [], holdNextBrowse: false, failNextBrowse: false,
+    heldControls: [], holdNextControl: false };
   await page.setViewportSize({ width: 1280, height: 900 });
   await installLiveStream(page);
   await page.route('**/api/v1/**', async (route) => {
@@ -230,7 +249,6 @@ async function install(page) {
             message: 'Receiver rejected this tune. Try again.' } }) });
         else {
           state.centerHz = Math.round(body.value * 1000000);
-          await page.evaluate((centerHz) => window.spectrumDragStream.updateReceiver(centerHz), state.centerHz);
           await respond({});
         }
       } catch (_) { /* Navigation may abort the request under test. */ }
@@ -263,10 +281,17 @@ async function install(page) {
     if (path === '/api/v1/live/multiplex/control') {
       const parameters = body.subscriptions?.tuner_diagnostics;
       state.controls.push(parameters);
-      await respond({});
-      if (!page.isClosed()) await page.evaluate(({ centerHz, parameters, clientId }) =>
-        window.spectrumDragStream.subscribe(centerHz, parameters, clientId),
-      { centerHz: state.centerHz, parameters, clientId: body.client_id });
+      const held = state.holdNextControl ? { body } : null;
+      state.holdNextControl = false;
+      if (held) {
+        const gate = new Promise((release) => { held.release = release; });
+        held.done = new Promise((complete) => { held.complete = complete; });
+        state.heldControls.push(held);
+        await gate;
+      }
+      try {
+        await respond({});
+      } finally { held?.complete(); }
       return;
     }
     if (path === '/api/v1/admin/channels/protocols') return respond(protocols);
@@ -290,6 +315,7 @@ async function install(page) {
   state.releaseAll = () => {
     state.tunes.forEach((record) => record.release());
     state.browses.forEach((record) => record.release?.());
+    state.heldControls.forEach((record) => record.release());
   };
   installedFixtures.set(page, state);
   await page.goto('/app.html?view=tuner-spectrum');
@@ -342,10 +368,26 @@ test('one display choice changes both plots, disables manual controls and follow
   await expect(range).toHaveText(`FFT and waterfall: ${manual}`);
   expect(state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method !== 'GET')
     .map((request) => request.body).some((body) => Object.hasOwn(body.preferences?.tuner || {}, 'auto_range_on_retune'))).toBe(false);
-  await page.goto('/app.html?view=tuners');
+  // Keep a real unsubscribe pending while hard navigation replaces its owning document.
+  state.holdNextControl = true;
+  await page.getByRole('link', { name: 'VCE home', exact: true }).click();
+  await expect(page).toHaveURL(/view=dashboard/);
+  await expect.poll(() => state.heldControls.length).toBe(1);
+  const held = state.heldControls[0];
+  expect(held.body.subscriptions.tuner_diagnostics).toBeUndefined();
+  const requested = page.waitForRequest(request => new URL(request.url()).searchParams.get('view') === 'tuners');
+  const navigation = page.goto('/app.html?view=tuners');
+  await requested;
+  held.release();
+  await Promise.all([navigation, held.done]);
   const embedded = page.locator('.tuners-spectrum');
   await embedded.getByRole('button', { name: 'Display options', exact: true }).click();
   await expect(embedded.locator('input[name="auto_range_on_retune"]')).not.toBeChecked();
+  await expect.poll(() => state.requests.some(request => request.path === '/api/v1/live/multiplex/control' &&
+    request.body.client_id !== held.body.client_id && request.body.subscriptions?.tuner_diagnostics)).toBe(true);
+  const emitted = await page.evaluate(() => window.spectrumDragStream.emitted);
+  await expect.poll(() => page.evaluate(() => window.spectrumDragStream.emitted)).toBeGreaterThan(emitted);
+  await expect(embedded.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
 });
 
 for (const width of [1280, 390]) {
