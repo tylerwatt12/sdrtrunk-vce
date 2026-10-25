@@ -542,8 +542,7 @@ public final class ApplicationMigrationService
         }
         if(ownedPlan.requiresMigration() || !recovery.isEmpty())
         {
-            long workspace = ownedPlan.source().version()==62 && content==MigrationContent.FULL ?
-                splitWorkspace(database) : sqliteFootprint(database);
+            long workspace = requiredOwnedMigrationWorkspace(database, content, ownedPlan);
             ensureFreeSpace(database.getParent(), safeAdd(safeAdd(workspace,
                 createBackup ? sqliteFootprint(database) : 0), 5L * 1024 * 1024 * 1024));
         }
@@ -606,7 +605,27 @@ public final class ApplicationMigrationService
         return Objects.requireNonNull(completedResult, "Database migration did not complete");
     }
 
-    /** Format 62 keeps detailed event pages in their original file; only compact owners and three indexes change. */
+    /**
+     * Additional workspace for migrating an application-owned database, after exact source admission. This excludes
+     * any profile copy, selected backup and free-space reserve, which the caller must budget separately. Format 62's
+     * full migration keeps detailed history pages in place and budgets only the compact structures it changes.
+     */
+    public static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content)
+        throws IOException, SQLException
+    {
+        Objects.requireNonNull(content, "Migration contents cannot be null");
+        Path normalized = Objects.requireNonNull(database, "Database cannot be null").toAbsolutePath().normalize();
+        return requiredOwnedMigrationWorkspace(normalized, content, readStartupPlan(normalized));
+    }
+
+    private static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content,
+        DatabaseMigrationChain.PreflightReport plan) throws IOException, SQLException
+    {
+        return plan.source().version() == 62 && content == MigrationContent.FULL ?
+            splitWorkspace(database) : sqliteFootprint(database);
+    }
+
+    /** Format 62 keeps detailed event pages in their original file; only compact owners and indexes change. */
     private static long splitWorkspace(Path database) throws IOException,SQLException
     {
         try(Connection connection=openLiveReadOnly(database);Statement query=connection.createStatement();
