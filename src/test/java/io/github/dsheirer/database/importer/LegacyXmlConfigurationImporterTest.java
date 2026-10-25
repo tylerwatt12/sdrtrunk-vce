@@ -111,12 +111,47 @@ class LegacyXmlConfigurationImporterTest
     }
 
     @Test
+    void sourceReviewLeavesThePlaylistAndDestinationUntouched() throws Exception
+    {
+        Path xml = writePlaylistXml();
+        byte[] before = Files.readAllBytes(xml);
+        var prepared = LegacyXmlConfigurationImporter.prepare(xml);
+
+        assertEquals(xml, prepared.sourceXml());
+        assertEquals(2, prepared.preview().aliasCount());
+        assertEquals(2, prepared.preview().channelCount());
+        assertEquals(1, prepared.preview().streamCount());
+        assertArrayEquals(before, Files.readAllBytes(xml));
+        try(var files = Files.list(mTemporaryFolder))
+        {
+            assertEquals(List.of(xml), files.toList());
+        }
+    }
+
+    @Test
+    void changedOrMissingReviewedPlaylistCannotCreateADestination() throws Exception
+    {
+        Path xml = writePlaylistXml();
+        var prepared = LegacyXmlConfigurationImporter.prepare(xml);
+        Path destination = mTemporaryFolder.resolve("new-profile/data/database/sdrtrunk.sqlite");
+        Files.writeString(xml, Files.readString(xml).replace("Dispatch", "Modified"));
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.importPlaylist(prepared, destination));
+        assertFalse(Files.exists(mTemporaryFolder.resolve("new-profile")));
+
+        Files.delete(xml);
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.importPlaylist(prepared, destination));
+        assertFalse(Files.exists(mTemporaryFolder.resolve("new-profile")));
+    }
+
+    @Test
     void migratesCurrentXmlShapeToSqlite() throws Exception
     {
         Path xml = writePlaylistXml();
         Path database = mTemporaryFolder.resolve("sdrtrunk.sqlite");
+        byte[] sourceBefore = Files.readAllBytes(xml);
 
-        LegacyXmlConfigurationImporter.importPlaylist(xml, database);
+        LegacyXmlConfigurationImporter.importPlaylist(LegacyXmlConfigurationImporter.prepare(xml), database);
+        assertArrayEquals(sourceBefore, Files.readAllBytes(xml));
 
         AliasDatabaseStore aliasStore = new AliasDatabaseStore(database);
         var definitions = aliasStore.loadAliasListDefinitions();
@@ -292,10 +327,13 @@ class LegacyXmlConfigurationImporterTest
     void refusesToOverwriteExistingDatabase() throws Exception
     {
         Path xml = writePlaylistXml();
+        var prepared = LegacyXmlConfigurationImporter.prepare(xml);
         Path database = mTemporaryFolder.resolve("existing.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        byte[] before = Files.readAllBytes(database);
 
-        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.importPlaylist(xml, database));
+        assertThrows(IOException.class, () -> LegacyXmlConfigurationImporter.importPlaylist(prepared, database));
+        assertArrayEquals(before, Files.readAllBytes(database));
     }
 
     @Test

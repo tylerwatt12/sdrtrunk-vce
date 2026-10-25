@@ -3,7 +3,7 @@
 VCE can update supported older settings during startup or copy them into a new installation. The Setup Wizard runs
 the bundled **Application Migrator** for you. You do not need a separate download or each intervening VCE release.
 
-If you are coming from mainline sdrtrunk, use **Import legacy XML** to bring in a playlist. For first-run choices and
+If you are coming from mainline sdrtrunk, choose **Bring my settings** and select your playlist. For first-run choices and
 the rest of setup, see [Setup, updates, and your saved data](portable-startup-and-storage.md). Related guides are in
 the [documentation index](README.md).
 
@@ -11,11 +11,11 @@ the [documentation index](README.md).
 
 | What you want to do | Where to start | What changes |
 | --- | --- | --- |
-| Use a newer build with the same active VCE data folder | Accept the database **Update** offered during startup | The active database is updated in place, with a recovery backup selected by default. |
-| Bring a previous VCE installation into a new download | **Copy a previous VCE installation / data folder** in first-run setup | A checked copy of the database and its saved settings is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
-| Start a new installation from a VCE database file | **Import a SQLite database only** in first-run setup | Only the selected database contents are imported. Neighboring files and saved output paths are not moved. |
-| Replace the settings in an installation you already use | **File → Import SQLite Database…**, or **Help → Setup Wizard… → Replace settings from a SQLite database** | The whole application database is replaced after backing up the current one. This does not merge profiles. |
-| Add another supported XML playlist | **Help → Setup Wizard… → Import a legacy XML playlist** | Supported configuration is added; existing configuration is retained and conflicting imported names are renamed. |
+| Use a newer build with the same active VCE data folder | Review the **Update** offered during startup | The active database is updated in place. The optional backup checkbox starts unchecked. |
+| Bring a previous VCE installation into a new download | **Bring my settings**, then choose its folder | A checked copy of the database and its saved settings is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
+| Start a new installation from a VCE database file | **Bring my settings**, then choose the file | Only the selected database contents are imported. Neighboring files and saved output paths are not moved. |
+| Replace the settings in an installation you already use | **File → Import SQLite Database…**, or choose different settings in Setup Wizard | The whole application database is replaced after backing up the current one. This does not merge profiles. |
+| Add another supported XML playlist | Choose different settings in Setup Wizard, then select the playlist | Supported configuration is added; existing configuration is retained and conflicting imported names are renamed. |
 
 VCE database imports support recognized formats used by **Alpha 12 and later**, up to the format understood by the
 running build. Alpha 11 uses the same format as Alpha 12 and remains compatible. For an older database format, first
@@ -32,22 +32,21 @@ from it so its settings and supporting files stay consistent during review.
 
 The automatic recovery backup covers the SQLite database being updated or replaced. It does not include every
 recording, log, voice library, or vault file. Backup locations appear in the report; application database backups are
-under `data/database/backups`. Leave **Create a recovery backup first** selected for an active-profile update unless
-you intend to rely on another recovery copy. Database replacement always retains a backup of the previous active
-database.
+under `data/database/backups`. The active-profile update checkbox starts unchecked; select it to keep a recovery
+copy. Database replacement and an XML merge into an existing profile always retain their recovery copy.
 
 ## Review, update, and check the result
 
 1. Choose the folder or file that holds your previous settings. A folder import is the most complete choice for
    moving an existing VCE profile.
-2. Select **Review import** for an external source, or review the update plan shown for the active profile. Check
+2. Review the selected source or the update shown for the active profile. Check
    the source, destination, and declared repairs, activity resets, or retired settings that may be removed.
-   When an older database needs updating, choose **Configuration only** or
-   **Configuration, activity, and statistics** before confirming.
+   When an older database needs updating, leave **Keep activity and statistics** selected for full migration,
+   or clear it to import configuration only.
 3. Confirm the import or update. Receiving has not started, and the active data folder stays locked while the
    database work runs.
-4. Read the completion report. It gives the actual preserved, repaired, defaulted, reset, and skipped-item counts.
-   **Copy Message** saves it to the clipboard; the visible continuation countdown keeps running.
+4. Setup continues to the next needed step. The optional report gives actual preserved, repaired, defaulted,
+   reset, and skipped-item counts.
 5. Finish setup review. Check channels and aliases, account access, recording and streaming routes, output folders,
    digital voice libraries, and channel auto-start selections before relying on the new installation.
 
@@ -58,9 +57,9 @@ are checked before reception can start.
 
 ### Choose how much to migrate
 
-For an older database, **Configuration, activity, and statistics** is selected initially. It carries forward usable
+For an older database, **Keep activity and statistics** is selected initially. It carries forward usable
 history through the supported updates; any required historical resets still apply and appear in the review.
-**Configuration only** keeps channels, aliases, lists, accounts, credentials, and settings while starting receiver
+Clearing it keeps channels, aliases, lists, accounts, credentials, and settings while starting receiver
 Activity, statistics, learned observations, and alert history fresh. Old pending alert deliveries are discarded;
 notification topics, rules, and subscriptions remain. Account preferences, including dismissed guides, are kept.
 Recording audio and the separate Managed Recordings catalog are not deleted by either choice. An import still copies
@@ -99,9 +98,9 @@ A SQLite-only import preserves choices already stored in the selected database; 
 files. Choose the complete folder when moving settings that an older build still kept outside SQLite.
 
 An earlier format-53 update could create defaults without importing the old JSON files. A later update preserves
-those database choices because a default may also be an intentional selection. Setup offers optional recovery for
-valid legacy Remote Links and paging-tone files whose corresponding database values are still defaults. Select only the settings you want to
-recover; recovery stops if the reviewed database value changes. Newer or non-default database choices are retained.
+those database choices because a default may also be an intentional selection. Explicit Application Migrator
+recovery can restore selected valid legacy values over reviewed defaults; normal setup does not offer this repair
+as a starting-point choice. Recovery stops if the reviewed database value changes. Newer or non-default choices are retained.
 
 A full installation/data-folder import also attempts to copy the encryption vault, JMBE files, and optional modules.
 Missing or unusable optional files are reported; you can select or set them up again. Logs, recordings, screenshots,
@@ -130,7 +129,7 @@ install a partial copy. Replacement attempts to restore its retained database ba
 fail; if a safe final state cannot be proven, VCE leaves the error and backup for recovery instead of restarting
 automatically.
 
-After a successful active-profile update, the recovery backup remains for manual restoration. There is no automatic
+After a successful active-profile update, any selected recovery backup remains for manual restoration. There is no automatic
 downgrade. If the report says the update completed with a cleanup warning, do not repeat it as if conversion failed.
 Returning to an older build requires its compatible older data or backup.
 
@@ -323,18 +322,19 @@ Explicitly selected external imports retain the launcher, private child process,
 validation, and atomic promotion. Both use the same format catalog and adjacent migration chain.
 
 The Swing Setup Wizard owns first-run graphical presentation. Current-profile inspection checks the registered
-format and bounded configuration before showing the declared best-effort policy. A recovery-backup checkbox is on
-by default. External-source review uses its private snapshot and fuller checks. Neither review runs a throwaway
+format and bounded configuration before showing the declared best-effort policy. The graphical recovery-backup
+checkbox starts unchecked. Headless command defaults are unchanged. External-source review uses its private snapshot
+and fuller checks. Neither review runs a throwaway
 migration; the completion report supplies the observed repair, reset, and skip counts.
-Preflight, progress, and completion stay on its Starting point page; completion offers Copy Message and a ten-second
-continuation countdown. Errors remain compact and inline with expandable details and a Copy error action. Database
+Source selection and review share the Your settings step, with explicit review headings. Success continues to the
+next needed setup step without a countdown. Errors remain compact and inline with expandable details and a Copy error action. Database
 replacement and startup errors use the same bounded, expandable, copyable presentation instead of message-sized
 dialogs. After promotion,
 Back can review the installed source/results but cannot replace the database. The separately confirmed post-setup
-SQLite replacement workflow is reached through **File > Import SQLite Database…** and uses that same Starting point
+SQLite replacement workflow is reached through **File > Import SQLite Database…** and uses that same setup
 boundary. It retains
-its existing service-stop, backup, validation, restart, and quit-blocking rules. Its source confirmation and completion
-dialogs are reused; it does not reuse the new-install copy operation against an occupied data folder.
+its existing service-stop, backup, validation, restart, and quit-blocking rules. Source review is inline;
+it does not reuse the new-install copy operation against an occupied data folder.
 
 Format 13 adds only the bounded `setup_wizard` record in `application_settings`. The adjacent 12-to-13 step preserves
 all existing configuration and marks existing installations previously configured; runtime readiness checks decide
@@ -967,8 +967,8 @@ and database services start. The Setup Wizard can already be visible at this poi
 
 1. Inspect the registered format, exact schema, and bounded required configuration. Unknown, mixed, newer, or
    unsupported formats are refused. SQLite reads committed WAL data and recovers an interrupted rollback journal.
-2. Show the required adjacent steps and declared resets or drops. The recovery-backup checkbox defaults to on;
-   headless upgrade commands accept `--no-upgrade-backup` to omit it.
+2. Review the selected scope and declared resets or drops. The graphical recovery-backup checkbox starts unchecked;
+   headless upgrade commands retain their default backup and accept `--no-upgrade-backup` to omit it.
 3. Reserve the database writer with `BEGIN IMMEDIATE` and check the source format again. If selected, make one
    standalone SQLite-aware recovery snapshot before any changes. A backup failure aborts without changing data.
 4. Run the existing `N -> N+1 -> ... -> current` chain in the same transaction. The runner verifies every exact target
@@ -1007,12 +1007,11 @@ or migrates an existing schema.
 
 After setup, **File > Import SQLite Database…** provides an explicit database-only replacement workflow. It safely
 restarts into the pre-receiver setup boundary and first closes the receiver and its database-owning runtime services.
-The wizard preflights the selected source and displays a bold red replacement warning before confirmation. With the
+The wizard preflights the selected source and shows a concise inline replacement review before confirmation. With the
 portable-data lock retained and setup preferences closed, it backs up the current active database, migrates a staged
 copy of the selected source, validates it, promotes it atomically, and starts a new application process. The source is
 never changed. Window close, Exit, and operating-system quit requests are refused while replacement is in progress.
-The completion report has a Copy Message action and a visible countdown that continues automatically without waiting
-for the operator to dismiss it. A failed replacement does not automatically relaunch the application when the final
+A successful replacement restarts into setup review. A failed replacement does not automatically relaunch the application when the final
 active-database state cannot be proven; the retained backup and error are left for explicit recovery. Replacement
 resets the existing bounded wizard-progress record on the staged copy before validation and promotion. Normal startup
 therefore returns to unfinished setup and review even if the imported source was setup-complete or the restart was

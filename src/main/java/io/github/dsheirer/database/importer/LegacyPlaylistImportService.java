@@ -17,21 +17,17 @@ import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.MergeResult;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Summary;
+import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter.PreparedPlaylist;
 import io.github.dsheirer.database.upgrade.SqliteDatabaseSnapshot;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.DigestInputStream;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.HexFormat;
 
 /**
  * Previews and safely merges a legacy XML playlist into the active SQLite configuration.
@@ -58,17 +54,16 @@ public class LegacyPlaylistImportService
 
     public PreparedImport prepare(Path sourceXml) throws IOException, SQLException
     {
-        Path source = requireSource(sourceXml);
-        LoadedImport loadedImport = loadImported(source);
+        PreparedPlaylist source = LegacyXmlConfigurationImporter.prepare(sourceXml);
         ConfigurationRepository.FingerprintedSnapshot current =
             new ConfigurationRepository(mDatabasePath).loadWithFingerprint();
-        LegacyConfigurationState imported = loadedImport.configuration();
+        LegacyConfigurationState imported = source.configuration();
         LegacyConfigurationState currentState = LegacyConfigurationState.from(current.snapshot());
 
         Preview preview = LegacyXmlConfigurationMerger.preview(currentState, imported);
         requireSupportedContent(preview);
         MergeResult mergeResult = LegacyXmlConfigurationMerger.merge(currentState, imported);
-        return new PreparedImport(source, preview, loadedImport.fingerprint(), current.fingerprint(), mergeResult);
+        return new PreparedImport(source, preview, current.fingerprint(), mergeResult);
     }
 
     public ImportResult execute(PreparedImport preparedImport) throws IOException, SQLException
@@ -78,12 +73,7 @@ public class LegacyPlaylistImportService
             throw new IllegalArgumentException("Prepared import cannot be null");
         }
 
-        Path source = requireSource(preparedImport.sourceXml());
-
-        if(!preparedImport.sourceFingerprint().equals(fileFingerprint(source)))
-        {
-            throw new IOException("The playlist changed after the preview. Preview it again.");
-        }
+        preparedImport.mSource.requireUnchanged();
 
         if(!preparedImport.configurationFingerprint().equals(new ConfigurationRepository(mDatabasePath).fingerprint()))
         {
@@ -94,25 +84,8 @@ public class LegacyPlaylistImportService
         LegacyConfigurationState merged = preparedImport.mergeResult().configurationState();
         ConfigurationRepository repository = new ConfigurationRepository(mDatabasePath);
         repository.replace(merged.toConfigurationSnapshot(repository));
-        return new ImportResult(source, backup, preparedImport.preview(),
+        return new ImportResult(preparedImport.sourceXml(), backup, preparedImport.preview(),
             preparedImport.mergeResult().summary());
-    }
-
-    private Path requireSource(Path sourceXml) throws IOException
-    {
-        if(sourceXml == null)
-        {
-            throw new IOException("Select an SDRTrunk playlist XML file.");
-        }
-
-        Path source = sourceXml.toAbsolutePath().normalize();
-
-        if(!Files.isRegularFile(source))
-        {
-            throw new IOException("Legacy SDRTrunk playlist XML does not exist: " + source);
-        }
-
-        return source;
     }
 
     private static void requireSupportedContent(Preview preview) throws IOException
@@ -121,56 +94,6 @@ public class LegacyPlaylistImportService
             preview.channelCount() == 0 && preview.streamCount() == 0)
         {
             throw new IOException("The playlist contains no supported aliases, channels, or streaming configurations.");
-        }
-    }
-
-    private LoadedImport loadImported(Path sourceXml) throws IOException
-    {
-        MessageDigest digest = sha256();
-        LegacyConfigurationState imported;
-        try(DigestInputStream inputStream = new DigestInputStream(Files.newInputStream(sourceXml), digest))
-        {
-            imported = LegacyXmlConfigurationImporter.readConfigurationState(inputStream);
-            byte[] buffer = new byte[8192];
-            while(inputStream.read(buffer) >= 0)
-            {
-                //Drain any parser lookahead remainder so the token covers the complete captured source.
-            }
-        }
-        LegacyXmlConfigurationImporter.convertLikelyConventionalP25Channels(imported);
-        return new LoadedImport(imported, HexFormat.of().formatHex(digest.digest()));
-    }
-
-    private static String fileFingerprint(Path source) throws IOException
-    {
-        MessageDigest digest = sha256();
-
-        try(InputStream inputStream = Files.newInputStream(source))
-        {
-            byte[] buffer = new byte[8192];
-            int length;
-
-            while((length = inputStream.read(buffer)) >= 0)
-            {
-                if(length > 0)
-                {
-                    digest.update(buffer, 0, length);
-                }
-            }
-        }
-
-        return HexFormat.of().formatHex(digest.digest());
-    }
-
-    private static MessageDigest sha256()
-    {
-        try
-        {
-            return MessageDigest.getInstance("SHA-256");
-        }
-        catch(NoSuchAlgorithmException e)
-        {
-            throw new IllegalStateException("SHA-256 is unavailable", e);
         }
     }
 
@@ -236,35 +159,28 @@ public class LegacyPlaylistImportService
 
     public static final class PreparedImport
     {
-        private final Path mSourceXml;
+        private final PreparedPlaylist mSource;
         private final Preview mPreview;
-        private final String mSourceFingerprint;
         private final String mConfigurationFingerprint;
         private final MergeResult mMergeResult;
 
-        private PreparedImport(Path sourceXml, Preview preview, String sourceFingerprint,
+        private PreparedImport(PreparedPlaylist source, Preview preview,
                                String configurationFingerprint, MergeResult mergeResult)
         {
-            mSourceXml = sourceXml;
+            mSource = source;
             mPreview = preview;
-            mSourceFingerprint = sourceFingerprint;
             mConfigurationFingerprint = configurationFingerprint;
             mMergeResult = mergeResult;
         }
 
         public Path sourceXml()
         {
-            return mSourceXml;
+            return mSource.sourceXml();
         }
 
         public Preview preview()
         {
             return mPreview;
-        }
-
-        private String sourceFingerprint()
-        {
-            return mSourceFingerprint;
         }
 
         private String configurationFingerprint()
@@ -282,7 +198,4 @@ public class LegacyPlaylistImportService
     {
     }
 
-    private record LoadedImport(LegacyConfigurationState configuration, String fingerprint)
-    {
-    }
 }

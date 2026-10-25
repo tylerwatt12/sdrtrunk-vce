@@ -4,19 +4,20 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationEstimate;
 import io.github.dsheirer.database.upgrade.DatabaseMigrationChain;
 import io.github.dsheirer.database.upgrade.MigrationContent;
 import java.awt.Component;
+import java.awt.Font;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.function.Consumer;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.ButtonGroup;
+import javax.swing.JCheckBox;
 import javax.swing.JPanel;
+import javax.swing.JTextArea;
 
 /** The same explicit history choice for startup updates and selected-database imports. */
 public final class MigrationContentChoices extends JPanel
 {
-    private final WizardChoiceCard configuration;
-    private final WizardChoiceCard full;
+    private final JCheckBox keepHistory = new JCheckBox("Keep activity and statistics");
 
     public MigrationContentChoices(Path database, MigrationContent selected,
                                    Consumer<MigrationContent> selectionChanged)
@@ -26,20 +27,20 @@ public final class MigrationContentChoices extends JPanel
         setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
         setOpaque(false);
         setAlignmentX(Component.LEFT_ALIGNMENT);
-        ButtonGroup group = new ButtonGroup();
-        configuration = new WizardChoiceCard(group, "Configuration only",
-            "Past activity, statistics, and alert history start fresh. Channels, aliases, accounts, settings, and recordings are kept.",
-            selected == MigrationContent.CONFIGURATION_ONLY);
-        full = new WizardChoiceCard(group, "Configuration, activity, and statistics",
-            ApplicationMigrationEstimate.fullMigrationWarning(database), selected == MigrationContent.FULL);
-        add(configuration);
-        add(Box.createVerticalStrut(12));
-        add(full);
-        configuration.radio().addItemListener(event -> {
-            if(configuration.isSelected()) selectionChanged.accept(MigrationContent.CONFIGURATION_ONLY);
-        });
-        full.radio().addItemListener(event -> {
-            if(full.isSelected()) selectionChanged.accept(MigrationContent.FULL);
+        keepHistory.setSelected(selected == MigrationContent.FULL);
+        keepHistory.setOpaque(false);
+        keepHistory.setAlignmentX(Component.LEFT_ALIGNMENT);
+        WizardStyles.bodyFont(keepHistory, Font.PLAIN);
+        String estimate = ApplicationMigrationEstimate.fullMigrationWarning(database);
+        String loss = "Activity, statistics, and alert history start fresh. Settings and recordings are kept.";
+        JTextArea help = WizardStyles.prose(keepHistory.isSelected() ? estimate : loss);
+        add(keepHistory);
+        add(Box.createVerticalStrut(8));
+        add(help);
+        keepHistory.addItemListener(event -> {
+            help.setText(keepHistory.isSelected() ? estimate : loss);
+            selectionChanged.accept(selectedContent());
+            revalidate();
         });
     }
 
@@ -51,6 +52,6 @@ public final class MigrationContentChoices extends JPanel
 
     public MigrationContent selectedContent()
     {
-        return configuration.isSelected() ? MigrationContent.CONFIGURATION_ONLY : MigrationContent.FULL;
+        return keepHistory.isSelected() ? MigrationContent.FULL : MigrationContent.CONFIGURATION_ONLY;
     }
 }

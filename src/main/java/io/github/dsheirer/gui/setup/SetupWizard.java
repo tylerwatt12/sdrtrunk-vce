@@ -9,7 +9,6 @@ import io.github.dsheirer.gui.theme.Theme;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.swing.IconFontSwing;
 import io.github.dsheirer.database.*;
-import io.github.dsheirer.database.settings.ReceiverSettingsSchema;
 import io.github.dsheirer.database.importer.LegacyXmlConfigurationImporter;
 import io.github.dsheirer.database.importer.LegacyPlaylistImportService;
 import io.github.dsheirer.gui.configuration.LegacyPlaylistImportDialog;
@@ -41,8 +40,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.EnumMap;
-import java.util.LinkedHashMap;
-import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.*;
@@ -94,7 +91,6 @@ public final class SetupWizard extends JDialog
     });
     private final SetupJobOutput output = new SetupJobOutput();
     private final Timer refresh;
-    private Timer countdown;
     private boolean busy;
     private boolean finished;
     private boolean firstRunGuideEligible;
@@ -133,10 +129,10 @@ public final class SetupWizard extends JDialog
     private DatabaseMigrationChain.PreflightReport startupMigrationPlan;
     private boolean managedRecordingCatalogNeedsUpgrade;
     private String managedRecordingCatalogReport = "";
-    private boolean createUpgradeBackup = true;
+    private boolean createUpgradeBackup;
+    private boolean reviewingSource;
+    private Path selectedSource;
     private MigrationContent migrationContent = MigrationContent.FULL;
-    private Set<String> availableLegacyRecovery = Set.of();
-    private boolean legacyRecoveryUnavailable;
 
     /** Retry an actual listener bind race in the same shell, before tuner activation or output workers start. */
     public static boolean ensureListener(UserPreferences preferences, StatsWebServerService server) throws Exception
@@ -193,10 +189,6 @@ public final class SetupWizard extends JDialog
                 {
                     wizard.startupMigrationPlan = ApplicationMigrationService.readStartupPlan(wizard.database);
                     current = !wizard.startupMigrationPlan.requiresMigration();
-                    var recovery = discoverLegacyRecovery(!current, wizard.forced,
-                        () -> ApplicationMigrationService.availableRecoveryKeys(wizard.root));
-                    wizard.availableLegacyRecovery = recovery.keys();
-                    wizard.legacyRecoveryUnavailable = recovery.unavailable();
                 }
                 catch(java.io.IOException | java.sql.SQLException e) { inspectionFailure = e; }
             }
@@ -230,7 +222,7 @@ public final class SetupWizard extends JDialog
                     CopyableErrorDialog.message(showInspectionFailure));
                 if(wizard.databaseImportRequested && wizard.preferences != null)
                 {
-                    SwingUtilities.invokeLater(wizard::promptForDatabaseReplacement);
+                    SwingUtilities.invokeLater(wizard::chooseSource);
                 }
                 wizard.setVisible(true);
             });
@@ -241,7 +233,7 @@ public final class SetupWizard extends JDialog
         {
             wizard.closeRadioReferenceSetup();
             wizard.worker.shutdown();
-            SwingUtilities.invokeAndWait(() -> { wizard.refresh.stop(); wizard.stopCountdown(); wizard.dispose(); });
+            SwingUtilities.invokeAndWait(() -> { wizard.refresh.stop(); wizard.dispose(); });
             if(!wizard.finished && wizard.ownsLock && wizard.lock != null) wizard.lock.close();
         }
     }
@@ -255,7 +247,7 @@ public final class SetupWizard extends JDialog
         database = SdrTrunkDatabasePath.getDatabasePath(root);
         managedRecordingCatalog = database.resolveSibling("managed-recordings.sqlite");
         options = SdrTrunkDatabaseBootstrap.Options.parse(args);
-        createUpgradeBackup = options.createUpgradeBackup();
+        selectedSource = options.importXml() != null ? options.importXml() : options.upgradeData();
         if(Files.isRegularFile(database) && options.upgradeData() != null)
             throw new IllegalArgumentException("This profile already has a database. Use File → Import SQLite Database for explicitly confirmed replacement.");
         if(!Files.isRegularFile(database) && options.upgradeCurrent())
@@ -353,7 +345,10 @@ public final class SetupWizard extends JDialog
         JPanel navigation = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         navigation.setAlignmentX(Component.LEFT_ALIGNMENT);
         exit.addActionListener(e -> leave());
-        back.addActionListener(e -> { if(!busy && step.ordinal() > 0) showPage(SetupStep.values()[step.ordinal()-1]); });
+        back.addActionListener(e -> {
+            if(!busy && reviewingSource) showPage(SetupStep.SOURCE);
+            else if(!busy && step.ordinal() > 0) showPage(SetupStep.values()[step.ordinal()-1]);
+        });
         next.addActionListener(e -> { if(!busy) attempt(accept); });
         WizardStyles.primary(next); WizardStyles.secondary(back);
         WizardStyles.quiet(exit); WizardStyles.secondary(cancel);
@@ -502,7 +497,7 @@ public final class SetupWizard extends JDialog
         if(managedRecordingCatalogNeedsUpgrade) id = SetupStep.SOURCE;
         else if(id == SetupStep.REVIEW && progress != null && progress.get(SetupStep.JMBE) == NEEDS_ATTENTION)
             id = SetupStep.JMBE;
-        stopCountdown();
+        reviewingSource = false;
         certificateGuideVisible = false;
         back.setVisible(true);
         step = id; generation++;
@@ -533,410 +528,231 @@ public final class SetupWizard extends JDialog
 
     private void sourcePage()
     {
-        // Finish validating or updating the main profile before changing its separate recording catalog.
         if(managedRecordingCatalogNeedsUpgrade && preferences != null)
         {
-            notice("Managed recordings need an update", "The catalog needs a one-time update. Its recording entries will be preserved.", false);
-            details("Catalog to update", managedRecordingCatalog.toString());
-            upgradeBackupChoice();
-            next.setText("Update");
-            accept = () -> confirmMigration(this::upgradeManagedRecordingCatalog);
+            reviewSettings(managedRecordingCatalog, managedRecordingCatalog, "Update the recording library. Recording entries and audio are kept.",
+                null, true, "Update", this::upgradeManagedRecordingCatalog);
             return;
         }
-        if(!managedRecordingCatalogReport.isBlank())
-        {
-            notice("Managed recordings", managedRecordingCatalogReport, false);
-        }
-        if(legacyRecoveryUnavailable && !sourceCommitted)
-            notice("Earlier saved settings could not be checked",
-                "Your database settings are kept. You can reopen Setup Wizard to try recovery later.", false);
         if(preferences != null)
         {
-            if(forced && !sourceCommitted && liveServer == null)
-            {
-                existingSourcePage();
-                return;
-            }
-            notice("Your settings are in place", "Continue using this installation’s saved settings. You can review or change them in the following steps.", true);
-            details("Where my settings are saved", database + "\n\nTo replace this database later, use File → Import SQLite Database from the main application. Returning to this page never replaces your data.");
-            if(!migrationReport.isBlank())
-            {
-                details("View the full import report",migrationReport);
-                button("Copy Message", () -> Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(migrationReport), null));
-            }
+            notice("Your settings are ready", "Continue to review your setup.", true);
+            if(liveServer == null && !sourceCommitted) WizardStyles.quiet(button("Choose different settings", this::chooseSource));
+            if(!migrationReport.isBlank()) details("Import report", migrationReport);
             return;
         }
         if(Files.isRegularFile(database))
         {
             if(startupMigrationPlan == null)
             {
-                paragraph("Check this installation’s saved settings before continuing.");
-                next.setText("Check my settings");
-                accept = () -> job("Checking your saved settings…", null,
-                    () -> {
-                        var plan = ApplicationMigrationService.readStartupPlan(database);
-                        var recovery = discoverLegacyRecovery(plan.requiresMigration(), forced,
-                            () -> ApplicationMigrationService.availableRecoveryKeys(root));
-                        availableLegacyRecovery = recovery.keys();
-                        legacyRecoveryUnavailable = recovery.unavailable();
-                        return plan;
-                    }, plan -> {
+                paragraph("Check your saved settings to continue.");
+                next.setText("Check settings");
+                accept = () -> job("Checking settings…", null,
+                    () -> ApplicationMigrationService.readStartupPlan(database), plan -> {
                         startupMigrationPlan = plan;
                         showPage(SetupStep.SOURCE);
                     });
-                return;
             }
-            if(!startupMigrationPlan.requiresMigration())
+            else if(!startupMigrationPlan.requiresMigration())
             {
-                notice("Your settings are ready", "Continue using this installation’s saved settings.", true);
-                accept = () -> job("Loading your settings…", null, () -> {
+                paragraph("Your settings are ready.");
+                accept = () -> job("Loading settings…", null, () -> {
                     initialize(false); return true;
                 }, ignored -> showPage(initialStep()));
-                return;
             }
-            notice("Your settings need an update", "This build needs to update the database before receiving starts.", false);
-            migrationDetails(database, startupMigrationPlan);
-            LegacyRecoveryChoices recovery = appendLegacyRecoveryChoices();
-            upgradeBackupChoice();
-            next.setText("Update");
-            accept = () -> {
-                Map<String,String> selected = recovery.selectedDefaults();
-                confirmMigration(migrationContent, () -> migrate(null, false, false, null, selected));
-            };
+            else reviewSettings(database, database, "Update this installation’s settings before receiving starts. Recordings are kept.",
+                startupMigrationPlan, true, "Update settings", () -> {
+                    boolean backup = createUpgradeBackup;
+                    MigrationContent content = migrationContent;
+                    prepareProfile(() -> ApplicationMigrationSuccessDialog.currentDatabaseReport(
+                        new ApplicationMigrationService().migrateCurrent(root, backup, content, this::migrationProgress)), false);
+                });
             return;
         }
-        paragraph("Welcome! Is this your first time using VCE, or are you bringing settings from an older installation?");
         ButtonGroup group = new ButtonGroup();
-        WizardChoiceCard fresh = choice(group, "Start fresh — recommended for new users", "Begin with no saved channels. We’ll help you set up digital voice, access and decoding performance.", true);
-        WizardChoiceCard folder = choice(group, "Copy a previous VCE installation / data folder", "Bring your saved settings and digital voice tools into this installation. Your old installation stays unchanged; recordings and logs are not copied.", false);
-        WizardChoiceCard sqlite = choice(group, "Import a SQLite database only", "Use settings from a .sqlite file. Extra files such as digital voice tools and your encryption vault are not included. Output folders may still point to the old location.", false);
-        WizardChoiceCard xml = choice(group, "Import legacy XML", "Bring in channels and other supported settings from an older XML playlist. Use SQLite or an installation folder if it has newer changes.", false);
-        JPanel folderDetails=stack(), sqliteDetails=stack(), xmlDetails=stack();
-        JTextField folderPath=sourceField(folderDetails,"Previous installation or data folder",true);
-        JTextField sqlitePath=sourceField(sqliteDetails,"SQLite database file",false);
-        JTextField xmlPath=sourceField(xmlDetails,"XML playlist file",false);
-        List<Path> nearby = PreviousBuildLocator.discover();
-        if(!nearby.isEmpty())
-        {
-            JComboBox<Path> locations = new JComboBox<>(nearby.toArray(Path[]::new));
-            locations.setMaximumSize(new Dimension(Integer.MAX_VALUE,38));
-            locations.getAccessibleContext().setAccessibleName("Nearby installations");
-            addTo(folderDetails,text("We found these nearby installations:")); addTo(folderDetails,locations);
-            addTo(folderDetails,action("Use this installation", () -> folderPath.setText(locations.getSelectedItem().toString())));
-        }
-        LegacyXmlConfigurationImporter.discoverPlaylist(io.github.dsheirer.portable.PortableApplicationPaths.getLegacyApplicationRoot()).ifPresent(found ->
-            addTo(xmlDetails,action("Use the XML playlist we found", () -> xmlPath.setText(found.toString()))));
-        folder.setDetails(folderDetails); sqlite.setDetails(sqliteDetails); xml.setDetails(xmlDetails);
-        Runnable selectionChanged = () -> { next.setText(fresh.isSelected() ? "Start setup" : xml.isSelected() ? "Import XML" : "Review import"); page.revalidate(); page.repaint(); };
-        for(var item:List.of(fresh,folder,sqlite,xml)) item.radio().addItemListener(e -> selectionChanged.run());
-        if(options.upgradeData() != null) {
-            boolean directory=Files.isDirectory(options.upgradeData());
-            (directory ? folderPath : sqlitePath).setText(options.upgradeData().toString());
-            (directory ? folder : sqlite).radio().setSelected(true);
-        }
-        if(options.importXml() != null) { xmlPath.setText(options.importXml().toString()); xml.radio().setSelected(true); }
-        selectionChanged.run();
+        WizardChoiceCard fresh = choice(group, "Start fresh", "Set up a new installation.", selectedSource == null);
+        WizardChoiceCard bring = choice(group, "Bring my settings", "Choose a previous VCE folder or a saved settings file.", selectedSource != null);
+        Runnable changed = () -> next.setText(fresh.isSelected() ? "Start setup" :
+            selectedSource == null ? "Choose settings" : "Review settings");
+        fresh.radio().addItemListener(e -> changed.run());
+        bring.radio().addItemListener(e -> changed.run());
+        changed.run();
         accept = () -> {
-            if(fresh.isSelected()) { migrate(null, true, false, null); return; }
-            JTextField source=folder.isSelected() ? folderPath : sqlite.isSelected() ? sqlitePath : xmlPath;
-            if(source.getText().isBlank()) throw new IllegalArgumentException("Choose the source folder or file first.");
-            Path input = Path.of(source.getText());
-            if(xml.isSelected()) { migrate(input, false, true, null); return; }
-            var selection = PreviousBuildLocator.resolveSelection(input).orElseThrow(() -> new IllegalArgumentException("No supported portable database found at this location."));
-            if(folder.isSelected() != selection.portableProfile()) throw new IllegalArgumentException("The selected path does not match the chosen folder/file import scope.");
-            migrationContent = MigrationContent.FULL;
-            job("Inspecting source…", null, () -> ApplicationMigrationService.readMigrationApproval(
-                selection, root.getParent()), approval -> {
-                DatabaseMigrationChain.PreflightReport plan = approval.plan();
-                page.removeAll();
-                notice("Ready to bring your settings over", "Your previous installation will stay unchanged. We’ll check the copied settings before using them.", false);
-                paragraph("Import from: " + selection.path());
-                selectedScope = selection.portableProfile() ? "Your saved settings will be copied, along with your encryption vault, digital voice library and optional tools when available. Folders inside the old data folder will point to this installation. Recordings and logs are not copied; shared folders outside it stay unchanged." : "Only the database contents will be copied. Your vault, digital voice library and other files stay where they are. Saved output folders will not be changed — review them before starting reception.";
-                notice("What will be carried over",selectedScope,false);
-                migrationDetails(selection.database(), plan);
-                button("Choose a different source", () -> showPage(SetupStep.SOURCE));
-                next.setText("Confirm import");
-                accept = () -> migrate(input, false, false, approval.withContent(migrationContent));
-                page.revalidate();
-            });
+            if(fresh.isSelected()) prepareProfile(() -> {
+                SdrTrunkDatabaseBootstrap.createFresh(database); return "New settings created.";
+            }, true);
+            else if(selectedSource != null) inspectSource(selectedSource);
+            else chooseSource();
         };
+    }
+
+    private void chooseSource()
+    {
+        if(busy || sourceCommitted || preferences != null && !persist()) return;
+        boolean foldersAllowed = !Files.isRegularFile(database);
+        JFileChooser chooser = new JFileChooser(selectedSource == null ? null : selectedSource.toFile());
+        chooser.setDialogTitle(foldersAllowed ? "Choose settings file or folder" : "Choose settings file");
+        chooser.setFileSelectionMode(foldersAllowed ? JFileChooser.FILES_AND_DIRECTORIES : JFileChooser.FILES_ONLY);
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+            foldersAllowed ? "Saved settings (*.sqlite, *.xml)" : "Saved settings (*.sqlite, *.db, *.xml)",
+            foldersAllowed ? new String[]{"sqlite", "xml"} : new String[]{"sqlite", "db", "xml"}));
+        if(chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION)
+            inspectSource(chooser.getSelectedFile().toPath());
+    }
+
+    private void inspectSource(Path input)
+    {
+        if(busy || sourceCommitted) return;
+        selectedSource = input.toAbsolutePath().normalize();
+        Path source = selectedSource;
+        boolean existing = Files.isRegularFile(database);
+        migrationContent = MigrationContent.FULL;
+        //A different selection invalidates the old Proceed action before any inspection can fail.
+        page.removeAll();
+        title.setText("Choose settings");
+        paragraph("Selected: " + source.getFileName());
+        WizardStyles.quiet(button("Choose different settings", this::chooseSource));
+        reviewingSource = true;
+        next.setText("Check settings");
+        accept = () -> inspectSource(source);
+        canContinue = () -> true;
+        page.revalidate(); page.repaint();
+        if(Files.isRegularFile(source) && source.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".xml"))
+        {
+            if(existing)
+                job("Checking playlist…", null, () -> new LegacyPlaylistImportService(database).prepare(source), prepared ->
+                    reviewPlaylist(source, prepared.preview(), true, () -> job("Importing playlist…", null, () -> {
+                        var result = new LegacyPlaylistImportService(database).execute(prepared);
+                        sourceCommitted = true;
+                        readAutoStart();
+                        revalidateSettings();
+                        return LegacyPlaylistImportDialog.resultMessage(result);
+                    }, this::sourceReady)));
+            else
+                job("Checking playlist…", null, () -> LegacyXmlConfigurationImporter.prepare(source), prepared ->
+                    reviewPlaylist(source, prepared.preview(), false, () -> prepareProfile(() -> {
+                        LegacyXmlConfigurationImporter.importPlaylist(prepared, database);
+                        return "Playlist imported. The selected file is unchanged.";
+                    }, true)));
+            return;
+        }
+        if(existing)
+        {
+            if(Files.isDirectory(source)) throw new IllegalArgumentException(
+                "Choose a saved settings file. To copy a previous installation, open VCE in a new folder.");
+            job("Checking settings…", null, () -> SqliteDatabaseImportDialog.inspect(source, database), prepared ->
+                reviewSettings(source, source, "These settings will replace your current channels, aliases, accounts and preferences. " +
+                    "Recordings and other files stay in place. A backup is kept before replacement.",
+                    prepared.approval().plan(), false, "Replace settings and restart", () -> {
+                        replacement = new SqliteDatabaseImportDialog.PreparedImport(prepared.sourceDatabase(),
+                            prepared.approval().withContent(migrationContent));
+                        finished = true;
+                        dispose();
+                    }));
+            return;
+        }
+        PreviousBuildLocator.Selection selection = PreviousBuildLocator.resolveSelection(source)
+            .orElseThrow(() -> new IllegalArgumentException(
+                "No saved VCE settings were found. Choose a previous installation, a .sqlite file or an XML playlist."));
+        job("Checking settings…", null, () -> ApplicationMigrationService.readMigrationApproval(selection, root.getParent()), approval -> {
+            selectedScope = selection.portableProfile() ?
+                "Copies settings, saved keys and available voice tools. Recordings and logs are not copied." :
+                "Copies settings from this file. Other files and saved recording folders stay in place.";
+            reviewSettings(selection.path(), selection.database(), selectedScope, approval.plan(), false, "Import settings", () -> {
+                var confirmed = approval.withContent(migrationContent);
+                prepareProfile(() -> ApplicationMigrationSuccessDialog.previousImportReport(
+                    new ApplicationMigrationService().importPrevious(selection, root, confirmed, this::migrationProgress)), false);
+            });
+        });
+    }
+
+    private void reviewPlaylist(Path source, io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview preview,
+                               boolean merging, Runnable proceed)
+    {
+        String scope = preview.channelCount() + " channels, " + preview.aliasCount() + " aliases and " +
+            preview.streamCount() + " streaming configurations. " + (merging ?
+                "Adds to your current settings; " + preview.totalConflicts() + " conflicting names will be renamed. A backup is kept first." :
+                "Creates settings from this playlist. The selected file is unchanged.");
+        reviewSettings(source, source, scope, null, false, "Import playlist", proceed);
+    }
+
+    private void reviewSettings(Path source, Path historyDatabase, String scope, DatabaseMigrationChain.PreflightReport plan,
+                                boolean backupChoice, String caption, Runnable proceed)
+    {
+        page.removeAll();
+        title.setText("Review settings");
+        paragraph("Source: " + source.getFileName());
+        paragraph(scope);
+        if(plan != null) migrationDetails(historyDatabase, plan);
+        if(backupChoice)
+        {
+            JCheckBox backup = new JCheckBox("Back up before updating", createUpgradeBackup);
+            backup.addActionListener(e -> createUpgradeBackup = backup.isSelected());
+            append(backup);
+            paragraph("Without a backup, you cannot return to the previous version.");
+        }
+        details("Source location", source.toString());
+        reviewingSource = !source.equals(database) && !source.equals(managedRecordingCatalog);
+        if(reviewingSource) WizardStyles.quiet(button("Choose different settings", this::chooseSource));
+        next.setText(caption);
+        accept = proceed;
+        updateNavigation();
+        page.revalidate(); page.repaint();
     }
 
     private void upgradeManagedRecordingCatalog()
     {
+        boolean backup = createUpgradeBackup;
         job("Updating managed recordings…", null,
-            () -> ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog, createUpgradeBackup), result -> {
+            () -> ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog, backup), result -> {
                 managedRecordingCatalogNeedsUpgrade = false;
-                managedRecordingCatalogReport = result.migrated() ?
-                    "The catalog is ready. " + (result.backup() == null ? "No recovery copy was requested." :
-                        "Recovery copy: " + result.backup()) : "The catalog is already current.";
-                showPage(SetupStep.SOURCE);
+                managedRecordingCatalogReport = "Managed Recordings is ready.";
+                sourceReady(result.backup() == null ? managedRecordingCatalogReport :
+                    managedRecordingCatalogReport + "\nBackup: " + result.backup());
             }, failure -> {
                 showPage(SetupStep.SOURCE);
-                fail("Managed recordings could not be updated. Try again, or continue receiving with managed recordings unavailable.",
+                fail("Managed Recordings could not be updated. Retry, or continue without it.",
                     CopyableErrorDialog.message(failure));
                 button("Continue without managed recordings", () -> {
                     managedRecordingCatalogNeedsUpgrade = false;
-                    managedRecordingCatalogReport = "Managed recordings are unavailable. Receiving can continue; the saved recording preference is unchanged. Try updating the catalog again on a later launch.";
-                    showPage(SetupStep.SOURCE);
+                    completeAndContinue();
+                    notice("Managed Recordings unavailable", "Your recording settings are unchanged.", false);
                 });
             });
     }
 
-    private void upgradeBackupChoice()
+    private void prepareProfile(Callable<String> prepare, boolean newPreferences)
     {
-        append(upgradeBackupCheckbox());
-        paragraph("A backup can take time for a large database. Without it, there is no recovery copy for the previous build.");
-    }
-
-    private JCheckBox upgradeBackupCheckbox()
-    {
-        JCheckBox backup = new JCheckBox("Create a recovery backup first", createUpgradeBackup);
-        backup.addActionListener(e -> createUpgradeBackup = backup.isSelected());
-        return backup;
-    }
-
-    record LegacyRecoveryDiscovery(Set<String> keys, boolean unavailable)
-    {
-        LegacyRecoveryDiscovery { keys = Set.copyOf(keys); }
-    }
-
-    /** A valid ordinary startup never inspects unused legacy files. Discovery cannot block usable SQLite settings. */
-    static LegacyRecoveryDiscovery discoverLegacyRecovery(boolean migrationRequired, boolean explicitVisit,
-                                                           Callable<Set<String>> inspection)
-    {
-        if(!migrationRequired && !explicitVisit) return new LegacyRecoveryDiscovery(Set.of(), false);
-        try { return new LegacyRecoveryDiscovery(inspection.call(), false); }
-        catch(Exception failure) { return new LegacyRecoveryDiscovery(Set.of(), true); }
-    }
-
-    /** Only safe labels and an unchecked selection are presented; legacy credentials never enter Swing text. */
-    static final class LegacyRecoveryChoices
-    {
-        private final JPanel panel = stack();
-        private final Map<String,JCheckBox> choices = new LinkedHashMap<>();
-
-        LegacyRecoveryChoices(Set<String> available)
-        {
-            for(String key: ReceiverSettingsSchema.KEYS)
-            {
-                if(!available.contains(key)) continue;
-                String label = switch(key)
-                {
-                    case ReceiverSettingsSchema.REMOTE_LINKS_KEY -> "Recover saved Remote Links";
-                    case ReceiverSettingsSchema.PAGING_TONES_KEY -> "Recover saved paging-tone detection";
-                    default -> throw new IllegalArgumentException("Unsupported saved setting");
-                };
-                JCheckBox choice = new JCheckBox(label, false);
-                choices.put(key, choice);
-                addTo(panel, choice);
-            }
-        }
-
-        JPanel panel() { return panel; }
-        Map<String,JCheckBox> choices() { return Map.copyOf(choices); }
-        boolean anySelected() { return choices.values().stream().anyMatch(JCheckBox::isSelected); }
-        Map<String,String> selectedDefaults()
-        {
-            Map<String,String> selected = new LinkedHashMap<>();
-            try
-            {
-                for(var choice: choices.entrySet())
-                    if(choice.getValue().isSelected())
-                        selected.put(choice.getKey(), ReceiverSettingsSchema.defaultJson(choice.getKey()));
-            }
-            catch(java.sql.SQLException failure)
-            {
-                throw new IllegalStateException("Saved settings could not be prepared for recovery.");
-            }
-            return Map.copyOf(selected);
-        }
-    }
-
-    private LegacyRecoveryChoices appendLegacyRecoveryChoices()
-    {
-        LegacyRecoveryChoices choices = new LegacyRecoveryChoices(availableLegacyRecovery);
-        if(!choices.choices().isEmpty())
-        {
-            paragraph("Saved settings from an older build are available. Choose any you want to recover. " +
-                "Only matching default settings will be replaced; the original files will be kept.");
-            append(choices.panel());
-            append(Box.createVerticalStrut(14));
-        }
-        return choices;
-    }
-
-    private void migrate(Path source, boolean fresh, boolean xml,
-                         ApplicationMigrationService.ApprovedMigrationPlan approved)
-    {
-        migrate(source, fresh, xml, approved, Map.of());
-    }
-
-    private void migrate(Path source, boolean fresh, boolean xml,
-                         ApplicationMigrationService.ApprovedMigrationPlan approved,
-                         Map<String,String> selectedRecovery)
-    {
-        MigrationContent selectedContent = approved == null ? migrationContent : approved.content();
-        job("Preparing your profile…", null, () -> {
-            String report;
-            if(fresh) { SdrTrunkDatabaseBootstrap.createFresh(database); report = "New profile created."; }
-            else if(xml) { LegacyXmlConfigurationImporter.importPlaylist(source, database); report = "Legacy XML imported. The source was not changed."; }
-            else
-            {
-                ApplicationMigrationService service = new ApplicationMigrationService();
-                if(source == null)
-                    report = ApplicationMigrationSuccessDialog.currentDatabaseReport(selectedRecovery.isEmpty() ?
-                        service.migrateCurrent(root, createUpgradeBackup, selectedContent, this::migrationProgress) :
-                        service.migrateCurrent(root, createUpgradeBackup, selectedRecovery, selectedContent, this::migrationProgress));
-                else
-                {
-                    var selected = PreviousBuildLocator.resolveSelection(source).orElseThrow();
-                    var result = service.importPrevious(selected, root, approved, output::accept);
-                    report = ApplicationMigrationSuccessDialog.previousImportReport(result);
-                }
-            }
-            //The database/profile operation is already committed at this point. If the following readiness refresh
-            //fails, recovery must not offer to import again into the now-occupied destination.
+        job("Preparing settings…", null, () -> {
+            String report = prepare.call();
+            //The commit precedes readiness refresh. Never offer another import if that refresh fails.
             sourceCommitted = true;
-            availableLegacyRecovery = Set.of();
-            initialize(fresh || xml);
+            initialize(newPreferences);
             return report;
-        }, report -> {
-            migrationReport = report;
-            progress.setComplete(false);
-            if(!persist()) return;
-            ThemeManager.getInstance().initialize(preferences);
-            SwingUtilities.updateComponentTreeUI(this);
-            showPage(SetupStep.SOURCE);
-            if(!fresh && !xml && !managedRecordingCatalogNeedsUpgrade)
-            {
-                int[] seconds = {10}; next.setText("Continue in 10 seconds");
-                countdown = new Timer(1000, e -> {
-                    if(--seconds[0] == 0) { stopCountdown(); completeAndContinue(); }
-                    else next.setText("Continue in " + seconds[0] + " seconds");
-                });
-                countdown.start();
-            }
-        });
+        }, this::sourceReady);
     }
 
-    private void confirmMigration(Runnable update)
+    private void sourceReady(String report)
     {
-        confirmMigration(MigrationContent.FULL, update);
-    }
-
-    private void confirmMigration(MigrationContent content, Runnable update)
-    {
-        int selected = JOptionPane.showOptionDialog(this,
-            (createUpgradeBackup ? "A recovery copy will be kept before updating. " :
-                "No recovery copy will be kept. ") +
-                (content == MigrationContent.CONFIGURATION_ONLY ?
-                    "Past activity, statistics, and alert history will start fresh. Recordings will be kept. " : "") +
-                "The previous VCE version cannot reopen the updated database. Continue?",
-            "Update saved data?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
-            new Object[]{"Update", "Cancel"}, "Cancel");
-        if(selected == 0)
-        {
-            update.run();
-        }
-    }
-
-    /** Same first step and lineage; replacement is an explicit action, never a side effect of Back. */
-    private void existingSourcePage()
-    {
-        paragraph("Your saved settings are already here. Keep using them, or choose an import to review before making any changes.");
-        ButtonGroup group = new ButtonGroup();
-        WizardChoiceCard keep = choice(group, "Keep my current settings — recommended",
-            "Review your setup without importing or replacing anything.", true);
-        WizardChoiceCard sqlite = choice(group, "Replace settings from a SQLite database",
-            "Replace this installation’s database, including channels, aliases, accounts and preferences. We’ll show a warning and save a recovery copy first. Extra files are not copied, and saved output folders are not changed.", false);
-        WizardChoiceCard xml = choice(group, "Import a legacy XML playlist",
-            "Add supported channels, aliases and streaming settings to this profile. Existing configuration stays in place; conflicting imported names are renamed. This does not replace your database.", false);
-        WizardChoiceCard recover = availableLegacyRecovery.isEmpty() ? null : choice(group,
-            "Recover settings saved by an older VCE build",
-            "Review saved Remote Links and audio choices that can replace matching default settings.", false);
-        LegacyRecoveryChoices recovery = new LegacyRecoveryChoices(availableLegacyRecovery);
-        JPanel recoveryPanel = stack();
-        addTo(recoveryPanel, text("Choose which saved choices to recover. Only matching default settings will be " +
-            "replaced; the original files will be kept."));
-        addTo(recoveryPanel, recovery.panel());
-        addTo(recoveryPanel, upgradeBackupCheckbox());
-        recoveryPanel.setVisible(false);
-        if(recover != null) append(recoveryPanel);
-        details("Where my settings are saved", database.toString());
-        Runnable selectionChanged = () -> {
-            boolean recovering = recover != null && recover.isSelected();
-            recoveryPanel.setVisible(recovering);
-            next.setText(recovering ? "Review recovery" : keep.isSelected() ? "Continue" : "Choose file & review");
-            updateNavigation();
-            page.revalidate();
-        };
-        canContinue = () -> recover == null || !recover.isSelected() || recovery.anySelected();
-        for(var choice: recovery.choices().values()) choice.addActionListener(e -> updateNavigation());
-        for(var card : List.of(keep, sqlite, xml)) card.radio().addItemListener(e -> selectionChanged.run());
-        if(recover != null) recover.radio().addItemListener(e -> selectionChanged.run());
-        accept = () -> {
-            if(keep.isSelected()) { completeAndContinue(); return; }
-            if(recover != null && recover.isSelected()) {
-                Map<String,String> selected = recovery.selectedDefaults();
-                if(selected.isEmpty()) return;
-                int confirmation = JOptionPane.showOptionDialog(this,
-                    "Replace only the selected default settings with their saved values? The original files will be kept. " +
-                        (createUpgradeBackup ? "A recovery copy of the database will be kept first." :
-                            "No new recovery copy of the database will be kept."),
-                    "Recover saved settings?", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null,
-                    new Object[]{"Recover selected settings", "Cancel"}, "Cancel");
-                if(confirmation == 0) migrate(null, false, false, null, selected);
-                return;
-            }
-            if(!persist()) return;
-            if(sqlite.isSelected())
-            {
-                promptForDatabaseReplacement();
-            }
-            else
-            {
-                var selected = LegacyPlaylistImportDialog.choose(this, database, root);
-                if(selected == null) return;
-                job("Importing your playlist…", null,
-                    () -> {
-                        var result = new LegacyPlaylistImportService(database).execute(selected);
-                        //The merge is already committed, even if a subsequent readiness read fails.
-                        sourceCommitted = true;
-                        migrationReport = LegacyPlaylistImportDialog.resultMessage(result);
-                        readAutoStart();
-                        revalidateSettings();
-                        return result;
-                    }, result -> {
-                        progress.set(SetupStep.SOURCE, COMPLETE);
-                        showPage(SetupStep.SOURCE);
-                        notice("Your playlist was imported", "Your existing settings were kept. Continue to review your setup before receiving starts.", true);
-                        persist();
-                    });
-            }
-        };
-    }
-
-    private void promptForDatabaseReplacement()
-    {
-        if(busy || preferences == null || !persist())
-        {
-            return;
-        }
-        var selected = SqliteDatabaseImportDialog.choose(this, database, root);
-        if(selected != null)
-        {
-            //Return to the startup boundary. No old preferences or setup callbacks may write after replacement.
-            replacement = selected;
-            finished = true;
-            dispose();
-        }
+        if(!report.isBlank())
+            migrationReport = migrationReport.isBlank() ? report : migrationReport + "\n\n" + report;
+        progress.setComplete(false);
+        progress.set(SetupStep.SOURCE, COMPLETE);
+        if(!persist()) { restartRequired = true; updateNavigation(); return; }
+        ThemeManager.getInstance().initialize(preferences);
+        SwingUtilities.updateComponentTreeUI(this);
+        if(managedRecordingCatalogNeedsUpgrade) createUpgradeBackup = false;
+        showPage(nextStep());
+        notice("Settings ready", "Continue reviewing your setup.", true);
+        if(!migrationReport.isBlank()) details("Import report", migrationReport);
+        page.revalidate(); page.repaint();
     }
 
     private void administratorPage()
     {
         boolean exists = administratorConfigured;
-        paragraph(exists ? "Your administrator account is already set up. Leave these fields blank to keep your password. To change it, enter your current password first." : "Choose a password to manage your channels, aliases and receiver settings. Use at least 7 characters (up to 256).");
+        paragraph(exists ? "Leave the fields blank to keep your password. To change it, enter your current password." :
+            "Choose an administrator password of 7–256 characters.");
         JPasswordField current = exists ? password("Current administrator password") : new JPasswordField();
         JPasswordField value = password("New administrator password");
         JPasswordField confirmation = password("Confirm new password");
@@ -967,21 +783,21 @@ public final class SetupWizard extends JDialog
     private void webPage()
     {
         var app = preferences.getApplicationPreference();
-        paragraph("Use the web interface to edit aliases, listen to calls, view spectrum and more. Choose where you want to access it.");
-        if(webAdjusted) notice("Web access is now available on this computer", "Your previous installation had web access turned off. We’ve enabled it locally so you can edit aliases. Other devices still cannot connect.", false);
+        paragraph("Use the web interface to manage channels and listen. Choose where you’ll access it.");
+        if(webAdjusted) notice("Web access is now available on this computer", "Web access is enabled locally. Other devices cannot connect.", false);
         else if(progress.get(step) == NEEDS_ATTENTION) notice("Please review your web access", "These settings changed or could not be started last time. Check them before continuing.", false);
         ButtonGroup group = new ButtonGroup();
         card(group, "This computer only — recommended", "Open the receiver in a browser on this computer. Other devices cannot connect.", !app.isStatsWebServerAnyIpEnabled());
         WizardChoiceCard networkChoice = choice(group, "Other devices", "Also connect from a phone, tablet or another computer that can reach this receiver.", app.isStatsWebServerAnyIpEnabled());
         JPanel networkDetails=stack();
-        addTo(networkDetails,text("Your firewall controls who can reach this computer. This choice is not limited to your home network; we do not change firewall rules or open router ports."));
+        addTo(networkDetails,text("Your firewall controls access, which can extend beyond your home network. VCE does not change firewall rules or router ports."));
         networkChoice.setDetails(networkDetails);
         JRadioButton network=networkChoice.radio();
         JSpinner port = WizardStyles.integerSpinner(app.getStatsWebServerPort(),
             ApplicationPreference.MIN_STATS_WEB_SERVER_PORT, ApplicationPreference.MAX_STATS_WEB_SERVER_PORT);
         labelled("Web port", port);
-        paragraph("8090 works for most installations. Change it only if another application already uses this port.");
-        details("About secure access", "Connections use HTTPS to protect your sign-in. Your existing certificate settings are kept. We’ll check that web access works before you finish setup.");
+        paragraph("Use 8090 unless another application already uses it.");
+        details("About secure access", "HTTPS protects sign-in. Your certificate settings are kept; web access is checked before launch.");
         accept = () -> {
             commitNumber(port, "Enter a port from " + ApplicationPreference.MIN_STATS_WEB_SERVER_PORT + " to " +
                 ApplicationPreference.MAX_STATS_WEB_SERVER_PORT + ".");
@@ -1033,20 +849,21 @@ public final class SetupWizard extends JDialog
             else
                 notice("Digital voice is ready", jmbeUpdateChecked ?
                     "Your selected JMBE library is current." :
-                    "A compatible JMBE library is already available. You’re ready to listen to supported digital voice channels.", true);
+                    "Your JMBE library supports digital voice.", true);
             details("Installed library details", "Version: " + JmbeLibraryMetadata.getVersion(library) + "\nLocation: " + library);
             button("Change digital voice setup…", () -> { editJmbe=true; showPage(step); });
             accept = () -> { progress.set(step,progress.get(step)==CARRIED_OVER ? CARRIED_OVER : COMPLETE); completeAndContinue(); };
             return;
         }
-        paragraph("Want to hear digital voice? JMBE adds audio support for systems such as P25 and DMR. We recommend setting it up now; analog listening does not need it.");
+        paragraph("JMBE enables P25 and DMR digital voice. Analog listening does not need it.");
         ButtonGroup group=new ButtonGroup();
-        WizardChoiceCard create=choice(group,"Set up digital voice — recommended", "We’ll download the JMBE tools, build the voice library and install it for you. This may take a few minutes and needs an internet connection.",true);
+        WizardChoiceCard create=choice(group,"Set up digital voice — recommended", "Download, build and install JMBE. Internet access is required; allow a few minutes.",true);
         JPanel createDetails=stack();
-        addTo(createDetails,text("JMBE source is provided for educational use. Voice-codec algorithms may be subject to patents or other restrictions in your jurisdiction. Review the project’s licensing and applicable restrictions before proceeding. Setup downloads and runs build tools on this computer."));
+        addTo(createDetails,new WizardDisclosure("JMBE licensing",
+            "JMBE source is provided for educational use. Voice-codec algorithms may be subject to patents or other restrictions in your jurisdiction. Review the project’s licensing and applicable restrictions before proceeding. Setup downloads and runs build tools on this computer."));
         JCheckBox consent = new JCheckBox("I agree to download and build JMBE on this computer.");
         WizardStyles.bodyFont(consent, Font.PLAIN); addTo(createDetails,consent); create.setDetails(createDetails);
-        WizardChoiceCard existing=choice(group,"Use a JMBE file I already have", "Choose a compatible JMBE .jar file. We’ll check it and copy it into this installation.",false);
+        WizardChoiceCard existing=choice(group,"Use a JMBE file I already have", "Choose a JMBE .jar file to check and install.",false);
         JPanel existingDetails=stack();
         JTextField selectedFile=sourceField(existingDetails,"JMBE library file",false); existing.setDetails(existingDetails);
         if(compatible) button("Keep current setup", () -> { editJmbe=false; progress.set(step,COMPLETE); if(persist()) showPage(step); });
@@ -1132,7 +949,7 @@ public final class SetupWizard extends JDialog
     private void radioReferencePage()
     {
         var rr = preferences.getRadioReferencePreference();
-        paragraph("Save your RadioReference account to look up radio systems and import channels.");
+        paragraph("Connect RadioReference to find systems and import channels.");
         JPanel account = stack();
         JPanel verification = new JPanel(new BorderLayout()) {
             public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE,getPreferredSize().height); }
@@ -1262,11 +1079,11 @@ public final class SetupWizard extends JDialog
         paragraph("Choose how much listening activity to keep.");
         ButtonGroup group = new ButtonGroup();
         JRadioButton off = card(group,"Off", "Do not collect statistics or detailed activity history.",!app.isStatsLoggingEnabled());
-        card(group,"Summary statistics", "Keep useful activity totals without a detailed event-by-event history.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
-        JRadioButton detailed = card(group,"Summaries plus detailed history", "Also keep individual activity events for troubleshooting and review. This uses more storage.",app.isStatsLoggingEnabled() && app.isStatsDetailedHistoryEnabled());
+        card(group,"Summary statistics", "Keep activity totals.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
+        JRadioButton detailed = card(group,"Summaries plus detailed history", "Keep individual events for troubleshooting. This uses more storage.",app.isStatsLoggingEnabled() && app.isStatsDetailedHistoryEnabled());
         JSpinner days = WizardStyles.integerSpinner(app.getStatsLoggingRetentionDays(),1,365);
         JPanel retention=stack();
-        addTo(retention,text("Keep time-based activity for this many days (30 recommended):"));
+        addTo(retention,text("Retention in days (30 recommended):"));
         days.getAccessibleContext().setAccessibleName("Activity retention in days"); addTo(retention,days);
         append(retention); retention.setVisible(!off.isSelected());
         off.addItemListener(e -> { retention.setVisible(!off.isSelected()); page.revalidate(); });
@@ -1286,21 +1103,13 @@ public final class SetupWizard extends JDialog
     {
         RecordingMode savedMode = preferences.getRecordPreference().getRecordingMode();
         boolean managedSelected = selectManagedByDefault(progress, savedMode);
-        paragraph("Make VCE your call recording library. Managed Recordings organizes new calls as they arrive, " +
-            "lets you search and play them in the browser, and can remove recordings after the age you choose.");
+        paragraph("Choose how new calls are saved.");
         ButtonGroup group = new ButtonGroup();
         JRadioButton managed = card(group, "Managed Recordings · Recommended",
-            "Organized folders, searchable call details, browser playback, and optional age retention. " +
-                "Choose this for the full VCE recording experience.", managedSelected);
+            "Searchable call details and browser playback, with optional age retention.", managedSelected);
         card(group, "Basic Recordings",
-            "Keep placing new recordings in one flat folder for other software that watches it, such as " +
-                "Trunking Recorder. Previously saved Managed calls stay searchable in VCE.", !managedSelected);
-        if(progress.isImported() || progress.isDone(step))
-        {
-            notice("Your current choice is preserved",
-                "Changing this setting affects future calls only. Earlier Managed recordings remain in the library.",
-                false);
-        }
+            "One folder for other software, such as Trunking Recorder.", !managedSelected);
+        paragraph("Only future calls are affected. Existing Managed recordings stay searchable.");
         accept = () -> {
             preferences.getRecordPreference().setRecordingMode(managed.isSelected() ?
                 RecordingMode.MANAGED : RecordingMode.CLASSIC);
@@ -1351,13 +1160,13 @@ public final class SetupWizard extends JDialog
             accept=this::completeAndContinue;
             return;
         }
-        paragraph("Help VCE decode signals efficiently on this computer. We’ll compare a few processing methods and save the fastest supported choices.");
-        notice("Before you start", "Close other applications and pause downloads, games and backups. Leave this wizard open. A quiet computer gives more reliable results.",false);
+        paragraph("Find the fastest supported decoding methods for this computer.");
+        notice("Before you start", "Close other applications and pause downloads while these checks run. Leave this window open.",false);
         paragraph(pending + " checks to run · " + (manager.getCalibrationTypes().size()-pending) + " saved checks reused");
         details("Why are these checks needed?", manager.getPendingReason() + "\n\nOnly new, changed or missing checks run. Valid results are kept if you stop or retry. A different processor or Java version may require all checks again.");
         next.setText(progress.get(step)==NEEDS_ATTENTION ? "Try remaining checks" : "Optimize now");
         defer("Skip this time");
-        paragraph("Recommended now. You can skip this time and use the available defaults; we’ll offer unfinished checks on a later launch.");
+        paragraph("You can use defaults now and finish these checks on a later launch.");
         accept = this::benchmark;
     }
 
@@ -1391,7 +1200,7 @@ public final class SetupWizard extends JDialog
 
     private void reviewPage()
     {
-        paragraph("You’re almost ready. Review your choices below. Nothing will start receiving until you choose Finish & launch.");
+        paragraph("Review your choices, then choose Finish & launch to start receiving.");
         JPanel summary=new JPanel(new GridLayout(0,2,24,12)); summary.setOpaque(false);
         for(SetupStep id: SetupStep.values()) if(id != SetupStep.REVIEW)
         {
@@ -1425,7 +1234,7 @@ public final class SetupWizard extends JDialog
             button("Continue without vault for this run", () -> { preferences.getEncryptionKeyPreference().getVaultService().disableForRun(); vaultDeferred=true; showPage(step); });
         }
         WhatsNewDialog.getPendingReleaseNotes().ifPresent(notes -> {
-            paragraph("What's new in this release"); append(WhatsNewDialog.createReleaseNotesView(notes));
+            append(new WizardDisclosure("What's new", WhatsNewDialog.createReleaseNotesView(notes)));
         });
         accept = () -> {
             startChannels = launchChannels.isSelected();
@@ -1636,7 +1445,6 @@ public final class SetupWizard extends JDialog
         if(busy) { fail("Wait for this operation to finish, or cancel it and wait for acknowledgement before exiting."); return; }
         if(preferences==null || persist()) dispose();
     }
-    private void stopCountdown() { if(countdown!=null) { countdown.stop(); countdown=null; } }
     private void refreshNavigationTheme()
     {
         if(themeRefreshPending) return;
@@ -1664,7 +1472,8 @@ public final class SetupWizard extends JDialog
     private void updateNavigation()
     {
         enableTree(page,!busy && !restartRequired);
-        back.setEnabled(!busy && !restartRequired && !certificateGuideVisible && preferences!=null && step.ordinal()>0);
+        back.setEnabled(!busy && !restartRequired && !certificateGuideVisible &&
+            (reviewingSource || preferences!=null && step.ordinal()>0));
         next.setEnabled(!busy && !restartRequired && canContinue.getAsBoolean());
         exit.setEnabled(!busy);
         boolean dark = preferences != null ? preferences.getApplicationPreference().getTheme().isDark() : selectedTheme == Theme.DARK;
@@ -1807,48 +1616,25 @@ public final class SetupWizard extends JDialog
     }
     private void migrationDetails(Path source, DatabaseMigrationChain.PreflightReport plan)
     {
-        JPanel changes = stack();
         if(MigrationContentChoices.isAvailable(plan))
         {
-            paragraph("What would you like to keep?");
-            append(new MigrationContentChoices(source, migrationContent, selected -> {
-                migrationContent = selected;
-                migrationDetails(changes, plan.withContent(selected));
-                page.revalidate(); page.repaint();
-            }));
+            append(new MigrationContentChoices(source, migrationContent, selected -> migrationContent = selected));
             append(Box.createVerticalStrut(16));
         }
         else migrationContent = MigrationContent.FULL;
-        migrationDetails(changes, plan.withContent(migrationContent));
-        append(changes);
+        if(plan.steps().stream().flatMap(item -> item.effects().stream()).anyMatch(SetupWizard::resetsReceiverActivity))
+            paragraph("Some older activity and statistics will start fresh.");
+        List<String> omitted = plan.steps().stream().flatMap(item -> item.effects().stream())
+            .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP && effect.affectedRows() != 0)
+            .map(effect -> effect.subject() + (effect.affectedRows() < 0 ? " (if present)" : ": " + effect.affectedRows()))
+            .distinct().toList();
+        if(!omitted.isEmpty())
+        {
+            paragraph("Some older settings may not be carried over.");
+            details("What will change", String.join("\n", omitted));
+        }
     }
 
-    private void migrationDetails(JPanel target, DatabaseMigrationChain.PreflightReport plan)
-    {
-        target.removeAll();
-        if(plan.requiresMigration())
-        {
-            addTo(target, noticePanel("What stays", "Usable supported channels, aliases, and streaming settings are migrated " +
-                "independently. A broken item in one area won't discard usable items in another.", false));
-            target.add(Box.createVerticalStrut(20));
-            if(plan.content() == MigrationContent.CONFIGURATION_ONLY || plan.steps().stream().flatMap(step -> step.effects().stream())
-                .anyMatch(SetupWizard::resetsReceiverActivity))
-            {
-                addTo(target, text("Activity history and statistics will start fresh. Radio-system and site information will be learned again as receiving resumes."));
-                target.add(Box.createVerticalStrut(12));
-            }
-            if(plan.steps().stream().flatMap(step -> step.effects().stream())
-                .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP))
-            {
-                addTo(target, text("Unusable components may be skipped, and retired state may be removed. Expand the " +
-                    "details below to see the full list of changes."));
-                target.add(Box.createVerticalStrut(12));
-            }
-        }
-        addTo(target, new WizardDisclosure("Technical details",ApplicationMigrationService.describePlan(plan)));
-        target.add(Box.createVerticalStrut(16));
-        target.revalidate(); target.repaint();
-    }
     private static boolean resetsReceiverActivity(DatabaseMigrationEffect effect)
     {
         if(effect.kind() != DatabaseMigrationEffect.Kind.RESET)

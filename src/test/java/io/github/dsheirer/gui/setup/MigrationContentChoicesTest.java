@@ -10,7 +10,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
-import javax.swing.JRadioButton;
+import javax.swing.JCheckBox;
 import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import org.junit.jupiter.api.Test;
@@ -21,7 +21,7 @@ class MigrationContentChoicesTest
 {
     @TempDir Path temporary;
 
-    @Test void fullHistoryStartsSelectedAndBothChoicesDescribeTheirConsequences() throws Exception
+    @Test void oneCheckedHistoryOptionShowsTheEstimateAndUncheckedExplainsTheLoss() throws Exception
     {
         Path source = temporary.resolve("selected.sqlite");
         Files.writeString(source, "Size-only UI fixture");
@@ -29,19 +29,23 @@ class MigrationContentChoicesTest
             AtomicReference<MigrationContent> changed = new AtomicReference<>();
             MigrationContentChoices choices = new MigrationContentChoices(source, MigrationContent.FULL, changed::set);
             assertEquals(MigrationContent.FULL, choices.selectedContent());
-            assertTrue(radio(choices, "Configuration, activity, and statistics").isSelected());
-            assertFalse(radio(choices, "Configuration only").isSelected());
+            JCheckBox keep = checkbox(choices);
+            assertEquals("Keep activity and statistics", keep.getText());
+            assertTrue(keep.isSelected());
+            assertNull(changed.get(), "Rendering must not change the approved content");
             String copy = copy(choices);
-            assertTrue(copy.contains("Past activity, statistics, and alert history start fresh."));
-            assertTrue(copy.contains("Channels, aliases, accounts, settings, and recordings are kept."));
             assertTrue(copy.contains("Allow a few minutes."));
             assertTrue(copy.contains("It may take longer."));
-            radio(choices, "Configuration only").doClick();
+            keep.doClick();
             assertEquals(MigrationContent.CONFIGURATION_ONLY, choices.selectedContent());
             assertEquals(MigrationContent.CONFIGURATION_ONLY, changed.get());
-            radio(choices, "Configuration, activity, and statistics").doClick();
+            assertTrue(copy(choices).contains("Activity, statistics, and alert history start fresh."));
+            assertTrue(copy(choices).contains("Settings and recordings are kept."));
+            assertFalse(copy(choices).contains("It may take longer."));
+            keep.doClick();
             assertEquals(MigrationContent.FULL, choices.selectedContent());
             assertEquals(MigrationContent.FULL, changed.get());
+            assertEquals(copy, copy(choices));
         });
         assertEquals("Size-only UI fixture", Files.readString(source));
     }
@@ -52,8 +56,12 @@ class MigrationContentChoicesTest
             MigrationContentChoices choices = new MigrationContentChoices(temporary.resolve("not-present.sqlite"),
                 MigrationContent.CONFIGURATION_ONLY, ignored -> fail("Initial rendering must not change the choice"));
             assertEquals(MigrationContent.CONFIGURATION_ONLY, choices.selectedContent());
-            assertTrue(radio(choices, "Configuration only").isSelected());
-            assertTrue(copy(choices).contains("Time estimate unavailable."));
+            assertFalse(checkbox(choices).isSelected());
+            assertTrue(copy(choices).contains("alert history start fresh"));
+            MigrationContentChoices full = new MigrationContentChoices(temporary.resolve("not-present.sqlite"),
+                MigrationContent.FULL, ignored -> fail("Initial rendering must not change the choice"));
+            assertTrue(checkbox(full).isSelected());
+            assertTrue(copy(full).contains("Time estimate unavailable."));
         });
     }
 
@@ -77,11 +85,12 @@ class MigrationContentChoicesTest
         assertFalse(MigrationContentChoices.isAvailable(markerAdoption));
     }
 
-    private static JRadioButton radio(Container parent, String name)
+    private static JCheckBox checkbox(Container parent)
     {
-        return components(parent).stream().filter(component -> component instanceof JRadioButton radio &&
-            name.equals(radio.getAccessibleContext().getAccessibleName()))
-            .map(component -> (JRadioButton)component).findFirst().orElseThrow();
+        List<JCheckBox> checkboxes = components(parent).stream().filter(JCheckBox.class::isInstance)
+            .map(JCheckBox.class::cast).toList();
+        assertEquals(1, checkboxes.size());
+        return checkboxes.getFirst();
     }
 
     private static String copy(Container parent)

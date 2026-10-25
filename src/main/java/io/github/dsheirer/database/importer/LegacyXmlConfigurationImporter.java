@@ -81,10 +81,15 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -148,30 +153,98 @@ public class LegacyXmlConfigurationImporter
 
     public static void importPlaylist(Path sourceXml, Path databasePath) throws IOException, SQLException
     {
-        Path normalizedXml = sourceXml.toAbsolutePath().normalize();
-        Path normalizedDatabase = databasePath.toAbsolutePath().normalize();
+        importPlaylist(prepare(sourceXml), databasePath);
+    }
 
-        if(!Files.isRegularFile(normalizedXml))
+    /** Reviews a captured source without creating or opening a destination profile. */
+    public static PreparedPlaylist prepare(Path sourceXml) throws IOException
+    {
+        Path source = requireSource(sourceXml);
+        MessageDigest digest = sha256();
+        LegacyConfigurationState state;
+        try(DigestInputStream input = new DigestInputStream(Files.newInputStream(source), digest))
         {
-            throw new IOException("Legacy SDRTrunk playlist XML does not exist: " + normalizedXml);
+            state = readConfigurationState(input);
+            byte[] buffer = new byte[8192];
+            while(input.read(buffer) >= 0)
+            {
+                //Include any parser lookahead remainder in the reviewed source fingerprint.
+            }
         }
+        convertLikelyConventionalP25Channels(state);
+        return new PreparedPlaylist(source, state, HexFormat.of().formatHex(digest.digest()));
+    }
 
+    public static void importPlaylist(PreparedPlaylist prepared, Path databasePath) throws IOException, SQLException
+    {
+        Objects.requireNonNull(prepared, "Prepared playlist cannot be null");
+        Path normalizedDatabase = databasePath.toAbsolutePath().normalize();
         if(Files.exists(normalizedDatabase))
         {
             throw new IOException("Refusing to overwrite existing SDRTrunk SQLite database: " + normalizedDatabase);
         }
-
-        LegacyConfigurationState state = readConfigurationState(normalizedXml);
-        convertLikelyConventionalP25Channels(state);
+        prepared.requireUnchanged();
         DatabaseFileInstaller.install(normalizedDatabase, temporaryDatabase -> {
             SdrTrunkDatabaseStartup.createGlobalDatabase(temporaryDatabase);
-            LegacyConfigurationState merged = mergeWithFactoryDefaults(temporaryDatabase, state);
+            LegacyConfigurationState merged = mergeWithFactoryDefaults(temporaryDatabase, prepared.configuration());
             ConfigurationRepository repository = new ConfigurationRepository(temporaryDatabase);
             ConfigurationSnapshot snapshot = merged.toConfigurationSnapshot(repository);
             repository.replace(snapshot);
             validateMigration(temporaryDatabase, snapshot);
         });
+    }
 
+    private static Path requireSource(Path sourceXml) throws IOException
+    {
+        if(sourceXml == null) throw new IOException("Choose a playlist file.");
+        Path source = sourceXml.toAbsolutePath().normalize();
+        if(!Files.isRegularFile(source))
+            throw new IOException("The playlist file is unavailable. Choose it again.");
+        return source;
+    }
+
+    private static String fileFingerprint(Path source) throws IOException
+    {
+        MessageDigest digest = sha256();
+        try(DigestInputStream input = new DigestInputStream(Files.newInputStream(source), digest))
+        {
+            byte[] buffer = new byte[8192];
+            while(input.read(buffer) >= 0) { }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static MessageDigest sha256()
+    {
+        try { return MessageDigest.getInstance("SHA-256"); }
+        catch(NoSuchAlgorithmException e) { throw new IllegalStateException("SHA-256 is unavailable", e); }
+    }
+
+    /** The reviewed configuration remains private so callers cannot change it before confirmation. */
+    public static final class PreparedPlaylist
+    {
+        private final Path source;
+        private final LegacyConfigurationState configuration;
+        private final String fingerprint;
+
+        private PreparedPlaylist(Path source, LegacyConfigurationState configuration, String fingerprint)
+        {
+            this.source = source;
+            this.configuration = configuration;
+            this.fingerprint = fingerprint;
+        }
+
+        public Path sourceXml() { return source; }
+        public LegacyXmlConfigurationMerger.Preview preview()
+        {
+            return LegacyXmlConfigurationMerger.preview(null, configuration);
+        }
+        LegacyConfigurationState configuration() { return configuration; }
+        void requireUnchanged() throws IOException
+        {
+            if(!fingerprint.equals(fileFingerprint(requireSource(source))))
+                throw new IOException("The playlist changed after review. Review it again.");
+        }
     }
 
     /**

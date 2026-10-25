@@ -5,17 +5,22 @@ import java.awt.Component;
 import java.awt.Dimension;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JPanel;
-import javax.swing.JTextArea;
 import javax.swing.SwingConstants;
 
 /** A full-width clickable header and a padded, visibly grouped expanded body. */
 final class WizardDisclosure extends JPanel
 {
     private final JButton toggle;
-    private final JTextArea content;
+    private final JComponent content;
 
     WizardDisclosure(String caption, String message)
+    {
+        this(caption, WizardStyles.prose(message));
+    }
+
+    WizardDisclosure(String caption, JComponent body)
     {
         super(new BorderLayout());
         setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -23,7 +28,7 @@ final class WizardDisclosure extends JPanel
         toggle.setHorizontalAlignment(SwingConstants.LEFT);
         toggle.getAccessibleContext().setAccessibleName(caption);
         toggle.getAccessibleContext().setAccessibleDescription("Expand details");
-        content = WizardStyles.prose(message);
+        content = body;
         content.setOpaque(true);
         content.setVisible(false);
         content.setBorder(BorderFactory.createEmptyBorder(16, 18, 18, 18));

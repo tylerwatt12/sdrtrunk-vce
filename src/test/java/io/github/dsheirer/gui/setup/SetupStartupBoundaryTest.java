@@ -67,41 +67,13 @@ class SetupStartupBoundaryTest
         assertTrue(hardware.contains("persist() && stopped.get()"));
         assertTrue(wizard.contains("? \"Skip discovery\" : \"Cancel operation\""));
         assertTrue(wizard.contains("cancel.setVisible(false)"));
-        assertFalse(wizard.contains("Summary statistics — recommended"));
     }
 
-    @Test void setupFailuresUsePlainGeneralGuidance() throws Exception
-    {
-        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
-        assertTrue(wizard.contains("This step couldn’t finish. Try again, or return to it later."));
-        assertTrue(wizard.contains("Your saved data could not be updated or imported. Use Copy error when reporting this problem."));
-        assertFalse(wizard.contains("Copy the technical details below"));
-        assertFalse(wizard.contains("make sure there is enough free space"));
-    }
-
-    @Test void migrationChoicesAndElapsedStatusRemainExplicit() throws Exception
+    @Test void elapsedStatusShowsMinutesAndSeconds()
     {
         assertEquals("0:00 elapsed", SetupWizard.elapsedLabel(-1));
         assertEquals("0:59 elapsed", SetupWizard.elapsedLabel(TimeUnit.SECONDS.toNanos(59)));
         assertEquals("1:01 elapsed", SetupWizard.elapsedLabel(TimeUnit.SECONDS.toNanos(61)));
-
-        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
-        String sourcePage = wizard.substring(wizard.indexOf("private void sourcePage()"),
-            wizard.indexOf("private void migrate(Path source"));
-        assertTrue(sourcePage.contains("migrationDetails(database, startupMigrationPlan)"));
-        assertTrue(sourcePage.contains("migrationDetails(selection.database(), plan)"));
-        assertTrue(sourcePage.contains("approval.withContent(migrationContent)"));
-        assertTrue(wizard.contains("private MigrationContent migrationContent = MigrationContent.FULL"));
-        assertTrue(sourcePage.contains("upgradeBackupChoice()"));
-        assertTrue(sourcePage.contains("next.setText(\"Update\")"));
-        assertTrue(wizard.contains("private boolean createUpgradeBackup = true"));
-        assertFalse(sourcePage.contains("readMigrationApproval(database"));
-        assertFalse(wizard.contains("directUpdateRequested"));
-        assertFalse(wizard.contains("Need the receiver back sooner?"));
-        assertFalse(wizard.contains("Faster update available"));
-        assertFalse(wizard.contains("Skip backup & safety checks"));
-        assertTrue(wizard.contains("service.migrateCurrent(root, createUpgradeBackup, selectedContent, this::migrationProgress)"));
-        assertTrue(wizard.contains("elapsedLabel(System.nanoTime() - operationStartedNanos)"));
     }
 
     @Test void replacementReviewIsDurableAndNeverMarksHardwareAsDetected() throws Exception

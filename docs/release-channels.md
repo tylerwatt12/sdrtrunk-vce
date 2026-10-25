@@ -46,7 +46,7 @@ The updater can open the matching download page. It does not download or install
 restart VCE, or switch channels for you.
 
 Before updating, back up the complete `data` folder. Extract the new package into a new folder, start VCE, and choose
-**Copy a previous VCE installation / data folder** in setup. Review the import plan, completion report, and output
+**Bring my settings**, then select the previous installation folder. Review the import plan, completion report, and output
 locations before receiving resumes. The built-in import upgrades supported settings without a separate program.
 Existing recordings and logs are not copied; check their configured locations before removing the old installation.
 

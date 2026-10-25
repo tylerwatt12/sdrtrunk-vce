@@ -9,25 +9,27 @@ channels, aliases, accounts, preferences, and other saved data. See the [documen
 
 ## Choose a starting point
 
-Launch VCE normally to open the Setup Wizard. On a new installation, choose the option that matches what you have:
+Launch VCE normally to open the Setup Wizard. A new installation offers **Start fresh** or **Bring my settings**.
+Choose a previous installation folder, saved database, or XML playlist; VCE checks the selection and shows what
+will be brought over before making changes.
 
 | Your starting point | Choose | What to expect |
 | --- | --- | --- |
 | You are new to VCE | **Start fresh** | Create a new profile, then set up your administrator account, web access, audio, and radios. |
-| You already use VCE | **Copy a previous VCE installation / data folder** | Bring over its database and available voice libraries, optional modules, and encryption vault. This is the most complete import choice. |
-| You have a VCE database file | **Import a SQLite database only** | Bring over settings and history stored in that file. Other files and saved output paths are not moved. |
-| You use mainline sdrtrunk or an older XML playlist | **Import legacy XML** | Bring over supported channels, aliases, and streaming settings from the playlist. The XML file stays unchanged. |
+| You already use VCE | **Bring my settings**, then choose its folder | Bring over its database and available voice libraries, optional modules, and encryption vault. |
+| You have a VCE database file | **Bring my settings**, then choose the file | Bring over settings and selected history. Other files and saved output paths are not moved. |
+| You use mainline sdrtrunk or an older XML playlist | **Bring my settings**, then choose the playlist | Bring over supported channels, aliases, and streaming settings. The XML file stays unchanged. |
 
-For a previous VCE installation, select a nearby installation or browse to its folder. Click **Review import**, read
-the plan, then click **Confirm import**. VCE checks and updates the copied database with its bundled Application
-Migrator; there is no separate tool to download. Supported older macOS `.app` installations can also be selected.
+Review the selected source and import scope, then continue. An older database also offers **Keep activity and
+statistics**, selected initially. Clear it to keep configuration and start history fresh. Supported older macOS
+`.app` installations can also be selected.
 
 The previous installation stays unchanged. Keep it until you have checked the new installation and confirmed that
 your channels receive and your recordings or streams work as expected.
 
 ## Work through setup
 
-The wizard takes you through Starting point, Administrator, Web access, Digital audio, RadioReference,
+The wizard takes you through Your settings, Administrator, Web access, Digital audio, RadioReference,
 Statistics & history, Recordings, Your radios, Optimize decoding, and Review & finish. Usable imported choices show
 **Carried over**. Continue skips those completed steps; select any step to review or change it.
 
@@ -47,7 +49,7 @@ Statistics & history, Recordings, Your radios, Optimize decoding, and Review & f
 - **Statistics & history:** New profiles collect summary statistics. Saving individual activity events is optional.
   Time-based activity retention defaults to 30 days and can be set from 1 to 365 days. This does not control recording
   retention or ordinary log files; imported Off choices stay Off.
-- **Recordings:** Choose Managed Recordings for searchable call details and browser playback, or Classic for ordinary
+- **Recordings:** Choose Managed Recordings for searchable call details and browser playback, or Basic Recordings for ordinary
   audio files. Imported recording choices are preserved. Review the recording folder before starting reception.
 - **Your radios:** A device marked **Detected** has been found; reception has not been tested. No hardware or a missing
   driver does not prevent completing setup. Use **Rescan** after connecting hardware or fixing its driver.
@@ -59,9 +61,8 @@ and decoding tests show progress in the wizard. Navigation waits for a running o
 safely. Exit keeps accepted settings and discards unsaved password entries.
 
 On **Review & finish**, check the actual output folders, web access, and channels selected to start automatically.
-Unlock the vault if requested. Reception starts after required setup and decoding preparation finish. Import and
-update reports have **Copy Message** and a visible ten-second continuation countdown; copying the report does not
-pause the countdown.
+Unlock the vault if requested. Reception starts after required setup and decoding preparation finish. Successful
+imports and updates continue to the next needed step; their report remains available without a countdown.
 
 ## What an import brings over
 
@@ -85,13 +86,13 @@ the settings import does not transfer them.
 
 ## Update an existing profile
 
-When a new build finds an older supported database in its active `data` folder, setup offers **Update** before
-receiving starts. Leave **Create a recovery backup first** selected unless you already have the recovery copy you
-intend to use. The backup is saved under `data/database/backups`; its exact location is reported.
+When a new build finds an older supported database in its active `data` folder, setup reviews the update before
+receiving starts. Its backup checkbox starts unchecked. Select it if you want a recovery copy of the old database;
+the copy is saved under `data/database/backups`. Without it, returning to the previous build requires another backup.
 
 This updates the active database in place. All required changes run in one transaction. If conversion or final
 validation fails before completion, that transaction rolls back. A successful update may make the database
-incompatible with the previous build. Its recovery backup remains for manual restoration; VCE does not automatically
+incompatible with the previous build. If selected, its recovery backup remains for manual restoration; VCE does not automatically
 switch the database back after a completed update. A healthy database already at this build's format needs no update
 or upgrade backup.
 
@@ -104,14 +105,10 @@ for the support boundary and detailed conversion contract.
 
 ## Review setup or import more settings later
 
-Use **Help → Setup Wizard…** and accept the restart prompt. Receiving stops while you review setup. The Starting
-point page then offers:
-
-- **Keep my current settings:** Review the existing profile without importing anything.
-- **Import a legacy XML playlist:** Add supported channels, aliases, and streaming settings. Existing configuration
-  stays in place; conflicting imported names are renamed. VCE saves a database backup before committing the import.
-- **Replace settings from a SQLite database:** Replace the complete application database, including channels,
-  aliases, accounts, preferences, and stored activity. This does not merge two profiles.
+Use **Help → Setup Wizard…** and accept the restart prompt. Receiving stops while you review setup. Your current
+settings are selected automatically. Continue to review them, or choose different settings to inspect a saved file.
+An XML playlist adds supported configuration and renames conflicts. A database file replaces the application
+settings. Both operations show their scope before confirmation and retain a recovery copy of the current database.
 
 **File → Import SQLite Database…** opens the same replacement flow. Review its warning and plan before confirming.
 VCE backs up the current database, updates and checks a private copy of the selected file, installs it, and restarts
@@ -119,8 +116,8 @@ into setup review. The selected source is unchanged. Files beside it are not cop
 non-database files remain in place, and stored paths are not remapped. An imported profile without a usable
 administrator account asks for a new password before reception starts.
 
-Selecting an option or going Back does not import anything. After an import finishes, Starting point shows its
-results instead of offering to repeat it. A replacement that cannot establish a safe final state does not restart
+Selecting a source or going Back does not import anything. After an import finishes, setup continues without
+offering to repeat it. A replacement that cannot establish a safe final state does not restart
 automatically; keep its error and reported recovery backup for troubleshooting.
 
 ## Where files are stored and how to back them up

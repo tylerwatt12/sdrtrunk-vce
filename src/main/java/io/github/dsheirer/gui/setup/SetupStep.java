@@ -3,7 +3,7 @@ package io.github.dsheirer.gui.setup;
 /** Stable, ordered setup identifiers; persisted names must not be renamed. */
 public enum SetupStep
 {
-    SOURCE("Starting point"), ADMINISTRATOR("Administrator"), WEB("Web access"),
+    SOURCE("Your settings"), ADMINISTRATOR("Administrator"), WEB("Web access"),
     JMBE("Digital audio"), RADIO_REFERENCE("RadioReference"), ACTIVITY("Statistics & history"),
     RECORDINGS("Recordings"),
     HARDWARE("Your radios"), CALIBRATION("Optimize decoding"), REVIEW("Review & finish");

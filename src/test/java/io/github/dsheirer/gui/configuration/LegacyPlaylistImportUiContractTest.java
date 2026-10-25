@@ -22,8 +22,6 @@ class LegacyPlaylistImportUiContractTest
 {
     private static final Path SDRTRUNK =
         Path.of("src/main/java/io/github/dsheirer/gui/SDRTrunk.java");
-    private static final Path DIALOG =
-        Path.of("src/main/java/io/github/dsheirer/gui/configuration/LegacyPlaylistImportDialog.java");
     private static final Path CONFIGURATION_MANAGER =
         Path.of("src/main/java/io/github/dsheirer/configuration/ConfigurationManager.java");
 
@@ -33,28 +31,12 @@ class LegacyPlaylistImportUiContractTest
         String source = Files.readString(SDRTRUNK);
         assertFalse(source.contains("new JMenuItem(\"Import Legacy Playlist XML...\")"));
         assertTrue(source.contains("new JMenuItem(\"Setup Wizard…\")"));
-        String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
-        assertTrue(wizard.contains("LegacyPlaylistImportDialog.choose(this, database, root)"));
-        assertTrue(wizard.contains("new LegacyPlaylistImportService(database).execute(selected)"));
     }
 
     @Test
-    void previewExplainsTheNonDestructiveImportContract() throws Exception
+    void configurationFlushIsSerializedAndTheRetiredRuntimeImportBridgeIsAbsent() throws Exception
     {
-        String source = Files.readString(DIALOG);
-        assertTrue(source.contains("Existing configuration will not be replaced."));
-        assertTrue(source.contains("database backup will be created before the import"));
-        assertTrue(source.contains("Unsupported legacy entries are omitted."));
-    }
-
-    @Test
-    void previewDoesNotConstructRuntimeServicesAndTheRetiredRuntimeImportBridgeIsAbsent() throws Exception
-    {
-        String dialog = Files.readString(DIALOG);
         String manager = Files.readString(CONFIGURATION_MANAGER);
-        assertFalse(dialog.contains("ConfigurationManager"));
-        assertFalse(dialog.contains("Platform.runLater"));
-        assertFalse(dialog.contains(".execute("));
         assertTrue(manager.contains("mExternalConfigurationOperation = true;"));
         assertTrue(manager.contains("if(mExternalConfigurationOperation)"));
         assertFalse(manager.contains("applyExternalConfigurationSnapshot"));

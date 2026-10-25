@@ -21,22 +21,19 @@ public final class SetupWizardSmoke
         {
             if(mode.equals("upgrade-catalog-failure"))
             {
-                io.github.dsheirer.database.upgrade.Format31TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
-                Path catalog = root.resolve("database/managed-recordings.sqlite");
-                try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + catalog);
-                    var statement = connection.createStatement())
-                {
-                    for(String ddl: io.github.dsheirer.record.managed.ManagedRecordingSchema.ddlForFormat(1).values())
-                        statement.execute(ddl);
-                    statement.execute("INSERT INTO catalog_metadata(id,format_version,call_count,total_bytes) VALUES(1,1,0,0)");
-                    statement.execute("PRAGMA application_id=" + io.github.dsheirer.record.managed.ManagedRecordingSchema.APPLICATION_ID);
-                    statement.execute("PRAGMA user_version=1");
-                }
+                Path database = root.resolve("database/sdrtrunk.sqlite");
+                io.github.dsheirer.database.SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+                io.github.dsheirer.database.InitialAdminSetup.provision(database, "smoke-only-password".toCharArray());
+                var complete = new SetupProgress(true, false);
+                complete.set(SetupStep.HARDWARE, SetupProgress.State.DEFERRED);
+                complete.save(database);
+                createOlderCatalog(root);
                 Files.writeString(root.resolve("database/backups"), "unrelated file");
             }
             else if(mode.equals("upgrade-configuration-only"))
                 io.github.dsheirer.database.upgrade.Format60TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
             else io.github.dsheirer.database.upgrade.Format30TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
+            if(mode.equals("upgrade-with-catalog")) createOlderCatalog(root);
             if(mode.equals("upgrade-retry")) Files.writeString(root.resolve("database/backups"), "unrelated file");
         }
         if(!System.getProperty("wizard.exercise", "").isBlank())
@@ -54,6 +51,20 @@ public final class SetupWizardSmoke
             if(result!=null) result.lock().close();
         }
         finally { SqlitePreferencesFactory.shutdown(); System.exit(0); }
+    }
+
+    private static void createOlderCatalog(Path root) throws Exception
+    {
+        Path catalog = root.resolve("database/managed-recordings.sqlite");
+        try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + catalog);
+            var statement = connection.createStatement())
+        {
+            for(String ddl: io.github.dsheirer.record.managed.ManagedRecordingSchema.ddlForFormat(1).values())
+                statement.execute(ddl);
+            statement.execute("INSERT INTO catalog_metadata(id,format_version,call_count,total_bytes) VALUES(1,1,0,0)");
+            statement.execute("PRAGMA application_id=" + io.github.dsheirer.record.managed.ManagedRecordingSchema.APPLICATION_ID);
+            statement.execute("PRAGMA user_version=1");
+        }
     }
 
     private static void exercise(Path root) throws Exception
@@ -93,23 +104,34 @@ public final class SetupWizardSmoke
         if(mode.startsWith("import"))
         {
             String source=System.getProperty("wizard.source");
-            javax.swing.SwingUtilities.invokeAndWait(()-> {
-                select(target,mode.equals("import-file") ? "Import a SQLite" : "Copy a previous");
-                visibleInput(target).setText(source);
-            });
-            click(target,"Continue"); await(target,SetupStep.SOURCE);
-            click(target,"Confirm import"); await(target,SetupStep.SOURCE);
+            javax.swing.SwingUtilities.invokeAndWait(() -> select(target,"Bring my settings"));
+            chooseSource(target,Path.of(source)); await(target,SetupStep.SOURCE);
+            if(mode.equals("import-only") && Files.isDirectory(Path.of(source)))
+            {
+                Path historyDatabase=io.github.dsheirer.database.upgrade.PreviousBuildLocator.resolveSelection(Path.of(source))
+                    .orElseThrow().database();
+                String estimate=io.github.dsheirer.database.upgrade.ApplicationMigrationEstimate.fullMigrationWarning(historyDatabase);
+                if(descendants(target).stream().anyMatch(MigrationContentChoices.class::isInstance) &&
+                    !hasVisibleText(target,estimate))
+                    throw new AssertionError("Folder review did not estimate from its database file");
+            }
+            clickPrimary(target); awaitAfterSource(target);
+            if(mode.equals("import-only"))
+            {
+                capture(target,root,"import-complete");
+                click(target,"Exit setup"); awaitClosed(target);
+                return;
+            }
             if(mode.equals("import-theme") && preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.DARK)
                 throw new AssertionError("Explicit theme choice was not retained after importing");
             var imported=SetupProgress.read(root.resolve("database/sdrtrunk.sqlite"));
             if(!imported.isImported() || imported.get(SetupStep.ADMINISTRATOR)!=SetupProgress.State.CARRIED_OVER || imported.get(SetupStep.WEB)!=SetupProgress.State.CARRIED_OVER || imported.get(SetupStep.ACTIVITY)!=SetupProgress.State.CARRIED_OVER)
                 throw new AssertionError("Imported valid settings were not carried over");
-            click(target,"Continue"); await(target,SetupStep.JMBE);
+            await(target,SetupStep.JMBE);
         }
         else
         {
-            if(!mode.equals("resume")) { click(target,"Continue"); await(target,SetupStep.SOURCE); }
-            click(target,"Continue"); await(target,SetupStep.ADMINISTRATOR);
+            clickPrimary(target); await(target,SetupStep.ADMINISTRATOR);
             capture(target,root,"02-admin");
             javax.swing.SwingUtilities.invokeAndWait(()-> {
                 for(java.awt.Component component:descendants(target)) if(component instanceof javax.swing.JPasswordField field && field.isShowing()) field.setText("smoke-only-password");
@@ -211,135 +233,158 @@ public final class SetupWizardSmoke
     {
         Path database = root.resolve("database/sdrtrunk.sqlite");
         byte[] source = Files.readAllBytes(database);
-        javax.swing.JCheckBox[] checkbox = new javax.swing.JCheckBox[1];
+        javax.swing.JCheckBox[] backup = new javax.swing.JCheckBox[1];
         MigrationContentChoices[] content = new MigrationContentChoices[1];
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             content[0] = descendants(wizard).stream().filter(MigrationContentChoices.class::isInstance)
                 .map(MigrationContentChoices.class::cast).findFirst().orElseThrow();
             if(content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.FULL)
                 throw new AssertionError("Full migration is not selected by default");
-            checkbox[0] = descendants(wizard).stream()
-                .filter(component -> component instanceof javax.swing.JCheckBox box && box.isShowing() &&
-                    box.getText().equals("Create a recovery backup first"))
-                .map(component -> (javax.swing.JCheckBox)component).findFirst().orElseThrow();
-            if(!checkbox[0].isSelected()) throw new AssertionError("Upgrade backup is not on by default");
-            if(descendants(wizard).stream().anyMatch(component -> component instanceof javax.swing.JButton button &&
-                button.isShowing() && (button.getText().contains("Check safely") || button.getText().contains("Skip safety"))))
-                throw new AssertionError("Upgrade still requires the discarded safety-review workflow");
+            backup[0] = backupChoice(wizard);
+            if(backup[0].isSelected()) throw new AssertionError("Upgrade backup must start unchecked");
         });
-        capture(wizard, root, "upgrade-full-ready");
-        if(mode.equals("upgrade-configuration-only"))
-            javax.swing.SwingUtilities.invokeAndWait(() -> {
-                descendants(content[0]).stream().filter(component -> component instanceof javax.swing.JRadioButton radio &&
-                    radio.getAccessibleContext().getAccessibleName().equals("Configuration only"))
-                    .map(component -> (javax.swing.JRadioButton)component).findFirst().orElseThrow().doClick();
-                if(content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
-                    throw new AssertionError("Configuration-only selection did not stick");
-            });
-        capture(wizard, root, "upgrade-ready");
-        openUpgradeConfirmation(wizard);
-        answerUpgradeConfirmation("Cancel");
-        await(wizard, SetupStep.SOURCE);
-        if(!java.util.Arrays.equals(source, Files.readAllBytes(database)))
-            throw new AssertionError("Cancelling confirmation changed the database");
+        capture(wizard,root,"upgrade-full-ready");
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            if(mode.equals("upgrade-configuration-only"))
+                descendants(content[0]).stream().filter(javax.swing.JCheckBox.class::isInstance)
+                    .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow().doClick();
+            if(mode.equals("upgrade-backup") || mode.equals("upgrade-retry")) backup[0].doClick();
+        });
+        if(!java.util.Arrays.equals(source,Files.readAllBytes(database)))
+            throw new AssertionError("Reviewing choices changed the database");
         if(mode.equals("upgrade-configuration-only") &&
-            content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
-            throw new AssertionError("Cancelling confirmation lost the selected migration content");
-        if(mode.equals("upgrade-no-backup"))
-            javax.swing.SwingUtilities.invokeAndWait(() -> checkbox[0].doClick());
-        openUpgradeConfirmation(wizard);
-        answerUpgradeConfirmation("Update");
-        await(wizard, SetupStep.SOURCE);
+            content[0].selectedContent()!=io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
+            throw new AssertionError("Configuration-only selection did not stick");
+        capture(wizard,root,"upgrade-ready");
+        clickPrimary(wizard);
+        if(mode.equals("upgrade-with-catalog"))
+        {
+            await(wizard,SetupStep.SOURCE);
+            var reportField=SetupWizard.class.getDeclaredField("migrationReport"); reportField.setAccessible(true);
+            String mainReport=(String)reportField.get(wizard);
+            if(mainReport.isBlank()) throw new AssertionError("Application update report was not retained");
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                if(backupChoice(wizard).isSelected()) throw new AssertionError("Catalog backup did not start unchecked");
+            });
+            capture(wizard,root,"upgrade-recordings-ready");
+            clickPrimary(wizard);
+            awaitAfterSource(wizard);
+            String combined=(String)reportField.get(wizard);
+            if(!combined.startsWith(mainReport) || !combined.contains("Managed Recordings is ready."))
+                throw new AssertionError("Consecutive updates lost one of their reports");
+        }
         if(mode.equals("upgrade-retry"))
         {
-            var danger = SetupWizard.class.getDeclaredField("danger"); danger.setAccessible(true);
+            await(wizard,SetupStep.SOURCE);
+            var danger=SetupWizard.class.getDeclaredField("danger"); danger.setAccessible(true);
             if(!((javax.swing.JTextArea)danger.get(wizard)).isVisible())
                 throw new AssertionError("Failed backup did not show an inline error");
-            if(!java.util.Arrays.equals(source, Files.readAllBytes(database)))
+            if(!java.util.Arrays.equals(source,Files.readAllBytes(database)))
                 throw new AssertionError("Failed backup changed the database");
-            javax.swing.SwingUtilities.invokeAndWait(() -> checkbox[0].doClick());
-            openUpgradeConfirmation(wizard);
-            answerUpgradeConfirmation("Update");
-            await(wizard, SetupStep.SOURCE);
-            if(!Files.readString(root.resolve("database/backups")).equals("unrelated file"))
-                throw new AssertionError("Retry replaced unrelated backup-path content");
+            javax.swing.SwingUtilities.invokeAndWait(() -> backup[0].doClick());
+            clickPrimary(wizard);
         }
-        try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + database))
+        awaitAfterSource(wizard);
+        try(var connection=java.sql.DriverManager.getConnection("jdbc:sqlite:"+database))
         {
-            if(io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.requireCurrent(connection).version() !=
+            if(io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.requireCurrent(connection).version()!=
                 io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.CURRENT_VERSION)
                 throw new AssertionError("Update did not reach the current format");
         }
-        if(mode.equals("upgrade-backup") || mode.equals("upgrade-configuration-only"))
-        {
-            try(var files = Files.list(root.resolve("database/backups")))
-            {
-                if(files.filter(Files::isRegularFile).count() != 1)
-                    throw new AssertionError("Update did not retain exactly one backup");
-            }
-        }
-        else if(mode.equals("upgrade-no-backup") && Files.exists(root.resolve("database/backups")))
-            throw new AssertionError("Backup-off update created backup files");
-        capture(wizard, root, "upgrade-complete");
         if(mode.equals("upgrade-backup"))
         {
-            //Exercise automatic continuation without entering hardware discovery or launching a receiver.
-            var field = SetupWizard.class.getDeclaredField("progress"); field.setAccessible(true);
-            javax.swing.SwingUtilities.invokeAndWait(() -> {
-                try { ((SetupProgress)field.get(wizard)).set(SetupStep.ADMINISTRATOR, SetupProgress.State.PENDING); }
-                catch(IllegalAccessException e) { throw new RuntimeException(e); }
-            });
-            await(wizard, SetupStep.ADMINISTRATOR);
-            click(wizard, "Back");
-            await(wizard, SetupStep.SOURCE);
-            if(descendants(wizard).stream().anyMatch(component -> component instanceof javax.swing.JCheckBox box &&
-                box.isShowing() && box.getText().equals("Create a recovery backup first")))
-                throw new AssertionError("Back offered to run the committed update again");
+            try(var files=Files.list(root.resolve("database/backups")))
+            {
+                if(files.filter(Files::isRegularFile).count()!=1)
+                    throw new AssertionError("Explicit backup did not retain exactly one copy");
+            }
         }
-        click(wizard, "Exit setup");
-        awaitClosed(wizard);
-    }
-
-    private static void answerUpgradeConfirmation(String answer) throws Exception
-    {
-        for(int attempt = 0; attempt < 100; attempt++)
+        else if(mode.equals("upgrade-retry"))
         {
-            boolean[] answered = {false};
-            javax.swing.SwingUtilities.invokeAndWait(() -> {
-                for(java.awt.Window window: java.awt.Window.getWindows())
-                    if(window instanceof javax.swing.JDialog dialog && dialog.isShowing() &&
-                        dialog.getTitle().equals("Update saved data?"))
-                        for(java.awt.Component component: descendants(dialog))
-                            if(component instanceof javax.swing.JButton button && button.isShowing() && button.getText().equals(answer))
-                            { button.doClick(); answered[0] = true; }
-            });
-            if(answered[0]) return;
-            Thread.sleep(25);
+            if(!Files.readString(root.resolve("database/backups")).equals("unrelated file"))
+                throw new AssertionError("Retry replaced unrelated backup-path content");
         }
-        throw new AssertionError("Upgrade confirmation not shown");
+        else if(Files.exists(root.resolve("database/backups")))
+            throw new AssertionError("Backup-off update created backup files");
+        capture(wizard,root,"upgrade-complete");
+        //Use the normal navigation control after commit; the update must not be offered again.
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            try
+            {
+                var field=SetupWizard.class.getDeclaredField("steps"); field.setAccessible(true);
+                ((java.util.Map<SetupStep,javax.swing.JButton>)field.get(wizard)).get(SetupStep.SOURCE).doClick();
+            }
+            catch(Exception e) { throw new RuntimeException(e); }
+        });
+        await(wizard,SetupStep.SOURCE);
+        if(descendants(wizard).stream().anyMatch(c -> c instanceof javax.swing.JCheckBox box && box.isShowing() &&
+            box.getText().equals("Back up before updating")))
+            throw new AssertionError("Back offered to repeat a committed update");
+        if(descendants(wizard).stream().anyMatch(c -> c instanceof javax.swing.JButton button && button.isShowing() &&
+            button.getText().equals("Choose different settings")))
+            throw new AssertionError("Back offered another import after commit");
+        click(wizard,"Exit setup"); awaitClosed(wizard);
     }
 
-    private static void openUpgradeConfirmation(SetupWizard wizard)
+    private static javax.swing.JCheckBox backupChoice(SetupWizard wizard)
     {
-        //The modal confirmation runs a nested Swing event loop; do not block the driver waiting for it to close.
+        return descendants(wizard).stream().filter(c -> c instanceof javax.swing.JCheckBox box && box.isShowing() &&
+            box.getText().equals("Back up before updating")).map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
+    }
+
+    private static void clickPrimary(SetupWizard wizard) throws Exception
+    { javax.swing.SwingUtilities.invokeAndWait(() -> wizard.getRootPane().getDefaultButton().doClick()); }
+
+    private static void awaitAfterSource(SetupWizard wizard) throws Exception
+    {
+        var step=SetupWizard.class.getDeclaredField("step"); step.setAccessible(true);
+        var busy=SetupWizard.class.getDeclaredField("busy"); busy.setAccessible(true);
+        for(int attempt=0;attempt<400;attempt++)
+        {
+            boolean[] ready={false};
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                try { ready[0]=step.get(wizard)!=SetupStep.SOURCE && !busy.getBoolean(wizard); }
+                catch(Exception e) { throw new RuntimeException(e); }
+            });
+            if(ready[0]) return;
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Setup did not continue after the source operation");
+    }
+
+    private static void chooseSource(SetupWizard wizard,Path source) throws Exception
+    {
         javax.swing.SwingUtilities.invokeLater(() -> wizard.getRootPane().getDefaultButton().doClick());
+        for(int attempt=0;attempt<400;attempt++)
+        {
+            boolean[] chosen={false};
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                for(java.awt.Window window:java.awt.Window.getWindows())
+                    for(java.awt.Component component:descendants(window))
+                        if(component instanceof javax.swing.JFileChooser chooser && chooser.isShowing())
+                        { chooser.setSelectedFile(source.toFile()); chooser.approveSelection(); chosen[0]=true; return; }
+            });
+            if(chosen[0]) return;
+            Thread.sleep(50);
+        }
+        throw new AssertionError("Source chooser did not open");
     }
 
     private static void exerciseCatalogFailure(SetupWizard wizard, Path root) throws Exception
     {
         Path catalog = root.resolve("database/managed-recordings.sqlite");
         byte[] before = Files.readAllBytes(catalog);
-        openUpgradeConfirmation(wizard);
-        answerUpgradeConfirmation("Update");
+        javax.swing.SwingUtilities.invokeAndWait(() -> backupChoice(wizard).doClick());
+        clickPrimary(wizard);
         await(wizard, SetupStep.SOURCE);
         capture(wizard, root, "upgrade-catalog-failed");
         click(wizard, "Continue without managed recordings");
-        await(wizard, SetupStep.SOURCE);
+        awaitAfterSource(wizard);
         if(!java.util.Arrays.equals(before, Files.readAllBytes(catalog)))
             throw new AssertionError("Failed catalog update changed the source");
         if(!Files.readString(root.resolve("database/backups")).equals("unrelated file"))
             throw new AssertionError("Failed catalog update replaced unrelated backup-path content");
-        if(!hasVisibleText(wizard, "Managed recordings are unavailable"))
+        if(!hasVisibleText(wizard, "Managed Recordings unavailable"))
             throw new AssertionError("Continuation hid the unavailable recordings warning");
         var restart = SetupWizard.class.getDeclaredField("restartRequired"); restart.setAccessible(true);
         if(restart.getBoolean(wizard)) throw new AssertionError("Optional catalog failure blocked all receiving");
@@ -446,31 +491,19 @@ public final class SetupWizardSmoke
         capture(target,root,"05d-connection-failure");
     }
 
-    /** No file selectors belong to Start fresh, and each import choice retains only its own source path. */
+    /** Source intent is independent of file format and creates no profile during selection. */
     private static void assertSourceChoices(SetupWizard target) throws Exception
     {
-        javax.swing.SwingUtilities.invokeAndWait(()-> {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            var choices=descendants(target).stream().filter(c -> c instanceof javax.swing.JRadioButton r && r.isShowing())
+                .map(javax.swing.JRadioButton.class::cast).toList();
+            if(choices.size()!=2) throw new AssertionError("New setup must offer exactly two source intents");
+            select(target,"Bring my settings");
+            if(!target.getRootPane().getDefaultButton().getText().equals("Choose settings"))
+                throw new AssertionError("Import intent must first choose and review its source");
             select(target,"Start fresh");
-            if(descendants(target).stream().anyMatch(component -> component instanceof javax.swing.JTextField && component.isShowing()))
-                throw new AssertionError("Start fresh shows an irrelevant source field");
-            if(descendants(target).stream().anyMatch(component -> component instanceof javax.swing.JButton button &&
-                button.isShowing() && button.getText().startsWith("Browse")))
-                throw new AssertionError("Start fresh shows an irrelevant Browse button");
-            for(String choice:new String[]{"Copy a previous", "Import a SQLite", "Import legacy XML"})
-            {
-                select(target,choice);
-                if(choice.equals("Import legacy XML") && !target.getRootPane().getDefaultButton().getText().equals("Import XML"))
-                    throw new AssertionError("XML action promises a review instead of an import");
-                javax.swing.JTextField input=visibleInput(target);
-                if(!input.getText().isBlank()) throw new AssertionError("An unselected import source leaked into "+choice);
-                input.setText(choice+"-smoke-source");
-            }
-            select(target,"Copy a previous");
-            if(!visibleInput(target).getText().equals("Copy a previous-smoke-source"))
-                throw new AssertionError("The folder source was replaced by another import option");
-            select(target,"Start fresh");
-            if(descendants(target).stream().anyMatch(component -> component instanceof javax.swing.JTextField && component.isShowing()))
-                throw new AssertionError("Source controls remained visible after returning to Start fresh");
+            if(descendants(target).stream().anyMatch(c -> c instanceof javax.swing.JTextField && c.isShowing()))
+                throw new AssertionError("Start fresh shows irrelevant source fields");
         });
     }
 
