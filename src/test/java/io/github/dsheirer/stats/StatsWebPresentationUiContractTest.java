@@ -22,7 +22,7 @@ class StatsWebPresentationUiContractTest
     void keepsOnlyReceiverTimingInReceiverSettingsAndMovesRowPresentationToLive() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings(target = content)");
+        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings(target = content, renderContext = captureRenderContext())");
         String live = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
 
         assertFalse(receiver.contains("Traffic-row idle delay"));
@@ -47,10 +47,10 @@ class StatsWebPresentationUiContractTest
         String source = readText(APP_JAVASCRIPT);
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
         String discover = function(source,
-            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
+            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary, presentation = null)");
         String scanList = function(source,
-            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount)");
-        String aliases = function(source, "async function renderAliases()");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount, presentation = null)");
+        String aliases = function(source, "async function renderAliases(presentation = null)");
         String channelGroups = function(source, "async function channelTopGroupsSection(channel, parent, renderContext)");
         String channelFrequencies = function(source,
             "async function renderTrunkedChannelFrequencies(channel, renderContext, host)");
@@ -92,8 +92,8 @@ class StatsWebPresentationUiContractTest
     void placesCompactLiveTableActionsInOneSharedDetailsHeader() throws Exception
     {
         String source = readText(APP_JAVASCRIPT);
-        String liveMessages = function(source, "function liveMessagesPane()");
-        String liveEvents = function(source, "function liveEventsPanel(onCollapse)");
+        String liveMessages = function(source, "function liveMessagesPane(options = {})");
+        String liveEvents = function(source, "function liveEventsPanel(onCollapse, options = {})");
 
         assertTrue(liveMessages.contains("layoutMenuHost: columnsHost"));
         assertTrue(liveMessages.contains("actions.append(columnsHost, filters.element)"));
@@ -124,7 +124,8 @@ class StatsWebPresentationUiContractTest
         assertTrue(source.contains("const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns)"));
         assertTrue(source.contains("column_order: options.recordListOrder } : tableDefaultLayout"));
         assertTrue(source.contains("const storedLayout = tableLayouts.mergePartyColumns(tableType, declaredColumns,"));
-        assertTrue(source.contains("options.layout || activeUserPreferences().tables[tableType] || defaultLayout"));
+        assertTrue(source.contains("options.layout || (!options.presentation && activeUserPreferences().tables[tableType]) || defaultLayout"));
+        assertTrue(source.contains("if (!options.presentation) tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns)"));
     }
 
     @Test
@@ -133,9 +134,9 @@ class StatsWebPresentationUiContractTest
         String source = readText(APP_JAVASCRIPT);
         String css = StatsWebStylesheetTestSupport.readAll();
         String discover = function(source,
-            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
+            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary, presentation = null)");
         String identity = function(source, "function observedGroupIdentityValue(row)");
-        String filters = function(source, "function aliasEditorFilterToolbar(aliasPage, options = null)");
+        String filters = function(source, "function aliasEditorFilterToolbar(aliasPage, options = null, route = currentAliasRoute())");
         String actions = function(source, "function observedGroupIdentityActions(row, selectedList)");
 
         for(String label: new String[]{"'Identity'", "'System / Channel'", "'Calls'", "'Signaling'",
@@ -167,10 +168,12 @@ class StatsWebPresentationUiContractTest
         String source = readText(APP_JAVASCRIPT);
         String css = StatsWebStylesheetTestSupport.readAll();
         String actions = function(source, "function observedGroupIdentityActions(row, selectedList)");
+        String metric = function(css, "\n.ui-metric ");
 
         assertTrue(css.contains("grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr))"));
-        assertTrue(css.contains("background: var(--surface);\n  border: 1px solid var(--line);\n" +
-            "  border-radius: var(--radius-control);"));
+        assertTrue(metric.contains("background: var(--ui-content-fill)"));
+        assertTrue(metric.contains("border: 0"));
+        assertTrue(metric.contains("border-radius: var(--radius-control)"));
         assertTrue(css.contains(".ui-metric-copy {\n  min-width: 0;"));
         assertTrue(css.contains(".ui-metric-copy > strong {"));
         assertTrue(actions.contains("node('div', 'ui-action-row')"));

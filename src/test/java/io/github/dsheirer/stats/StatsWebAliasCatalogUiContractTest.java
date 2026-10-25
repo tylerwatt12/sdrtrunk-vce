@@ -22,7 +22,7 @@ class StatsWebAliasCatalogUiContractTest
     void requiresAListBeforeLoadingBoundedAliases() throws Exception
     {
         String source = source();
-        String renderer = function(source, "async function renderAliases()");
+        String renderer = function(source, "async function renderAliases(presentation = null)");
 
         assertTrue(readText(INDEX_HTML).contains("data-view=\"aliases\" href=\"/?view=aliases\""));
         assertTrue(source.contains("aliases: renderAliases"));
@@ -76,9 +76,9 @@ class StatsWebAliasCatalogUiContractTest
     void combinesCallsAndSignalingInOneActivityView() throws Exception
     {
         String source = source();
-        String tabs = function(source, "function aliasEditorViewTabs(selectedList, onSwitch = null)");
-        String view = function(source, "function aliasEditorView(selectedList)");
-        String renderer = function(source, "async function renderAliases()");
+        String tabs = function(source, "function aliasEditorViewTabs(selectedList, onSwitch = null, route = currentAliasRoute())");
+        String view = function(source, "function aliasEditorView(selectedList, route = currentAliasRoute())");
+        String renderer = function(source, "async function renderAliases(presentation = null)");
         String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange)");
         String activity = function(source, "function aliasActivityColumns()");
         String configuration = function(source, "function aliasCustomConfigurationColumns()");
@@ -89,11 +89,11 @@ class StatsWebAliasCatalogUiContractTest
             assertTrue(tabs.contains("'" + label + "'"), () -> "Missing editor view " + label);
         }
         assertTrue(tabs.contains("const navigation = tabs(entries, active)"));
-        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'configure', active)"));
-        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'activity', active)"));
-        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'custom', active)"));
+        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'configure', active, route)"));
+        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'activity', active, route)"));
+        assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'custom', active, route)"));
         assertTrue(tabs.contains("void onSwitch(entry.id)"));
-        assertTrue(renderer.contains("aliasEditorViewTabs(selectedList, (nextView) => switchView?.(nextView))"));
+        assertTrue(renderer.contains("aliasEditorViewTabs(selectedList, (nextView) => switchView?.(nextView), route)"));
         assertTrue(renderer.contains("setAliasEditorViewTabs(viewTabs, view)"));
         assertFalse(tabs.contains("'Call Use'"));
         assertFalse(tabs.contains("'System Evidence'"));
@@ -144,8 +144,8 @@ class StatsWebAliasCatalogUiContractTest
     void exposesAdminMutationsOnlyThroughTheAliasCapability() throws Exception
     {
         String source = source();
-        String renderer = function(source, "async function renderAliases()");
-        String editor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
+        String renderer = function(source, "async function renderAliases(presentation = null)");
+        String editor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
 
         assertTrue(source.contains("ADMIN_ALIASES: 'admin-aliases'"));
         assertTrue(function(source, "function aliasAdminAllowed()")
@@ -154,7 +154,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(renderer.contains("requestJson('/api/v1/admin/alias-lists'"));
         assertTrue(renderer.contains("admin: true"));
         assertTrue(editor.contains("/api/v1/admin/aliases/options?alias_list_id="));
-        assertTrue(editor.contains("aliasFormWorkflow(form, save, errorHost, modal"));
+        assertTrue(editor.contains("aliasFormWorkflow(form, save, errorHost, workflowModal"));
         assertTrue(editor.contains("await workflow.save(async () =>"));
         assertTrue(editor.contains("requestJson(editing ? `/api/v1/admin/aliases/${id}` : '/api/v1/admin/aliases'"));
         assertTrue(editor.contains("body: editing ? { edit_revision: editRevision, alias: payload } : { alias: payload }"));
@@ -228,7 +228,7 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String columns = function(source, "function aliasEditorSourceBreakdownColumns()");
-        String activity = function(source, "function aliasActivityContent(response)");
+        String activity = function(source, "function aliasActivityContent(response, { presentation = false } = {})");
 
         assertTrue(columns.contains("radioSystemPrimaryName(row) || row.source_label || radioSystemDisplayName(row)"));
         assertTrue(columns.contains("radioSystemLink(row.radio_system_entity_ref, availableValue(label))"));
@@ -243,7 +243,8 @@ class StatsWebAliasCatalogUiContractTest
             assertFalse(columns.contains(repeated), () -> "Repeated scope field remains " + repeated);
         }
         assertTrue(activity.contains("aliasEditorSourceBreakdownColumns()"));
-        assertTrue(activity.contains("grant_observation_count"));
+        assertTrue(activity.contains("activityDefinitions().map((definition) =>"));
+        assertTrue(activity.contains("`${definition.name.toLowerCase()}_observation_count`"));
         assertTrue(activity.contains("relationship_count"));
         assertTrue(activity.contains("saved call and signaling activity"));
         assertTrue(activity.contains("included in the Signaling total"));
@@ -270,7 +271,7 @@ class StatsWebAliasCatalogUiContractTest
     void keepsBulkSelectionExplicitBoundedAndTriState() throws Exception
     {
         String source = source();
-        String bulk = function(source, "function openAliasBulkModal(kind)");
+        String bulk = function(source, "function openAliasBulkModal(kind, presentation = null)");
         String columns = function(source, "function aliasEditorBaseColumns(rows, onSelectionChange)");
         String selectedIds = function(source,
             "function validatedAliasSelectionIds(selection, maximum = ALIAS_BULK_SELECTION_LIMIT)");
@@ -308,9 +309,9 @@ class StatsWebAliasCatalogUiContractTest
     void selectsEverySupportedMatchAcrossPagesWithoutChangingFilterMeaning() throws Exception
     {
         String source = source();
-        String renderer = function(source, "async function renderAliases()");
+        String renderer = function(source, "async function renderAliases(presentation = null)");
         String members = function(source,
-            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount)");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount, presentation = null)");
         String selectAll = function(source,
             "async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)");
         String complete = function(source,
@@ -359,14 +360,14 @@ class StatsWebAliasCatalogUiContractTest
     void opensAllScanListMembersAndRemovesOnlySelectedMemberships() throws Exception
     {
         String source = source();
-        String actions = function(source, "function adminScanListActions(scanList)");
-        String renderer = function(source, "async function renderAliases()");
+        String actions = function(source, "function adminScanListActions(scanList, presentation = null)");
+        String renderer = function(source, "async function renderAliases(presentation = null)");
         String members = function(source,
-            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount)");
+            "async function renderScanListMembers(main, scanListCatalog, scanList, renderContext, request, mount, presentation = null)");
         String columns = function(source, "function scanListMemberColumns(rows, onSelectionChange)");
         String loader = function(source, "async function requestAliasEditorData(selectedList, view, request = {})");
         String filters = function(source, "function aliasEditorQueryFilters(query, listId = null, scanListId = null)");
-        String bulk = function(source, "function scanListMemberBulkBar(scanList, onClear)");
+        String bulk = function(source, "function scanListMemberBulkBar(scanList, onClear, presentation = null)");
         String remove = function(source, "function openScanListMemberRemoveModal(scanList)");
 
         assertTrue(actions.contains("'Manage aliases'"));
@@ -394,7 +395,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(remove.contains("edit_revision: editRevision"));
         assertTrue(remove.contains("aliases and their other scan-list memberships will be preserved"));
         String fullSet = function(source,
-            "function openFullScanListMembershipModal(scanList, operation)");
+            "function openFullScanListMembershipModal(scanList, operation, presentation = null)");
         String fullSetRequest = function(source,
             "function fullScanListMembershipRequest(editRevision, operation, aliasListId = null)");
         assertTrue(members.contains("'Add an Entire Alias List'"));
@@ -418,7 +419,7 @@ class StatsWebAliasCatalogUiContractTest
         String detail = function(source, "function aliasConflictDetail(response, aliasId, aliasName = '')");
         String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange)");
         String editor = function(source,
-            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
+            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
 
         assertTrue(button.contains("openAliasConflictModal(id, row.name)"));
         assertTrue(button.contains("detailsHost.replaceChildren(aliasConflictDetail("));
@@ -441,9 +442,9 @@ class StatsWebAliasCatalogUiContractTest
     void retainsExactServerFiltersAndUsesSimpleActivitySemantics() throws Exception
     {
         String source = source();
-        String renderer = function(source, "async function renderAliases()");
-        String filters = function(source, "function aliasEditorFilterToolbar(aliasPage, options = null)");
-        String activeFilters = function(source, "function aliasEditorHasActiveFilters(scanListScope = false)");
+        String renderer = function(source, "async function renderAliases(presentation = null)");
+        String filters = function(source, "function aliasEditorFilterToolbar(aliasPage, options = null, route = currentAliasRoute())");
+        String activeFilters = function(source, "function aliasEditorHasActiveFilters(scanListScope = false, route = currentAliasRoute())");
 
         for(String parameter: new String[]{"group", "record", "stream", "evidence", "use"})
         {
@@ -471,15 +472,16 @@ class StatsWebAliasCatalogUiContractTest
     void exposesUnmatchedPolicyAndBoundedObservedGroupIdentityDiscovery() throws Exception
     {
         String source = source();
-        String tabs = function(source, "function aliasEditorViewTabs(selectedList, onSwitch = null)");
-        String view = function(source, "function aliasEditorView(selectedList)");
-        String renderer = function(source, "async function renderAliases()");
+        String tabs = function(source, "function aliasEditorViewTabs(selectedList, onSwitch = null, route = currentAliasRoute())");
+        String view = function(source, "function aliasEditorView(selectedList, route = currentAliasRoute())");
+        String renderer = function(source, "async function renderAliases(presentation = null)");
         String discoverySupport = function(source, "function observedGroupIdentityDiscoverySupported(selectedList)");
         String unmatchedSupport = function(source, "function unmatchedTalkgroupsSupported(selectedList)");
-        String policy = function(source, "function openUnmatchedTalkgroupPolicyModal(selectedList)");
+        String policy = function(source, "function openUnmatchedTalkgroupPolicyModal(selectedList, presentation = null)");
+        String policyPanel = function(source, "function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null)");
         String checkbox = function(source, "function aliasCheckOption(labelText, control)");
         String observed = function(source,
-            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary)");
+            "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary, presentation = null)");
         String prefill = function(source, "function observedGroupIdentityPrefill(row, selectedList)");
         String identity = function(source, "function observedGroupIdentityValue(row)");
         String key = function(source, "function observedGroupIdentityKey(row)");
@@ -488,7 +490,7 @@ class StatsWebAliasCatalogUiContractTest
         String create = function(source, "function observedGroupIdentityCreateButton(row, selectedList)");
         String actions = function(source, "function observedGroupIdentityActions(row, selectedList)");
         String editor = function(source,
-            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
+            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
 
         assertFalse(source.contains("alias_match_kind"));
         assertTrue(tabs.contains("const discover = anchor('Discover', href('aliases',"));
@@ -511,7 +513,8 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(observed.contains("analog ? 'Unmatched assignments' : 'Observed Groups'"));
         assertTrue(unmatchedSupport.contains("['P25', 'DMR', 'NXDN', 'NBFM']"));
         assertTrue(checkbox.contains("'alias-check-option ui-choice-card'"));
-        assertTrue(policy.contains("uiToggleField('Record calls'"));
+        assertTrue(function(source, "function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null)")
+            .contains("uiToggleField('Record calls'"));
         assertTrue(editor.contains("uiToggleField('Record calls'"));
         assertTrue(editor.contains("setUiToggle(record, Boolean(defaults.recordable))"));
         assertFalse(policy.contains("aliasFormField('Record calls', record)"));
@@ -534,12 +537,12 @@ class StatsWebAliasCatalogUiContractTest
         {
             assertTrue(policy.contains(field), () -> "Missing unmatched policy field " + field);
         }
-        assertTrue(policy.contains("aliasScanListChoices(options, policy?.scan_list_ids || [])"));
+        assertTrue(policyPanel.contains("aliasScanListChoices(options, policy?.scan_list_ids || [])"));
         assertTrue(policy.contains("selectedAliasScanListIds(controls.panel)"));
-        assertTrue(policy.contains("'Scan List'"));
+        assertTrue(policyPanel.contains("'Scan List'"));
         assertTrue(policy.contains("'Save Call Handling Defaults'"));
-        assertTrue(policy.contains("'Recording'"));
-        assertTrue(policy.contains("'Streaming'"));
+        assertTrue(policyPanel.contains("'Recording'"));
+        assertTrue(policyPanel.contains("'Streaming'"));
         assertTrue(policy.contains("including sensitive traffic"));
         assertTrue(prefill.contains("scan_list_ids: [...(policy.scan_list_ids || [])]"));
         assertTrue(renderer.contains("'Call Handling Defaults'"));

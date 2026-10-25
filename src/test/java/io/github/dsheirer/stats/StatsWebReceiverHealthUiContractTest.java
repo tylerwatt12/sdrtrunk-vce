@@ -28,13 +28,18 @@ class StatsWebReceiverHealthUiContractTest
         String facts = block(source, "function receiverHealthComputerFacts(computer)");
         String page = block(source, "function renderReceiverHealthPage(host, snapshot, stale, lastError)");
         String diagnostics = block(source, "function receiverHealthDiagnostics(snapshot)");
+        String computerPage = block(source, "function renderReceiverComputerPage(host, snapshot, stale)");
+        String controller = block(source, "class ReceiverHealthController");
         assertTrue(page.contains("receiverHealthDiagnostics(snapshot)"));
-        assertTrue(diagnostics.contains("receiverHealthComputerOverview(snapshot)"));
+        assertFalse(diagnostics.contains("receiverHealthComputerOverview(snapshot)"));
+        assertTrue(controller.contains("this.pageKind === 'computer' ? renderReceiverComputerPage : renderReceiverHealthPage"));
+        assertTrue(computerPage.contains("receiverHealthComputerOverview(snapshot)"));
         assertTrue(overview.contains("keyValues(entries)"));
         assertTrue(overview.contains("ui-facts-embedded"));
         assertTrue(overview.contains("receiverHealthSection('computer', 'Computer & version'"));
         assertTrue(overview.contains("uiActionButton('Copy details', 'icon-copy'"));
-        assertTrue(overview.contains("receiverHealthController.authorized()"));
+        assertTrue(overview.contains("const healthController = currentReceiverHealthPageController()"));
+        assertTrue(overview.contains("healthController.authorized()"));
         assertTrue(overview.contains("navigator.clipboard.writeText"));
         assertTrue(overview.contains("ui-feedback-${state}"));
         assertTrue(facts.contains("['Installed RAM', memory('installed_memory_bytes')]"));
@@ -94,7 +99,8 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(source.contains("void receiverHealthController.refresh();"));
         assertTrue(source.contains("Promise.all([loadStatus(true), receiverHealthController.refresh()])"));
         assertTrue(refreshButton.contains("'Refresh'"));
-        assertTrue(refreshButton.contains("Promise.all([receiverHealthController.refresh(), loadStatus(true)])"));
+        assertTrue(refreshButton.contains("Promise.all([healthController.guideMode ? healthController.updatePage() : healthController.refresh()"));
+        assertTrue(refreshButton.contains("healthController === receiverHealthController ? loadStatus(true) : Promise.resolve()"));
         assertFalse(source.contains("refreshLiveDisplaySettings"));
         assertTrue(source.contains("receiverHealthController.refresh()"));
     }
@@ -251,8 +257,9 @@ class StatsWebReceiverHealthUiContractTest
         assertTrue(resolvedSection.contains("receiverHealthResolvedPage(groups,"));
         assertTrue(resolvedSection.contains("section('Issue history'"));
         assertTrue(resolvedSection.contains("result.dataset.receiverHealthSection = 'resolved'"));
-        assertTrue(resolvedSection.contains("receiverHealthController.resolvedPage = page.page"));
-        assertTrue(resolvedSection.contains("receiverHealthController.resolvedPage = 0"));
+        assertTrue(resolvedSection.contains("const healthController = currentReceiverHealthPageController()"));
+        assertTrue(resolvedSection.contains("healthController.resolvedPage = page.page"));
+        assertTrue(resolvedSection.contains("healthController.resolvedPage = 0"));
         assertTrue(prune.contains("incidents.flatMap((incident) => [incident, ...(incident.occurrences || [])])"));
         assertTrue(prune.contains(".map(receiverHealthResolvedIncidentKey)"));
         assertTrue(prune.contains("expandedResolvedIncidents.delete(key)"));

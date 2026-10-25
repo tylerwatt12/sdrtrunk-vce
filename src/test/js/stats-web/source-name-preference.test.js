@@ -15,7 +15,9 @@ function functionSource(name) {
   let start = source.indexOf(signature);
   assert.notEqual(start, -1, `Missing ${name}`);
   if (source.slice(start - 6, start) === 'async ') start -= 6;
-  const opening = source.indexOf('{', start);
+  // Default object arguments precede the function body (for example options = {}).
+  const opening = source.indexOf(') {', start) + 2;
+  assert.ok(opening > start, `Missing body for ${name}`);
   let depth = 0;
   let quote = '';
   for (let index = opening; index < source.length; index += 1) {

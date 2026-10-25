@@ -100,7 +100,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(css.contains("@keyframes activity-row-highlight"));
         assertTrue(css.contains(".activity-row-new > td"));
         assertTrue(css.contains("animation: activity-row-highlight 8s ease-out"));
-        assertTrue(css.contains("@media (prefers-reduced-motion: reduce)"));
+        assertFalse(css.contains("@media (prefers-reduced-motion: reduce)"));
     }
 
     @Test
@@ -166,7 +166,7 @@ class StatsWebInteractionUiContractTest
         String source = source();
         String globalNotice = function(source, "function databaseLoggingNotice(view)");
         String status = function(source, "async function loadStatus(refreshCurrentView = false)");
-        String historyNotice = function(source, "function detailedHistoryNotice()");
+        String historyNotice = function(source, "function detailedHistoryNotice(logging = statsLoggingState())");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
 
         assertFalse(globalNotice.contains("Detailed history"));
@@ -197,7 +197,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(databaseDisplay.contains("typeof database?.database_exists !== 'boolean'"));
         assertTrue(databaseDisplay.contains("if (!database.database_exists) return 'No saved activity'"));
         assertTrue(databaseDisplay.contains("return size === '—' ? 'Available' : size"));
-        assertTrue(system.contains("const database = serviceStatus?.database"));
+        assertTrue(system.contains("const status = healthController.guideStatus || serviceStatus"));
+        assertTrue(system.contains("const database = status?.database"));
         assertTrue(system.contains("adminDatabaseDisplay(database)"));
         assertTrue(system.contains("['Activity summaries', logging.summaryActive, summaryState]"));
         assertTrue(system.contains("['Individual events', logging.historyActive, historyState]"));
@@ -223,15 +224,16 @@ class StatsWebInteractionUiContractTest
         assertTrue(loadStatus.contains("currentView === 'admin' && ['health', 'activity'].includes(route.get('tab') || 'health')"));
         assertTrue(loadStatus.contains("refreshReceiverHealthSavedActivityStatus();"));
         String refreshButton = function(javascript, "function receiverHealthRefreshButton()");
-        assertTrue(refreshButton.contains("Promise.all([receiverHealthController.refresh(), loadStatus(true)])"));
+        assertTrue(refreshButton.contains("healthController.guideMode ? healthController.updatePage() : healthController.refresh()"));
+        assertTrue(refreshButton.contains("healthController === receiverHealthController ? loadStatus(true) : Promise.resolve()"));
     }
 
     @Test
     void keepsSignalAndTunerSpectrumVisibleWithoutDesktopViewGates() throws Exception
     {
         String source = source();
-        String live = function(source, "async function renderLive()");
-        String channel = function(source, "function liveChannelPane()");
+        String live = function(source, "async function renderLive(workspaceOptions = {})");
+        String channel = function(source, "function liveChannelPane(options = {})");
         String tuner = function(source, "function tunerSpectrumPanel(snapPresetDocument, panelOptions = {})");
 
         assertTrue(live.contains("liveEventsPanel"));
@@ -378,7 +380,7 @@ class StatsWebInteractionUiContractTest
     void showsConfiguredSystemHeadingsAndLinksEveryTrunkedParent() throws Exception
     {
         String source = source();
-        String directory = function(source, "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [])");
+        String directory = function(source, "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [], options = {})");
         assertFalse(source.contains("function renderRadioSystems()"));
         assertFalse(source.contains("if (!editable) return renderNestedRadioDirectory(renderContext)"));
         assertTrue(directory.contains("radioDirectoryEmbeddedPanel('systems', wrapper)"));
@@ -552,7 +554,7 @@ class StatsWebInteractionUiContractTest
     void showsSystemIdentityTotalsWithNavigationAboveAndBelowEachTable() throws Exception
     {
         String source = source();
-        String pager = function(source, "function pager(page, position = 'bottom', itemLabel = 'Rows')");
+        String pager = function(source, "function pager(page, position = 'bottom', itemLabel = 'Rows', parameters = route)");
         String content = function(source,
             "function pagedTableContent(page, columns, tableType, options = {})");
         String system = function(source, "async function renderRadioSystem()");
@@ -565,8 +567,8 @@ class StatsWebInteractionUiContractTest
         String browsing = readText(BROWSING_WORKFLOWS);
         assertTrue(browsing.contains("Number.isInteger(total) ? ` of ${format(total)}`"));
         assertTrue(browsing.contains("pager.setAttribute('aria-label', ariaLabel)"));
-        assertTrue(content.contains("if (options.topPager) result.append(pager(page, 'top', itemLabel))"));
-        assertTrue(content.contains("result.append(pager(page, 'bottom', itemLabel))"));
+        assertTrue(content.contains("if (options.topPager) result.append(pager(page, 'top', itemLabel, options.parameters))"));
+        assertTrue(content.contains("result.append(pager(page, 'bottom', itemLabel, options.parameters))"));
         assertTrue(source.contains("const actions = sectionActionHost(action);"));
         assertTrue(source.contains("layoutMenuHost: actions }"));
         assertTrue(source.contains(
@@ -610,8 +612,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(function(source, "async function renderChannelRadios(configurationId)")
             .contains("exportCsvLink('channel-radios', { configuration_id: configurationId })"));
 
-        assertFalse(function(source, "async function renderDashboard()").contains("exportCsvLink("));
-        assertFalse(function(source, "async function renderLive()").contains("exportCsvLink("));
+        assertFalse(function(source, "async function renderDashboard(options = {})").contains("exportCsvLink("));
+        assertFalse(function(source, "async function renderLive(workspaceOptions = {})").contains("exportCsvLink("));
         assertFalse(function(source, "async function renderActivity(scopeParameters, title = 'Activity')")
             .contains("exportCsvLink("));
         assertTrue(helper.contains("'ui-button ui-button-secondary ui-icon-button export-csv-action'"));
@@ -842,7 +844,7 @@ class StatsWebInteractionUiContractTest
         String toggleHold = function(source, "  toggleHold()");
         String avoidCurrent = function(source, "  avoidCurrent()");
         String render = function(source, "  render()");
-        String avoidList = function(source(), "function openPlaybackAvoidList(player = webCallPlayer)");
+        String avoidList = function(source(), "function openPlaybackAvoidList(player = webCallPlayer, options = {})");
 
         int play = html.indexOf("id=\"playback-play\"");
         int skip = html.indexOf("id=\"playback-skip\"");
@@ -993,10 +995,10 @@ class StatsWebInteractionUiContractTest
     void rendersScanListsAsSearchableResponsiveFocusedList() throws Exception
     {
         String source = source();
-        String renderer = function(source, "async function renderAdminScanLists()");
+        String renderer = function(source, "async function renderAdminScanLists(presentation = null)");
         String selector = function(source, "function adminScanListSelector(");
         String detail = function(source, "function adminScanListDetail(");
-        String actions = function(source, "function adminScanListActions(scanList)");
+        String actions = function(source, "function adminScanListActions(scanList, presentation = null)");
 
         assertTrue(renderer.contains("requestJson('/api/v1/admin/scan-lists'"));
         assertTrue(renderer.contains("heading.classList.add('scan-list-page-header')"));
@@ -1039,13 +1041,13 @@ class StatsWebInteractionUiContractTest
         String html = readText(INDEX_HTML);
         String source = source();
         String css = StatsWebStylesheetTestSupport.readAll();
-        String scanner = function(source, "function renderScanner()");
-        String scannerCall = function(source, "function renderScannerCall(host, state, channelMetadata)");
+        String scanner = function(source, "function renderScanner(options = {})");
+        String scannerCall = function(source, "function renderScannerCall(host, state, channelMetadata, options = {})");
         String networkSite = function(source, "function scannerNetworkSiteIdentity(call)");
         String callQuality = function(source, "function scannerCallQuality(call)");
         String voiceMeter = function(source, "function scannerVoiceMeter(call)");
         String coverageTree = function(source, "function scanListCoverageTree(coverage)");
-        String scanLists = function(source, "async function renderAdminScanLists()");
+        String scanLists = function(source, "async function renderAdminScanLists(presentation = null)");
 
         assertTrue(html.contains("id=\"navigation-toggle\""));
         assertTrue(html.contains("id=\"navigation-backdrop\""));
@@ -1076,7 +1078,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("ui-section-disclosure ui-listening-queue-disclosure scanner-queue-disclosure"));
         assertTrue(scanner.contains("upNextList.tabIndex = 0;"));
         assertTrue(scanner.contains("'aria-label', 'Queued calls'"));
-        assertFalse(function(source, "function arrangeScannerPlayback(bar, player, signal)")
+        assertFalse(function(source, "function arrangeScannerPlayback(bar, player, signal, options = {})")
             .contains("scanner-queue-trigger"));
         assertTrue(scanner.contains("scanner-workspace"));
         assertTrue(scanner.contains("uiSelectFrame(modeSelect, 'scanner-view-modes')"));
@@ -1084,7 +1086,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Normal"));
         assertTrue(scanner.contains("Advanced"));
         assertTrue(scanner.contains("Engineer"));
-        assertTrue(source.contains("openReadOnlyModal('Avoid List'"));
+        String avoidList = function(source,
+            "function openPlaybackAvoidList(player = webCallPlayer, options = {})");
+        assertTrue(avoidList.contains("const openModal = options.openReadOnlyModal || openReadOnlyModal"));
+        assertTrue(avoidList.contains("openModal('Avoid List'"));
         assertFalse(scanner.contains("Recent Calls"));
         assertTrue(html.contains("aria-label=\"Replay last call\""));
         assertTrue(html.contains("aria-label=\"Clear queued calls\""));
@@ -1155,7 +1160,7 @@ class StatsWebInteractionUiContractTest
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-display {"));
         assertFalse(css.contains(".scanner-quality-track {"));
         assertTrue(css.contains(".scanner-participant-grid {"));
-        assertTrue(function(source, "function scannerField(label, value, level, action, wide = false)")
+        assertTrue(function(source, "function scannerField(label, value, level, action, wide = false, mode = scannerDetailMode)")
             .contains("ui-fact-row"));
         assertFalse(source.contains("ui-button ${styleClass} scanner-key"));
         assertTrue(scanner.contains("ui-select-list-item scanner-scan-button"));
@@ -1175,8 +1180,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(source.contains("function renderConfiguration()"));
         assertTrue(scanLists.contains("const heading = pageHeader('Scan Lists'"));
         assertTrue(scanLists.contains("heading.classList.add('scan-list-page-header')"));
-        assertTrue(source.contains("function renderStreaming()"));
-        assertTrue(source.contains("function renderTuners()"));
+        assertTrue(source.contains("async function renderStreaming()"));
+        assertTrue(source.contains("async function renderTuners(options = {})"));
         assertFalse(source.contains("function renderRfPlanner()"));
         assertTrue(source.contains("const actionSetting = setting.kind === 'action'"));
         assertTrue(source.contains("saveTunerSetting(tuner, setting, actionSetting ? true : control.read(control.input)"));
@@ -1207,7 +1212,7 @@ class StatsWebInteractionUiContractTest
         assertTrue(unmatchedAliasLists.contains("scanList?.unmatched_alias_lists"));
         assertTrue(unmatchedAliasLists.contains("list: id, aliasTab: 'configure'"));
         assertTrue(unmatchedAliasLists.contains("aliasList.name"));
-        String editScanList = function(source, "function openScanListAdminModal(scanList)");
+        String editScanList = function(source, "function openScanListAdminModal(scanList, presentation = null)");
         String deleteScanList = function(source, "function openDeleteScanListAdminModal(scanList)");
         assertTrue(deleteScanList.contains("unmatched_alias_list_count"));
         assertTrue(deleteScanList.contains("Call Handling Defaults"));
@@ -1234,8 +1239,8 @@ class StatsWebInteractionUiContractTest
         String model = function(source, "function liveDetailFilterModel(options = {})");
         String filters = function(source, "function liveDetailFilterController(options)");
         String modal = function(source, "function openReadOnlyModal(title, body, options = {})");
-        String messages = function(source, "function liveMessagesPane()");
-        String events = function(source, "function liveEventsPanel(onCollapse)");
+        String messages = function(source, "function liveMessagesPane(options = {})");
+        String events = function(source, "function liveEventsPanel(onCollapse, options = {})");
         String addMessage = function(source, "  const addMessage = (message) =>");
         String addEvent = function(source, "  const addEvent = (event) =>");
 
@@ -1324,7 +1329,7 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String level = function(source, "function signalBarLevel(value)");
-        String live = function(source, "function liveChannelsSection(onSelectionChange)");
+        String live = function(source, "function liveChannelsSection(onSelectionChange, options = {})");
         assertTrue(level.contains("signal >= -65"));
         assertTrue(level.contains("signal >= -75"));
         assertTrue(level.contains("signal >= -85"));
@@ -1343,10 +1348,10 @@ class StatsWebInteractionUiContractTest
         String identityInfo = function(source, "function liveIdentityInfo(row, kind)");
         String identityAction = function(source, "function liveIdentityActionLink(row, kind, label)");
         String routedPrefill = function(source, "function routedAliasPrefill(selectedList, options)");
-        String aliasEditor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null)");
+        String aliasEditor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
         String scannerNavigate = function(source, "function scannerNavigate(call, channel, destination)");
         String conventional = function(source, "function liveConventionalChannelValue(row)");
-        String systems = function(source, "function liveChannelsSection(onSelectionChange)");
+        String systems = function(source, "function liveChannelsSection(onSelectionChange, options = {})");
         String selectedViewAction = function(source, "function liveSelectedViewAction(target, label, iconId)");
         String settingsActivation = function(source, "async function activateLivePresentationSettings(button)");
         String upsert = function(systems, "const upsertTable = (value) =>");
@@ -1470,17 +1475,17 @@ class StatsWebInteractionUiContractTest
         String rowSelection = function(source, "function liveDetailRowSelection(tableValue, row)");
         String rowsChangedSelection = function(source,
             "function liveDetailSelectionAfterRowsChanged(tableValue, selection)");
-        String events = function(source, "function liveEventsPanel(onCollapse)");
+        String events = function(source, "function liveEventsPanel(onCollapse, options = {})");
         String filters = function(source, "function liveDetailFilterController(options)");
-        String messages = function(source, "function liveMessagesPane()");
-        String channel = function(source, "function liveChannelPane()");
-        String systems = function(source, "function liveChannelsSection(onSelectionChange)");
+        String messages = function(source, "function liveMessagesPane(options = {})");
+        String channel = function(source, "function liveChannelPane(options = {})");
+        String systems = function(source, "function liveChannelsSection(onSelectionChange, options = {})");
         String settingsActivation = function(source, "async function activateLivePresentationSettings(button)");
         String showTable = function(systems, "const showTable = (tableId, closeMobilePicker = false) =>");
         String reconcileSelection = function(systems, "const reconcileSelection = (displayed) =>");
         String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
-        String live = function(source, "async function renderLive()");
-        String resizer = function(source, "function liveWorkspaceResizer(workspace)");
+        String live = function(source, "async function renderLive(workspaceOptions = {})");
+        String resizer = function(source, "function liveWorkspaceResizer(workspace, options = {})");
         String html = readText(INDEX_HTML);
 
         assertTrue(live.contains("node('div', 'live-split')"));
@@ -1490,14 +1495,17 @@ class StatsWebInteractionUiContractTest
         assertTrue(live.contains("node('div', 'live-right-workspace')"));
         assertTrue(live.contains(
             "rightWorkspace.append(channels.element, workspaceResizer.element, eventsPanel.element)"));
-        assertTrue(live.contains("const workspaceResizer = liveWorkspaceResizer(rightWorkspace)"));
-        assertTrue(live.contains("pageConnections.add(workspaceResizer)"));
+        assertTrue(live.contains("const workspaceResizer = liveWorkspaceResizer(rightWorkspace, options)"));
+        assertTrue(live.contains("registerConnection(workspaceResizer)"));
+        assertTrue(live.contains("else pageConnections.add(connection)"));
         assertTrue(live.contains("split.append(channels.picker, rightWorkspace)"));
         assertTrue(live.contains("beginPage(renderContext, split)"));
-        assertTrue(resizer.contains("liveUiState().details_panel_percent"));
+        assertTrue(resizer.contains("const savedUiState = options.uiState || liveUiState()"));
+        assertTrue(resizer.contains("savedUiState.details_panel_percent"));
         assertTrue(resizer.contains("separator.setAttribute('role', 'separator')"));
         assertTrue(resizer.contains("separator.setAttribute('aria-orientation', 'horizontal')"));
-        assertTrue(resizer.contains("storeLiveUiState({ details_panel_percent: detailsPercent })"));
+        assertTrue(resizer.contains("const saveUiState = options.storeUiState || storeLiveUiState"));
+        assertTrue(resizer.contains("saveUiState({ details_panel_percent: detailsPercent })"));
         assertTrue(resizer.contains("['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)"));
         assertTrue(resizer.contains("if (activePointerCleanup || event.button !== 0"));
         assertTrue(resizer.contains("moveEvent.pointerId !== pointerId"));
@@ -1530,8 +1538,9 @@ class StatsWebInteractionUiContractTest
         assertTrue(systems.contains("selectedViewHeader?.replaceChildren(selectedViewLead, titleActions)"));
         assertTrue(systems.contains("pickerCollapse.setAttribute('aria-controls', picker.id)"));
         assertFalse(systems.contains("pickerActions.prepend(pickerCollapse)"));
-        assertTrue(systems.contains("storeLiveUiState({ picker_collapsed: pickerCollapsed })"));
-        assertTrue(systems.contains("return { element: block, picker, pickerCollapsed }"));
+        assertTrue(systems.contains("const saveUiState = options.storeUiState || storeLiveUiState"));
+        assertTrue(systems.contains("saveUiState({ picker_collapsed: pickerCollapsed })"));
+        assertTrue(systems.contains("element: block, picker, pickerCollapsed"));
         assertTrue(live.contains("split.classList.toggle('picker-collapsed', channels.pickerCollapsed)"));
         assertTrue(events.contains("layoutMenuHost: eventColumnsHost"));
         assertTrue(messages.contains("layoutMenuHost: columnsHost"));
@@ -1567,9 +1576,10 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("{ id: 'events', label: 'Events', icon: 'icon-scan-lists' }"));
         assertTrue(events.contains("{ id: 'messages', label: 'Messages', icon: 'icon-messages' }"));
         assertTrue(events.contains("{ id: 'channel', label: 'Channel', icon: 'icon-channel' }"));
-        assertTrue(events.contains("liveMessagesPane()"));
-        assertTrue(events.contains("liveChannelPane()"));
-        assertTrue(events.contains("liveConnection('decode_events', parameters)"));
+        assertTrue(events.contains("liveMessagesPane(options)"));
+        assertTrue(events.contains("liveChannelPane(options)"));
+        assertTrue(events.contains("const connect = options.liveConnection || liveConnection"));
+        assertTrue(events.contains("connect('decode_events', parameters)"));
         assertTrue(events.contains("configuration_id: selection.configurationId"));
         assertTrue(events.contains("selection.kind === LIVE_DETAIL_SELECTION_KINDS.EXACT"));
         assertTrue(events.contains("parameters.frequency_hz = selection.bindingFrequencyHz"));
@@ -1605,7 +1615,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(events.contains("rowClass: (event) => liveEventCategoryClass(event.category)"));
         assertTrue(events.contains("eventsTable.tableController.replaceRows"));
         assertTrue(events.contains("node('strong', 'live-event-duration-value', text)"));
-        assertTrue(messages.contains("liveConnection('decode_messages', parameters)"));
+        assertTrue(messages.contains("const connect = options.liveConnection || liveConnection"));
+        assertTrue(messages.contains("connect('decode_messages', parameters)"));
         assertTrue(messages.contains("stream.addEventListener('decode_message'"));
         assertTrue(messages.contains("active && !collapsed && !document.hidden &&"));
         assertTrue(messages.contains("Boolean(liveDetailTransportParameters(selection))"));
@@ -1615,13 +1626,14 @@ class StatsWebInteractionUiContractTest
         assertTrue(messages.contains("pane.append(gap, messagesTable)"));
         assertFalse(messages.contains("live-messages-toolbar"));
         assertFalse(messages.contains("live-message-selection"));
-        assertTrue(channel.contains("binaryFrameConnection('channel_diagnostics', parameters"));
+        assertTrue(channel.contains("const connect = options.connectionFactory || binaryFrameConnection"));
+        assertTrue(channel.contains("connect('channel_diagnostics', parameters"));
         assertTrue(channel.contains("expectedSubscriptionId = randomLiveClientId()"));
         assertTrue(channel.contains("parameters.subscription_id = expectedSubscriptionId"));
         assertTrue(channel.contains(
             "liveChannelStateMatchesSelection(selection, expectedSubscriptionId, nextState)"));
-        assertEquals(channel.indexOf("binaryFrameConnection('channel_diagnostics', parameters"),
-            channel.lastIndexOf("binaryFrameConnection('channel_diagnostics', parameters"));
+        assertEquals(channel.indexOf("connect('channel_diagnostics', parameters"),
+            channel.lastIndexOf("connect('channel_diagnostics', parameters"));
         assertTrue(channel.contains("frame.type === DIAGNOSTIC_FRAME_TYPES.CHANNEL_SIGNAL"));
         assertTrue(channel.contains("DIAGNOSTIC_FRAME_TYPES.CHANNEL_SYMBOLS"));
         assertFalse(channel.contains("client_id"));
@@ -1758,8 +1770,8 @@ class StatsWebInteractionUiContractTest
         String acceptFrame = function(tuner, "function acceptTunerFrame(frame)");
         String visibleValues = function(tuner, "function visibleSpectrumValues(useSmoothing = true)");
         String visibleValuesFor = function(tuner, "function visibleValuesFor(values, metadata)");
-        String live = function(source, "async function renderLive()");
-        String systems = function(source, "function liveChannelsSection(onSelectionChange)");
+        String live = function(source, "async function renderLive(workspaceOptions = {})");
+        String systems = function(source, "function liveChannelsSection(onSelectionChange, options = {})");
         String css = StatsWebStylesheetTestSupport.readAll();
 
         String tunerPage = function(source, "async function renderTunerSpectrum(workspaceOptions = {})");
@@ -1889,7 +1901,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("flagLegend.hidden = !liveActivityAllowed"));
         assertTrue(tuner.contains("'Channel markers require Live access.'"));
         assertTrue(tuner.contains("(guideMode ? panelOptions.activityFeed : subscribeLiveChannelActivity)({"));
-        assertTrue(systems.contains("subscribeLiveChannelActivity({"));
+        assertTrue(systems.contains("const subscribeActivity = options.activityFeed || subscribeLiveChannelActivity"));
+        assertTrue(systems.contains("subscribeActivity({"));
         assertTrue(activity.contains("liveConnection('channel_activity', parameters, false)"));
         assertTrue(activity.contains("const parameters = { subscription_id: liveChannelActivitySubscriptionId }"));
         assertTrue(activity.contains("if ([...liveChannelActivitySubscribers].every((subscriber) => subscriber.markers)) parameters.markers = true"));
@@ -1942,7 +1955,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("storeChoice('session-target', targetSelect.value)"));
         assertTrue(tuner.contains("storedChoice('session-target', targets[0].id"));
         assertTrue(tuner.contains("const options = node('details', 'tuner-spectrum-options')"));
-        assertTrue(tuner.contains("settingsCardGrid(displayOptions, fftOptions, waterfallOptions"));
+        assertTrue(tuner.contains("settingsCardGrid(...(!basicOperator ? [profilePanel] : [])"));
+        assertTrue(tuner.contains("displayOptions, fftOptions, waterfallOptions"));
         assertTrue(tuner.contains("...(!basicOperator ? [profilePanel] : [])"));
         assertTrue(tuner.contains("optionsPanel.append(optionsHeader, optionGroups)"));
         assertTrue(tuner.contains("optionsSummary.setAttribute('aria-expanded', 'false')"));
@@ -2150,9 +2164,9 @@ class StatsWebInteractionUiContractTest
     void pausesEventsMessagesAndChannelFromOneSharedControl() throws Exception
     {
         String source = source();
-        String events = function(source, "function liveEventsPanel(onCollapse)");
-        String messages = function(source, "function liveMessagesPane()");
-        String channel = function(source, "function liveChannelPane()");
+        String events = function(source, "function liveEventsPanel(onCollapse, options = {})");
+        String messages = function(source, "function liveMessagesPane(options = {})");
+        String channel = function(source, "function liveChannelPane(options = {})");
 
         assertTrue(events.contains("iconButton('icon-pause', 'Pause live details'"));
         assertFalse(events.contains("const connection = badge('Waiting'"));

@@ -57,10 +57,10 @@ class StatsWebRemoteLinksUiContractTest
         String index = Files.readString(Path.of("stats-web", "index.html"));
 
         assertTrue(index.contains("id=\"icon-cloud\""));
-        assertTrue(app.contains("function liveRemoteOriginBadge(origin, showLabel = false)"));
+        assertTrue(app.contains("function liveRemoteOriginBadge(origin)"));
         assertTrue(app.contains("row.remote_origin"));
         assertTrue(app.contains("value?.remote_origin"));
-        assertTrue(app.contains("origin?.remote === true ? 'Remote source' : ''"));
+        assertTrue(app.contains("origin?.remote === true ? 'Received from another receiver.' : ''"));
         assertTrue(feature.contains("listener.dependencies"));
         assertTrue(feature.contains("sender.sender_id"));
         assertTrue(feature.contains("status(feed.state)"));

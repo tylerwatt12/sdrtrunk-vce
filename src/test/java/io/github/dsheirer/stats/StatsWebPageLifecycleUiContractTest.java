@@ -72,7 +72,7 @@ class StatsWebPageLifecycleUiContractTest
         assertTrue(system.contains("loadingMessage: 'Loading radios…'"));
         assertTrue(system.contains("loadingMessage: 'Loading talker aliases…'"));
 
-        String admin = function(source, "async function renderAdmin()");
+        String admin = function(source, "async function renderAdmin(options = {})");
         String completion = admin.substring(admin.indexOf("else await renderAdminUsers(renderContext);"));
         assertOrdered(completion, "else await renderAdminUsers(renderContext);",
             "if (!renderIsCurrent(renderContext)) return;");
@@ -123,9 +123,9 @@ class StatsWebPageLifecycleUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String directory = function(source,
-            "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [])");
-        String dashboard = function(source, "async function renderDashboard()");
-        String mainRefresh = dashboard.substring(dashboard.indexOf("const snapshot = await loadMainDashboard();"));
+            "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [], options = {})");
+        String dashboard = function(source, "async function renderDashboard(options = {})");
+        String mainRefresh = dashboard.substring(dashboard.indexOf("const snapshot = await loadMainDashboard(requestApi);"));
         String channelSignal = function(source, "async function channelSignalHistorySection(channel, parent, renderContext)");
         String groupIdentityHistory = function(source,
             "async function groupIdentityActivityHistorySection(scopeParameters, parent, renderContext)");
@@ -137,7 +137,7 @@ class StatsWebPageLifecycleUiContractTest
 
         assertFalse(directory.contains("pageInterval("));
         assertFalse(directory.contains("api("));
-        assertOrdered(mainRefresh, "const snapshot = await loadMainDashboard();",
+        assertOrdered(mainRefresh, "const snapshot = await loadMainDashboard(requestApi);",
             "if (!renderIsCurrent(renderContext)) return;");
         assertTrue(mainRefresh.contains("if (refreshing || !renderIsCurrent(renderContext)) return;"));
         assertTrue(mainRefresh.contains("directory.update(updated.directory, updated.quality.current)"));

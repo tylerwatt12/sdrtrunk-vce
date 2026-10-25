@@ -23,7 +23,7 @@ class StatsWebDashboardUiContractTest
     @Test
     void separatesCallActivityFromReceiverHealth() throws Exception
     {
-        String dashboard = function(Files.readString(APP_JAVASCRIPT), "async function renderDashboard()");
+        String dashboard = function(Files.readString(APP_JAVASCRIPT), "async function renderDashboard(options = {})");
         assertTrue(dashboard.contains("route.get('tab') || 'health'"));
         assertTrue(dashboard.contains("['health', 'calls', 'activity', 'inventory'].includes(requestedTab)"));
         assertTrue(dashboard.contains("{ id: 'calls', label: 'Call Statistics'"));
@@ -34,10 +34,10 @@ class StatsWebDashboardUiContractTest
         assertTrue(dashboard.indexOf("{ id: 'calls', label: 'Call Statistics'") <
             dashboard.indexOf("{ id: 'activity', label: 'Radio Activity'"));
         assertTrue(dashboard.contains("if (tab === 'health')"));
-        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, snapshot.directory, snapshot.quality.current)"));
+        assertTrue(dashboard.contains("renderNestedRadioDirectory(renderContext, visibleDirectory, snapshot.quality.current, options)"));
         assertTrue(dashboard.contains("if (tab === 'activity')"));
-        assertTrue(dashboard.contains("await renderDashboardActivity(renderContext)"));
-        assertTrue(dashboard.contains("const snapshot = await loadMainDashboard()"));
+        assertTrue(dashboard.contains("await renderDashboardActivity(renderContext, options)"));
+        assertTrue(dashboard.contains("const snapshot = await loadMainDashboard(requestApi)"));
         assertFalse(dashboard.contains("signalHealthSection("));
         assertFalse(dashboard.contains("'Monitored Coverage'"));
         assertFalse(dashboard.contains("'Recent Channels'"));
@@ -62,9 +62,9 @@ class StatsWebDashboardUiContractTest
     void rendersAccessibleActivityTotalsAndSourceRadioDrilldown() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String actionRows = function(source, "function dashboardActivityActionRows(response)");
-        String mix = function(source, "function dashboardActivityMix(response, selectedAction, onSelect)");
-        String activity = function(source, "async function renderDashboardActivity(renderContext)");
+        String actionRows = function(source, "function dashboardActivityActionRows(response, catalog = activityMessageTypes)");
+        String mix = function(source, "function dashboardActivityMix(response, selectedAction, onSelect, catalog = activityMessageTypes)");
+        String activity = function(source, "async function renderDashboardActivity(renderContext, options = {})");
         String radio = function(source, "function dashboardActivityRadio(row)");
         String pager = function(source, "function dashboardActivityRadioPager(page, onOffset)");
         String note = function(source, "function dashboardActivityRadioNote(page)");
@@ -79,7 +79,7 @@ class StatsWebDashboardUiContractTest
         assertTrue(mix.contains("updateSelection(row.action)"));
         assertTrue(mix.contains("if (notify && selected) onSelect(selected)"));
         assertFalse(mix.contains("api("));
-        assertTrue(activity.contains("api('/api/v1/activity/actions'"));
+        assertTrue(activity.contains("requestApi('/api/v1/activity/actions'"));
         assertTrue(activity.contains("signal: request.controller.signal"));
         assertTrue(activity.contains("renderContext.signal.addEventListener('abort'"));
         assertTrue(activity.contains("previous?.controller.abort()"));
@@ -90,11 +90,11 @@ class StatsWebDashboardUiContractTest
         assertTrue(activity.contains("setAttribute('aria-busy'"));
         assertTrue(activity.contains("asyncSectionFailure(error"));
         assertTrue(failure.contains("setAttribute('role', 'alert')"));
-        assertTrue(activity.contains("activityMetricGuide()"));
-        assertTrue(activity.contains("apiPage('/api/v1/activity/radios'"));
+        assertTrue(activity.contains("activityMetricGuide(false, catalog)"));
+        assertTrue(activity.contains("requestPage('/api/v1/activity/radios'"));
         assertTrue(activity.contains("range: selectedRange, action, limit: 100, offset: selectedOffset"));
         assertTrue(activity.contains("'Source radios'"));
-        assertTrue(activity.contains("detailedHistoryAvailable()"));
+        assertTrue(activity.contains("detailedHistoryAvailable(options.historyState)"));
         assertTrue(activity.contains("capabilityAllowed(ACCESS_CAPABILITIES.RADIO)"));
         assertTrue(activity.contains("sequence !== radioSequence || action !== selectedAction"));
         assertTrue(activity.contains("cleanupTableLayoutMenu(radioTableController)"));
@@ -152,7 +152,7 @@ class StatsWebDashboardUiContractTest
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String decoder = function(source, "function decoderLabel(value, compact = false)");
-        String live = function(source, "function liveChannelsSection(onSelectionChange)");
+        String live = function(source, "function liveChannelsSection(onSelectionChange, options = {})");
         assertTrue(decoder.contains("P25_PHASE1: ['P25 P1', 'P25 Phase 1']"));
         assertTrue(decoder.contains("P25_PHASE2: ['P25 P2', 'P25 Phase 2']"));
         assertTrue(decoder.contains("P25_CONVENTIONAL: ['P25 Conv', 'P25 Conventional']"));
@@ -221,7 +221,7 @@ class StatsWebDashboardUiContractTest
         String source = Files.readString(APP_JAVASCRIPT);
         String sorter = function(source, "function radioDirectoryCompare(left, right)");
         String directory = function(source,
-            "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [])");
+            "function renderNestedRadioDirectory(renderContext, directory, currentQuality = [], options = {})");
         assertTrue(sorter.contains("left.name || left.site || left.site_name"));
         assertTrue(sorter.contains("left.configuration_id"));
         assertFalse(sorter.contains("decode_health_pct"));
@@ -257,8 +257,8 @@ class StatsWebDashboardUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         assertTrue(css.contains(".dashboard-identity-split"));
         String dashboardCss = Files.readString(Path.of("stats-web", "assets", "styles", "features", "dashboard.css"));
-        assertTrue(dashboardCss.contains("grid-template-columns: minmax(0, 1fr)"));
-        assertFalse(dashboardCss.contains("@media (max-width: 1500px)"));
+        assertTrue(function(dashboardCss, ".dashboard-identity-split")
+            .contains("grid-template-columns: minmax(0, 1fr)"));
         assertTrue(css.contains(".dashboard-summary-section .summary-band"));
         assertTrue(css.contains(".dashboard-identity-context"));
         assertTrue(css.contains(".dashboard-activity-layout"));

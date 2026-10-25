@@ -90,8 +90,11 @@ class StatsWebDashboardActivityAccessTest
 
             HttpResponse<String> anonymousActivity = get(client, origin, StatsApiV1.ACTIVITY + "?limit=1", null);
             assertEquals(401, anonymousActivity.statusCode(), anonymousActivity.body());
+            assertEquals(401, get(client, origin, StatsApiV1.ACTIVITY_RADIOS +
+                "?range=24h&action=GRANT", null).statusCode());
             String cookie = login(client, origin, "listener", "dashboard-activity-user-password");
-            assertEquals(404, get(client, origin, "/api/v1/activity/radios?range=24h&action=GRANT", cookie).statusCode());
+            assertEquals(200, get(client, origin, StatsApiV1.ACTIVITY_RADIOS +
+                "?range=24h&action=GRANT", cookie).statusCode());
 
             accessService.setCapabilityTier(WebCapability.DASHBOARD_VIEW, AccessTier.ADMIN);
             HttpResponse<String> activity = get(client, origin, StatsApiV1.ACTIVITY + "?limit=1", cookie);
@@ -104,6 +107,8 @@ class StatsWebDashboardActivityAccessTest
                 .at("/meta/traffic_grant_age_out_milliseconds").intValue(), updated.body());
             assertEquals(403, get(client, origin, StatsApiV1.STATUS, cookie).statusCode());
             assertEquals(403, get(client, origin, StatsApiV1.ACTIVITY_ACTIONS + "?range=24h", cookie).statusCode());
+            assertEquals(200, get(client, origin, StatsApiV1.ACTIVITY_RADIOS +
+                "?range=24h&action=GRANT", cookie).statusCode());
         }
         finally
         {

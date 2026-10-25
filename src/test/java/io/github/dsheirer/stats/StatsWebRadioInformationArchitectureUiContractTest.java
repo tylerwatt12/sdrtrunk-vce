@@ -44,7 +44,7 @@ class StatsWebRadioInformationArchitectureUiContractTest
         assertFalse(routes.contains("id: 'hardware'"));
         assertFalse(app.contains("if (view === 'channels' || view === 'radio-systems')"));
         assertFalse(app.contains("if (view === 'identities')"));
-        assertTrue(app.contains("renderNestedRadioDirectory(renderContext, snapshot.directory, snapshot.quality.current)"));
+        assertTrue(app.contains("renderNestedRadioDirectory(renderContext, visibleDirectory, snapshot.quality.current, options)"));
         assertFalse(app.contains("editable ? 'Channels' : 'Radio Directory'"));
         assertFalse(app.contains("if (editable) columns.push"));
     }
@@ -55,17 +55,17 @@ class StatsWebRadioInformationArchitectureUiContractTest
         String app = readText(APP);
         String css = StatsWebStylesheetTestSupport.readAll();
 
-        assertTrue(app.contains("apiPage('/api/v1/identities/lists'"));
+        assertTrue(app.contains("requestPage('/api/v1/identities/lists'"));
         assertTrue(app.contains("/overview`"));
         assertTrue(app.contains("/unassigned`"));
-        assertTrue(app.contains("function renderAliasCoverageDirectory(renderContext, embedded = false)"));
+        assertTrue(app.contains("async function renderAliasCoverageDirectory(renderContext, embedded = false, dependencies = {})"));
         assertFalse(app.contains("See aliases that activity-only views cannot show"));
         assertFalse(app.contains("Where this Alias List is used"));
         assertTrue(app.contains("node('details', 'ui-section-disclosure alias-coverage-scope')"));
         assertTrue(app.contains("node('summary', 'ui-section-summary')"));
         assertTrue(app.contains("header.append(node('span', '', 'Channels using this Alias List')"));
         assertTrue(app.contains("createAsyncSection('Alias inventory'"));
-        assertTrue(app.contains("const navigateCoverage = (target, options = {}) => routeFoundation.navigate"));
+        assertTrue(app.contains("return routeFoundation.navigate(window, target, (nextRoute) => {"));
         assertTrue(app.contains("directory.host.replaceChildren(present(model))"));
         assertTrue(app.contains("scrollToTable: Boolean(link.closest('.pager'))"));
         assertTrue(app.contains("value: 'zero_calls'"));

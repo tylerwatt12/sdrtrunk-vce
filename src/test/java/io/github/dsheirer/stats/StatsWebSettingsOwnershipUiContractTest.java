@@ -20,29 +20,30 @@ class StatsWebSettingsOwnershipUiContractTest
     void separatesSharedTrafficTimingFromPersonalLivePresentation() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
-        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings(target = content)");
-        String request = function(source, "async function requestReceiverSettings(method = 'GET', settings = null, revision = null)");
+        String receiver = function(source, "async function renderAdminReceiverBehaviorSettings(target = content, renderContext = captureRenderContext())");
+        String request = function(source, "async function requestReceiverSettings(method = 'GET', settings = null, revision = null,\n" +
+            "    fetchDocument = jsonDocumentFetch)");
         String bandplanRequest = function(source,
-            "async function requestP25BandplanOverrides(method = 'GET', profiles = null)");
-        String bandplanPage = function(source, "async function renderAdminP25BandplanOverrides()");
+            "async function requestP25BandplanOverrides(method = 'GET', profiles = null, fetchDocument = jsonDocumentFetch)");
+        String bandplanPage = function(source, "async function renderAdminP25BandplanOverrides(renderContext = captureRenderContext())");
         String personal = function(source, "async function renderSettings()");
         String personalWorkspace = Files.readString(Path.of("stats-web", "assets", "features", "my-settings.js"));
         String personalReset = function(source, "function openResetUserPreferences(returnFocusSelector = null)");
         String livePresentation = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
-        String scannerPlayback = function(source, "function openScannerSettings(returnFocusSelector = null)");
+        String scannerPlayback = function(source, "function openScannerSettings(returnFocusSelector = null, options = {})");
         String preferenceSave = function(source, "async function savePreferenceForm(workflow, modal, mutate, options)");
-        String admin = function(source, "async function renderAdmin()");
+        String admin = function(source, "async function renderAdmin(options = {})");
         String adminGroups = function(source, "function adminSettingsGroups()");
 
         assertTrue(adminGroups.contains("id: 'display', label: 'Display settings'"));
-        assertTrue(admin.contains("renderAdminReceiverBehaviorSettings(display)"));
+        assertTrue(admin.contains("renderAdminReceiverBehaviorSettings(display, renderContext)"));
         assertTrue(adminGroups.contains("id: 'protocol-p25', label: 'P25 band plans'"));
         assertFalse(adminGroups.contains("id: 'activity', label: 'Activity history'"));
         assertFalse(adminGroups.contains("id: 'protocol-dmr'"));
-        assertTrue(admin.contains("await renderAdminP25BandplanOverrides()"));
+        assertTrue(admin.contains("await renderAdminP25BandplanOverrides(renderContext)"));
         assertTrue(request.contains("'/api/v1/admin/receiver-settings'"));
         assertTrue(request.contains("headers['If-Match'] = `\"${revision}\"`"));
-        assertTrue(bandplanRequest.contains("jsonDocumentFetch('/api/v1/admin/p25-bandplan-overrides'"));
+        assertTrue(bandplanRequest.contains("fetchDocument('/api/v1/admin/p25-bandplan-overrides'"));
         assertFalse(bandplanRequest.contains("requestJson("));
         assertTrue(bandplanPage.contains("list.replaceChildren(...profiles.map((profile, index) =>"));
         assertTrue(bandplanPage.contains("p25OverrideProfileCard(existing, knownSystems)"));
@@ -120,22 +121,22 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(preferenceSave.contains("modal.close() && renderAfterSave"));
         assertTrue(preferenceSave.contains("void render()"));
 
-        assertTrue(scannerPlayback.contains("openReadOnlyModal('Scanner settings'"));
+        assertTrue(scannerPlayback.contains("openModal('Scanner settings'"));
         assertTrue(scannerPlayback.contains("target_grouping"));
         assertTrue(scannerPlayback.contains("target_burst_limit"));
         assertTrue(scannerPlayback.contains("page_titles.prepend_playing_call"));
         assertTrue(scannerPlayback.contains("preferences.playback.target_grouping ="));
         assertTrue(scannerPlayback.contains("preferences.playback.target_burst_limit ="));
         assertTrue(scannerPlayback.contains("preferences.page_titles.prepend_playing_call ="));
-        assertTrue(scannerPlayback.contains("savePreferenceForm(workflow, modal"));
+        assertTrue(scannerPlayback.contains("saveForm(workflow, modal"));
         assertTrue(scannerPlayback.contains("identity: snapshot.identity"));
-        assertTrue(scannerPlayback.contains("same playback target together"));
-        assertTrue(scannerPlayback.contains("current playback target before another target"));
+        assertTrue(scannerPlayback.contains("same talkgroup or channel together"));
+        assertTrue(scannerPlayback.contains("queued calls before switching targets"));
         assertFalse(scannerPlayback.contains("groupIdentity"));
         assertFalse(scannerPlayback.contains("same channel or talkgroup"));
         assertFalse(scannerPlayback.contains("preferences.presentation"));
         assertTrue(source.contains("id = 'scanner-settings'"));
-        assertTrue(source.contains("scannerSettings.addEventListener('click', () => void activateScannerSettings(scannerSettings))"));
+        assertTrue(source.contains("scannerSettings.addEventListener('click', () => void openSettings())"));
         assertTrue(source.contains("if (snapshot.loaded) openScannerSettings(returnFocusSelector)"));
 
         assertFalse(source.contains("/api/v1/admin/web-display"));
@@ -173,7 +174,7 @@ class StatsWebSettingsOwnershipUiContractTest
     {
         int start = source.indexOf(marker);
         assertTrue(start >= 0, marker);
-        int opening = source.indexOf('{', start);
+        int opening = source.indexOf('{', start + marker.length());
         int depth = 0;
         for(int index = opening; index < source.length(); index++)
         {

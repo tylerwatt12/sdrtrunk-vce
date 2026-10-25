@@ -42,7 +42,8 @@ class StatsWebChannelsUiContractTest
         assertTrue(catalog.contains("type: 'channel-catalog-admin-v3'"));
         assertTrue(catalog.contains("const pageSize = 20"));
         assertTrue(catalog.contains("bare: true"));
-        assertTrue(catalog.contains("headingActions.replaceChildren(newChannelButton)"));
+        assertTrue(catalog.contains("creationActions.append(newChannelButton)"));
+        assertTrue(catalog.contains("creationActions.append(findSystemsButton)"));
         assertTrue(columns.contains("row.processing_state === 'RUNNING'"));
         assertFalse(columns.contains("if (editable)"));
         assertTrue(columns.contains("id: 'status', label: 'State', render: (row) => uiStatus("));
@@ -89,7 +90,7 @@ class StatsWebChannelsUiContractTest
         assertTrue(catalog.contains("activeCatalogView === 'auto-start' ? channelAutoStartOrder : " +
             "channelProtocolOrder"));
         assertTrue(catalog.contains("wrapper: channelTable || undefined"));
-        assertTrue(catalog.contains("revealRowGroups: () => Boolean(search.value.trim())"));
+        assertTrue(catalog.contains("revealRowGroups: () => guideSampleData.isActive('channel-catalog') || Boolean(search.value.trim())"));
         assertTrue(catalog.contains("Select all matching channels"));
         assertTrue(catalog.contains("rows.sort(activeCatalogView === 'auto-start' ? channelAutoStartOrder : " +
             "channelProtocolOrder)"));
@@ -180,8 +181,8 @@ class StatsWebChannelsUiContractTest
         assertTrue(css.contains("grid-template-columns: minmax(0, 1fr)"));
         assertTrue(css.contains(".channel-catalog-table-host {\n  width: 100%;\n  min-width: 0;\n" +
             "  max-width: 100%;\n  overflow: visible;"));
-        assertTrue(css.contains(".ui-catalog-table-wrap {\n  background: var(--surface);\n" +
-            "  border: 1px solid var(--line);\n  border-radius: var(--catalog-panel-radius);"));
+        assertTrue(css.contains(".ui-catalog-table-wrap {\n  background: var(--ui-panel-fill);\n" +
+            "  border: 0;\n  border-radius: var(--catalog-panel-radius);"));
         assertTrue(css.contains(".ui-catalog-table-wrap {\n    overflow: visible;"));
         assertFalse(css.contains("max-height: min(70dvh, 720px);"));
         assertTrue(css.contains("@media (max-width: 720px)"));
