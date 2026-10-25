@@ -378,6 +378,8 @@ function verifyParallelPreparationWiring() {
     'The Main CI gate must require every application group, browser shard and direct contract job.');
   const contracts = job('contracts', reusable);
   assert.match(contracts, /runs-on: ubuntu-latest/);
+  assert.match(contracts, /uses: actions\/setup-java@v5[\s\S]*java-version: '25'/,
+    'Packaged USB probe contracts compile Java 25 source and require its JDK.');
   assert.match(contracts, /run: node src\/test\/js\/stats-web\/run-contracts\.js/,
     'Pure JavaScript contracts run directly, without a Java subprocess wrapper.');
   assert.match(contracts, /run: node src\/test\/js\/release\/nightly-workflow\.test\.js/);
