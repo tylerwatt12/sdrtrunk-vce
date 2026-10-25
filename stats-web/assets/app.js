@@ -6541,6 +6541,14 @@ function aliasTransferExportIsReady(cookieHeader, token) {
   });
 }
 
+function aliasTransferImportRequest({ file, ...options }) {
+  // Keep the CSV in its File; only the small import options need JSON encoding.
+  const body = new FormData();
+  body.append('options', JSON.stringify(options));
+  body.append('file', file);
+  return { body };
+}
+
 async function openAliasImportChoice(selectedList) {
   if (!viewAllowed('aliases')) return;
   return openActionChoiceModal({
@@ -7082,7 +7090,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     setBusy(true); errorHost.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Checking import changes…'));
     try {
       const response = await requestJson(endpoint, { method: 'POST', timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS,
-        body: { ...request, action: 'preview', offset } });
+        ...aliasTransferImportRequest({ ...request, action: 'preview', offset }) });
       preview = response; confirm.checked = false;
       errorHost.replaceChildren();
       destination.textContent = response.source_list ?
@@ -7151,9 +7159,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
       if(!selected || selected.size > ALIAS_TRANSFER_IMPORT_MAX_BYTES) {
         throw new Error('Select a CSV file no larger than 128 MiB.');
       }
-      setBusy(true);
-      errorHost.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Reading alias file…'));
-      request = { format: format.value, mode: mode.value, csv: await selected.text(), defaults: format.value === 'RADIOREFERENCE' ? {
+      request = { format: format.value, mode: mode.value, file: selected, defaults: format.value === 'RADIOREFERENCE' ? {
         recordable: record.value === '' ? null : record.value === 'true', scan_lists: scans.value(),
         streams: streams.value()
       } : null };
@@ -7165,8 +7171,8 @@ function openAliasTransferModal(selectedList, action = 'Import') {
     setBusy(true); errorHost.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Importing aliases…'));
     try {
       const result = await requestJson(endpoint, { method: 'POST', timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS,
-        body: { ...request, action: 'apply', revision: preview.revision, digest: preview.digest,
-          confirm_replace: confirm.checked } });
+        ...aliasTransferImportRequest({ ...request, action: 'apply', revision: preview.revision, digest: preview.digest,
+          confirm_replace: confirm.checked }) });
       modal.setBusy(false); modal.setDirty(false);
       const counts = preview.counts;
       await finishAliasMutation(modal, result);
@@ -10153,8 +10159,9 @@ function snakeCasePayload(value) {
 async function requestJson(path, options = {}) {
   const method = String(options.method || 'GET').toUpperCase();
   const headers = new Headers(options.headers || {});
+  const multipartBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
   headers.set('Accept', 'application/json');
-  if (options.body !== undefined) headers.set('Content-Type', 'application/json');
+  if (options.body !== undefined && !multipartBody) headers.set('Content-Type', 'application/json');
   if (options.csrf !== false && !['GET', 'HEAD', 'OPTIONS'].includes(method) && accessSession.csrfToken) {
     headers.set('X-CSRF-Token', accessSession.csrfToken);
   }
@@ -10162,7 +10169,7 @@ async function requestJson(path, options = {}) {
   try {
     ({ response, result } = await timedFetch(path, {
       ...options, method, headers,
-      body: options.body === undefined ? undefined : JSON.stringify(snakeCasePayload(options.body)),
+      body: options.body === undefined || multipartBody ? options.body : JSON.stringify(snakeCasePayload(options.body)),
       keepalive: options.keepalive === true
     }, async (response, signal) => {
       options.onResponse?.(response);

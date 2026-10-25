@@ -14,7 +14,7 @@ const settle = async () => { for (let n = 0; n < 4; n++) await Promise.resolve()
 
 function context(fetch) {
   const timers = new Map();
-  const value = { fetch, Headers, AbortController, activeRenderController: null, initialPageDeadline: 0, performance,
+  const value = { fetch, Headers, FormData, AbortController, activeRenderController: null, initialPageDeadline: 0, performance,
     reloadForWebClientRevision() {}, systemLabels: { rememberSystemNames: value => value },
     accessSession: { csrfToken: 'fixture-csrf' }, window: {
     setTimeout(callback, delay) { const id = timers.size + 1; timers.set(id, { callback, delay }); return id; },
@@ -32,6 +32,34 @@ test('preference deadline includes a stalled response body and releases its time
   await settle(); assert.equal(timers.size, 1);
   const timer = [...timers.values()][0]; assert.equal(timer.delay, 10_000); timer.callback();
   await assert.rejects(pending, error => error.code === 'request_timeout' && error.path === '/api/v1/me/preferences');
+  assert.equal(timers.size, 0);
+});
+
+test('multipart CSV uploads preserve the file, authorization, timeout and structured errors', async () => {
+  const file = new Blob(['Decimal,Hex,Alpha Tag\n1201,4b1,Dispatch\n'], { type: 'text/csv' });
+  const body = new FormData();
+  body.append('options', '{}');
+  body.append('file', file, 'aliases.csv');
+  let sent;
+  const { value, timers } = context(async (_url, options) => {
+    sent = options;
+    return { ok: false, status: 409, headers: new Headers({ 'Content-Type': 'application/json' }),
+      json: async () => ({ error: { code: 'stale_revision', field: 'revision', message: 'Saved aliases changed.' } }) };
+  });
+  const pending = value.requestJson('/api/v1/admin/alias-lists/1/transfer', { method: 'POST', body,
+    timeoutMs: 60_000 });
+  await assert.rejects(pending, error => error.status === 409 && error.code === 'stale_revision' &&
+    error.field === 'revision' && error.message === 'Saved aliases changed.' && !error.outcomeUnknown);
+  assert.equal(sent.body, body);
+  assert.equal(sent.headers.get('Content-Type'), null, 'Fetch owns the multipart boundary.');
+  assert.equal(sent.headers.get('X-CSRF-Token'), 'fixture-csrf');
+  assert.equal(sent.headers.get('Accept'), 'application/json');
+  assert.equal(sent.credentials, 'same-origin');
+  assert.equal(timers.size, 0);
+  value.actionFailureMessage = () => 'The receiver did not confirm the result.';
+  value.fetch = async () => { throw new Error('Disconnected'); };
+  await assert.rejects(value.requestJson('/api/v1/admin/alias-lists/1/transfer', { method: 'POST', body }),
+    error => error.outcomeUnknown === true && error.message === 'The receiver did not confirm the result.');
   assert.equal(timers.size, 0);
 });
 

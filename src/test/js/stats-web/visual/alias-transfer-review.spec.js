@@ -19,6 +19,13 @@ const preview = {
   ]
 };
 
+function transferOptions(request) {
+  expect(request.headers()['content-type']).toMatch(/^multipart\/form-data; boundary=/);
+  const options = request.postData().match(/name="options"\r\n\r\n([^\r]+)\r\n/);
+  expect(options).not.toBeNull();
+  return JSON.parse(options[1]);
+}
+
 for (const width of [320, 390]) {
   for (const theme of ['light']) {
     test(`Alias import review keeps expanded changes and actions bounded ${theme} ${width}`, async ({ page }) => {
@@ -27,11 +34,12 @@ for (const width of [320, 390]) {
       const transferRequests = [];
       await page.route('**/api/v1/admin/alias-lists/1/transfer', async (route) => {
         expect(route.request().method()).toBe('POST');
-        const request = route.request().postDataJSON();
+        const request = transferOptions(route.request());
         transferRequests.push(request);
         expect(request.format).toBe('RADIOREFERENCE');
         expect(request.mode).toBe('UPDATE_ADD');
-        expect(request.csv).toContain('Fireground 2');
+        expect(route.request().postData()).toContain('Fireground 2');
+        expect(request).not.toHaveProperty('csv');
         if (request.action === 'preview') {
           return route.fulfill({ json: { data: preview } });
         }
@@ -107,7 +115,7 @@ test('Alias import preview and apply provide pending feedback without losing the
   const held = [];
   const requests = [];
   await page.route('**/api/v1/admin/alias-lists/1/transfer', async route => {
-    const request = route.request().postDataJSON();
+    const request = transferOptions(route.request());
     requests.push(request);
     await new Promise(resolve => held.push(resolve));
     if (request.action === 'preview') return route.fulfill({ json: { data: preview } });

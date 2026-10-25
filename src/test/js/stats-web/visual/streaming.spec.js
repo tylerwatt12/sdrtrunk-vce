@@ -9,9 +9,9 @@ const helpersSource = app.slice(app.indexOf('function closeReadOnlyModal('), app
   app.slice(app.indexOf('function uiSegmentedControl('), app.indexOf('function channelSummaryCards(')) +
   app.slice(app.indexOf('const METRIC_ICONS ='), app.indexOf('function searchBar('));
 
-async function install(page, theme = 'light', empty = false, radioReferenceAllowed = true) {
+async function install(page, theme = 'light', empty = false, radioReferenceAllowed = true, aliasCount = 60) {
   await page.goto(`/design-system.html?theme=${theme}`);
-  await page.evaluate(async ({helpersSource, theme, empty, radioReferenceAllowed}) => {
+  await page.evaluate(async ({helpersSource, theme, empty, radioReferenceAllowed, aliasCount}) => {
     const { createStreamingWorkspace } = await import('/assets/features/streaming.js');
     const { openRadioReferenceConnect } = await import('/assets/features/radioreference-connect.js');
     const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
@@ -139,7 +139,7 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
     const status={configuration_id:'destination',name:'County Calls',provider:'BROADCASTIFY_CALL',provider_label:'Broadcastify Calls',
       enabled:true,state:'CONNECTED',state_label:'Connected',queued:3,sent:128,aged_off:0,errors:0,last_error:null,attention:false};
     let assignments=new Set([1,51]);
-    const aliases=Array.from({length:60},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
+    const aliases=Array.from({length:aliasCount},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
     const calls=[];
     window.streamingTest={calls,status,changeOther:()=>{otherName='Updated archive';},changeDestination:()=>{editRevision='destination-edit-remote';},changeAssignments:()=>{assignmentRevision='assignments-remote';},fail:false,stale:false,holdAliasRead:false,releaseAliasRead:null,releaseAliasReadOnSave:false,holdWrite:false,releaseWrite:null,holdOptions:false,releaseOptions:null,references:{aliases:2,alias_lists:[]},feedMode:'ready',feedDelay:0,accountState:'VALID_PREMIUM',connectCount:0,feeds:[
       {id:1042,name:'Metro Public Safety Dispatch and Regional Interoperability Network',configured:false},
@@ -216,7 +216,7 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
       modalFooter:(...controls)=>{const footer=node('footer','alias-modal-footer ui-modal-footer ui-action-row');footer.append(...controls);return footer;},
       formatNumber:String,href:(view,params)=>`/?${new URLSearchParams({view,...params})}`,signal:abort.signal});
     shell.append(header,workspace.element);document.body.append(shell);
-  }, {helpersSource,theme,empty,radioReferenceAllowed});
+  }, {helpersSource,theme,empty,radioReferenceAllowed,aliasCount});
   await expect(page.getByRole('button',{name:'Add destination',exact:true})).toBeVisible();
 }
 
@@ -735,4 +735,49 @@ test('leaving Streaming aborts the shared sign-in and ignores a late connection 
   await page.evaluate(() => { window.streamingTest.abort(); window.streamingTest.releaseConnect(); });
   await expect(page.getByRole('dialog')).toHaveCount(0);
   expect(await page.evaluate(() => window.streamingTest.calls.filter(([path]) => path.endsWith('/feeds/refresh')).length)).toBe(0);
+});
+
+test('500 explicit streaming assignments remain responsive across pages and a held save', async ({ page }) => {
+  await install(page, 'light', false, true, 500);
+  await page.getByRole('button', { name: 'County Calls', exact: true }).click();
+  const modal = page.getByRole('dialog');
+  await modal.getByRole('button', { name: 'Aliases', exact: true }).click();
+  await page.evaluate(() => {
+    const probe = { last: performance.now(), maximum: 0, ticks: 0 };
+    probe.timer = setInterval(() => {
+      const now = performance.now(); probe.maximum = Math.max(probe.maximum, now - probe.last);
+      probe.last = now; probe.ticks++;
+    }, 10);
+    window.assignmentHeartbeat = probe;
+  });
+  for (let index = 0; index < 10; index++) {
+    await expect(modal.locator('table[data-table-type="streaming-aliases"] tbody tr')).toHaveCount(50);
+    await modal.getByRole('checkbox', { name: 'Send all aliases on this page to this destination', exact: true }).check();
+    // Flip the two previously assigned rows as well: 498 additions and two removals.
+    if (index < 2) await modal.getByRole('checkbox', {
+      name: `Send Dispatch ${index * 50 + 1} to this destination`, exact: true }).uncheck();
+    if (index < 9) await modal.getByRole('button', { name: 'Next', exact: true }).click();
+  }
+  await page.evaluate(() => { window.streamingTest.holdWrite = true; });
+  await modal.getByRole('button', { name: 'Save assignments', exact: true }).click();
+  await expect(modal.locator('.ui-feedback-loading')).toHaveText('Saving alias assignments…');
+  await expect(modal).toHaveAttribute('aria-busy', 'true');
+  await page.keyboard.press('Escape');
+  await expect(modal).toBeVisible();
+  await expect(modal.getByRole('button', { name: 'Save assignments', exact: true })).toBeDisabled();
+  await expect.poll(() => page.evaluate(() => window.assignmentHeartbeat.ticks)).toBeGreaterThan(5);
+  const result = await page.evaluate(() => {
+    const probe = window.assignmentHeartbeat; clearInterval(probe.timer);
+    const writes = window.streamingTest.calls.filter(([path, options]) => path.endsWith('/aliases') && options.method === 'POST');
+    return { maximum: Math.max(probe.maximum, performance.now() - probe.last), writes };
+  });
+  expect(result.maximum).toBeLessThan(250);
+  expect(result.writes).toHaveLength(1);
+  expect(result.writes[0][1].body.add).toHaveLength(498);
+  expect(result.writes[0][1].body.remove).toEqual([1, 51]);
+  await test.info().attach('browser-heartbeat', { body: JSON.stringify({ maximum: result.maximum }),
+    contentType: 'application/json' });
+  await page.evaluate(() => { window.streamingTest.releaseWrite(); });
+  await expect(modal.locator('.ui-feedback-loading')).toHaveCount(0);
+  await expect(modal.getByRole('button', { name: 'Save assignments', exact: true })).toBeHidden();
 });

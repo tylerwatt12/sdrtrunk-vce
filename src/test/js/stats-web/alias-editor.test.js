@@ -49,6 +49,7 @@ const context = {
   URLSearchParams,
   Uint8Array,
   encodeURIComponent,
+  FormData,
   window: {
     crypto: {
       getRandomValues: (bytes) => {
@@ -104,6 +105,7 @@ vm.runInContext(`
   ${functionSource('function aliasTransferExportToken()')}
   ${functionSource('function aliasTransferExportDownloadHref(listId, token)')}
   ${functionSource('function aliasTransferExportIsReady(cookieHeader, token)')}
+  ${functionSource('function aliasTransferImportRequest({ file, ...options })')}
   ${functionSource("function exportCsvFileName(response, fallback = 'export.csv')")}
   ${functionSource('function reorderedAliasToneRows(rows, index, direction)')}
   ${functionSource('function fullScanListMembershipRequest(editRevision, operation, aliasListId = null)')}
@@ -157,6 +159,7 @@ vm.runInContext(`
   globalThis.transferExportToken = aliasTransferExportToken;
   globalThis.transferExportDownloadHref = aliasTransferExportDownloadHref;
   globalThis.transferExportIsReady = aliasTransferExportIsReady;
+  globalThis.transferImportRequest = aliasTransferImportRequest;
   globalThis.exportFileName = exportCsvFileName;
   globalThis.reorderTones = reorderedAliasToneRows;
   globalThis.fullMembershipRequest = fullScanListMembershipRequest;
@@ -486,6 +489,23 @@ assert.equal(context.transferExportIsReady(concurrentReadyCookies,
   'fedcba9876543210fedcba9876543210'), true,
   'Concurrent configuration downloads must keep independent ready markers.');
 
+const originalFile = new File(['Decimal,Hex,Alpha Tag\n1201,4b1,Dispatch\n'], 'aliases.csv', { type: 'text/csv' });
+const rawImport = context.transferImportRequest({ file: originalFile, format: 'RADIOREFERENCE',
+  mode: 'UPDATE_ADD', action: 'preview', offset: 100,
+  defaults: { streams: ['Équipe + Dispatch 🚒'], scan_lists: ['Unités'], recordable: true } });
+assert.equal(rawImport.body.get('file'), originalFile, 'The complete CSV stays in the browser File without a text copy.');
+assert.equal(rawImport.headers, undefined, 'The browser must choose the multipart boundary.');
+assert.deepEqual(Array.from(rawImport.body.keys()), ['options', 'file']);
+assert.deepEqual(JSON.parse(rawImport.body.get('options')), { format: 'RADIOREFERENCE',
+  mode: 'UPDATE_ADD', action: 'preview', offset: 100,
+  defaults: { streams: ['Équipe + Dispatch 🚒'], scan_lists: ['Unités'], recordable: true } });
+const largeImportOptions = { defaults: {
+  streams: Array.from({ length: 500 }, (_, index) => `${index} ${'🚒'.repeat(124)}`),
+  scan_lists: Array.from({ length: 500 }, (_, index) => `${index} ${'🚑'.repeat(124)}`) } };
+const largeMetadata = context.transferImportRequest({ file: originalFile, ...largeImportOptions });
+assert.deepEqual(JSON.parse(largeMetadata.body.get('options')), largeImportOptions,
+  'Existing large multibyte destination overrides must be transmitted without a header-size restriction.');
+
 const transferModal = functionSource("function openAliasTransferModal(selectedList, action = 'Import')");
 const transferExportHref = functionSource('function aliasTransferExportHref(listId)');
 const activityReportHref = functionSource("function aliasActivityReportHref(listId, scope = 'all')");
@@ -532,6 +552,8 @@ assert.doesNotMatch(transferModal, /fetch\(endpoint/);
 assert.match(transferModal, /reportController\?\.abort\(\)/,
   'Closing the export dialog must cancel an activity report that is still being prepared.');
 assert.match(transferModal, /timeoutMs: ALIAS_BULK_REQUEST_TIMEOUT_MS/g);
+assert.doesNotMatch(transferModal, /selected\.text\(\)/,
+  'Preview and apply must not read and encode the complete CSV on the UI thread.');
 
 context.setRoute('q=Dispatch&type=talkgroup&group=Fire&scanListId=2&record=on&' +
   'lastActivityAfter=2026-10-01&sort=name&direction=desc&limit=25&offset=50');
