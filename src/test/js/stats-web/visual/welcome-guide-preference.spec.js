@@ -175,7 +175,7 @@ test('a failed account save rolls the checkbox back and allows an explicit retry
   const server = await accountServer(), fixture = await install(page, server);
   server.failWrites = true;
   await open(page);
-  await choice(page).check();
+  await choice(page).click();
   await expect(guide(page).getByRole('alert')).toHaveText('Your guide choice could not be saved. Try the checkbox again.');
   await expect(choice(page)).toBeEnabled();
   await expect(choice(page)).not.toBeChecked();
