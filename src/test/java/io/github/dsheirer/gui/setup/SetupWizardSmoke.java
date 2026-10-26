@@ -140,7 +140,6 @@ public final class SetupWizardSmoke
             });
             if(mode.equals("interrupt")) { click(target,"Exit setup"); return; }
             click(target,"Continue"); await(target,SetupStep.WEB);
-            assertAndTypePort(target);
             if(mode.equals("theme"))
             {
                 if(preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.DARK)
@@ -150,6 +149,9 @@ public final class SetupWizardSmoke
                     throw new AssertionError("Theme choice was not updated");
             }
             capture(target,root,"03-web");
+            assertAndTypePort(target);
+            capture(target,root,"03a-web-more-options");
+            click(target,"▾  More options");
             if(mode.equals("feedback"))
             {
                 click(target,"▸  About secure access");
@@ -159,6 +161,7 @@ public final class SetupWizardSmoke
             click(target,"Continue"); await(target,SetupStep.JMBE);
             if(preferences(target).getApplicationPreference().getStatsWebServerPort()!=18091)
                 throw new AssertionError("The typed port was not committed");
+            if(mode.equals("web-options")) { click(target,"Exit setup"); awaitClosed(target); return; }
         }
         capture(target,root,"04-jmbe");
         if(mode.equals("jmbe-success")) exerciseJmbe(target,root); else click(target,"Set up later");
@@ -194,7 +197,7 @@ public final class SetupWizardSmoke
             button.isShowing() && button.getText().equals("Skip discovery")))
             throw new AssertionError("Completed scan still has Skip discovery");
         click(target,"Continue"); await(target,SetupStep.CALIBRATION);
-        capture(target,root,"08-benchmark"); click(target,"Skip this time"); await(target,SetupStep.REVIEW);
+        capture(target,root,"08-benchmark"); click(target,"Use defaults for now"); await(target,SetupStep.REVIEW);
         capture(target,root,"09-review");
         javax.swing.SwingUtilities.invokeAndWait(()-> {
             try
@@ -211,7 +214,7 @@ public final class SetupWizardSmoke
         {
             try(var occupied=new java.net.ServerSocket(18091,1,java.net.InetAddress.getLoopbackAddress()))
             {
-                click(target,"Finish & launch"); await(target,SetupStep.REVIEW);
+                click(target,"Finish setup"); await(target,SetupStep.REVIEW);
                 var banner=SetupWizard.class.getDeclaredField("danger"); banner.setAccessible(true);
                 if(!((javax.swing.JTextArea)banner.get(target)).isVisible()) throw new AssertionError("Bind failure did not remain in the wizard");
                 capture(target,root,"11-bind-error");
@@ -220,7 +223,7 @@ public final class SetupWizardSmoke
         var web=preferences(target).getApplicationPreference();
         boolean guideExpected=web.isStatsWebServerHttpsEnabled() &&
             web.getStatsWebServerCertificateMode()==io.github.dsheirer.preference.application.WebCertificateMode.AUTOMATIC;
-        click(target,"Finish & launch");
+        click(target,"Finish setup");
         if(guideExpected)
         {
             assertCertificateGuide(target,root);
@@ -343,7 +346,9 @@ public final class SetupWizardSmoke
 
     private static long eventCount(Path database) throws Exception
     {
-        try(var connection=java.sql.DriverManager.getConnection("jdbc:sqlite:"+database);
+        Path activity=io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database);
+        Path history=Files.isRegularFile(activity) ? activity : database;
+        try(var connection=java.sql.DriverManager.getConnection("jdbc:sqlite:"+history);
             var query=connection.createStatement();var rows=query.executeQuery("SELECT COUNT(*) FROM receiver_activity_event"))
         { rows.next(); return rows.getLong(1); }
     }
@@ -526,6 +531,13 @@ public final class SetupWizardSmoke
     private static void assertAndTypePort(SetupWizard target) throws Exception
     {
         javax.swing.SwingUtilities.invokeAndWait(()-> {
+            if(descendants(target).stream().anyMatch(component -> component instanceof javax.swing.JSpinner &&
+                component.isShowing())) throw new AssertionError("Web port must start inside collapsed More options");
+            var moreOptions=descendants(target).stream().filter(component -> component instanceof javax.swing.JButton button &&
+                button.isShowing() && "More options".equals(button.getAccessibleContext().getAccessibleName()))
+                .map(javax.swing.JButton.class::cast).findFirst().orElseThrow();
+            moreOptions.doClick();
+            target.validate();
             for(java.awt.Component component:descendants(target))
             {
                 if(component instanceof javax.swing.JSpinner spinner && spinner.isShowing())
@@ -719,7 +731,7 @@ public final class SetupWizardSmoke
                 return;
             }
             for(java.awt.Component component:descendants(target)) if(component instanceof javax.swing.JButton button &&
-                (button.getText().equals(title) || title.equals("Finish & launch") && button.getText().equals("Retry launch")) &&
+                (button.getText().equals(title) || title.equals("Finish setup") && button.getText().equals("Retry launch")) &&
                 button.isEnabled() && button.isShowing()) { button.doClick(); return; }
             throw new AssertionError("Button unavailable: "+title);
         });

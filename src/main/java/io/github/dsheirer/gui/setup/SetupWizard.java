@@ -496,7 +496,7 @@ public final class SetupWizard extends JDialog
         diagnostics.setVisible(false);
         detailsToggle.setVisible(false); detailsToggle.setText("Show details");
         title.setText(id.title());
-        next.setText(id == SetupStep.REVIEW ? "Finish & launch" : "Continue");
+        next.setText(id == SetupStep.REVIEW ? "Finish setup" : "Continue");
         canContinue = () -> true;
         accept = () -> completeAndContinue();
         switch(id)
@@ -521,7 +521,7 @@ public final class SetupWizard extends JDialog
         if(hasPendingDatabaseTransition(database))
         {
             notice("Finish updating your settings", "Receiving hasn’t started.", false);
-            paragraph("Your saved configuration and history have an interrupted update. Finish it before reviewing setup.");
+            paragraph("An earlier update didn’t finish. Finish the update before continuing setup.");
             next.setText("Finish update");
             accept = () -> prepareProfile(() -> ApplicationMigrationSuccessDialog.currentDatabaseReport(
                 new ApplicationMigrationService().migrateCurrent(root, false, this::migrationProgress)), false);
@@ -529,7 +529,7 @@ public final class SetupWizard extends JDialog
         }
         if(managedRecordingCatalogNeedsUpgrade && preferences != null)
         {
-            reviewSettings(managedRecordingCatalog, managedRecordingCatalog, "Update the recording library. Recording entries and audio are kept.",
+            reviewSettings(managedRecordingCatalog, managedRecordingCatalog, "Update the list of saved recordings so VCE can use it. Your recording entries and audio files are kept.",
                 null, true, "Update", this::upgradeManagedRecordingCatalog);
             return;
         }
@@ -558,7 +558,7 @@ public final class SetupWizard extends JDialog
                     initialize(false); return true;
                 }, ignored -> showPage(initialStep()));
             }
-            else reviewSettings(database, database, "Update this installation’s settings before receiving starts. Recordings are kept.",
+            else reviewSettings(database, database, "Your saved settings need an update before VCE can start receiving. Your recording files will stay in place.",
                 startupMigrationPlan, true, "Update settings", () -> {
                     boolean backup = createUpgradeBackup;
                     MigrationContent content = migrationContent;
@@ -567,9 +567,13 @@ public final class SetupWizard extends JDialog
                 });
             return;
         }
+        title.setText("Welcome to VCE");
+        paragraph("Let’s get your receiver ready. We’ll guide you through web access, digital voice, recordings, and your radios.");
+        paragraph("How would you like to begin?");
         ButtonGroup group = new ButtonGroup();
-        WizardChoiceCard fresh = choice(group, "Start fresh", "Set up a new installation.", selectedSource == null);
-        WizardChoiceCard bring = choice(group, "Bring my settings", "Choose a previous VCE folder or an XML playlist.", selectedSource != null);
+        WizardChoiceCard fresh = choice(group, "Start fresh", "Start with default settings and an empty channel list. You can add the channels you want to hear after setup.", selectedSource == null);
+        WizardChoiceCard bring = choice(group, "Bring my settings", "Choose a previous VCE folder or an sdrtrunk XML playlist. You’ll review what’s included before importing.", selectedSource != null);
+        paragraph("You can change your preferences later in Settings or the web interface.");
         Runnable changed = () -> next.setText(fresh.isSelected() ? "Start setup" :
             selectedSource == null ? "Choose settings" : "Review settings");
         fresh.radio().addItemListener(e -> changed.run());
@@ -628,7 +632,7 @@ public final class SetupWizard extends JDialog
             .orElseThrow(() -> new IllegalArgumentException(
                 "No saved VCE settings were found. Choose a previous VCE folder or an XML playlist."));
         job("Checking settings…", null, () -> ApplicationMigrationService.readMigrationApproval(selection, root.getParent()), approval -> {
-            selectedScope = "Copies settings, saved keys and available voice tools. Recordings and logs are not copied.";
+            selectedScope = "Bring your saved settings, keys, and digital voice files into this installation. Your original folder stays unchanged. Recordings and logs stay in their original location.";
             reviewSettings(selection.path(), selection.database(), selectedScope, approval.plan(), false, "Import settings", () -> {
                 var confirmed = approval.withContent(migrationContent);
                 prepareProfile(() -> ApplicationMigrationSuccessDialog.previousImportReport(
@@ -640,8 +644,9 @@ public final class SetupWizard extends JDialog
     private void reviewPlaylist(Path source, io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview preview,
                                Runnable proceed)
     {
-        String scope = "Channels: " + preview.channelCount() + " · Aliases: " + preview.aliasCount() +
-            " · Streams: " + preview.streamCount() + ". The selected file stays unchanged.";
+        String scope = "Bring channels, aliases, and streaming settings from this playlist.\n\nChannels: " +
+            preview.channelCount() + " · Aliases: " + preview.aliasCount() + " · Streams: " +
+            preview.streamCount() + ". Your original playlist stays unchanged.";
         reviewSettings(source, source, scope, null, false, "Import playlist", proceed);
     }
 
@@ -659,7 +664,7 @@ public final class SetupWizard extends JDialog
             JCheckBox backup = new JCheckBox("Back up before updating", createUpgradeBackup);
             backup.addActionListener(e -> createUpgradeBackup = backup.isSelected());
             append(backup);
-            paragraph("Without a backup, you cannot return to the previous version.");
+            paragraph("Save a recovery copy in case you need to go back.");
         }
         details("Source location", source.toString());
         if(reviewingSource) WizardStyles.quiet(button("Choose different settings", this::chooseSource));
@@ -719,11 +724,11 @@ public final class SetupWizard extends JDialog
     private void administratorPage()
     {
         boolean exists = administratorConfigured;
-        paragraph(exists ? "Leave the fields blank to keep your password. To change it, enter your current password." :
-            "Choose an administrator password of 7–256 characters.");
-        JPasswordField current = exists ? password("Current administrator password") : new JPasswordField();
-        JPasswordField value = password("New administrator password");
-        JPasswordField confirmation = password("Confirm new password");
+        paragraph(exists ? "An administrator password is already set. Leave these fields blank to keep it, or enter your current password to change it." :
+            "Create the password you’ll use to sign in to VCE and manage your receiver. Your username is admin.");
+        JPasswordField current = exists ? password("Current password") : new JPasswordField();
+        JPasswordField value = password(exists ? "New password (7–256 characters)" : "Password (7–256 characters)");
+        JPasswordField confirmation = password("Confirm password");
         accept = () -> {
             char[] old = current.getPassword(), first = value.getPassword(), second = confirmation.getPassword();
             current.setText(""); value.setText(""); confirmation.setText("");
@@ -751,21 +756,24 @@ public final class SetupWizard extends JDialog
     private void webPage()
     {
         var app = preferences.getApplicationPreference();
-        paragraph("Use the web interface to manage channels and listen. Choose where you’ll access it.");
+        paragraph("You’ll manage channels and listen through a web browser. Choose which devices can connect to this receiver.");
         if(webAdjusted) notice("Web access is now available on this computer", "Web access is enabled locally. Other devices cannot connect.", false);
         else if(progress.get(step) == NEEDS_ATTENTION) notice("Please review your web access", "These settings changed or could not be started last time. Check them before continuing.", false);
         ButtonGroup group = new ButtonGroup();
-        card(group, "This computer only — recommended", "Open the receiver in a browser on this computer. Other devices cannot connect.", !app.isStatsWebServerAnyIpEnabled());
-        WizardChoiceCard networkChoice = choice(group, "Other devices", "Also connect from a phone, tablet or another computer that can reach this receiver.", app.isStatsWebServerAnyIpEnabled());
+        card(group, "This computer only — recommended", "Use VCE in a browser on this computer.", !app.isStatsWebServerAnyIpEnabled());
+        WizardChoiceCard networkChoice = choice(group, "Other devices", "Also connect from a phone, tablet, or another computer.", app.isStatsWebServerAnyIpEnabled());
         JPanel networkDetails=stack();
-        addTo(networkDetails,text("Your firewall controls access, which can extend beyond your home network. VCE does not change firewall rules or router ports."));
+        addTo(networkDetails,text("Your network and firewall control which devices can connect."));
         networkChoice.setDetails(networkDetails);
         JRadioButton network=networkChoice.radio();
         JSpinner port = WizardStyles.integerSpinner(app.getStatsWebServerPort(),
             ApplicationPreference.MIN_STATS_WEB_SERVER_PORT, ApplicationPreference.MAX_STATS_WEB_SERVER_PORT);
-        labelled("Web port", port);
-        paragraph("Use 8090 unless another application already uses it.");
-        details("About secure access", "HTTPS protects sign-in. Your certificate settings are kept; web access is checked before launch.");
+        JPanel advanced = stack();
+        labelled(advanced, "Web port", port, 12);
+        addTo(advanced, text("Use 8090 unless another application already uses it."));
+        append(new WizardDisclosure("More options", advanced));
+        append(Box.createVerticalStrut(16));
+        details("About secure access", "VCE uses a secure connection to protect sign-in. We’ll check web access before launch.");
         accept = () -> {
             commitNumber(port, "Enter a port from " + ApplicationPreference.MIN_STATS_WEB_SERVER_PORT + " to " +
                 ApplicationPreference.MAX_STATS_WEB_SERVER_PORT + ".");
@@ -823,15 +831,15 @@ public final class SetupWizard extends JDialog
             accept = () -> { progress.set(step,progress.get(step)==CARRIED_OVER ? CARRIED_OVER : COMPLETE); completeAndContinue(); };
             return;
         }
-        paragraph("JMBE enables P25 and DMR digital voice. Analog listening does not need it.");
+        paragraph("JMBE lets VCE turn P25 and DMR signals into voice you can hear. You can skip this if you only listen to analog channels.");
         ButtonGroup group=new ButtonGroup();
-        WizardChoiceCard create=choice(group,"Set up digital voice — recommended", "Download, build and install JMBE. Internet access is required; allow a few minutes.",true);
+        WizardChoiceCard create=choice(group,"Set up digital voice — recommended", "Let VCE download and prepare JMBE for this computer. Requires internet access and may take a few minutes.",true);
         JPanel createDetails=stack();
         addTo(createDetails,new WizardDisclosure("JMBE licensing",
             "JMBE source is provided for educational use. Voice-codec algorithms may be subject to patents or other restrictions in your jurisdiction. Review the project’s licensing and applicable restrictions before proceeding. Setup downloads and runs build tools on this computer."));
         JCheckBox consent = new JCheckBox("I agree to download and build JMBE on this computer.");
         WizardStyles.bodyFont(consent, Font.PLAIN); addTo(createDetails,consent); create.setDetails(createDetails);
-        WizardChoiceCard existing=choice(group,"Use a JMBE file I already have", "Choose a JMBE .jar file to check and install.",false);
+        WizardChoiceCard existing=choice(group,"Use a JMBE file I already have", "Choose an existing JMBE .jar file. VCE will check it before installing.",false);
         JPanel existingDetails=stack();
         JTextField selectedFile=sourceField(existingDetails,"JMBE library file",false); existing.setDetails(existingDetails);
         if(compatible) button("Keep current setup", () -> { editJmbe=false; progress.set(step,COMPLETE); if(persist()) showPage(step); });
@@ -917,8 +925,9 @@ public final class SetupWizard extends JDialog
     private void radioReferencePage()
     {
         var rr = preferences.getRadioReferencePreference();
-        paragraph("Connect RadioReference to find systems and import channels.");
+        paragraph("RadioReference helps you find radio systems and add their channels. Imports and location lookup require a premium RadioReference subscription.");
         JPanel account = stack();
+        addTo(account, text("Use your RadioReference account here, separate from your VCE administrator account. These sign-in details are saved on this receiver."));
         JPanel verification = new JPanel(new BorderLayout()) {
             public Dimension getMaximumSize() { return new Dimension(Integer.MAX_VALUE,getPreferredSize().height); }
         };
@@ -1044,15 +1053,16 @@ public final class SetupWizard extends JDialog
         var app = preferences.getApplicationPreference();
         boolean initiallyOff = !app.isStatsLoggingEnabled();
         boolean storedDetailed = app.isStatsDetailedHistoryEnabled();
-        paragraph("Choose how much listening activity to keep.");
+        paragraph("Save information about receiver activity so you can review radio use or troubleshoot problems.");
         ButtonGroup group = new ButtonGroup();
-        JRadioButton off = card(group,"Off", "Do not collect statistics or detailed activity history.",!app.isStatsLoggingEnabled());
-        card(group,"Summary statistics", "Keep activity totals.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
-        JRadioButton detailed = card(group,"Summaries plus detailed history", "Keep individual events for troubleshooting. This uses more storage.",app.isStatsLoggingEnabled() && app.isStatsDetailedHistoryEnabled());
+        JRadioButton off = card(group,"Off", "Do not save new statistics or detailed activity history.",!app.isStatsLoggingEnabled());
+        card(group,"Summary statistics", "Keep activity totals for later review.",app.isStatsLoggingEnabled() && !app.isStatsDetailedHistoryEnabled());
+        JRadioButton detailed = card(group,"Summaries plus detailed history", "Also keep individual activity events. Useful for troubleshooting, but uses more storage.",app.isStatsLoggingEnabled() && app.isStatsDetailedHistoryEnabled());
         JSpinner days = WizardStyles.integerSpinner(app.getStatsLoggingRetentionDays(),1,365);
         JPanel retention=stack();
-        addTo(retention,text("Retention in days (30 recommended):"));
-        days.getAccessibleContext().setAccessibleName("Activity retention in days"); addTo(retention,days);
+        labelled(retention, "Keep activity for (days)", days, 8);
+        days.getAccessibleContext().setAccessibleName("Activity retention in days");
+        addTo(retention,text("30 days recommended."));
         append(retention); retention.setVisible(!off.isSelected());
         off.addItemListener(e -> { retention.setVisible(!off.isSelected()); page.revalidate(); });
         accept = () -> {
@@ -1071,13 +1081,12 @@ public final class SetupWizard extends JDialog
     {
         RecordingMode savedMode = preferences.getRecordPreference().getRecordingMode();
         boolean managedSelected = selectManagedByDefault(progress, savedMode);
-        paragraph("Choose how new calls are saved.");
+        paragraph("For calls you choose to record, pick how VCE saves them.");
         ButtonGroup group = new ButtonGroup();
         JRadioButton managed = card(group, "Managed Recordings · Recommended",
-            "Searchable call details and browser playback, with optional age retention.", managedSelected);
+            "Search, browse, and play saved calls in VCE.", managedSelected);
         card(group, "Classic recordings",
-            "One folder for other software, such as Trunking Recorder.", !managedSelected);
-        paragraph("Only future calls are affected. Existing Managed recordings stay searchable.");
+            "Save audio files in one folder for other software, such as Trunking Recorder.", !managedSelected);
         accept = () -> {
             preferences.getRecordPreference().setRecordingMode(managed.isSelected() ?
                 RecordingMode.MANAGED : RecordingMode.CLASSIC);
@@ -1095,7 +1104,7 @@ public final class SetupWizard extends JDialog
 
     private void hardwarePage()
     {
-        paragraph("Let’s see which radios are connected.");
+        paragraph("Check that VCE can find your connected radio receivers. After setup, use Channels to choose what to listen to.");
         JPanel inventory=stack(); append(inventory);
         addTo(inventory,text("Looking for connected radios…"));
         Runnable scan = () -> {
@@ -1103,7 +1112,7 @@ public final class SetupWizard extends JDialog
             job("Looking for connected radios…", () -> stopped.set(true),
                 () -> new TunerHardwareDiscovery().scan(stopped::get), result -> {
                     inventory.removeAll();
-                    for(var device: result.devices()) addTo(inventory,noticePanel("Detected · " + device.model(),device.identity() == null ? "Connected radio" : device.identity(),true));
+                    for(var device: result.devices()) addTo(inventory,noticePanel("Radio found · " + device.model(),device.identity() == null ? "Connected radio" : device.identity(),true));
                     if(result.devices().isEmpty()) addTo(inventory,noticePanel("No radios found yet", "That’s okay — you can connect one later. If a radio is already plugged in, check its cable and driver, then choose Rescan.",false));
                     for(String info:result.notices()) addTo(inventory,noticePanel("Optional radio support",info,false));
                     for(String error:result.errors()) addTo(inventory,new WizardNotice("A radio could not be checked",error,WizardNotice.Tone.ERROR));
@@ -1128,13 +1137,12 @@ public final class SetupWizard extends JDialog
             accept=this::completeAndContinue;
             return;
         }
-        paragraph("Find the fastest supported decoding methods for this computer.");
-        notice("Before you start", "Close other applications and pause downloads while these checks run. Leave this window open.",false);
+        paragraph("These checks help VCE decode radio signals efficiently on this computer. Run them now, or use the defaults and do this later in Settings.");
+        notice("Before you start", "Avoid other demanding work while the checks run. Leave this window open.",false);
         paragraph(pending + " checks to run · " + (manager.getCalibrationTypes().size()-pending) + " saved checks reused");
         details("Why are these checks needed?", manager.getPendingReason() + "\n\nOnly new, changed or missing checks run. Valid results are kept if you stop or retry. A different processor or Java version may require all checks again.");
         next.setText(progress.get(step)==NEEDS_ATTENTION ? "Try remaining checks" : "Optimize now");
-        defer("Skip this time");
-        paragraph("You can use defaults now and finish these checks on a later launch.");
+        defer("Use defaults for now");
         accept = this::benchmark;
     }
 
@@ -1146,8 +1154,8 @@ public final class SetupWizard extends JDialog
             completed=value.completed(); total=value.total();
             operation=completed==total ? "Saving your decoding choices…" : "Checking decoding methods · " + (completed+1) + " of " + total;
         },output), result -> {
-            if(result.cancelled()) { progress.set(step,DEFERRED); persist(); showPage(step); detailsToggle.setVisible(true); notice("Optimization stopped", "Completed checks are saved. You can run the remaining checks now or skip this time.",false); return; }
-            if(result.failed()>0) { progress.set(step,NEEDS_ATTENTION); persist(); showPage(step); detailsToggle.setVisible(true); fail("Some checks couldn’t finish. Your successful results are saved. Try the remaining checks again, or skip this time."); return; }
+            if(result.cancelled()) { progress.set(step,DEFERRED); persist(); showPage(step); detailsToggle.setVisible(true); notice("Optimization stopped", "Completed checks are saved. Run the remaining checks now, or choose Use defaults for now.",false); return; }
+            if(result.failed()>0) { progress.set(step,NEEDS_ATTENTION); persist(); showPage(step); detailsToggle.setVisible(true); fail("Some checks couldn’t finish. Your successful results are saved. Try the remaining checks again, or choose Use defaults for now."); return; }
             progress.set(step,COMPLETE); persist(); showPage(step);
         });
     }
@@ -1161,7 +1169,7 @@ public final class SetupWizard extends JDialog
 
     private void reviewPage()
     {
-        paragraph("Review your choices, then choose Finish & launch to start receiving.");
+        paragraph("Review your choices, then finish setup. VCE will open in your browser, where you can add channels or start listening.");
         JPanel summary=new JPanel(new GridLayout(0,2,24,12)); summary.setOpaque(false);
         for(SetupStep id: SetupStep.values()) if(id != SetupStep.REVIEW)
         {
@@ -1179,11 +1187,11 @@ public final class SetupWizard extends JDialog
         var app = preferences.getApplicationPreference();
         if(!autoStart.isEmpty() || progress.isImported() || progress.isComplete())
             paragraph("Channels selected to start: " + (autoStart.isEmpty() ? "None — you can add channels after setup." : String.join(", ",autoStart)));
-        JCheckBox launchChannels = new JCheckBox("Start configured channels after setup", startChannels);
+        JCheckBox launchChannels = new JCheckBox("Start these channels when VCE opens", startChannels);
         if(!autoStart.isEmpty()) append(launchChannels);
         if(vaultLocked())
         {
-            paragraph("The encryption vault is locked. Unlock it or explicitly continue without it for this run.");
+            paragraph("Your saved encryption keys are locked. Unlock them to use them, or continue without them for this run.");
             JPasswordField secret = password("Vault password");
             button("Unlock vault", () -> {
                 char[] value=secret.getPassword(); secret.setText("");
@@ -1235,7 +1243,7 @@ public final class SetupWizard extends JDialog
         copyError.setVisible(false);
         back.setVisible(false);
         next.setText("Launch VCE & open browser");
-        paragraph("Your browser will open on this computer when you launch VCE. If it shows a certificate warning, follow the pictured steps.");
+        paragraph("Your browser may show a warning because VCE creates its own security certificate. Check that the address matches the one below before continuing.");
         paragraph("This computer's VCE web address: " + address);
         if(app.isStatsWebServerAnyIpEnabled())
             paragraph("On another device, use this computer's reachable address with port " + app.getStatsWebServerPort() +
@@ -1371,7 +1379,7 @@ public final class SetupWizard extends JDialog
         if(step==SetupStep.RADIO_REFERENCE) return "RadioReference connection failed. Check your account details and internet connection, then retry or choose Set up later.";
         if(step==SetupStep.JMBE) return "Digital voice setup couldn’t finish. Check your internet connection or the JMBE file you selected, then try again. Any working library is still safe. You can also set this up later.";
         if(step==SetupStep.ADMINISTRATOR) return "Administrator setup failed. Check the current password and password rules, then retry.";
-        if(step==SetupStep.REVIEW) return "Web access couldn’t start. Another application may be using this port, or the security settings may need attention. Return to Web access, check the port and try again.";
+        if(step==SetupStep.REVIEW) return "Web access couldn’t start. Another application may be using this port, or the security settings may need attention. Return to Web access, open More options to check the port, then try again.";
         if(step==SetupStep.SOURCE) return "Your saved data could not be updated or imported. Use Copy error when reporting this problem.";
         return "This step couldn’t finish. Try again, or return to it later. Any completed setup choices are still saved.";
     }
@@ -1615,6 +1623,6 @@ public final class SetupWizard extends JDialog
     private static boolean present(String value) { return value!=null && !value.isBlank(); }
     private static String label(SetupProgress.State value)
     {
-        return switch(value) { case PENDING->"Pending"; case CARRIED_OVER->"Carried over"; case COMPLETE->"Complete"; case NEEDS_ATTENTION->"Needs attention"; case RUNNING->"Running"; case DEFERRED->"Deferred"; };
+        return switch(value) { case PENDING->"Pending"; case CARRIED_OVER->"Carried over"; case COMPLETE->"Complete"; case NEEDS_ATTENTION->"Needs attention"; case RUNNING->"Running"; case DEFERRED->"Skipped for now"; };
     }
 }

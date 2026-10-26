@@ -29,8 +29,8 @@ your channels receive and your recordings or streams work as expected.
 
 ## Work through setup
 
-First setup takes you through Your settings, Administrator, Web access, Digital audio, RadioReference,
-Statistics & history, Recordings, Your radios, Optimize decoding, and Review & finish. Usable imported choices show
+First setup takes you through Your settings, Administrator, Web access, Digital voice, RadioReference,
+Statistics & history, Recordings, Your radios, Improve performance, and Review & finish. Usable imported choices show
 **Carried over**. Continue skips those completed steps; select any step to review or change it.
 
 A healthy completed profile starts normally. Optional JMBE checks, decoding optimization, and unread release notes
@@ -44,7 +44,7 @@ repairs, and a required vault unlock are handled before reception starts.
   if you want remote access. This makes the service reachable through the computer's network interfaces, subject
   to its firewall; it does not open firewall or router ports. An imported disabled web server is enabled locally,
   with the change shown in setup.
-- **Digital audio:** Set up JMBE to hear supported digital voice calls. Use an existing library or allow the wizard
+- **Digital voice:** Set up JMBE to hear supported digital voice calls. Use an existing library or allow the wizard
   to download and build it. If that fails, retry or set it up later; digital voice needs a working library.
   After migration, setup checks a carried-over library for updates. You can update it or keep the current version;
   a failed update check does not prevent you from continuing with a working library.
@@ -55,10 +55,10 @@ repairs, and a required vault unlock are handled before reception starts.
   retention or ordinary log files; imported Off choices stay Off.
 - **Recordings:** Choose Managed Recordings for searchable call details and browser playback, or Classic recordings for ordinary
   audio files. Imported recording choices are preserved. Review the recording folder before starting reception.
-- **Your radios:** A device marked **Detected** has been found; reception has not been tested. No hardware or a missing
+- **Your radios:** A device marked **Radio found** has been found; reception has not been tested. No hardware or a missing
   driver does not prevent completing setup. Use **Rescan** after connecting hardware or fixing its driver.
-- **Optimize decoding:** Run the recommended tests to choose efficient signal processing for this computer. Pause
-  CPU-heavy work first. Completed valid results are reused; Retry keeps them. **Skip this time** allows you to continue.
+- **Improve performance:** Run the recommended tests to choose efficient signal processing for this computer. Pause
+  CPU-heavy work first. Completed valid results are reused; Retry keeps them. **Use defaults for now** allows you to continue.
 
 The sun/moon button changes Light or Dark appearance without losing entered settings. Downloads, library building,
 and decoding tests show progress in the wizard. Navigation waits for a running operation to finish, fail, or stop

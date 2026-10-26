@@ -32,7 +32,8 @@ public final class MigrationContentChoices extends JPanel
         keepHistory.setAlignmentX(Component.LEFT_ALIGNMENT);
         WizardStyles.bodyFont(keepHistory, Font.PLAIN);
         String estimate = ApplicationMigrationEstimate.fullMigrationWarning(database);
-        String loss = "Activity, statistics, and alert history start fresh. Settings and recordings are kept.";
+        String loss = "Past activity, statistics, and alert history will start fresh. " +
+            "Your channels, aliases, accounts, and settings are kept.";
         JTextArea help = WizardStyles.prose(keepHistory.isSelected() ? estimate : loss);
         add(keepHistory);
         add(Box.createVerticalStrut(8));

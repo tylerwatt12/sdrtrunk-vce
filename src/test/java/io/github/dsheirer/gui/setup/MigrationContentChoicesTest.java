@@ -34,8 +34,8 @@ class MigrationContentChoicesTest
             assertFalse(keep.isSelected());
             assertNull(changed.get(), "Rendering must not change the approved content");
             String copy = copy(choices);
-            assertTrue(copy.contains("Activity, statistics, and alert history start fresh."));
-            assertTrue(copy.contains("Settings and recordings are kept."));
+            assertTrue(copy.contains("Past activity, statistics, and alert history will start fresh."));
+            assertTrue(copy.contains("Your channels, aliases, accounts, and settings are kept."));
             keep.doClick();
             assertEquals(MigrationContent.FULL, choices.selectedContent());
             assertEquals(MigrationContent.FULL, changed.get());
@@ -55,7 +55,7 @@ class MigrationContentChoicesTest
                 MigrationContent.CONFIGURATION_ONLY, ignored -> fail("Initial rendering must not change the choice"));
             assertEquals(MigrationContent.CONFIGURATION_ONLY, choices.selectedContent());
             assertFalse(checkbox(choices).isSelected());
-            assertTrue(copy(choices).contains("alert history start fresh"));
+            assertTrue(copy(choices).contains("alert history will start fresh"));
             MigrationContentChoices full = new MigrationContentChoices(temporary.resolve("not-present.sqlite"),
                 MigrationContent.FULL, ignored -> fail("Initial rendering must not change the choice"));
             assertTrue(checkbox(full).isSelected());
