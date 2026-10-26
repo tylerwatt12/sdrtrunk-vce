@@ -6,6 +6,7 @@ const { selectDockSource } = require('./fixtures/audio-dock-source.cjs');
 const dock = (page) => page.locator('#audio-dock');
 const badge = (page) => dock(page).locator('.audio-dock-listening-status > .ui-pill');
 const feedback = (page) => page.locator('.audio-dock-playback-feedback');
+const selectedScanList = { id: 1, name: 'Fire', enabled: true, selected: true };
 
 async function mountDock(page, theme) {
   await page.emulateMedia({ reducedMotion: 'reduce' });
@@ -14,7 +15,7 @@ async function mountDock(page, theme) {
   await page.goto('/dock-feedback-test');
   // Observable adapters deliver normal engine notifications to the production
   // presentation without waiting for network polling or an audio decoder.
-  await page.evaluate(async () => {
+  return page.evaluate(async (scanList) => {
     const { createAudioDock } = await import('/assets/core/audio-dock.js');
     const node = (tag, classes = '', text) => {
       const element = document.createElement(tag); element.className = classes;
@@ -34,7 +35,8 @@ async function mountDock(page, theme) {
       source_alias: 'Engine 4', channel: 'North Ridge Channel', started_at_ms: Date.now(), duration_ms: 42_000 };
     const permissions = { live: true, recordings: true };
     const liveState = { current: call, displayCall: call, volume: 0.65, stopped: false, paused: false,
-      queuedCount: 0, queue: [], scanLists: [], currentReady: false, duration: 42, currentTime: 3,
+      queuedCount: 0, queue: [], scanLists: [scanList], scanListCatalogReady: true,
+      scanListCatalogState: 'ready', currentReady: false, duration: 42, currentTime: 3,
       holdTarget: null, status: 'Waiting for the next matching call' };
     const recordingState = { current: call, stopped: false, paused: true, playing: false, loading: false,
       volume: 1, queue: [], clickMode: 'once', duration: 42, currentTime: 3, status: 'Ready to play' };
@@ -60,7 +62,8 @@ async function mountDock(page, theme) {
       access: () => permissions, entityRefHref: () => null, canViewRadio: () => false, href: () => '/',
       getTitlePreference: () => false, setTitlePreference: async () => {} });
     window.dockFeedback = { component, permissions, publish };
-  });
+    return call;
+  }, selectedScanList);
 }
 
 async function size(page, value) {
@@ -84,7 +87,7 @@ for (const display of [{ name: 'desktop', width: 1280, height: 900, theme: 'ligh
   { name: 'phone', width: 390, height: 844, theme: 'dark' }]) {
   test(`ordinary playback states keep every ${display.name} player size steady`, async ({ page }) => {
     await page.setViewportSize({ width: display.width, height: display.height });
-    await mountDock(page, display.theme);
+    const call = await mountDock(page, display.theme);
     for (const presentation of ['full', 'minimal', 'collapsed']) {
       await size(page, presentation);
       await publish(page, 'live', { stopped: false, paused: false, holdTarget: null,
@@ -101,9 +104,18 @@ for (const display of [{ name: 'desktop', width: 1280, height: 900, theme: 'ligh
         await expect(feedback(page)).toBeHidden();
         await expect.poll(() => geometry(page)).toEqual(baseline);
       }
-      await publish(page, 'live', { status: 'Buffering', holdTarget: { label: 'Fire Dispatch' } });
+      await publish(page, 'live', { status: 'Buffering', currentReady: false,
+        holdTarget: { label: 'Fire Dispatch' } });
       await expect(badge(page)).toHaveText('Holding');
       await expect(feedback(page)).toBeHidden();
+      await publish(page, 'live', { scanLists: [{ ...selectedScanList, selected: false }],
+        current: null, currentReady: false, queue: [], queuedCount: 0, status: 'Select a scan list' });
+      await expect(badge(page)).toHaveText('Select a List');
+      await expect(badge(page)).not.toHaveClass(/ui-pill-success/);
+      await expect(feedback(page)).toBeHidden();
+      await expect.poll(() => geometry(page)).toEqual(baseline);
+      await publish(page, 'live', { scanLists: [selectedScanList], current: call, status: 'Buffering' });
+      await expect(badge(page)).toHaveText('Holding');
       await publish(page, 'live', { status: 'Paused · collecting calls', paused: true });
       await expect(badge(page)).toHaveText('Paused');
       await expect(feedback(page)).toBeHidden();
