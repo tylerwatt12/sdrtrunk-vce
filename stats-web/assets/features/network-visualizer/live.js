@@ -9,14 +9,13 @@ function createP25ActivityFeed(options) {
   let source = null, retryTimer = 0, closed = false, epoch = '', sequence = 0, cursor = 0;
   let generation = 0, bufferedBytes = 0, retryDelay = 500;
   const buffered = new Map();
-  const hidden = () => options.isHidden?.() === true;
   const status = value => { if (!closed) options.onStatus?.(value); };
   const clearBuffer = () => { buffered.clear(); bufferedBytes = 0; };
   const stopSource = () => { generation++; source?.close(); source = null; epoch = ''; clearBuffer(); };
   function reconnect(reason) {
     if (closed) return;
-    stopSource(); options.onReset?.(reason); status(hidden() ? 'paused' : 'reconnecting');
-    if (hidden() || retryTimer) return;
+    stopSource(); options.onReset?.(reason); status('reconnecting');
+    if (retryTimer) return;
     retryTimer = options.setTimeout(() => { retryTimer = 0; connect(); }, retryDelay);
     retryDelay = Math.min(10_000, retryDelay * 2);
   }
@@ -74,11 +73,11 @@ function createP25ActivityFeed(options) {
     cursor = value.next_after_id;
   }
   function connect() {
-    if (closed || hidden() || source) return;
+    if (closed || source) return;
     status('connecting');
     const attempt = ++generation;
     const accept = callback => (...args) => {
-      if (closed || hidden() || attempt !== generation) return;
+      if (closed || attempt !== generation) return;
       try { callback(...args); } catch (error) { options.onError?.(error); reconnect('gap'); }
     };
     source = options.openStream({ boundary: accept(boundary), delta: accept(delta), append: accept(append),
@@ -89,12 +88,6 @@ function createP25ActivityFeed(options) {
     // Refresh reopens at the present; it does not preload past observations.
     reseed() { if (!closed) { if (retryTimer) options.clearTimeout(retryTimer); retryTimer = 0;
       stopSource(); options.onReset?.('refresh'); connect(); } },
-    visibilityChanged() {
-      if (closed) return;
-      if (retryTimer) options.clearTimeout(retryTimer); retryTimer = 0;
-      stopSource(); options.onReset?.('visibility');
-      if (hidden()) status('paused'); else connect();
-    },
     close() { if (closed) return; closed = true; stopSource();
       if (retryTimer) options.clearTimeout(retryTimer); retryTimer = 0; }
   });

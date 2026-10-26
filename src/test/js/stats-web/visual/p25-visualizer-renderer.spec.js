@@ -244,25 +244,69 @@ test('ordinary activity repaints reuse the mesh without inventing flight', async
   await page.evaluate(() => window.visualizerFixture.renderer.dispose());
 });
 
-test('hidden updates settle immediately and resume without stale motion or fading', async ({ page }) => {
+test('hidden updates retain current data without rendering and resume without stale motion or fading', async ({ page }) => {
   await openRenderer(page, 'light', 1280, false, true);
   await affiliationScene(page);
   await page.evaluate(() => {
     const f = window.visualizerFixture;
     f.renderer.setData(f.dataAt('B'), { affiliationChanges: [f.change('A', 'B')] });
-    f.renderer.focusAffiliation('radio-7001', 0);
+    f.renderer.focusAffiliation('radio-7001', 600);
+  });
+  await page.clock.runFor(100);
+  await page.evaluate(() => {
+    const f = window.visualizerFixture;
+    f.work = { publications: 0, renders: 0, labels: 0, controls: 0 };
+    const publish = f.graph.graphData;
+    f.graph.graphData = (...args) => {
+      if (args.length) f.work.publications += 1;
+      return publish(...args);
+    };
+    const renderer = f.graph.renderer(), render = renderer.render;
+    renderer.render = (...args) => { f.work.renders += 1; return render.apply(renderer, args); };
+    const project = f.graph.graph2ScreenCoords;
+    f.graph.graph2ScreenCoords = (...args) => { f.work.labels += 1; return project(...args); };
+    const controls = f.graph.controls(), update = controls.update;
+    controls.update = (...args) => { f.work.controls += 1; return update.apply(controls, args); };
     f.hidden = true;
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => f.hidden });
     document.dispatchEvent(new Event('visibilitychange'));
+    // Journey framing can leave the camera outside the normal system envelope.
+    f.graph.camera().position.set(900, 500, 600);
+    f.hiddenBefore = { camera: f.inspect().camera, labels: document.querySelector('.network-visualizer-label-layer').innerHTML,
+      opacity: f.mesh().material.opacity, work: { ...f.work } };
+    f.renderer.setMode('manual');
+    f.renderer.enterTalkgroup('system', 'B', { immediate: true });
+    f.renderer.enterSystem('system', { immediate: true });
+    f.renderer.moveManualCamera({ forward: 1 }, 0.05);
+    f.renderer.setMode('auto');
+    f.renderer.setData(f.dataAt('B'), { affiliationChanges: [f.change('A', 'B')] });
     f.renderer.setData(f.dataAt('C'), { affiliationChanges: [f.change('B', 'C')] });
+  });
+  await page.clock.runFor(5_000);
+  const hidden = await page.evaluate(() => {
+    const f = window.visualizerFixture;
+    return { before: f.hiddenBefore, camera: { ...f.graph.camera().position },
+      labels: document.querySelector('.network-visualizer-label-layer').innerHTML,
+      opacity: f.mesh().material.opacity, work: f.work, rotating: f.graph.controls().autoRotate };
+  });
+  expect(hidden.work).toEqual(hidden.before.work);
+  expect(hidden.camera).toEqual(hidden.before.camera);
+  expect(hidden.labels).toBe(hidden.before.labels);
+  expect(hidden.opacity).toBe(hidden.before.opacity);
+  expect(hidden.rotating).toBe(false);
+  await page.evaluate(() => {
+    const f = window.visualizerFixture;
     f.hidden = false;
     document.dispatchEvent(new Event('visibilitychange'));
   });
   await page.clock.runFor(300);
   const resumed = await page.evaluate(() => window.visualizerFixture.inspect());
   expect(resumed.radio.x).toBe(18);
+  expect(resumed.radio.y).toBe(-80);
+  expect(resumed.movementLinks).toBe(0);
   expect(resumed.rotating).toBe(true);
   expect(resumed.cubes.A.opacity).toBeGreaterThan(0.7);
+  expect(await page.evaluate(() => window.visualizerFixture.work.publications)).toBe(1);
   await page.evaluate(() => { delete document.hidden; window.visualizerFixture.renderer.dispose(); });
 });
 

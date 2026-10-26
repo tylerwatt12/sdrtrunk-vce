@@ -11,9 +11,9 @@ import {
   p25ActionCount,
   mostActiveP25System
 } from './history.js?v=20';
-import { createP25ActivityFeed } from './live.js?v=5';
+import { createP25ActivityFeed } from './live.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=5';
-import { createP25Renderer } from './renderer.js?v=11';
+import { createP25Renderer } from './renderer.js?v=12';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=6';
 import {
   P25_EVENT_SETTINGS,
@@ -161,6 +161,7 @@ function createP25Visualizer(dependencies = {}) {
   let activitySubscription = null;
   let serverTimeOffsetMs = 0;
   let scenePresented = false;
+  let sceneDirty = false;
   let collectionEnabled = true;
   let sourceEpoch = '';
   let overviewSelected = false;
@@ -252,8 +253,10 @@ function createP25Visualizer(dependencies = {}) {
   function renderActions() {
     for (const [id, { count, label }] of actionCounts) {
       const value = p25ActionCount(state, id);
-      count.textContent = String(value);
-      count.setAttribute('aria-label', `${label}: ${value} since this page opened`);
+      if (count.textContent !== String(value)) {
+        count.textContent = String(value);
+        count.setAttribute('aria-label', `${label}: ${value} since this page opened`);
+      }
     }
     ensureEventsSpace();
   }
@@ -302,7 +305,7 @@ function createP25Visualizer(dependencies = {}) {
   }
 
   function ensureEventsSpace() {
-    if (events.hidden || eventsModal || closed) return;
+    if (events.hidden || eventsModal || closed || presentationPaused()) return;
     const rowHeight = eventList.firstElementChild?.getBoundingClientRect().height || 0;
     if (shortViewport.matches || (rowHeight && eventList.clientHeight < rowHeight)) void openEventsSheet();
   }
@@ -329,7 +332,9 @@ function createP25Visualizer(dependencies = {}) {
   cancel.addEventListener('click', () => { restoreChoices(); hideActions(); });
 
   function renderGraph(animate = true, affiliationChanges = []) {
-    if (!renderer || closed) return;
+    if (closed) return;
+    if (!renderer || presentationPaused()) { sceneDirty = true; return; }
+    sceneDirty = false;
     const graph = buildP25Graph(state, selectedSystemKey, Date.now() + serverTimeOffsetMs, selectedGroupKey,
       { highlightCategories: highlightedCategories });
     visibleNodeKeys = new Set(graph.nodes.map(value => value.id));
@@ -438,7 +443,9 @@ function createP25Visualizer(dependencies = {}) {
   function updateScene(result = { focusCandidates: [], affiliationChanges: [] }) {
     renderActions();
     if (closed) return;
+    if (presentationPaused()) { sceneDirty = true; return; }
     if (!renderer) {
+      sceneDirty = true;
       for (const change of result.affiliationChanges || []) {
         pendingAffiliations.set(change.radioKey, change);
         if (pendingAffiliations.size > 256) pendingAffiliations.delete(pendingAffiliations.keys().next().value);
@@ -479,37 +486,62 @@ function createP25Visualizer(dependencies = {}) {
     resolveGuideScene(true);
   }
 
+  function presentationPaused() { return document.hidden || guideSuspended; }
+
+  function expireIdle(now = Date.now() + serverTimeOffsetMs) {
+    if (now < nextIdleCleanupAtMs) return false;
+    nextIdleCleanupAtMs = now + 60_000;
+    return expireP25History(state, now - 15 * 60_000, { atMs: now }).changed;
+  }
+
   function acceptAffiliations(document) {
     collectionEnabled = document.collection_enabled ?? collectionEnabled;
     const result = applyP25Affiliations(state, document, { ...activityOptions(), sequence: document.sequence });
     setLiveStatus('live');
-    if (result.changed) updateScene(result);
+    if (expireIdle() || result.changed) updateScene(result);
   }
 
   function acceptRows(rows) {
     const result = applyP25ActivityRows(state, rows, activityOptions());
-    if (result.changed) updateScene(result);
+    if (expireIdle() || result.changed) updateScene(result);
   }
 
   function acceptLiveTables(initial = false) {
-    if (closed || guideSuspended) return;
+    if (closed) return;
     const result = applyP25LiveTables(state, [...liveTables.values()], activityOptions(initial));
-    if (result.changed) updateScene(result);
+    if (expireIdle() || result.changed) updateScene(result);
   }
 
   function setLiveStatus(value) {
     if (value === 'live') setStatus(!state.available ? 'P25 activity unavailable · Reconnecting' :
       collectionEnabled ? 'Live' : 'Live · Activity collection off', state.available ? 'current' : 'stale');
-    else if (value === 'paused') setStatus('Paused while this tab is hidden', 'stale');
     else if (['error', 'retrying', 'reconnecting'].includes(value)) setStatus('Reconnecting to live activity', 'stale');
     else setStatus('Connecting to live activity', 'stale');
   }
 
+  function pausePresentation() {
+    if (animationFrame) cancelAnimationFrame(animationFrame);
+    animationFrame = 0;
+    if (highlightTimer) window.clearTimeout(highlightTimer);
+    highlightTimer = 0;
+    pendingAffiliations.clear(); pendingFocusCandidates = [];
+    sceneDirty = true;
+    resetAttention();
+  }
+
+  function resumePresentation() {
+    if (closed || presentationPaused()) return;
+    lastAnimationAt = performance.now();
+    if (expireIdle()) sceneDirty = true;
+    acceptLiveTables(true);
+    if (sceneDirty) updateScene();
+    if (!animationFrame) animationFrame = requestAnimationFrame(animate);
+  }
+
   function onVisibilityChanged() {
     pressedKeys.clear();
-    if (document.hidden) resetAttention();
-    feed?.visibilityChanged();
-    if (!document.hidden) acceptLiveTables(true);
+    if (presentationPaused()) pausePresentation();
+    else resumePresentation();
   }
 
   function setMode(value) {
@@ -544,13 +576,8 @@ function createP25Visualizer(dependencies = {}) {
 
   function animate(at) {
     animationFrame = 0;
-    if (closed || guideSuspended) return;
-    const now = Date.now() + serverTimeOffsetMs;
-    if (!document.hidden && now >= nextIdleCleanupAtMs) {
-      nextIdleCleanupAtMs = now + 60_000;
-      const result = expireP25History(state, now - 15 * 60_000, { atMs: now });
-      if (result.changed) updateScene(result);
-    }
+    if (closed || presentationPaused()) return;
+    if (expireIdle()) updateScene();
     const delta = Math.min(0.05, Math.max(0, (at - lastAnimationAt) / 1_000));
     lastAnimationAt = at;
     if (mode === 'manual') renderer?.moveManualCamera({
@@ -632,7 +659,7 @@ function createP25Visualizer(dependencies = {}) {
     renderer?.dispose();
   };
   dependencies.signal?.addEventListener?.('abort', close, { once: true });
-  animationFrame = requestAnimationFrame(animate);
+  if (!presentationPaused()) animationFrame = requestAnimationFrame(animate);
   const rendererReady = initialize();
   feed = createP25ActivityFeed({
     openStream: dependencies.openActivityStream,
@@ -662,7 +689,6 @@ function createP25Visualizer(dependencies = {}) {
       if (Number.isFinite(boundary.server_time_ms)) serverTimeOffsetMs = boundary.server_time_ms - Date.now();
     },
     onError: () => setLiveStatus('error'),
-    isHidden: () => document.hidden || guideSuspended,
     setTimeout: (callback, delay) => window.setTimeout(callback, delay),
     clearTimeout: timer => window.clearTimeout(timer)
   });
@@ -688,15 +714,8 @@ function createP25Visualizer(dependencies = {}) {
     guideSuspended = Boolean(value);
     pressedKeys.clear();
     renderer?.setGuideSuspended(guideSuspended);
-    if (guideSuspended) {
-      if (animationFrame) cancelAnimationFrame(animationFrame);
-      animationFrame = 0;
-    } else {
-      lastAnimationAt = performance.now();
-      animationFrame = requestAnimationFrame(animate);
-    }
-    feed?.visibilityChanged();
-    if (!guideSuspended) acceptLiveTables(true);
+    if (presentationPaused()) pausePresentation();
+    else resumePresentation();
   }
 
   const ready = rendererReady.then(async () => {

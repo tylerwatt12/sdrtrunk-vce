@@ -8240,7 +8240,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const [feature, presentation] = await Promise.all(mapTour ? [
       import('./features/listen-map.js?v=14'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=59'), import('./guides/network-visualizer-presentation.js?v=2')
+      import('./features/network-visualizer/index.js?v=60'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
       import('./features/alerts.js?v=23'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
@@ -11592,7 +11592,8 @@ function reportLiveChannelActivityGap(detail, reconnect = false) {
 }
 
 function synchronizeLiveChannelActivitySource() {
-  if (document.hidden || !liveChannelActivitySubscribers.size) {
+  const background = [...liveChannelActivitySubscribers].some(subscriber => subscriber.background);
+  if (document.hidden && !background || !liveChannelActivitySubscribers.size) {
     if (liveChannelActivitySource) {
       const source = liveChannelActivitySource;
       liveChannelActivitySource = null;
@@ -11680,6 +11681,7 @@ document.addEventListener('visibilitychange', synchronizeLiveChannelActivitySour
 function subscribeLiveChannelActivity(callbacks = {}, options = {}) {
   const subscriber = {
     markers: options.markers === true,
+    background: options.background === true,
     snapshot: typeof callbacks.snapshot === 'function' ? callbacks.snapshot : null,
     activityBatch: typeof callbacks.activityBatch === 'function' ? callbacks.activityBatch : null,
     gap: typeof callbacks.gap === 'function' ? callbacks.gap : null,
@@ -20975,7 +20977,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
     saveEventSettings: saveP25VisualizerEventSettings,
     messageTypeLabel: (name) => activityOptionLabel(name),
     messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
-    subscribeActivity: subscribeLiveChannelActivity,
+    subscribeActivity: callbacks => subscribeLiveChannelActivity(callbacks, { background: true }),
     openActivityStream: (callbacks) => {
       const source = liveConnection('p25_activity', { subscription_id: randomLiveClientId() }, false);
       [['source_change', 'boundary'], ['p25_state_delta', 'delta'], ['activity_append', 'append'],
@@ -20998,7 +21000,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=59');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=60');
   // The live scene does not wait for an optional label catalog or historical data.
   void loadActivityMessageTypes();
   const visualizerModule = await p25VisualizerModulePromise;

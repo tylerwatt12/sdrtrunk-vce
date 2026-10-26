@@ -121,6 +121,9 @@ async function createP25Renderer(options = {}) {
   let cameraFrame = 0;
   let resizeObserver = null;
   let themeObserver = null;
+  let graphDirty = false;
+  let themeDirty = false;
+  let refreshPending = false;
   let mode = options.mode === 'manual' ? 'manual' : 'auto';
   let cameraPhase = 'roam';
   let scope = { level: 'overview', systemKey: '' };
@@ -143,6 +146,8 @@ async function createP25Renderer(options = {}) {
   let canonicalLinks = [];
   const geometries = new Map();
   const materials = new Map();
+
+  const renderingPaused = () => documentValue.hidden || guideSuspended;
 
   function movementIncludes(key) { return movementParticipants.has(key); }
 
@@ -245,6 +250,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function updateFocusOpacity() {
+    if (renderingPaused()) { graphDirty = true; return; }
     materials.forEach((value) => {
       const base = Number(value.userData?.p25BaseOpacity);
       const dim = Number(value.userData?.p25DimOpacity);
@@ -253,6 +259,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function applyFocusStyles() {
+    if (renderingPaused()) { graphDirty = true; return; }
     movementParticipants.clear();
     for (const [radioKey, trip] of affiliationMoves) {
       for (const key of [radioKey, trip.change.fromGroupKey, trip.change.toGroupKey]) movementParticipants.add(key);
@@ -314,6 +321,9 @@ async function createP25Renderer(options = {}) {
   }
 
   function publishGraph() {
+    graphDirty = true;
+    if (!graph || disposed || renderingPaused()) return;
+    graphDirty = false;
     const nextNodes = [...nodes.values()];
     const presented = canonicalLinks.filter(link => link.kind !== 'history' ||
       affiliationMoves.get(link.source)?.change.fromGroupKey !== link.target);
@@ -331,6 +341,7 @@ async function createP25Renderer(options = {}) {
     graph.graphData({ nodes: nextNodes, links: nextLinks });
     updateSystemFog();
     applyFocusStyles();
+    updateFocusOpacity();
   }
 
   function clearAffiliationMoves() {
@@ -354,7 +365,7 @@ async function createP25Renderer(options = {}) {
 
   function setData(value = {}, optionsValue = {}) {
     if (!graph || disposed) return;
-    const animate = optionsValue.animate !== false && !documentValue.hidden;
+    const animate = optionsValue.animate !== false && !renderingPaused();
     const now = performance.now();
     const incomingNodes = new Map((value.nodes || []).map((node) => [String(node.id), node]));
     const incomingChanges = new Map((optionsValue.affiliationChanges || []).map((change) => [change.radioKey, change]));
@@ -368,7 +379,7 @@ async function createP25Renderer(options = {}) {
         cancelled = true;
       }
     }
-    if (cancelled || documentValue.hidden) resetAttention();
+    if (cancelled || renderingPaused()) resetAttention();
     const startedMoves = new Set();
     if (animate) for (const change of optionsValue.affiliationChanges || []) {
       if (incomingNodes.get(change.radioKey)?.type !== 'radio' ||
@@ -407,7 +418,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function resize() {
-    if (!graph || disposed || guideSuspended) return;
+    if (!graph || disposed || renderingPaused()) return;
     const width = Math.max(1, Math.floor(host.clientWidth));
     const height = Math.max(1, Math.floor(host.clientHeight));
     graph.width(width).height(height);
@@ -423,7 +434,9 @@ async function createP25Renderer(options = {}) {
   }
 
   function updateSystemFog() {
-    if (!scene || scope.level === 'overview') return;
+    if (!scene) return;
+    if (renderingPaused()) { graphDirty = true; return; }
+    if (scope.level === 'overview') { scene.fog = null; return; }
     const radius = finite(systemNode()?.radius, SYSTEM_RADIUS);
     const density = SYSTEM_FOG_DEPTH / Math.max(SYSTEM_RADIUS, radius);
     if (scene.fog) scene.fog.density = density;
@@ -432,7 +445,7 @@ async function createP25Renderer(options = {}) {
 
   function containSystemCamera() {
     const system = systemNode();
-    if (!system || !controls || !graph) return;
+    if (!system || !controls || !graph || renderingPaused()) return;
     // Framing a complete journey can require stepping outside the system sphere.
     if (focusKeys.size) { controls.maxDistance = Infinity; return; }
     const center = new library.Vector3(system.x, system.y, system.z);
@@ -473,7 +486,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function tweenCamera(position, target, duration = 900) {
-    if (!graph || !controls || disposed || guideSuspended) return false;
+    if (!graph || !controls || disposed || renderingPaused()) return false;
     stopCamera();
     const camera = graph.camera();
     const from = cameraPose();
@@ -547,7 +560,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function focus(keys, duration = 900) {
-    if (mode !== 'auto' || documentValue.hidden || !['system', 'talkgroup'].includes(scope.level)) return false;
+    if (mode !== 'auto' || renderingPaused() || !['system', 'talkgroup'].includes(scope.level)) return false;
     const bounds = boundsFor(Array.isArray(keys) ? keys : [keys]);
     return focusBounds(bounds, Array.isArray(keys) ? keys : [keys], duration);
   }
@@ -569,7 +582,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function focusAffiliation(radioKey, duration = 600) {
-    if (mode !== 'auto' || documentValue.hidden || !['system', 'talkgroup'].includes(scope.level)) return false;
+    if (mode !== 'auto' || renderingPaused() || !['system', 'talkgroup'].includes(scope.level)) return false;
     const trip = affiliationMoves.get(String(radioKey));
     if (!trip) return false;
     const keys = [String(radioKey), trip.change.fromGroupKey, trip.change.toGroupKey];
@@ -620,7 +633,7 @@ async function createP25Renderer(options = {}) {
     resetAttention();
     scope = { level: 'overview', systemKey: '' };
     clearFocus();
-    if (scene) scene.fog = null;
+    updateSystemFog();
     if (controls) controls.maxDistance = Infinity;
     updateAutoRotate();
     return frameOverview(optionsValue.immediate === true);
@@ -629,7 +642,7 @@ async function createP25Renderer(options = {}) {
   function setMode(value) {
     mode = value === 'manual' ? 'manual' : 'auto';
     resetAttention();
-    if (mode === 'manual' && controls) {
+    if (mode === 'manual' && controls && !renderingPaused()) {
       // Drain OrbitControls' residual Auto rotation before handing the camera to the user.
       const damping = controls.enableDamping;
       controls.enableDamping = false;
@@ -645,7 +658,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function moveManualCamera(input = {}, deltaSeconds = 0) {
-    if (mode !== 'manual' || !graph || !controls || programmatic) return false;
+    if (mode !== 'manual' || !graph || !controls || programmatic || renderingPaused()) return false;
     const delta = clamp(finite(deltaSeconds), 0, 0.05);
     if (!delta) return false;
     if (!['forward', 'right', 'up', 'yaw', 'pitch'].some(key => finite(input[key]))) return false;
@@ -732,7 +745,8 @@ async function createP25Renderer(options = {}) {
 
   function animate(at) {
     frame = 0;
-    if (disposed || guideSuspended) return;
+    if (disposed || renderingPaused()) return;
+    if (graphDirty) publishGraph();
     if (focusAmount !== focusTarget) {
       const progress = clamp((at - focusStartedAt) / FOCUS_FADE_MS, 0, 1);
       focusAmount = focusFrom + (focusTarget - focusFrom) * ease(progress);
@@ -763,11 +777,20 @@ async function createP25Renderer(options = {}) {
   };
   const onVisibility = () => {
     if (!graph) return;
-    if (documentValue.hidden || guideSuspended) {
+    if (renderingPaused()) {
       resetAttention();
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
       graph.pauseAnimation();
+    } else {
+      if (themeDirty) updateTheme();
+      resize();
+      // Reconcile retained data before the vendor's next frame. A caller can supply a newer
+      // snapshot during this visibility event without publishing the previous one first.
+      if (!frame) frame = requestAnimationFrame(animate);
+      if (refreshPending) { refreshPending = false; graph.refresh(); }
+      graph.resumeAnimation();
     }
-    else graph.resumeAnimation();
     updateAutoRotate();
   };
   const onContextLost = (event) => {
@@ -776,8 +799,21 @@ async function createP25Renderer(options = {}) {
   };
   const onContextRestored = () => {
     host.dataset.rendererState = 'ready';
-    graph?.refresh();
+    if (renderingPaused()) refreshPending = true;
+    else graph?.refresh();
   };
+
+  function updateTheme() {
+    if (renderingPaused()) { themeDirty = true; return; }
+    themeDirty = false;
+    colors = palette();
+    materials.forEach((value, key) => {
+      const state = key.startsWith('line:') ? key.split(':')[1] : key.split(':')[0];
+      value.color?.set?.(colorFor(state));
+      value.needsUpdate = true;
+    });
+    if (scene?.fog) scene.fog.color?.set?.(colors.background);
+  }
 
   try {
     graph = library.ForceGraph3D({ controlType: 'orbit', rendererConfig: { alpha: true, antialias: true,
@@ -820,15 +856,7 @@ async function createP25Renderer(options = {}) {
     resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(host);
   }
-  themeObserver = new MutationObserver(() => {
-    colors = palette();
-    materials.forEach((value, key) => {
-      const state = key.startsWith('line:') ? key.split(':')[1] : key.split(':')[0];
-      value.color?.set?.(colorFor(state));
-      value.needsUpdate = true;
-    });
-    if (scene?.fog) scene.fog.color?.set?.(colors.background);
-  });
+  themeObserver = new MutationObserver(updateTheme);
   themeObserver.observe(documentValue.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   documentValue.addEventListener('visibilitychange', onVisibility);
   async function enterFullscreen() {
@@ -848,17 +876,7 @@ async function createP25Renderer(options = {}) {
   function setGuideSuspended(value) {
     if (disposed || guideSuspended === Boolean(value)) return;
     guideSuspended = Boolean(value);
-    if (guideSuspended) {
-      resetAttention();
-      if (frame) cancelAnimationFrame(frame);
-      frame = 0;
-      graph?.pauseAnimation();
-    } else {
-      resize();
-      if (!documentValue.hidden) graph?.resumeAnimation();
-      frame = requestAnimationFrame(animate);
-    }
-    updateAutoRotate();
+    onVisibility();
   }
 
   function dispose() {
@@ -894,8 +912,7 @@ async function createP25Renderer(options = {}) {
   }
 
   options.signal?.addEventListener?.('abort', dispose, { once: true });
-  resize();
-  frame = requestAnimationFrame(animate);
+  onVisibility();
 
   return Object.freeze({ available: true, setData, setMode, setCameraPhase, enterSystem, enterTalkgroup,
     showOverview, focus, focusAffiliation, home, moveManualCamera, enterFullscreen, exitFullscreen,

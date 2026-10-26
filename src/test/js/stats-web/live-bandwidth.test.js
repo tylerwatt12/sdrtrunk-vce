@@ -385,6 +385,134 @@ test('activity incarnation stays stable while sharing the same source and steady
   assert.equal(h.mux.ready, false);
 });
 
+test('ordinary activity subscribers still pause hidden and receive a fresh baseline on return', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const requests = installRetainedActivityServer(h);
+  const snapshots = [];
+  const connection = h.context.subscribeLiveChannelActivity({ snapshot: value => snapshots.push(value) });
+  await flushMicrotasks();
+  await h.clock.next();
+  const firstId = h.context.liveChannelActivitySubscriptionId;
+  h.context.document.hidden = true;
+  h.context.synchronizeLiveChannelActivitySource();
+  assert.equal(h.context.liveChannelActivitySource, null);
+  await h.clock.next();
+  assert.equal(requests.at(-1).subscriptions.channel_activity, undefined);
+  h.context.document.hidden = false;
+  h.mux.controller = new AbortController();
+  h.mux.clientId = 'visible-again';
+  h.mux.ready = true;
+  h.context.synchronizeLiveChannelActivitySource();
+  await flushMicrotasks();
+  await h.clock.next();
+  assert.notEqual(h.context.liveChannelActivitySubscriptionId, firstId);
+  assert.equal(snapshots.length, 2);
+  connection.close();
+  await h.clock.next();
+  assert.equal(h.context.pageConnections.size, 0);
+});
+
+test('a background activity subscriber can start hidden and keeps one continuous baseline across visibility', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const requests = installRetainedActivityServer(h);
+  const snapshots = [], revisions = [];
+  h.context.document.hidden = true;
+  const connection = h.context.subscribeLiveChannelActivity({
+    snapshot: value => snapshots.push(value), activityBatch: batch => revisions.push(batch.revision)
+  }, { background: true });
+  await flushMicrotasks();
+  await h.clock.next();
+  const source = h.context.liveChannelActivitySource;
+  const id = h.context.liveChannelActivitySubscriptionId;
+  assert.ok(source);
+  for (const hidden of [false, true, false]) {
+    h.context.document.hidden = hidden;
+    h.context.synchronizeLiveChannelActivitySource();
+    assert.equal(h.context.liveChannelActivitySource, source);
+    assert.equal(h.context.liveChannelActivitySubscriptionId, id);
+  }
+  h.context.document.hidden = true;
+  await h.receive('activity_batch', { base_revision: 10, revision: 11, changes: [{ replace: false,
+    table_id: 'site', operation: 'upsert', rows: [{ key: 'one', value: 11 }] }] });
+  await h.receive('activity_batch', { base_revision: 10, revision: 11, changes: [] });
+  assert.deepEqual(revisions, [11]);
+  h.context.document.hidden = false;
+  h.context.synchronizeLiveChannelActivitySource();
+  assert.equal(snapshots.length, 1);
+  assert.equal(requests.length, 1);
+  assert.equal(h.context.liveChannelActivityRevision, 11);
+  connection.close();
+  await h.clock.next();
+  assert.equal(h.context.liveChannelActivitySource, null);
+  assert.equal(h.context.pageConnections.size, 0);
+  assert.equal(h.tables.size, 0);
+  assert.equal(h.mux.hasSubscribers(), false);
+});
+
+test('closing the last background subscriber restores the ordinary hidden pause', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  const requests = installRetainedActivityServer(h);
+  const ordinary = h.context.subscribeLiveChannelActivity();
+  const background = h.context.subscribeLiveChannelActivity({}, { background: true });
+  await flushMicrotasks();
+  await h.clock.next();
+  h.context.document.hidden = true;
+  h.context.synchronizeLiveChannelActivitySource();
+  assert.ok(h.context.liveChannelActivitySource);
+  background.close();
+  assert.equal(h.context.liveChannelActivitySource, null);
+  assert.equal(h.context.liveChannelActivitySubscribers.size, 1);
+  await h.clock.next();
+  assert.equal(requests.at(-1).subscriptions.channel_activity, undefined);
+  ordinary.close();
+  assert.equal(h.context.pageConnections.size, 0);
+  assert.equal(h.tables.size, 0);
+});
+
+test('background activity reconnects after a hidden transport failure and still releases on page close', async (t) => {
+  const h = controlHarness();
+  t.after(() => h.mux.stop());
+  h.mux.stop();
+  h.mux.ensureConnected = Object.getPrototypeOf(h.mux).ensureConnected.bind(h.mux);
+  const requests = installRetainedActivityServer(h);
+  const reading = deferred();
+  let attempts = 0;
+  h.context.fetch = async () => {
+    if (++attempts === 1) throw new Error('Temporary transport failure');
+    return { ok: true, status: 200, body: { getReader: () => ({
+      read: () => reading.promise,
+      cancel: () => { reading.resolve({ done: true }); return Promise.resolve(); }
+    }) } };
+  };
+  h.context.document.hidden = true;
+  const states = [], snapshots = [];
+  const connection = h.context.subscribeLiveChannelActivity({
+    open: () => states.push('open'), error: () => states.push('error'),
+    snapshot: value => snapshots.push(value)
+  }, { background: true });
+  const source = h.context.liveChannelActivitySource;
+  await flushMicrotasks();
+  assert.deepEqual(states, ['error']);
+  assert.equal(await h.clock.next(), 500);
+  assert.equal(attempts, 2);
+  await h.receive('ready', { client_id: h.mux.clientId }, 0);
+  await h.clock.next();
+  assert.equal(h.context.liveChannelActivitySource, source);
+  assert.deepEqual(states, ['error', 'open']);
+  assert.equal(snapshots.length, 1);
+  assert.equal(requests.length, 1);
+  connection.close();
+  await h.clock.next();
+  await flushMicrotasks();
+  assert.equal(h.context.liveChannelActivitySource, null);
+  assert.equal(h.context.pageConnections.size, 0);
+  assert.equal(h.mux.controller, null);
+  assert.equal(h.clock.timers.size, 0);
+});
+
 for (const failure of [Object.assign(new Error('Unavailable'), { status: 503 }),
   Object.assign(new Error('Timed out'), { code: 'request_timeout' })]) {
   test(`activity subscriptions recover exactly after ${failure.status || failure.code} despite healthy heartbeats`, async (t) => {
