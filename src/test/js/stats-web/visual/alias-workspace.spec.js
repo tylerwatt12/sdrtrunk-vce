@@ -195,7 +195,7 @@ for (const width of [1280, 390]) test(`Alias browsing and selection update in pl
   await expect(page.locator('.observed-group-identity-row')).toHaveCount(1);
   if (width < 600) await page.getByRole('combobox', { name: 'Alias list', exact: true }).selectOption('2');
   else await page.locator('.alias-list-item').filter({ hasText: 'City' }).click();
-  await expect(page.locator('.alias-list-summary h2')).toHaveText('Alias List: City');
+  await expect(page.locator('.alias-list-summary h2')).toHaveText('City');
   await expect(page.getByRole('checkbox', { name: 'Select City Dispatch', exact: true })).toBeVisible();
   await expectStableWorkspace(page, fixture);
 });

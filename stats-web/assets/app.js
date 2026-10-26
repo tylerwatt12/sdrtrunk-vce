@@ -5249,6 +5249,84 @@ function openAliasListCreateModal() {
   modal.focus?.(name);
 }
 
+function aliasListRenamePayload(selectedList, value) {
+  const name = String(value || '').trim();
+  if (!name) throw new Error('Enter a name for this Alias List.');
+  if (name.length > ALIAS_LIST_NAME_MAX_LENGTH) {
+    throw new Error(`Use ${ALIAS_LIST_NAME_MAX_LENGTH} characters or fewer for the name.`);
+  }
+  if (!selectedList?.name_edit_revision) {
+    throw new Error('Current list information is unavailable. Reload the page and try again.');
+  }
+  return { name, edit_revision: selectedList.name_edit_revision };
+}
+
+async function openAliasListRenameModal(selectedList, onRenamed) {
+  const id = aliasListId(selectedList);
+  if (!id || !aliasAdminAllowed()) return;
+  const form = node('form', 'alias-editor-form alias-list-form editor-workspace');
+  const name = aliasTextInput('name', selectedList.name);
+  name.required = true;
+  name.maxLength = ALIAS_LIST_NAME_MAX_LENGTH;
+  const errorHost = node('div', 'alias-form-message');
+  const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+  cancel.type = 'button';
+  const save = node('button', 'ui-button ui-button-primary', 'Save');
+  save.type = 'submit';
+  form.append(aliasFormField('Name', name), errorHost, aliasModalFooter(cancel, save));
+  const modal = openReadOnlyModal('Rename Alias List', form, {
+    id: `rename-alias-list-${id}`, className: 'modal-size-small',
+    returnFocusSelector: '.alias-list-rename-button'
+  });
+  if (!modal || (modal.ready && !await modal.ready)) return;
+  cancel.addEventListener('click', modal.close);
+  const applyName = (list, revision) => {
+    Object.assign(selectedList, list);
+    if (aliasListId(aliasEditorContext?.selectedList) === id) {
+      Object.assign(aliasEditorContext.selectedList, list);
+      if (aliasEditorContext.options?.alias_list) Object.assign(aliasEditorContext.options.alias_list, list);
+      aliasEditorContext.lists = aliasEditorLists(aliasEditorContext.lists.map((row) =>
+        aliasListId(row) === id ? { ...row, ...list } : row));
+      if (revision !== undefined) aliasEditorContext.revision = Number(revision);
+      aliasEditorWorkspaceController?.rail?.updateLists(aliasEditorContext.lists, id);
+    }
+    onRenamed?.(selectedList);
+  };
+  const reloadWorkflow = createActionWorkflow({ surface: form, modal, renderFeedback: (state, message, error) => {
+    if (error) aliasMutationError(errorHost, error, reloadCurrentName);
+    else workflow.showFeedback(state, message);
+  } });
+  const reloadCurrentName = async () => {
+    if (workflow.isBusy() || reloadWorkflow.isBusy()) return;
+    try {
+      await reloadWorkflow.run(() => api('/api/v1/admin/aliases/options', { alias_list_id: id }), {
+        pending: 'Loading current name…', success: null,
+        onSuccess: (options) => {
+          if (!options?.alias_list?.name_edit_revision) {
+            throw new Error('Current list information is unavailable. Reload the page and try again.');
+          }
+          applyName(options.alias_list, options.revision);
+          workflow.showFeedback('status', `Current name: ${selectedList.name}. Your draft is unchanged.`);
+        }
+      });
+    } catch (_) { /* The shared feedback keeps the draft and retry action available. */ }
+    workflow.refresh();
+  };
+  const workflow = aliasFormWorkflow(form, save, errorHost, modal, reloadCurrentName,
+    () => name.value.trim() !== selectedList.name);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (reloadWorkflow.isBusy()) return;
+    await workflow.save(async () => {
+      const payload = aliasListRenamePayload(selectedList, name.value);
+      const result = await requestJson(`/api/v1/admin/alias-lists/${id}`, { method: 'PUT', body: payload });
+      name.value = result.name || payload.name;
+      applyName({ name: name.value, name_edit_revision: result.name_edit_revision }, result.revision);
+    }, { saving: 'Saving name…', onSuccess: () => modal.close() });
+  });
+  modal.focus?.(name);
+}
+
 async function openAliasListDeleteModal(selectedList) {
   const id = aliasListId(selectedList);
   const loading = node('div', 'loading', 'Checking list usage');
@@ -8805,10 +8883,21 @@ async function renderAliases(presentation = null) {
   const summary = node('section', 'alias-list-summary ui-surface');
   const summaryCopy = node('div', 'alias-list-summary-copy');
   const summaryMetrics = node('span', 'muted alias-list-summary-metrics');
-  summaryCopy.append(node('h2', '', entityPageTitle('Alias List', selectedList.name)),
+  const summaryTitle = node('h2', '', selectedList.name);
+  const summaryTitleRow = node('div', 'alias-list-summary-title');
+  const rename = iconButton('icon-edit', 'Rename Alias List',
+    'ui-button ui-button-secondary ui-icon-button alias-list-rename-button');
+  let updateListNames = () => {};
+  rename.addEventListener('click', () => void openAliasListRenameModal(selectedList, (list) => {
+    updateSummary(list);
+    updateListNames(list);
+  }));
+  summaryTitleRow.append(summaryTitle, rename);
+  summaryCopy.append(summaryTitleRow,
     badge(aliasListFamilyLabel(selectedList), 'state-current'),
     summaryMetrics);
   const updateSummary = (list) => {
+    summaryTitle.textContent = list.name;
     summaryMetrics.textContent = `${number(list?.alias_count || 0)} aliases · ` +
       `${number(list?.assigned_channel_count || 0)} assigned channels`;
   };
@@ -8853,6 +8942,11 @@ async function renderAliases(presentation = null) {
 
   const tableHost = node('div', 'alias-catalog-table-host alias-editor-table-host');
   const tableController = {};
+  updateListNames = (list) => {
+    rows.forEach((row) => { if (aliasListId(row) === aliasListId(list)) row.alias_list_name = list.name; });
+    tableController.replaceRows?.(rows);
+    updateSelection('', false, true);
+  };
   const viewFeedback = node('div', 'alias-editor-view-feedback');
   viewFeedback.setAttribute('role', 'status');
   viewTabs.after(viewFeedback);

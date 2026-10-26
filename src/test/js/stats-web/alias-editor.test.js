@@ -66,6 +66,7 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(`
+  const ALIAS_LIST_NAME_MAX_LENGTH = 128;
   const ALIAS_BULK_SELECTION_LIMIT = 10_000;
   const ALIAS_BULK_REQUEST_TIMEOUT_MS = 60_000;
   const ALIAS_TRANSFER_EXPORT_READY_COOKIE_PREFIX = 'sdrtrunk_alias_export_ready_';
@@ -84,6 +85,7 @@ vm.runInContext(`
   let aliasEditorSelectionRequest = 0;
   let aliasEditorLastSelectionIndex = null;
   ${functionSource('function aliasListId(row)')}
+  ${functionSource('function aliasListRenamePayload(selectedList, value)')}
   ${functionSource('function canonicalConfigurationId(value)')}
   ${functionSource('function aliasEditorLists(configurationRows, metadataRows = [])')}
   ${functionSource('function aliasListChannelUsage(channels)')}
@@ -141,6 +143,7 @@ vm.runInContext(`
   ${functionSource('function clearAliasSelectionOutsideEditor(view)')}
   ${functionSource('async function selectAllMatchingAliases(filters, scope, button, onSelectionChange)')}
   globalThis.editorLists = aliasEditorLists;
+  globalThis.renamePayload = aliasListRenamePayload;
   globalThis.channelUsage = aliasListChannelUsage;
   globalThis.channelPreview = aliasListChannelPreview;
   globalThis.optionLimit = aliasOptionLimit;
@@ -192,6 +195,16 @@ vm.runInContext(`
   globalThis.selectionState = () => ({ ids: [...aliasEditorSelection], scope: aliasEditorSelectionScope,
     request: aliasEditorSelectionRequest });
 `, context);
+
+const renameSource = { alias_list_id: 7, name: 'County', name_edit_revision: 'list-name-7-v1' };
+assert.deepEqual(JSON.parse(JSON.stringify(context.renamePayload(renameSource, '  County Dispatch  '))),
+  { name: 'County Dispatch', edit_revision: 'list-name-7-v1' });
+assert.equal(context.renamePayload(renameSource, 'A'.repeat(128)).name.length, 128);
+assert.throws(() => context.renamePayload(renameSource, '   '), /Enter a name/);
+assert.throws(() => context.renamePayload(renameSource, 'A'.repeat(129)), /128 characters/);
+assert.throws(() => context.renamePayload({ alias_list_id: 7 }, 'County'), /Reload the page/);
+assert.deepEqual(renameSource, { alias_list_id: 7, name: 'County', name_edit_revision: 'list-name-7-v1' },
+  'Preparing a rename keeps the stored name and identity unchanged until the write succeeds.');
 
 const adminLists = Array.from({ length: 150 }, (_, offset) => {
   const id = offset + 1;

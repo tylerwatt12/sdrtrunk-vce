@@ -13,7 +13,7 @@ const radioKey = 'v1-r-00001-001-30914';
 const channelName = 'North County Simulcast';
 const systemName = 'County Public Safety and Regional Emergency Services';
 const list = { id: 1, alias_list_id: 1, name: 'County Public Safety', family: 'P25',
-  alias_count: 2, assigned_channel_count: 1 };
+  alias_count: 2, assigned_channel_count: 1, name_edit_revision: 'list-name-1-v1' };
 const channel = { configuration_id: channelId, protocol: 'P25', protocol_id: 'p25-phase1',
   protocol_label: 'P25 Phase 1', channel_kind: 'TRUNKED', name: channelName,
   system: systemName, system_name: systemName, site: 'North', site_name: 'North',

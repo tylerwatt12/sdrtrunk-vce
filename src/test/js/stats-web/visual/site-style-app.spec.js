@@ -63,6 +63,11 @@ const openAliasChannelScope = async (page) => {
   await expect(page.locator('.alias-coverage-channel-grid')).toBeVisible();
 };
 const additionalCases = [
+  ['aliases-rename', 'view=aliases&list=1&aliasTab=configure', '.alias-list-summary', 'County Public Safety',
+    async (page) => {
+      await page.getByRole('button', { name: 'Rename Alias List', exact: true }).click();
+      await expect(page.getByRole('dialog', { name: 'Rename Alias List', exact: true })).toBeVisible();
+    }],
   ['dashboard-calls', 'view=dashboard&tab=calls', '.dashboard-call-activity', 'Fire Dispatch'],
   ['dashboard-activity', 'view=dashboard&tab=activity', '.dashboard-activity-radio-result', 'Engine 4',
     async (page) => {
@@ -221,6 +226,22 @@ async function expectSharedTypography(page) {
         className: element.className, font: getComputedStyle(element).fontFamily }));
   });
   expect(inconsistent).toEqual([]);
+}
+
+for (const { name: presentation, theme, viewport } of [presentations[0], presentations[3]]) {
+  for (const [name, query, selector, content, open] of cases.filter(([name]) =>
+    ['aliases', 'aliases-rename'].includes(name))) {
+    test(`populated Alias List style ${name} ${presentation}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      const fixture = await installSiteStyleApplication(page, theme);
+      await page.goto(`/app.html?${query}`);
+      await expectSuccessfulPage(page, fixture, name, selector, content);
+      if (open) await open(page);
+      await expectSharedTypography(page);
+      await expectNoHorizontalOverflow(page);
+      await auditPageContrast(page, `${name}-${presentation}`);
+    });
+  }
 }
 
 test('actual route style matrix includes every production route and administration section', async ({ page }) => {
