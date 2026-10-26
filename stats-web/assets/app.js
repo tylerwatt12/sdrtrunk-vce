@@ -4222,10 +4222,8 @@ async function requestAliasEditorData(selectedList, view, request = {}) {
     includeActivity = view !== 'configure', includeOptions = true, refreshCatalog = false } = request;
   const listId = aliasListId(selectedList);
   const filters = aliasEditorQueryFilters(query, scanList ? null : listId, scanList?.id);
-  const order = aliasEditorDefaultOrder(view);
   const parameters = { q: query.get('q'), offset: query.get('offset'), limit: 100,
-    sort: query.get('sort') || (view === 'discover' ? 'last_seen' : order.sort),
-    direction: query.get('direction') || (view === 'discover' ? 'desc' : order.direction) };
+    ...aliasEditorOrder(view, query) };
   const requestOptions = { signal, ...(view === 'activity' ? { timeoutMs: 35_000 } : {}) };
   const pagePromise = view === 'discover' ?
     apiPage(`/api/v1/alias-lists/${listId}/observed-group-identities`,
@@ -4594,8 +4592,14 @@ function aliasEditorView(selectedList, route = currentAliasRoute()) {
 }
 
 function aliasEditorDefaultOrder(view) {
-  return view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' } :
+  return view === 'activity' ? { sort: 'signaling_observation_count', direction: 'desc' } :
     { sort: 'name', direction: 'asc' };
+}
+
+function aliasEditorOrder(view, query = currentAliasRoute()) {
+  const order = aliasEditorDefaultOrder(view);
+  return { sort: query.get('sort') || (view === 'discover' ? 'last_seen' : order.sort),
+    direction: query.get('direction') || (view === 'discover' ? 'desc' : order.direction) };
 }
 
 function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView(selectedList), route = currentAliasRoute()) {
@@ -4603,18 +4607,21 @@ function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView
   if (currentView === 'discover') return href('aliases', { list: id, aliasTab: target });
   const parameters = { list: id, aliasTab: target };
   ['q', 'type', 'matcher', 'group', 'scanListId', 'record', 'stream', 'evidence', 'use',
-    'lastActivityAfter', 'lastActivityBefore', 'offset'].forEach((key) => {
+    'lastActivityAfter', 'lastActivityBefore', 'sort', 'direction'].forEach((key) => {
     if (route.get(key)) parameters[key] = route.get(key);
   });
-  const order = aliasEditorDefaultOrder(currentView);
-  parameters.sort = route.get('sort') || order.sort;
-  parameters.direction = route.get('direction') || order.direction;
+  const currentOrder = aliasEditorOrder(currentView, route);
+  const nextOrder = aliasEditorOrder(target, route);
+  if (currentOrder.sort === nextOrder.sort && currentOrder.direction === nextOrder.direction && route.get('offset'))
+    parameters.offset = route.get('offset');
   return href('aliases', parameters);
 }
 
-function setAliasEditorViewTabs(viewTabs, view) {
+function setAliasEditorViewTabs(viewTabs, view, selectedList, query = currentAliasRoute()) {
   viewTabs.querySelectorAll('[data-alias-view]').forEach((link) => {
     const active = link.dataset.aliasView === view;
+    if (['configure', 'activity', 'custom'].includes(link.dataset.aliasView))
+      link.href = aliasEditorViewHref(selectedList, link.dataset.aliasView, view, query);
     link.classList.toggle('active', active);
     if (active) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
@@ -4649,7 +4656,7 @@ function aliasEditorViewTabs(selectedList, onSwitch = null, route = currentAlias
     discover.dataset.aliasView = 'discover';
     switcher.append(discover);
   }
-  setAliasEditorViewTabs(switcher, active);
+  setAliasEditorViewTabs(switcher, active, selectedList, route);
   return switcher;
 }
 
@@ -8936,11 +8943,15 @@ async function renderAliases(presentation = null) {
   let appliedQuery = new URLSearchParams(route);
   let viewSwitchRequest = 0;
   let dataVersion = 0;
-  switchView = async (nextView, navigationRequest = null) => {
+  switchView = async (nextView, navigationRequest = null, query = currentAliasRoute()) => {
     if (!['configure', 'activity', 'custom'].includes(nextView) ||
         nextView === view && !aliasEditorWorkspaceController.pendingRequest) return;
     if (!navigationRequest) return aliasEditorWorkspaceController.navigate(
-      aliasEditorViewHref(selectedList, nextView, view), { columnView: true });
+      aliasEditorViewHref(selectedList, nextView, view, query), { columnView: true });
+    const currentOrder = aliasEditorOrder(view, appliedQuery);
+    const nextOrder = aliasEditorOrder(nextView, query);
+    if (currentOrder.sort !== nextOrder.sort || currentOrder.direction !== nextOrder.direction)
+      return pageController.reload(new URLSearchParams(query), navigationRequest);
     const request = ++viewSwitchRequest;
     const currentDataVersion = dataVersion;
     viewFeedback.replaceChildren();
@@ -8968,7 +8979,7 @@ async function renderAliases(presentation = null) {
     }
     if (request !== viewSwitchRequest || currentDataVersion !== dataVersion ||
         !pageController.isCurrent() || !navigationRequest.isCurrent()) return;
-    appliedQuery = new URLSearchParams(route);
+    appliedQuery = new URLSearchParams(query);
     view = nextView;
     defaultOrder = aliasEditorDefaultOrder(view);
     ['aliasTab', 'sort', 'direction'].forEach((name) => {
@@ -8979,9 +8990,9 @@ async function renderAliases(presentation = null) {
         hidden.name = name;
         filterToolbar.prepend(hidden);
       }
-      hidden.value = route.get(name) || '';
+      hidden.value = query.get(name) || '';
     });
-    setAliasEditorViewTabs(viewTabs, view);
+    setAliasEditorViewTabs(viewTabs, view, selectedList, query);
     block.querySelector(':scope > .section-title').firstChild.textContent = viewTitle(view);
     viewDescription.textContent = view === 'configure' ?
       'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :
@@ -9001,16 +9012,16 @@ async function renderAliases(presentation = null) {
       Number(routeChanges.list) === aliasListId(selectedList),
     canNavigate: (query) => Number(query.get('list')) === aliasListId(selectedList) &&
       query.get('aliasTab') !== 'discover',
-    switchView: (query, request) => switchView(query.get('aliasTab'), request),
+    switchView: (query, request) => switchView(query.get('aliasTab'), request, query),
     navigate: async (query, request) => pageController.reload(query, request),
-    refresh: async () => pageController.reload(new URLSearchParams(route), null, true),
+    refresh: async () => pageController.reload(new URLSearchParams(currentAliasRoute()), null, true),
     reload: async (query, navigationRequest = null, mutation = false) => {
       if (!pageController.isCurrent()) return false;
       const request = navigationRequest || aliasEditorBeginRequest();
       viewSwitchRequest += 1;
       dataVersion += 1;
       viewFeedback.replaceChildren();
-      const nextView = aliasEditorView(selectedList);
+      const nextView = aliasEditorView(selectedList, query);
       const { page: nextPage, options: nextOptions, catalog: nextCatalog, filters: nextFilters } =
         await requestAliasEditorData(selectedList, nextView, {
           query, signal: request?.signal, includeActivity: activityLoaded || nextView !== 'configure',
@@ -9038,7 +9049,7 @@ async function renderAliases(presentation = null) {
       updateSummary(selectedList);
       filterToolbar = aliasEditorReplaceFilters(filterToolbar, aliasEditorFilterToolbar(nextPage, nextOptions),
         mutation || previousScope === selectionScope, request?.draft);
-      setAliasEditorViewTabs(viewTabs, view);
+      setAliasEditorViewTabs(viewTabs, view, selectedList, query);
       block.querySelector(':scope > .section-title').firstChild.textContent = viewTitle(view);
       viewDescription.textContent = view === 'configure' ?
         'Configuration controls what the alias matches and what happens to its calls. Open an alias to edit it.' :

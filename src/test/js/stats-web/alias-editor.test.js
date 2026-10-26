@@ -92,6 +92,7 @@ vm.runInContext(`
   ${functionSource('function aliasCloneOptionValue(value, configured, cloning, optionsTruncated)')}
   ${functionSource('function aliasStreamOptionSelected(selected, configured, editing, optionsTruncated)')}
   ${functionSource('function aliasEditorDefaultOrder(view)')}
+  ${functionSource('function aliasEditorOrder(view, query = currentAliasRoute())')}
   ${functionSource('function currentAliasRoute()')}
   ${functionSource('function aliasEditorViewHref(selectedList, target, currentView = aliasEditorView(selectedList), route = currentAliasRoute())')}
   ${functionSource('function aliasEditorHasActiveFilters(scanListScope = false, route = currentAliasRoute())')}
@@ -255,8 +256,8 @@ assert.equal(context.streamOptionSelected(true, false, false, true), true,
 assert.equal(context.streamOptionSelected(true, false, false, false), false,
   'A clone should not preserve a stream confirmed absent from the complete options response.');
 assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('activity'))),
-  { sort: 'logical_call_count', direction: 'desc' },
-  'The Activity view must initially rank aliases by highest call count.');
+  { sort: 'signaling_observation_count', direction: 'desc' },
+  'The Activity view must initially rank aliases by most signaling.');
 assert.deepEqual(JSON.parse(JSON.stringify(context.editorDefaultOrder('configure'))),
   { sort: 'name', direction: 'asc' },
   'Configuration views must retain their alphabetical default.');
@@ -286,16 +287,21 @@ for (const key of ['alias', 'createAlias', 'createListId', 'unrelated']) {
 }
 context.setRoute('view=aliases&list=7&aliasTab=configure&q=fire&offset=100');
 const defaultActivityRoute = viewRoute('activity', 'configure');
-assert.equal(defaultActivityRoute.get('sort'), 'name',
-  'Switching from Configure must keep its effective alphabetical order.');
-assert.equal(defaultActivityRoute.get('direction'), 'asc');
-assert.equal(defaultActivityRoute.get('offset'), '100');
+assert.equal(defaultActivityRoute.get('sort'), null,
+  'Switching from Configure must allow the Activity default without inventing an explicit alphabetical choice.');
+assert.equal(defaultActivityRoute.get('direction'), null);
+assert.equal(defaultActivityRoute.get('offset'), null,
+  'A different default order starts at the first page, so the most signaling is visible first.');
+const defaultCustomFromConfigure = viewRoute('custom', 'configure');
+assert.equal(defaultCustomFromConfigure.get('sort'), null);
+assert.equal(defaultCustomFromConfigure.get('offset'), '100',
+  'Views with the same effective default can keep their current page.');
 context.setRoute('view=aliases&list=7&aliasTab=activity&q=fire&offset=100');
 const defaultCustomRoute = viewRoute('custom', 'activity');
-assert.equal(defaultCustomRoute.get('sort'), 'logical_call_count',
-  'Switching from Activity must keep its effective call-count order.');
-assert.equal(defaultCustomRoute.get('direction'), 'desc');
-assert.equal(defaultCustomRoute.get('offset'), '100');
+assert.equal(defaultCustomRoute.get('sort'), null,
+  'An inferred Activity default must not become an explicit sort in another view.');
+assert.equal(defaultCustomRoute.get('direction'), null);
+assert.equal(defaultCustomRoute.get('offset'), null);
 context.setRoute('view=aliases&list=7&aliasTab=discover&q=channel');
 const returnFromDiscover = viewRoute('configure', 'discover');
 assert.deepEqual([...returnFromDiscover.entries()],
@@ -318,9 +324,11 @@ assert.match(aliasViewTabs, /anchor\('Discover', href\('aliases', \{ list: id, a
   'Discover must have a separate link to its own search and results.');
 assert.match(aliasRenderer, /aliasEditorViewTabs\(selectedList, \(nextView\) => switchView\?\.\(nextView\), route\)/,
   'The three column-view controls must be wired to the current Alias table.');
-assert.match(aliasRenderer, /switchView = async \(nextView, navigationRequest = null\) => \{[\s\S]*?aliasEditorWorkspaceController\.navigate\([\s\S]*?setAliasEditorViewTabs\(viewTabs, view\);[\s\S]*?renderTable\(\)/,
+assert.match(aliasRenderer, /switchView = async \(nextView, navigationRequest = null, query = currentAliasRoute\(\)\) => \{[\s\S]*?aliasEditorWorkspaceController\.navigate\([\s\S]*?setAliasEditorViewTabs\(viewTabs, view, selectedList, query\);[\s\S]*?renderTable\(\)/,
   'Switching views must update the route, selected control, and existing table without rendering the page again.');
-assert.match(aliasDataLoader, /sort: query\.get\('sort'\) \|\|/,
+assert.match(aliasDataLoader, /\.\.\.aliasEditorOrder\(view, query\)/,
+  'Requests and tab navigation must share the same effective sorting.');
+assert.match(functionSource('function aliasEditorOrder(view, query = currentAliasRoute())'), /sort: query\.get\('sort'\) \|\|/,
   'Explicit routed sorting must take precedence over the view default.');
 assert.match(aliasRenderer, /defaultSort: defaultOrder\.sort/,
   'The table indicator must match the order requested from the server.');

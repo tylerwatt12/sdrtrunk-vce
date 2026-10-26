@@ -94,14 +94,16 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(tabs.contains("href: aliasEditorViewHref(selectedList, 'custom', active, route)"));
         assertTrue(tabs.contains("void onSwitch(entry.id)"));
         assertTrue(renderer.contains("aliasEditorViewTabs(selectedList, (nextView) => switchView?.(nextView), route)"));
-        assertTrue(renderer.contains("setAliasEditorViewTabs(viewTabs, view)"));
+        assertTrue(renderer.contains("setAliasEditorViewTabs(viewTabs, view, selectedList, query)"));
         assertFalse(tabs.contains("'Call Use'"));
         assertFalse(tabs.contains("'System Evidence'"));
         assertTrue(view.contains("['calls', 'evidence']"));
         assertTrue(view.contains("'activity' : route.get('aliasTab')"));
         assertTrue(function(source, "function aliasEditorDefaultOrder(view)")
-            .contains("view === 'activity' ? { sort: 'logical_call_count', direction: 'desc' }"));
+            .contains("view === 'activity' ? { sort: 'signaling_observation_count', direction: 'desc' }"));
         assertTrue(function(source, "async function requestAliasEditorData(selectedList, view, request = {})")
+            .contains("...aliasEditorOrder(view, query)"));
+        assertTrue(function(source, "function aliasEditorOrder(view, query = currentAliasRoute())")
             .contains("sort: query.get('sort') ||"));
         assertTrue(function(source,
             "async function requestAliasEditorData(selectedList, view, request = {})")
@@ -506,7 +508,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(source.contains("aliasTab: 'discover'"));
         assertTrue(tabs.contains("observedGroupIdentityDiscoverySupported(selectedList)"));
         assertTrue(view.contains("observedGroupIdentityDiscoverySupported(selectedList)"));
-        assertTrue(renderer.contains("aliasEditorView(selectedList)"));
+        assertTrue(renderer.contains("aliasEditorView(selectedList, route)"));
         assertTrue(discoverySupport.contains("capabilities?.observed_group_discovery !== false"));
         assertFalse(discoverySupport.contains("['P25', 'DMR', 'NXDN']"));
         assertTrue(observed.contains("analog ? 'Assigned number' : 'Identity'"));
