@@ -499,7 +499,8 @@ class RemoteConnectivityServiceTest
                 .allMatch(sender -> !sender.autoAdopt() && sender.defaultAliasListId() == null),
                 "old disabled sender preferences must not gate automatic setup");
             await(() -> host.remote.snapshot().senders().stream().allMatch(sender ->
-                sender.feeds().size() == 1 && sender.feeds().getFirst().channelConfigurationId() != null));
+                sender.feeds().size() == 1 && sender.feeds().getFirst().channelConfigurationId() != null &&
+                    sender.feeds().getFirst().enabled()));
             Channel westRemote = host.configuration.getChannelModel().getChannels().stream().filter(channel ->
                 channel.getSourceConfiguration() instanceof SourceConfigRemote source &&
                     westPair.senderId().equals(source.getSenderId()) &&
@@ -769,7 +770,7 @@ class RemoteConnectivityServiceTest
                         "Original", "P25_PHASE1", 851_012_500L, true)))))));
                 await(() -> host.remote.snapshot().senders().stream().anyMatch(peer ->
                     pair.senderId().equals(peer.senderId()) && peer.feeds().stream().anyMatch(feed ->
-                        feedId.equals(feed.feedId()) && feed.channelConfigurationId() != null)));
+                        feedId.equals(feed.feedId()) && feed.channelConfigurationId() != null && feed.enabled())));
                 Channel original = host.configuration.getChannelModel().getChannels().stream().filter(channel ->
                     channel.getSourceConfiguration() instanceof SourceConfigRemote source &&
                         pair.senderId().equals(source.getSenderId()) && feedId.equals(source.getFeedId()))
@@ -838,7 +839,7 @@ class RemoteConnectivityServiceTest
             assertTrue(sender.offer(pending.catalog("Synthetic feed")));
             await(() -> host.remote.snapshot().senders().stream().anyMatch(peer ->
                 pair.senderId().equals(peer.senderId()) && peer.feeds().stream().anyMatch(feed ->
-                    feedId.equals(feed.feedId()) && feed.channelConfigurationId() != null)));
+                    feedId.equals(feed.feedId()) && feed.channelConfigurationId() != null && feed.enabled())));
             Channel channel = host.configuration.getChannelModel().getChannels().stream().filter(saved ->
                 saved.getSourceConfiguration() instanceof SourceConfigRemote source &&
                     pair.senderId().equals(source.getSenderId()) && feedId.equals(source.getFeedId()))
