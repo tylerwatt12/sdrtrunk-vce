@@ -44,7 +44,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class TunerAdminHttpControllerTest
 {
@@ -64,6 +67,12 @@ class TunerAdminHttpControllerTest
             assertEquals(400, fixture.send(path, "POST", "{\"unknown\":true}").statusCode());
             assertEquals(422, fixture.send(path, "POST", "{\"lease_id\":17}").statusCode());
             assertEquals(422, fixture.send(path, "POST", "{\"takeover\":\"yes\"}").statusCode());
+            assertEquals(422, fixture.send(path, "POST", "{\"claim_session\":true}").statusCode());
+            assertEquals(422, fixture.send(path, "POST", "{\"claim_session\":\"\"}").statusCode());
+            assertEquals(422, fixture.send(path, "POST",
+                "{\"claim_session\":\"revision\",\"takeover\":false}").statusCode());
+            assertEquals(422, fixture.send(path, "POST",
+                "{\"claim_session\":\"revision\",\"lease_id\":\"lease\"}").statusCode());
             assertEquals(422, fixture.send(path, "DELETE", "{}").statusCode());
         }
     }
@@ -89,6 +98,94 @@ class TunerAdminHttpControllerTest
             assertEquals(true, releaseData.path("released").booleanValue());
             assertEquals(true, releaseData.path("previous_channels_not_resumed").isArray());
             assertEquals(0, releaseData.path("previous_channels_not_resumed").size());
+        }
+    }
+
+    @Test
+    void browseClaimUsesPublicConflictRevisionAndRejectsFormerOwnersAndStaleClaims() throws Exception
+    {
+        try(ServerFixture fixture = new ServerFixture(new FakeManager(), true))
+        {
+            String tunerPath = TunerAdminHttpController.PATH + "/" +
+                TunerAdministrationService.opaqueId(fixture.mPhysical);
+            String browsePath = tunerPath + "/browse";
+            var acquired = fixture.send(browsePath, "POST", "{\"takeover\":true}");
+            assertEquals(200, acquired.statusCode());
+            String oldLease = MAPPER.readTree(acquired.body()).at("/data/lease_id").asText();
+
+            var conflict = fixture.send(browsePath, "POST", "{}");
+            assertEquals(409, conflict.statusCode());
+            var error = MAPPER.readTree(conflict.body()).path("error");
+            assertEquals("tuner_browse_conflict", error.path("code").asText());
+            assertTrue(error.at("/details/claim_allowed").asBoolean());
+            String revision = error.at("/details/session_revision").asText();
+            assertFalse(revision.isBlank());
+            assertNotEquals(oldLease, revision);
+            assertFalse(conflict.body().contains(oldLease), "a conflict cannot expose the owner's authorization token");
+
+            // The public conflict token cannot renew, tune, or release the existing owner.
+            String publicTokenBody = "{\"lease_id\":\"" + revision + "\"}";
+            assertEquals(409, fixture.send(browsePath, "POST", publicTokenBody).statusCode());
+            assertEquals(409, fixture.send(browsePath, "DELETE", publicTokenBody).statusCode());
+            var claimed = fixture.send(browsePath, "POST", "{\"claim_session\":\"" + revision + "\"}");
+            assertEquals(200, claimed.statusCode());
+            var data = MAPPER.readTree(claimed.body()).path("data");
+            String newLease = data.path("lease_id").asText();
+            assertNotEquals(oldLease, newLease);
+            assertTrue(data.path("takeover").asBoolean());
+            assertTrue(data.path("can_tune").asBoolean());
+
+            String oldBody = "{\"lease_id\":\"" + oldLease + "\"}";
+            for(String method: List.of("POST", "DELETE"))
+            {
+                var stale = fixture.send(browsePath, method, oldBody);
+                assertEquals(409, stale.statusCode());
+                assertEquals("tuner_browse_ownership_lost", MAPPER.readTree(stale.body()).at("/error/code").asText());
+            }
+            var tune = fixture.send(tunerPath + "/settings/frequency_mhz", "PUT",
+                "{\"value\":120.1,\"lease_id\":\"" + oldLease + "\"}");
+            assertEquals(409, tune.statusCode());
+            assertEquals("tuner_browse_ownership_lost", MAPPER.readTree(tune.body()).at("/error/code").asText());
+
+            var staleClaim = fixture.send(browsePath, "POST", "{\"claim_session\":\"" + revision + "\"}");
+            assertEquals(409, staleClaim.statusCode());
+            var currentConflict = MAPPER.readTree(staleClaim.body()).path("error");
+            assertEquals("tuner_browse_conflict", currentConflict.path("code").asText());
+            assertTrue(currentConflict.at("/details/claim_allowed").asBoolean());
+            assertNotEquals(revision, currentConflict.at("/details/session_revision").asText());
+            assertFalse(staleClaim.body().contains(newLease));
+            assertEquals(200, fixture.send(browsePath, "POST",
+                "{\"lease_id\":\"" + newLease + "\"}").statusCode());
+            assertEquals(200, fixture.send(browsePath, "DELETE",
+                "{\"lease_id\":\"" + newLease + "\"}").statusCode());
+        }
+    }
+
+    @Test
+    void browseConflictExplainsWhyActiveIdentificationCannotBeClaimed() throws Exception
+    {
+        try(ServerFixture fixture = new ServerFixture(new FakeManager(), true))
+        {
+            String path = TunerAdminHttpController.PATH + "/" +
+                TunerAdministrationService.opaqueId(fixture.mPhysical) + "/browse";
+            var acquired = fixture.send(path, "POST", "{}");
+            assertEquals(200, acquired.statusCode());
+            String lease = MAPPER.readTree(acquired.body()).at("/data/lease_id").asText();
+            try(var hold = fixture.mSettings.holdForProbe(fixture.mPhysical))
+            {
+                var conflict = fixture.send(path, "POST", "{}");
+                assertEquals(409, conflict.statusCode());
+                var error = MAPPER.readTree(conflict.body()).path("error");
+                assertEquals("tuner_browse_conflict", error.path("code").asText());
+                assertFalse(error.at("/details/claim_allowed").asBoolean());
+                assertTrue(error.path("message").asText().contains("Signal identification"));
+                var claim = fixture.send(path, "POST", "{\"claim_session\":\"" +
+                    error.at("/details/session_revision").asText() + "\"}");
+                assertEquals(409, claim.statusCode());
+                assertFalse(MAPPER.readTree(claim.body()).at("/error/details/claim_allowed").asBoolean());
+                assertTrue(fixture.mSettings.verifyBrowse(fixture.mPhysical, lease));
+            }
+            assertEquals(200, fixture.send(path, "DELETE", "{\"lease_id\":\"" + lease + "\"}").statusCode());
         }
     }
 

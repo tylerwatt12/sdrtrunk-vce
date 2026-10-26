@@ -3,6 +3,7 @@ package io.github.dsheirer.source.tuner.manager;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
@@ -56,6 +57,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.List;
 import java.util.function.IntConsumer;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 class TunerSettingsServiceTest
@@ -1069,6 +1071,174 @@ class TunerSettingsServiceTest
             await(Duration.ofSeconds(2), tuner::isAvailableForAllocation);
             assertFalse(service.ownsBrowse(tuner, lease.leaseId()));
         }
+    }
+
+    @Test
+    void claimingBrowsePreservesStoppedChannelsAndFencesEveryFormerOwnerMutation() throws Exception
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        CountingChannelManager sources = new CountingChannelManager();
+        FakeDiscoveredTuner tuner = runningTuner(controller, sources);
+        AirspyTunerConfiguration configuration = (AirspyTunerConfiguration)tuner.getTunerConfiguration();
+        configuration.setCenterFrequencyLocked(true);
+        controller.setCenterFrequencyLocked(true);
+        TestChannelProcessingManager channels = new TestChannelProcessingManager(tuner, sources);
+        Channel original = channels.addStandard("County control", 851_012_500L);
+        AtomicInteger starts = new AtomicInteger();
+
+        try(TunerSettingsService service = service(tuner, new AtomicInteger(), channels))
+        {
+            var previous = service.browse(tuner, null, true).get(2, TimeUnit.SECONDS);
+            long generation = tuner.operatorGeneration();
+            long center = controller.getFrequency();
+            var conflict = assertThrows(TunerSettingsService.BrowseConflictException.class,
+                () -> service.browse(tuner, null));
+            assertTrue(conflict.claimAllowed());
+            assertNotEquals(previous.leaseId(), conflict.sessionRevision());
+
+            var claimed = service.claimBrowse(tuner, conflict.sessionRevision());
+            assertNotEquals(previous.leaseId(), claimed.leaseId());
+            assertEquals(previous.takeover(), claimed.takeover());
+            assertEquals(previous.canTune(), claimed.canTune());
+            assertEquals(previous.stoppedChannels(), claimed.stoppedChannels());
+            assertEquals(generation, tuner.operatorGeneration());
+            assertEquals(center, controller.getFrequency());
+            assertEquals(DiscoveredTuner.OperatorState.SETUP, tuner.getOperatorState());
+            assertFalse(controller.isCenterFrequencyLocked());
+            assertEquals(List.of("stop:" + original.getConfigurationId()), channels.operations());
+            assertFalse(service.ownsBrowse(tuner, previous.leaseId()));
+            assertTrue(service.verifyBrowse(tuner, claimed.leaseId()));
+
+            assertThrows(TunerSettingsService.BrowseOwnershipLostException.class,
+                () -> service.browse(tuner, previous.leaseId()));
+            assertThrows(TunerSettingsService.BrowseOwnershipLostException.class,
+                () -> service.set(tuner, "frequency_mhz", 120.1, previous.leaseId()));
+            assertThrows(TunerSettingsService.BrowseOwnershipLostException.class,
+                () -> service.releaseBrowse(tuner, previous.leaseId(), false));
+            assertThrows(TunerSettingsService.BrowseOwnershipLostException.class,
+                () -> service.handoffBrowse(tuner, previous.leaseId(), starts::incrementAndGet));
+            assertThrows(TunerSettingsService.BrowseOwnershipLostException.class,
+                () -> service.startSavedChannel(tuner, previous.leaseId(), starts::incrementAndGet,
+                    starts::incrementAndGet));
+            assertEquals(0, starts.get());
+            assertEquals(center, controller.getFrequency());
+            assertTrue(service.verifyBrowse(tuner, claimed.leaseId()));
+
+            service.releaseBrowse(tuner, claimed.leaseId(), false).get(2, TimeUnit.SECONDS);
+            assertEquals(List.of("stop:" + original.getConfigurationId(),
+                "start:" + original.getConfigurationId()), channels.operations());
+            assertEquals(1, sources.mCount.get());
+            assertEquals(DiscoveredTuner.OperatorState.LIVE, tuner.getOperatorState());
+            assertTrue(configuration.isCenterFrequencyLocked());
+            assertTrue(controller.isCenterFrequencyLocked());
+        }
+        finally { channels.close(); }
+    }
+
+    @Test
+    void simultaneousClaimsCanReplaceOnlyTheObservedSessionRevision() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch claim = new CountDownLatch(1);
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var previous = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            var conflict = assertThrows(TunerSettingsService.BrowseConflictException.class,
+                () -> service.browse(tuner, null));
+            Supplier<TunerSettingsService.BrowseLease> attempt = () ->
+            {
+                ready.countDown();
+                try { assertTrue(claim.await(2, TimeUnit.SECONDS)); }
+                catch(InterruptedException exception) { throw new AssertionError(exception); }
+                return service.claimBrowse(tuner, conflict.sessionRevision());
+            };
+            var first = CompletableFuture.supplyAsync(attempt);
+            var second = CompletableFuture.supplyAsync(attempt);
+            assertTrue(ready.await(2, TimeUnit.SECONDS));
+            claim.countDown();
+            TunerSettingsService.BrowseLease winner = null;
+            TunerSettingsService.BrowseConflictException loser = null;
+            for(var request: List.of(first, second))
+            {
+                try
+                {
+                    var result = request.get(2, TimeUnit.SECONDS);
+                    assertNull(winner, "one observed revision can have only one successful claimant");
+                    winner = result;
+                }
+                catch(ExecutionException exception)
+                {
+                    assertTrue(exception.getCause() instanceof TunerSettingsService.BrowseConflictException);
+                    loser = (TunerSettingsService.BrowseConflictException)exception.getCause();
+                }
+            }
+            assertNotNull(winner);
+            assertNotNull(loser);
+            assertTrue(loser.claimAllowed());
+            assertNotEquals(conflict.sessionRevision(), loser.sessionRevision());
+            assertNotEquals(winner.leaseId(), loser.sessionRevision());
+            assertTrue(service.verifyBrowse(tuner, winner.leaseId()));
+            assertFalse(service.verifyBrowse(tuner, previous.leaseId()));
+            service.releaseBrowse(tuner, winner.leaseId(), false).get(2, TimeUnit.SECONDS);
+        }
+        finally { claim.countDown(); }
+    }
+
+    @Test
+    void claimRefusesActiveSearchWithoutInvalidatingItsLeaseOrCenterCleanup() throws Exception
+    {
+        TrackingAirspyController controller = new TrackingAirspyController();
+        FakeDiscoveredTuner tuner = runningTuner(controller, new CountingChannelManager());
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var previous = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            var conflict = assertThrows(TunerSettingsService.BrowseConflictException.class,
+                () -> service.browse(tuner, null));
+            try(var hold = service.holdForSearch(tuner, previous.leaseId()))
+            {
+                long center = controller.getFrequency();
+                hold.tune(120_100_000L);
+                var blocked = assertThrows(TunerSettingsService.BrowseConflictException.class,
+                    () -> service.claimBrowse(tuner, conflict.sessionRevision()));
+                assertFalse(blocked.claimAllowed());
+                assertEquals(conflict.sessionRevision(), blocked.sessionRevision());
+                assertTrue(service.verifyBrowse(tuner, previous.leaseId()));
+                hold.restoreSearchCenter();
+                assertEquals(center, controller.getFrequency());
+            }
+            var claimed = service.claimBrowse(tuner, conflict.sessionRevision());
+            service.releaseBrowse(tuner, claimed.leaseId(), false).get(2, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void claimRefusesReceiverHandoffAlreadyInProgress() throws Exception
+    {
+        FakeDiscoveredTuner tuner = runningTuner(new TrackingAirspyController(), new CountingChannelManager());
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch finish = new CountDownLatch(1);
+        try(TunerSettingsService service = service(tuner, new AtomicInteger()))
+        {
+            var previous = service.browse(tuner, null).get(2, TimeUnit.SECONDS);
+            var conflict = assertThrows(TunerSettingsService.BrowseConflictException.class,
+                () -> service.browse(tuner, null));
+            var handoff = service.handoffBrowse(tuner, previous.leaseId(), () ->
+            {
+                entered.countDown();
+                try { assertTrue(finish.await(2, TimeUnit.SECONDS)); }
+                catch(InterruptedException exception) { throw new AssertionError(exception); }
+                return "started";
+            });
+            assertTrue(entered.await(2, TimeUnit.SECONDS));
+            var blocked = assertThrows(TunerSettingsService.BrowseConflictException.class,
+                () -> service.claimBrowse(tuner, conflict.sessionRevision()));
+            assertFalse(blocked.claimAllowed());
+            finish.countDown();
+            assertEquals("started", handoff.get(2, TimeUnit.SECONDS));
+            assertFalse(service.ownsBrowse(tuner, previous.leaseId()));
+        }
+        finally { finish.countDown(); }
     }
 
     @Test

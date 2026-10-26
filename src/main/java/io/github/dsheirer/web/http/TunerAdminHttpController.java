@@ -246,7 +246,7 @@ public final class TunerAdminHttpController
         }
         catch(TunerSettingsService.SettingUnavailableException exception)
         {
-            ApiHttpResponse.sendError(exchange, 409, "tuner_setting_unavailable", exception.getMessage());
+            sendBrowseFailure(exchange, exception, "tuner_setting_unavailable");
         }
         catch(IllegalStateException exception)
         {
@@ -267,7 +267,7 @@ public final class TunerAdminHttpController
         try
         {
             JsonNode request = WebHttpSupport.readJsonObject(exchange, "POST".equals(method) ?
-                Set.of("lease_id", "takeover") : Set.of("lease_id", "handoff"));
+                Set.of("lease_id", "takeover", "claim_session") : Set.of("lease_id", "handoff"));
             String leaseId = optionalLease(request);
             if("DELETE".equals(method))
             {
@@ -285,7 +285,12 @@ public final class TunerAdminHttpController
                 if(takeoverValue != null && !takeoverValue.isBoolean())
                     throw new IllegalArgumentException("takeover must be true or false");
                 boolean takeover = takeoverValue != null && takeoverValue.booleanValue();
-                TunerSettingsService.BrowseLease lease = mSettings.browse(tuner, leaseId, takeover).join();
+                JsonNode claim = request.get("claim_session");
+                if(claim != null && (request.has("lease_id") || request.has("takeover") ||
+                    !claim.isTextual() || claim.textValue().isBlank() || claim.textValue().length() > 64))
+                    throw new IllegalArgumentException("claim_session must identify a session without lease_id or takeover");
+                TunerSettingsService.BrowseLease lease = claim != null ?
+                    mSettings.claimBrowse(tuner, claim.textValue()) : mSettings.browse(tuner, leaseId, takeover).join();
                 ApiHttpResponse.sendData(exchange, 200, Map.of("lease_id", lease.leaseId(),
                     "expires_at_epoch_ms", lease.expiresAtEpochMs(), "can_tune", lease.canTune(),
                     "takeover", lease.takeover(), "stopped_channels", lease.stoppedChannels(),
@@ -299,8 +304,8 @@ public final class TunerAdminHttpController
         catch(RuntimeException exception)
         {
             Throwable cause = TunerSettingsService.unwrapHandoffFailure(exception);
-            if(cause instanceof TunerSettingsService.SettingUnavailableException)
-                ApiHttpResponse.sendError(exchange, 409, "tuner_browse_unavailable", cause.getMessage());
+            if(cause instanceof TunerSettingsService.SettingUnavailableException unavailable)
+                sendBrowseFailure(exchange, unavailable, "tuner_browse_unavailable");
             else if(cause instanceof IllegalArgumentException)
                 ApiHttpResponse.sendError(exchange, 422, "invalid_tuner_browse", cause.getMessage());
             else
@@ -311,6 +316,21 @@ public final class TunerAdminHttpController
                     "The receiver handoff failed. Check the receiver log for details and retry.");
             }
         }
+    }
+
+    private static void sendBrowseFailure(HttpExchange exchange,
+        TunerSettingsService.SettingUnavailableException exception, String fallbackCode) throws IOException
+    {
+        if(exception instanceof TunerSettingsService.BrowseConflictException conflict)
+        {
+            ApiHttpResponse.sendDocument(exchange, 409, Map.of("error", Map.of(
+                "code", "tuner_browse_conflict", "message", conflict.getMessage(), "status", 409,
+                "details", Map.of("session_revision", conflict.sessionRevision(),
+                    "claim_allowed", conflict.claimAllowed()))));
+        }
+        else ApiHttpResponse.sendError(exchange, 409,
+            exception instanceof TunerSettingsService.BrowseOwnershipLostException ?
+                "tuner_browse_ownership_lost" : fallbackCode, exception.getMessage());
     }
 
     private static String optionalLease(JsonNode request)

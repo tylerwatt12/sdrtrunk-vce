@@ -275,6 +275,7 @@ public final class TunerSettingsService implements AutoCloseable
             BrowseSession owner = browseOwner(tuner);
             if(owner != null && !Objects.equals(owner.id, leaseId))
             {
+                if(leaseId != null) throw new BrowseOwnershipLostException();
                 throw new SettingUnavailableException("Spectrum is using this tuner");
             }
             if(owner != null && owner.takeover && "center_frequency_locked".equals(settingId))
@@ -465,9 +466,11 @@ public final class TunerSettingsService implements AutoCloseable
             {
                 if(takeover)
                     throw new IllegalArgumentException("takeover is only valid when browsing begins");
+                BrowseSession owner = browseOwner(tuner);
+                if(owner != null && !Objects.equals(owner.id, leaseId))
+                    throw new BrowseOwnershipLostException();
                 if(!verifyBrowse(tuner, leaseId))
                     throw new SettingUnavailableException("Spectrum tuner session expired; reopen Spectrum");
-                BrowseSession owner = browseOwner(tuner);
                 owner.expiresAt = mClock.getAsLong() + BROWSE_LIFETIME_MS;
                 return CompletableFuture.completedFuture(owner.lease());
             }
@@ -477,8 +480,9 @@ public final class TunerSettingsService implements AutoCloseable
             if(recording && takeover)
                 throw new SettingUnavailableException("Recording playback has a fixed capture window; tuning takeover is unavailable");
             List<DiscoveredTuner> group = lifecycleGroup(tuner);
-            if(group.stream().anyMatch(member -> browseOwner(member) != null))
-                throw new SettingUnavailableException("Another Spectrum session is using this tuner");
+            BrowseSession existing = group.stream().map(this::browseOwner).filter(Objects::nonNull)
+                .findFirst().orElse(null);
+            if(existing != null) throw browseConflict(tuner, existing);
             if(group.stream().anyMatch(DiscoveredTuner::isDiscoveryHeld))
                 throw new SettingUnavailableException("Signal identification is using this tuner");
             reserveTransition(tuner, group, "starting_browse");
@@ -559,6 +563,43 @@ public final class TunerSettingsService implements AutoCloseable
         }
     }
 
+    /** Transfers browser ownership without ending the receiver-owned session or changing its restoration work. */
+    public BrowseLease claimBrowse(DiscoveredTuner tuner, String sessionRevision)
+    {
+        synchronized(mLifecycleLock)
+        {
+            ensureOpen();
+            ensurePresent(tuner);
+            if(sessionRevision == null || sessionRevision.isBlank() || sessionRevision.length() > 64)
+                throw new IllegalArgumentException("claim_session is invalid");
+            BrowseSession owner = browseOwner(tuner);
+            if(owner == null)
+                throw new SettingUnavailableException("The Spectrum session ended. Retry browsing this tuner.");
+            BrowseConflictException conflict = browseConflict(tuner, owner);
+            if(!conflict.claimAllowed() || !Objects.equals(owner.revision, sessionRevision)) throw conflict;
+            owner.id = UUID.randomUUID().toString();
+            owner.revision = UUID.randomUUID().toString();
+            owner.expiresAt = mClock.getAsLong() + BROWSE_LIFETIME_MS;
+            return owner.lease();
+        }
+    }
+
+    /** The public revision identifies the observed owner but never authorizes tuning or releasing its lease. */
+    private BrowseConflictException browseConflict(DiscoveredTuner tuner, BrowseSession owner)
+    {
+        boolean discovery = owner.group.stream().anyMatch(DiscoveredTuner::isDiscoveryHeld);
+        boolean transition = owner.group.stream().anyMatch(this::isReserved);
+        boolean available = owner.ownsModes() && tuner.getTunerStatus() != TunerStatus.ERROR &&
+            tuner.getTunerStatus() != TunerStatus.REMOVED;
+        boolean sameTarget = owner.target == tuner;
+        String message = discovery ? "Signal identification is using this tuner. Finish it before taking over." :
+            transition || !available ? "This Spectrum session is finishing a receiver operation. Retry shortly." :
+            !sameTarget ? "Another Spectrum session is using this tuner's paired hardware. Select its tuner to take over." :
+            "Another Spectrum session is using this tuner";
+        return new BrowseConflictException(message, owner.revision,
+            sameTarget && available && !discovery && !transition);
+    }
+
     public boolean verifyBrowse(DiscoveredTuner tuner, String leaseId)
     {
         synchronized(mLifecycleLock)
@@ -632,7 +673,7 @@ public final class TunerSettingsService implements AutoCloseable
                 return CompletableFuture.completedFuture(null);
             }
             if(owner.target != tuner || !Objects.equals(owner.id, leaseId))
-                throw new SettingUnavailableException("Spectrum tuner session belongs to another browser");
+                throw new BrowseOwnershipLostException();
             if(handoffHold != null && (!handoff || handoffHold.tuner != tuner ||
                 !handoffHold.group.equals(owner.group) || !handoffHold.valid()))
                 throw new SettingUnavailableException("The signal identification reservation changed; retry the saved channel");
@@ -1320,7 +1361,8 @@ public final class TunerSettingsService implements AutoCloseable
 
     private final class BrowseSession
     {
-        private final String id = UUID.randomUUID().toString();
+        private String id = UUID.randomUUID().toString();
+        private String revision = UUID.randomUUID().toString();
         private final DiscoveredTuner target;
         private final List<DiscoveredTuner> group;
         private final Map<DiscoveredTuner,DiscoveredTuner.OperatorState> previous;
@@ -1949,7 +1991,31 @@ public final class TunerSettingsService implements AutoCloseable
     {
     }
 
-    public static final class SettingUnavailableException extends IllegalStateException
+    public static final class BrowseConflictException extends SettingUnavailableException
+    {
+        private final String mSessionRevision;
+        private final boolean mClaimAllowed;
+
+        private BrowseConflictException(String message, String sessionRevision, boolean claimAllowed)
+        {
+            super(message);
+            mSessionRevision = sessionRevision;
+            mClaimAllowed = claimAllowed;
+        }
+
+        public String sessionRevision() { return mSessionRevision; }
+        public boolean claimAllowed() { return mClaimAllowed; }
+    }
+
+    public static final class BrowseOwnershipLostException extends SettingUnavailableException
+    {
+        private BrowseOwnershipLostException()
+        {
+            super("This Spectrum session was taken over in another tab or browser.");
+        }
+    }
+
+    public static class SettingUnavailableException extends IllegalStateException
     {
         public SettingUnavailableException(String message)
         {

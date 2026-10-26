@@ -1723,7 +1723,8 @@ if(view === 'live-notice') {
 if(view === 'scanner') document.body.dataset.view = 'scanner';
 if(view === 'entity-details') document.body.dataset.view = 'group-identity';
 if(view === 'tuner-spectrum') {
-  const spectrumOptions = document.querySelector('.visual-tuner-spectrum-example .tuner-spectrum-options-summary');
+  const example = document.querySelector('.visual-tuner-spectrum-example');
+  const spectrumOptions = example.querySelector('.tuner-spectrum-options-summary');
   const compactSpectrum = window.matchMedia('(max-width: 760px)');
   const syncSpectrumOptionsLabel = () => {
     const text = compactSpectrum.matches ? 'More spectrum actions' : 'Display options';
@@ -1732,6 +1733,26 @@ if(view === 'tuner-spectrum') {
   };
   syncSpectrumOptionsLabel();
   compactSpectrum.addEventListener('change', syncSpectrumOptionsLabel);
+  if (parameters.get('state') === 'session-conflict') {
+    const toolbar = example.querySelector('.spectrum-browse-toolbar');
+    toolbar.classList.add('spectrum-browse-toolbar-unavailable');
+    const center = toolbar.querySelector('.spectrum-browse-center');
+    center.hidden = true;
+    center.replaceChildren();
+    toolbar.querySelector('[aria-label="Tuner mode"]').hidden = true;
+    const status = toolbar.querySelector('.spectrum-browse-state .badge');
+    status.textContent = 'In use';
+    status.classList.replace('state-current', 'state-stale');
+    toolbar.querySelectorAll('.tuner-spectrum-zoom-actions button, .tuner-spectrum-playback-actions button')
+      .forEach(button => { button.disabled = true; });
+    const feedback = document.createElement('div');
+    feedback.className = 'spectrum-browse-feedback';
+    feedback.innerHTML = '<div class="ui-feedback spectrum-browse-message" role="status">In use by another Spectrum session</div>' +
+      '<button class="ui-button ui-button-primary" type="button">Take over</button>' +
+      '<button class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Retry browsing" hidden>' +
+        '<svg aria-hidden="true"><use href="#visual-icon-replay"></use></svg></button>';
+    toolbar.append(feedback);
+  }
 }
 if(view === 'tuners') {
   const toolbar = document.querySelector('.visual-tuners-example .tuner-spectrum-toolbar');

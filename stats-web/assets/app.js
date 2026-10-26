@@ -10216,6 +10216,7 @@ async function requestJson(path, options = {}) {
     error.status = Number(failure?.status) || response.status;
     error.code = failure?.code || (typeof result?.error === 'string' ? result.error : null);
     error.field = failure?.field || null;
+    error.details = failure?.details || null;
     error.path = path;
     throw error;
   }
@@ -20972,7 +20973,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
   const receiverIcon = iconGlyph('icon-radio-tower');
   receiverIcon.classList.add('spectrum-browse-receiver-icon');
   selectField.querySelector('.ui-select-frame')?.prepend(receiverIcon);
-  const centerHost = node('div', 'spectrum-browse-center tuners-readout');
+  const centerHost = node('div', 'spectrum-browse-center');
   const feedback = node('div', 'spectrum-browse-feedback');
   feedback.hidden = true;
   const message = node('div', 'ui-feedback spectrum-browse-message');
@@ -20988,12 +20989,20 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     const routine = routineBrowseMessages.has(text);
     message.classList.toggle('spectrum-browse-message-routine', routine);
     feedback.hidden = !text || routine;
+    spectrum.controls.toolbar.classList.toggle('spectrum-browse-toolbar-unavailable', !lease);
   };
   const retryBrowse = iconButton('icon-replay', 'Retry browsing',
     'ui-button ui-button-secondary ui-icon-button');
   retryBrowse.addEventListener('click', () => void chooseTuner(select.value));
   retryBrowse.hidden = true;
-  feedback.append(message, retryBrowse);
+  const claimBrowse = node('button', 'ui-button ui-button-primary', 'Take over');
+  claimBrowse.type = 'button';
+  claimBrowse.hidden = true;
+  claimBrowse.addEventListener('click', () => {
+    if (select.disabled || !browseConflict?.claim_allowed) return;
+    void chooseTuner(select.value, false, browseConflict.session_revision);
+  });
+  feedback.append(message, claimBrowse, retryBrowse);
   const confirmTakeover = (tuner, purpose = 'browse') => {
     if (guideMode) return Promise.resolve(false);
     const channelCount = purpose === 'search' ? Math.max(0, Number(tuner?.channel_count) || 0) :
@@ -21031,6 +21040,8 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
   let tuners = [];
   let selectedTuner = null;
   let lease = null;
+  let browseConflict = null;
+  let ownershipTransferred = false;
   let leaseTimer = null;
   let leaseRenewal = null;
   let leaseRenewalRequested = false;
@@ -21122,12 +21133,40 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     // This control owns the page's temporary takeover; idle monitoring can also borrow Setup hardware.
     const takeover = lease?.takeover === true;
     const tuner = selectedInventoryTuner();
-    mode.hidden = !tuner || tunerIsRecording(tuner);
+    mode.hidden = !tuner || tunerIsRecording(tuner) || !!browseConflict || ownershipTransferred;
+    claimBrowse.disabled = select.disabled || disposed;
     const unavailable = modeConfirming || select.disabled || probeActive || tuning || liveTune?.busy === true;
     for (const [next, button] of modeButtons) {
       button.setAttribute('aria-pressed', String(next === (takeover ? 'setup' : 'live')));
       button.setAttribute('aria-disabled', String(unavailable));
     }
+  };
+  const showBrowseFailure = (error) => {
+    browseConflict = error?.code === 'tuner_browse_conflict' ? error.details : null;
+    ownershipTransferred = error?.code === 'tuner_browse_ownership_lost';
+    const canClaim = browseConflict?.claim_allowed === true && !!browseConflict.session_revision;
+    claimBrowse.hidden = !canClaim;
+    retryBrowse.hidden = canClaim;
+    setBrowseMessage(ownershipTransferred ? 'This Spectrum session was taken over.' : canClaim ?
+      'In use by another Spectrum session' :
+      error.message || 'Could not browse this tuner. Retry or choose another tuner.');
+    spectrum.selectTarget('');
+    renderCenter();
+    syncTakeoverActions();
+  };
+  const loseLease = (error) => {
+    operation += 1;
+    window.clearTimeout(leaseTimer);
+    leaseTimer = null;
+    leaseRenewalRequested = false;
+    leaseRetrying = false;
+    manualTuneOperation = null;
+    tuning = false;
+    lease = null;
+    liveTune.reset();
+    resetFrequencyRail();
+    select.disabled = probeActive;
+    showBrowseFailure(error);
   };
   const releaseLease = async (suppressFailure = true) => {
     const previous = lease;
@@ -21150,6 +21189,12 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       if (lease?.lease_id === previous.lease_id) lease = null;
       return result;
     } catch (error) {
+      if (!disposed && lease?.lease_id === previous.lease_id &&
+          error?.code === 'tuner_browse_ownership_lost') {
+        loseLease(error);
+        if (!suppressFailure) throw error;
+        return;
+      }
       if (!suppressFailure) {
         if (!disposed && lease?.lease_id === previous.lease_id) {
           window.clearTimeout(leaseTimer);
@@ -21203,6 +21248,11 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
   };
   const renderCenter = () => {
     centerControl?.close();
+    if (!lease) {
+      centerHost.replaceChildren();
+      centerHost.hidden = true;
+      return;
+    }
     const recording = tunerIsRecording(selectedTuner);
     const recordingFrequency = Number(selectedTuner?.frequency_hz ?? selectedTuner?.configured_frequency_hz);
     const setting = selectedTuner?.settings?.find((candidate) => candidate.id === 'frequency_mhz') ||
@@ -21263,7 +21313,8 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       }
       setBrowseMessage('Click a signal to inspect it. Drag the full view to tune; zoom to pan.');
     } catch (error) {
-      if (current() && !live) setBrowseMessage(error.message || 'Could not save center frequency settings. Try again.');
+      if (current() && leaseOwnershipLost(error)) loseLease(error);
+      else if (current() && !live) setBrowseMessage(error.message || 'Could not save center frequency settings. Try again.');
       throw error;
     } finally {
       if (!live && manualTuneOperation === saveOperation) {
@@ -21299,12 +21350,9 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     failed: (error) => {
       if (disposed) return;
       liveTune.reset();
-      setBrowseMessage(error.message || 'Could not tune this receiver. Drag again to retry.');
       if (leaseOwnershipLost(error)) {
-        lease = null;
-        spectrum.selectTarget('');
-        retryBrowse.hidden = false;
-      }
+        if (lease) loseLease(error);
+      } else setBrowseMessage(error.message || 'Could not tune this receiver. Drag again to retry.');
     },
     idle: () => {
       if (disposed) return;
@@ -21323,6 +21371,10 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       activityFeed: workspaceOptions.activityFeed } : {}),
     managedSelection: true,
     emptyState: () => {
+      if (browseConflict || ownershipTransferred) return {
+        status: 'In use', message: ownershipTransferred ? 'This Spectrum session was taken over.' :
+          'Another Spectrum session is using this tuner.'
+      };
       if (!tunerIsRecording(selectedTuner)) return null;
       const state = selectedTuner?.recording_playback?.state;
       return state === 'stopped' ? { status: 'Stopped', message: 'Recording playback is stopped.' } :
@@ -21436,14 +21488,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     } catch (error) {
       if (disposed || lease?.lease_id !== existing.lease_id) return;
       if (leaseOwnershipLost(error)) {
-        liveTune.reset();
-        lease = null;
-        leaseRetrying = false;
-        spectrum.selectTarget('');
-        setBrowseMessage(error.message || 'Tuner browsing expired. Retry to resume.');
-        retryBrowse.hidden = false;
-        syncTakeoverActions();
-        renderCenter();
+        loseLease(error);
         return;
       }
       leaseRetrying = true;
@@ -21467,16 +21512,20 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       }
     }
   };
-  const chooseTuner = async (id, takeover = false) => {
+  const chooseTuner = async (id, takeover = false, claimSession = null) => {
     const generation = ++operation;
     manualTuneOperation = null;
     tuning = false;
     retuneCancelled = false;
     liveTune.reset();
     resetFrequencyRail();
+    if (!claimSession) browseConflict = null;
+    ownershipTransferred = false;
     retryBrowse.hidden = true;
+    if (!claimSession) claimBrowse.hidden = true;
     select.disabled = true;
-    setBrowseMessage('Preparing tuner…');
+    setBrowseMessage(claimSession ? 'Taking over…' : 'Preparing tuner…');
+    syncTakeoverActions();
     spectrum.selectTarget('');
     centerControl?.close();
     centerHost.replaceChildren();
@@ -21484,7 +21533,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       await releaseLease(false);
       if (disposed || generation !== operation) return;
       const acquired = await requestSpectrumJson(leasePath(id), {
-        method: 'POST', body: takeover ? { takeover: true } : {}, page: false
+        method: 'POST', body: claimSession ? { claim_session: claimSession } : takeover ? { takeover: true } : {}, page: false
       });
       if (disposed || generation !== operation) {
         void requestSpectrumJson(leasePath(id), { method: 'DELETE', body: { lease_id: acquired.lease_id },
@@ -21492,6 +21541,8 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
         return;
       }
       lease = acquired;
+      browseConflict = null;
+      claimBrowse.hidden = true;
       leaseRetrying = false;
       confirmSelectedTuner(acquired.tuner);
       select.value = id;
@@ -21513,8 +21564,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
         setBrowseMessage(error.message || 'Could not release this tuner. Try again before switching.');
         retryBrowse.hidden = true;
       } else {
-        setBrowseMessage(error.message || 'Could not browse this tuner. Retry or choose another tuner.');
-        retryBrowse.hidden = false;
+        showBrowseFailure(error);
       }
     }
     finally {

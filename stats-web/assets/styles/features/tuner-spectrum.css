@@ -1012,6 +1012,15 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   flex: 1 1 auto;
 }
 
+.spectrum-browse-toolbar-unavailable .spectrum-browse-feedback {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.spectrum-browse-feedback > button {
+  flex: 0 0 auto;
+}
+
 .spectrum-browse-tuner {
   min-width: 0;
   position: relative;
@@ -1041,16 +1050,16 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   border: 0;
 }
 
-.spectrum-browse-toolbar .spectrum-browse-center.tuners-readout {
+.spectrum-browse-toolbar .spectrum-browse-center {
   min-width: 0;
   display: grid;
   grid-template-columns: minmax(235px, 1fr);
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-1);
-  background: var(--surface-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-card);
+}
+
+.spectrum-browse-toolbar .spectrum-browse-center[hidden] {
+  display: none;
 }
 
 .spectrum-browse-center .tuners-center-frequency,
@@ -1922,7 +1931,7 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
     grid-area: receiver;
   }
 
-  .spectrum-browse-toolbar .spectrum-browse-center.tuners-readout,
+  .spectrum-browse-toolbar .spectrum-browse-center,
   .spectrum-browse-command-cluster {
     display: contents;
   }
@@ -1945,6 +1954,17 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
 
   .spectrum-browse-feedback {
     grid-area: feedback;
+  }
+
+  .spectrum-browse-toolbar-unavailable {
+    grid-template-areas:
+      "receiver status"
+      "frequency frequency"
+      "actions actions";
+  }
+
+  .spectrum-browse-toolbar-unavailable .spectrum-browse-feedback {
+    grid-area: frequency;
   }
 
   .spectrum-browse-toolbar .tuner-spectrum-zoom-actions > button:last-child {
