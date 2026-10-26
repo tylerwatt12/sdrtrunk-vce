@@ -90,6 +90,50 @@ class SqliteDatabaseSnapshotTest
     }
 
     @Test
+    void aPrivateIdentityAnchorRemovesAnOwnedSnapshotWhenFileKeysAreUnavailable() throws Exception
+    {
+        Path copy = Files.writeString(mTemporaryFolder.resolve("owned.sqlite"), "snapshot");
+        Path privateDirectory = Files.createTempDirectory(mTemporaryFolder, ".sqlite-snapshot-");
+        Path anchor = Files.createLink(privateDirectory.resolve("identity.sqlite"), copy);
+        var published = new SqliteDatabaseSnapshot.PublishedSnapshot(copy, null, anchor);
+        published.deleteIfUnchanged();
+        assertFalse(Files.exists(copy));
+        assertTrue(Files.exists(anchor));
+        published.releaseIdentity();
+        assertFalse(Files.exists(privateDirectory));
+    }
+
+    @Test
+    void aPrivateIdentityAnchorPreservesAReplacementEvenWithIdenticalContents() throws Exception
+    {
+        Path copy = Files.writeString(mTemporaryFolder.resolve("replaced-with-identical.sqlite"), "same contents");
+        Path privateDirectory = Files.createTempDirectory(mTemporaryFolder, ".sqlite-snapshot-");
+        Path anchor = Files.createLink(privateDirectory.resolve("identity.sqlite"), copy);
+        var published = new SqliteDatabaseSnapshot.PublishedSnapshot(copy, null, anchor);
+        Path replacement = Files.writeString(mTemporaryFolder.resolve("replacement.sqlite"), "same contents");
+        Files.move(replacement, copy, StandardCopyOption.REPLACE_EXISTING);
+        assertThrows(IOException.class, published::deleteIfUnchanged);
+        assertEquals("same contents", Files.readString(copy));
+        published.releaseIdentity();
+        assertFalse(Files.exists(privateDirectory));
+        assertTrue(Files.exists(copy));
+    }
+
+    @Test
+    void aPrivateIdentityAnchorDoesNotGrantOwnershipOfANewSidecar() throws Exception
+    {
+        Path copy = Files.writeString(mTemporaryFolder.resolve("sidecar-owned.sqlite"), "snapshot");
+        Path privateDirectory = Files.createTempDirectory(mTemporaryFolder, ".sqlite-snapshot-");
+        Path anchor = Files.createLink(privateDirectory.resolve("identity.sqlite"), copy);
+        var published = new SqliteDatabaseSnapshot.PublishedSnapshot(copy, null, anchor);
+        Path sidecar = Files.writeString(Path.of(copy + "-wal"), "foreign sidecar");
+        assertThrows(IOException.class, published::deleteIfUnchanged);
+        published.releaseIdentity();
+        assertEquals("snapshot", Files.readString(copy));
+        assertEquals("foreign sidecar", Files.readString(sidecar));
+    }
+
+    @Test
     void repeatedCanonicalSnapshotsHaveTheSameApprovalDigest() throws Exception
     {
         Path source = mTemporaryFolder.resolve("sdrtrunk.sqlite");

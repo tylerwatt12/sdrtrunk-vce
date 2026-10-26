@@ -138,6 +138,7 @@ class WebConfiguredEntityRepositoryTest
                     configuration_id TEXT NOT NULL UNIQUE,
                     first_seen_ms INTEGER,
                     last_seen_ms INTEGER,
+                    alias_list_name TEXT NOT NULL DEFAULT '',
                     radio_system_id INTEGER
                 )
                 """);

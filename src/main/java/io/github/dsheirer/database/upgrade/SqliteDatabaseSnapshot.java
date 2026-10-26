@@ -77,6 +77,7 @@ public final class SqliteDatabaseSnapshot
             requireUnusedDestination(companion);
         }
         List<PublishedSnapshot> published = new ArrayList<>();
+        Throwable primaryFailure = null;
         try
         {
             createSingle(source, destination, cancellation, published);
@@ -88,6 +89,7 @@ public final class SqliteDatabaseSnapshot
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
+            primaryFailure = failure;
             //Admission does not confer ownership: another actor may claim a destination before publication.
             for(PublishedSnapshot owned: published.reversed())
             {
@@ -95,6 +97,24 @@ public final class SqliteDatabaseSnapshot
                 catch(IOException cleanup) { failure.addSuppressed(cleanup); }
             }
             throw failure;
+        }
+        finally
+        {
+            IOException cleanupFailure = null;
+            for(PublishedSnapshot owned: published.reversed())
+            {
+                try { owned.releaseIdentity(); }
+                catch(IOException cleanup)
+                {
+                    if(cleanupFailure == null) cleanupFailure = cleanup;
+                    else cleanupFailure.addSuppressed(cleanup);
+                }
+            }
+            if(cleanupFailure != null)
+            {
+                if(primaryFailure != null) primaryFailure.addSuppressed(cleanupFailure);
+                else throw cleanupFailure;
+            }
         }
     }
 
@@ -130,6 +150,8 @@ public final class SqliteDatabaseSnapshot
 
         Path privateDirectory = Files.createTempDirectory(destinationParent, ".sqlite-snapshot-");
         Path privateSnapshot = privateDirectory.resolve("snapshot.sqlite");
+        Path identityAnchor = null;
+        boolean publicationComplete = false;
         Throwable primaryFailure = null;
         try
         {
@@ -141,10 +163,18 @@ public final class SqliteDatabaseSnapshot
             FileAccessAttributeSnapshot.restrictSensitiveFile(privateSnapshot);
             Object fileKey = Files.readAttributes(privateSnapshot, BasicFileAttributes.class,
                 LinkOption.NOFOLLOW_LINKS).fileKey();
+            if(fileKey == null)
+            {
+                // Windows exposes no BasicFileAttributes file key. Keep a private name for this exact new file
+                // until both members are published, so cancellation can still distinguish a replacement.
+                identityAnchor = privateDirectory.resolve("identity.sqlite");
+                Files.createLink(identityAnchor, privateSnapshot);
+            }
             requireUnusedDestination(normalizedDestination);
             requireNotCancelled(cancellation);
             Files.move(privateSnapshot, normalizedDestination);
-            published.add(new PublishedSnapshot(normalizedDestination, fileKey));
+            published.add(new PublishedSnapshot(normalizedDestination, fileKey, identityAnchor));
+            publicationComplete = true;
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
@@ -155,7 +185,7 @@ public final class SqliteDatabaseSnapshot
         {
             try
             {
-                deleteTree(privateDirectory);
+                if(identityAnchor == null || !publicationComplete) deleteTree(privateDirectory);
             }
             catch(IOException cleanupFailure)
             {
@@ -694,18 +724,25 @@ public final class SqliteDatabaseSnapshot
         });
     }
 
-    private record PublishedSnapshot(Path path, Object fileKey)
+    record PublishedSnapshot(Path path, Object fileKey, Path identityAnchor)
     {
-        private void deleteIfUnchanged() throws IOException
+        void deleteIfUnchanged() throws IOException
         {
             if(!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
-            Object currentKey = Files.readAttributes(path, BasicFileAttributes.class,
-                LinkOption.NOFOLLOW_LINKS).fileKey();
-            if(fileKey == null || !fileKey.equals(currentKey))
+            BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS);
+            boolean sameIdentity = attributes.isRegularFile() && (fileKey != null ?
+                fileKey.equals(attributes.fileKey()) : identityAnchor != null && Files.isSameFile(identityAnchor, path));
+            if(!sameIdentity)
                 throw new IOException("Snapshot destination ownership changed; preserving " + path);
             //Standalone publication creates no sidecars. A new sidecar belongs to a different actor.
             requireNoDestinationSidecars(path);
             Files.delete(path);
+        }
+
+        void releaseIdentity() throws IOException
+        {
+            if(identityAnchor != null) deleteTree(identityAnchor.getParent());
         }
     }
 

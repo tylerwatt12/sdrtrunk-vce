@@ -12,6 +12,8 @@
 package io.github.dsheirer.database;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,6 +21,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BiPredicate;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
@@ -32,11 +35,14 @@ class SdrTrunkDatabaseDdlBoundaryTest
     private static final Pattern DDL = Pattern.compile(
         "(?i)\\b(?:CREATE\\s+(?:(?:UNIQUE|TEMP|TEMPORARY|VIRTUAL)\\s+)*(?:TABLE|INDEX|VIEW|TRIGGER)|" +
             "ALTER\\s+TABLE|DROP\\s+(?:TABLE|INDEX|VIEW|TRIGGER))\\b");
+    private static final Pattern TEMP_VIEW_DDL = Pattern.compile("(?i)CREATE\\s+TEMP(?:ORARY)?\\s+VIEW");
     private static final Pattern SCHEMA_DDL_CALL = Pattern.compile(
         "\\b(?:(?:SdrTrunkDatabaseSchema|DmrActivitySchema|TrunkedSiteSchema|" +
             "EncryptionKeyVaultSchema|TrunkedIdentitySchema|ReceiverActivitySchema)\\.create\\w*|" +
             "ReceiverActivitySchema\\.(?:rebuildCoveringActivityIndexes|rebuildHistoricalMemberEvidenceIndexes|" +
                 "rebuildStoredMemberChannelEvidence|rebuildTargetIdentityForeignKeyIndex)|" +
+            "ConfigurationHistorySchema\\.(?:createConfiguration|createHistory|separateHistoryOwners|" +
+                "addAliasActivityIdentity|removeConfiguration)|" +
             "Format(?:2|4|5)SchemaSql\\.create\\w*|ManagedRecordingSchema\\.ddlForFormat)\\s*\\(");
     private static final Pattern FRESH_SCHEMA_CALL = Pattern.compile(
         "\\bSdrTrunkDatabaseStartup(?:::|\\.)(?:createGlobalDatabase|createVaultDatabase)\\b");
@@ -46,6 +52,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/stats/activity/ActivityMessageSchemaMigration.java",
         "java/io/github/dsheirer/stats/activity/ToneActivitySchema.java",
         "java/io/github/dsheirer/database/SdrTrunkDatabaseSchema.java",
+        "java/io/github/dsheirer/database/ConfigurationHistorySchema.java",
         "java/io/github/dsheirer/stats/activity/ReceiverActivitySchema.java",
         "java/io/github/dsheirer/stats/activity/RadioSystemSchema.java",
         "java/io/github/dsheirer/stats/activity/TrunkedIdentitySchema.java",
@@ -74,6 +81,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
     private static final Set<String> CREATION_ORCHESTRATORS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseStartup.java",
         "java/io/github/dsheirer/database/SdrTrunkDatabaseSchema.java",
+        "java/io/github/dsheirer/database/ConfigurationHistorySchema.java",
         "java/io/github/dsheirer/stats/activity/ReceiverActivitySchema.java",
         "java/io/github/dsheirer/stats/activity/ToneActivitySchema.java",
         "java/io/github/dsheirer/database/upgrade/Format3To4DatabaseMigration.java",
@@ -103,7 +111,11 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/upgrade/Format41To42DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format43To44DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format60To61DatabaseMigration.java",
+        "java/io/github/dsheirer/database/upgrade/Format62To63DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/ManagedRecordingCatalogMigrator.java");
+    // These views live only on the current read connection; their owner still cannot change persisted objects.
+    private static final Set<String> TEMP_VIEW_OWNERS = Set.of(
+        "java/io/github/dsheirer/stats/StatsHistoryContext.java");
     private static final Set<String> FRESH_DATABASE_CALLERS = Set.of(
         "java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java",
         "java/io/github/dsheirer/database/importer/LegacyXmlConfigurationImporter.java");
@@ -111,13 +123,28 @@ class SdrTrunkDatabaseDdlBoundaryTest
     @Test
     void ddlIsConfinedToSchemaAndMigrationOwners() throws IOException
     {
-        List<String> violations = matchingSources(DDL).stream()
-            .filter(path -> !DDL_OWNERS.contains(relative(path)))
+        List<String> violations = matchingSources((path, source) -> hasUnownedDdl(relative(path), source)).stream()
             .map(SdrTrunkDatabaseDdlBoundaryTest::relative)
             .toList();
 
         assertEquals(List.of(), violations,
             "Runtime stores/services must not create, repair, alter, or drop database objects");
+    }
+
+    @Test
+    void readContextMayCreateOnlyConnectionLocalViews()
+    {
+        String owner = "java/io/github/dsheirer/stats/StatsHistoryContext.java";
+        String view = "CREATE TEMP VIEW configured_channel AS SELECT * FROM configuration.configuration_channel";
+        assertFalse(hasUnownedDdl(owner, view));
+        assertFalse(hasUnownedDdl(owner, view.replace("TEMP", "TEMPORARY")));
+        assertTrue(hasUnownedDdl(owner, view + "; CREATE TABLE persisted(id INTEGER)"));
+        assertTrue(hasUnownedDdl(owner, "CREATE VIEW persisted AS SELECT 1"));
+        assertTrue(hasUnownedDdl(owner, "CREATE TEMP TABLE scratch(id INTEGER)"));
+        assertTrue(hasUnownedDdl(owner, "CREATE INDEX persisted ON alias(name)"));
+        assertTrue(hasUnownedDdl(owner, "ALTER TABLE alias ADD COLUMN extra TEXT"));
+        assertTrue(hasUnownedDdl(owner, "DROP VIEW persisted"));
+        assertTrue(hasUnownedDdl("java/io/github/dsheirer/stats/OtherRuntimeStore.java", view));
     }
 
     @Test
@@ -146,6 +173,21 @@ class SdrTrunkDatabaseDdlBoundaryTest
 
     private static List<Path> matchingSources(Pattern pattern) throws IOException
     {
+        return matchingSources((path, source) -> pattern.matcher(source).find());
+    }
+
+    private static boolean hasUnownedDdl(String path, String source)
+    {
+        if(DDL_OWNERS.contains(path))
+        {
+            return false;
+        }
+        return DDL.matcher(source).results().anyMatch(match ->
+            !TEMP_VIEW_OWNERS.contains(path) || !TEMP_VIEW_DDL.matcher(match.group()).matches());
+    }
+
+    private static List<Path> matchingSources(BiPredicate<Path,String> predicate) throws IOException
+    {
         List<Path> matches = new ArrayList<>();
 
         try(var paths = Files.walk(MAIN_SOURCE))
@@ -153,7 +195,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
             for(Path path: paths.filter(Files::isRegularFile)
                 .filter(SdrTrunkDatabaseDdlBoundaryTest::isSqlBearingSource).sorted().toList())
             {
-                if(pattern.matcher(Files.readString(path)).find())
+                if(predicate.test(path, Files.readString(path)))
                 {
                     matches.add(path);
                 }

@@ -25,6 +25,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -590,46 +591,102 @@ class SdrTrunkDatabaseStartupTest
     @Test
     void rejectsExtraTriggerWithoutChangingJournalMode() throws Exception
     {
+        rejectsExtraTriggerWithoutChangingJournalMode("configuration");
+    }
+
+    @Test
+    void rejectsActivityExtraTriggerWithoutChangingJournalMode() throws Exception
+    {
+        rejectsExtraTriggerWithoutChangingJournalMode("activity");
+    }
+
+    private void rejectsExtraTriggerWithoutChangingJournalMode(String role) throws Exception
+    {
         Path database = mTemporaryFolder.resolve("extra-trigger.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        useDeleteJournals(database);
+        Path changedRole = role.equals("configuration") ? database : ActivityDatabasePath.forConfiguration(database);
+        String table = role.equals("configuration") ? "alias" : "receiver_channel";
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + changedRole);
             Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA journal_mode=DELETE");
             statement.executeUpdate("""
-                CREATE TRIGGER unexpected_alias_trigger
-                AFTER INSERT ON alias
+                CREATE TRIGGER unexpected_trigger
+                AFTER INSERT ON %s
                 BEGIN
                     SELECT 1;
                 END
-                """);
+                """.formatted(table));
         }
 
-        assertEquals("delete", journalMode(database));
-        java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
-            () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        assertTrue(failure.getMessage().contains("exact format-63 schema"));
-        assertEquals("delete", journalMode(database));
+        assertSchemaRejectedWithoutMutation(database, role);
     }
 
     @Test
     void rejectsSameNamedIndexWithWrongDefinition() throws Exception
     {
+        rejectsSameNamedIndexWithWrongDefinition("configuration");
+    }
+
+    @Test
+    void rejectsActivitySameNamedIndexWithWrongDefinition() throws Exception
+    {
+        rejectsSameNamedIndexWithWrongDefinition("activity");
+    }
+
+    private void rejectsSameNamedIndexWithWrongDefinition(String role) throws Exception
+    {
         Path database = mTemporaryFolder.resolve("wrong-index-definition.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(database);
-        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+        useDeleteJournals(database);
+        Path changedRole = role.equals("configuration") ? database : ActivityDatabasePath.forConfiguration(database);
+        String index = role.equals("configuration") ? "idx_configuration_channel_sort" : "idx_receiver_channel_retention";
+        String table = role.equals("configuration") ? "configuration_channel" : "receiver_channel";
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + changedRole);
             Statement statement = connection.createStatement())
         {
-            statement.executeUpdate("DROP INDEX idx_configuration_channel_sort");
-            statement.executeUpdate("""
-                CREATE INDEX idx_configuration_channel_sort
-                ON configuration_channel(id)
-                """);
+            statement.executeUpdate("DROP INDEX " + index);
+            statement.executeUpdate("CREATE INDEX " + index + " ON " + table + "(id)");
         }
 
+        assertSchemaRejectedWithoutMutation(database, role);
+    }
+
+    private static void useDeleteJournals(Path database) throws Exception
+    {
+        for(Path path: List.of(database, ActivityDatabasePath.forConfiguration(database)))
+        {
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + path);
+                Statement statement = connection.createStatement())
+            {
+                statement.execute("PRAGMA journal_mode=DELETE");
+            }
+        }
+    }
+
+    private static void assertSchemaRejectedWithoutMutation(Path database, String changedRole) throws Exception
+    {
+        List<Path> files = List.of(database, ActivityDatabasePath.forConfiguration(database));
+        List<byte[]> contents = new ArrayList<>();
+        List<FileTime> modifiedTimes = new ArrayList<>();
+        for(Path path: files)
+        {
+            assertEquals("delete", journalMode(path));
+            contents.add(Files.readAllBytes(path));
+            modifiedTimes.add(Files.getLastModifiedTime(path));
+        }
         java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
-        assertTrue(failure.getMessage().contains("exact format-63 schema"));
+        String expected = changedRole.equals("configuration") ? "Unrecognized SQLite database schema fingerprint" :
+            "The activity database does not have the exact format-63 schema";
+        assertTrue(failure.getMessage().contains(expected), failure::getMessage);
+        for(int index = 0; index < files.size(); index++)
+        {
+            Path path = files.get(index);
+            assertEquals("delete", journalMode(path));
+            assertArrayEquals(contents.get(index), Files.readAllBytes(path));
+            assertEquals(modifiedTimes.get(index), Files.getLastModifiedTime(path));
+        }
     }
 
     private static String journalMode(Path database) throws Exception

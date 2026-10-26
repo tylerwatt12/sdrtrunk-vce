@@ -559,7 +559,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
-    void rejectsHardLinkedCurrentActivityBeforeRepairingEitherStagedFile() throws Exception
+    void rejectsHardLinkedCurrentActivityBeforeRepairingEitherStagedFileWhenLinkCountsAreAvailable() throws Exception
     {
         Path source = mTemporaryFolder.resolve("linked-source/sdrtrunk.sqlite");
         Files.createDirectories(source.getParent());
@@ -569,10 +569,14 @@ class ApplicationDatabaseMigratorTest
         try
         {
             Files.createLink(ActivityDatabasePath.forConfiguration(stage), ActivityDatabasePath.forConfiguration(source));
+            Object links = Files.getAttribute(ActivityDatabasePath.forConfiguration(stage), "unix:nlink",
+                java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            Assumptions.assumeTrue(links instanceof Number && ((Number)links).longValue() > 1,
+                "Filesystem link counts are unavailable");
         }
-        catch(UnsupportedOperationException exception)
+        catch(UnsupportedOperationException | IllegalArgumentException | java.io.IOException | SecurityException exception)
         {
-            Assumptions.abort("Filesystem does not support hard links");
+            Assumptions.abort("Filesystem hard-link counts are unavailable");
         }
         byte[] configurationBefore = Files.readAllBytes(stage);
         byte[] activityBefore = Files.readAllBytes(ActivityDatabasePath.forConfiguration(source));

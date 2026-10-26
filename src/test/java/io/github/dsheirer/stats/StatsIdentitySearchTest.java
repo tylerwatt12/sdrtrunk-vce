@@ -46,6 +46,8 @@ class StatsIdentitySearchTest
                 "CREATE TABLE alias(id INTEGER PRIMARY KEY,alias_list_id INTEGER,name TEXT,description TEXT," +
                     "group_name TEXT,matcher_type TEXT,protocol TEXT,value INTEGER,min_value INTEGER,max_value INTEGER)",
                 "CREATE TABLE alias_p25_subscriber_identity(alias_id INTEGER,p25_subscriber_identity_id INTEGER)",
+                "CREATE TABLE p25_subscriber_identity(id INTEGER PRIMARY KEY,home_wacn INTEGER," +
+                    "home_system_id INTEGER,subscriber_id INTEGER)",
                 "CREATE TABLE p25_site_call_identity_bucket(identity_summary_id INTEGER,channel_id INTEGER," +
                     "observed_local_id INTEGER,observed_working_id INTEGER)",
                 "CREATE TABLE receiver_activity_event(id INTEGER PRIMARY KEY,channel_id INTEGER," +
@@ -125,6 +127,8 @@ class StatsIdentitySearchTest
                     (11,10,'Dispatch Fleet',NULL,NULL,'TALKGROUP_RANGE','APCO25',NULL,203,204);
                 """);
             statement.executeUpdate("INSERT INTO alias_p25_subscriber_identity VALUES (7,10)");
+            statement.executeUpdate("INSERT INTO p25_subscriber_identity VALUES " +
+                "(10,0xBEE00,1,300),(11,0xBEE00,1,202)");
             statement.executeUpdate("INSERT INTO trunked_radio_channel_presence(radio_system_id,radio_identity_id,channel_id,observed_local_id) VALUES " +
                 "(1,1003,1,555),(1,1010,2,555)");
             statement.executeUpdate("INSERT INTO receiver_activity_event(id,channel_id,source_identity_summary_id,source_observed_local_id,target_identity_summary_id,target_observed_local_id) VALUES " +
@@ -133,6 +137,7 @@ class StatsIdentitySearchTest
             statement.executeUpdate("INSERT INTO activity_event_identity_member VALUES (3,1008,888,1)");
             statement.executeUpdate("INSERT INTO p25_site_call_identity_bucket(identity_summary_id,channel_id,observed_local_id) VALUES (1005,99,999)");
         }
+        StatsHistoryContext.installSubscriberContext(mConnection);
     }
 
     @AfterEach
@@ -160,6 +165,30 @@ class StatsIdentitySearchTest
         assertEquals(List.of(1001L,1002L,1003L), search(1,"dispatch","TALKGROUP"));
         assertEquals(List.of(1002L,1003L), search(1,"dispatch fleet","TALKGROUP"));
         assertEquals(List.of(3001L), search(3,"12-0345","RADIO_ID"));
+    }
+
+    @Test
+    void canonicalSearchMatchesSubscriberTuplesAcrossIndependentDictionaryKeys() throws Exception
+    {
+        try(Statement statement = mConnection.createStatement())
+        {
+            statement.execute("DROP VIEW configured_p25_subscriber_identity");
+            statement.execute("ATTACH DATABASE ':memory:' AS configuration");
+            statement.execute("CREATE TABLE configuration.p25_subscriber_identity(" +
+                "id INTEGER PRIMARY KEY,home_wacn INTEGER,home_system_id INTEGER,subscriber_id INTEGER)");
+            statement.executeUpdate("INSERT INTO configuration.p25_subscriber_identity VALUES " +
+                "(10,0xBEE00,2,999),(75,0xBEE00,1,300)");
+            statement.executeUpdate("UPDATE alias_p25_subscriber_identity " +
+                "SET p25_subscriber_identity_id=75 WHERE alias_id=7");
+            StatsHistoryContext.installSubscriberContext(mConnection);
+            assertEquals(List.of(1006L),search(1,"canonical officer","RADIO_ID"),
+                "The same subscriber must match even when the two dictionaries assign different keys");
+
+            statement.executeUpdate("UPDATE alias_p25_subscriber_identity " +
+                "SET p25_subscriber_identity_id=10 WHERE alias_id=7");
+            assertEquals(List.of(),search(1,"canonical officer","RADIO_ID"),
+                "Equal integer keys must not match different subscriber tuples across stores");
+        }
     }
 
     @Test

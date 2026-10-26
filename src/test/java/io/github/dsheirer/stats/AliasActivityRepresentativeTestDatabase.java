@@ -113,12 +113,15 @@ public final class AliasActivityRepresentativeTestDatabase
             """);
         statement.executeUpdate("""
             INSERT INTO receiver_channel(
-                id,configuration_id,first_seen_ms,last_seen_ms,radio_system_id,radio_system_assigned_at_ms
-            ) VALUES
-                (9901,'99010000-0000-4000-8000-000000000001',1700000000000,1700100000000,9901,
-                    1700000000000),
-                (9902,'99010000-0000-4000-8000-000000000002',1700000000000,1700100000000,9901,
-                    1700000000000)
+                id,configuration_id,first_seen_ms,last_seen_ms,radio_system_id,radio_system_assigned_at_ms,
+                name,system_name,site_name,decoder_type,channel_kind,address_domain_code,
+                alias_list_id,alias_list_name,primary_frequency_hz
+            ) SELECT channel.sort_order,channel.configuration_id,1700000000000,1700100000000,9901,
+                1700000000000,channel.name,channel.system_name,channel.site_name,channel.decoder_type,
+                channel.channel_kind,channel.address_domain_code,channel.alias_list_id,list.name,
+                channel.primary_frequency_hz
+              FROM configuration_channel channel JOIN alias_list list ON list.id=channel.alias_list_id
+              WHERE channel.alias_list_id=9901
             """);
     }
 
