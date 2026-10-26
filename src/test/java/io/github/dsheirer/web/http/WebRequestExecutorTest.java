@@ -74,8 +74,14 @@ class WebRequestExecutorTest
             finally
             {
                 release.countDown();
-                for(var connection: connections)
-                    connection.get(5, TimeUnit.SECONDS).body().close();
+                try
+                {
+                    assertAll(connections.stream().map(connection -> () -> {
+                        if(!connection.cancel(true) && !connection.isCompletedExceptionally())
+                            connection.join().body().close();
+                    }));
+                }
+                finally { client.shutdownNow(); }
             }
         }
         finally { assertTrue(EmbeddedHttpServerShutdown.stop(server, executor)); }
