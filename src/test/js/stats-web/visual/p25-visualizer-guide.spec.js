@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const { coach, nonGuideStorage, installTour, advance, startTour, isolated, screenshot, focusVisible } = require('./fixtures/page-tour.cjs');
 
 const id = 'network-visualizer';
-const steps = ['shapes', 'manual-button', 'manual-camera', 'auto-camera'];
+const steps = ['shapes', 'actions-button', 'actions', 'actions-close', 'manual-button', 'manual-camera', 'auto-camera'];
 const evidence = process.env.P25_GUIDE_EVIDENCE || path.resolve(__dirname, '../../../../../build/playwright-results/p25-guide-evidence');
 const sample = page => page.locator('.network-visualizer-layout[data-guide-example="network-visualizer"]');
 async function observeActualRenderer(page) {
@@ -59,7 +59,8 @@ async function expectStep(page, step) {
   await expect(sample(page).locator('.network-visualizer-status')).toContainText('Example data');
   await focusVisible(page, id, [`p25-${step}`], { allowFocusOverlap: step === 'manual-camera',
     owners: step === 'shapes' ? ['.network-visualizer-stage'] :
-      ['manual-button', 'auto-camera'].includes(step) ? ['.network-visualizer-toolbar'] : [] });
+      ['manual-button', 'auto-camera', 'actions-button'].includes(step) ? ['.network-visualizer-toolbar'] :
+      ['actions', 'actions-close'].includes(step) ? ['.network-visualizer-events'] : [] });
   const manual = sample(page).getByRole('button', { name: 'Manual', exact: true });
   await expect(manual).toHaveAttribute('aria-pressed', ['manual-camera', 'auto-camera'].includes(step) ? 'true' : 'false');
   await expect(sample(page).locator('.network-visualizer-manual-guide'))[
@@ -82,7 +83,7 @@ test('P25 sample controls and settings cannot persist, request receiver data or 
       }
     });
     await expect(coach(page, id)).toHaveAttribute('data-guide-step', step);
-    await expect(page.getByRole('dialog', { name: 'P25 Visualizer settings', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('dialog', { name: 'P25 actions', exact: true })).toHaveCount(0);
     await expect(page).toHaveURL(url);
     if (step !== steps.at(-1)) await advance(page, id);
   }

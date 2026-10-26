@@ -17,7 +17,7 @@ import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=37';
+import { createGuideController } from './guides/controller.js?v=38';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -8240,7 +8240,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const [feature, presentation] = await Promise.all(mapTour ? [
       import('./features/listen-map.js?v=14'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=58'), import('./guides/network-visualizer-presentation.js?v=1')
+      import('./features/network-visualizer/index.js?v=59'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
       import('./features/alerts.js?v=23'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
@@ -8304,8 +8304,8 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     } else if (visualizerTour) {
       workspace = feature.createP25Visualizer(p25VisualizerDependencies(
         { ...renderContext, signal: context.signal }, {
-          guideMode: true, requestActivity: sample.requestActivity,
-          requestActivitySeed: sample.requestActivitySeed, openActivityStream: sample.openActivityStream,
+          guideMode: true, openActivityStream: sample.openActivityStream,
+          subscribeActivity: sample.subscribeActivity,
           loadEventSettings: sample.loadEventSettings, saveEventSettings: sample.saveEventSettings,
           openReadOnlyModal: openSampleModal, systemHref: () => '',
           messageTypeLabel: sample.messageTypeLabel, messageTypeDefinition: sample.messageTypeDefinition
@@ -20975,8 +20975,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
     saveEventSettings: saveP25VisualizerEventSettings,
     messageTypeLabel: (name) => activityOptionLabel(name),
     messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
-    requestActivity: (parameters, options) => api('/api/v1/activity', parameters, options),
-    requestActivitySeed: (parameters, options) => api('/api/v1/activity/live/seed', parameters, options),
+    subscribeActivity: subscribeLiveChannelActivity,
     openActivityStream: (callbacks) => {
       const source = liveConnection('p25_activity', { subscription_id: randomLiveClientId() }, false);
       [['source_change', 'boundary'], ['p25_state_delta', 'delta'], ['activity_append', 'append'],
@@ -20999,8 +20998,10 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=58');
-  const [visualizerModule] = await Promise.all([p25VisualizerModulePromise, loadActivityMessageTypes()]);
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=59');
+  // The live scene does not wait for an optional label catalog or historical data.
+  void loadActivityMessageTypes();
+  const visualizerModule = await p25VisualizerModulePromise;
   if (!renderIsCurrent(renderContext)) return;
   const visualizer = visualizerModule.createP25Visualizer(p25VisualizerDependencies(renderContext));
   if (!renderIsCurrent(renderContext)) {

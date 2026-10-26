@@ -10,27 +10,12 @@ const P25_HISTORY_ACTIONS = Object.freeze([
 const P25_ROUTINE_ACTIONS = Object.freeze(['CALL', 'GRANT']);
 
 const ACTIONS = new Set([...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS]);
-const MAX_EVENTS = 120;
 const MAX_PRIOR_GROUPS = 3;
-const REPEAT_FOCUS_MS = 60_000;
 const SYSTEM_RADIUS = 300;
 const GROUP_CLOUD_MARGIN = 76;
 const GROUP_GRID_SPACING = 124;
 const GROUP_GRID_JITTER = 6;
-const MAX_VISIBLE_GROUPS = 220;
 
-const CAMERA_PRIORITY = Object.freeze({
-  emergency: 4,
-  movement: 3,
-  denial: 3,
-  patch: 2,
-  busy: 2,
-  queued: 2,
-  check: 1,
-  page: 1,
-  logout: 1,
-  call: 0.5
-});
 
 function finite(value, fallback = 0) {
   const number = Number(value);
@@ -221,12 +206,14 @@ function createP25HistoryState(options = {}) {
     systems: new Map(),
     groups: new Map(),
     radios: new Map(),
-    events: new Map(),
     currentAffiliations: new Map(),
+    actionCounts: new Map(),
+    activeKeys: new Set(),
+    activeRadioGroups: new Map(),
+    liveTablesAvailable: false,
     systemOrdinals: ordinalPool(),
     available: true,
-    historyAfterId: 0,
-    liveAfterId: 0
+    afterId: 0
   };
 }
 
@@ -284,7 +271,8 @@ function ensureRadio(state, system, row, identityKey, role, atMs = finite(row.ob
       nativeId: nativeId(identityKey, role === 'source' ? row.source_native_id ?? row.source_radio_id :
         row.target_native_id ?? row.target_id), x: system.x + local.x, y: system.y + local.y,
       z: system.z + local.z, lastAtMs: 0, visualGroupKey: '', activityGroupKey: '',
-      priorGroups: new Map(), priorGroupKeys: [], signalAction: '', highlightUntilMs: 0 };
+      priorGroups: new Map(), priorGroupKeys: [], signalAction: '', highlightUntilMs: 0,
+      motionUntilMs: 0, motionGroupKeys: [] };
     state.radios.set(key, radio);
     system.radioKeys.add(key);
   } else {
@@ -305,23 +293,6 @@ function highlight(entity, action, untilMs) {
   entity.signalAction = action.toLowerCase();
 }
 
-function trimEvents(state) {
-  if (state.events.size <= MAX_EVENTS) return;
-  const oldest = [...state.events.values()].sort((left, right) => left.observedAtMs - right.observedAtMs)
-    .slice(0, state.events.size - MAX_EVENTS);
-  oldest.forEach((event) => state.events.delete(event.key));
-}
-
-function upsertEvent(state, value) {
-  const previous = state.events.get(value.key);
-  if (previous && (previous.observedAtMs > value.observedAtMs ||
-      previous.observedAtMs === value.observedAtMs && (previous.id || 0) >= (value.id || 0))) return false;
-  state.events.set(value.key, value);
-  trimEvents(state);
-  return !previous || value.observedAtMs - previous.observedAtMs >= REPEAT_FOCUS_MS;
-}
-
-
 function eventDetail(action, radio, group, previousGroup) {
   if (action === 'movement') return `${radio.label} · ${previousGroup.label} → ${group.label}`;
   if (action === 'logout') return `${radio.label} deregistered`;
@@ -330,9 +301,12 @@ function eventDetail(action, radio, group, previousGroup) {
 }
 
 function radioPosition(radio, parent, parentKey, systemRadius) {
+  if (!parentKey && radio.unaffiliatedPosition) return { ...radio.unaffiliatedPosition };
   const offset = localPosition(`${radio.key}:${parentKey || 'unaffiliated'}`,
     parentKey ? 16 : systemRadius * 0.72, parentKey ? 40 : systemRadius * 0.82);
-  return { x: parent.x + offset.x, y: parent.y + offset.y, z: parent.z + offset.z };
+  const position = { x: parent.x + offset.x, y: parent.y + offset.y, z: parent.z + offset.z };
+  if (!parentKey) radio.unaffiliatedPosition = position;
+  return { ...position };
 }
 
 // Saved JOIN observations describe an event; canonical current state owns the solid link.
@@ -346,20 +320,13 @@ function rememberGroup(radio, groupKey, atMs, id = 0) {
   radio.priorGroupKeys = latest.map(([key]) => key);
 }
 
-function applyJoin(state, system, row, result, initial, ingestedAtMs, shouldHighlight) {
+function applyJoin(state, system, row) {
   const radioIdentity = sourceRadioKey(row), groupIdentity = targetGroupKey(row, false);
   if (!radioIdentity || !groupIdentity) return;
   const radio = ensureRadio(state, system, row, radioIdentity, 'source');
   const group = ensureGroup(state, system, row, groupIdentity);
   if (!radio || !group) return;
   if (radio.visualGroupKey !== group.key) rememberGroup(radio, group.key, finite(row.observed_at_ms), Number(row.id));
-  upsertEvent(state, { key: `join:${radio.key}`, category: 'movement', title: 'Affiliation observed',
-    detail: eventDetail('join', radio, group), observedAtMs: finite(row.observed_at_ms), id: row.id,
-    systemKey: system.key, focusKeys: [radio.key, group.key], priority: CAMERA_PRIORITY.movement });
-  if (!initial && shouldHighlight('movement')) {
-    highlight(radio, 'movement', ingestedAtMs + 8_000);
-    highlight(group, 'movement', ingestedAtMs + 8_000);
-  }
 }
 
 function applySignal(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight) {
@@ -385,21 +352,19 @@ function applySignal(state, system, row, result, initial, action, ingestedAtMs, 
   if (!radio && !group) return;
 
   const category = action.toLowerCase();
-  const priority = CAMERA_PRIORITY[category] || CAMERA_PRIORITY.patch;
   const entity = radio || group;
   const eventKey = `${category}:${entity.key}`;
   const title = state.actionLabel(action);
   const eventCategory = action.startsWith('PATCH') ? 'patch' : category;
   const event = { key: eventKey, category: eventCategory, title,
     detail: eventDetail(category, radio, group), observedAtMs: atMs, id: row.id, systemKey: system.key,
-    focusKeys: [radio?.key, group?.key].filter(Boolean), priority };
-  const focusEligible = upsertEvent(state, event);
+    focusKeys: [radio?.key, group?.key].filter(Boolean) };
   if (!initial && shouldHighlight(eventCategory)) {
     const untilMs = ingestedAtMs + (action === 'EMERGENCY' ? 12_000 : 7_000);
     highlight(radio, eventCategory, untilMs);
     highlight(group, eventCategory, untilMs);
   }
-  if (!initial && focusEligible) result.focusCandidates.push(event);
+  if (!initial) result.focusCandidates.push(event);
 }
 
 function applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHighlight) {
@@ -411,9 +376,8 @@ function applyLogout(state, system, row, result, initial, ingestedAtMs, shouldHi
   if (!initial && shouldHighlight('logout')) highlight(radio, 'logout', ingestedAtMs + 7_000);
   const event = { key: `logout:${radio.key}`, category: 'logout', title: state.actionLabel('LOGOUT'),
     detail: `${radio.label} · Logout observed`, observedAtMs: finite(row.observed_at_ms), id: row.id,
-    systemKey: system.key, focusKeys: [radio.key], priority: CAMERA_PRIORITY.logout };
-  const eligible = upsertEvent(state, event);
-  if (!initial && eligible) result.focusCandidates.push(event);
+    systemKey: system.key, focusKeys: [radio.key] };
+  if (!initial) result.focusCandidates.push(event);
 }
 
 function applyRoutineActivity(state, system, row, result, initial, action, ingestedAtMs, shouldHighlight,
@@ -427,20 +391,20 @@ function applyRoutineActivity(state, system, row, result, initial, action, inges
   const atMs = finite(row.observed_at_ms);
   if (radio && group && (atMs > (radio.activityAtMs || 0) ||
       atMs === radio.activityAtMs && row.id > (radio.activityId || 0))) {
-    radio.activityGroupKey = group.key;
+    if (!radio.activityGroupKey && !radio.visualGroupKey) radio.activityGroupKey = group.key;
+    radio.callGroupKey = group.key;
     radio.activityAtMs = atMs; radio.activityId = row.id;
   }
   const entity = group || radio;
   const event = { key: `call:${entity.key}`, category: 'call',
     title: state.actionLabel(action),
     detail: eventDetail('call', radio, group), observedAtMs: atMs, id: row.id, systemKey: system.key,
-    focusKeys: [radio?.key, group?.key].filter(Boolean), priority: CAMERA_PRIORITY.call };
-  const focusEligible = upsertEvent(state, event);
+    focusKeys: [radio?.key, group?.key].filter(Boolean) };
   if (!initial && shouldHighlight('call')) {
     highlight(radio, 'call', ingestedAtMs + grantActivityTimeoutMs);
     highlight(group, 'call', ingestedAtMs + grantActivityTimeoutMs);
   }
-  if (!initial && focusEligible) result.focusCandidates.push(event);
+  if (!initial) result.focusCandidates.push(event);
 }
 
 function applyP25ActivityRows(state, rows, options = {}) {
@@ -453,7 +417,7 @@ function applyP25ActivityRows(state, rows, options = {}) {
   const highlightDuration = (category) => category === 'call' ? grantActivityTimeoutMs :
     category === 'emergency' ? 12_000 : category === 'movement' ? 8_000 : 7_000;
   const result = { changed: false, accepted: 0, ignored: 0, focusCandidates: [], affiliationChanges: [] };
-  const cursor = initial ? state.historyAfterId : Math.max(state.historyAfterId, state.liveAfterId);
+  const cursor = state.afterId;
   const incoming = [], ids = new Set();
   for (const row of rows) {
     if (!Number.isSafeInteger(row?.id) || row.id < 1) throw new Error('Invalid P25 activity record.');
@@ -461,13 +425,15 @@ function applyP25ActivityRows(state, rows, options = {}) {
     ids.add(row.id); incoming.push(row);
   }
   const after = incoming.reduce((maximum, row) => Math.max(maximum, row.id), cursor);
-  if (initial) state.historyAfterId = after; else state.liveAfterId = after;
+  state.afterId = after;
   const ordered = incoming.sort((left, right) =>
     finite(left?.observed_at_ms) - finite(right?.observed_at_ms) || finite(left?.id) - finite(right?.id));
   for (const row of ordered) {
     const action = actionOf(row);
     if (!isP25Trunked(row) || !ACTIONS.has(action)) { result.ignored++; continue; }
     result.accepted++; result.changed = true;
+    if (!initial && action !== 'JOIN') countAction(state, action.startsWith('PATCH') ? 'patch' :
+      P25_ROUTINE_ACTIONS.includes(action) ? 'call' : action.toLowerCase());
     if (action === 'DENIAL' && !targetRadioKey(row) && !sourceRadioKey(row)) {
       continue;
     }
@@ -476,7 +442,7 @@ function applyP25ActivityRows(state, rows, options = {}) {
       Math.min(ingestedAtMs, finite(row.observed_at_ms, ingestedAtMs)) : ingestedAtMs;
     const rowShouldHighlight = (category) => shouldHighlight(category) &&
       (options.highlightAtObservationTime !== true || highlightAtMs + highlightDuration(category) > ingestedAtMs);
-    if (action === 'JOIN') applyJoin(state, system, row, result, initial, highlightAtMs, rowShouldHighlight);
+    if (action === 'JOIN') applyJoin(state, system, row);
     else if (action === 'LOGOUT') applyLogout(state, system, row, result, initial, highlightAtMs, rowShouldHighlight);
     else if (P25_ROUTINE_ACTIONS.includes(action)) {
       applyRoutineActivity(state, system, row, result, initial, action, highlightAtMs, rowShouldHighlight,
@@ -488,8 +454,7 @@ function applyP25ActivityRows(state, rows, options = {}) {
       return event.observedAtMs + highlightDuration(event.category) > ingestedAtMs;
     });
   }
-  result.focusCandidates.sort((left, right) => right.priority - left.priority ||
-    right.observedAtMs - left.observedAtMs);
+  result.focusCandidates.sort((left, right) => right.observedAtMs - left.observedAtMs);
   return result;
 }
 
@@ -509,68 +474,136 @@ function affiliationLabelContext(fact) {
       system_id: fact.talkgroup_home_system_id, talkgroup_id: fact.talkgroup_id } };
 }
 
-// Native state alone owns solid affiliations; history only contributes entities and faint links.
+// Only confirmed receiver affiliations can move an existing radio between groups.
 function applyP25Affiliations(state, update = {}, options = {}) {
   const result = { changed: false, focusCandidates: [], affiliationChanges: [] };
   state.available = update.available !== false;
-  if (!options.replace && !state.available) return result;
+  if (!state.available && !options.replace) return result;
   const facts = update.affiliations || [];
-  for (const fact of facts) if (!text(fact?.radio_system_key) || !text(fact?.radio_identity_key) ||
-      !text(fact?.talkgroup_identity_key) || !Number.isFinite(Number(fact.confirmed_at_ms)))
-    throw new Error('Invalid current P25 affiliation.');
+  const now = finite(options.atMs, Date.now());
   const retained = options.replace ? new Set(facts.map(fact => entityKey(fact.radio_system_key, fact.radio_identity_key))) : null;
   const removals = retained ? [...state.currentAffiliations.keys()].filter(key => !retained.has(key)) :
     (update.removed_radio_keys || []).map(key => entityKey(key.radio_system_key, key.radio_identity_key));
   for (const key of removals) {
-    const prior = state.currentAffiliations.get(key), radio = state.radios.get(key);
-    if (!prior) continue;
+    const radio = state.radios.get(key);
     if (radio) {
-      rememberGroup(radio, entityKey(prior.radio_system_key, prior.talkgroup_identity_key), finite(prior.confirmed_at_ms));
-      radio.visualGroupKey = ''; radio.current = false;
+      result.changed = result.changed || Boolean(radio.current || radio.motionUntilMs);
+      radio.current = false; radio.motionUntilMs = 0; radio.motionGroupKeys = [];
     }
-    state.currentAffiliations.delete(key); result.changed = true;
+    result.changed = state.currentAffiliations.delete(key) || result.changed;
   }
-  const now = finite(options.atMs, Date.now());
-  for (const fact of facts) {
-    const key = entityKey(fact.radio_system_key, fact.radio_identity_key);
-    const prior = state.currentAffiliations.get(key), atMs = finite(fact.confirmed_at_ms);
-    // Confirmation-only updates advance freshness without rebuilding entities or replaying motion.
-    const same = prior && JSON.stringify({ ...prior, confirmed_at_ms: undefined }) ===
+  for (const incoming of facts) {
+    if (!text(incoming?.radio_system_key) || !text(incoming?.radio_identity_key) ||
+        !text(incoming?.talkgroup_identity_key) || !Number.isFinite(Number(incoming.confirmed_at_ms)))
+      throw new Error('Invalid current P25 affiliation.');
+    const { previous_affiliation: suppliedPrior, ...fact } = incoming;
+    const key = entityKey(fact.radio_system_key, fact.radio_identity_key), atMs = finite(fact.confirmed_at_ms);
+    const storedPrior = state.currentAffiliations.get(key);
+    if (storedPrior && atMs < finite(storedPrior.confirmed_at_ms)) continue;
+    const explicitPrior = suppliedPrior && suppliedPrior.radio_system_key === fact.radio_system_key &&
+      suppliedPrior.radio_identity_key === fact.radio_identity_key && text(suppliedPrior.talkgroup_identity_key) ? suppliedPrior : null;
+    const prior = storedPrior || explicitPrior;
+    const same = storedPrior && JSON.stringify({ ...storedPrior, confirmed_at_ms: undefined }) ===
       JSON.stringify({ ...fact, confirmed_at_ms: undefined });
     state.currentAffiliations.set(key, fact);
     const context = affiliationLabelContext(fact), system = ensureSystem(state, fact, atMs);
     const group = ensureGroup(state, system, context, fact.talkgroup_identity_key, atMs);
     const radio = ensureRadio(state, system, context, fact.radio_identity_key, 'source', atMs);
     system.current = group.current = radio.current = true;
+    radio.visualGroupKey = group.key;
     if (same) continue;
     system.name = systemName(fact); system.label = systemLabel(fact);
-    const previousGroup = prior && state.groups.get(entityKey(prior.radio_system_key, prior.talkgroup_identity_key));
-    if (previousGroup && previousGroup.key !== group.key) rememberGroup(radio, previousGroup.key, finite(prior.confirmed_at_ms));
-    radio.priorGroups.delete(group.key); radio.priorGroupKeys = [...radio.priorGroups.keys()];
-    radio.visualGroupKey = group.key; radio.label = radioLabel(context, fact.radio_identity_key);
-    radio.labelIsAlias = Boolean(radioAlias(context)); group.label = groupLabel(context, fact.talkgroup_identity_key);
+    radio.label = radioLabel(context, fact.radio_identity_key); radio.labelIsAlias = Boolean(radioAlias(context));
+    group.label = groupLabel(context, fact.talkgroup_identity_key);
     result.changed = true;
-    if (options.initial || !prior || !previousGroup || previousGroup.key === group.key ||
-        !text(fact.configuration_id) || fact.configuration_id !== prior.configuration_id ||
-        atMs <= finite(prior.confirmed_at_ms) || atMs + 8_000 <= now) continue;
+    const comparable = prior && text(fact.configuration_id) && prior.configuration_id === fact.configuration_id &&
+      prior.talkgroup_identity_key !== fact.talkgroup_identity_key && atMs > finite(prior.confirmed_at_ms);
+    if (!comparable || options.initial || atMs + 8_000 <= now) continue;
+    const previousGroup = ensureGroup(state, system, affiliationLabelContext(prior), prior.talkgroup_identity_key, atMs);
+    rememberGroup(radio, previousGroup.key, atMs);
+    radio.priorGroups.delete(group.key); radio.priorGroupKeys = [...radio.priorGroups.keys()];
+    radio.motionUntilMs = Math.max(radio.motionUntilMs || 0, now + 10_000);
+    radio.motionGroupKeys = [...new Set([...(radio.motionGroupKeys || []).filter(key =>
+      key !== previousGroup.key && key !== group.key), previousGroup.key, group.key])].slice(-3);
     const event = { key: `movement:${key}`, category: 'movement', title: 'Observed affiliation change',
       detail: eventDetail('movement', radio, group, previousGroup), observedAtMs: atMs,
-      systemKey: system.key, focusKeys: [key, group.key], priority: CAMERA_PRIORITY.movement, affiliationRadioKey: key };
-    upsertEvent(state, event); result.focusCandidates.push(event);
-    result.affiliationChanges.push({ id: `affiliation:${options.sequence}:${key}`, radioKey: key,
+      systemKey: system.key, focusKeys: [key, previousGroup.key, group.key],
+      affiliationRadioKey: key };
+    countAction(state, 'movement'); result.focusCandidates.push(event);
+    result.affiliationChanges.push({ id: `affiliation:${options.sequence}:${key}:${atMs}`, radioKey: key,
       systemKey: system.key, fromGroupKey: previousGroup.key, toGroupKey: group.key,
       from: radioPosition(radio, previousGroup, previousGroup.key, system.radius),
       target: radioPosition(radio, group, group.key, system.radius), observedAtMs: atMs,
       remainingMs: Math.max(0, atMs + 8_000 - now) });
     if (!options.highlightCategories || options.highlightCategories.has('movement')) {
-      highlight(radio, 'movement', atMs + 8_000); highlight(group, 'movement', atMs + 8_000);
+      for (const entity of [radio, previousGroup, group]) highlight(entity, 'movement', atMs + 8_000);
     }
   }
   return result;
 }
 
-function visibleSignal(entity, atMs, highlighted) {
+function countAction(state, category) {
+  state.actionCounts.set(category, (state.actionCounts.get(category) || 0) + 1);
+}
+
+function p25ActionCount(state, category) { return state.actionCounts.get(category) || 0; }
+
+// Live supplies complete current tables. Activity observations count actions; these
+// tables alone determine which entities remain lit for an ongoing call.
+function applyP25LiveTables(state, tables = [], options = {}) {
+  const result = { changed: false, focusCandidates: [], affiliationChanges: [] };
+  const active = new Set(), activeRadioGroups = new Map(), now = finite(options.atMs, Date.now());
+  const wasAvailable = state.liveTablesAvailable;
+  state.liveTablesAvailable = true;
+  for (const table of tables) {
+    if (table?.table_id === 'conventional' || table?.channel_running === false) continue;
+    for (const raw of table?.rows || []) {
+      const order = Number(raw?.activation_order), status = text(raw?.status).toUpperCase();
+      if (!Number.isSafeInteger(order) || order <= 0 || status === 'IDLE' ||
+          text(raw?.protocol).toLowerCase() !== 'p25') continue;
+      const systemKey = Object.prototype.hasOwnProperty.call(raw, 'serving_system_key') ?
+        text(raw.serving_system_key) : text(raw.radio_system_key);
+      if (!systemKey) continue;
+      const row = { ...raw, radio_system_key: systemKey, observed_at_ms: now,
+        configuration_id: raw.configuration_id || table.configuration_id,
+        source_identity_key: raw.source_entity_ref?.identity_key || raw.source_identity_key,
+        target_identity_key: raw.target_entity_ref?.identity_key || raw.target_identity_key,
+        source_identity_kind_code: raw.source_entity_ref?.kind === 'radio' || text(raw.source_type).toLowerCase() === 'radio' ?
+          2 : raw.source_identity_kind_code,
+        target_kind: raw.target_entity_ref?.kind || raw.target_kind || text(raw.target_type).toLowerCase(),
+        source_native_id: raw.source_id, target_native_id: raw.target_id,
+        source_alias_name: raw.source_alias, target_alias_name: raw.target_alias };
+      const groupIdentity = targetGroupKey(row), radioIdentity = sourceRadioKey(row);
+      if (!groupIdentity && !radioIdentity) continue;
+      const system = ensureSystem(state, row, now);
+      const group = groupIdentity ? ensureGroup(state, system, row, groupIdentity, now) : null;
+      const radio = radioIdentity ? ensureRadio(state, system, row, radioIdentity, 'source', now) : null;
+      if (group) { group.label = groupLabel(row, groupIdentity); active.add(group.key); }
+      if (radio) {
+        radio.label = radioLabel(row, radioIdentity); radio.labelIsAlias = Boolean(radioAlias(row));
+        active.add(radio.key);
+        if (group) {
+          if (!radio.visualGroupKey && !radio.activityGroupKey) radio.activityGroupKey = group.key;
+          if (!activeRadioGroups.has(radio.key)) activeRadioGroups.set(radio.key, new Set());
+          activeRadioGroups.get(radio.key).add(group.key);
+        }
+      }
+    }
+  }
+  const signature = JSON.stringify([...active].sort().map(key => {
+    const entity = state.radios.get(key) || state.groups.get(key);
+    return [key, entity.label, state.systems.get(entity.systemKey)?.label,
+      [...(activeRadioGroups.get(key) || [])].sort()];
+  }));
+  result.changed = !wasAvailable || signature !== state.liveActivitySignature;
+  state.liveActivitySignature = signature;
+  state.activeKeys = active; state.activeRadioGroups = activeRadioGroups;
+  return result;
+}
+
+function visibleSignal(entity, atMs, highlighted, state) {
   const signal = entity?.highlightUntilMs > atMs ? entity.signalAction : '';
+  if (signal === 'call' && state?.liveTablesAvailable && !state.activeKeys.has(entity.key)) return '';
   return signal && (!highlighted || highlighted.has(signal)) ? signal : '';
 }
 
@@ -579,7 +612,7 @@ function nextP25HighlightExpiry(state, atMs = Date.now(), options = {}) {
   let next = 0;
   for (const entities of [state.groups, state.radios]) {
     for (const entity of entities.values()) {
-      if (visibleSignal(entity, atMs, highlighted) && (!next || entity.highlightUntilMs < next)) {
+      if (visibleSignal(entity, atMs, highlighted, state) && (!next || entity.highlightUntilMs < next)) {
         next = entity.highlightUntilMs;
       }
     }
@@ -587,17 +620,20 @@ function nextP25HighlightExpiry(state, atMs = Date.now(), options = {}) {
   return next;
 }
 
-// Age only historical aggregates. The complete native map remains authoritative at any confirmation age.
-function expireP25History(state, cutoffMs) {
+// Retire quiet scene entities without dropping active calls or either endpoint of a fresh movement.
+function expireP25History(state, cutoffMs, options = {}) {
   const currentSystems = new Set(), currentGroups = new Set();
-  for (const fact of state.currentAffiliations.values()) {
-    currentSystems.add(fact.radio_system_key);
-    currentGroups.add(entityKey(fact.radio_system_key, fact.talkgroup_identity_key));
+  const now = finite(options.atMs, Date.now());
+  for (const radio of state.radios.values()) {
+    if (radio.motionUntilMs <= now) { radio.motionGroupKeys = []; radio.motionUntilMs = 0; }
+    for (const key of radio.motionGroupKeys || []) currentGroups.add(key);
+    if (radio.lastAtMs >= cutoffMs || state.activeKeys.has(radio.key) || radio.motionUntilMs > now) {
+      currentSystems.add(radio.systemKey);
+      if (radio.visualGroupKey) currentGroups.add(radio.visualGroupKey);
+      if (radio.activityGroupKey) currentGroups.add(radio.activityGroupKey);
+    }
   }
   let changed = false;
-  for (const [key, event] of state.events) if (event.observedAtMs < cutoffMs) {
-    state.events.delete(key); changed = true;
-  }
   for (const [key, radio] of state.radios) {
     radio.current = state.currentAffiliations.has(key);
     if (radio.activityGroupKey && radio.activityAtMs < cutoffMs) {
@@ -607,14 +643,15 @@ function expireP25History(state, cutoffMs) {
       radio.priorGroups.delete(groupKey); changed = true;
     }
     radio.priorGroupKeys = [...radio.priorGroups.keys()];
-    if (!radio.current && radio.lastAtMs < cutoffMs) {
+    if (radio.lastAtMs < cutoffMs && !state.activeKeys.has(key) && !(radio.motionUntilMs > now)) {
+      state.currentAffiliations.delete(key);
       state.radios.delete(key); state.systems.get(radio.systemKey).radioKeys.delete(key); changed = true;
     }
   }
   const layouts = new Set();
   for (const [key, group] of state.groups) {
     group.current = currentGroups.has(key);
-    if (!group.current && group.lastAtMs < cutoffMs) {
+    if (!group.current && group.lastAtMs < cutoffMs && !state.activeKeys.has(key)) {
       const system = state.systems.get(group.systemKey);
       state.groups.delete(key); system.groupKeys.delete(key); releaseOrdinal(system.groupOrdinals, group.ordinal);
       layouts.add(system); changed = true;
@@ -635,11 +672,12 @@ function expireP25History(state, cutoffMs) {
   return { changed, focusCandidates: [], affiliationChanges: [] };
 }
 
-// A selection heuristic over retained grouped events, rather than a lifetime observation counter.
-function retainedEventScores(state) {
+function currentActivityScores(state) {
   const scores = new Map();
-  for (const event of state.events.values())
-    scores.set(event.systemKey, (scores.get(event.systemKey) || 0) + event.priority);
+  for (const key of state.activeKeys) {
+    const entity = state.radios.get(key) || state.groups.get(key);
+    if (entity) scores.set(entity.systemKey, (scores.get(entity.systemKey) || 0) + 1);
+  }
   return scores;
 }
 
@@ -650,7 +688,7 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
   };
   const highlighted = options.highlightCategories instanceof Set ? options.highlightCategories : null;
   if (!systemKey) {
-    const scores = retainedEventScores(state);
+    const scores = currentActivityScores(state);
     const nodes = [...state.systems.values()].map((system) => ({ id: system.key, type: 'system',
       label: system.label, x: system.x, y: system.y, z: system.z, radius: 58, systemKey: system.key,
       activityScore: scores.get(system.key) || 0 }));
@@ -662,19 +700,32 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
   const focused = focusGroup?.systemKey === systemKey;
   const allGroups = [...system.groupKeys].map((key) => state.groups.get(key)).filter(Boolean)
     .sort((left, right) => right.lastAtMs - left.lastAtMs);
-  const layoutGroups = allGroups.slice(0, MAX_VISIBLE_GROUPS);
+  const layoutGroups = allGroups;
   if (focused && !layoutGroups.includes(focusGroup)) layoutGroups.push(focusGroup);
   const groupPositions = new Map(layoutGroups.map((group) => [group.key, group]));
-  system.radius = Math.max(system.radius, ...layoutGroups.map((group) => Math.hypot(group.x - system.x,
-    group.y - system.y, group.z - system.z) + GROUP_CLOUD_MARGIN));
-  const groups = focused ? [focusGroup] : layoutGroups;
-  const groupKeys = new Set(groups.map((group) => group.key));
+  system.radius = layoutGroups.reduce((radius, group) => Math.max(radius, Math.hypot(group.x - system.x,
+    group.y - system.y, group.z - system.z) + GROUP_CLOUD_MARGIN), system.radius);
+  const motionGroups = new Set();
+  for (const radio of state.radios.values()) {
+    if (radio.systemKey === systemKey && radio.motionUntilMs > atMs &&
+        (!focused || radio.motionGroupKeys.includes(focusGroup.key)))
+      radio.motionGroupKeys.forEach(key => motionGroups.add(key));
+  }
   const touchesFocus = (radio) => currentGroup(radio) === focusGroup?.key ||
-    radio.activityGroupKey === focusGroup?.key ||
-    radio.priorGroupKeys.includes(focusGroup?.key);
+    radio.activityGroupKey === focusGroup?.key || radio.callGroupKey === focusGroup?.key ||
+    state.activeRadioGroups.get(radio.key)?.has(focusGroup?.key) ||
+    radio.priorGroupKeys.includes(focusGroup?.key) ||
+    radio.motionUntilMs > atMs && radio.motionGroupKeys.includes(focusGroup?.key);
   const eligibleRadios = [...system.radioKeys].map((key) => state.radios.get(key)).filter(Boolean)
     .filter((radio) => !focused || touchesFocus(radio)).sort((left, right) => right.lastAtMs - left.lastAtMs);
-  const radios = eligibleRadios.slice(0, 900);
+  const radios = eligibleRadios;
+  const physicalGroup = radio => groupPositions.has(currentGroup(radio)) ? currentGroup(radio) :
+    groupPositions.has(radio.visualGroupKey) ? radio.visualGroupKey :
+    groupPositions.has(radio.activityGroupKey) ? radio.activityGroupKey : '';
+  const relatedGroups = new Set([focusGroup?.key, ...motionGroups]);
+  if (focused) radios.forEach(radio => { const key = physicalGroup(radio); if (key) relatedGroups.add(key); });
+  const groups = focused ? layoutGroups.filter(group => relatedGroups.has(group.key)) : layoutGroups;
+  const groupKeys = new Set(groups.map(group => group.key));
   const radioKeys = new Set(radios.map((radio) => radio.key));
   const nodes = [{ id: system.key, type: 'system', label: system.label, x: system.x, y: system.y, z: system.z,
     radius: system.radius, systemKey: system.key }];
@@ -682,13 +733,12 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
     const position = groupPositions.get(group.key);
     nodes.push({ id: group.key, type: 'talkgroup', label: group.label,
       x: position.x, y: position.y, z: position.z, radius: 13, systemKey,
-      signalAction: visibleSignal(group, atMs, highlighted) });
+      active: state.activeKeys.has(group.key), signalAction: visibleSignal(group, atMs, highlighted, state) });
   });
 
   const groupedRadios = new Map();
   radios.forEach((radio) => {
-    const parentKey = focused ? focusGroup.key : groupKeys.has(currentGroup(radio)) ? currentGroup(radio) :
-      groupKeys.has(radio.activityGroupKey) ? radio.activityGroupKey : '';
+    const parentKey = physicalGroup(radio);
     if (!groupedRadios.has(parentKey)) groupedRadios.set(parentKey, []);
     groupedRadios.get(parentKey).push(radio);
   });
@@ -698,7 +748,7 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
       Object.assign(radio, radioPosition(radio, parent, parentKey, system.radius));
       nodes.push({ id: radio.key, type: 'radio', label: radio.label, x: radio.x, y: radio.y, z: radio.z,
         radius: 6.5, systemKey, groupKey: parentKey, affiliationGroupKey: currentGroup(radio),
-        signalAction: visibleSignal(radio, atMs, highlighted) });
+        active: state.activeKeys.has(radio.key), signalAction: visibleSignal(radio, atMs, highlighted, state) });
     });
   });
 
@@ -707,9 +757,10 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
     if (!radioKeys.has(radio.key)) return;
     if (groupKeys.has(currentGroup(radio))) links.push({ id: `current:${radio.key}:${currentGroup(radio)}`,
       source: radio.key, target: currentGroup(radio), kind: 'current' });
-    if (groupKeys.has(radio.activityGroupKey) && radio.activityGroupKey !== currentGroup(radio)) {
-      links.push({ id: `activity:${radio.key}:${radio.activityGroupKey}`,
-        source: radio.key, target: radio.activityGroupKey, kind: 'activity' });
+    const activityGroups = state.liveTablesAvailable ? state.activeRadioGroups.get(radio.key) || [] :
+      [radio.callGroupKey || radio.activityGroupKey];
+    for (const groupKey of activityGroups) if (groupKeys.has(groupKey) && groupKey !== currentGroup(radio)) {
+      links.push({ id: `activity:${radio.key}:${groupKey}`, source: radio.key, target: groupKey, kind: 'activity' });
     }
     const earlierGroups = new Set(radio.priorGroupKeys);
     [...earlierGroups].filter((key) => groupKeys.has(key) && key !== currentGroup(radio)).forEach((groupKey) =>
@@ -718,13 +769,8 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
   return { nodes, links, labels: nodes.map((node) => node.id), truncated: (!focused && groups.length < allGroups.length) || radios.length < eligibleRadios.length };
 }
 
-function groupedP25Events(state, systemKey = '') {
-  return [...state.events.values()].filter((event) => !systemKey || event.systemKey === systemKey)
-    .sort((left, right) => right.observedAtMs - left.observedAtMs).slice(0, MAX_EVENTS);
-}
-
 function mostActiveP25System(state) {
-  const scores = retainedEventScores(state);
+  const scores = currentActivityScores(state);
   return [...state.systems.values()].sort((left, right) => (scores.get(right.key) || 0) - (scores.get(left.key) || 0) ||
     right.lastAtMs - left.lastAtMs || left.ordinal - right.ordinal)[0] || null;
 }
@@ -732,13 +778,13 @@ function mostActiveP25System(state) {
 export {
   P25_HISTORY_ACTIONS,
   P25_ROUTINE_ACTIONS,
-  CAMERA_PRIORITY,
   createP25HistoryState,
   applyP25ActivityRows,
   applyP25Affiliations,
+  applyP25LiveTables,
+  p25ActionCount,
   expireP25History,
   buildP25Graph,
   nextP25HighlightExpiry,
-  groupedP25Events,
   mostActiveP25System
 };

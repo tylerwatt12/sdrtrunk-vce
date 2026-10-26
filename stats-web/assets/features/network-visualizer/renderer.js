@@ -7,8 +7,6 @@ const AUTO_ROTATE_SPEED = 0.34;
 const FOCUS_FADE_MS = 220;
 const SYSTEM_FOG_DEPTH = 0.83;
 const AFFILIATION_MOVE_MS = 1_100;
-const AFFILIATION_ATTACH_MS = 180;
-const MAX_AFFILIATION_MOVES = 4;
 
 let vendorPromise;
 const loadVendor = () => vendorPromise ||= import(new URL(VENDOR_ASSET, import.meta.url).href);
@@ -27,21 +25,8 @@ function ease(value) {
   return progress < 0.5 ? 4 * progress ** 3 : 1 - (-2 * progress + 2) ** 3 / 2;
 }
 
-function enqueueAffiliationChange(queue, change) {
-  if (queue.some((entry) => entry.id === change.id)) return false;
-  if (queue.length >= MAX_AFFILIATION_MOVES) {
-    // Retain the current trip and bounded FIFO; coalesce overflow into the final saved destination.
-    const previous = queue[queue.length - 2];
-    queue[queue.length - 1] = { ...change, fromGroupKey: previous.toGroupKey, from: previous.target };
-  } else queue.push(change);
-  return true;
-}
-
-function calculateFocusBounds(keys, nodes, movements) {
-  const values = [...new Set(keys)].map((key) => nodes.get(String(key))).filter(Boolean).map((node) => {
-    const target = movements.get(node.id)?.target;
-    return target ? { ...node, x: target.x, y: target.y, z: target.z } : node;
-  });
+function calculateFocusBounds(keys, nodes) {
+  const values = [...new Set(keys)].map((key) => nodes.get(String(key))).filter(Boolean);
   if (!values.length) return null;
   const center = values.reduce((sum, node) => ({ x: sum.x + node.x, y: sum.y + node.y, z: sum.z + node.z }),
     { x: 0, y: 0, z: 0 });
@@ -60,7 +45,7 @@ function element(documentValue, tag, className = '') {
 }
 
 function nodeState(node) {
-  return String(node?.signalAction || node?.type || 'radio').toLowerCase();
+  return String(node?.signalAction || (node?.active ? 'call' : '') || node?.type || 'radio').toLowerCase();
 }
 
 function createUnavailable(host, message, signal) {
@@ -77,7 +62,7 @@ function createUnavailable(host, message, signal) {
   signal?.addEventListener?.('abort', dispose, { once: true });
   return Object.freeze({ available: false, setData: () => {}, setMode: () => {}, setCameraPhase: () => {},
     enterSystem: () => false, enterTalkgroup: () => false, showOverview: () => false, focus: () => false,
-    home: () => false, focusAffiliation: () => false,
+    home: () => false, focusAffiliation: () => false, resetAttention: () => {},
     moveManualCamera: () => false, enterFullscreen: async () => false, exitFullscreen: async () => false,
     setGuideSuspended: () => {}, dispose });
 }
@@ -97,7 +82,7 @@ async function createP25Renderer(options = {}) {
   } catch (_) {
     surface.remove();
     labels.remove();
-    return createUnavailable(host, 'P25 visualization is unavailable in this browser. Saved events remain available.',
+    return createUnavailable(host, 'P25 visualization is unavailable in this browser. Live activity remains available on the Live page.',
       options.signal);
   }
 
@@ -151,13 +136,15 @@ async function createP25Renderer(options = {}) {
   const nodeObjects = new Map();
   const linkObjects = new Map();
   const labelElements = new Map();
-  const movements = new Map();
   const affiliationMoves = new Map();
+  const movementParticipants = new Set();
+  let labelCandidates = [];
   const canonicalPositions = new Map();
   let canonicalLinks = [];
-  let affiliationFocusKey = '';
   const geometries = new Map();
   const materials = new Map();
+
+  function movementIncludes(key) { return movementParticipants.has(key); }
 
   function colorFor(state) {
     return colors[state] || colors.radio;
@@ -193,8 +180,9 @@ async function createP25Renderer(options = {}) {
   function applyNodeStyle(node, object = nodeObjects.get(node.id)) {
     if (!object) return;
     const state = nodeState(node);
-    const clear = Boolean(node.signalAction);
-    const dimmed = focusKeys.size > 0 && !focusKeys.has(node.id) && node.type !== 'system';
+    const participant = movementIncludes(node.id);
+    const clear = Boolean(node.signalAction || node.active || participant || focusKeys.has(node.id));
+    const dimmed = focusKeys.size > 0 && !focusKeys.has(node.id) && !participant && !node.active && node.type !== 'system';
     object.userData.p25Node = node;
     if (node.type === 'system') {
       object.children[0].material = material('system', { dimmed });
@@ -248,7 +236,8 @@ async function createP25Renderer(options = {}) {
   function linkIsDimmed(link) {
     const source = typeof link.source === 'object' ? link.source.id : link.source;
     const target = typeof link.target === 'object' ? link.target.id : link.target;
-    return focusKeys.size > 0 && !(focusKeys.has(String(source)) && focusKeys.has(String(target)));
+    return focusKeys.size > 0 && !(focusKeys.has(String(source)) && focusKeys.has(String(target))) &&
+      !(movementIncludes(String(source)) && movementIncludes(String(target)));
   }
 
   function applyLinkStyle(link, object = linkObjects.get(link.id)) {
@@ -264,6 +253,13 @@ async function createP25Renderer(options = {}) {
   }
 
   function applyFocusStyles() {
+    movementParticipants.clear();
+    for (const [radioKey, trip] of affiliationMoves) {
+      for (const key of [radioKey, trip.change.fromGroupKey, trip.change.toGroupKey]) movementParticipants.add(key);
+    }
+    const priority = node => focusKeys.has(node.id) ? 6 : node.signalAction || node.active ? 5 :
+      node.type === 'system' ? 4 : node.type === 'talkgroup' ? 3 : 1;
+    labelCandidates = [...nodes.values()].sort((left, right) => priority(right) - priority(left)).slice(0, LABEL_LIMIT);
     nodes.forEach((node) => applyNodeStyle(node));
     links.forEach((link) => applyLinkStyle(link));
   }
@@ -282,8 +278,13 @@ async function createP25Renderer(options = {}) {
     transitionFocus(true);
   }
 
-  function clearFocus() {
-    transitionFocus(false);
+  function clearFocus(immediate = false) {
+    if (immediate) {
+      focusKeys.clear();
+      focusAmount = focusTarget = focusFrom = 0;
+      applyFocusStyles();
+      updateFocusOpacity();
+    } else transitionFocus(false);
   }
 
   function updateLinkPosition(object, start, end, link) {
@@ -302,7 +303,6 @@ async function createP25Renderer(options = {}) {
       nodeObjects.delete(key);
       labelElements.get(key)?.remove();
       labelElements.delete(key);
-      movements.delete(key);
       affiliationMoves.delete(key);
     }
     for (const [key, object] of linkObjects) {
@@ -315,16 +315,11 @@ async function createP25Renderer(options = {}) {
 
   function publishGraph() {
     const nextNodes = [...nodes.values()];
-    const presented = canonicalLinks.filter((link) => {
-      const trip = affiliationMoves.get(String(link.source));
-      return !trip || link.kind !== 'current' &&
-        !(link.kind === 'history' && (String(link.target) === trip.attachedGroupKey ||
-          trip.queue.some((change) => change.toGroupKey === String(link.target))));
-    });
+    const presented = canonicalLinks.filter(link => link.kind !== 'history' ||
+      affiliationMoves.get(link.source)?.change.fromGroupKey !== link.target);
     for (const [radioKey, trip] of affiliationMoves) {
-      if (!trip.attachedGroupKey || !nodes.has(trip.attachedGroupKey)) continue;
-      presented.push({ id: `current:${radioKey}:${trip.attachedGroupKey}`, source: radioKey,
-        target: trip.attachedGroupKey, kind: 'current' });
+      presented.push({ id: `movement:${radioKey}:${trip.change.fromGroupKey}`, source: radioKey,
+        target: trip.change.fromGroupKey, kind: 'movement' });
     }
     const nextLinks = presented.map((incoming) => {
       const previous = links.get(incoming.id);
@@ -335,105 +330,79 @@ async function createP25Renderer(options = {}) {
     nextLinks.forEach((link) => links.set(link.id, link));
     graph.graphData({ nodes: nextNodes, links: nextLinks });
     updateSystemFog();
-    nextNodes.forEach((node) => applyNodeStyle(node));
-    nextLinks.forEach((link) => applyLinkStyle(link));
+    applyFocusStyles();
   }
 
   function clearAffiliationMoves() {
-    if (!affiliationMoves.size) return;
-    affiliationFocusKey = '';
+    const hadMoves = affiliationMoves.size > 0;
     for (const key of affiliationMoves.keys()) {
-      const node = nodes.get(key);
-      const target = canonicalPositions.get(key);
+      const node = nodes.get(key), target = canonicalPositions.get(key);
       if (node && target) Object.assign(node, target, { fx: target.x, fy: target.y, fz: target.z });
     }
     affiliationMoves.clear();
-    if (graph && !disposed) publishGraph();
+    if (hadMoves && graph && !disposed) publishGraph();
+    else applyFocusStyles();
+  }
+
+  function resetAttention() {
+    stopCamera();
+    clearAffiliationMoves();
+    cameraPhase = 'roam';
+    clearFocus(true);
+    updateAutoRotate();
   }
 
   function setData(value = {}, optionsValue = {}) {
     if (!graph || disposed) return;
     const animate = optionsValue.animate !== false && !documentValue.hidden;
     const now = performance.now();
-    const incomingNodes = new Map((Array.isArray(value.nodes) ? value.nodes : []).map((node) =>
-      [String(node.id), node]));
-    if (affiliationFocusKey && !incomingNodes.has(affiliationFocusKey)) {
-      stopCamera();
-      clearFocus();
-    }
+    const incomingNodes = new Map((value.nodes || []).map((node) => [String(node.id), node]));
+    const incomingChanges = new Map((optionsValue.affiliationChanges || []).map((change) => [change.radioKey, change]));
+    let cancelled = false;
     for (const [key, trip] of affiliationMoves) {
-      if (!incomingNodes.has(key) || trip.queue.some((change) =>
-        !incomingNodes.has(change.fromGroupKey) || !incomingNodes.has(change.toGroupKey))) {
+      if (!incomingNodes.has(key) || !incomingNodes.has(trip.change.fromGroupKey) ||
+          !incomingNodes.has(trip.change.toGroupKey) ||
+          (incomingNodes.get(key).affiliationGroupKey !== trip.change.toGroupKey &&
+            incomingChanges.get(key)?.toGroupKey !== incomingNodes.get(key).affiliationGroupKey)) {
         affiliationMoves.delete(key);
-        if (affiliationFocusKey === key) {
-          stopCamera();
-          clearFocus();
-        }
+        cancelled = true;
       }
     }
+    if (cancelled || documentValue.hidden) resetAttention();
+    const startedMoves = new Set();
     if (animate) for (const change of optionsValue.affiliationChanges || []) {
-      if (!nodes.has(change.radioKey) || incomingNodes.get(change.radioKey)?.type !== 'radio' ||
+      if (incomingNodes.get(change.radioKey)?.type !== 'radio' ||
           incomingNodes.get(change.fromGroupKey)?.type !== 'talkgroup' ||
-          incomingNodes.get(change.toGroupKey)?.type !== 'talkgroup' || !change.remainingMs) continue;
-      const descriptor = { ...change, expiresAt: now + Math.min(8_000, change.remainingMs) };
+          incomingNodes.get(change.toGroupKey)?.type !== 'talkgroup' ||
+          incomingNodes.get(change.radioKey).affiliationGroupKey !== change.toGroupKey || !change.remainingMs) continue;
+      const previous = nodes.get(change.radioKey);
       const trip = affiliationMoves.get(change.radioKey);
-      if (trip) enqueueAffiliationChange(trip.queue, descriptor);
-      else {
-        affiliationMoves.set(change.radioKey, { queue: [descriptor], phase: 'waiting',
-          startedAt: now + AFFILIATION_ATTACH_MS, from: change.from,
-          attachedGroupKey: change.fromGroupKey });
-        const node = nodes.get(change.radioKey);
-        Object.assign(node, change.from, { fx: change.from.x, fy: change.from.y, fz: change.from.z });
-      }
-      movements.delete(change.radioKey);
+      if (trip?.change.id === change.id) continue;
+      // Keep only the latest destination. Repeated data updates cannot restart this trip.
+      const from = trip && previous ? { x: previous.x, y: previous.y, z: previous.z } : change.from;
+      startedMoves.add(change.radioKey);
+      affiliationMoves.set(change.radioKey, { change, from, startedAt: now,
+        duration: Math.min(AFFILIATION_MOVE_MS, change.remainingMs) });
     }
-    // Logout, stale catch-up and evidence from another scope may supersede a queued trip silently.
-    for (const [key, trip] of affiliationMoves) {
-      if (trip.queue.at(-1).toGroupKey !== incomingNodes.get(key)?.affiliationGroupKey) {
-        affiliationMoves.delete(key);
-        if (affiliationFocusKey === key) {
-          stopCamera();
-          clearFocus();
-        }
-      }
-    }
-    const nextNodes = (Array.isArray(value.nodes) ? value.nodes : []).map((incoming) => {
-      const id = String(incoming.id);
+    const nextNodes = [...incomingNodes].map(([id, incoming]) => {
       const previous = nodes.get(id);
-      if (!previous) return { ...incoming, id, x: finite(incoming.x), y: finite(incoming.y),
-        z: finite(incoming.z), fx: finite(incoming.x), fy: finite(incoming.y), fz: finite(incoming.z) };
-      const original = { x: finite(previous.x), y: finite(previous.y), z: finite(previous.z) };
       const target = { x: finite(incoming.x), y: finite(incoming.y), z: finite(incoming.z) };
-      const distance = Math.hypot(target.x - original.x, target.y - original.y, target.z - original.z);
-      const movement = movements.get(id);
+      canonicalPositions.set(id, target);
       const trip = affiliationMoves.get(id);
-      const affiliationChanged = previous.affiliationGroupKey !== incoming.affiliationGroupKey;
-      canonicalPositions.set(id, { ...target, groupKey: incoming.groupKey });
-      const continuing = movement &&
-        Math.hypot(target.x - movement.target.x, target.y - movement.target.y,
-          target.z - movement.target.z) < 0.001;
-      Object.assign(previous, incoming, { id });
-      if (trip || continuing) {
-        // Highlight expiry and repeated observations must not restart an in-flight relocation.
-        Object.assign(previous, original, { fx: original.x, fy: original.y, fz: original.z });
-      } else if (animate && !affiliationChanged && previous.type === 'radio' && distance > 1) {
-        Object.assign(previous, original, { fx: original.x, fy: original.y, fz: original.z });
-        movements.set(id, { startedAt: now, duration: AFFILIATION_MOVE_MS, from: original, target });
-      } else {
-        movements.delete(id);
-        Object.assign(previous, target, { fx: target.x, fy: target.y, fz: target.z });
-      }
-      return previous;
-    });
-    canonicalLinks = (Array.isArray(value.links) ? value.links : []).map((incoming) => {
-      const id = String(incoming.id);
-      const source = typeof incoming.source === 'object' ? incoming.source.id : incoming.source;
-      const target = typeof incoming.target === 'object' ? incoming.target.id : incoming.target;
-      return { ...incoming, id, source: String(source), target: String(target) };
+      const position = trip ? !startedMoves.has(id) && previous ?
+        { x: previous.x, y: previous.y, z: previous.z } : trip.from : target;
+      return Object.assign(previous || {}, { active: false, signalAction: '', groupKey: '', affiliationGroupKey: '' },
+        incoming, position, { id,
+        fx: position.x, fy: position.y, fz: position.z });
     });
     nodes.clear();
     nextNodes.forEach((node) => nodes.set(node.id, node));
     for (const key of canonicalPositions.keys()) if (!nodes.has(key)) canonicalPositions.delete(key);
+    canonicalLinks = (value.links || []).map((incoming) => ({ ...incoming, id: String(incoming.id),
+      source: String(typeof incoming.source === 'object' ? incoming.source.id : incoming.source),
+      target: String(typeof incoming.target === 'object' ? incoming.target.id : incoming.target) }))
+      .filter((link) => nodes.has(link.source) && nodes.has(link.target));
+    if (focusKeys.size && ![...focusKeys].some((key) => nodes.has(key))) resetAttention();
     publishGraph();
   }
 
@@ -464,6 +433,8 @@ async function createP25Renderer(options = {}) {
   function containSystemCamera() {
     const system = systemNode();
     if (!system || !controls || !graph) return;
+    // Framing a complete journey can require stepping outside the system sphere.
+    if (focusKeys.size) { controls.maxDistance = Infinity; return; }
     const center = new library.Vector3(system.x, system.y, system.z);
     const camera = graph.camera();
     const offset = new library.Vector3().copy(camera.position).sub(center);
@@ -496,7 +467,6 @@ async function createP25Renderer(options = {}) {
   function stopCamera() {
     if (cameraFrame) cancelAnimationFrame(cameraFrame);
     cameraFrame = 0;
-    affiliationFocusKey = '';
     programmatic = false;
     if (controls) controls.enabled = true;
     updateAutoRotate();
@@ -573,7 +543,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function boundsFor(keys) {
-    return calculateFocusBounds(keys, nodes, movements);
+    return calculateFocusBounds(keys, nodes);
   }
 
   function focus(keys, duration = 900) {
@@ -590,21 +560,23 @@ async function createP25Renderer(options = {}) {
       system.z - bounds.center.z);
     if (inward.lengthSq() < 0.001) inward.set(0.7, 0.35, 1);
     inward.normalize();
-    const distance = clamp(bounds.radius * 3.2, 64, finite(system.radius, SYSTEM_RADIUS) * 0.72);
+    const camera = graph.camera();
+    const vertical = finite(camera.fov, 50) * Math.PI / 360;
+    const horizontal = Math.atan(Math.tan(vertical) * Math.max(0.1, finite(camera.aspect, 1)));
+    const distance = Math.max(64, bounds.radius / Math.sin(Math.min(vertical, horizontal)) * 1.18);
     return tweenCamera({ x: bounds.center.x + inward.x * distance, y: bounds.center.y + inward.y * distance,
       z: bounds.center.z + inward.z * distance }, bounds.center, duration);
   }
 
-  function focusAffiliation(radioKey, duration = 900) {
-    if (mode !== 'auto' || documentValue.hidden || scope.level !== 'system') return false;
+  function focusAffiliation(radioKey, duration = 600) {
+    if (mode !== 'auto' || documentValue.hidden || !['system', 'talkgroup'].includes(scope.level)) return false;
     const trip = affiliationMoves.get(String(radioKey));
-    if (!trip || trip.phase !== 'waiting') return false;
-    const keys = [String(radioKey), trip.attachedGroupKey];
-    // Frame the existing attachment, never the settled destination used by ordinary focus.
-    const bounds = calculateFocusBounds(keys, nodes, new Map());
-    if (!focusBounds(bounds, keys, duration)) return false;
-    trip.startedAt = performance.now() + Math.max(0, duration) + AFFILIATION_ATTACH_MS;
-    affiliationFocusKey = String(radioKey);
+    if (!trip) return false;
+    const keys = [String(radioKey), trip.change.fromGroupKey, trip.change.toGroupKey];
+    // Both cubes and the full path stay in the same view; the camera does not chase the radio.
+    const framingMs = Math.min(Math.max(0, duration), Math.max(0, trip.change.remainingMs - trip.duration));
+    if (!focusBounds(calculateFocusBounds(keys, nodes), keys, framingMs)) return false;
+    trip.startedAt = performance.now() + framingMs;
     return true;
   }
 
@@ -625,7 +597,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function enterSystem(systemKey, optionsValue = {}) {
-    clearAffiliationMoves();
+    resetAttention();
     scope = { level: 'system', systemKey: String(systemKey || '') };
     updateSystemFog();
     const result = home(optionsValue.immediate ? 0 : finite(optionsValue.duration, 900));
@@ -635,7 +607,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function enterTalkgroup(systemKey, groupKey, optionsValue = {}) {
-    clearAffiliationMoves();
+    resetAttention();
     scope = { level: 'talkgroup', systemKey: String(systemKey || ''), groupKey: String(groupKey || '') };
     updateSystemFog();
     const result = home(optionsValue.immediate ? 0 : finite(optionsValue.duration, 900));
@@ -645,7 +617,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function showOverview(optionsValue = {}) {
-    clearAffiliationMoves();
+    resetAttention();
     scope = { level: 'overview', systemKey: '' };
     clearFocus();
     if (scene) scene.fog = null;
@@ -656,20 +628,19 @@ async function createP25Renderer(options = {}) {
 
   function setMode(value) {
     mode = value === 'manual' ? 'manual' : 'auto';
-    if (mode === 'manual') {
-      stopCamera();
-      clearAffiliationMoves();
-      clearFocus();
+    resetAttention();
+    if (mode === 'manual' && controls) {
+      // Drain OrbitControls' residual Auto rotation before handing the camera to the user.
+      const damping = controls.enableDamping;
+      controls.enableDamping = false;
+      controls.update();
+      controls.enableDamping = damping;
     }
-    updateAutoRotate();
   }
 
   function setCameraPhase(value) {
-    cameraPhase = ['focus', 'hold', 'return', 'roam'].includes(value) ? value : 'roam';
-    if (cameraPhase === 'return' || cameraPhase === 'roam') {
-      affiliationFocusKey = '';
-      clearFocus();
-    }
+    cameraPhase = ['focus', 'return', 'roam'].includes(value) ? value : 'roam';
+    if (cameraPhase !== 'focus') clearFocus();
     updateAutoRotate();
   }
 
@@ -677,6 +648,7 @@ async function createP25Renderer(options = {}) {
     if (mode !== 'manual' || !graph || !controls || programmatic) return false;
     const delta = clamp(finite(deltaSeconds), 0, 0.05);
     if (!delta) return false;
+    if (!['forward', 'right', 'up', 'yaw', 'pitch'].some(key => finite(input[key]))) return false;
     const camera = graph.camera();
     const direction = new library.Vector3().copy(controls.target).sub(camera.position).normalize();
     const up = new library.Vector3(0, 1, 0);
@@ -698,18 +670,14 @@ async function createP25Renderer(options = {}) {
     if (!graph || !controls || disposed || documentValue.hidden) return;
     const camera = graph.camera();
     const system = systemNode();
-    const candidates = [...nodes.values()].sort((left, right) => {
-      const priority = (node) => focusKeys.has(node.id) ? 6 : node.signalAction ? 5 : node.type === 'system' ? 4 :
-        node.type === 'talkgroup' ? 3 : 1;
-      return priority(right) - priority(left);
-    }).slice(0, LABEL_LIMIT);
+    const width = host.clientWidth, height = host.clientHeight;
     const visible = new Set();
-    for (const node of candidates) {
-      if (scope.level === 'talkgroup' && node.type === 'system') continue;
+    for (const node of labelCandidates) {
+      if (scope.level !== 'overview' && node.type === 'system') continue;
       const screen = graph.graph2ScreenCoords(node.x, node.y, node.z);
       const projected = new library.Vector3(node.x, node.y, node.z).project(camera);
       if (!screen || projected.z < -1 || projected.z > 1 || screen.x < -120 || screen.y < -50 ||
-          screen.x > host.clientWidth + 120 || screen.y > host.clientHeight + 50) continue;
+          screen.x > width + 120 || screen.y > height + 50) continue;
       let label = labelElements.get(node.id);
       if (!label) {
         label = element(documentValue, 'span', 'network-visualizer-label');
@@ -719,15 +687,21 @@ async function createP25Renderer(options = {}) {
       visible.add(node.id);
       label.textContent = node.label || node.id;
       label.dataset.type = node.type;
-      label.dataset.signal = node.signalAction || '';
-      label.style.transform = `translate3d(${Math.round(screen.x)}px, ${Math.round(screen.y)}px, 0)`;
+      label.dataset.signal = node.signalAction || (node.active ? 'call' : '');
+      // Keep names beside the shapes instead of painting over the journey's endpoints.
+      const distance = Math.max(1, camera.position.distanceTo(new library.Vector3(node.x, node.y, node.z)));
+      const screenRadius = finite(node.radius, 8) * height /
+        (2 * distance * Math.tan(finite(camera.fov, 50) * Math.PI / 360));
+      const labelY = node.type === 'talkgroup' ? screen.y + screenRadius * 1.75 + 14 :
+        node.type === 'radio' ? screen.y - screenRadius * 1.5 - 14 : screen.y;
+      label.style.transform = `translate3d(${Math.round(screen.x)}px, ${Math.round(labelY)}px, 0)`;
       label.style.zIndex = String(Math.round((1 - projected.z) * 5_000));
+      const participant = movementIncludes(node.id);
       const clear = scope.level === 'overview' || scope.level === 'talkgroup' || Boolean(node.signalAction) ||
-        node.type === 'system';
-      const depth = system ? camera.position.distanceTo(new library.Vector3(node.x, node.y, node.z)) /
-        (finite(system.radius, SYSTEM_RADIUS) * 1.55) : 0;
+        node.active || participant || focusKeys.has(node.id) || node.type === 'system';
+      const depth = system ? distance / (finite(system.radius, SYSTEM_RADIUS) * 1.55) : 0;
       const haze = clear ? 0 : clamp((depth - 0.28) * 1.45, 0, 0.82);
-      const dimmed = focusKeys.size > 0 && !focusKeys.has(node.id) && node.type !== 'system';
+      const dimmed = focusKeys.size > 0 && !focusKeys.has(node.id) && !participant && !node.active && node.type !== 'system';
       label.style.opacity = String((1 - haze * 0.72) * (dimmed ? 1 - focusAmount * 0.96 : 1));
       const blur = haze * 2.8 + (dimmed ? focusAmount * 2 : 0);
       label.style.filter = blur ? `blur(${blur.toFixed(2)}px)` : '';
@@ -736,62 +710,24 @@ async function createP25Renderer(options = {}) {
   }
 
   function animateAffiliations(at) {
-    let changed = false;
+    let finished = false;
     for (const [key, trip] of affiliationMoves) {
       const node = nodes.get(key);
-      const change = trip.queue[0];
-      if (!node || !change || at >= change.expiresAt) {
-        const target = canonicalPositions.get(key);
-        if (node && target) Object.assign(node, target, { fx: target.x, fy: target.y, fz: target.z });
-        affiliationMoves.delete(key);
-        if (affiliationFocusKey === key) {
-          stopCamera();
-          clearFocus();
-        }
-        changed = true;
-        continue;
-      }
-      if (trip.phase === 'waiting') {
-        if (at < trip.startedAt) continue;
-        trip.phase = 'travel';
-        trip.from = { x: node.x, y: node.y, z: node.z };
-        trip.attachedGroupKey = '';
-        if (affiliationFocusKey === key) setFocus([key]);
-        changed = true;
-      }
-      const progress = clamp((at - trip.startedAt) / AFFILIATION_MOVE_MS, 0, 1);
-      const amount = ease(progress);
-      const before = { x: node.x, y: node.y, z: node.z };
-      node.x = trip.from.x + (change.target.x - trip.from.x) * amount;
-      node.y = trip.from.y + (change.target.y - trip.from.y) * amount;
-      node.z = trip.from.z + (change.target.z - trip.from.z) * amount;
-      node.fx = node.x;
-      node.fy = node.y;
-      node.fz = node.z;
-      if (affiliationFocusKey === key && !cameraFrame) {
-        // Translate camera and look-at together; the radio stays in view throughout its travel.
-        const delta = new library.Vector3(node.x - before.x, node.y - before.y, node.z - before.z);
-        graph.camera().position.add(delta);
-        controls.target.add(delta);
-        containSystemCamera();
-      }
+      if (!node) { affiliationMoves.delete(key); finished = true; continue; }
+      const progress = clamp((at - trip.startedAt) / trip.duration, 0, 1);
+      const amount = ease(progress), target = trip.change.target;
+      node.x = trip.from.x + (target.x - trip.from.x) * amount;
+      node.y = trip.from.y + (target.y - trip.from.y) * amount;
+      node.z = trip.from.z + (target.z - trip.from.z) * amount;
+      node.fx = node.x; node.fy = node.y; node.fz = node.z;
       if (progress >= 1) {
-        if (affiliationFocusKey === key) setFocus([key, change.toGroupKey]);
-        trip.queue.shift();
-        if (trip.queue.length) {
-          trip.phase = 'waiting';
-          trip.attachedGroupKey = change.toGroupKey;
-          trip.startedAt = at + AFFILIATION_ATTACH_MS;
-        } else {
-          affiliationMoves.delete(key);
-          // Keep following this radio during the accepted attention window if another fresh move arrives.
-          const target = canonicalPositions.get(key);
-          if (target) Object.assign(node, target, { fx: target.x, fy: target.y, fz: target.z });
-        }
-        changed = true;
+        affiliationMoves.delete(key);
+        const settled = canonicalPositions.get(key);
+        if (settled) Object.assign(node, settled, { fx: settled.x, fy: settled.y, fz: settled.z });
+        finished = true;
       }
     }
-    if (changed) publishGraph();
+    if (finished) publishGraph();
   }
 
   function animate(at) {
@@ -807,22 +743,6 @@ async function createP25Renderer(options = {}) {
       }
     }
     animateAffiliations(at);
-    for (const [key, movement] of movements) {
-      const node = nodes.get(key);
-      if (!node) {
-        movements.delete(key);
-        continue;
-      }
-      const progress = clamp((at - movement.startedAt) / movement.duration, 0, 1);
-      const amount = ease(progress);
-      node.x = movement.from.x + (movement.target.x - movement.from.x) * amount;
-      node.y = movement.from.y + (movement.target.y - movement.from.y) * amount;
-      node.z = movement.from.z + (movement.target.z - movement.from.z) * amount;
-      node.fx = node.x;
-      node.fy = node.y;
-      node.fz = node.z;
-      if (progress >= 1) movements.delete(key);
-    }
     updateAutoRotate();
     renderLabels();
     frame = requestAnimationFrame(animate);
@@ -830,6 +750,8 @@ async function createP25Renderer(options = {}) {
 
   const onControlsStart = () => {
     stopCamera();
+    cameraPhase = 'roam';
+    clearFocus(true);
     interactionUntil = Number.POSITIVE_INFINITY;
     updateAutoRotate();
     options.onInteraction?.();
@@ -842,8 +764,7 @@ async function createP25Renderer(options = {}) {
   const onVisibility = () => {
     if (!graph) return;
     if (documentValue.hidden || guideSuspended) {
-      stopCamera();
-      clearAffiliationMoves();
+      resetAttention();
       graph.pauseAnimation();
     }
     else graph.resumeAnimation();
@@ -890,7 +811,7 @@ async function createP25Renderer(options = {}) {
     try { graph?._destructor?.(); } catch (_) { /* Partial renderer. */ }
     surface.remove();
     labels.remove();
-    return createUnavailable(host, 'P25 visualization is unavailable in this browser. Saved events remain available.',
+    return createUnavailable(host, 'P25 visualization is unavailable in this browser. Live activity remains available on the Live page.',
       options.signal);
   }
 
@@ -928,7 +849,7 @@ async function createP25Renderer(options = {}) {
     if (disposed || guideSuspended === Boolean(value)) return;
     guideSuspended = Boolean(value);
     if (guideSuspended) {
-      stopCamera();
+      resetAttention();
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
       graph?.pauseAnimation();
@@ -965,10 +886,11 @@ async function createP25Renderer(options = {}) {
     nodeObjects.clear();
     linkObjects.clear();
     labelElements.clear();
-    movements.clear();
     affiliationMoves.clear();
     canonicalPositions.clear();
     canonicalLinks = [];
+    movementParticipants.clear();
+    labelCandidates = [];
   }
 
   options.signal?.addEventListener?.('abort', dispose, { once: true });
@@ -977,7 +899,7 @@ async function createP25Renderer(options = {}) {
 
   return Object.freeze({ available: true, setData, setMode, setCameraPhase, enterSystem, enterTalkgroup,
     showOverview, focus, focusAffiliation, home, moveManualCamera, enterFullscreen, exitFullscreen,
-    setGuideSuspended, dispose });
+    setGuideSuspended, resetAttention, dispose });
 }
 
-export { calculateFocusBounds, enqueueAffiliationChange, createP25Renderer };
+export { calculateFocusBounds, createP25Renderer };

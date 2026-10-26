@@ -1,27 +1,27 @@
 'use strict';
 
 const P25_EVENT_SETTINGS = Object.freeze([
-  Object.freeze({ id: 'emergency', action: 'EMERGENCY',
+  Object.freeze({ id: 'emergency', action: 'EMERGENCY', label: 'Emergency',
     highlight: true, autoZoom: true }),
   Object.freeze({ id: 'movement', label: 'Affiliation change',
     detail: 'A confirmed radio affiliation changed between talkgroups in comparable scope.',
     highlight: true, autoZoom: true }),
-  Object.freeze({ id: 'denial', action: 'DENIAL',
+  Object.freeze({ id: 'denial', action: 'DENIAL', label: 'Denial',
     highlight: true, autoZoom: false }),
-  Object.freeze({ id: 'patch', label: 'Patch change', detail: 'A stored patch observation, creation, or removal.',
+  Object.freeze({ id: 'patch', label: 'Patch change', detail: 'A patch observation, creation, or removal.',
     highlight: true, autoZoom: true }),
-  Object.freeze({ id: 'busy', action: 'BUSY',
+  Object.freeze({ id: 'busy', action: 'BUSY', label: 'Busy',
     highlight: true, autoZoom: true }),
-  Object.freeze({ id: 'queued', action: 'QUEUED',
+  Object.freeze({ id: 'queued', action: 'QUEUED', label: 'Queued',
     highlight: true, autoZoom: true }),
-  Object.freeze({ id: 'check', action: 'CHECK',
+  Object.freeze({ id: 'check', action: 'CHECK', label: 'Radio check',
     highlight: true, autoZoom: false }),
-  Object.freeze({ id: 'page', action: 'PAGE',
+  Object.freeze({ id: 'page', action: 'PAGE', label: 'Page',
     highlight: true, autoZoom: false }),
-  Object.freeze({ id: 'logout', action: 'LOGOUT',
+  Object.freeze({ id: 'logout', action: 'LOGOUT', label: 'Logout',
     highlight: true, autoZoom: false }),
   Object.freeze({ id: 'call', label: 'Calls and grants',
-    detail: 'Routine stored call and control-channel grant activity. This does not prove affiliation.',
+    detail: 'Call and control-channel grant activity.',
     highlight: true, autoZoom: false })
 ]);
 
@@ -48,15 +48,9 @@ function enabledP25EventCategories(settings, property) {
   return new Set(P25_EVENT_SETTINGS.filter((entry) => normalized[entry.id]?.[property]).map((entry) => entry.id));
 }
 
-function routineP25ActivityEnabled(settings) {
-  const call = normalizeP25EventSettings(settings).call;
-  return call.highlight || call.autoZoom;
-}
-
 export {
   P25_EVENT_SETTINGS,
   defaultP25EventSettings,
   normalizeP25EventSettings,
-  enabledP25EventCategories,
-  routineP25ActivityEnabled
+  enabledP25EventCategories
 };

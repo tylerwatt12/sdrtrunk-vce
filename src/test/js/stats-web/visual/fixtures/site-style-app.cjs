@@ -144,8 +144,11 @@ const liveSnapshot = { revision: 1, tables: [{ table_id: channelId, configuratio
     { key: 'county-control', configuration_id: channelId, lcn: 1, frequency_hz: 851012500,
       status: 'IDLE', tags: ['CURRENT_CONTROL'], role: 'CURRENT_CONTROL', activation_order: 1 },
     { key: 'county-voice', configuration_id: channelId, lcn: 2, frequency_hz: 851037500,
+      protocol: 'P25', serving_system_key: systemKey, system_name: systemName,
       status: 'CALL', tags: ['VOICE'], activation_order: 2, talkgroup: 1201, talkgroup_alias: 'Fire Dispatch',
-      source: 30914, source_alias: 'Engine 4' } ] }] };
+      source: 30914, source_id: 30914, source_identity_key: radioKey, source_identity_kind_code: 2,
+      target_id: 1201, target_identity_key: groupKey, target_kind: 'talkgroup', target_alias: 'Fire Dispatch',
+      source_alias: 'Engine 4' } ] }] };
 const policies = [...fs.readFileSync(path.join(root, 'src/main/java/io/github/dsheirer/web/auth/WebCapability.java'), 'utf8')
   .matchAll(/^\s+[A-Z_]+\("([^"]+)", "([^"]+)", AccessTier\.(PUBLIC|USER|ADMIN)(, false)?\)/gm)]
   .map(([, id, display_name, tier, fixed]) => ({ id, display_name, required_tier: tier.toLowerCase(),
@@ -325,7 +328,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
   // account so onboarding does not cover the controls those fixtures exercise.
   if (!options.guides) await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner', 'recordings', 'topics', 'map', 'network-visualizer', 'admin']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${['channel-setup', 'scanner', 'recordings'].includes(id) ? 4 : ['tuners', 'streaming', 'radioreference', 'live', 'dashboard', 'topics', 'map', 'network-visualizer', 'admin'].includes(id) ? 3 : id === 'scan-lists' ? 7 : ['aliases', 'tuner-spectrum'].includes(id) ? 5 : 1}`, '1');
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${['channel-setup', 'scanner', 'recordings', 'network-visualizer'].includes(id) ? 4 : ['tuners', 'streaming', 'radioreference', 'live', 'dashboard', 'topics', 'map', 'network-visualizer', 'admin'].includes(id) ? 3 : id === 'scan-lists' ? 7 : ['aliases', 'tuner-spectrum'].includes(id) ? 5 : 1}`, '1');
     }
   });
   await page.addInitScript((snapshotValue) => {

@@ -59,401 +59,251 @@ async function openRenderer(page, theme, width, reducedMotion = false, controlle
   await expect.poll(() => page.evaluate(() => !!window.visualizerFixture.mesh())).toBe(true);
 }
 
-for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
-  test(`radio transitions retain rendered motion through activity updates ${theme} ${width}px`, async ({ page }) => {
-    await openRenderer(page, theme, width, false, true);
-    await page.evaluate(() => {
-      const fixture = window.visualizerFixture;
-      fixture.initialMesh = fixture.mesh();
-      fixture.startedAt = performance.now();
-      fixture.renderer.setData(fixture.data(140, 'call'));
-    });
-    // Drive the actual renderer frames on an exact clock; wall-clock sleeps race GPU warm-up in CI.
-    await page.clock.runFor(250);
-    const midpoint = await page.evaluate(() => window.visualizerFixture.mesh().position.x);
-    expect(midpoint).toBeGreaterThan(0);
-    expect(midpoint).toBeLessThan(140);
-
-    // Expiry repaint and unchanged stream updates must leave the original tween deadline intact.
-    await page.evaluate(() => {
-      const fixture = window.visualizerFixture;
-      fixture.renderer.setData(fixture.data(140), { animate: false });
-    });
-    for (let update = 0; update < 4; update += 1) {
-      await page.clock.runFor(180);
-      await page.evaluate(() => {
-        const fixture = window.visualizerFixture;
-        fixture.renderer.setData(fixture.data(140));
+async function affiliationScene(page, includeRadio = true) {
+  await page.evaluate((withRadio) => {
+    const fixture = window.visualizerFixture;
+    const system = { id: 'system', systemKey: 'system', type: 'system', label: 'Metro Public Safety',
+      x: 0, y: 0, z: 0, radius: 300 };
+    const groups = [{ id: 'A', label: 'Dispatch', x: -100, y: 20, z: 0 },
+      { id: 'B', label: 'Tactical', x: 100, y: 20, z: 0 },
+      { id: 'C', label: 'Operations', x: 0, y: -80, z: 0 }]
+      .map((group) => ({ ...group, type: 'talkgroup', systemKey: 'system', radius: 13 }));
+    const poses = Object.fromEntries(groups.map((group) => [group.id,
+      { x: group.x + 18, y: group.y, z: group.z + 10 }]));
+    fixture.dataAt = (groupKey, withRadio = true) => ({ nodes: [system, ...groups, ...(withRadio ? [{
+      id: 'radio-7001', systemKey: 'system', type: 'radio', label: 'Engine 4', radius: 6.5,
+      ...poses[groupKey], groupKey, affiliationGroupKey: groupKey, signalAction: 'movement'
+    }] : [])], links: withRadio ? [{ id: `current:radio-7001:${groupKey}`, source: 'radio-7001',
+      target: groupKey, kind: 'current' }] : [] });
+    fixture.change = (fromGroupKey, toGroupKey, id = `${fromGroupKey}-${toGroupKey}`) => ({ id,
+      radioKey: 'radio-7001', fromGroupKey, toGroupKey, from: poses[fromGroupKey],
+      target: poses[toGroupKey], remainingMs: 8_000 });
+    fixture.renderer.setData(fixture.dataAt('A', withRadio), { animate: false });
+    fixture.renderer.enterSystem('system', { immediate: true });
+    fixture.renderer.setMode('auto');
+    fixture.renderer.setCameraPhase('focus');
+    fixture.inspect = () => {
+      const graph = fixture.graph.graphData(), camera = fixture.graph.camera();
+      const point = (value) => ({ x: value.x, y: value.y, z: value.z });
+      const cubes = {};
+      fixture.graph.scene().traverse((object) => {
+        if (['A', 'B', 'C'].includes(object.userData?.p25Node?.id)) {
+          cubes[object.userData.p25Node.id] = { opacity: object.material.opacity, fog: object.material.fog };
+        }
       });
-    }
-    await page.clock.runFor(180);
-    const settled = await page.evaluate(() => {
-      const fixture = window.visualizerFixture;
-      return { x: fixture.mesh().position.x, sameMesh: fixture.mesh() === fixture.initialMesh,
-        refreshes: fixture.refreshes(), elapsed: performance.now() - fixture.startedAt,
-        dataX: fixture.graph.graphData().nodes.find((node) => node.id === 'radio-7001').x };
+      return { radio: point(graph.nodes.find((node) => node.id === 'radio-7001') || {}),
+        target: point(fixture.graph.controls().target), camera: point(camera.position), cubes,
+        projected: Object.fromEntries(['A', 'B'].map((key) => {
+          const node = graph.nodes.find((value) => value.id === key);
+          const projected = fixture.graph.graph2ScreenCoords(node.x, node.y, node.z);
+          return [key, projected];
+        })), width: fixture.graph.width(), height: fixture.graph.height(),
+        rotating: fixture.graph.controls().autoRotate,
+        movementLinks: graph.links.filter(link => link.id.startsWith('movement:')).length,
+        endpoints: graph.links.every((link) => [link.source, link.target].every((value) =>
+          graph.nodes.some((node) => node.id === (typeof value === 'object' ? value.id : value)))) };
+    };
+  }, includeRadio);
+  await page.clock.runFor(100);
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`both affiliation cubes stay clear and framed throughout movement ${theme} ${width}px`, async ({ page }) => {
+    await openRenderer(page, theme, width, false, true);
+    await affiliationScene(page);
+    await page.evaluate(() => {
+      const f = window.visualizerFixture;
+      f.renderer.setData(f.dataAt('B'), { affiliationChanges: [f.change('A', 'B')] });
+      f.renderer.focusAffiliation('radio-7001', 0);
+      f.framed = f.inspect();
     });
-    expect(settled.elapsed).toBeLessThan(1_650);
-    expect(settled.x).toBeCloseTo(140, 1);
-    expect(settled.dataX).toBeCloseTo(140, 1);
-    expect(settled.sameMesh).toBe(true);
-    expect(settled.refreshes).toBe(0);
-    await page.clock.resume();
-    await expect(page.locator('.network-visualizer-stage')).toHaveScreenshot(
-      `network-visualizer-motion-${theme}-${width}.png`);
+    await page.clock.runFor(400);
+    const during = await page.evaluate(() => ({ before: window.visualizerFixture.framed,
+      after: window.visualizerFixture.inspect() }));
+    expect(during.after.radio.x).toBeGreaterThan(-82);
+    expect(during.after.radio.x).toBeLessThan(118);
+    for (const axis of ['x', 'y', 'z']) {
+      expect(during.after.target[axis]).toBeCloseTo(during.before.target[axis], 8);
+      expect(during.after.camera[axis]).toBeCloseTo(during.before.camera[axis], 8);
+    }
+    for (const key of ['A', 'B']) {
+      expect(during.after.cubes[key].opacity).toBeGreaterThan(0.9);
+      expect(during.after.cubes[key].fog).toBe(false);
+      expect(during.after.projected[key].x).toBeGreaterThan(15);
+      expect(during.after.projected[key].x).toBeLessThan(during.after.width - 15);
+      expect(during.after.projected[key].y).toBeGreaterThan(15);
+      expect(during.after.projected[key].y).toBeLessThan(during.after.height - 15);
+    }
+    await page.locator('.network-visualizer-stage').screenshot({ path: test.info().outputPath('journey.png') });
+    await page.evaluate(() => {
+      const f = window.visualizerFixture;
+      f.renderer.setData(f.dataAt('B'), { animate: false });
+    });
+    await page.clock.runFor(800);
+    expect((await page.evaluate(() => window.visualizerFixture.inspect())).radio.x).toBe(118);
+    await page.evaluate(() => {
+      const f = window.visualizerFixture;
+      f.renderer.setCameraPhase('return'); f.renderer.home(0); f.renderer.setCameraPhase('roam');
+    });
+    await page.clock.runFor(300);
+    const idle = await page.evaluate(() => window.visualizerFixture.inspect());
+    expect(idle.rotating).toBe(true);
+    expect(idle.cubes.A.opacity).toBeGreaterThan(0.7);
+    expect(idle.cubes.B.opacity).toBeGreaterThan(0.7);
     await page.evaluate(() => window.visualizerFixture.renderer.dispose());
     await expect(page.locator('.network-visualizer-canvas canvas')).toHaveCount(0);
   });
 }
 
-test('browser motion preferences preserve radio tweens and automatic rotation', async ({ page }) => {
-  await openRenderer(page, 'light', 1280, true, true);
+test('first-observed radio moves from a known previous cube without a preloaded radio', async ({ page }) => {
+  await openRenderer(page, 'light', 1280, false, true);
+  await affiliationScene(page, false);
   await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.renderer.setData(fixture.data(140));
+    const f = window.visualizerFixture;
+    f.renderer.setData(f.dataAt('B'), { affiliationChanges: [f.change('A', 'B')] });
   });
-  await page.clock.runFor(250);
-  const midpoint = await page.evaluate(() => window.visualizerFixture.mesh().position.x);
-  expect(midpoint).toBeGreaterThan(0);
-  expect(midpoint).toBeLessThan(140);
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await page.clock.runFor(100);
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.clock.runFor(100);
-  const continuing = await page.evaluate(() => window.visualizerFixture.mesh().position.x);
-  expect(continuing).toBeGreaterThan(midpoint);
-  expect(continuing).toBeLessThan(140);
-  await page.clock.runFor(1_000);
-  expect(await page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(140);
-  await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.renderer.setMode('auto');
-    fixture.renderer.setCameraPhase('roam');
-    fixture.beforeRotation = fixture.graph.camera().position.clone();
-  });
-  await page.clock.runFor(250);
-  const rotating = await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    return { enabled: fixture.graph.controls().autoRotate,
-      distance: fixture.graph.camera().position.distanceTo(fixture.beforeRotation) };
-  });
-  expect(rotating.enabled).toBe(true);
-  expect(rotating.distance).toBeGreaterThan(0.1);
+  await page.clock.runFor(300);
+  const moving = await page.evaluate(() => window.visualizerFixture.inspect());
+  expect(moving.radio.x).toBeGreaterThan(-82);
+  expect(moving.radio.x).toBeLessThan(118);
+  expect(moving.cubes.A.opacity).toBeGreaterThan(0.9);
+  expect(moving.cubes.B.opacity).toBeGreaterThan(0.9);
   await page.evaluate(() => window.visualizerFixture.renderer.dispose());
 });
 
-async function affiliationScene(page) {
-  await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    const system = { id: 'system', systemKey: 'system', type: 'system', label: 'Metro Public Safety',
-      x: 0, y: 0, z: 0, radius: 300 };
-    const groups = [
-      { id: 'A', label: 'Dispatch', x: -100, y: 20, z: 0 },
-      { id: 'B', label: 'Tactical', x: 100, y: 20, z: 0 },
-      { id: 'C', label: 'Operations', x: 0, y: -80, z: 0 }
-    ].map((group) => ({ ...group, type: 'talkgroup', systemKey: 'system', radius: 13 }));
-    const poses = Object.fromEntries(groups.map((group) => [group.id,
-      { x: group.x + 18, y: group.y, z: group.z + 10 }]));
-    fixture.affiliationData = (groupKey, visible = ['A', 'B', 'C']) => ({
-      nodes: [system, ...groups.filter((group) => visible.includes(group.id)), {
-        id: 'radio-7001', systemKey: 'system', type: 'radio', label: 'Engine 4', radius: 6.5,
-        ...poses[groupKey], groupKey, affiliationGroupKey: groupKey, signalAction: 'movement'
-      }], links: [{ id: `current:radio-7001:${groupKey}`, source: 'radio-7001', target: groupKey,
-        kind: 'current' }, ...(groupKey === 'C' ? ['A', 'B'] : groupKey === 'B' ? ['A'] : []).map((key) =>
-        ({ id: `history:radio-7001:${key}`, source: 'radio-7001', target: key, kind: 'history' }))] });
-    fixture.changes = [['A', 'B'], ['B', 'C']].map(([fromGroupKey, toGroupKey], index) => ({
-      id: `move-${index}`, radioKey: 'radio-7001', systemKey: 'system', fromGroupKey, toGroupKey,
-      from: poses[fromGroupKey], target: poses[toGroupKey], remainingMs: 8_000
-    }));
-    fixture.renderer.setData(fixture.affiliationData('A'), { animate: false });
-    fixture.renderer.enterSystem('system', { immediate: true });
-    fixture.renderer.setMode('auto');
-    fixture.renderer.setCameraPhase('focus');
-    fixture.capture = () => {
-      const point = (value) => ({ x: value.x, y: value.y, z: value.z });
-      return { at: performance.now() - fixture.startedAt, radio: point(fixture.mesh().position),
-        data: point(fixture.graph.graphData().nodes.find((node) => node.id === 'radio-7001')),
-        camera: point(fixture.graph.camera().position), target: point(fixture.graph.controls().target),
-        attached: fixture.graph.graphData().links.filter((link) => link.kind === 'current').map((link) =>
-          typeof link.target === 'object' ? link.target.id : link.target),
-        history: fixture.graph.graphData().links.filter((link) => link.kind === 'history').map((link) =>
-          typeof link.target === 'object' ? link.target.id : link.target) };
-    };
-    fixture.samples = [];
-    fixture.record = () => {
-      fixture.samples.push(fixture.capture());
-      fixture.recording = requestAnimationFrame(fixture.record);
-    };
-    fixture.stop = () => {
-      cancelAnimationFrame(fixture.recording);
-      fixture.renderer.dispose();
-    };
-  });
-  await page.clock.runFor(100);
-  await expect.poll(() => page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(-82);
-}
-
-for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
-  test(`affiliation focus shows the old attachment, follows FIFO moves, then attaches ${theme} ${width}px`,
-    async ({ page }) => {
-      await openRenderer(page, theme, width, false, true);
-      await affiliationScene(page);
-      await page.evaluate(() => {
-        const fixture = window.visualizerFixture;
-        fixture.startedAt = performance.now();
-        fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges: fixture.changes });
-        fixture.focused = fixture.renderer.focusAffiliation('radio-7001', 900);
-        fixture.record();
-      });
-      expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(true);
-      await page.clock.fastForward(600);
-      await page.evaluate(() => {
-        const fixture = window.visualizerFixture;
-        fixture.renderer.setData(fixture.affiliationData('C'), { animate: false });
-      });
-      // Render each meaningful phase instead of making CI draw every intervening WebGL frame.
-      for (const checkpoint of [1_000, 1_400, 2_200, 3_500]) {
-        const elapsed = await page.evaluate(() => performance.now() - window.visualizerFixture.startedAt);
-        await page.clock.fastForward(checkpoint - elapsed);
-        await page.clock.runFor(16);
-      }
-      expect(await page.evaluate(() => window.visualizerFixture.samples.some((sample) =>
-        sample.attached[0] === 'B'))).toBe(true);
-      expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['C']);
-      const result = await page.evaluate(() => {
-        const fixture = window.visualizerFixture;
-        cancelAnimationFrame(fixture.recording);
-        return { samples: fixture.samples, final: fixture.capture(), refreshes: fixture.refreshes() };
-      });
-      const old = result.samples.find((sample) => sample.at >= 950 && sample.at < 1_070);
-      expect(old).toBeTruthy();
-      expect(old.radio.x).toBeCloseTo(-82, 1);
-      expect(old.attached).toEqual(['A']);
-      expect(old.history).toEqual([], 'queued destination history links remain hidden before arrival');
-      expect(old.target.x).toBeCloseTo(-91, 0);
-      const travelling = result.samples.find((sample) => sample.at > 1_300 && sample.at < 1_800 &&
-        sample.radio.x > -70 && sample.radio.x < 100 && sample.attached.length === 0);
-      expect(travelling).toBeTruthy();
-      expect(travelling.history).toEqual(['A']);
-      expect(travelling.camera.x - old.camera.x).toBeCloseTo(travelling.data.x - old.data.x, 0);
-      expect(travelling.target.x - old.target.x).toBeCloseTo(travelling.data.x - old.data.x, 0);
-      const firstArrival = result.samples.findIndex((sample) => sample.attached[0] === 'B');
-      const finalArrival = result.samples.findIndex((sample) => sample.attached[0] === 'C');
-      expect(firstArrival).toBeGreaterThan(0);
-      expect(finalArrival).toBeGreaterThan(firstArrival);
-      expect(result.samples[firstArrival].data.x).toBeCloseTo(118, 1);
-      expect(result.final.radio.x).toBeCloseTo(18, 1);
-      expect(result.final.radio.y).toBeCloseTo(-80, 1);
-      expect(result.final.attached).toEqual(['C']);
-      expect(result.refreshes).toBe(0);
-      await page.clock.resume();
-      await expect(page.locator('.network-visualizer-stage')).toHaveScreenshot(
-        `network-visualizer-affiliation-${theme}-${width}.png`);
-      await page.evaluate(() => window.visualizerFixture.stop());
-      await expect(page.locator('.network-visualizer-canvas canvas')).toHaveCount(0);
-    });
-}
-
-test('manual camera and scope changes cancel affiliation follow without dangling links', async ({ page }) => {
-  await openRenderer(page, 'light', 1280, false, true);
-  await affiliationScene(page);
-  await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.startedAt = performance.now();
-    fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges: fixture.changes });
-    fixture.renderer.focusAffiliation('radio-7001');
-    fixture.renderer.setMode('manual');
-    fixture.beforeManual = fixture.capture();
-  });
-  await page.clock.runFor(250);
-  const manual = await page.evaluate(() => ({ before: window.visualizerFixture.beforeManual,
-    after: window.visualizerFixture.capture() }));
-  expect(manual.after.attached).toEqual(['C']);
-  expect(manual.after.data.x).toBe(18);
-  expect(manual.after.target).toEqual(manual.before.target);
-  await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.renderer.setMode('auto');
-    fixture.renderer.setCameraPhase('focus');
-    fixture.renderer.setData(fixture.affiliationData('A'), { animate: false });
-    fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges: fixture.changes });
-    fixture.renderer.focusAffiliation('radio-7001');
-    const scoped = fixture.affiliationData('A', ['A']);
-    scoped.nodes.at(-1).affiliationGroupKey = 'C';
-    scoped.links = [{ id: 'previous', source: 'radio-7001', target: 'A', kind: 'history' }];
-    fixture.renderer.setData(scoped, { animate: false });
-    fixture.renderer.enterTalkgroup('system', 'A', { immediate: true });
-  });
-  await page.clock.runFor(250);
-  const scoped = await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    const graph = fixture.graph.graphData();
-    const ids = new Set(graph.nodes.map((node) => node.id));
-    return { sample: fixture.capture(), allEndpointsPresent: graph.links.every((link) =>
-      [link.source, link.target].every((node) => ids.has(typeof node === 'object' ? node.id : node))) };
-  });
-  expect(scoped.sample.radio.x).toBe(-82);
-  expect(scoped.sample.attached).toEqual([]);
-  expect(scoped.allEndpointsPresent).toBe(true);
-  await page.evaluate(() => window.visualizerFixture.stop());
-});
-
-test('affiliation focus animates with reduced motion and expired evidence settles without replay', async ({ page }) => {
+test('newer affiliation retargets from its current position without replaying a backlog', async ({ page }) => {
   await openRenderer(page, 'dark', 390, true, true);
   await affiliationScene(page);
   await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.startedAt = performance.now();
-    fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges: fixture.changes });
-    fixture.focused = fixture.renderer.focusAffiliation('radio-7001');
+    const f = window.visualizerFixture;
+    f.renderer.setData(f.dataAt('B'), { affiliationChanges: [f.change('A', 'B')] });
   });
-  expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(true);
-  await page.emulateMedia({ reducedMotion: 'no-preference' });
-  await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.clock.runFor(600);
-  const focusing = await page.evaluate(() => window.visualizerFixture.capture());
-  expect(focusing.radio.x).toBeCloseTo(-82, 1);
-  expect(focusing.attached).toEqual(['A']);
-  expect(focusing.target.x).toBeLessThan(60);
-  await page.clock.runFor(3_000);
-  expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['C']);
-  expect(await page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBeCloseTo(18, 1);
+  await page.clock.runFor(400);
   await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.renderer.setData(fixture.affiliationData('A'), { animate: false });
-    fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges:
-      fixture.changes.map((change) => ({ ...change, remainingMs: 100 })) });
-    fixture.renderer.focusAffiliation('radio-7001');
+    const f = window.visualizerFixture;
+    f.before = f.inspect();
+    f.renderer.setData(f.dataAt('C'), { affiliationChanges: [f.change('B', 'C')] });
+    f.after = f.inspect();
   });
-  await page.clock.runFor(300);
-  const settled = await page.evaluate(() => window.visualizerFixture.capture());
-  expect(settled.data.x).toBe(18);
-  expect(settled.attached).toEqual(['C']);
-  await page.clock.runFor(150);
-  expect(await page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(18);
-  await page.evaluate(() => window.visualizerFixture.stop());
+  const retarget = await page.evaluate(() => ({ before: window.visualizerFixture.before,
+    after: window.visualizerFixture.after }));
+  expect(retarget.after.radio).toEqual(retarget.before.radio);
+  await page.clock.runFor(1_200);
+  const settled = await page.evaluate(() => window.visualizerFixture.inspect());
+  expect(settled.radio.x).toBe(18);
+  expect(settled.radio.y).toBe(-80);
+  expect(settled.endpoints).toBe(true);
+  await page.evaluate(() => window.visualizerFixture.renderer.dispose());
 });
 
-test('new canonical evidence cancels an obsolete waiting or travelling affiliation', async ({ page }) => {
+test('reset restores visibility and rotation and Manual movement leaves the camera alone', async ({ page }) => {
   await openRenderer(page, 'light', 1280, false, true);
   await affiliationScene(page);
-  for (const [destination, delay] of [['', 100], ['C', 500]]) {
-    await page.evaluate(() => {
-      const fixture = window.visualizerFixture;
-      fixture.startedAt = performance.now();
-      fixture.renderer.setData(fixture.affiliationData('A'), { animate: false });
-      fixture.renderer.setData(fixture.affiliationData('B'), { affiliationChanges: [fixture.changes[0]] });
-    });
-    await page.clock.runFor(delay);
-    await page.evaluate((current) => {
-      const fixture = window.visualizerFixture;
-      const corrected = fixture.affiliationData(current || 'C');
-      corrected.nodes.at(-1).affiliationGroupKey = current;
-      if (!current) corrected.links = [];
-      fixture.renderer.setData(corrected);
-    }, destination);
-    await page.clock.runFor(250);
-    const corrected = await page.evaluate(() => window.visualizerFixture.capture());
-    expect(corrected.data.x).toBe(18);
-    expect(corrected.attached).toEqual(destination ? ['C'] : []);
-    await page.clock.runFor(900);
-    expect((await page.evaluate(() => window.visualizerFixture.capture())).attached)
-      .toEqual(destination ? ['C'] : []);
-  }
-  await page.evaluate(() => window.visualizerFixture.stop());
+  await page.evaluate(() => {
+    const f = window.visualizerFixture;
+    f.renderer.setData(f.dataAt('B'), { affiliationChanges: [f.change('A', 'B')] });
+    f.renderer.focusAffiliation('radio-7001', 0);
+  });
+  await page.clock.runFor(300);
+  await page.evaluate(() => window.visualizerFixture.renderer.resetAttention());
+  await page.clock.runFor(100);
+  const reset = await page.evaluate(() => window.visualizerFixture.inspect());
+  expect(reset.radio.x).toBe(118);
+  expect(reset.rotating).toBe(true);
+  expect(reset.movementLinks).toBe(0);
+  expect(reset.cubes.C.opacity).toBeGreaterThan(0.7);
+  await page.evaluate(() => {
+    const f = window.visualizerFixture;
+    f.renderer.setMode('manual'); f.beforeManual = f.inspect();
+    f.renderer.setData(f.dataAt('C'), { affiliationChanges: [f.change('B', 'C')] });
+  });
+  await page.clock.runFor(500);
+  const manual = await page.evaluate(() => ({ before: window.visualizerFixture.beforeManual,
+    after: window.visualizerFixture.inspect() }));
+  expect(manual.after.radio.x).toBeGreaterThan(18);
+  expect(manual.after.radio.x).toBeLessThan(118);
+  expect(manual.after.camera).toEqual(manual.before.camera);
+  expect(manual.after.target).toEqual(manual.before.target);
+  await page.evaluate(() => window.visualizerFixture.renderer.dispose());
 });
 
-test('later moves of the focused radio continue tracking until manual interaction', async ({ page }) => {
+test('ordinary activity repaints reuse the mesh without inventing flight', async ({ page }) => {
+  await openRenderer(page, 'dark', 390, false, true);
+  await page.evaluate(() => {
+    const f = window.visualizerFixture; f.initialMesh = f.mesh();
+    f.renderer.setData(f.data(140, 'call'));
+  });
+  await page.clock.runFor(100);
+  expect(await page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(140);
+  await page.evaluate(() => window.visualizerFixture.renderer.setData(window.visualizerFixture.data(140)));
+  await page.clock.runFor(300);
+  const repeated = await page.evaluate(() => ({ same: window.visualizerFixture.mesh() ===
+    window.visualizerFixture.initialMesh, x: window.visualizerFixture.mesh().position.x,
+    refreshes: window.visualizerFixture.refreshes() }));
+  expect(repeated).toEqual({ same: true, x: 140, refreshes: 0 });
+  await page.evaluate(() => window.visualizerFixture.renderer.dispose());
+});
+
+test('hidden updates settle immediately and resume without stale motion or fading', async ({ page }) => {
+  await openRenderer(page, 'light', 1280, false, true);
+  await affiliationScene(page);
+  await page.evaluate(() => {
+    const f = window.visualizerFixture;
+    f.renderer.setData(f.dataAt('B'), { affiliationChanges: [f.change('A', 'B')] });
+    f.renderer.focusAffiliation('radio-7001', 0);
+    f.hidden = true;
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => f.hidden });
+    document.dispatchEvent(new Event('visibilitychange'));
+    f.renderer.setData(f.dataAt('C'), { affiliationChanges: [f.change('B', 'C')] });
+    f.hidden = false;
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await page.clock.runFor(300);
+  const resumed = await page.evaluate(() => window.visualizerFixture.inspect());
+  expect(resumed.radio.x).toBe(18);
+  expect(resumed.rotating).toBe(true);
+  expect(resumed.cubes.A.opacity).toBeGreaterThan(0.7);
+  await page.evaluate(() => { delete document.hidden; window.visualizerFixture.renderer.dispose(); });
+});
+
+test('live activity stays bright with optional call highlighting disabled', async ({ page }) => {
+  await openRenderer(page, 'dark', 390, false, true);
+  await page.evaluate(() => {
+    const f = window.visualizerFixture;
+    f.renderer.setData(f.data(0, 'call'));
+    f.callColor = f.mesh().material.color.getHex();
+    const active = f.data(0); active.nodes.at(-1).active = true;
+    f.renderer.setData(active);
+    f.activeColor = f.mesh().material.color.getHex();
+    f.renderer.setData(f.data(0));
+    f.idleColor = f.mesh().material.color.getHex();
+  });
+  const colors = await page.evaluate(() => ({ call: window.visualizerFixture.callColor,
+    active: window.visualizerFixture.activeColor, idle: window.visualizerFixture.idleColor }));
+  expect(colors.active).toBe(colors.call);
+  expect(colors.idle).not.toBe(colors.call);
+  await page.evaluate(() => window.visualizerFixture.renderer.dispose());
+});
+
+test('automatic movement starts after both endpoints have been framed', async ({ page }) => {
   await openRenderer(page, 'dark', 390, false, true);
   await affiliationScene(page);
   await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.startedAt = performance.now();
-    fixture.renderer.setData(fixture.affiliationData('B'), { affiliationChanges: [fixture.changes[0]] });
-    fixture.renderer.focusAffiliation('radio-7001', 120);
+    const f = window.visualizerFixture;
+    f.renderer.setData(f.dataAt('B'), { affiliationChanges: [f.change('A', 'B')] });
+    f.renderer.focusAffiliation('radio-7001', 300);
   });
-  await page.clock.runFor(1_500);
-  expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['B']);
-  await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.renderer.setCameraPhase('hold');
-    fixture.beforeLater = fixture.capture();
-    fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges: [fixture.changes[1]] });
-  });
-  await page.clock.runFor(600);
-  const tracking = await page.evaluate(() => ({ before: window.visualizerFixture.beforeLater,
-    after: window.visualizerFixture.capture() }));
-  expect(tracking.after.data.x).toBeLessThan(118);
-  expect(tracking.after.data.x).toBeGreaterThan(18);
-  expect(tracking.after.target.x - tracking.before.target.x)
-    .toBeCloseTo(tracking.after.data.x - tracking.before.data.x, 0);
-  await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.graph.controls().dispatchEvent({ type: 'start' });
-    fixture.afterInteraction = fixture.capture();
-  });
-  await page.clock.runFor(800);
-  expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['C']);
-  const interrupted = await page.evaluate(() => ({ before: window.visualizerFixture.afterInteraction,
-    after: window.visualizerFixture.capture() }));
-  for (const axis of ['x', 'y', 'z']) {
-    expect(interrupted.after.target[axis]).toBeCloseTo(interrupted.before.target[axis], 5);
-  }
-  await page.evaluate(() => window.visualizerFixture.stop());
-});
-
-test('fresh Manual updates move the radio and attach on arrival while the camera stays put', async ({ page }) => {
-  await openRenderer(page, 'light', 1280, false, true);
-  await affiliationScene(page);
-  await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.startedAt = performance.now();
-    fixture.renderer.setMode('manual');
-    fixture.beforeManual = fixture.capture();
-    fixture.renderer.setData(fixture.affiliationData('B'), { affiliationChanges: [fixture.changes[0]] });
-    fixture.focused = fixture.renderer.focusAffiliation('radio-7001');
-  });
-  expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(false);
-  await page.clock.runFor(600);
-  const moving = await page.evaluate(() => ({ before: window.visualizerFixture.beforeManual,
-    after: window.visualizerFixture.capture() }));
-  expect(moving.after.radio.x).toBeGreaterThan(-82);
-  expect(moving.after.radio.x).toBeLessThan(118);
-  expect(moving.after.attached).toEqual([]);
-  expect(moving.after.target).toEqual(moving.before.target);
-  await page.clock.runFor(800);
-  expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['B']);
-  await page.evaluate(() => window.visualizerFixture.stop());
-});
-
-test('a response arriving after the view becomes hidden updates state without queued replay', async ({ page }) => {
-  await openRenderer(page, 'light', 1280, false, true);
-  await affiliationScene(page);
-  await page.evaluate(() => {
-    const fixture = window.visualizerFixture;
-    fixture.startedAt = performance.now();
-    fixture.renderer.setData(fixture.affiliationData('B'), { affiliationChanges: [fixture.changes[0]] });
-    fixture.renderer.focusAffiliation('radio-7001');
-    fixture.hidden = true;
-    Object.defineProperty(document, 'hidden', { configurable: true, get: () => fixture.hidden });
-    document.dispatchEvent(new Event('visibilitychange'));
-    fixture.beforeHidden = fixture.capture();
-    fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges: [fixture.changes[1]] });
-    fixture.focused = fixture.renderer.focusAffiliation('radio-7001');
-    fixture.genericFocus = fixture.renderer.focus(['radio-7001', 'C']);
-  });
-  expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(false);
-  expect(await page.evaluate(() => window.visualizerFixture.genericFocus)).toBe(false);
-  expect((await page.evaluate(() => window.visualizerFixture.capture())).data.x).toBe(18);
-  await page.evaluate(() => {
-    window.visualizerFixture.hidden = false;
-    document.dispatchEvent(new Event('visibilitychange'));
-  });
+  await page.clock.runFor(200);
+  expect((await page.evaluate(() => window.visualizerFixture.inspect())).radio.x).toBe(-82);
   await page.clock.runFor(300);
-  const resumed = await page.evaluate(() => ({ before: window.visualizerFixture.beforeHidden,
-    after: window.visualizerFixture.capture() }));
-  expect(resumed.after.radio.x).toBe(18);
-  expect(resumed.after.attached).toEqual(['C']);
-  expect(resumed.after.target).toEqual(resumed.before.target);
-  await page.evaluate(() => { delete document.hidden; window.visualizerFixture.stop(); });
+  const travelling = await page.evaluate(() => window.visualizerFixture.inspect());
+  expect(travelling.radio.x).toBeGreaterThan(-82);
+  expect(travelling.radio.x).toBeLessThan(118);
+  for (const key of ['A', 'B']) {
+    expect(travelling.projected[key].x).toBeGreaterThan(15);
+    expect(travelling.projected[key].x).toBeLessThan(travelling.width - 15);
+  }
+  await page.clock.runFor(1_000);
+  expect((await page.evaluate(() => window.visualizerFixture.inspect())).radio.x).toBe(118);
+  await page.evaluate(() => window.visualizerFixture.renderer.dispose());
 });

@@ -1,135 +1,103 @@
 'use strict';
-
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 const { pathToFileURL } = require('node:url');
-const feature = path.resolve(process.argv[2] || path.resolve(__dirname,
-  '../../../../stats-web/assets/features/network-visualizer'));
-const row = (id, at, overrides = {}) => ({ id, observed_at_ms: at, action: 'JOIN', protocol: 'p25',
-  channel_kind: 'trunked_site', radio_system_key: 'history', source_identity_kind_code: 2, source_identity_key: `r${id}`,
-  target_identity_key: `g${id}`, target_kind: 'talkgroup', ...overrides });
-const fact = (radio = 'native', group = 'native', at = 1, system = 'native') => ({
-  radio_system_key: system, radio_identity_key: radio, talkgroup_identity_key: group,
-  configuration_id: 'site', confirmed_at_ms: at, radio_id: 1, talkgroup_id: 1 });
-
+const feature = path.resolve(process.argv[2] || path.resolve(__dirname, '../../../../stats-web/assets/features/network-visualizer'));
+const fact = (radio, group, at) => ({ radio_system_key: 'system', radio_identity_key: `v1-r-${radio}`,
+  talkgroup_identity_key: `v1-g-${group}`, configuration_id: 'site', confirmed_at_ms: at, radio_id: radio, talkgroup_id: group });
+const voice = (overrides = {}) => ({ protocol: 'P25', serving_system_key: 'system',
+  status: 'CALL', activation_order: 2, source_id: 10, target_id: 20,
+  source_entity_ref: { kind: 'radio', identity_key: 'v1-r-10' },
+  target_entity_ref: { kind: 'talkgroup', identity_key: 'v1-g-20' },
+  source_alias: 'Engine 10', target_alias: 'Dispatch', ...overrides });
+const table = rows => [{ table_id: 'site', channel_running: true, configuration_id: 'site', rows }];
 async function main() {
   const history = await import(pathToFileURL(path.join(feature, 'history.js')).href);
-  const apply = (state, rows) => history.applyP25ActivityRows(state, rows, { initial: true });
-  const native = (state, facts, options = {}) => history.applyP25Affiliations(state,
-    { affiliations: facts, available: options.available }, { ...options, initial: true });
+  const state = history.createP25HistoryState(), now = Date.now();
+  history.applyP25LiveTables(state, table([voice()]), { atMs: now, initial: true, highlightCategories: new Set() });
+  const graph = () => history.buildP25Graph(state, 'system', now, '', { highlightCategories: new Set() });
+  assert.equal(state.radios.get('system:v1-r-10').label, 'Engine 10');
+  assert.equal(state.groups.get('system:v1-g-20').label, 'Dispatch');
+  assert.equal(history.applyP25LiveTables(state, table([voice({ signal_dbfs: -40 })]), { atMs: now + 1 }).changed, false,
+    'quality-only Live updates refresh seen times without rebuilding the graph');
+  assert.equal(state.radios.get('system:v1-r-10').lastAtMs, now + 1);
+  assert.equal(history.applyP25LiveTables(state, table([voice({ source_alias: 'Engine 10 portable' })]), { atMs: now + 2 }).changed, true,
+    'a changed alias updates visible presentation');
+  assert.equal(state.radios.get('system:v1-r-10').label, 'Engine 10 portable');
+  assert.equal(graph().nodes.filter(node => node.active).length, 2,
+    'current calls light the radio and group even with every optional highlight off');
+  assert.equal(history.p25ActionCount(state, 'call'), 0, 'snapshots and table updates never double count Activity actions');
+  const firstPosition = graph().nodes.find(node => node.type === 'radio');
+  history.applyP25LiveTables(state, table([voice({ target_id: 21,
+    target_entity_ref: { kind: 'talkgroup', identity_key: 'v1-g-21' } })]), { atMs: now + 1 });
+  const nextPosition = graph().nodes.find(node => node.type === 'radio');
+  assert.deepEqual([nextPosition.x, nextPosition.y, nextPosition.z], [firstPosition.x, firstPosition.y, firstPosition.z],
+    'hearing another call cannot fabricate affiliation travel');
+  assert.equal(graph().links.find(link => link.kind === 'activity').target, 'system:v1-g-21');
+  const focusedCall = history.buildP25Graph(state, 'system', now, 'system:v1-g-21');
+  const focusedRadio = focusedCall.nodes.find(node => node.type === 'radio');
+  assert.ok(focusedRadio, 'the current call group drilldown includes its active speaker');
+  assert.ok(focusedCall.nodes.some(node => node.id === firstPosition.groupKey),
+    'every included radio retains a visible physical anchor cube');
+  assert.deepEqual([focusedRadio.x, focusedRadio.y, focusedRadio.z], [firstPosition.x, firstPosition.y, firstPosition.z],
+    'drilldown cannot move a radio away from its established physical anchor');
+  history.applyP25LiveTables(state, table([voice({ status: 'IDLE' })]), { atMs: now + 2 });
+  assert.equal(graph().nodes.some(node => node.active), false, 'idle clears activity immediately with no highlight timeout');
+  history.applyP25ActivityRows(state, [{ id: 1, action: 'CALL', observed_at_ms: now,
+    protocol: 'p25', channel_kind: 'trunked_site', radio_system_key: 'system',
+    source_identity_key: 'v1-r-10', target_identity_key: 'v1-g-20' }], { atMs: now });
+  assert.equal(history.buildP25Graph(state, 'system', now).nodes.some(node => node.signalAction === 'call'), false,
+    'a delayed call observation cannot light an entity that Live has already declared idle');
+  history.applyP25LiveTables(state, table([voice({ activation_order: 0 })]));
+  assert.equal(state.activeKeys.size, 0);
+  const unscoped = history.createP25HistoryState();
+  history.applyP25LiveTables(unscoped, [{ ...table([])[0], radio_system_key: 'wrong-configured-system', rows: [
+    voice({ serving_system_key: null, radio_system_key: 'wrong-configured-system' }),
+    voice({ protocol: 'DMR' })] }]);
+  assert.equal(unscoped.systems.size, 0, 'missing captured serving scope cannot inherit a configured or home system');
+  const unresolved = history.createP25HistoryState();
+  history.applyP25LiveTables(unresolved, table([voice({ source_entity_ref: null, target_entity_ref: null,
+    source_identity_key: 'channel-scoped-radio', target_identity_key: 'channel-scoped-group',
+    source_type: 'RADIO', target_type: 'TALKGROUP' })]), { atMs: now });
+  assert.equal(unresolved.radios.size, 1); assert.equal(unresolved.groups.size, 1,
+    'unresolved Live channel identities retain their typed scope and remain visible');
+  history.applyP25LiveTables(unscoped, [{ ...table([voice()])[0], table_id: 'conventional' }]);
+  assert.equal(unscoped.systems.size, 0, 'conventional rows do not join the trunked visualizer');
 
-  for (const hours of [1, 24]) {
-    const now = 10 * 86_400_000, cutoff = now - hours * 3_600_000;
-    const state = history.createP25HistoryState();
-    native(state, Array.from({ length: 10_001 }, (_, id) => fact(`native${id}`)), { replace: true, available: false });
-    apply(state, [row(1, cutoff - 1), row(2, cutoff)]);
-    const cursors = [state.historyAfterId, state.liveAfterId];
-    assert.equal(history.expireP25History(state, cutoff).changed, true);
-    assert.equal(state.currentAffiliations.size, 10_001, `${hours}h keeps every ancient unavailable native fact`);
-    assert.equal(state.available, false);
-    assert.equal(state.radios.size, 10_002);
-    assert.equal(state.groups.size, 2);
-    assert.equal(state.radios.has('history:r1'), false);
-    assert.equal(state.radios.has('history:r2'), true, 'the exact time boundary remains included');
-    assert.deepEqual([state.historyAfterId, state.liveAfterId], cursors, 'expiry cannot rewind verified cursors');
-  }
+  // Idle retention releases stale entities, including old known affiliations, but
+  // current Live activity and in-flight endpoints remain complete.
+  history.applyP25Affiliations(state, { affiliations: [fact(30, 40, now - 10_000)] }, { initial: true, atMs: now });
+  history.applyP25LiveTables(state, table([voice()]), { atMs: now });
+  state.actionCounts.set('emergency', 5);
+  history.expireP25History(state, now + 1);
+  assert.equal(state.radios.has('system:v1-r-30'), false, 'quiet ancient affiliations do not grow the scene forever');
+  assert.equal(state.currentAffiliations.size, 0);
+  assert.equal(state.radios.has('system:v1-r-10'), true, 'an ongoing call is protected even beyond its observation time');
+  assert.equal(state.groups.has('system:v1-g-20'), true);
+  assert.equal(history.p25ActionCount(state, 'emergency'), 5, 'session action totals outlive quiet entities');
+  history.applyP25LiveTables(state, []);
+  history.expireP25History(state, now + 3);
+  assert.equal(state.radios.size + state.groups.size + state.systems.size, 0);
+  assert.deepEqual(state.systemOrdinals, { next: 0, free: [], changed: false });
 
-  const cutoff = 100_000, links = history.createP25HistoryState();
-  native(links, [fact('radio', 'current', cutoff + 1, 'system')]);
-  apply(links, [row(1, cutoff - 2, { radio_system_key: 'system', source_identity_key: 'radio',
-    target_identity_key: 'old', action: 'CALL' }), row(2, cutoff - 1, {
-    radio_system_key: 'system', source_identity_key: 'radio', target_identity_key: 'old' }),
-  row(3, cutoff, { radio_system_key: 'system', source_identity_key: 'radio', target_identity_key: 'recent' })]);
-  history.expireP25History(links, cutoff);
-  const radio = links.radios.get('system:radio');
-  assert.equal(radio.activityGroupKey, '', 'recent native confirmation does not preserve an old heard-on link');
-  assert.deepEqual(radio.priorGroupKeys, ['system:recent']);
-  assert.equal(links.groups.has('system:old'), false);
-  assert.equal(links.groups.has('system:current'), true);
-  assert.equal([...links.events.values()].every(event => event.observedAtMs >= cutoff), true);
-  native(links, [], { replace: true });
-  history.expireP25History(links, cutoff + 2);
-  assert.equal(links.currentAffiliations.size, 0);
-  assert.equal(links.radios.size + links.groups.size + links.systems.size, 0,
-    'removing native protection permits expiry despite prior sticky current flags');
-  assert.deepEqual(links.systemOrdinals, { next: 0, free: [], changed: false });
-
-  const layout = history.createP25HistoryState();
-  apply(layout, [row(1, 1, { radio_system_key: 'gone' }), row(2, 1, {
-    radio_system_key: 'kept', source_identity_key: 'a', target_identity_key: 'a' })]);
-  native(layout, [fact('b', 'b', 1, 'kept')]);
-  apply(layout, [row(3, 1, { radio_system_key: 'kept', source_identity_key: 'c', target_identity_key: 'c' })]);
-  const system = layout.systems.get('kept'), anchor = layout.groups.get('kept:b');
-  const position = { x: anchor.x, y: anchor.y, z: anchor.z }, systemOrdinal = system.ordinal;
-  history.expireP25History(layout, 2);
-  assert.equal(system.groupSlots.length, 0, 'expired layout scratch is released without moving retained anchors');
-  apply(layout, [row(4, 3, { radio_system_key: 'new' }), row(5, 3, {
-    radio_system_key: 'kept', source_identity_key: 'd', target_identity_key: 'd' })]);
-  assert.notEqual(layout.systems.get('new').ordinal, systemOrdinal);
-  assert.notEqual(layout.groups.get('kept:d').ordinal, anchor.ordinal);
-  assert.deepEqual({ x: anchor.x, y: anchor.y, z: anchor.z }, position);
-  assert.ok(Math.hypot(anchor.x - layout.groups.get('kept:d').x,
-    anchor.y - layout.groups.get('kept:d').y, anchor.z - layout.groups.get('kept:d').z) >= 103.99);
-
-  const cycling = history.createP25HistoryState();
-  native(cycling, [fact()]);
-  let id = 0;
-  for (let cycle = 1; cycle <= 6; cycle++) {
-    const at = cycle * 7_200_000;
-    apply(cycling, Array.from({ length: 601 }, () => row(++id, at)));
-    assert.equal(cycling.radios.size, 602, 'the selected window has no total entity cutoff');
-    history.expireP25History(cycling, at + 1);
-    assert.equal(cycling.radios.size, 1);
-    assert.equal(cycling.groups.size, 1);
-    assert.equal(cycling.systems.size, 1);
-    assert.equal(cycling.systemOrdinals.next, 1);
-    assert.equal(cycling.systemOrdinals.free.length, 0);
-    assert.equal(cycling.systems.get('native').groupOrdinals.next, 1);
-    assert.equal(cycling.events.size, 0);
-  }
-  assert.equal(cycling.historyAfterId, id, 'many rolling windows keep cursor progress without storing old rows');
-  assert.equal(Object.hasOwn(cycling, 'recentRows'), false);
-
-  const ordered = history.createP25HistoryState();
-  apply(ordered, [row(1, 200), row(2, 100, { source_identity_key: 'r1', target_identity_key: 'g1' })]);
-  history.expireP25History(ordered, 150);
-  assert.equal(ordered.radios.get('history:r1').lastAtMs, 200,
-    'a later ID with an old timestamp cannot shorten the entity lifetime');
-  history.expireP25History(ordered, 201); assert.equal(ordered.systems.size, 0);
-
-  const scoring = history.createP25HistoryState();
-  native(scoring, [fact('radio', 'group', 1, 'old')]);
-  apply(scoring, [row(1, 10, { radio_system_key: 'old', action: 'EMERGENCY' }),
-    row(2, 100, { radio_system_key: 'recent', action: 'PAGE' })]);
-  assert.equal(history.mostActiveP25System(scoring).key, 'old');
-  history.expireP25History(scoring, 50);
-  assert.equal(history.mostActiveP25System(scoring).key, 'recent',
-    'selection uses retained grouped priorities rather than an expired lifetime score');
-
-  const index = fs.readFileSync(path.join(feature, 'index.js'), 'utf8');
-  const expirySource = index.match(/  function expireHistory\(\) \{[\s\S]+?\n  \}/)[0];
-  const visibilitySource = index.match(/  function onVisibilityChanged\(\) \{[\s\S]+?\n  \}/)[0];
-  let now = 3_600_100, runs = 0, updates = 0, visibility = 0;
-  const timed = history.createP25HistoryState(); apply(timed, [row(1, 100)]);
-  const context = { state: timed, historyHours: 1, nextHistoryExpiryAtMs: 0, serverTimeOffsetMs: 0,
-    historySceneDirty: true, Date: { now: () => now }, document: { hidden: false }, pressedKeys: new Set(['w']),
-    expireP25History(state, cutoffMs) { runs++; return history.expireP25History(state, cutoffMs); },
-    updateScene(result) { assert.equal(result.changed, true); updates++; },
-    feed: { visibilityChanged() { visibility++; } } };
-  vm.createContext(context); vm.runInContext(expirySource + '\n' + visibilitySource, context);
-  context.expireHistory(); assert.equal(updates, 0, 'expiry retains the exact rolling boundary');
-  now += 59_999; context.expireHistory(); assert.equal(runs, 1, 'full scans are limited to once a minute');
-  now++; context.expireHistory(); assert.equal(updates, 1); assert.equal(timed.systems.size, 0);
-  assert.equal(context.historySceneDirty, false);
-  now += 60_000; context.document.hidden = true; context.onVisibilityChanged(); assert.equal(runs, 2);
-  context.document.hidden = false; context.onVisibilityChanged(); assert.equal(runs, 3);
-  assert.equal(visibility, 2); assert.equal(context.pressedKeys.size, 0);
-  assert.match(index, /if \(!document\.hidden\) expireHistory\(\);/);
-  assert.doesNotMatch(expirySource, /requestActivity|reloadHistory|reseed|loadSeed/,
-    'quiet-receiver expiry makes no new history or native requests');
-  console.log('P25 rolling history expiry, native protection, geometry reuse and quiet-page contracts passed.');
+  const motion = history.createP25HistoryState();
+  history.applyP25Affiliations(motion, { affiliations: [{ ...fact(1, 2, now), previous_affiliation: fact(1, 1, now - 1) }] }, { atMs: now });
+  history.expireP25History(motion, now + 1);
+  assert.equal(motion.radios.size, 1); assert.equal(motion.groups.size, 2, 'cleanup pins both moving endpoints');
+  const current = motion.groups.get('system:v1-g-2'), position = [current.x, current.y, current.z];
+  history.applyP25Affiliations(motion, { affiliations: [fact(2, 3, now + 1)] }, { initial: true, atMs: now + 1 });
+  assert.deepEqual([current.x, current.y, current.z], position, 'new activity leaves existing cube anchors stationary');
+  const unaffiliated = history.createP25HistoryState();
+  const activityRow = (id, overrides = {}) => ({ id, action: 'CHECK', observed_at_ms: now,
+    protocol: 'p25', channel_kind: 'trunked_site', radio_system_key: 'system',
+    source_identity_key: 'v1-r-99', ...overrides });
+  history.applyP25ActivityRows(unaffiliated, [activityRow(1)]);
+  const beforeGrowth = history.buildP25Graph(unaffiliated, 'system', now).nodes.find(node => node.type === 'radio');
+  history.applyP25ActivityRows(unaffiliated, Array.from({ length: 100 }, (_, index) => activityRow(index + 2, {
+    action: 'PATCH', source_identity_key: null, target_identity_key: `v1-g-${index + 100}` })));
+  const afterGrowth = history.buildP25Graph(unaffiliated, 'system', now).nodes.find(node => node.type === 'radio');
+  assert.deepEqual([afterGrowth.x, afterGrowth.y, afterGrowth.z], [beforeGrowth.x, beforeGrowth.y, beforeGrowth.z],
+    'growing the system cloud cannot relocate an unrelated unaffiliated radio');
+  console.log('P25 current activity parity, identity scope and bounded idle cleanup checks passed.');
 }
-
 main().catch(error => { console.error(error); process.exitCode = 1; });

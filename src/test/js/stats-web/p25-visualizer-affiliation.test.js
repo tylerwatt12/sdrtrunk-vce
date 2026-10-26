@@ -15,15 +15,14 @@ async function main() {
   const applyRows = (state, rows, options = {}) => history.applyP25ActivityRows(state, rows, options);
   const applyAffiliations = (state, affiliations, options = {}) => history.applyP25Affiliations(state, { affiliations,
     removed_radio_keys: options.removedRadioKeys, available: options.available }, { ...options, sequence: options.revision });
-  const { enqueueAffiliationChange } = await import(pathToFileURL(path.join(feature, 'renderer.js')).href);
   const fact = (group, at, overrides = {}) => ({ radio_system_key: 'system', radio_identity_key: 'radio',
     talkgroup_identity_key: group, configuration_id: 'site-a', confirmed_at_ms: at, protocol: 'p25',
     radio_id: 7001, talkgroup_id: Number(group) || 1, ...overrides });
   const state = history.createP25HistoryState();
   const seed = applyAffiliations(state, [fact('A', 1_000)], { replace: true, initial: true });
   assert.deepEqual(seed.affiliationChanges, [], 'current-state seed never queues fresh motion');
-  assert.equal(state.historyAfterId, 0, 'current state does not fabricate Activity records');
-  assert.equal(history.groupedP25Events(state).length, 0);
+  assert.equal(state.afterId, 0, 'current state does not fabricate Activity records');
+  assert.equal(history.p25ActionCount(state, 'movement'), 0);
   assert.equal(history.buildP25Graph(state, 'system').links[0].kind, 'current',
     'a long-lived affiliation appears without any recent Activity');
   applyRows(state, [row(1, 'A', 1_000), row(2, 'B', 2_000), row(3, 'C', 3_000)], { initial: true });
@@ -63,8 +62,18 @@ async function main() {
   assert.equal(state.radios.get(radioKey).visualGroupKey, 'system:E', 'unavailable retains the last complete map');
   applyAffiliations(state, [], { removedRadioKeys: [{ radio_system_key: 'system', radio_identity_key: 'radio' }],
     available: true, revision: 7 });
-  assert.equal(state.radios.get(radioKey).visualGroupKey, '', 'explicit canonical removal has no event-history fallback');
+  assert.equal(state.radios.get(radioKey).visualGroupKey, 'system:E',
+    'removal keeps the last visual anchor without fabricating a move');
+  assert.equal(history.buildP25Graph(state, 'system').links.some(link => link.kind === 'current'), false,
+    'removal clears authoritative current links even when a quiet radio stays near its last known group');
   assert.equal(state.currentAffiliations.size, 0);
+  const gapRemoval = history.createP25HistoryState();
+  applyAffiliations(gapRemoval, [fact('A', 100)], { initial: true });
+  gapRemoval.currentAffiliations.clear();
+  const removedAfterGap = applyAffiliations(gapRemoval, [], { removedRadioKeys: [{
+    radio_system_key: 'system', radio_identity_key: 'radio' }] });
+  assert.equal(removedAfterGap.changed, true, 'removal after reconnect invalidation still redraws retained radio state');
+  assert.equal(gapRemoval.radios.get(radioKey).visualGroupKey, 'system:A', 'gap removal preserves the quiet physical anchor');
   const missed = history.createP25HistoryState();
   applyAffiliations(missed, [fact('A', 100)], { replace: true, initial: true });
   applyAffiliations(missed, [fact('B', 200)], { replace: true, initial: true, available: false });
@@ -105,20 +114,33 @@ async function main() {
     radio_identity_key: `r${index}`, radio_id: index })), { initial: true });
   const partialGraph = history.buildP25Graph(partial, 'system');
   assert.equal(partial.currentAffiliations.size, 901, 'display caps do not discard canonical knowledge');
-  assert.equal(partialGraph.nodes.filter((node) => node.type === 'radio').length, 900);
-  assert.equal(partialGraph.truncated, true, 'a bounded display explicitly reports partial data');
+  assert.equal(partialGraph.nodes.filter((node) => node.type === 'radio').length, 901,
+    'recent-rank display caps cannot hide a live entity');
+  assert.equal(partialGraph.truncated, false);
 
-  const queue = [];
-  const changes = Array.from({ length: 9 }, (_, index) => ({ id: index, fromGroupKey: `g${index}`,
-    toGroupKey: `g${index + 1}`, from: { x: index }, target: { x: index + 1 } }));
-  changes.forEach((change) => enqueueAffiliationChange(queue, change));
-  assert.equal(queue.length, 4, 'bursts cannot grow the per-radio presentation queue');
-  assert.deepEqual(queue.map((change) => change.id), [0, 1, 2, 8],
-    'the current trip and bounded FIFO remain; overflow coalesces to the latest saved destination');
-  assert.equal(queue.at(-1).fromGroupKey, queue.at(-2).toGroupKey);
-  assert.deepEqual(queue.at(-1).from, queue.at(-2).target);
-  assert.equal(queue.at(-1).toGroupKey, 'g9');
-  assert.equal(enqueueAffiliationChange(queue, changes.at(-1)), false, 'duplicate delivery stays bounded');
+  const fresh = history.createP25HistoryState(), now = Date.now();
+  const previous = fact('source', now - 1000, { talkgroup_alias_name: 'Previous group' });
+  const arrival = fact('destination', now, { previous_affiliation: previous, talkgroup_alias_name: 'Current group' });
+  const observed = applyAffiliations(fresh, [arrival], { atMs: now, revision: 50 });
+  assert.equal(observed.affiliationChanges.length, 1, 'first-seen movement uses explicit confirmed prior affiliation');
+  assert.deepEqual(observed.focusCandidates[0].focusKeys, [radioKey, 'system:source', 'system:destination']);
+  assert.equal(history.p25ActionCount(fresh, 'movement'), 1);
+  const tripGraph = history.buildP25Graph(fresh, 'system', now, 'system:source');
+  assert.deepEqual(tripGraph.nodes.filter(node => node.type === 'talkgroup').map(node => node.id).sort(),
+    ['system:destination', 'system:source'], 'talkgroup drilldown retains both trip endpoints');
+  assert.equal(tripGraph.nodes.filter(node => node.signalAction === 'movement').length, 3,
+    'both cubes and the moving radio are emphasized');
+  assert.equal(applyAffiliations(fresh, [arrival], { atMs: now, revision: 51 }).affiliationChanges.length, 0);
+  assert.equal(history.p25ActionCount(fresh, 'movement'), 1, 'repeat delivery does not count or animate again');
+  applyAffiliations(fresh, [fact('older', now - 100)], { atMs: now, revision: 52 });
+  assert.equal(fresh.radios.get(radioKey).visualGroupKey, 'system:destination', 'old confirmation cannot reverse a radio');
+  const unknown = history.createP25HistoryState();
+  assert.equal(applyAffiliations(unknown, [fact('only', now)], { atMs: now }).affiliationChanges.length, 0,
+    'missing previous affiliation never invents a source');
+  assert.equal(history.p25ActionCount(unknown, 'movement'), 0);
+  for (let id = 1; id <= 10; id++) applyAffiliations(fresh, [fact(`rapid-${id}`, now + id)], { atMs: now + id, revision: 60 + id });
+  assert.equal(fresh.radios.get(radioKey).motionGroupKeys.length, 3,
+    'continuous hot-radio movement retains only the latest and preceding segment endpoints');
   console.log('P25 visualizer affiliation contracts passed');
 }
 

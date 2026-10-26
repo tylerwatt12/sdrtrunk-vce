@@ -17,7 +17,7 @@ const routes = [
   ['topics', 'view=topics', '.alerts-public-topics', 'Fire activity'],
   ['recordings', 'view=recordings', '.recordings-library', 'Fire Dispatch'],
   ['map', 'view=map', '.listen-map-details', 'Engine 4'],
-  ['network-visualizer', 'view=network-visualizer', '.network-visualizer-label', systemName],
+  ['network-visualizer', 'view=network-visualizer', '.network-visualizer-scope-title', systemName],
   ['scanner', 'view=scanner', '.scanner-page', 'County Fire and Emergency Medical Services'],
   ['tuner-spectrum', 'view=tuner-spectrum', '.spectrum-browse-center', '0851.01250MHz'],
   ['radio-system', `view=radio-system&${scope}`, '.system-info-column', systemName],
@@ -63,6 +63,11 @@ const openAliasChannelScope = async (page) => {
   await expect(page.locator('.alias-coverage-channel-grid')).toBeVisible();
 };
 const additionalCases = [
+  ['network-visualizer-actions', 'view=network-visualizer', '.network-visualizer-scope-title', systemName,
+    async page => {
+      await page.getByRole('button', { name: 'Actions', exact: true }).click();
+      await expect(page.locator('.network-visualizer-events')).toBeVisible();
+    }],
   ['aliases-rename', 'view=aliases&list=1&aliasTab=configure', '.alias-list-summary', 'County Public Safety',
     async (page) => {
       await page.getByRole('button', { name: 'Rename Alias List', exact: true }).click();
@@ -242,6 +247,35 @@ for (const { name: presentation, theme, viewport } of [presentations[0], present
       await auditPageContrast(page, `${name}-${presentation}`);
     });
   }
+}
+
+for (const { name: presentation, theme, viewport } of presentations) {
+  test(`populated route style network-visualizer ${presentation}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const fixture = await installSiteStyleApplication(page, theme);
+    await page.clock.install({ time: new Date('2026-10-01T12:00:00Z') });
+    await page.clock.pauseAt(new Date('2026-10-01T12:00:01Z'));
+    const filename = path.resolve(__dirname, '../../../../../stats-web/assets/features/network-visualizer/renderer.js');
+    const source = readFileSync(filename, 'utf8').replace("\n  host.dataset.rendererState = 'ready';", `
+  window.p25StylePainted = () => { let objects = 0;
+    graph.scene().traverse(object => { if (object.userData?.p25Node) objects += 1; });
+    return objects >= 3 && graph.renderer().info.render.calls > 0;
+  };
+  host.dataset.rendererState = 'ready';`);
+    await page.route('**/assets/features/network-visualizer/renderer.js?**', route =>
+      route.fulfill({ contentType: 'text/javascript', body: source }));
+    await page.goto('/app.html?view=network-visualizer');
+    await expect(page.locator('.network-visualizer-canvas')).toHaveAttribute('data-renderer-state', 'ready');
+    await page.clock.runFor(100);
+    await expect.poll(() => page.evaluate(() => window.p25StylePainted?.())).toBe(true);
+    await expect(page.locator('.network-visualizer-label[data-type="system"]:not([hidden])')).toHaveCount(0);
+    await expect(page.locator('.network-visualizer-label[data-type="talkgroup"]:not([hidden])')).toHaveText('Fire Dispatch');
+    await expectSuccessfulPage(page, fixture, 'network-visualizer', '.network-visualizer-scope-title', systemName);
+    await expectSharedTypography(page);
+    await expectNoHorizontalOverflow(page);
+    await auditPageContrast(page, `network-visualizer-${presentation}`);
+    await expect(page).toHaveScreenshot(`network-visualizer-${presentation}.png`, { fullPage: true });
+  });
 }
 
 test('actual route style matrix includes every production route and administration section', async ({ page }) => {

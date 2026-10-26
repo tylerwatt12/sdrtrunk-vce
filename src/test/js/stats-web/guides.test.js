@@ -94,7 +94,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('recordings').version, 4);
   assert.equal(createGuideDefinition('topics').version, 3);
   assert.equal(createGuideDefinition('map').version, 3);
-  assert.equal(createGuideDefinition('network-visualizer').version, 3);
+  assert.equal(createGuideDefinition('network-visualizer').version, 4);
   assert.equal(createGuideDefinition('admin').version, 3);
   assert.equal(createGuideDefinition('missing-page'), null);
   const prepared = [];
@@ -1235,7 +1235,7 @@ async function checkGuides(assetsRoot) {
 
   for (const [view, sections, prefix] of [
     ['map', ['overview', 'explore', 'select-radio', 'history', 'follow'], 'map'],
-    ['network-visualizer', ['overview', 'shapes', 'manual-button', 'manual-camera', 'auto-camera'], 'p25']
+    ['network-visualizer', ['overview', 'shapes', 'actions-button', 'actions', 'actions-close', 'manual-button', 'manual-camera', 'auto-camera'], 'p25']
   ]) {
     const tour = createGuideDefinition(view, {
       documentValue: targetDocument,
@@ -1275,29 +1275,28 @@ async function checkGuides(assetsRoot) {
 
   const { createNetworkVisualizerGuideData } = await load('guides/network-visualizer-presentation.js');
   const p25Data = createNetworkVisualizerGuideData();
-  const seed = await p25Data.requestActivitySeed();
-  assert.equal(seed.affiliations.length, 6);
-  assert.equal(new Set(seed.affiliations.map(item => item.talkgroup_identity_key)).size, 4,
+  const snapshots = [];
+  const activitySource = p25Data.subscribeActivity({ snapshot: value => snapshots.push(value) });
+  await new Promise(queueMicrotask);
+  assert.equal(snapshots[0].tables[0].rows.length, 6);
+  assert.equal(new Set(snapshots[0].tables[0].rows.map(item => item.target_identity_key)).size, 4,
     'P25 examples cover several talkgroups and radios inside the actual graph.');
-  seed.affiliations[0].radio_alias_name = 'Changed outside the example';
-  assert.notEqual((await p25Data.requestActivitySeed()).affiliations[0].radio_alias_name, 'Changed outside the example');
-  const visualHistory = await p25Data.requestActivity({ projection: 'p25_visualizer' });
-  assert.ok(visualHistory.rows.length >= 6);
-  assert.equal(visualHistory.has_more, false);
-  assert.ok(visualHistory.rows.some(row => row.action === 'CALL'));
-  await assert.rejects(p25Data.requestActivity({ projection: 'private-real-data' }));
-  await assert.rejects(p25Data.requestActivitySeed({ private: true }));
+  snapshots[0].tables[0].rows[0].source_alias = 'Changed outside the example';
+  p25Data.subscribeActivity({ snapshot: value => snapshots.push(value) });
+  await new Promise(queueMicrotask);
+  assert.notEqual(snapshots[1].tables[0].rows[0].source_alias, 'Changed outside the example');
+  assert.deepEqual(p25Data.requests, [], 'The live example requests no seed or saved history.');
   const boundaries = [];
   const localStream = p25Data.openActivityStream({ boundary: value => boundaries.push(value), append() {}, delta() {} });
   await new Promise(queueMicrotask);
   assert.equal(boundaries.length, 1);
   assert.match(boundaries[0].source_epoch, /^guide-/,
     'The visualizer receives a local feed boundary instead of a receiver connection.');
-  localStream.close(); p25Data.dispose();
-  await assert.rejects(p25Data.requestActivitySeed(), { name: 'AbortError' });
+  localStream.close(); activitySource.close(); p25Data.dispose();
+  assert.throws(() => p25Data.subscribeActivity({}), { name: 'AbortError' });
   assert.throws(() => p25Data.openActivityStream({}), { name: 'AbortError' });
   const visualAbort = new AbortController(); visualAbort.abort();
-  await assert.rejects(createNetworkVisualizerGuideData({ signal: visualAbort.signal }).requestActivitySeed(), { name: 'AbortError' });
+  assert.throws(() => createNetworkVisualizerGuideData({ signal: visualAbort.signal }).subscribeActivity({}), { name: 'AbortError' });
 
   const liveTour = createGuideDefinition('live', {
     documentValue: targetDocument,

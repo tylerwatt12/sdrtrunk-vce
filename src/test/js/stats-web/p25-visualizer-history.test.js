@@ -3,8 +3,6 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const fs = require('node:fs');
-const vm = require('node:vm');
 
 const feature = path.resolve(process.argv[2] ||
   path.resolve(__dirname, '../../../../stats-web/assets/features/network-visualizer'));
@@ -58,9 +56,7 @@ async function main() {
   const defaults = settings.defaultP25EventSettings();
   assert.deepEqual(defaults.call, { highlight: true, autoZoom: false },
     'routine calls and grants are highlighted by default without requesting camera attention');
-  assert.equal(settings.routineP25ActivityEnabled(defaults), true);
   const callsEnabled = settings.normalizeP25EventSettings({ call: { highlight: true, autoZoom: false } });
-  assert.equal(settings.routineP25ActivityEnabled(callsEnabled), true);
   assert.equal(settings.enabledP25EventCategories(callsEnabled, 'highlight').has('call'), true);
   assert.equal(settings.enabledP25EventCategories(callsEnabled, 'autoZoom').has('call'), false);
 
@@ -85,8 +81,8 @@ async function main() {
     'Graph context retains both the friendly name and exact P25 identity');
   assert.equal(state.radios.size, 1, 'a changed affiliation must move one stable radio node');
   assert.equal(state.groups.size, 2);
-  assert.equal(history.groupedP25Events(state).length, 1);
-  assert.equal(history.groupedP25Events(state)[0].category, 'movement');
+  assert.equal(history.p25ActionCount(state, 'movement'), 0, 'baseline observations do not invent movement counts');
+  assert.equal(Object.hasOwn(state, 'events'), false, 'the live scene retains no obsolete grouped event backlog');
 
   const radio = [...state.radios.values()][0];
   assert.equal(radio.visualGroupKey, `${SYSTEM_A}:v1-g-202`);
@@ -98,10 +94,10 @@ async function main() {
   assert.deepEqual(graph.links.map((link) => link.kind).sort(), ['current', 'history']);
   const dispatchGraph = history.buildP25Graph(state, SYSTEM_A, Number.MAX_SAFE_INTEGER,
     `${SYSTEM_A}:v1-g-101`);
-  assert.deepEqual(dispatchGraph.nodes.map((node) => node.type).sort(), ['radio', 'system', 'talkgroup'],
-    'talkgroup drill-down keeps its enclosing system, hub, and historically connected radios');
-  assert.deepEqual(dispatchGraph.links.map((link) => link.kind), ['history'],
-    'a radio that moved away remains connected by one faint historical link');
+  assert.deepEqual(dispatchGraph.nodes.map((node) => node.type).sort(), ['radio', 'system', 'talkgroup', 'talkgroup'],
+    'talkgroup drill-down keeps the selected and current attachment cubes for related radios');
+  assert.deepEqual(dispatchGraph.links.map((link) => link.kind), ['current', 'history'],
+    'a radio that moved away retains an actual visible current attachment alongside its earlier link');
   const tacticalGraph = history.buildP25Graph(state, SYSTEM_A, Number.MAX_SAFE_INTEGER,
     `${SYSTEM_A}:v1-g-202`);
   assert.deepEqual(tacticalGraph.links.map((link) => link.kind), ['current'],
@@ -123,9 +119,9 @@ async function main() {
   })], { atMs: 2_000_000_000_000, highlightCategories: new Set(['call']) });
   routineRadio = [...routineState.radios.values()][0];
   assert.equal(routineUpdate.focusCandidates[0]?.category, 'call');
-  assert.equal(routineUpdate.focusCandidates[0]?.priority, 0.5);
   assert.equal(routineRadio.visualGroupKey, '', 'call activity must still not become affiliation evidence');
-  assert.equal(routineRadio.activityGroupKey, `${SYSTEM_A}:v1-g-202`);
+  assert.equal(routineRadio.activityGroupKey, `${SYSTEM_A}:v1-g-101`, 'calls keep a stable first-seen position');
+  assert.equal(routineRadio.callGroupKey, `${SYSTEM_A}:v1-g-202`, 'the heard-on link follows current call activity');
   assert.equal(history.buildP25Graph(routineState, SYSTEM_A, 2_000_000_000_001, '', {
     highlightCategories: new Set(['call'])
   }).nodes.find((entry) => entry.id === routineRadio.key)?.signalAction, 'call');
@@ -149,63 +145,6 @@ async function main() {
     'repeated delivery of the same saved row must not extend activity');
   assert.equal(history.nextP25HighlightExpiry(timingState, 12_000), 0);
 
-  // Run the actual graph repaint against a local clock, with no polling or network work.
-  const indexSource = fs.readFileSync(path.join(feature, 'index.js'), 'utf8');
-  const parametersSource = indexSource.slice(indexSource.indexOf('  function historyParameters('),
-    indexSource.indexOf('  function acceptHistory('));
-  let clockReads = 0;
-  const clockNow = 1_790_000_000_000, clockOffset = 2_500;
-  const windowContext = { Date: { now: () => { clockReads++; return clockNow; } },
-    serverTimeOffsetMs: clockOffset, historyHours: 1, eventSettings: {},
-    routineP25ActivityEnabled: () => false, P25_HISTORY_ACTIONS: history.P25_HISTORY_ACTIONS,
-    P25_ROUTINE_ACTIONS: history.P25_ROUTINE_ACTIONS };
-  vm.createContext(windowContext); vm.runInContext(parametersSource, windowContext);
-  for (const hours of [1, 24]) {
-    windowContext.historyHours = hours; clockReads = 0;
-    const bounds = windowContext.historyParameters(), oldest = clockNow + clockOffset - hours * 3_600_000;
-    assert.equal(bounds.from_ms, oldest, 'the complete selected history window includes its oldest minute');
-    assert.equal(bounds.to_ms, clockNow + clockOffset);
-    assert.equal(bounds.to_ms - bounds.from_ms, hours * 3_600_000, 'the24h request stays within the API maximum');
-    assert.equal(clockReads, 1, 'both window boundaries share one receiver-adjusted clock reading');
-    assert.ok(oldest + 1 >= bounds.from_ms && oldest + 59_999 <= bounds.to_ms);
-    assert.ok(oldest - 1 < bounds.from_ms, 'an observation before the selected window remains outside the query');
-  }
-  const renderGraphSource = indexSource.slice(indexSource.indexOf('  function renderGraph('),
-    indexSource.indexOf('  function renderScopeTitle('));
-  let now = 10_800;
-  let timerId = 0;
-  const scheduled = new Map();
-  const frames = [];
-  const context = {
-    state: timingState, selectedSystemKey: SYSTEM_A, selectedGroupKey: '', highlightedCategories,
-    buildP25Graph: history.buildP25Graph, nextP25HighlightExpiry: history.nextP25HighlightExpiry,
-    renderer: { setData: (graph) => frames.push(graph) }, renderEvents: () => {},
-    status: {}, partialView: false, feedStatus: 'loading', highlightTimer: 0, closed: false, serverTimeOffsetMs: 0, Set, Date: { now: () => now },
-    window: {
-      setTimeout: (callback, delay) => { scheduled.set(++timerId, { callback, at: now + delay }); return timerId; },
-      clearTimeout: (id) => scheduled.delete(id)
-    }
-  };
-  vm.createContext(context);
-  vm.runInContext(renderGraphSource, context);
-  context.renderGraph(false);
-  assert.equal(scheduled.size, 1);
-  assert.equal([...scheduled.values()][0].at, 12_000);
-  assert.equal(frames.at(-1).nodes.filter((node) => node.signalAction === 'call').length, 2);
-  now = 11_500;
-  applyRows(timingState, [row(72, 'CALL')], {
-    atMs: now, highlightCategories: highlightedCategories, grantActivityTimeoutMs: 1_200
-  });
-  context.renderGraph(false);
-  assert.equal(scheduled.size, 1, 'a repeated call replaces the pending expiry timer');
-  const expiry = [...scheduled.values()][0];
-  assert.equal(expiry.at, 12_700);
-  now = expiry.at;
-  scheduled.clear();
-  expiry.callback();
-  assert.equal(frames.at(-1).nodes.some((node) => node.signalAction), false,
-    'the local timeout clears the rendered highlight without another history fetch');
-  assert.equal(scheduled.size, 0);
   applyRows(timingState, [row(73, 'EMERGENCY')], { atMs: 13_000 });
   applyRows(timingState, [row(74, 'CALL')], {
     atMs: 13_100, grantActivityTimeoutMs: 1_200
@@ -247,12 +186,12 @@ async function main() {
   });
   const displayedRadio = (overrides = {}) => {
     const labelState = history.createP25HistoryState();
-    applyRows(labelState, [{ ...labelRow, ...overrides }], { initial: true });
+    const observed = applyRows(labelState, [{ ...labelRow, ...overrides }]);
     const value = [...labelState.radios.values()][0];
     assert.equal(value.identityKey, labelRow.source_identity_key, 'A display label cannot change radio identity.');
     assert.equal(history.buildP25Graph(labelState, labelRow.radio_system_key).nodes
       .find((entry) => entry.type === 'radio').label, value.label, 'Scene nodes use the shared radio label.');
-    assert.ok(history.groupedP25Events(labelState)[0].detail.includes(value.label),
+    assert.ok(observed.focusCandidates[0].detail.includes(value.label),
       'Visualizer event captions use the same radio presentation.');
     return value.label;
   };
@@ -342,8 +281,8 @@ async function main() {
     observed_at_ms: mixedRows[0].observed_at_ms + 10_000 }], { initial: true, removedIds: [mixedRows[0].id] });
   const mixedGraph = history.buildP25Graph(mixedState, SYSTEM_A, Number.MAX_SAFE_INTEGER);
   const mixedGroups = mixedGraph.nodes.filter((node) => node.type === 'talkgroup');
-  const mixedMinimum = Math.min(...mixedGroups.flatMap((left, index) => mixedGroups.slice(index + 1)
-    .map((right) => Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z))));
+  const mixedMinimum = mixedGroups.flatMap((left, index) => mixedGroups.slice(index + 1)
+    .map((right) => Math.hypot(left.x - right.x, left.y - right.y, left.z - right.z))).reduce((a, b) => Math.min(a, b), Infinity);
   assert.ok(mixedMinimum >= 103.99,
     'visible talkgroups should retain their separation when older groups become recent again');
   mixedGroups.filter((group) => beforeMixedGroups.has(group.id)).forEach((group) => {
@@ -388,12 +327,9 @@ async function main() {
     })
   ], { atMs: ingestionTime });
   assert.equal(denied.accepted, 3, 'valid stored rows advance the high-water state even when not renderable');
-  const groupedDenials = history.groupedP25Events(state).filter((event) => event.category === 'denial');
-  assert.equal(groupedDenials.length, 1,
-    'repeated denials are one current entry scoped to the canonical radio');
-  assert.equal('count' in groupedDenials[0], false, 'the grouped entry must not expose a repeat counter');
-  assert.equal(denied.focusCandidates.filter((event) => event.category === 'denial').length, 1,
-    'rapid repeats must not repeatedly refocus the camera');
+  assert.equal(denied.focusCandidates.filter((event) => event.category === 'denial').length, 2,
+    'distinct observations remain eligible without a hidden repeat cooldown');
+  assert.equal(history.p25ActionCount(state, 'denial'), 3, 'counts include every unique observed action');
   assert.equal(radio.visualGroupKey, `${SYSTEM_A}:v1-g-202`, 'a denial must not move the radio');
   assert.equal(history.buildP25Graph(state, SYSTEM_A, ingestionTime + 1).nodes
     .find((node) => node.id === radio.key)?.signalAction, 'denial',
@@ -411,17 +347,14 @@ async function main() {
     'a denial without a scoped radio must not create a system or fabricated entity');
 
   const incremental = history.createP25HistoryState();
-  applyRows(incremental, [row(1, 'EMERGENCY', { source_identity_key: 'v1-r-8001', source_radio_id: 8001 })], { initial: true });
+  applyRows(incremental, [row(1, 'EMERGENCY', { source_identity_key: 'v1-r-8001', source_radio_id: 8001 })]);
   applyRows(incremental, Array.from({ length: 1_500 }, (_, index) => row(index + 2, 'GRANT', {
     source_identity_key: 'v1-r-7001', observed_at_ms: 1_700_000_000_000 + index
   })), { initial: true });
   assert.equal(incremental.radios.has(`${SYSTEM_A}:v1-r-8001`), true,
     'routine traffic cannot evict earlier noteworthy graph facts');
-  assert.equal(history.groupedP25Events(incremental).some(event => event.category === 'emergency'), true);
+  assert.equal(history.p25ActionCount(incremental, 'emergency'), 1, 'session counts outlive unrelated routine observations');
   assert.equal(Object.hasOwn(incremental, 'recentRows'), false, 'history folds into entities without retaining raw rows');
-  assert.match(indexSource, /History scope/);
-  assert.match(indexSource, /from_ms:.*historyHours/s, 'the selected 1h/24h scope is pushed into SQL');
-  assert.doesNotMatch(indexSource, /MAX_SEED_ROWS|seedRows|250_000/, 'every history page folds immediately without a total dataset cutoff');
 
   const shuffled = history.createP25HistoryState();
   const joinAt = (id, group, at) => row(id, 'JOIN', { target_identity_key: `v1-g-${group}`, target_id: group,
@@ -434,8 +367,10 @@ async function main() {
   applyRows(shuffled, [row(6, 'CALL', { target_identity_key: 'v1-g-105', observed_at_ms: 60_000 })], { initial: true });
   applyRows(shuffled, [row(7, 'CALL', { target_identity_key: 'v1-g-103', observed_at_ms: 10_000 }),
     row(8, 'CALL', { target_identity_key: 'v1-g-101', observed_at_ms: 60_000 })], { initial: true });
-  assert.equal([...shuffled.radios.values()][0].activityGroupKey, `${SYSTEM_A}:v1-g-101`,
-    'a higher ID wins equal-time activity and older timestamps never overwrite newer groups');
+  assert.equal([...shuffled.radios.values()][0].activityGroupKey, `${SYSTEM_A}:v1-g-105`,
+    'repeated calls never move the first observed radio position');
+  assert.equal([...shuffled.radios.values()][0].callGroupKey, `${SYSTEM_A}:v1-g-101`,
+    'a higher ID wins equal-time heard-on activity without changing affiliation');
   applyAffiliations(shuffled, [affiliation(joinAt(8, 104, 100_000))], { initial: true });
   applyRows(shuffled, [joinAt(9, 106, 200_000)], { initial: true });
   assert.equal(history.buildP25Graph(shuffled, SYSTEM_A).links.filter(link => link.kind === 'current')[0].target,
@@ -458,12 +393,17 @@ async function main() {
   assert.equal(state.radios.size, 2, 'matching numeric IDs in different systems must remain separate');
   assert.equal(state.systems.size, 2);
   assert.equal(history.mostActiveP25System(state).key, SYSTEM_A,
-    'the overview should select the system with the greatest noteworthy score');
+    'without current calls the overview selects the freshest observed system');
+  state.activeKeys.add(`${SYSTEM_B}:v1-r-7001`);
+  assert.equal(history.mostActiveP25System(state).key, SYSTEM_B, 'current activity takes precedence over old observations');
 
   const firstOnly = history.createP25HistoryState();
   applyRows(firstOnly, [row(20, 'JOIN')], { initial: true });
-  assert.equal(history.groupedP25Events(firstOnly)[0].title, 'Affiliation observed',
-    'saved JOIN is an observed event rather than a fabricated current movement');
+  assert.equal(history.p25ActionCount(firstOnly, 'movement'), 0, 'JOIN alone never fabricates a confirmed affiliation change');
+  const confirmation = applyRows(firstOnly, [row(21, 'JOIN')]);
+  assert.equal(confirmation.focusCandidates.length, 0);
+  assert.ok([...firstOnly.radios.values(), ...firstOnly.groups.values()].every(entity => !entity.signalAction),
+    'routine affiliation confirmations do not flash the movement highlight');
   assert.equal([...firstOnly.radios.values()][0].visualGroupKey, '', 'Activity never supplies current links');
 
   const incompatibleScopes = history.createP25HistoryState();
@@ -471,8 +411,8 @@ async function main() {
     row(30, 'JOIN', { configuration_id: 'site-a' }),
     row(31, 'JOIN', { configuration_id: 'site-b', target_identity_key: 'v1-g-202', target_id: 202 })
   ], { initial: true });
-  assert.equal(history.groupedP25Events(incompatibleScopes)[0].title, 'Affiliation observed',
-    'different event scopes must not fabricate a canonical affiliation change');
+  assert.equal(history.p25ActionCount(incompatibleScopes, 'movement'), 0,
+    'different observation scopes never fabricate a confirmed affiliation change');
   applyRows(incompatibleScopes, [row(32, 'LOGOUT', { configuration_id: 'site-b' })],
     { initial: true });
   assert.equal([...incompatibleScopes.radios.values()][0].visualGroupKey, '',

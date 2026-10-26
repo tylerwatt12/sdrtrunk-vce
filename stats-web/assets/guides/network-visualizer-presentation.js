@@ -1,5 +1,5 @@
-// Fictional affiliations and saved activity for the production P25 graph. Every
-// request and stream stays inside this provider, including refresh and settings.
+// Fictional live observations for the production P25 graph. Every subscription
+// stays inside this provider and has no receiver or preference side effects.
 const SYSTEM = 'p25:bee00:101';
 const CONFIGURATION = 'cafe2500-0000-4000-8000-000000000001';
 const EPOCH = 'guide-p25-visualizer';
@@ -12,48 +12,38 @@ const radios = [[2101, 'Sheriff 12', 1001], [2102, 'Sheriff 18', 1001],
   [3103, 'Fire Command', 1003], [4101, 'Road Crew 4', 1004]];
 
 export function createNetworkVisualizerGuideData({ signal } = {}) {
-  const requests = [], connections = new Set();
-  let disposed = false, sequence = 0, nextId = radios.length;
-  const now = Date.now();
-  const check = options => {
-    if (disposed || signal?.aborted || options?.signal?.aborted)
+  const requests = [], connections = new Set(), activitySources = new Set();
+  let disposed = false, sequence = 0, nextId = 0;
+  const check = () => {
+    if (disposed || signal?.aborted)
       throw new DOMException('The P25 Visualizer example was closed.', 'AbortError');
   };
-  const affiliation = ([id, name, groupId], at = now - 45_000) => ({
+  const affiliation = ([id, name, groupId], at = Date.now()) => ({
     radio_system_key: SYSTEM, radio_identity_key: radioKey(id), talkgroup_identity_key: groupKey(groupId),
     configuration_id: CONFIGURATION, confirmed_at_ms: at, protocol: 'p25', system_name: 'County P25',
     radio_id: id, talkgroup_id: groupId, radio_alias_name: name,
     talkgroup_alias_name: groups.find(group => group[0] === groupId)[1]
   });
-  const activity = ([id, name, groupId], index, action = 'CALL', at = now - (index + 1) * 20_000) => ({
-    id: index + 1, observed_at_ms: at, action, protocol: 'p25', channel_kind: 'trunked_site',
-    radio_system_key: SYSTEM, system_name: 'County P25', configuration_id: CONFIGURATION,
-    source_identity_key: radioKey(id), source_radio_id: id, source_alias_name: name,
-    target_identity_key: groupKey(groupId), target_kind: 'talkgroup', target_id: groupId,
-    target_alias_name: groups.find(group => group[0] === groupId)[1]
-  });
-  const rows = [...radios.map((radio, index) => activity(radio, index)),
-    activity([2102, 'Sheriff 18', 1004], 6, 'JOIN', now - 180_000),
-    activity([3102, 'Rescue 2', 1003], 7, 'CALL', now - 10_000)];
-  nextId = rows.length;
   const current = new Map(radios.map(radio => [radio[0], affiliation(radio)]));
-  const requestActivitySeed = async (parameters = {}, options = {}) => {
-    check(options);
-    if (Object.keys(parameters).some(key => key !== 'refresh')) throw new Error('Unknown P25 example refresh.');
-    requests.push({ kind: 'seed', parameters: clone(parameters) });
-    return { source_epoch: EPOCH, sequence, available: true, collection_enabled: true,
-      captured_at_ms: Date.now(), traffic_grant_age_out_milliseconds: 1200,
-      affiliations: clone([...current.values()]) };
-  };
-  const requestActivity = async (parameters = {}, options = {}) => {
-    check(options);
-    if (parameters.projection !== 'p25_visualizer' ||
-        Object.keys(parameters).some(key => !['from_ms', 'to_ms', 'actions', 'projection', 'limit',
-          'after_id', 'watermark_id'].includes(key))) throw new Error('Unknown P25 example history.');
-    requests.push({ kind: 'history', parameters: clone(parameters) });
-    const watermark = Number(parameters.watermark_id ?? nextId), after = Number(parameters.after_id || 0);
-    return { rows: clone(rows.filter(row => row.id > after && row.id <= watermark)),
-      next_after_id: watermark, watermark_id: watermark, has_more: false };
+  const tables = () => [{ table_id: 'guide-p25', configuration_id: CONFIGURATION,
+    system_name: 'County P25', channel_running: true,
+    rows: [...current.values()].map((fact, index) => ({
+      key: `guide-p25-${fact.radio_id}`, protocol: 'P25', serving_system_key: SYSTEM,
+      system_name: 'County P25', configuration_id: CONFIGURATION, status: 'CALL', activation_order: index + 1,
+      source_identity_key: fact.radio_identity_key, source_identity_kind_code: 2,
+      source_form: 'RADIO', source_id: fact.radio_id, source_alias: fact.radio_alias_name,
+      target_identity_key: fact.talkgroup_identity_key, target_kind: 'talkgroup',
+      target_form: 'TALKGROUP', target_id: fact.talkgroup_id, target_alias: fact.talkgroup_alias_name
+    })) }];
+  const subscribeActivity = callbacks => {
+    check();
+    const source = { callbacks, close() { activitySources.delete(source); } };
+    activitySources.add(source);
+    queueMicrotask(() => {
+      if (disposed || signal?.aborted || !activitySources.has(source)) return;
+      callbacks.snapshot?.({ tables: clone(tables()) });
+    });
+    return source;
   };
   const openActivityStream = callbacks => {
     check();
@@ -68,32 +58,36 @@ export function createNetworkVisualizerGuideData({ signal } = {}) {
     queueMicrotask(() => {
       if (closed || disposed || signal?.aborted) return;
       callbacks.boundary({ source_epoch: EPOCH, sequence, watermark_id: nextId,
-        history_generation: 0, available: true, collection_enabled: true, server_time_ms: Date.now(),
-        traffic_grant_age_out_milliseconds: 1200 });
+        available: true, collection_enabled: true, server_time_ms: Date.now() });
       timer = setInterval(() => {
         if (closed || disposed || signal?.aborted || globalThis.document?.hidden) return;
         move = !move;
         const radio = [3101, 'Engine 7', move ? 1003 : 1002], at = Date.now();
-        const fact = affiliation(radio, at);
+        const previous = current.get(radio[0]), fact = affiliation(radio, at);
         current.set(radio[0], fact);
         const base = sequence++;
         callbacks.delta({ source_epoch: EPOCH, base_sequence: base, sequence, part: 0, parts: 1,
-          affiliations: [clone(fact)], removed_radio_keys: [], available: true, collection_enabled: true });
-        const row = activity(radio, nextId++, 'CALL', at);
-        rows.push(row);
-        callbacks.append({ source_epoch: EPOCH, history_generation: 0, after_id: row.id - 1,
-          next_after_id: row.id, watermark_id: row.id, rows: [clone(row)] });
+          affiliations: [{ ...clone(fact), previous_affiliation: clone(previous) }],
+          removed_radio_keys: [], available: true, collection_enabled: true });
+        const id = ++nextId;
+        callbacks.append({ source_epoch: EPOCH, after_id: id - 1, next_after_id: id, watermark_id: id,
+          rows: [{ id, observed_at_ms: at, action: 'CALL', protocol: 'p25', channel_kind: 'trunked_site',
+            radio_system_key: SYSTEM, system_name: 'County P25', configuration_id: CONFIGURATION,
+            source_identity_key: fact.radio_identity_key, source_radio_id: fact.radio_id,
+            source_alias_name: fact.radio_alias_name, target_identity_key: fact.talkgroup_identity_key,
+            target_kind: 'talkgroup', target_id: fact.talkgroup_id, target_alias_name: fact.talkgroup_alias_name }] });
+        for (const source of activitySources) source.callbacks.activityBatch?.({
+          changes: tables().map(table => ({ operation: 'upsert', table_id: table.table_id, table: clone(table) })) });
       }, 7000);
     });
     return connection;
   };
   const dispose = () => {
     disposed = true;
-    [...connections].forEach(connection => connection.close());
+    [...connections, ...activitySources].forEach(connection => connection.close());
   };
   signal?.addEventListener('abort', dispose, { once: true });
-  return { guideMode: true, requestActivity, requestActivitySeed, openActivityStream,
-    loadEventSettings: () => null,
-    saveEventSettings: async () => { check(); }, systemHref: () => '',
-    requests, dispose };
+  return { guideMode: true, subscribeActivity, openActivityStream,
+    loadEventSettings: () => null, saveEventSettings: async () => { check(); },
+    systemHref: () => '', requests, dispose };
 }

@@ -1,27 +1,25 @@
 'use strict';
 
 import {
-  P25_HISTORY_ACTIONS,
-  P25_ROUTINE_ACTIONS,
   createP25HistoryState,
   applyP25ActivityRows,
   applyP25Affiliations,
-  expireP25History,
+  applyP25LiveTables,
   buildP25Graph,
+  expireP25History,
   nextP25HighlightExpiry,
-  groupedP25Events,
+  p25ActionCount,
   mostActiveP25System
-} from './history.js?v=19';
-import { createP25ActivityFeed } from './live.js?v=4';
-import { createP25CameraCoordinator } from './camera.js?v=4';
-import { createP25Renderer } from './renderer.js?v=10';
+} from './history.js?v=20';
+import { createP25ActivityFeed } from './live.js?v=5';
+import { createP25CameraCoordinator } from './camera.js?v=5';
+import { createP25Renderer } from './renderer.js?v=11';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=6';
 import {
   P25_EVENT_SETTINGS,
   normalizeP25EventSettings,
-  enabledP25EventCategories,
-  routineP25ActivityEnabled
-} from './settings.js?v=4';
+  enabledP25EventCategories
+} from './settings.js?v=5';
 
 
 function textButton(node, label, className = 'ui-button ui-button-secondary') {
@@ -39,14 +37,14 @@ function formatTime(value) {
 
 
 function createP25Visualizer(dependencies = {}) {
-  const required = ['node', 'iconGlyph', 'iconButton', 'requestActivity', 'requestActivitySeed', 'openReadOnlyModal',
-    'preferenceCheckbox', 'settingsCard', 'settingsCardGrid', 'modalFooter',
-    'loadEventSettings', 'saveEventSettings', 'openActivityStream'];
+  const required = ['node', 'iconGlyph', 'iconButton', 'openReadOnlyModal',
+    'preferenceCheckbox', 'modalFooter', 'loadEventSettings', 'saveEventSettings',
+    'openActivityStream', 'subscribeActivity'];
   required.forEach((name) => {
     if (typeof dependencies[name] !== 'function') throw new TypeError(`P25 Visualizer dependency ${name} is required.`);
   });
-  const { node, iconGlyph, iconButton, requestActivity, requestActivitySeed, openReadOnlyModal, preferenceCheckbox,
-    settingsCard, settingsCardGrid, modalFooter, loadEventSettings, saveEventSettings } = dependencies;
+  const { node, iconGlyph, iconButton, openReadOnlyModal, preferenceCheckbox,
+    modalFooter, loadEventSettings, saveEventSettings } = dependencies;
   const guideMode = dependencies.guideMode === true;
   const layout = node('section', 'network-visualizer-layout');
   layout.setAttribute('aria-label', 'P25 Visualizer');
@@ -55,7 +53,7 @@ function createP25Visualizer(dependencies = {}) {
   toolbar.setAttribute('aria-label', 'P25 Visualizer controls');
   const brand = node('div', 'network-visualizer-brand');
   brand.append(iconGlyph('icon-network-visualizer'), node('strong', '', 'P25 Visualizer'));
-  const status = node('span', 'badge ui-pill state-stale network-visualizer-status', 'Loading recent activity');
+  const status = node('span', 'badge ui-pill state-stale network-visualizer-status', 'Connecting to live activity');
   status.setAttribute('role', 'status');
   status.setAttribute('aria-live', 'polite');
 
@@ -70,24 +68,17 @@ function createP25Visualizer(dependencies = {}) {
   cameraControls.append(auto, manual);
   auto.dataset.guideTarget = 'p25-auto-camera';
   manual.dataset.guideTarget = 'p25-manual-button';
-  const eventsToggle = textButton(node, 'Events');
+  const eventsToggle = textButton(node, 'Actions');
   eventsToggle.setAttribute('aria-pressed', 'false');
-  const scopes = node('div', 'network-visualizer-choice-group');
-  scopes.setAttribute('role', 'group');
-  scopes.setAttribute('aria-label', 'History scope');
-  const hour = textButton(node, '1h'), day = textButton(node, '24h');
-  hour.setAttribute('aria-pressed', 'true'); day.setAttribute('aria-pressed', 'false');
-  scopes.append(hour, day);
-  const refresh = textButton(node, 'Refresh');
-  const settingsButton = textButton(node, 'Settings');
+  eventsToggle.dataset.guideTarget = 'p25-actions-button';
   const fullscreen = iconButton('icon-fullscreen', 'Enter fullscreen');
   fullscreen.classList.add('network-visualizer-fullscreen');
-  actions.append(scopes, refresh, cameraControls, eventsToggle, settingsButton, fullscreen);
+  actions.append(cameraControls, eventsToggle, fullscreen);
   toolbar.append(brand, status, actions);
 
   const stage = node('div', 'network-visualizer-stage');
   stage.tabIndex = 0;
-  stage.setAttribute('aria-label', 'Interactive recent P25 activity visualization');
+  stage.setAttribute('aria-label', 'Interactive live P25 activity visualization');
   stage.dataset.guideTarget = 'p25-manual-camera';
   const canvas = node('div', 'network-visualizer-canvas');
   const back = textButton(node, '← All systems',
@@ -108,8 +99,8 @@ function createP25Visualizer(dependencies = {}) {
   manualGuide.append(node('strong', '', 'Manual camera'), node('span', '', 'W/S move · A/D strafe · Q/E rise'),
     node('span', '', 'Arrow keys look · Drag orbits · Wheel zooms at cursor'));
   const empty = node('div', 'network-visualizer-empty');
-  empty.append(iconGlyph('icon-network-visualizer'), node('strong', '', 'Loading recent P25 activity…'),
-    node('p', '', 'New saved activity appears automatically.'));
+  empty.append(iconGlyph('icon-network-visualizer'), node('strong', '', 'Waiting for P25 activity'),
+    node('p', '', 'Talkgroups and radios appear as they are heard.'));
   const legend = node('div', 'network-visualizer-legend');
   legend.setAttribute('role', 'group');
   legend.setAttribute('aria-label', 'Shape and line key');
@@ -132,18 +123,28 @@ function createP25Visualizer(dependencies = {}) {
     entry.append(icon, node('span', '', label));
     legend.append(entry);
   }
-  const events = node('aside', 'network-visualizer-events');
+  const events = node('aside', 'network-visualizer-events ui-surface');
   events.hidden = true;
   const eventsHeader = node('header', 'network-visualizer-panel-header');
   const eventsHeading = node('div', 'network-visualizer-panel-heading');
-  eventsHeading.append(node('h2', '', 'Noteworthy P25 activity'),
-    node('p', '', 'Grouped P25 observations'));
-  const closeEvents = iconButton('icon-close', 'Close noteworthy activity');
+  eventsHeading.append(node('h2', '', 'Actions'),
+    node('p', '', 'Counts since this page opened.'));
+  const closeEvents = iconButton('icon-close', 'Close actions');
+  closeEvents.dataset.guideTarget = 'p25-actions-close';
+  events.dataset.guideTarget = 'p25-actions';
   eventsHeader.append(eventsHeading, closeEvents);
-  const eventList = node('ol', 'network-visualizer-event-list');
-  eventList.tabIndex = 0;
-  eventList.setAttribute('aria-label', 'Recent noteworthy P25 activity');
-  events.append(eventsHeader, eventList);
+  const actionsForm = node('form', 'admin-form network-visualizer-actions-form');
+  const eventList = node('ul', 'network-visualizer-event-list');
+  eventList.setAttribute('aria-label', 'P25 actions');
+  const message = node('div', 'admin-form-message');
+  message.setAttribute('role', 'status');
+  const cancel = textButton(node, 'Cancel');
+  const save = textButton(node, 'Save choices', 'ui-button ui-button-primary');
+  save.type = 'submit';
+  const choicesFooter = modalFooter(cancel, save);
+  choicesFooter.classList.add('ui-modal-footer-flush');
+  actionsForm.append(eventList, message, choicesFooter);
+  events.append(eventsHeader, actionsForm);
   stage.append(canvas, back, scopeTitle, autoFocus, manualGuide, empty, legend, events);
   layout.append(toolbar, stage);
 
@@ -156,17 +157,15 @@ function createP25Visualizer(dependencies = {}) {
   let selectedGroupKey = '';
   let visibleNodeKeys = new Set();
   let mode = 'auto';
-  let hasSnapshot = false;
   let feed = null;
+  let activitySubscription = null;
   let serverTimeOffsetMs = 0;
   let scenePresented = false;
   let collectionEnabled = true;
   let sourceEpoch = '';
-  let historyHours = 1, historyLoading = false, historySceneDirty = false;
-  let nextHistoryExpiryAtMs = 0;
-  let feedStatus = 'connecting';
+  let overviewSelected = false;
   let highlightTimer = 0;
-  let grantActivityTimeoutMs = 1_000;
+  let nextIdleCleanupAtMs = 0;
   let animationFrame = 0;
   let lastAnimationAt = performance.now();
   let closed = false;
@@ -175,10 +174,14 @@ function createP25Visualizer(dependencies = {}) {
   const guideSceneReady = new Promise(resolve => { resolveGuideScene = resolve; });
   let lastCameraPhase = 'roam';
   let eventsModal = null;
-  const shortViewport = window.matchMedia('(max-height: 640px)');
+  const shortViewport = window.matchMedia('(max-width: 600px), (max-height: 640px)');
   const pressedKeys = new Set();
-  const camera = createP25CameraCoordinator({ focusMs: 5_000, cooldownMs: 8_000, transitionMs: 900,
-    returnMs: 900 });
+  const liveTables = new Map();
+  const actionControls = new Map();
+  const actionCounts = new Map();
+  const pendingAffiliations = new Map();
+  let pendingFocusCandidates = [];
+  const camera = createP25CameraCoordinator({ focusMs: 2_000, transitionMs: 900, returnMs: 900 });
 
   function setStatus(label, tone = 'current') {
     status.textContent = guideMode ? `Example data · ${label}` : label;
@@ -198,121 +201,140 @@ function createP25Visualizer(dependencies = {}) {
     autoFocus.dataset.category = '';
   }
 
+  function resetAttention() {
+    camera.reset();
+    lastCameraPhase = mode === 'auto' ? 'roam' : 'disabled';
+    renderer?.resetAttention?.();
+    renderer?.setCameraPhase(lastCameraPhase);
+    clearAutoFocus();
+  }
+
   function showAutoFocus(event) {
     autoFocusKicker.textContent = `AUTO FOCUS · ${formatTime(event.observedAtMs)}`;
-    autoFocusTitle.textContent = event.title || 'Noteworthy P25 activity';
+    autoFocusTitle.textContent = event.title || 'P25 activity';
     autoFocusDetail.textContent = event.detail || 'P25 system activity';
     autoFocus.dataset.category = event.category || '';
     autoFocus.dataset.phase = 'focus';
     autoFocus.hidden = false;
   }
 
-  function renderEvents() {
-    const rows = groupedP25Events(state, selectedSystemKey).filter((event) => !selectedGroupKey ||
-      event.focusKeys.some((key) => visibleNodeKeys.has(key)));
-    if (!rows.length) {
-      eventList.replaceChildren(node('li', 'network-visualizer-event network-visualizer-event-empty',
-        'No noteworthy saved activity in this scope.'));
-      ensureEventsSpace();
-      return;
+  for (const entry of P25_EVENT_SETTINGS) {
+    const definition = entry.action ? dependencies.messageTypeDefinition?.(entry.action) : null;
+    const label = definition?.label || entry.label || dependencies.messageTypeLabel?.(entry.action) || entry.id;
+    const item = node('li', 'network-visualizer-action');
+    item.dataset.category = entry.id;
+    const heading = node('div', 'network-visualizer-action-heading');
+    const count = node('span', 'ui-pill', '0');
+    count.setAttribute('aria-label', `${label}: 0 since this page opened`);
+    actionCounts.set(entry.id, { count, label });
+    heading.append(node('strong', '', label), count);
+    const choices = node('div', 'network-visualizer-action-choices');
+    for (const [property, title] of [['autoZoom', 'Zoom to'], ['highlight', 'Highlight']]) {
+      const choice = preferenceCheckbox(`p25-visualizer-${property}-${entry.id}`, title,
+        eventSettings[entry.id][property]);
+      choice.input.setAttribute('aria-label', `${title} ${label}`);
+      actionControls.set(`${property}:${entry.id}`, choice.input);
+      choices.append(choice.control);
     }
-    eventList.replaceChildren(...rows.map((event) => {
-      const item = node('li', 'network-visualizer-event');
-      item.dataset.category = event.category;
-      item.append(node('strong', 'network-visualizer-event-kind', event.title),
-        node('span', 'network-visualizer-event-detail', event.detail),
-        node('time', '', formatTime(event.observedAtMs)));
-      return item;
-    }));
+    item.append(heading, choices);
+    eventList.append(item);
+  }
+  const choicesChanged = () => P25_EVENT_SETTINGS.some(entry => ['highlight', 'autoZoom'].some(property =>
+    actionControls.get(`${property}:${entry.id}`).checked !== eventSettings[entry.id][property]));
+  const modalGuard = {
+    setDirty: value => eventsModal?.setDirty(value),
+    setBusy: value => eventsModal?.setBusy(value)
+  };
+  const choicesWorkflow = createFormWorkflow({ form: actionsForm, submit: save, feedback: message,
+    modal: modalGuard, changed: choicesChanged, hideCleanSubmit: false });
+  choicesWorkflow.setModalLayout(false);
+
+  function renderActions() {
+    for (const [id, { count, label }] of actionCounts) {
+      const value = p25ActionCount(state, id);
+      count.textContent = String(value);
+      count.setAttribute('aria-label', `${label}: ${value} since this page opened`);
+    }
     ensureEventsSpace();
   }
 
-  function openEventsSheet() {
+  function restoreChoices() {
+    for (const entry of P25_EVENT_SETTINGS) for (const property of ['highlight', 'autoZoom'])
+      actionControls.get(`${property}:${entry.id}`).checked = eventSettings[entry.id][property];
+    choicesWorkflow.setDirty(false);
+    choicesWorkflow.showFeedback('status', '');
+  }
+
+  function hideActions() {
+    if (choicesWorkflow.isBusy()) return;
+    if (eventsModal) { eventsModal.close(); return; }
+    events.hidden = true;
+    eventsToggle.setAttribute('aria-pressed', 'false');
+    eventsToggle.focus({ preventScroll: true });
+  }
+
+  async function openEventsSheet() {
     if (eventsModal || closed || document.body.classList.contains('modal-open')) return;
     const body = node('div', 'network-visualizer-events-sheet');
-    body.append(node('p', 'modal-introduction', 'Grouped P25 observations'), events);
-    eventsModal = openReadOnlyModal('Noteworthy P25 activity', body, {
-      id: 'p25-visualizer-events', className: 'network-visualizer-events-modal',
+    events.classList.remove('ui-surface');
+    body.append(node('p', 'modal-introduction', 'Counts since this page opened.'), events);
+    eventsModal = openReadOnlyModal('P25 actions', body, {
+      id: 'p25-visualizer-actions', className: 'network-visualizer-events-modal',
       onClose: () => {
         eventsModal = null;
+        events.classList.add('ui-surface');
+        choicesWorkflow.setModalLayout(false);
+        restoreChoices();
         events.hidden = true;
         stage.append(events);
         eventsToggle.setAttribute('aria-pressed', 'false');
         if (!closed) eventsToggle.focus({ preventScroll: true });
       }
     });
-    if (!eventsModal) stage.append(events);
-    else if (document.fullscreenElement === layout) layout.append(eventsModal.state.backdrop);
+    if (!eventsModal) { events.classList.add('ui-surface'); stage.append(events); }
+    else {
+      choicesWorkflow.setModalLayout(true);
+      choicesWorkflow.refresh();
+      if (document.fullscreenElement === layout) layout.append(eventsModal.state.backdrop);
+      if (eventsModal.ready && !await eventsModal.ready) return;
+      eventsModal.focus?.(actionControls.values().next().value);
+    }
   }
 
   function ensureEventsSpace() {
     if (events.hidden || eventsModal || closed) return;
-    const entryHeight = eventList.firstElementChild?.getBoundingClientRect().height || 0;
-    if (shortViewport.matches || eventList.clientHeight < entryHeight) openEventsSheet();
+    const rowHeight = eventList.firstElementChild?.getBoundingClientRect().height || 0;
+    if (shortViewport.matches || (rowHeight && eventList.clientHeight < rowHeight)) void openEventsSheet();
   }
   shortViewport.addEventListener('change', ensureEventsSpace);
   const eventsResizeObserver = new ResizeObserver(ensureEventsSpace);
-  eventsResizeObserver.observe(stage);
+  eventsResizeObserver.observe(events);
 
-  async function openSettings() {
-    const form = node('form', 'admin-form network-visualizer-settings-form');
-    const message = node('div', 'admin-form-message');
-    message.setAttribute('role', 'status');
-    const controls = new Map();
-    const choices = (property) => P25_EVENT_SETTINGS.map((entry) => {
-      const definition = entry.action ? dependencies.messageTypeDefinition?.(entry.action) : null;
-      const label = definition?.label || entry.label || dependencies.messageTypeLabel?.(entry.action) || entry.id;
-      const choice = preferenceCheckbox(`p25-visualizer-${property}-${entry.id}`, label,
-        eventSettings[entry.id][property], definition?.meaning || entry.detail || '');
-      controls.set(`${property}:${entry.id}`, choice.input);
-      return choice.control;
-    });
-    const highlightCard = settingsCard('Scene highlights',
-      'Briefly emphasize new saved observations.', ...choices('highlight'));
-    const zoomCard = settingsCard('Automatic camera',
-      'Let new saved observations move the Auto camera.',
-      ...choices('autoZoom'));
-    const cancel = textButton(node, 'Cancel');
-    const save = textButton(node, 'Save choices', 'ui-button ui-button-primary');
-    save.type = 'submit';
-    form.append(node('p', 'modal-introduction',
-      'These choices are saved in this browser for the current web profile.'),
-      settingsCardGrid(highlightCard, zoomCard), message,
-      modalFooter(cancel, save));
-    const modal = openReadOnlyModal('P25 Visualizer settings', form, {
-      id: 'p25-visualizer-settings', className: 'network-visualizer-settings-modal'
-    });
-    if (!modal || (modal.ready && !await modal.ready)) return;
-    cancel.addEventListener('click', modal.close);
-    const workflow = createFormWorkflow({ form, submit: save, feedback: message, modal,
-      changed: () => P25_EVENT_SETTINGS.some((entry) => ['highlight', 'autoZoom'].some((property) =>
-        controls.get(`${property}:${entry.id}`).checked !== eventSettings[entry.id][property])) });
-    form.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const next = Object.fromEntries(P25_EVENT_SETTINGS.map((entry) => [entry.id, {
-        highlight: controls.get(`highlight:${entry.id}`).checked,
-        autoZoom: controls.get(`autoZoom:${entry.id}`).checked
-      }]));
-      await workflow.save(async () => {
-        await saveEventSettings(next);
-        eventSettings = normalizeP25EventSettings(next);
-        highlightedCategories = enabledP25EventCategories(eventSettings, 'highlight');
-        autoZoomCategories = enabledP25EventCategories(eventSettings, 'autoZoom');
-      }, { saving: 'Saving visualizer choices…',
-        onSuccess: () => { if (modal.close()) feed?.reloadHistory(); },
-        onError: (error) => ({ state: 'error', message: error?.message ||
-          'Visualizer choices could not be saved in this browser.' }) });
-    });
-  }
+  actionsForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    const next = Object.fromEntries(P25_EVENT_SETTINGS.map(entry => [entry.id, {
+      highlight: actionControls.get(`highlight:${entry.id}`).checked,
+      autoZoom: actionControls.get(`autoZoom:${entry.id}`).checked
+    }]));
+    await choicesWorkflow.save(async () => {
+      await saveEventSettings(next);
+      eventSettings = normalizeP25EventSettings(next);
+      highlightedCategories = enabledP25EventCategories(eventSettings, 'highlight');
+      autoZoomCategories = enabledP25EventCategories(eventSettings, 'autoZoom');
+    }, { saving: 'Saving visualizer choices…', onSuccess: () => {
+      resetAttention();
+      renderGraph(false);
+    }, onError: () => ({ state: 'error', message: 'Visualizer choices could not be saved. Try again.' }) });
+  });
+  cancel.addEventListener('click', () => { restoreChoices(); hideActions(); });
 
   function renderGraph(animate = true, affiliationChanges = []) {
-    if (!renderer) return;
+    if (!renderer || closed) return;
     const graph = buildP25Graph(state, selectedSystemKey, Date.now() + serverTimeOffsetMs, selectedGroupKey,
       { highlightCategories: highlightedCategories });
-    if (feedStatus === 'live') setLiveStatus('live');
-    visibleNodeKeys = new Set(graph.nodes.map((value) => value.id));
+    visibleNodeKeys = new Set(graph.nodes.map(value => value.id));
     renderer.setData(graph, { animate, affiliationChanges });
-    renderEvents();
+    renderActions();
     if (highlightTimer) window.clearTimeout(highlightTimer);
     const now = Date.now() + serverTimeOffsetMs;
     const expiresAt = nextP25HighlightExpiry(state, now, { highlightCategories: highlightedCategories });
@@ -343,6 +365,7 @@ function createP25Visualizer(dependencies = {}) {
     if (!system || !renderer) return false;
     selectedSystemKey = system.key;
     selectedGroupKey = '';
+    overviewSelected = false;
     back.hidden = false;
     back.textContent = '← All systems';
     renderScopeTitle(system);
@@ -375,6 +398,7 @@ function createP25Visualizer(dependencies = {}) {
     if (!renderer) return;
     selectedSystemKey = '';
     selectedGroupKey = '';
+    overviewSelected = true;
     back.hidden = true;
     scopeTitle.textContent = 'P25 radio systems';
     clearAutoFocus();
@@ -387,167 +411,106 @@ function createP25Visualizer(dependencies = {}) {
 
   function applyAttention(candidates) {
     if (mode !== 'auto' || !selectedSystemKey || document.hidden) return;
-    for (const event of candidates.filter((candidate) => candidate.systemKey === selectedSystemKey &&
-      autoZoomCategories.has(candidate.category))) {
-      const focusKeys = event.focusKeys.filter((key) => visibleNodeKeys.has(key));
-      if (!focusKeys.length) continue;
-      const visibleEvent = { ...event, focusKeys };
-      const decision = camera.consider(visibleEvent, Date.now());
-      if (!decision.accepted) continue;
-      lastCameraPhase = 'focus';
-      renderer?.setCameraPhase('focus');
-      const focused = event.affiliationRadioKey && renderer?.focusAffiliation?.(
-        event.affiliationRadioKey, decision.state.timing.transitionMs) ||
-        renderer?.focus(focusKeys, decision.state.timing.transitionMs);
-      if (!focused) {
-        camera.cancel();
-        lastCameraPhase = 'roam';
-        renderer?.setCameraPhase('roam');
-        clearAutoFocus();
-        break;
-      }
-      showAutoFocus(event);
-      break;
-    }
-  }
-
-  function waitForRenderer(signal) {
-    return new Promise((resolve, reject) => {
-      const abort = () => reject(signal.reason || new DOMException('Loading canceled.', 'AbortError'));
-      if (signal.aborted) return abort();
-      signal.addEventListener('abort', abort, { once: true });
-      rendererReady.then(() => {
-        signal.removeEventListener('abort', abort);
-        resolve();
-      }, (error) => {
-        signal.removeEventListener('abort', abort);
-        reject(error);
-      });
-    });
-  }
-
-  async function loadSeed(signal, options = {}) {
-    refresh.disabled = true;
-    if (!hasSnapshot) setEmpty('Loading recent P25 activity…', 'New saved activity appears automatically.');
-    return requestActivitySeed(options.refresh === true ? { refresh: true } : {}, { signal });
+    const event = candidates.filter(candidate => candidate.systemKey === selectedSystemKey &&
+      autoZoomCategories.has(candidate.category)).reduce((latest, value) =>
+      !latest || value.observedAtMs >= latest.observedAtMs ? value : latest, null);
+    if (!event) return;
+    if (selectedGroupKey && event.focusKeys.some(key => !visibleNodeKeys.has(key)))
+      enterSystem(selectedSystemKey, { animate: false, immediate: true });
+    const focusKeys = event.focusKeys.filter(key => visibleNodeKeys.has(key));
+    if (!focusKeys.length) return;
+    const decision = camera.consider({ ...event, focusKeys }, Date.now());
+    if (!decision.accepted) return;
+    lastCameraPhase = 'focus';
+    renderer?.setCameraPhase('focus');
+    const focused = event.affiliationRadioKey && renderer?.focusAffiliation?.(
+      event.affiliationRadioKey, decision.state.timing.transitionMs) ||
+      renderer?.focus(focusKeys, decision.state.timing.transitionMs);
+    if (!focused) { resetAttention(); return; }
+    showAutoFocus(event);
   }
 
   function activityOptions(initial = false) {
     return { initial, atMs: Date.now() + serverTimeOffsetMs, highlightAtObservationTime: true,
-      highlightCategories: highlightedCategories, grantActivityTimeoutMs };
+      highlightCategories: highlightedCategories };
   }
 
-  function updateScene(result, replace = false) {
-    if (scenePresented && !selectedSystemKey && !replace && state.systems.size) {
+  function updateScene(result = { focusCandidates: [], affiliationChanges: [] }) {
+    renderActions();
+    if (closed) return;
+    if (!renderer) {
+      for (const change of result.affiliationChanges || []) {
+        pendingAffiliations.set(change.radioKey, change);
+        if (pendingAffiliations.size > 256) pendingAffiliations.delete(pendingAffiliations.keys().next().value);
+      }
+      if (result.focusCandidates?.length) pendingFocusCandidates = result.focusCandidates.slice(-P25_EVENT_SETTINGS.length);
+      return;
+    }
+    if (overviewSelected && state.systems.size) {
       empty.hidden = true;
       renderGraph(true);
       return;
     }
+    const firstPresentation = !scenePresented;
     scenePresented = true;
-    const previousSystemKey = selectedSystemKey;
-    const systemKey = state.systems.has(selectedSystemKey) ? selectedSystemKey :
-      mostActiveP25System(state)?.key;
+    const systemKey = state.systems.has(selectedSystemKey) ? selectedSystemKey : mostActiveP25System(state)?.key;
     if (!systemKey) {
-      selectedSystemKey = selectedGroupKey = '';
-      back.hidden = true;
-      scopeTitle.textContent = 'P25 radio systems';
-      clearAutoFocus();
+      empty.hidden = false;
       renderGraph(false);
-      renderer?.showOverview();
-      setEmpty('No P25 activity or affiliations to show',
-        routineP25ActivityEnabled(eventSettings) ?
-          'New saved activity will appear automatically.' :
-          'Enable calls and grants in Visualizer settings to include routine activity.');
       return;
     }
     empty.hidden = true;
-    if (!previousSystemKey || systemKey !== previousSystemKey) {
+    const leaveDrilldown = mode === 'auto' && selectedGroupKey && (result.focusCandidates || []).some(event =>
+      event.systemKey === systemKey && autoZoomCategories.has(event.category) &&
+      event.focusKeys.some(key => !visibleNodeKeys.has(key)));
+    if (leaveDrilldown) {
       enterSystem(systemKey, { animate: false, immediate: true });
+      renderGraph(true, result.affiliationChanges || []);
+    } else if (!selectedSystemKey || systemKey !== selectedSystemKey) {
+      enterSystem(systemKey, { animate: false, immediate: true });
+      if (result.affiliationChanges?.length) renderGraph(true, result.affiliationChanges);
     } else {
-      selectedSystemKey = systemKey;
-      if (selectedGroupKey && state.groups.get(selectedGroupKey)?.systemKey !== systemKey) {
-        enterSystem(systemKey, { animate: false, immediate: true });
-        applyAttention(result.focusCandidates);
-        return;
-      }
-      back.hidden = false;
-      back.textContent = selectedGroupKey ? '← System' : '← All systems';
+      if (selectedGroupKey && state.groups.get(selectedGroupKey)?.systemKey !== systemKey)
+        selectedGroupKey = '';
       renderScopeTitle(state.systems.get(systemKey), state.groups.get(selectedGroupKey));
-      renderGraph(!replace, result.affiliationChanges);
+      renderGraph(!firstPresentation, result.affiliationChanges || []);
     }
-    applyAttention(result.focusCandidates);
+    applyAttention(result.focusCandidates || []);
     resolveGuideScene(true);
   }
 
-  function acceptAffiliations(document, replace = false) {
+  function acceptAffiliations(document) {
     collectionEnabled = document.collection_enabled ?? collectionEnabled;
-    const timing = document.traffic_grant_age_out_milliseconds;
-    if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
-    const result = applyP25Affiliations(state, document, { ...activityOptions(replace), replace, sequence: document.sequence });
-    if (result.changed || replace) { hasSnapshot = true; updateScene(result, replace); }
+    const result = applyP25Affiliations(state, document, { ...activityOptions(), sequence: document.sequence });
+    setLiveStatus('live');
+    if (result.changed) updateScene(result);
   }
 
-  function resetHistory() {
-    historySceneDirty = false;
-    nextHistoryExpiryAtMs = 0;
-    const affiliations = [...state.currentAffiliations.values()], available = state.available;
-    state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
-    const result = applyP25Affiliations(state, { affiliations, available }, { ...activityOptions(true), replace: true });
-    clearAutoFocus(); camera.reset(); updateScene(result, true);
+  function acceptRows(rows) {
+    const result = applyP25ActivityRows(state, rows, activityOptions());
+    if (result.changed) updateScene(result);
   }
 
-  function historyParameters() {
-    const now = Date.now() + serverTimeOffsetMs;
-    const actions = routineP25ActivityEnabled(eventSettings) ?
-      [...P25_HISTORY_ACTIONS, ...P25_ROUTINE_ACTIONS] : P25_HISTORY_ACTIONS;
-    return { from_ms: now - historyHours * 3_600_000, to_ms: now,
-      actions: actions.join(','), projection: 'p25_visualizer', limit: 5_000 };
-  }
-
-  function acceptHistory(rows, initial) {
-    const now = Date.now() + serverTimeOffsetMs;
-    const selected = rows.filter(row => row.observed_at_ms >= now - historyHours * 3_600_000 &&
-      row.observed_at_ms <= now + 60_000 &&
-      (routineP25ActivityEnabled(eventSettings) || !P25_ROUTINE_ACTIONS.includes(row.action)));
-    const result = applyP25ActivityRows(state, selected, activityOptions(initial));
-    if (result.changed) {
-      hasSnapshot = true;
-      if (initial) historySceneDirty = true; else updateScene(result);
-    }
+  function acceptLiveTables(initial = false) {
+    if (closed || guideSuspended) return;
+    const result = applyP25LiveTables(state, [...liveTables.values()], activityOptions(initial));
+    if (result.changed) updateScene(result);
   }
 
   function setLiveStatus(value) {
-    feedStatus = value;
-    refresh.disabled = value === 'loading' || value === 'refreshing';
-    if (value === 'live') {
-      const label = !state.available ? 'P25 data unavailable · Showing previous data' :
-        collectionEnabled ? 'Live' : 'Live affiliations · Activity collection off';
-      setStatus(label + (historyLoading ? ` · Loading ${historyHours}h history…` : ''), state.available ? 'current' : 'stale');
-    }
+    if (value === 'live') setStatus(!state.available ? 'P25 activity unavailable · Reconnecting' :
+      collectionEnabled ? 'Live' : 'Live · Activity collection off', state.available ? 'current' : 'stale');
     else if (value === 'paused') setStatus('Paused while this tab is hidden', 'stale');
-    else if (value === 'loading') setStatus('Loading recent activity', 'stale');
-    else if (value === 'refreshing') setStatus('Refreshing recent activity…', 'stale');
-    else if (value === 'retrying' || value === 'error') setStatus(hasSnapshot ?
-      'Reconnecting · showing previous activity' : 'Activity unavailable · retrying', 'stale');
-    else setStatus(hasSnapshot ? 'Reconnecting · showing previous activity' : 'Connecting to live activity', 'stale');
+    else if (['error', 'retrying', 'reconnecting'].includes(value)) setStatus('Reconnecting to live activity', 'stale');
+    else setStatus('Connecting to live activity', 'stale');
   }
-
-  function loadSnapshot(options = {}) { feed?.reseed(options); }
 
   function onVisibilityChanged() {
     pressedKeys.clear();
-    if (!document.hidden) expireHistory();
+    if (document.hidden) resetAttention();
     feed?.visibilityChanged();
+    if (!document.hidden) acceptLiveTables(true);
   }
-
-  function expireHistory() {
-    const now = Date.now() + serverTimeOffsetMs;
-    if (now < nextHistoryExpiryAtMs) return;
-    nextHistoryExpiryAtMs = now + 60_000;
-    const result = expireP25History(state, now - historyHours * 3_600_000);
-    if (result.changed) { historySceneDirty = false; updateScene(result); }
-  }
-
 
   function setMode(value) {
     mode = value === 'manual' ? 'manual' : 'auto';
@@ -568,6 +531,7 @@ function createP25Visualizer(dependencies = {}) {
   }
 
   function onKeyDown(event) {
+    if (event.target?.closest?.('button, input, select, textarea, a')) return;
     if (mode !== 'manual' || !['w', 'a', 's', 'd', 'q', 'e', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
       'ArrowDown'].includes(keyName(event))) return;
     pressedKeys.add(keyName(event));
@@ -581,9 +545,11 @@ function createP25Visualizer(dependencies = {}) {
   function animate(at) {
     animationFrame = 0;
     if (closed || guideSuspended) return;
-    if (!document.hidden) expireHistory();
-    if (historySceneDirty && renderer) {
-      historySceneDirty = false; updateScene({ focusCandidates: [], affiliationChanges: [] });
+    const now = Date.now() + serverTimeOffsetMs;
+    if (!document.hidden && now >= nextIdleCleanupAtMs) {
+      nextIdleCleanupAtMs = now + 60_000;
+      const result = expireP25History(state, now - 15 * 60_000, { atMs: now });
+      if (result.changed) updateScene(result);
     }
     const delta = Math.min(0.05, Math.max(0, (at - lastAnimationAt) / 1_000));
     lastAnimationAt = at;
@@ -606,28 +572,14 @@ function createP25Visualizer(dependencies = {}) {
     animationFrame = requestAnimationFrame(animate);
   }
 
-  function selectHistory(hours) {
-    if (hours === historyHours) return;
-    historyHours = hours;
-    hour.setAttribute('aria-pressed', String(hours === 1)); day.setAttribute('aria-pressed', String(hours === 24));
-    feed?.reloadHistory();
-  }
-  hour.addEventListener('click', () => selectHistory(1));
-  day.addEventListener('click', () => selectHistory(24));
-  refresh.addEventListener('click', () => void loadSnapshot({ refresh: true }));
   auto.addEventListener('click', () => mode !== 'auto' && setMode('auto'));
   manual.addEventListener('click', () => mode !== 'manual' && setMode('manual'));
   eventsToggle.addEventListener('click', () => {
     events.hidden = !events.hidden;
     eventsToggle.setAttribute('aria-pressed', String(!events.hidden));
-    if (!events.hidden) renderEvents();
+    if (!events.hidden) renderActions();
   });
-  settingsButton.addEventListener('click', openSettings);
-  closeEvents.addEventListener('click', () => {
-    events.hidden = true;
-    eventsToggle.setAttribute('aria-pressed', 'false');
-    eventsToggle.focus();
-  });
+  closeEvents.addEventListener('click', hideActions);
   back.addEventListener('click', () => selectedGroupKey ? enterSystem(selectedSystemKey) : showOverview());
   fullscreen.addEventListener('click', async () => {
     if (!renderer) return;
@@ -655,6 +607,13 @@ function createP25Visualizer(dependencies = {}) {
     renderer.setMode(mode);
     renderer.setCameraPhase(mode === 'auto' ? 'roam' : 'disabled');
     renderer.setGuideSuspended(guideSuspended);
+    const now = Date.now() + serverTimeOffsetMs;
+    updateScene({
+      affiliationChanges: [...pendingAffiliations.values()].filter(change => change.observedAtMs + 8_000 > now)
+        .map(change => ({ ...change, remainingMs: Math.min(change.remainingMs, change.observedAtMs + 8_000 - now) })),
+      focusCandidates: pendingFocusCandidates.filter(event => event.observedAtMs + 8_000 > now)
+    });
+    pendingAffiliations.clear(); pendingFocusCandidates = [];
   }
 
   const close = () => {
@@ -662,6 +621,7 @@ function createP25Visualizer(dependencies = {}) {
     closed = true;
     resolveGuideScene(false);
     feed?.close();
+    activitySubscription?.close();
     document.removeEventListener('visibilitychange', onVisibilityChanged);
     if (highlightTimer) window.clearTimeout(highlightTimer);
     if (animationFrame) cancelAnimationFrame(animationFrame);
@@ -676,39 +636,50 @@ function createP25Visualizer(dependencies = {}) {
   const rendererReady = initialize();
   feed = createP25ActivityFeed({
     openStream: dependencies.openActivityStream,
-    loadSeed, onDelta: acceptAffiliations, onStatus: setLiveStatus,
-    historyParameters, loadHistory: (parameters, signal) => requestActivity(parameters, { signal }),
-    onHistory: async (rows, signal) => {
-      await waitForRenderer(signal);
-      if (!closed && !signal.aborted) acceptHistory(rows, true);
+    onDelta: acceptAffiliations, onAppend: acceptRows, onStatus: setLiveStatus,
+    onReset: () => {
+      pendingAffiliations.clear(); pendingFocusCandidates = [];
+      state.currentAffiliations.clear();
+      resetAttention();
+      renderGraph(false);
     },
-    onAppend: (rows) => acceptHistory(rows, false), onHistoryReset: resetHistory,
-    onHistoryStatus: (loading) => { historyLoading = loading; if (feedStatus === 'live') setLiveStatus('live'); },
-    onSeed: async (document, signal) => {
-      await waitForRenderer(signal);
-      if (!closed && !signal.aborted) acceptAffiliations(document, true);
-    },
-    onBoundary: (boundary) => {
+    onBoundary: boundary => {
       if (sourceEpoch && sourceEpoch !== boundary.source_epoch) {
+        const counts = state.actionCounts;
         state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
-        nextHistoryExpiryAtMs = 0;
-        hasSnapshot = false;
-        clearAutoFocus();
-        if (renderer) renderGraph(false);
+        state.actionCounts = counts;
+        liveTables.clear();
+        pendingAffiliations.clear(); pendingFocusCandidates = [];
+        selectedSystemKey = selectedGroupKey = '';
+        overviewSelected = scenePresented = false;
+        resetAttention();
+        renderGraph(false);
+        setEmpty('Waiting for P25 activity', 'Talkgroups and radios appear as they are heard.');
       }
       sourceEpoch = boundary.source_epoch;
+      state.available = boundary.available !== false;
       collectionEnabled = boundary.collection_enabled !== false;
       if (Number.isFinite(boundary.server_time_ms)) serverTimeOffsetMs = boundary.server_time_ms - Date.now();
-      const timing = boundary.traffic_grant_age_out_milliseconds;
-      if (Number.isInteger(timing) && timing >= 100 && timing <= 15_000) grantActivityTimeoutMs = timing;
     },
-    onError: (error) => {
-      if (!hasSnapshot) setEmpty('Recent P25 activity could not be loaded',
-        error?.message || 'Reconnecting automatically. You can also select Refresh.', 'error');
-    },
+    onError: () => setLiveStatus('error'),
     isHidden: () => document.hidden || guideSuspended,
     setTimeout: (callback, delay) => window.setTimeout(callback, delay),
-    clearTimeout: (timer) => window.clearTimeout(timer)
+    clearTimeout: timer => window.clearTimeout(timer)
+  });
+  activitySubscription = dependencies.subscribeActivity({
+    snapshot: snapshot => {
+      liveTables.clear();
+      for (const table of snapshot.tables || []) liveTables.set(table.table_id, table);
+      acceptLiveTables(true);
+    },
+    activityBatch: batch => {
+      for (const change of batch.changes || []) {
+        if (change.operation === 'remove') liveTables.delete(change.table_id);
+        else if (change.table) liveTables.set(change.table.table_id, change.table);
+      }
+      acceptLiveTables();
+    },
+    error: () => resetAttention()
   });
   document.addEventListener('visibilitychange', onVisibilityChanged);
 
@@ -725,6 +696,7 @@ function createP25Visualizer(dependencies = {}) {
       animationFrame = requestAnimationFrame(animate);
     }
     feed?.visibilityChanged();
+    if (!guideSuspended) acceptLiveTables(true);
   }
 
   const ready = rendererReady.then(async () => {
@@ -733,6 +705,9 @@ function createP25Visualizer(dependencies = {}) {
   });
   async function prepareGuide(section) {
     if (!guideMode || !await ready || closed) return false;
+    const showActions = ['actions', 'actions-close'].includes(section);
+    if (showActions && events.hidden) eventsToggle.click();
+    else if (!showActions && !events.hidden) hideActions();
     if (['manual-camera', 'auto-camera'].includes(section)) manual.click();
     else if (mode !== 'auto') auto.click();
     return true;
