@@ -206,15 +206,19 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
         fixture.record();
       });
       expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(true);
-      await page.clock.runFor(600);
+      await page.clock.fastForward(600);
       await page.evaluate(() => {
         const fixture = window.visualizerFixture;
         fixture.renderer.setData(fixture.affiliationData('C'), { animate: false });
       });
-      await page.clock.runFor(1_600);
+      // Render each meaningful phase instead of making CI draw every intervening WebGL frame.
+      for (const checkpoint of [1_000, 1_400, 2_200, 3_500]) {
+        const elapsed = await page.evaluate(() => performance.now() - window.visualizerFixture.startedAt);
+        await page.clock.fastForward(checkpoint - elapsed);
+        await page.clock.runFor(16);
+      }
       expect(await page.evaluate(() => window.visualizerFixture.samples.some((sample) =>
         sample.attached[0] === 'B'))).toBe(true);
-      await page.clock.runFor(1_300);
       expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['C']);
       const result = await page.evaluate(() => {
         const fixture = window.visualizerFixture;
