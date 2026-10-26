@@ -21,25 +21,61 @@
 package io.github.dsheirer.identifier.configuration;
 
 import io.github.dsheirer.identifier.Form;
+import java.util.Objects;
 
 /**
- * User specified alias list name for a decode configuration.
+ * Alias-list identity and its display name when this decode configuration was captured.
  */
 public class AliasListConfigurationIdentifier extends ConfigurationStringIdentifier
 {
+    private final long mAliasListId;
+
     public AliasListConfigurationIdentifier(String value)
     {
+        this(0, value);
+    }
+
+    public AliasListConfigurationIdentifier(long aliasListId, String value)
+    {
         super(value, Form.ALIAS_LIST);
+        if(aliasListId < 0)
+        {
+            throw new IllegalArgumentException("Alias list ID cannot be negative");
+        }
+        mAliasListId = aliasListId;
+    }
+
+    /** Stable list identity, or zero for a legacy name-only identifier. */
+    public long getAliasListId()
+    {
+        return mAliasListId;
     }
 
     @Override
     public boolean isValid()
     {
-        return getValue() != null && !getValue().isEmpty();
+        return mAliasListId > 0 || getValue() != null && !getValue().isEmpty();
     }
 
     public static AliasListConfigurationIdentifier create(String value)
     {
         return new AliasListConfigurationIdentifier(value);
+    }
+
+    public static AliasListConfigurationIdentifier create(long aliasListId, String value)
+    {
+        return new AliasListConfigurationIdentifier(aliasListId, value);
+    }
+
+    @Override
+    public boolean equals(Object other)
+    {
+        return super.equals(other) && mAliasListId == ((AliasListConfigurationIdentifier)other).mAliasListId;
+    }
+
+    @Override
+    public int hashCode()
+    {
+        return Objects.hash(super.hashCode(), mAliasListId);
     }
 }

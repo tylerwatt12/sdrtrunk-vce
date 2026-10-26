@@ -511,6 +511,44 @@ public final class AliasAdministrationService
         });
     }
 
+    /** Renames one durable list without changing its membership, family, or call-handling settings. */
+    public MutationResult renameAliasList(long aliasListId, String name, String expectedEditRevision)
+    {
+        String preparedName = requireAliasListName(name);
+        return mutateValidated(() -> requireEditRevision(expectedEditRevision,
+            aliasListNameEditRevision(requireAliasList(aliasListId))), () ->
+        {
+            AliasListDefinition current = requireAliasList(aliasListId);
+            AliasListDefinition sameName = aliasModel().getAliasListDefinition(preparedName);
+            if(sameName != null && sameName.getId() != aliasListId)
+            {
+                throw new IllegalArgumentException("An Alias List with this name already exists. Choose another name");
+            }
+            if(current.getName().equals(preparedName))
+            {
+                return new MutationTarget(current, List.of(), 0, PublicationMode.ALIAS_LISTS);
+            }
+
+            AliasListDefinition replacement = new AliasListDefinition(preparedName, current.getFamily(),
+                current.getUnmatchedTalkgroupPolicy(), current.getNewAliasBehavior());
+            replacement.setId(current.getId());
+            aliasModel().setAliasListDefinitions(aliasModel().aliasListDefinitions().stream()
+                .map(definition -> definition.getId() == aliasListId ? replacement : definition).toList());
+            return new MutationTarget(replacement, List.of(), 1, PublicationMode.ALIAS_LISTS);
+        });
+    }
+
+    /** Name edits conflict only with another rename of the same durable list. */
+    public static String aliasListNameEditRevision(AliasListDefinition definition)
+    {
+        return aliasListNameEditRevision(definition.getId(), definition.getName());
+    }
+
+    public static String aliasListNameEditRevision(long aliasListId, String name)
+    {
+        return ConfigurationEditVersion.of(List.of(aliasListId, name));
+    }
+
     /** Atomically replaces the two independent call-handling policies and their scan-list memberships. */
     public MutationResult updateAliasListDefaults(long aliasListId, AliasListDefaults defaults,
                                                    String expectedEditRevision)

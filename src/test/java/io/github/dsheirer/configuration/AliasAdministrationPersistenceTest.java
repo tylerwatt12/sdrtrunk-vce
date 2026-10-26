@@ -20,7 +20,9 @@ import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
+import io.github.dsheirer.alias.AliasListDefaults;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.NewAliasBehavior;
 import io.github.dsheirer.alias.UnmatchedTalkgroupPolicy;
 import io.github.dsheirer.alias.id.broadcast.BroadcastChannel;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
@@ -28,6 +30,8 @@ import io.github.dsheirer.audio.broadcast.BroadcastEvent;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
@@ -35,6 +39,7 @@ import io.github.dsheirer.database.alias.AliasDatabaseStore;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.database.scanlist.ScanListDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.preference.UserPreferences;
@@ -43,9 +48,11 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.scanlist.ScanList;
 import io.github.dsheirer.scanlist.ScanListConfiguration;
 import java.nio.file.Path;
+import java.lang.reflect.Field;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -57,6 +64,202 @@ class AliasAdministrationPersistenceTest
 {
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void renameRetainsDefaultListIdentityPoliciesAssignmentsAndActiveChainsAcrossReload() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("rename-default-list-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null);
+        long listId;
+        long aliasId;
+        String channelId;
+        AliasListDefaults defaults;
+        Map<Channel,ProcessingChain> chains = null;
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            AliasListDefinition original = manager.getAliasModel().getDefaultAliasListDefinition(
+                io.github.dsheirer.module.decode.DecoderType.P25_PHASE1);
+            listId = original.getId();
+            long scanListId = manager.getScanListModel().defaultScanList().getId();
+            defaults = new AliasListDefaults(new UnmatchedTalkgroupPolicy(true, List.of()), Set.of(scanListId),
+                new NewAliasBehavior(true, List.of()), Set.of(scanListId));
+            service.updateAliasListDefaults(listId, defaults, service.getAliasListDefaults(listId).editRevision());
+            aliasId = service.createAlias(alias("Dispatch", listId, 101), List.of(scanListId)).aliasIds().getFirst();
+            AliasList cached = manager.getAliasModel().getAliasList(original);
+            Channel saved = new Channel("Saved P25");
+            saved.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            saved.setAliasListDefinition(original);
+            manager.addChannel(saved);
+            channelId = saved.getConfigurationId();
+            Channel traffic = new Channel("Traffic P25", Channel.ChannelType.TRAFFIC);
+            traffic.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            traffic.setConfigurationId(channelId);
+            traffic.setAliasListDefinition(original);
+            AtomicInteger savedRefreshes = new AtomicInteger();
+            AtomicInteger trafficRefreshes = new AtomicInteger();
+            ProcessingChain savedChain = observingChain(saved, manager.getAliasModel(), savedRefreshes,
+                new AtomicBoolean(false));
+            ProcessingChain trafficChain = observingChain(traffic, manager.getAliasModel(), trafficRefreshes,
+                new AtomicBoolean(true));
+            chains = processingChains(manager);
+            chains.put(saved, savedChain);
+            chains.put(traffic, trafficChain);
+
+            service.renameAliasList(listId, "  Regional P25  ",
+                AliasAdministrationService.aliasListNameEditRevision(original));
+
+            assertEquals("Regional P25", saved.getAliasListName());
+            assertEquals("Regional P25", traffic.getAliasListName());
+            assertEquals(listId, saved.getAliasListId());
+            assertSame(savedChain, chains.get(saved));
+            assertSame(trafficChain, chains.get(traffic));
+            assertTrue(savedRefreshes.get() >= 1);
+            assertEquals(2, trafficRefreshes.get(), "Recovery retries metadata notification after an observer failure");
+            assertEquals(aliasId, manager.getAliasModel().getAlias(aliasId).getId());
+            assertEquals("Regional P25", manager.getAliasModel().getAlias(aliasId).getAliasListName());
+            assertSame(cached, manager.getAliasModel().getAliasListForChannel(saved));
+            assertEquals(defaults, service.getAliasListDefaults(listId).defaults());
+            assertEquals(Set.of(scanListId), service.getAlias(aliasId).scanListIds());
+            assertEquals("Regional P25", new ConfigurationDatabaseStore(database).load().channels().getFirst()
+                .getAliasListName());
+        }
+        finally
+        {
+            if(chains != null) chains.clear();
+            flushAndUnregister(manager);
+        }
+
+        ConfigurationManager reloaded = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null);
+        try
+        {
+            reloaded.init();
+            assertEquals("Regional P25", reloaded.getAliasModel().getAliasListDefinition(listId).getName());
+            assertEquals(defaults, reloaded.getAliasAdministrationService().getAliasListDefaults(listId).defaults());
+            assertEquals(listId, reloaded.getAliasModel().getAlias(aliasId).getAliasListId());
+            assertTrue(reloaded.getAliasModel().aliasListDefinitions().stream()
+                .noneMatch(definition -> definition.getName().equals("Default P25")));
+            Channel saved = reloaded.getChannelModel().getChannels().stream()
+                .filter(channel -> channel.getConfigurationId().equals(channelId)).findFirst().orElseThrow();
+            assertEquals(listId, saved.getAliasListId());
+            assertEquals("Regional P25", saved.getAliasListName());
+            Channel newChannel = new Channel("New P25");
+            newChannel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            reloaded.getAliasModel().requireAliasListAssignment(newChannel);
+            assertEquals(listId, newChannel.getAliasListId());
+        }
+        finally
+        {
+            flushAndUnregister(reloaded);
+        }
+    }
+
+    @Test
+    void renameRejectsStaleDuplicateAndInvalidNamesWithoutChangingConfiguration() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("rename-validation-data");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null);
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long listId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            service.createAliasList("Other", AliasListFamily.P25);
+            String initial = AliasAdministrationService.aliasListNameEditRevision(service.options(listId).aliasList());
+            long revision = service.currentRevision();
+            for(String invalid: List.of("   ", "x".repeat(129), "oThEr"))
+            {
+                assertThrows(IllegalArgumentException.class, () -> service.renameAliasList(listId, invalid, initial));
+            }
+            assertEquals(revision, service.currentRevision());
+            service.updateUnmatchedTalkgroupPolicy(listId, new UnmatchedTalkgroupPolicy(true, List.of()),
+                service.getAliasListDefaults(listId).editRevision());
+            service.renameAliasList(listId, "county p25", initial);
+            assertEquals("county p25", service.options(listId).aliasList().getName());
+            assertThrows(AliasAdministrationService.StaleEditException.class,
+                () -> service.renameAliasList(listId, "Stale rename", initial));
+            String current = AliasAdministrationService.aliasListNameEditRevision(service.options(listId).aliasList());
+            service.renameAliasList(listId, "x".repeat(128), current);
+            assertEquals(128, service.options(listId).aliasList().getName().length());
+        }
+        finally
+        {
+            flushAndUnregister(manager);
+        }
+    }
+
+    @Test
+    void unchangedRenameAvoidsCommitAndFailedRenamePreservesRowsAndLiveNames() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("rename-rollback-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        FailingConfigurationManager manager = new FailingConfigurationManager(new TestUserPreferences(dataRoot));
+        try
+        {
+            manager.init();
+            AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+            long listId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            long aliasId = service.createAlias(alias("Dispatch", listId, 101)).aliasIds().getFirst();
+            AliasListDefinition definition = manager.getAliasModel().getAliasListDefinition(listId);
+            String editRevision = AliasAdministrationService.aliasListNameEditRevision(definition);
+            Channel channel = new Channel("Saved P25");
+            channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+            channel.setAliasListDefinition(definition);
+            manager.addChannel(channel);
+            long revision = service.currentRevision();
+            manager.failNextSave();
+
+            assertEquals(0, service.renameAliasList(listId, " County P25 ", editRevision).affected());
+            assertEquals(revision, service.currentRevision());
+            assertThrows(AliasAdministrationService.PersistenceException.class,
+                () -> service.renameAliasList(listId, "Regional P25", editRevision));
+
+            assertEquals(revision, service.currentRevision());
+            assertSame(definition, manager.getAliasModel().getAliasListDefinition(listId));
+            assertEquals("County P25", channel.getAliasListName());
+            assertEquals("County P25", manager.getAliasModel().getAlias(aliasId).getAliasListName());
+            assertEquals("County P25", aliasListDefinition(new AliasDatabaseStore(database)
+                .loadAliasListDefinitions(), listId).getName());
+        }
+        finally
+        {
+            flushAndUnregister(manager);
+        }
+    }
+
+    private static ProcessingChain observingChain(Channel channel, AliasModel aliases, AtomicInteger notifications,
+                                                   AtomicBoolean failFirstNotification)
+    {
+        return new ProcessingChain(channel, aliases)
+        {
+            @Override
+            public void channelConfigurationChanged(ChannelConfigurationChangeNotification notification)
+            {
+                super.channelConfigurationChanged(notification);
+                notifications.incrementAndGet();
+                if(failFirstNotification.getAndSet(false))
+                {
+                    throw new IllegalStateException("Injected rename observer failure");
+                }
+            }
+        };
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<Channel,ProcessingChain> processingChains(ConfigurationManager manager) throws Exception
+    {
+        Field field = ChannelProcessingManager.class.getDeclaredField("mProcessingChainsMap");
+        field.setAccessible(true);
+        return (Map<Channel,ProcessingChain>)field.get(manager.getChannelProcessingManager());
+    }
 
     @Test
     void unchangedAliasDefaultsAndScanListAvoidCommitPublicationAndRevisionChange() throws Exception

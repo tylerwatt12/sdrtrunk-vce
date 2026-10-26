@@ -239,7 +239,8 @@ public class SingleChannelState extends AbstractChannelState implements IDecoder
 
         if(mAliasModel != null && mAliasModel.isAliasListCompatible(channel))
         {
-            mIdentifierCollection.update(AliasListConfigurationIdentifier.create(channel.getAliasListName()));
+            mIdentifierCollection.update(AliasListConfigurationIdentifier.create(channel.getAliasListId(),
+                channel.getAliasListName()));
         }
         else if(existingAliasList != null)
         {

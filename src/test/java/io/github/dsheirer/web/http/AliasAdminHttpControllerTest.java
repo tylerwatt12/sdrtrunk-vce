@@ -69,6 +69,69 @@ class AliasAdminHttpControllerTest
     Path mTemporaryFolder;
 
     @Test
+    void renameUsesTheListNameRevisionAndReturnsTheNormalizedName() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("rename-list-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null);
+        manager.init();
+        AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+        long listId = service.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+        service.createAliasList("Other", AliasListFamily.P25);
+        AtomicInteger changes = new AtomicInteger();
+        AliasAdminHttpController controller = new AliasAdminHttpController(service, changes::incrementAndGet);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, controller::handle);
+        server.createContext(AliasAdminHttpController.OPTIONS_PATH, controller::handle);
+        server.start();
+        try(HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build())
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            String path = AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + listId;
+            JsonNode catalog = aliasList(json(send(client,
+                request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET())), listId);
+            String initialRevision = catalog.get("name_edit_revision").textValue();
+            JsonNode options = json(send(client, request(origin,
+                AliasAdminHttpController.OPTIONS_PATH + "?alias_list_id=" + listId).GET()));
+            assertEquals(initialRevision, options.at("/alias_list/name_edit_revision").textValue());
+            HttpResponse<String> missingRevision = send(client, jsonRequest(origin, path)
+                .PUT(HttpRequest.BodyPublishers.ofString("{\"name\":\"Regional P25\"}")));
+            assertEquals(400, missingRevision.statusCode());
+            JsonNode renamed = json(send(client, jsonRequest(origin, path)
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "name", "  Regional P25  ", "edit_revision", initialRevision))))));
+            assertEquals(listId, renamed.get("alias_list_id").longValue());
+            assertEquals("Regional P25", renamed.get("name").textValue());
+            assertTrue(renamed.hasNonNull("name_edit_revision"));
+            assertEquals(1, renamed.get("affected").intValue());
+            assertEquals(1, changes.get());
+            assertEquals("Regional P25", aliasList(json(send(client,
+                request(origin, AliasAdminHttpController.ALIAS_LISTS_PATH).GET())), listId).get("name").textValue());
+            HttpResponse<String> stale = send(client, jsonRequest(origin, path)
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                    "name", "Stale Rename", "edit_revision", initialRevision)))));
+            assertEquals(409, stale.statusCode());
+            assertEquals("stale_revision", root(stale).at("/error/code").textValue());
+            String currentRevision = renamed.get("name_edit_revision").textValue();
+            for(String invalid: List.of("   ", "x".repeat(129), "oThEr"))
+            {
+                assertEquals(400, send(client, jsonRequest(origin, path)
+                    .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(Map.of(
+                        "name", invalid, "edit_revision", currentRevision))))).statusCode());
+            }
+            assertEquals(1, changes.get());
+        }
+        finally
+        {
+            server.stop(0);
+            closeConfigurationManager(manager);
+        }
+    }
+
+    @Test
     void transferPreparationFailureReturnsAnExportError() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("failed-export-data");

@@ -346,6 +346,17 @@ public final class AliasAdminHttpController
 
         switch(exchange.getRequestMethod())
         {
+            case "PUT" -> {
+                RenameListRequest request = readJson(exchange, RenameListRequest.class);
+                String name = requiredText(request.name() != null ? request.name().trim() : null, "name",
+                    AliasAdministrationService.MAX_ALIAS_LIST_NAME_LENGTH);
+                AliasAdministrationService.MutationResult result = changed(mService.renameAliasList(aliasListId,
+                    name, requiredEditRevision(request.editRevision())));
+                Map<String,Object> response = new LinkedHashMap<>(mutationResponse(result));
+                response.put("name", name);
+                response.put("nameEditRevision", AliasAdministrationService.aliasListNameEditRevision(aliasListId, name));
+                sendData(exchange, 200, response);
+            }
             case "DELETE" -> {
                 DeleteListRequest request = readJson(exchange, DeleteListRequest.class);
                 long revision = requiredRevision(request.revision());
@@ -362,7 +373,7 @@ public final class AliasAdminHttpController
                     mAliasListDeletion.delete(aliasListId, revision, confirmed));
                 sendData(exchange, 200, mutationResponse(result));
             }
-            default -> methodNotAllowed(exchange, "DELETE");
+            default -> methodNotAllowed(exchange, "PUT, DELETE");
         }
     }
 
@@ -1050,6 +1061,7 @@ public final class AliasAdminHttpController
         Map<String,Object> response = new LinkedHashMap<>();
         response.put("aliasListId", definition.getId());
         response.put("name", definition.getName());
+        response.put("nameEditRevision", AliasAdministrationService.aliasListNameEditRevision(definition));
         response.put("family", familyName(definition.getFamily()));
         Map<String,Object> unknown = behaviorView(definition.getUnmatchedTalkgroupPolicy().isRecordEnabled(),
             definition.getUnmatchedTalkgroupPolicy().getStreamDestinations(), unmatchedScanListIds);
@@ -1836,6 +1848,7 @@ public final class AliasAdminHttpController
     }
 
     private record CreateListRequest(String name, String family) {}
+    private record RenameListRequest(String name, String editRevision) {}
     private record DeleteListRequest(Long revision, Boolean confirmed) {}
     private record UnmatchedPolicyRequest(String editRevision, Boolean recordable,
                                           List<String> broadcastConfigurationIds,

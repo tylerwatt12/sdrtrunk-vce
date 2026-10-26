@@ -389,7 +389,7 @@ public class BroadcastifyCallBroadcaster extends AbstractAudioBroadcaster<Broadc
 
                 if(config != null)
                 {
-                    AliasList aliasList = mAliasModel.getAliasList(config.getValue());
+                    AliasList aliasList = mAliasModel.getAliasList(config);
 
                     if(aliasList != null)
                     {

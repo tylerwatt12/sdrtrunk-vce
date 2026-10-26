@@ -495,13 +495,25 @@ public class AliasModel
     /**
      * Retrieves an alias list specified by the alias list configuration identifier
      *
-     * @param configurationIdentifier containing the name of an alias list
+     * @param configurationIdentifier containing the stable list identity and its captured display name
      * @return alias list or null.
      */
     public AliasList getAliasList(AliasListConfigurationIdentifier configurationIdentifier)
     {
         if(configurationIdentifier != null && configurationIdentifier.isValid())
         {
+            long aliasListId = configurationIdentifier.getAliasListId();
+            if(aliasListId > AliasListDefinition.UNASSIGNED_ID)
+            {
+                AliasList cached = mAliasListMap.get(aliasListId);
+                if(cached != null) return cached;
+
+                AliasListDefinition definition = getAliasListDefinition(aliasListId);
+                //A removed list must never resolve to another list that reuses its former display name.
+                return definition != null ? getAliasList(definition) :
+                    AliasList.empty(configurationIdentifier.getValue());
+            }
+
             return getAliasList(configurationIdentifier.getValue());
         }
 

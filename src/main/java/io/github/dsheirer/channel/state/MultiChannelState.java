@@ -357,7 +357,8 @@ public class MultiChannelState extends AbstractChannelState implements IDecoderS
 
             if(mAliasModel != null && mAliasModel.isAliasListCompatible(channel))
             {
-                identifierCollection.update(AliasListConfigurationIdentifier.create(channel.getAliasListName()));
+                identifierCollection.update(AliasListConfigurationIdentifier.create(channel.getAliasListId(),
+                    channel.getAliasListName()));
             }
             else if(existingAliasList != null)
             {

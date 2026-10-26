@@ -14,11 +14,16 @@ package io.github.dsheirer.channel.state;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasListDefinition;
+import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
+import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -52,6 +57,56 @@ class ChannelStateConfigurationIdentityTest
 
         assertIdentity(updates, 1);
         assertIdentity(updates, 2);
+    }
+
+    @Test
+    void singleChannelRenamePublishesStableAliasIdentityWithTheNewDisplayName()
+    {
+        AliasListDefinition definition = definition("Original");
+        AliasModel aliases = new AliasModel();
+        aliases.replaceCommittedConfiguration(List.of(definition), List.of());
+        Channel channel = channel();
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        channel.setAliasListDefinition(definition);
+        SingleChannelState state = new SingleChannelState(channel, aliases);
+        List<IdentifierUpdateNotification> updates = new ArrayList<>();
+        state.setIdentifierUpdateListener(updates::add);
+        state.start();
+        assertAliasIdentity(updates, 0, "Original");
+
+        updates.clear();
+        AliasListDefinition renamed = definition("Renamed");
+        aliases.replaceCommittedConfiguration(List.of(renamed), List.of());
+        channel.setAliasListDefinition(renamed);
+        state.channelConfigurationChanged(new ChannelConfigurationChangeNotification(channel));
+
+        assertAliasIdentity(updates, 0, "Renamed");
+    }
+
+    @Test
+    void multiChannelRenamePublishesStableAliasIdentityForEveryTimeslot()
+    {
+        AliasListDefinition definition = definition("Original");
+        AliasModel aliases = new AliasModel();
+        aliases.replaceCommittedConfiguration(List.of(definition), List.of());
+        Channel channel = channel();
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        channel.setAliasListDefinition(definition);
+        MultiChannelState state = new MultiChannelState(channel, aliases, new int[]{1, 2});
+        List<IdentifierUpdateNotification> updates = new ArrayList<>();
+        state.setIdentifierUpdateListener(updates::add);
+        state.start();
+        assertAliasIdentity(updates, 1, "Original");
+        assertAliasIdentity(updates, 2, "Original");
+
+        updates.clear();
+        AliasListDefinition renamed = definition("Renamed");
+        aliases.replaceCommittedConfiguration(List.of(renamed), List.of());
+        channel.setAliasListDefinition(renamed);
+        state.channelConfigurationChanged(new ChannelConfigurationChangeNotification(channel));
+
+        assertAliasIdentity(updates, 1, "Renamed");
+        assertAliasIdentity(updates, 2, "Renamed");
     }
 
     @Test
@@ -112,6 +167,27 @@ class ChannelStateConfigurationIdentityTest
         Channel channel = new Channel("Control");
         channel.setConfigurationId(CONFIGURATION_ID);
         return channel;
+    }
+
+    private static AliasListDefinition definition(String name)
+    {
+        AliasListDefinition definition = new AliasListDefinition(name, AliasListFamily.P25);
+        definition.setId(7);
+        return definition;
+    }
+
+    private static void assertAliasIdentity(List<IdentifierUpdateNotification> updates, int timeslot, String name)
+    {
+        List<AliasListConfigurationIdentifier> matches = updates.stream()
+            .filter(IdentifierUpdateNotification::isAdd)
+            .filter(update -> update.getTimeslot() == timeslot)
+            .map(IdentifierUpdateNotification::getIdentifier)
+            .filter(AliasListConfigurationIdentifier.class::isInstance)
+            .map(AliasListConfigurationIdentifier.class::cast)
+            .toList();
+        assertEquals(1, matches.size());
+        assertEquals(7, matches.getFirst().getAliasListId());
+        assertEquals(name, matches.getFirst().getValue());
     }
 
     private static void assertIdentity(List<IdentifierUpdateNotification> updates, int timeslot)

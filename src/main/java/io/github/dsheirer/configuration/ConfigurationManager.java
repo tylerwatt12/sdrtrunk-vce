@@ -22,18 +22,21 @@ import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasAdministrationService;
 import io.github.dsheirer.alias.AliasConfigurationSnapshot;
 import io.github.dsheirer.alias.AliasConfigurationEquality;
+import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.BroadcastModel;
 import io.github.dsheirer.audio.broadcast.StreamingAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelConfigurationChangeNotification;
 import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.configuration.ConfigurationRepository;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService;
@@ -82,6 +85,8 @@ public class ConfigurationManager implements AutoCloseable
     private final ChannelAdministrationService mChannelAdministrationService;
     private final ScanListModel mScanListModel;
     private final AtomicLong mAliasConfigurationRevision = new AtomicLong();
+    //Retained across observer failures so recovery replays live metadata notifications after refreshing the names.
+    private final Set<String> mAliasListNameRefreshPending = new HashSet<>();
     private final AtomicLong mChannelConfigurationRevision = new AtomicLong();
     private final AtomicLong mStreamingConfigurationRevision = new AtomicLong();
     private StreamingAdministrationService mStreamingAdministrationService;
@@ -813,6 +818,11 @@ public class ConfigurationManager implements AutoCloseable
                 publication.changedAliasIds(), publication.definitionsChanged());
         }
 
+        if(publication.definitionsChanged())
+        {
+            refreshAliasListChannelNames();
+        }
+
         if(publication.scanListsChanged() && !publication.scanListsFirst())
         {
             mScanListModel.replaceConfiguration(committed.scanLists());
@@ -820,6 +830,44 @@ public class ConfigurationManager implements AutoCloseable
 
         mAliasConfigurationRevision.incrementAndGet();
         mChannelCatalogDirty = true;
+    }
+
+    /** Refreshes presentation metadata in place; active decoding chains keep their current channel and source. */
+    private void refreshAliasListChannelNames()
+    {
+        for(Channel saved: mChannelModel.getChannels())
+        {
+            AliasListDefinition definition = mAliasModel.getAliasListDefinition(saved.getAliasListId());
+            if(definition == null)
+            {
+                continue;
+            }
+
+            boolean savedNameChanged = !Objects.equals(saved.getAliasListName(), definition.getName());
+            if(savedNameChanged)
+            {
+                mAliasListNameRefreshPending.add(saved.getConfigurationId());
+                saved.setAliasListDefinition(definition);
+            }
+            boolean refreshPending = mAliasListNameRefreshPending.contains(saved.getConfigurationId());
+            for(ProcessingChain chain: mChannelProcessingManager.getProcessingChainsByConfiguration(
+                saved.getConfigurationId(), null))
+            {
+                Channel active = chain.getCurrentChannel();
+                if(active != null && active.getAliasListId() == definition.getId() &&
+                    (refreshPending || !Objects.equals(active.getAliasListName(), definition.getName())))
+                {
+                    mAliasListNameRefreshPending.add(saved.getConfigurationId());
+                    active.setAliasListDefinition(definition);
+                    chain.channelConfigurationChanged(new ChannelConfigurationChangeNotification(active));
+                }
+            }
+            if(mAliasListNameRefreshPending.contains(saved.getConfigurationId()))
+            {
+                mChannelModel.receive(new ChannelEvent(saved, ChannelEvent.Event.NOTIFICATION_CONFIGURATION_CHANGE));
+                mAliasListNameRefreshPending.remove(saved.getConfigurationId());
+            }
+        }
     }
 
     private AliasConfigurationSnapshot loadCommittedAliasConfiguration()

@@ -66,6 +66,17 @@ class BroadcastifyCallBroadcasterTest
 
     private void verifyDecodedNxdnZeroUpload(Integer streamAs) throws Exception
     {
+        verifyDecodedNxdnZeroUpload(streamAs, false);
+    }
+
+    @Test
+    void uploadsCapturedAliasIdentityAfterRenameAndNameReuse() throws Exception
+    {
+        verifyDecodedNxdnZeroUpload(700, true);
+    }
+
+    private void verifyDecodedNxdnZeroUpload(Integer streamAs, boolean renameList) throws Exception
+    {
         AliasListDefinition definition = new AliasListDefinition("NXDN wire fixture", AliasListFamily.NXDN);
         definition.setId(7);
         Alias group = new Alias("Security");
@@ -79,7 +90,7 @@ class BroadcastifyCallBroadcasterTest
             .audio();
         MutableIdentifierCollection identifiers = new MutableIdentifierCollection(
             call.snapshot().identifierCollection().getIdentifiers());
-        identifiers.silentUpdate(AliasListConfigurationIdentifier.create(definition.getName()));
+        identifiers.silentUpdate(AliasListConfigurationIdentifier.create(definition.getId(), definition.getName()));
         identifiers.silentUpdate(FrequencyConfigurationIdentifier.create(461_125_000L));
         AtomicReference<Map<String,String>> submitted = new AtomicReference<>();
         AtomicReference<byte[]> uploaded = new AtomicReference<>();
@@ -121,6 +132,20 @@ class BroadcastifyCallBroadcasterTest
             long startedAt = System.currentTimeMillis();
             AudioRecording recording = new AudioRecording(path, List.of(), identifiers.copyOf(), startedAt,
                 call.getDuration());
+            if(renameList)
+            {
+                AliasListDefinition renamed = new AliasListDefinition("Renamed NXDN", AliasListFamily.NXDN);
+                renamed.setId(definition.getId());
+                AliasListDefinition reusedName = new AliasListDefinition(definition.getName(), AliasListFamily.NXDN);
+                reusedName.setId(8);
+                Alias wrongList = new Alias("Other list");
+                wrongList.setId(2);
+                wrongList.setAliasListDefinition(reusedName);
+                wrongList.setMatchIdentifier(new Talkgroup(Protocol.NXDN, 0));
+                wrongList.setStreamTalkgroupAlias(new StreamAsTalkgroup(999));
+                aliases.publishCommittedConfiguration(List.of(renamed, reusedName), List.of(group, wrongList),
+                    Set.of(wrongList.getId()), true);
+            }
             recording.addPendingReplay();
             broadcaster.receive(recording);
             assertTrue(streamed.await(5, TimeUnit.SECONDS), "Both Broadcastify upload stages must complete");
