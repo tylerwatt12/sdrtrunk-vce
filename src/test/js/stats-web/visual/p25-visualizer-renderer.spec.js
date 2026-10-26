@@ -189,13 +189,14 @@ async function affiliationScene(page) {
       fixture.renderer.dispose();
     };
   });
+  await page.clock.runFor(100);
   await expect.poll(() => page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(-82);
 }
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`affiliation focus shows the old attachment, follows FIFO moves, then attaches ${theme} ${width}px`,
     async ({ page }) => {
-      await openRenderer(page, theme, width);
+      await openRenderer(page, theme, width, false, true);
       await affiliationScene(page);
       await page.evaluate(() => {
         const fixture = window.visualizerFixture;
@@ -205,15 +206,16 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
         fixture.record();
       });
       expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(true);
-      await page.waitForTimeout(600);
+      await page.clock.runFor(600);
       await page.evaluate(() => {
         const fixture = window.visualizerFixture;
         fixture.renderer.setData(fixture.affiliationData('C'), { animate: false });
       });
-      await expect.poll(() => page.evaluate(() => window.visualizerFixture.samples.some((sample) =>
-        sample.attached[0] === 'B')), { timeout: 3_500 }).toBe(true);
-      await expect.poll(() => page.evaluate(() => window.visualizerFixture.capture().attached[0]),
-        { timeout: 2_500 }).toBe('C');
+      await page.clock.runFor(1_600);
+      expect(await page.evaluate(() => window.visualizerFixture.samples.some((sample) =>
+        sample.attached[0] === 'B'))).toBe(true);
+      await page.clock.runFor(1_300);
+      expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['C']);
       const result = await page.evaluate(() => {
         const fixture = window.visualizerFixture;
         cancelAnimationFrame(fixture.recording);
@@ -240,6 +242,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       expect(result.final.radio.y).toBeCloseTo(-80, 1);
       expect(result.final.attached).toEqual(['C']);
       expect(result.refreshes).toBe(0);
+      await page.clock.resume();
       await expect(page.locator('.network-visualizer-stage')).toHaveScreenshot(
         `network-visualizer-affiliation-${theme}-${width}.png`);
       await page.evaluate(() => window.visualizerFixture.stop());
@@ -248,7 +251,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
 }
 
 test('manual camera and scope changes cancel affiliation follow without dangling links', async ({ page }) => {
-  await openRenderer(page, 'light', 1280);
+  await openRenderer(page, 'light', 1280, false, true);
   await affiliationScene(page);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
@@ -258,7 +261,7 @@ test('manual camera and scope changes cancel affiliation follow without dangling
     fixture.renderer.setMode('manual');
     fixture.beforeManual = fixture.capture();
   });
-  await page.waitForTimeout(250);
+  await page.clock.runFor(250);
   const manual = await page.evaluate(() => ({ before: window.visualizerFixture.beforeManual,
     after: window.visualizerFixture.capture() }));
   expect(manual.after.attached).toEqual(['C']);
@@ -277,7 +280,7 @@ test('manual camera and scope changes cancel affiliation follow without dangling
     fixture.renderer.setData(scoped, { animate: false });
     fixture.renderer.enterTalkgroup('system', 'A', { immediate: true });
   });
-  await page.waitForTimeout(250);
+  await page.clock.runFor(250);
   const scoped = await page.evaluate(() => {
     const fixture = window.visualizerFixture;
     const graph = fixture.graph.graphData();
@@ -292,7 +295,7 @@ test('manual camera and scope changes cancel affiliation follow without dangling
 });
 
 test('affiliation focus animates with reduced motion and expired evidence settles without replay', async ({ page }) => {
-  await openRenderer(page, 'dark', 390, true);
+  await openRenderer(page, 'dark', 390, true, true);
   await affiliationScene(page);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
@@ -303,13 +306,13 @@ test('affiliation focus animates with reduced motion and expired evidence settle
   expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(true);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.waitForTimeout(600);
+  await page.clock.runFor(600);
   const focusing = await page.evaluate(() => window.visualizerFixture.capture());
   expect(focusing.radio.x).toBeCloseTo(-82, 1);
   expect(focusing.attached).toEqual(['A']);
   expect(focusing.target.x).toBeLessThan(60);
-  await expect.poll(() => page.evaluate(() => window.visualizerFixture.capture().attached[0]),
-    { timeout: 5_000 }).toBe('C');
+  await page.clock.runFor(3_000);
+  expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['C']);
   expect(await page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBeCloseTo(18, 1);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
@@ -318,17 +321,17 @@ test('affiliation focus animates with reduced motion and expired evidence settle
       fixture.changes.map((change) => ({ ...change, remainingMs: 100 })) });
     fixture.renderer.focusAffiliation('radio-7001');
   });
-  await page.waitForTimeout(300);
+  await page.clock.runFor(300);
   const settled = await page.evaluate(() => window.visualizerFixture.capture());
   expect(settled.data.x).toBe(18);
   expect(settled.attached).toEqual(['C']);
-  await page.waitForTimeout(150);
+  await page.clock.runFor(150);
   expect(await page.evaluate(() => window.visualizerFixture.mesh().position.x)).toBe(18);
   await page.evaluate(() => window.visualizerFixture.stop());
 });
 
 test('new canonical evidence cancels an obsolete waiting or travelling affiliation', async ({ page }) => {
-  await openRenderer(page, 'light', 1280);
+  await openRenderer(page, 'light', 1280, false, true);
   await affiliationScene(page);
   for (const [destination, delay] of [['', 100], ['C', 500]]) {
     await page.evaluate(() => {
@@ -337,7 +340,7 @@ test('new canonical evidence cancels an obsolete waiting or travelling affiliati
       fixture.renderer.setData(fixture.affiliationData('A'), { animate: false });
       fixture.renderer.setData(fixture.affiliationData('B'), { affiliationChanges: [fixture.changes[0]] });
     });
-    await page.waitForTimeout(delay);
+    await page.clock.runFor(delay);
     await page.evaluate((current) => {
       const fixture = window.visualizerFixture;
       const corrected = fixture.affiliationData(current || 'C');
@@ -345,11 +348,11 @@ test('new canonical evidence cancels an obsolete waiting or travelling affiliati
       if (!current) corrected.links = [];
       fixture.renderer.setData(corrected);
     }, destination);
-    await page.waitForTimeout(250);
+    await page.clock.runFor(250);
     const corrected = await page.evaluate(() => window.visualizerFixture.capture());
     expect(corrected.data.x).toBe(18);
     expect(corrected.attached).toEqual(destination ? ['C'] : []);
-    await page.waitForTimeout(900);
+    await page.clock.runFor(900);
     expect((await page.evaluate(() => window.visualizerFixture.capture())).attached)
       .toEqual(destination ? ['C'] : []);
   }
@@ -357,7 +360,7 @@ test('new canonical evidence cancels an obsolete waiting or travelling affiliati
 });
 
 test('later moves of the focused radio continue tracking until manual interaction', async ({ page }) => {
-  await openRenderer(page, 'dark', 390);
+  await openRenderer(page, 'dark', 390, false, true);
   await affiliationScene(page);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
@@ -365,15 +368,15 @@ test('later moves of the focused radio continue tracking until manual interactio
     fixture.renderer.setData(fixture.affiliationData('B'), { affiliationChanges: [fixture.changes[0]] });
     fixture.renderer.focusAffiliation('radio-7001', 120);
   });
-  await expect.poll(() => page.evaluate(() => window.visualizerFixture.capture().attached[0]),
-    { timeout: 2_500 }).toBe('B');
+  await page.clock.runFor(1_500);
+  expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['B']);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
     fixture.renderer.setCameraPhase('hold');
     fixture.beforeLater = fixture.capture();
     fixture.renderer.setData(fixture.affiliationData('C'), { affiliationChanges: [fixture.changes[1]] });
   });
-  await page.waitForTimeout(600);
+  await page.clock.runFor(600);
   const tracking = await page.evaluate(() => ({ before: window.visualizerFixture.beforeLater,
     after: window.visualizerFixture.capture() }));
   expect(tracking.after.data.x).toBeLessThan(118);
@@ -385,7 +388,8 @@ test('later moves of the focused radio continue tracking until manual interactio
     fixture.graph.controls().dispatchEvent({ type: 'start' });
     fixture.afterInteraction = fixture.capture();
   });
-  await expect.poll(() => page.evaluate(() => window.visualizerFixture.capture().attached[0])).toBe('C');
+  await page.clock.runFor(800);
+  expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['C']);
   const interrupted = await page.evaluate(() => ({ before: window.visualizerFixture.afterInteraction,
     after: window.visualizerFixture.capture() }));
   for (const axis of ['x', 'y', 'z']) {
@@ -395,7 +399,7 @@ test('later moves of the focused radio continue tracking until manual interactio
 });
 
 test('fresh Manual updates move the radio and attach on arrival while the camera stays put', async ({ page }) => {
-  await openRenderer(page, 'light', 1280);
+  await openRenderer(page, 'light', 1280, false, true);
   await affiliationScene(page);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
@@ -406,19 +410,20 @@ test('fresh Manual updates move the radio and attach on arrival while the camera
     fixture.focused = fixture.renderer.focusAffiliation('radio-7001');
   });
   expect(await page.evaluate(() => window.visualizerFixture.focused)).toBe(false);
-  await page.waitForTimeout(600);
+  await page.clock.runFor(600);
   const moving = await page.evaluate(() => ({ before: window.visualizerFixture.beforeManual,
     after: window.visualizerFixture.capture() }));
   expect(moving.after.radio.x).toBeGreaterThan(-82);
   expect(moving.after.radio.x).toBeLessThan(118);
   expect(moving.after.attached).toEqual([]);
   expect(moving.after.target).toEqual(moving.before.target);
-  await expect.poll(() => page.evaluate(() => window.visualizerFixture.capture().attached[0])).toBe('B');
+  await page.clock.runFor(800);
+  expect((await page.evaluate(() => window.visualizerFixture.capture())).attached).toEqual(['B']);
   await page.evaluate(() => window.visualizerFixture.stop());
 });
 
 test('a response arriving after the view becomes hidden updates state without queued replay', async ({ page }) => {
-  await openRenderer(page, 'light', 1280);
+  await openRenderer(page, 'light', 1280, false, true);
   await affiliationScene(page);
   await page.evaluate(() => {
     const fixture = window.visualizerFixture;
@@ -440,7 +445,7 @@ test('a response arriving after the view becomes hidden updates state without qu
     window.visualizerFixture.hidden = false;
     document.dispatchEvent(new Event('visibilitychange'));
   });
-  await page.waitForTimeout(300);
+  await page.clock.runFor(300);
   const resumed = await page.evaluate(() => ({ before: window.visualizerFixture.beforeHidden,
     after: window.visualizerFixture.capture() }));
   expect(resumed.after.radio.x).toBe(18);

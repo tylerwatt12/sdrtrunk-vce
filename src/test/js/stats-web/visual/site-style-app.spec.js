@@ -400,8 +400,7 @@ test('RadioReference lookup region failed save preserves draft and blocks duplic
     await modal.getByLabel('Username', { exact: true }).fill('fixture.changed');
     await modal.getByLabel('Password', { exact: true }).fill('fixture-new-password');
     const remember = modal.getByRole('checkbox', { name: 'Remember credentials on this receiver', exact: true });
-    await remember.focus();
-    await remember.press('Space');
+    await remember.locator('..').click();
     await expect(remember).not.toBeChecked();
     await page.keyboard.press('Escape');
     await confirmation.getByRole('button', { name: 'Discard changes', exact: true }).click();
