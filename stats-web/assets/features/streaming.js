@@ -643,7 +643,8 @@ export function createStreamingWorkspace(deps) {
                   if (alive) { modal.setBusy(false); modal.close(); void openEditor(saved.configuration_id); }
                 } });
             } catch (_) { /* Preserve the feed list and its recovery feedback. */ }
-          });
+          }, !row.configured);
+          add.classList.add('streaming-feed-add');
           add.disabled = row.configured;
           cardActions.append(add);
           card.append(header, facts, cardMessage, cardActions);

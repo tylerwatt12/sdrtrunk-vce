@@ -112,7 +112,7 @@ test('real Alias Editor bulk actions stay above a long table while scrolling', a
   })).toBe(true);
 
   await bar.getByRole('button', { name: 'Delete', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Delete · 1 aliases' });
+  const dialog = page.getByRole('dialog', { name: 'Delete · 1 alias', exact: true });
   const confirmation = dialog.getByRole('checkbox', {
     name: 'I understand this permanently deletes exactly 1 selected aliases.'
   });

@@ -621,6 +621,16 @@ for(const scenario of [
   await expect(modal.locator('table[data-table-type="streaming-feeds"]')).toHaveCount(0);
   await expect(modal.getByRole('heading',{name:'Metro Public Safety Dispatch and Regional Interoperability Network',exact:true})).toBeVisible();
   await expect(modal.getByRole('button',{name:'Already added',exact:true})).toBeDisabled();
+  const add = modal.getByRole('button',{name:'Add feed',exact:true}).first();
+  await expect(add).toHaveClass(/ui-button-primary/);
+  if(scenario.mobile) {
+    const [controlWidth, contentWidth] = await add.evaluate(element => [
+      element.getBoundingClientRect().width,
+      element.parentElement.clientWidth - parseFloat(getComputedStyle(element.parentElement).paddingLeft) -
+        parseFloat(getComputedStyle(element.parentElement).paddingRight)
+    ]);
+    expect(Math.abs(controlWidth-contentWidth)).toBeLessThanOrEqual(1);
+  }
   expect(await modal.evaluate(element=>element.scrollWidth)).toBeLessThanOrEqual(scenario.mobile?390:900);
   await expect(modal).toHaveScreenshot(scenario.snapshot);
 });
@@ -643,7 +653,14 @@ test('available Broadcastify feed opens its destination editor',async({page})=>{
   await install(page);
   await page.getByRole('button',{name:'Find Broadcastify feeds',exact:true}).click();
   let modal=page.getByRole('dialog');
+  await expect(modal.locator('.streaming-feed-card')).toHaveCount(3);
+  await page.evaluate(()=>{window.streamingTest.holdWrite=true;});
   await modal.getByRole('button',{name:'Add feed',exact:true}).first().click();
+  await expect(modal.getByText('Adding feed…',{exact:true})).toBeVisible();
+  for(const control of await modal.getByRole('button').all()) await expect(control).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(modal.getByRole('heading',{name:'Available Broadcastify feeds',exact:true})).toBeVisible();
+  await page.evaluate(()=>{window.streamingTest.holdWrite=false;window.streamingTest.releaseWrite();});
   modal=page.getByRole('dialog');
   await expect(modal.getByRole('heading',{name:'Streaming destination',exact:true})).toBeVisible();
   await expect(modal.getByLabel('Name',{exact:true})).toHaveValue('County Calls');
