@@ -259,7 +259,8 @@ class SpectrumDiscoveryHandoffIntegrationTest
                 assertEquals(200, foreign.statusCode());
                 var failed = new ObjectMapper().readTree(foreign.body()).path("data");
                 assertFalse(failed.path("results").get(0).path("success").booleanValue());
-                assertTrue(failed.path("results").get(0).path("message").textValue().contains("another browser"));
+                String ownershipLoss = failed.path("results").get(0).path("message").textValue();
+                assertTrue(ownershipLoss.contains("taken over"), ownershipLoss);
                 assertTrue(fixture.settings.ownsBrowse(fixture.tuner, another.leaseId()));
                 assertEquals(0, fixture.sources.getTunerChannelCount());
                 allowed.set(false);

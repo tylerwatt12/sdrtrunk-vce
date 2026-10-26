@@ -1157,6 +1157,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertEquals(1, tunerManager.getSourceRequests(),
                 "the current-frequency grant unexpectedly requested a traffic source");
 
+            awaitDeferredMetadata(manager, parent);
             trafficManager.requestRestChannelHandoff(parent, CURRENT_FREQUENCY,
                 restChannel(3, FIRST_REST_FREQUENCY));
             assertTrue(awaitCondition(() -> manager.getPendingDmrRestChannelAttemptCount() == 0 &&
@@ -1272,17 +1273,7 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertTrue(manager
                 .getProcessingChainsByConfiguration(parent.getConfigurationId(), SECOND_REST_FREQUENCY).isEmpty());
 
-            //The joined callback can leave a deferred snapshot that briefly acquires the restored authority.
-            //Fence that FIFO observer work before testing whether the pooled channel accepts one clean retry.
-            CountDownLatch metadataDrained = new CountDownLatch(1);
-            manager.process(new ProtocolSiteMetadataSnapshotRequest(parent,
-                SiteReceiverContext.capture(parent, null, CURRENT_FREQUENCY), () ->
-                {
-                    metadataDrained.countDown();
-                    return null;
-                }, System.currentTimeMillis()));
-            assertTrue(metadataDrained.await(5, TimeUnit.SECONDS), "Deferred DMR metadata did not finish");
-
+            awaitDeferredMetadata(manager, parent);
             trafficManager.requestRestChannelHandoff(parent, CURRENT_FREQUENCY,
                 restChannel(3, FIRST_REST_FREQUENCY));
             assertTrue(awaitCondition(() ->
@@ -2008,6 +1999,20 @@ class ChannelProcessingManagerDMRRestHandoffTest
         }
 
         return latch.getCount() <= expectedRemaining;
+    }
+
+    private static void awaitDeferredMetadata(ChannelProcessingManager manager, Channel parent) throws InterruptedException
+    {
+        //A joined grant can leave a deferred snapshot that briefly acquires allocation authority.
+        //Fence that FIFO observer work before asserting that one clean handoff retry succeeds.
+        CountDownLatch metadataDrained = new CountDownLatch(1);
+        manager.process(new ProtocolSiteMetadataSnapshotRequest(parent,
+            SiteReceiverContext.capture(parent, null, CURRENT_FREQUENCY), () ->
+            {
+                metadataDrained.countDown();
+                return null;
+            }, System.currentTimeMillis()));
+        assertTrue(metadataDrained.await(5, TimeUnit.SECONDS), "Deferred DMR metadata did not finish");
     }
 
     private static boolean awaitCondition(BooleanSupplier condition, long timeoutSeconds)
