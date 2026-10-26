@@ -38,13 +38,28 @@ async function main() {
   assert.ok(spectrumSearchIdentityFacts(nxdn, hex).some(([name, value]) => name === 'RAN' && value === 9));
   assert.equal(spectrumSearchSystemName({ ...dmr, system_name: 'Transit' }), 'Transit');
 
-  const node = (tag, className, text = '') => ({ tag, className, children: [text], attributes: {},
-    classList: { add() {}, toggle() {} },
-    setAttribute(name, value) { this.attributes[name] = value; },
-    get firstElementChild() { return this.children.find((child) => child?.tag); },
-    append(...children) { this.children.push(...children); },
-    replaceChildren(...children) { this.children = children; } });
+  const node = (tag, className = '', text = '') => {
+    const element = { tag, className, children: [text], attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; },
+      get firstElementChild() { return this.children.find((child) => child?.tag); },
+      append(...children) { this.children.push(...children); },
+      replaceChildren(...children) { this.children = children; } };
+    element.classList = {
+      add(...names) { element.className = [...new Set([...element.className.split(/\s+/).filter(Boolean), ...names])].join(' '); },
+      toggle(name, enabled) {
+        const names = new Set(element.className.split(/\s+/).filter(Boolean));
+        if (enabled) names.add(name); else names.delete(name);
+        element.className = [...names].join(' ');
+      }
+    };
+    return element;
+  };
   const ui = { node, anchor: (label, url) => ({ label, url }), channelMHz: (value) => String(value / 1e6) };
+  const descendants = (element) => [element, ...(element?.children || []).flatMap((child) =>
+    child && typeof child === 'object' ? descendants(child) : [])];
+  const withClass = (element, name) => descendants(element).filter((child) =>
+    String(child.className || '').split(/\s+/).includes(name));
+
   const directoryCandidates = [
     { candidate_id: 'north', group: 'county', radio_reference: { state: 'matched' } },
     { candidate_id: 'south', group: 'county', radio_reference: { state: 'pending' } },
@@ -110,6 +125,71 @@ async function main() {
   const empty = createDiscoveryCompletion(ui, { imports: { targets: [{ state: 'imported',
     added: 0, updated: 0, unchanged: 0 }] } });
   assert.match(JSON.stringify(empty), /No talkgroups available/);
+  const grouped = createDiscoveryCompletion(ui, { grouped: true, channels: [
+    { name: 'County Public Safety · North Simulcast', system: 'County Public Safety', site: 'North Simulcast', status: 'added',
+      alias_list_id: 21, alias_list_name: 'Shared display name', alias_list_existing: true },
+    { name: 'County Public Safety · South Simulcast', system: 'County Public Safety', site: 'South Simulcast', status: 'saved',
+      alias_list_id: 21, alias_list_name: 'Shared display name', alias_list_existing: true },
+    { name: 'My County Public Safety overnight monitor with a long custom label', system: 'County Public Safety',
+      status: 'failed', error: 'Receiver changes could not load.' },
+    { name: 'County Public Safety · Overnight dispatch custom label', system: 'County Public Safety', site: 'North Simulcast', status: 'added' },
+    { name: 'Transit · East', system: 'Transit', site: 'East', status: 'added', alias_list_id: 22,
+      alias_list_name: 'Shared display name', alias_list_existing: false },
+    { name: 'Transit ·East custom spacing', system: 'Transit', status: 'already_saved', alias_list_id: 22,
+      alias_list_name: 'Shared display name', alias_list_existing: false }
+  ], imports: { targets: [
+    { alias_list_id: 21, alias_list_name: 'Shared display name', state: 'imported', added: 12 },
+    { alias_list_id: 21, alias_list_name: 'Shared display name', state: 'imported', added: 12 },
+    { alias_list_id: 22, alias_list_name: 'Shared display name', state: 'failed', message: 'Transit import failed. Retry.' },
+    { alias_list_id: 99, alias_list_name: 'Shared display name', state: 'failed', message: 'Unrelated import failed. Retry.' }
+  ] } });
+  const groupedSections = withClass(grouped, 'discovery-completion-group');
+  assert.equal(groupedSections.length, 2);
+  assert.deepEqual(withClass(groupedSections[0], 'discovery-completion-name').map((value) => value.children[0]),
+    ['North Simulcast', 'South Simulcast', 'My County Public Safety overnight monitor with a long custom label',
+      'County Public Safety · Overnight dispatch custom label'],
+    'Grouped results compact only the exact generated system and site name; a prefixed custom name remains intact.');
+  assert.deepEqual(withClass(groupedSections[1], 'discovery-completion-name').map((value) => value.children[0]),
+    ['East', 'Transit ·East custom spacing'], 'Custom spacing and custom names must remain unchanged.');
+  assert.equal(withClass(grouped, 'discovery-completion-import').length, 3,
+    'Import results deduplicate actual IDs while distinct IDs with the same name remain distinct.');
+  assert.match(JSON.stringify(withClass(groupedSections[0], 'discovery-completion-group-summary')), /12 talkgroups added/);
+  assert.doesNotMatch(JSON.stringify(groupedSections[0]), /Transit import failed|Unrelated import failed/);
+  assert.match(JSON.stringify(withClass(groupedSections[1], 'discovery-completion-group-summary')), /Transit import failed/);
+  assert.doesNotMatch(JSON.stringify(groupedSections[1]), /12 talkgroups added|Unrelated import failed/);
+  assert.match(JSON.stringify(withClass(grouped, 'discovery-completion-imports')), /Unrelated import failed/,
+    'A valid, different destination ID must never be associated by its matching display name.');
+  assert.match(JSON.stringify(groupedSections[0]), /Could not add|Receiver changes could not load/);
+  assert.match(JSON.stringify(groupedSections[1]), /Already added/);
+  assert.equal(withClass(grouped, 'discovery-completion-status').length, 2,
+    'Grouped success rows omit repeated Added pills while failures and known channels keep their states.');
+  const groupedDetails = withClass(grouped, 'discovery-completion-details')[0];
+  assert.match(JSON.stringify(groupedDetails), /County Public Safety · North Simulcast/);
+  assert.match(JSON.stringify(groupedDetails), /County Public Safety · South Simulcast/);
+  assert.match(JSON.stringify(groupedDetails), /Transit · East/);
+  assert.equal(withClass(groupedSections[0], 'discovery-completion-note').length, 1);
+  assert.equal(withClass(groupedSections[1], 'discovery-completion-note').length, 1);
+  const sharedDestination = createDiscoveryCompletion(ui, { grouped: true, channels: [
+    { name: 'County · North', system: 'County', status: 'added', alias_list_id: 30, alias_list_name: 'Combined' },
+    { name: 'Transit · South', system: 'Transit', status: 'added', alias_list_id: 30, alias_list_name: 'Combined' }
+  ], imports: { targets: [{ alias_list_id: 30, alias_list_name: 'Combined', state: 'imported', added: 9 }] } });
+  assert.equal(withClass(sharedDestination, 'discovery-completion-import').length, 1);
+  assert.ok(withClass(sharedDestination, 'discovery-completion-group').every((group) =>
+    withClass(group, 'discovery-completion-import').length === 0),
+  'A shared destination spanning different system groups stays global rather than implying one system owns the import.');
+  assert.match(JSON.stringify(withClass(sharedDestination, 'discovery-completion-imports')), /9 talkgroups added/);
+  const legacyDestination = createDiscoveryCompletion(ui, { grouped: true,
+    channels: [{ name: 'Legacy · North', system: 'Legacy', status: 'added', alias_list_name: 'Legacy aliases' }],
+    imports: { targets: [{ alias_list_name: 'Legacy aliases', state: 'imported', added: 3 }] } });
+  assert.match(JSON.stringify(withClass(legacyDestination, 'discovery-completion-group-summary')), /3 talkgroups added/,
+    'Legacy rows without IDs on either side may use an exact Alias List name as a compatibility fallback.');
+  const missingChannelId = createDiscoveryCompletion(ui, { grouped: true,
+    channels: [{ name: 'Legacy · North', system: 'Legacy', status: 'added', alias_list_name: 'Legacy aliases' }],
+    imports: { targets: [{ alias_list_id: 99, alias_list_name: 'Legacy aliases', state: 'imported', added: 4 }] } });
+  assert.ok(withClass(missingChannelId, 'discovery-completion-group').every((group) =>
+    withClass(group, 'discovery-completion-import').length === 0),
+  'A positive target ID cannot match an ID-less channel by name alone.');
+  assert.match(JSON.stringify(withClass(missingChannelId, 'discovery-completion-imports')), /4 talkgroups added/);
   const lifecycleCalls = [];
   const savedStart = await requestChannelAction(async (url, options) => {
     lifecycleCalls.push([url, options]);

@@ -2,7 +2,7 @@ import { systemIdentity } from '../core/system-labels.js?v=2';
 import { spectrumSearchProtocolLabel, spectrumSearchSystemName, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchGroupKey } from './spectrum-search-data.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=2';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, createDiscoveryCompletion, createDiscoveryRadioReferenceWait, createDiscoveryAliasListChoice, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases, discoveryAliasImportTargets } from './discovery-radioreference.js?v=16';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, createDiscoveryCompletion, createDiscoveryRadioReferenceWait, createDiscoveryAliasListChoice, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases, discoveryAliasImportTargets } from './discovery-radioreference.js?v=17';
 
 export function openSpectrumSearchWizard(ui, context = {}) {
   const { node, openReadOnlyModal, requestJson, uiActionButton, iconButton, uiSelect, uiSelectFrame, uiPill,

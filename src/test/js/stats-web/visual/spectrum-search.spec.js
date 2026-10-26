@@ -422,6 +422,108 @@ async function addChannels(page, count, importChoice = importNo) {
   await add.click();
 }
 
+async function expectCompletionWidth(modal, viewportWidth) {
+  const geometry = await modal.evaluate(element => {
+    const content = element.querySelector('.modal-content');
+    const workspace = element.querySelector('.spectrum-discovery-workspace');
+    const actions = element.querySelector('.spectrum-discovery-actions');
+    const stage = element.querySelector('.spectrum-discovery-stage');
+    const padding = getComputedStyle(workspace);
+    const contentStyle = getComputedStyle(content);
+    const innerWidth = content.clientWidth - parseFloat(contentStyle.paddingLeft) - parseFloat(contentStyle.paddingRight);
+    const workspaceInnerWidth = workspace.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
+    return { workspaceWidth: workspace.getBoundingClientRect().width, innerWidth,
+      footerWidth: actions.getBoundingClientRect().width, stageWidth: stage.getBoundingClientRect().width, workspaceInnerWidth,
+      footerRight: actions.getBoundingClientRect().right,
+      workspaceRight: workspace.getBoundingClientRect().right - parseFloat(padding.paddingRight),
+      fits: [workspace, stage, actions].every(node => node.scrollWidth <= node.clientWidth + 1) };
+  });
+  expect(geometry.workspaceWidth).toBeGreaterThanOrEqual(geometry.innerWidth - 2);
+  expect(geometry.footerWidth).toBeGreaterThanOrEqual(geometry.workspaceInnerWidth - 2);
+  expect(geometry.stageWidth).toBeGreaterThanOrEqual(geometry.workspaceInnerWidth - 2);
+  expect(Math.abs(geometry.footerRight - geometry.workspaceRight)).toBeLessThanOrEqual(2);
+  expect(geometry.fits).toBe(true);
+  const bounds = await modal.boundingBox();
+  expect(bounds.x).toBeGreaterThanOrEqual(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(viewportWidth + 1);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(901);
+}
+
+for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+  test(`Finder completion fills the modal with five channels and three matched import groups in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const fixture = ohioResultsFixture();
+    const source = fixture.customCandidates;
+    const customName = 'My overnight dispatch monitor for Parma, Brooklyn and the regional emergency services network';
+    fixture.customCandidates = [source[0], source[1], source[2], source[2], source[3]].map((candidate, index) => {
+      const site = index === 3 ? 'Brooklyn Simulcast' : candidate.site_name;
+      return { ...candidate, candidate_id: `layout-${index}`, frequency_hz: 851012500 + index * 25000,
+        name: index === 4 ? customName : `${candidate.system_name} · ${site}`, site_name: site,
+        identity: { ...candidate.identity, site: index + 1 } };
+    });
+    const state = await install(page, { ...fixture, theme,
+      aliasImportCounts: { 21: { added: 6650 }, 41: { added: 454 }, 42: { added: 18 } } });
+    await complete(page);
+    await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+    await dialog(page).getByRole('button', { name: 'Review 5 channels', exact: true }).click();
+    await addChannels(page, 5, importYes);
+    const modal = dialog(page);
+    const completion = modal.locator('.discovery-completion');
+    await expect(modal.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+    await expect(modal.locator('.modal-header').getByRole('heading', { name: '5 channels added', exact: true })).toHaveCount(1);
+    await expect(completion.locator('.discovery-completion-channel')).toHaveCount(5);
+    await expect(completion.locator('.discovery-completion-group.ui-record-card')).toHaveCount(3);
+    await expect(completion.locator('.discovery-completion-import')).toHaveCount(3);
+    await expect(completion.locator('.discovery-completion-status')).toHaveCount(0);
+    for (const [system, count] of [[ohioSystems.marcs, '6,650 talkgroups added'],
+      [ohioSystems.cleveland, '454 talkgroups added'], [ohioSystems.parma, '18 talkgroups added']]) {
+      const group = completion.locator('.discovery-completion-group').filter({ has: page.getByRole('heading', { name: system, exact: true }) });
+      await expect(group).toHaveCount(1);
+      await expect(group.locator('.discovery-completion-group-summary .discovery-completion-import')).toHaveCount(1);
+      await expect(group.locator('.discovery-completion-group-summary')).toContainText(count);
+      await expect(group.locator('.discovery-completion-note')).toHaveCount(1);
+    }
+    await expect(completion.locator('.discovery-completion-name')).toHaveText(
+      ['Cuyahoga County', 'Lake County', 'Cleveland Simulcast', 'Brooklyn Simulcast', customName]);
+    await expectCompletionWidth(modal, width);
+    await modal.screenshot({ path: testInfo.outputPath(`five-channel-completion-${theme}-${width}.png`) });
+    if (width === 390) {
+      const finalImport = completion.locator('.discovery-completion-group').last().locator('.discovery-completion-import');
+      await finalImport.scrollIntoViewIfNeeded();
+      await expect(finalImport).toBeInViewport();
+      const importBounds = await finalImport.boundingBox();
+      const footerBounds = await modal.locator('.spectrum-discovery-actions').boundingBox();
+      expect(importBounds.y + importBounds.height).toBeLessThanOrEqual(footerBounds.y + 1);
+      await modal.screenshot({ path: testInfo.outputPath(`five-channel-completion-bottom-${theme}-${width}.png`) });
+    }
+    const details = completion.locator('.discovery-completion-details');
+    await details.locator('summary').click();
+    await expect(details).toContainText(`${ohioSystems.marcs} · Cuyahoga County`);
+    await expect(details).toContainText(`${ohioSystems.cleveland} · Brooklyn Simulcast`);
+    await expect(details).toContainText(customName);
+    await expectCompletionWidth(modal, width);
+    expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+    expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(3);
+  });
+}
+
+for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+  test(`shared completion keeps the single running channel full width in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`/design-system.html?view=spectrum-discovery&state=complete&theme=${theme}`);
+    const example = page.locator('.visual-spectrum-discovery-example');
+    await expect(example).toHaveAttribute('data-completion-ready', 'true');
+    const modal = example.locator('.spectrum-discovery-modal');
+    await expect(modal.locator('.discovery-completion-channel')).toHaveCount(1);
+    await expect(modal.locator('.discovery-completion-import')).toHaveCount(1);
+    await expect(modal.locator('.discovery-completion-status')).toHaveText('Running');
+    await expect(modal.locator('.discovery-completion-name')).toHaveText(
+      'Greater Cleveland Radio Communications Network · Cleveland Simulcast');
+    await expectCompletionWidth(modal, width);
+    await modal.screenshot({ path: testInfo.outputPath(`single-channel-completion-${theme}-${width}.png`) });
+  });
+}
+
 for (const theme of ['light']) for (const width of [1280, 390]) {
   test(`compact Finder completion groups seven added channels and one import per Alias List in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
@@ -458,6 +560,7 @@ for (const theme of ['light']) for (const width of [1280, 390]) {
     expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
     expect(bounds.y + bounds.height).toBeLessThanOrEqual(901);
     expect(await completion.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await expectCompletionWidth(modal, width);
     await modal.screenshot({ path: testInfo.outputPath(`seven-channel-completion-${theme}-${width}.png`) });
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
     expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(2);
@@ -1904,7 +2007,8 @@ test('groups exact identities, saves channels stopped, and retries only failed a
   await expect(dialog(page).getByLabel('Start with')).toHaveCount(0);
   await addChannels(page);
   await expect(dialog(page).locator('.discovery-completion')).toBeVisible();
-  await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(2);
+  await expect(dialog(page).locator('.discovery-completion-channel')).toHaveCount(3);
+  await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(0);
   await expect(dialog(page).getByText('Could not add', { exact: true })).toHaveCount(1);
   const save = state.requests.find((request) => request.path.endsWith('/save'));
   expect(save.body.alias_groups).toEqual([{ group_id: 'county', alias_list_id: 21, new_alias_list_name: null },
@@ -1939,7 +2043,8 @@ test('a committed channel with failed publication requires restart without anoth
   await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
   await addChannels(page);
   await expect(dialog(page)).toContainText('Restart VCE before opening these channels');
-  await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(1);
+  await expect(dialog(page).locator('.discovery-completion-channel')).toHaveCount(3);
+  await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(0);
   await expect(dialog(page).getByText('Not added', { exact: true })).toHaveCount(2);
   await expect(dialog(page).getByRole('link', { name: 'Open channel', exact: true })).toHaveCount(0);
   await expect(dialog(page).getByRole('link', { name: 'Open Channels', exact: true })).toBeVisible();

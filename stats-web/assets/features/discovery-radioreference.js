@@ -488,14 +488,27 @@ export function createDiscoveryCompletion(ui, { channels = [], imports = null, g
     const key = grouped ? channel.system_key || channel.system || 'Channels' : '';
     let section = sections.get(key);
     if (!section) {
-      section = node('section', 'discovery-completion-group');
-      if (grouped) section.append(node('h4', 'discovery-completion-group-title', channel.system || 'Radio system'));
+      const element = node('section', `${grouped ? 'ui-record-card ' : ''}discovery-completion-group`);
+      const rows = node('div', 'discovery-completion-group-channels');
+      const summary = node('div', 'discovery-completion-group-summary');
+      if (grouped) {
+        const heading = node('header', 'ui-record-card-header');
+        heading.append(node('h3', 'ui-record-card-title discovery-completion-group-title', channel.system || 'Radio system'));
+        const body = node('div', 'ui-record-card-body discovery-completion-group-body');
+        body.append(rows, summary);
+        element.append(heading, body);
+      } else element.append(rows, summary);
+      section = { element, rows, summary, channels: [], lists: new Set(), displayedNames: new Set([channel.system]) };
       sections.set(key, section);
-      list.append(section);
+      list.append(element);
     }
+    section.channels.push(channel);
     const row = node('article', 'discovery-completion-row discovery-completion-channel');
     const header = node('div', 'discovery-completion-header');
-    header.append(node('h3', 'discovery-completion-name', channel.name || 'Saved channel'));
+    const name = channel.name || 'Saved channel';
+    const standardName = channel.system && channel.site ? `${channel.system} · ${channel.site}` : '';
+    const displayName = grouped && name === standardName ? channel.site : name;
+    header.append(node(grouped ? 'h4' : 'h3', 'discovery-completion-name', displayName));
     const metadata = node('p', 'discovery-completion-meta');
     const parts = [];
     if (Number(channel.frequency_hz) > 0) parts.push(`${(Number(channel.frequency_hz) / 1_000_000).toFixed(6)} MHz`);
@@ -505,9 +518,11 @@ export function createDiscoveryCompletion(ui, { channels = [], imports = null, g
       already_saved: ['Already added', 'neutral'], failed: ['Could not add', 'warning'],
       not_added: ['Not added', 'warning'], status_unknown: ['Status unavailable', 'warning'] };
     const [label, tone] = statuses[channel.status] || statuses.added;
-    const status = pill(label, tone);
-    status.classList.add('discovery-completion-status');
-    metadata.append(status);
+    if (!grouped || !['added', 'saved'].includes(channel.status)) {
+      const status = pill(label, tone);
+      status.classList.add('discovery-completion-status');
+      metadata.append(status);
+    }
     header.append(metadata);
     row.append(header);
     if (channel.error) row.append(node('p', 'ui-notice ui-notice-warning', channel.error));
@@ -516,13 +531,23 @@ export function createDiscoveryCompletion(ui, { channels = [], imports = null, g
       actions.append(...channel.actions);
       row.append(actions);
     }
-    section.append(row);
+    section.rows.append(row);
     const aliasKey = Number(channel.alias_list_id) > 0 ? `id:${channel.alias_list_id}` : channel.alias_list_name;
-    if (aliasKey && !seenLists.has(aliasKey)) {
-      seenLists.add(aliasKey);
-      if (typeof channel.alias_list_existing === 'boolean') section.append(node('p', 'discovery-completion-note',
-        channel.alias_list_existing ? 'Existing Alias List' : 'New Alias List'));
-      detailEntries.push(['Alias List', channel.alias_list_name]);
+    if (aliasKey) {
+      if (!section.lists.has(aliasKey)) {
+        section.lists.add(aliasKey);
+        if (typeof channel.alias_list_existing === 'boolean') {
+          const label = channel.alias_list_existing ? 'Existing Alias List' : 'New Alias List';
+          const destination = grouped && channel.alias_list_name && channel.alias_list_name !== channel.system ?
+            ` · ${channel.alias_list_name}` : '';
+          section.summary.append(node('p', 'discovery-completion-note', label + destination));
+          if (destination) section.displayedNames.add(channel.alias_list_name);
+        }
+      }
+      if (!seenLists.has(aliasKey)) {
+        seenLists.add(aliasKey);
+        detailEntries.push(['Alias List', channel.alias_list_name]);
+      }
     }
     detailEntries.push(...(channels.length > 1 ? [['Channel', channel.name]] : []),
       ['System', channel.system], ['Site', channel.site], ...(channel.details || []));
@@ -531,12 +556,19 @@ export function createDiscoveryCompletion(ui, { channels = [], imports = null, g
   const targets = [...new Map((imports?.targets || []).map((target, index) =>
     [Number(target.alias_list_id) > 0 ? `id:${target.alias_list_id}` : `target:${index}`, target])).values()];
   if (targets.length) {
-    const section = node('div', 'discovery-completion-imports');
+    const unmatched = node('div', 'discovery-completion-imports');
+    let unmatchedCount = 0;
     targets.forEach((target) => {
       const row = node('div', 'discovery-completion-import');
       const destination = target.alias_list_name || target.system_name;
-      const showDestination = destination && (targets.length > 1 || !channels.some((channel) =>
-        channel.name === destination || channel.system === destination));
+      // A shared list's result must not be attributed to just one of several systems.
+      const matches = grouped ? [...sections.values()].filter((section) => section.channels.some((channel) =>
+        Number(channel.alias_list_id) > 0 || Number(target.alias_list_id) > 0 ?
+          Number(channel.alias_list_id) > 0 && Number(target.alias_list_id) === Number(channel.alias_list_id) :
+          target.alias_list_name && target.alias_list_name === channel.alias_list_name)) : [];
+      const owner = matches.length === 1 ? matches[0] : null;
+      const showDestination = destination && (owner ? !owner.displayedNames.has(destination) :
+        grouped || targets.length > 1 || !channels.some((channel) => channel.name === destination || channel.system === destination));
       if (showDestination) row.append(node('strong', '', destination));
       const added = Number(target.added) || 0;
       const updated = Number(target.updated) || 0;
@@ -559,9 +591,10 @@ export function createDiscoveryCompletion(ui, { channels = [], imports = null, g
       }
       if (target.alias_list_name && !channels.some((channel) => channel.alias_list_name === target.alias_list_name))
         detailEntries.push(['Alias List', target.alias_list_name]);
-      section.append(row);
+      if (owner) owner.summary.append(row);
+      else { unmatched.append(row); unmatchedCount += 1; }
     });
-    element.append(section);
+    if (unmatchedCount) element.append(unmatched);
   }
   const receivers = [...new Set([receiver, ...channels.map((channel) => channel.receiver)].filter(Boolean))];
   receivers.forEach((name) => detailEntries.push(['Receiver', name]));

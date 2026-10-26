@@ -826,7 +826,7 @@ if (view === 'spectrum-discovery') {
     return element;
   };
   if (parameters.get('state') === 'review') {
-    const { createDiscoveryAliasListChoice } = await import('/assets/features/discovery-radioreference.js?v=16');
+    const { createDiscoveryAliasListChoice } = await import('/assets/features/discovery-radioreference.js?v=17');
     const source = await fetch('/assets/app.js').then(response => response.text());
     const names = ['formField', 'uiSelect', 'uiSelectFrame'];
     const controls = names.map(name => {
@@ -1045,7 +1045,7 @@ if (view === 'spectrum-search') {
 }
 
 if (['spectrum-discovery', 'spectrum-search'].includes(view) && parameters.get('state') === 'complete') {
-  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=16');
+  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=17');
   const node = (tag, className = '', text = null) => {
     const element = document.createElement(tag);
     element.className = className;
@@ -1056,26 +1056,36 @@ if (['spectrum-discovery', 'spectrum-search'].includes(view) && parameters.get('
   const example = document.querySelector(single ? '.visual-spectrum-discovery-example' : '.visual-spectrum-search-example');
   const modal = example.querySelector('.read-only-modal');
   modal.classList.add(single ? 'spectrum-discovery-complete' : 'spectrum-search-complete');
-  modal.querySelector('.modal-header h2').textContent = single ? 'Channel added' : '7 channels added';
-  const channels = Array.from({ length: single ? 1 : 7 }, (_, index) => ({
-    name: single ? 'Greater Cleveland Radio Communications Network · Cleveland Simulcast' :
-      `County ${index + 1} Simulcast and Regional Public Safety Control`,
-    system: index < 4 ? 'Greater Cleveland Radio Communications Network' : 'Ohio MARCS-IP',
-    site: `County ${index + 1} Simulcast`, frequency_hz: 851012500 + index * 25000, protocol: 'P25 Phase 1',
-    status: single ? 'running' : 'added', alias_list_id: index < 4 ? 1 : 2,
-    alias_list_name: index < 4 ? 'GCRCN dispatch aliases' : 'MARCS dispatch aliases', alias_list_existing: true
+  const systems = [
+    { name: 'Greater Cleveland Radio Communications Network', alias: 'GCRCN dispatch aliases', sites:
+      ['Cleveland Simulcast', 'East Simulcast', 'West Simulcast', 'South Simulcast'] },
+    { name: 'Ohio MARCS-IP: Multi-Agency Radio Communications', alias: 'MARCS dispatch aliases', sites:
+      ['Cuyahoga County', 'Lake County'] },
+    { name: 'Parma / Parma Heights / Brooklyn / Brooklyn Heights', alias: 'Parma dispatch aliases', sites:
+      ['Parma Simulcast'] }
+  ];
+  const rows = systems.flatMap((system, group) => system.sites.map(site => ({ group, site })));
+  const selected = single ? [rows[0]] : parameters.get('channels') === '5' ?
+    [rows[0], rows[1], rows[4], rows[5], rows[6]] : rows;
+  const channels = selected.map(({ group, site }, index) => ({
+    name: !single && index === selected.length - 1 ?
+      'My overnight dispatch monitor for Parma, Brooklyn and regional emergency services' : `${systems[group].name} · ${site}`,
+    system: systems[group].name, site, frequency_hz: 851012500 + index * 25000, protocol: 'P25 Phase 1',
+    status: single ? 'running' : 'added', alias_list_id: group + 1,
+    alias_list_name: systems[group].alias, alias_list_existing: true
   }));
+  modal.querySelector('.modal-header h2').textContent = single ? 'Channel added' : `${channels.length} channels added`;
   const imports = { targets: [...new Set(channels.map(channel => channel.alias_list_id))].map(id => ({
-    alias_list_id: id, alias_list_name: id === 1 ? 'GCRCN dispatch aliases' : 'MARCS dispatch aliases',
-    state: 'imported', added: id === 1 ? 454 : 18, updated: 0, unchanged: 0
+    alias_list_id: id, alias_list_name: systems[id - 1].alias,
+    state: 'imported', added: id === 1 ? 454 : id === 2 ? 6650 : 18, updated: 0, unchanged: 0
   })) };
   example.querySelector('.spectrum-discovery-stage').replaceChildren(
     createDiscoveryCompletion({ node }, { channels, imports, grouped: !single, receiver: 'Receiver 1' }));
-  const open = node('a', 'ui-button ui-button-secondary', single ? 'Open channel' : 'Open Channels');
+  const open = node('a', `ui-button ui-button-${single ? 'secondary' : 'primary'}`, single ? 'Open channel' : 'Open Channels');
   open.href = '#';
-  const done = node('button', 'ui-button ui-button-primary', 'Done');
+  const done = node('button', `ui-button ui-button-${single ? 'primary' : 'secondary'}`, 'Done');
   done.type = 'button';
-  example.querySelector('.spectrum-discovery-actions').replaceChildren(open, done);
+  example.querySelector('.spectrum-discovery-actions').replaceChildren(...(single ? [open, done] : [done, open]));
   example.dataset.completionReady = 'true';
 }
 

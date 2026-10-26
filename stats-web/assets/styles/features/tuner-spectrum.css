@@ -1560,11 +1560,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   max-height: calc(100dvh - var(--modal-viewport-inset));
 }
 
-:is(.spectrum-discovery-complete, .spectrum-search-complete) .spectrum-discovery-workspace {
-  flex: 0 1 auto;
-  gap: var(--space-4);
-}
-
 :is(.spectrum-discovery-complete, .spectrum-search-complete) .spectrum-discovery-context,
 :is(.spectrum-discovery-complete, .spectrum-search-complete) .spectrum-discovery-progress {
   display: none;
