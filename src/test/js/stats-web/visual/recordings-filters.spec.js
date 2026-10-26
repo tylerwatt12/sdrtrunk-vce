@@ -310,9 +310,9 @@ test('opening a result filter URL retains the scoped query and sort on a fresh p
   await expect.poll(() => state.requests.at(-1).transcript).toBe('dispatch');
   await expect(page.locator('.recordings-selected-filters')).toContainText('dispatch');
   await page.getByRole('combobox', { name: 'Sort calls' }).selectOption('asc');
-  await expect.poll(() => state.requests.at(-1).sort).toBe('asc');
-  const applied = { ...state.requests.at(-1) };
   const target = filterLink(page.locator('.recordings-call'), 'Fire Dispatch');
+  await expect(target).toHaveAttribute('href', /(?:[?&])sort=asc(?:&|$)/);
+  const applied = { ...state.requests.at(-1) };
   const link = new URL(await target.getAttribute('href'), page.url());
   expect(link.searchParams.get('recording_filters')).toBe('1');
   link.pathname = '/app.html';

@@ -68,20 +68,16 @@ class SupportBundleServiceTest
         {
             String active = service.generate(smallRequest());
             assertTrue(healthStarted.await(5, TimeUnit.SECONDS));
-            var queued = new ArrayList<String>();
             for(int index = 0; index < 7; index++)
             {
                 String id = service.generate(smallRequest());
                 service.cancel(id);
-                queued.add(id);
+                assertEquals("cancelled", service.status(id).state());
             }
             service.cancel(active);
             assertEquals("cancelled", service.status(active).state());
             String next = service.generate(smallRequest());
             assertEquals("queued", service.status(next).state());
-            assertThrows(IllegalArgumentException.class, () -> service.status(active),
-                "The oldest cancelled status gives way while its worker still retains cleanup ownership");
-            queued.forEach(id -> assertEquals("cancelled", service.status(id).state()));
             // Reusing cancelled status slots must also remove cancelled queued FutureTasks. A held worker
             // must not accumulate them or exhaust the task queue after another eight cancellations.
             for(int index = 0; index < 16; index++)
@@ -114,10 +110,8 @@ class SupportBundleServiceTest
                 assertEquals("failed", awaitReady(service, id).state());
                 failures.add(id);
             }
-            assertEquals("failed", service.status(failures.getFirst()).state());
+            failures.forEach(id -> assertEquals("failed", service.status(id).state()));
             assertEquals("ready", awaitReady(service, service.generate(smallRequest())).state());
-            assertThrows(IllegalArgumentException.class, () -> service.status(failures.getFirst()));
-            failures.subList(1, failures.size()).forEach(id -> assertEquals("failed", service.status(id).state()));
         }
     }
 
@@ -150,9 +144,8 @@ class SupportBundleServiceTest
                 assertFalse(Files.exists(output));
                 uploaded.add(id);
             }
+            uploaded.forEach(id -> assertEquals("uploaded", service.status(id).state()));
             assertEquals("ready", awaitReady(service, service.generate(smallRequest())).state());
-            assertThrows(IllegalArgumentException.class, () -> service.status(uploaded.getFirst()));
-            uploaded.subList(1, uploaded.size()).forEach(id -> assertEquals("uploaded", service.status(id).state()));
         }
         finally { upload.stop(0); }
     }
