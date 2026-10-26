@@ -196,6 +196,92 @@ class P25ActivityLiveServiceTest
         }
     }
 
+    @Test void liveMoveIncludesItsPreviousGroupWithoutExpandingTheCurrentSeed() throws Exception
+    {
+        Fixture fixture = new Fixture();
+        fixture.nativeRows.set(List.of(confirmedAffiliation(1, 11, "channel", 1000)));
+        try(var service = fixture.service(); var viewer = service.subscribe())
+        {
+            seed(service);
+            fixture.nativeRows.set(List.of(confirmedAffiliation(1, 12, "channel", 2000)));
+            var moved = viewer.poll(2, TimeUnit.SECONDS); assertNotNull(moved);
+            var fact = JSON.valueToTree(data(moved).get("affiliations")).get(0);
+            assertEquals(12, fact.path("talkgroup_id").asInt());
+            assertEquals(11, fact.at("/previous_affiliation/talkgroup_id").asInt());
+            assertEquals(1000, fact.at("/previous_affiliation/confirmed_at_ms").asLong());
+            assertEquals("unit", fact.at("/previous_affiliation/radio_alias_name").asText());
+            assertFalse(seed(service).at("/affiliations/0").has("previous_affiliation"));
+
+            fixture.nativeRows.set(List.of(confirmedAffiliation(1, 12, "channel", 3000)));
+            var confirmation = viewer.poll(2, TimeUnit.SECONDS); assertNotNull(confirmation);
+            var confirmed = JSON.valueToTree(data(confirmation).get("affiliations")).get(0);
+            assertFalse(confirmed.has("previous_affiliation"), "confirmation refreshes must not replay a journey");
+            assertEquals(3000, confirmed.path("confirmed_at_ms").asLong());
+        }
+    }
+
+    @Test void liveStartupDoesNotNameDormantAffiliationsAndFirstObservedMoveCarriesBothGroups() throws Exception
+    {
+        Fixture fixture = new Fixture();
+        var rows = new ArrayList<Map<String,Object>>();
+        for(int id = 1; id <= 1000; id++) rows.add(confirmedAffiliation(id, 11, "channel", 1000));
+        fixture.nativeRows.set(rows);
+        try(var service = fixture.service(); var viewer = service.subscribe())
+        {
+            await(service::ready);
+            assertEquals(0, fixture.nativePresentedRows.get(), "live startup must not preload dormant identities");
+            int reads = fixture.reads.get();
+            fixture.alias.set("renamed"); fixture.presentation.incrementAndGet();
+            await(() -> fixture.reads.get() > reads);
+            assertNull(viewer.poll(50, TimeUnit.MILLISECONDS), "a label refresh must not introduce dormant radios");
+            assertEquals(0, fixture.nativePresentedRows.get());
+            var changed = new ArrayList<>(rows);
+            changed.set(499, confirmedAffiliation(500, 12, "channel", 2000));
+            fixture.nativeRows.set(changed);
+            var moved = viewer.poll(2, TimeUnit.SECONDS); assertNotNull(moved);
+            var affiliations = JSON.valueToTree(data(moved).get("affiliations"));
+            assertEquals(1, affiliations.size());
+            assertEquals(500, affiliations.get(0).path("radio_id").asInt());
+            assertEquals(11, affiliations.get(0).at("/previous_affiliation/talkgroup_id").asInt());
+            assertEquals(2, fixture.nativePresentedRows.get(), "only the changed radio and its previous group need names");
+            assertEquals(1000, seed(service).path("affiliations").size(), "explicit legacy seeds remain complete");
+            assertEquals(1002, fixture.nativePresentedRows.get());
+        }
+    }
+
+    @Test void changedScopeOrNonIncreasingConfirmationDoesNotInventAMove() throws Exception
+    {
+        Fixture fixture = new Fixture();
+        fixture.nativeRows.set(List.of(confirmedAffiliation(1, 11, "first-channel", 1000)));
+        try(var service = fixture.service(); var viewer = service.subscribe())
+        {
+            seed(service);
+            fixture.nativeRows.set(List.of(confirmedAffiliation(1, 12, "first-channel", 1000)));
+            var sameTime = viewer.poll(2, TimeUnit.SECONDS); assertNotNull(sameTime);
+            assertFalse(JSON.valueToTree(data(sameTime).get("affiliations")).get(0).has("previous_affiliation"));
+            fixture.nativeRows.set(List.of(confirmedAffiliation(1, 13, "second-channel", 2000)));
+            var otherScope = viewer.poll(2, TimeUnit.SECONDS); assertNotNull(otherScope);
+            assertFalse(JSON.valueToTree(data(otherScope).get("affiliations")).get(0).has("previous_affiliation"));
+        }
+    }
+
+    @Test void failedLazySeedNamingDoesNotStopTheSharedLiveReader() throws Exception
+    {
+        Fixture fixture = new Fixture();
+        fixture.nativeRows.set(List.of(confirmedAffiliation(1, 11, "channel", 1000)));
+        try(var service = fixture.service(); var viewer = service.subscribe())
+        {
+            await(service::ready);
+            fixture.failNames.set(true);
+            assertThrows(StatsApiException.class, service::seed);
+            fixture.failNames.set(false);
+            assertEquals(1, seed(service).path("affiliations").size());
+            fixture.nativeRows.set(List.of(confirmedAffiliation(1, 12, "channel", 2000)));
+            var moved = viewer.poll(2, TimeUnit.SECONDS); assertNotNull(moved);
+            assertEquals(12, JSON.valueToTree(data(moved).get("affiliations")).get(0).path("talkgroup_id").asInt());
+        }
+    }
+
     @Test void sourceBoundaryWaitsForHistoryEdgeAndLaterCommitIsNeverSkipped() throws Exception
     {
         Fixture fixture = new Fixture(); fixture.history.add(row(1));
@@ -295,6 +381,13 @@ class P25ActivityLiveServiceTest
     private static Map<String,Object> affiliation(int id, int group)
     { return Map.of("radio_system_key", "p25:bee00:49f", "source_identity_key", "v1-r-bee00-49f-" + id,
         "radio_id", id, "talkgroup_id", group, "confirmed_at_ms", 1000); }
+    private static Map<String,Object> confirmedAffiliation(int id, int group, String configuration, long confirmed)
+    {
+        var value = new LinkedHashMap<>(affiliation(id, group));
+        value.put("talkgroup_identity_key", "v1-g-bee00-49f-" + group);
+        value.put("configuration_id", configuration); value.put("confirmed_at_ms", confirmed);
+        return value;
+    }
     private static void await(BooleanSupplier condition) throws Exception
     {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
@@ -307,9 +400,11 @@ class P25ActivityLiveServiceTest
         final AtomicReference<Object> identity = new AtomicReference<>("first");
         final AtomicReference<List<Map<String,Object>>> nativeRows = new AtomicReference<>(List.of());
         final CopyOnWriteArrayList<Map<String,Object>> history = new CopyOnWriteArrayList<>();
-        final AtomicInteger reads = new AtomicInteger(), nativePresentations = new AtomicInteger(), pages = new AtomicInteger();
+        final AtomicInteger reads = new AtomicInteger(), nativePresentations = new AtomicInteger(),
+            nativePresentedRows = new AtomicInteger(), pages = new AtomicInteger();
         final AtomicLong presentation = new AtomicLong(), historyGeneration = new AtomicLong();
-        final AtomicBoolean enabled = new AtomicBoolean(true), fail = new AtomicBoolean(), emptyPages = new AtomicBoolean();
+        final AtomicBoolean enabled = new AtomicBoolean(true), fail = new AtomicBoolean(),
+            failNames = new AtomicBoolean(), emptyPages = new AtomicBoolean();
         final AtomicReference<String> alias = new AtomicReference<>("unit");
         volatile CountDownLatch entered, release, watermarkEntered, watermarkRelease, afterEntered, afterRelease;
         volatile Runnable onWatermark;
@@ -343,7 +438,8 @@ class P25ActivityLiveServiceTest
         }
         @Override public List<ObjectNode> presentAffiliations(List<Map<String,Object>> rows)
         {
-            if(rows.isEmpty()) return List.of(); nativePresentations.incrementAndGet();
+            if(failNames.get()) throw new IllegalStateException("fixture naming unavailable");
+            if(rows.isEmpty()) return List.of(); nativePresentations.incrementAndGet(); nativePresentedRows.addAndGet(rows.size());
             return rows.stream().map(row -> {
                 var value = new LinkedHashMap<>(row); value.put("radio_identity_key", value.remove("source_identity_key"));
                 value.put("radio_alias_name", alias.get()); return (ObjectNode)JSON.valueToTree(value);

@@ -220,8 +220,9 @@ final class P25ActivityLiveService implements AutoCloseable
         if(raw.identity() == null) throw new IllegalStateException("P25 source identity is unavailable");
         boolean replaced = mIdentity != null && !mIdentity.equals(raw.identity());
         long generation = mSource.presentationGeneration();
-        Table affiliations = table(raw.affiliations(), replaced ? Table.empty() : mAffiliations,
-            refresh || replaced || generation != mPresentation);
+        // The live scene starts at this edge. Do not name and encode dormant radios for a seed nobody requested.
+        Table affiliations = mPublished == null || replaced ? coreTable(raw.affiliations()) :
+            table(raw.affiliations(), mAffiliations, refresh || generation != mPresentation);
         if(!Objects.equals(raw.identity(), mSource.identity()))
             throw new IllegalStateException("P25 source changed during its read");
         if(!mHub.hasSubscribers() || mClosed) return false;
@@ -231,8 +232,9 @@ final class P25ActivityLiveService implements AutoCloseable
             for(var entry: affiliations.entries().entrySet())
             {
                 Row old = mAffiliations.entries().get(entry.getKey()), value = entry.getValue();
-                if(old != value && (old == null || !old.value().equals(P25ActivityLiveService::compareValues, value.value())))
-                    changes.add(new Change(false, value.value(), value.bytes()));
+                if(old != value && (old == null || old.value() == null ||
+                    !old.value().equals(P25ActivityLiveService::compareValues, value.value())))
+                    changes.add(affiliationChange(old, value));
             }
             for(RadioKey id: mAffiliations.entries().keySet())
                 if(!affiliations.entries().containsKey(id)) changes.add(new Change(true, id.payload(), 256));
@@ -343,7 +345,7 @@ final class P25ActivityLiveService implements AutoCloseable
             RadioKey id = key(value, "source_identity_key");
             if(core.put(id, value) != null) throw new IllegalStateException("Duplicate P25 radio identity");
             Row old = previous.entries().get(id);
-            if(names || old == null || !old.core().equals(value)) changed.add(value);
+            if(old == null || !old.core().equals(value) || names && old.value() != null) changed.add(value);
         }
         Map<RadioKey,ObjectNode> projected = new LinkedHashMap<>();
         for(var value: mSource.presentAffiliations(changed))
@@ -362,6 +364,18 @@ final class P25ActivityLiveService implements AutoCloseable
             next.put(entry.getKey(), value);
         }
         return new Table(Collections.unmodifiableMap(next));
+    }
+
+    private static Table coreTable(List<Map<String,Object>> raw)
+    {
+        Map<RadioKey,Row> entries = new LinkedHashMap<>();
+        for(var value: raw)
+        {
+            var row = new Row(Collections.unmodifiableMap(new LinkedHashMap<>(value)), null, 0);
+            if(entries.put(key(value, "source_identity_key"), row) != null)
+                throw new IllegalStateException("Duplicate P25 radio identity");
+        }
+        return new Table(Collections.unmodifiableMap(entries));
     }
 
     private static RadioKey key(Map<String,Object> row, String radioField)
@@ -383,6 +397,44 @@ final class P25ActivityLiveService implements AutoCloseable
     {
         return left.isIntegralNumber() && right.isIntegralNumber() ?
             left.bigIntegerValue().compareTo(right.bigIntegerValue()) : left.equals(right) ? 0 : 1;
+    }
+
+    /** A live viewer needs only the radio being observed, including its last comparable attachment. */
+    private Change affiliationChange(Row previous, Row current) throws IOException
+    {
+        ObjectNode value = current.value();
+        if(previous != null)
+        {
+            String configuration = value.path("configuration_id").asText("");
+            String group = value.path("talkgroup_identity_key").asText("");
+            ObjectNode before = previous.value();
+            String previousConfiguration = before != null ? before.path("configuration_id").asText("") :
+                Objects.toString(previous.core().get("configuration_id"), "");
+            String previousGroup = before != null ? before.path("talkgroup_identity_key").asText("") :
+                Objects.toString(previous.core().getOrDefault("target_identity_key",
+                    previous.core().get("talkgroup_identity_key")), "");
+            Object confirmed = previous.core().get("confirmed_at_ms");
+            long previousConfirmed = before != null ? before.path("confirmed_at_ms").asLong() :
+                confirmed instanceof Number number ? number.longValue() : 0;
+            if(!configuration.isBlank() && configuration.equals(previousConfiguration) &&
+                !group.isBlank() && !previousGroup.isBlank() && !group.equals(previousGroup) &&
+                value.path("confirmed_at_ms").asLong() > previousConfirmed)
+            {
+                if(before == null)
+                {
+                    var presented = mSource.presentAffiliations(List.of(previous.core()));
+                    if(presented.size() != 1 || !key(presented.getFirst(), "radio_identity_key").equals(
+                        key(value, "radio_identity_key")))
+                        throw new IllegalStateException("Incomplete previous P25 affiliation");
+                    before = presented.getFirst();
+                }
+                // Keep transition context out of the reusable current-state table and REST seed.
+                value = value.deepCopy();
+                value.set("previous_affiliation", before.deepCopy());
+                return new Change(false, value, ApiHttpResponse.encodeNormalizedPayload(value).length);
+            }
+        }
+        return new Change(false, value, current.bytes());
     }
 
     private void install(Table affiliations, boolean available, long captured, List<Change> changes, boolean replaced)
@@ -454,10 +506,25 @@ final class P25ActivityLiveService implements AutoCloseable
         {
             if(mPublished == null || !mReady || mClosed || !mHub.hasSubscribers())
                 throw new IOException("No complete P25 affiliations");
+            if(mPublished.affiliations.entries().values().stream().anyMatch(row -> row.value() == null))
+            {
+                Object identity = mIdentity;
+                long presentation = mSource.presentationGeneration();
+                if(!Objects.equals(identity, mSource.identity()))
+                    throw new IOException("P25 source changed before seed naming");
+                var raw = mPublished.affiliations.entries().values().stream().map(Row::core).toList();
+                Table complete = table(raw, Table.empty(), true);
+                if(!Objects.equals(identity, mSource.identity()) || presentation != mSource.presentationGeneration())
+                    throw new IOException("P25 source changed during seed naming");
+                mAffiliations = complete;
+                mPublished = new PublishedState(mPublished.epoch, mPublished.sequence, mPublished.captured,
+                    complete, mPublished.available, mPublished.timeout, mPublished.enabled);
+            }
             var prepared = mPublished.seed();
             for(var request: requests) request.complete(prepared);
         }
-        catch(IOException exception) { for(var request: requests) request.completeExceptionally(exception); }
+        catch(RuntimeException | IOException exception)
+        { for(var request: requests) request.completeExceptionally(exception); }
     }
 
     private void failSeeds()
