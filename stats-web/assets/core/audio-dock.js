@@ -1098,7 +1098,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const engineStatus = String(active.status || '').trim().replace(/\bscan lists\b/gi, 'Lists').replace(/\bscan list\b/gi, 'List');
     const ordinaryStatus = engineStatus.toLocaleLowerCase().replace(/[.!]$/, '');
     const shortStatus = playbackStatuses.get(ordinaryStatus);
-    const statusLabel = active.paused ? 'Paused' : live && active.holdTarget ? 'Holding' : shortStatus ||
+    const statusLabel = active.paused ? 'Paused' : live && selected > 0 && active.holdTarget ? 'Holding' : shortStatus ||
       (active.stopped ? 'Stopped' : active.loading ? 'Loading' : playing ? 'Listening' : 'Ready');
     if (status.textContent !== statusLabel) status.textContent = statusLabel;
     status.classList.toggle('ui-pill-success', playing && ['Listening', 'Holding', 'Replaying last call'].includes(statusLabel));

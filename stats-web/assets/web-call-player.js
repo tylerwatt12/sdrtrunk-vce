@@ -306,14 +306,16 @@ export class WebCallPlayer {
     if (!this.scanListCatalogReady || !this.activeSelectedScanListIds().length) {
       this.stopFeed();
       if (!this.stopped) {
-        this.stopped = true;
-        this.paused = false;
+        // An empty selection keeps live listening armed. A one-off replay still
+        // returns to stopped, and an unavailable catalog retains its stop behavior.
+        this.stopped = !this.scanListCatalogReady || this.stopAfterReplay;
+        if (this.stopped) this.paused = false;
         this.transportToken++;
         this.clearQueuedCalls();
         this.stopCurrent();
         this.replayingLast = false;
         this.stopAfterReplay = false;
-        if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
+        if (this.stopped && this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
       }
       this.setStatus(this.scanListCatalogReady ? 'Select a scan list' : 'Loading scan lists');
       return;
@@ -856,7 +858,7 @@ export class WebCallPlayer {
     }
     if (!next) {
       if (completedCall) this.showIdleDisplay(completedCall);
-      this.setStatus('Waiting');
+      this.setStatus(this.activeSelectedScanListIds().length ? 'Waiting' : 'Select a scan list');
       this.render();
       return;
     }

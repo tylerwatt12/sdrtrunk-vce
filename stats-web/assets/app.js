@@ -45,11 +45,11 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=34';
+import { createAudioDock } from './core/audio-dock.js?v=35';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=19';
+import { WebCallPlayer } from './web-call-player.js?v=20';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -12994,7 +12994,8 @@ function renderScanner(options = {}) {
     }
     playbackStatus.textContent = state.status ||
       (state.stopped ? 'Ready' : state.paused ? 'Paused' : 'Listening');
-    playbackStatus.classList.toggle('ui-pill-success', !state.stopped && !state.paused);
+    playbackStatus.classList.toggle('ui-pill-success', !state.stopped && !state.paused &&
+      state.scanLists.some(item => item.selected && item.enabled));
     statusBar.dataset.state = state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening';
     updateAge();
     paintCall(display, state, currentChannel);

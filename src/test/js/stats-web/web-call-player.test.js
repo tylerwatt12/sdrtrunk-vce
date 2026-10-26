@@ -809,6 +809,90 @@ async function main() {
       return player;
     }
 
+    function selectionFixture() {
+      const player = pauseFixture();
+      const secondList = { id: '2', name: 'Other', enabled: true, default: false };
+      player.scanLists.push(secondList);
+      player.scanListById.set(secondList.id, secondList);
+      player.feedRequests = [];
+      player.feedFetch = async (url) => {
+        player.feedRequests.push(url);
+        return { cursor: '20', reset: false, calls: [] };
+      };
+      return player;
+    }
+
+    const switching = selectionFixture();
+    switching.current = switching.normalizeCall(overlap);
+    switching.currentBuffer = { duration: 20 };
+    switching.startCurrent();
+    switching.enqueue({ ...overlap, call_id: 'old-queued' });
+    const oldSource = switching.source;
+    const oldFeed = switching.feedController = new AbortController();
+    const oldDownload = switching.loadController = new AbortController();
+    switching.setScanListSelected('1', false);
+    assert.equal(switching.stopped, false, 'Removing the last list must preserve live listening intent');
+    assert.equal(switching.paused, false);
+    assert.equal(switching.feedActive, false);
+    assert.equal(switching.feedCursor, null);
+    assert.equal(oldFeed.signal.aborted, true);
+    assert.equal(oldDownload.signal.aborted, true);
+    assert.equal(oldSource.onended, null);
+    assert.equal(switching.current, null);
+    assert.equal(switching.source, null);
+    assert.equal(switching.queuedCount, 0);
+    assert.equal(switching.audioContext.state, 'running', 'An empty selection must leave authorized audio usable');
+    assert.equal(switching.ensureConnected(), false);
+    assert.equal(switching.feedRequests.length, 0, 'No selection must never request the server default list');
+    assert.equal(switching.ui.status.textContent, 'Select a scan list');
+    await switching.togglePause();
+    assert.equal(switching.paused, true, 'Pause must remain available during the selection gap');
+    await switching.togglePause();
+    assert.equal(switching.ui.status.textContent, 'Select a scan list', 'Resume with no lists still waits for selection');
+    switching.setScanListSelected('2', true);
+    assert.equal(switching.feedActive, true, 'Selecting another list must restart the live feed automatically');
+    assert.deepEqual(switching.feedRequests, ['/api/v1/calls/feed?scan_list_id=2'],
+      'The new list must start at the live edge with no old cursor');
+    switching.loadCurrent = async function () { this.loadedId = this.current._callId; };
+    switching.enqueue({ ...overlap, call_id: 'new-list-call', scan_list_ids: [2] });
+    assert.equal(switching.loadedId, 'new-list-call', 'Calls on the new list must start without another Play');
+    await switching.togglePlayback();
+
+    const pausedSwitch = selectionFixture();
+    await pausedSwitch.togglePause();
+    pausedSwitch.setScanListSelected('1', false);
+    pausedSwitch.setScanListSelected('2', true);
+    pausedSwitch.enqueue({ ...overlap, call_id: 'paused-new-list', scan_list_ids: [2] });
+    assert.equal(pausedSwitch.stopped, false);
+    assert.equal(pausedSwitch.paused, true, 'Selecting another list must preserve Pause');
+    assert.equal(pausedSwitch.audioContext.state, 'suspended');
+    assert.equal(pausedSwitch.current, null);
+    assert.equal(pausedSwitch.queuedCount, 1);
+    await pausedSwitch.togglePlayback();
+
+    const stoppedDuringGap = selectionFixture();
+    stoppedDuringGap.setScanListSelected('1', false);
+    await stoppedDuringGap.togglePlayback();
+    stoppedDuringGap.setScanListSelected('2', true);
+    assert.equal(stoppedDuringGap.stopped, true, 'Stop during the selection gap must cancel listening intent');
+    assert.equal(stoppedDuringGap.feedActive, false);
+    assert.equal(stoppedDuringGap.feedRequests.length, 0);
+
+    for (const originallyStopped of [true, false]) {
+      const replaySwitch = selectionFixture();
+      replaySwitch.stopped = originallyStopped;
+      await replaySwitch.replayLastCall();
+      replaySwitch.setScanListSelected('1', false);
+      assert.equal(replaySwitch.stopped, originallyStopped,
+        'Canceling Replay by clearing selections must restore its original listening intent');
+      assert.equal(replaySwitch.replayingLast, false);
+      assert.equal(replaySwitch.stopAfterReplay, false);
+      replaySwitch.setScanListSelected('2', true);
+      assert.equal(replaySwitch.feedActive, !originallyStopped);
+      assert.equal(replaySwitch.feedRequests.length, originallyStopped ? 0 : 1);
+      if (!replaySwitch.stopped) await replaySwitch.togglePlayback();
+    }
+
     const pausing = pauseFixture();
     pausing.current = { ...overlap, _callId: 'current' };
     pausing.currentBuffer = { duration: 20 };
@@ -894,8 +978,8 @@ async function main() {
     assert.equal([...selectionWhilePaused.avoids.values()][0].radio_system_key, 'p25:bee00:49f',
       'Avoid entries retain their exact system key for identity and removal');
     selectionWhilePaused.setScanListSelected('1', false);
-    assert.equal(selectionWhilePaused.stopped, true, 'Removing the last list also stops a paused feed');
-    assert.equal(selectionWhilePaused.paused, false);
+    assert.equal(selectionWhilePaused.stopped, false, 'Removing the last list must retain paused listening intent');
+    assert.equal(selectionWhilePaused.paused, true);
     assert.equal(selectionWhilePaused.feedActive, false);
 
     const originalFetch = global.fetch;
@@ -927,6 +1011,19 @@ async function main() {
       await staleDownload;
       assert.equal(stoppedDownload.currentBuffer, null, 'Late downloads cannot resurrect stopped audio');
       assert.equal(stoppedDownload.source, null);
+
+      const switchedDownload = selectionFixture();
+      switchedDownload.current = switchedDownload.normalizeCall(overlap);
+      switchedDownload.audioContext.decodeAudioData = async () => ({ duration: 10 });
+      const oldListDownload = switchedDownload.loadCurrent();
+      switchedDownload.setScanListSelected('1', false);
+      switchedDownload.setScanListSelected('2', true);
+      finishDownload({ ok: true, arrayBuffer: async () => wave() });
+      await oldListDownload;
+      assert.equal(switchedDownload.stopped, false);
+      assert.equal(switchedDownload.currentBuffer, null, 'A late old-list download cannot restart armed audio');
+      assert.equal(switchedDownload.source, null);
+      await switchedDownload.togglePlayback();
 
       global.fetch = async () => ({ ok: false, status: 410 });
       const expired = pauseFixture();
