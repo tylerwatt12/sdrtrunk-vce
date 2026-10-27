@@ -35,6 +35,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.config.DecodeConfiguration;
@@ -95,7 +96,7 @@ import org.slf4j.LoggerFactory;
  * This manager monitors channel events watching for events related to managed traffic channels.
  */
 public class DMRTrafficChannelManager extends TrafficChannelManager implements IChannelEventListener,
-    IChannelEventProvider, IDecodeEventProvider
+    IChannelEventProvider, IDecodeEventProvider, TalkerAliasManagerProvider
 {
     private static final Logger mLog = LoggerFactory.getLogger(DMRTrafficChannelManager.class);
     public static final String CHANNEL_START_REJECTED = " REJECTED - NO TUNER";

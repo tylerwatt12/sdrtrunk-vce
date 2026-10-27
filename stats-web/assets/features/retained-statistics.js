@@ -7,6 +7,35 @@ const JOB_POLL_MS = 1500;
 const JOB_STORAGE_KEY = 'retained-statistics-job';
 const HISTORY_TYPES = new Set(['control_quality', 'hourly_history', 'detailed_events']);
 
+async function readJob(requestJson, jobId, signal) {
+  return requestJson(`${ROOT}/deletions/${encodeURIComponent(jobId)}`, { csrf: false, signal });
+}
+
+/** The accepted job is authoritative; a successful POST alone does not mean the action finished. */
+export async function runRetainedStatisticsJob(requestJson, {
+  submitPath = `${ROOT}/deletions`, body, initialJob, signal, onProgress
+}) {
+  let job = initialJob ? await readJob(requestJson, initialJob.job_id, signal) :
+    await requestJson(submitPath, { method: 'POST', body, signal });
+  while (true) {
+    onProgress?.(job);
+    if (job.state === 'succeeded') return job;
+    if (!['queued', 'running', 'cancelling'].includes(job.state)) {
+      const error = new Error(job.error || (job.state === 'cancelled' ? 'The action was stopped.' :
+        'The action did not finish. Check its status before trying again.'));
+      error.job = job;
+      throw error;
+    }
+    await new Promise((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(signal.reason || new DOMException('Aborted', 'AbortError')); };
+      const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, JOB_POLL_MS);
+      if (signal?.aborted) abort();
+      else signal?.addEventListener('abort', abort, { once: true });
+    });
+    job = await readJob(requestJson, job.job_id, signal);
+  }
+}
+
 const TYPE_GROUPS = Object.freeze({
   radio_system: [
     { label: 'Observed setup', types: [
@@ -1213,8 +1242,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     if (state.disposed || !busyWithJob()) return;
     const generation = ++state.jobRequest;
     try {
-      const response = await requestJson(`${ROOT}/deletions/${encodeURIComponent(state.job.job_id)}`,
-        { csrf: false, signal });
+      const response = await readJob(requestJson, state.job.job_id, signal);
       if (state.disposed || generation !== state.jobRequest) return;
       setJob(response);
       drawJob();

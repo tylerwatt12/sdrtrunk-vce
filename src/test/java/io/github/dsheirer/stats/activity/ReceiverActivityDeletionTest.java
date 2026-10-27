@@ -29,6 +29,32 @@ import org.junit.jupiter.api.Test;
 
 class ReceiverActivityDeletionTest
 {
+    @Test
+    void forgettingOtaAliasPreservesHistoryAndAReplacementName() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            execute(connection, "INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id," +
+                "first_seen_ms,last_seen_ms) VALUES(1,'p25:abcde:123',1,0xABCDE,0x123,1000,1000)");
+            execute(connection, "INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
+                "home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,last_talker_alias," +
+                "last_talker_alias_seen_ms,logical_call_count) VALUES" +
+                "(1,1,2,0xABCDE,0x123,750003,1000,2000,'Observed name',2000,17)," +
+                "(2,1,2,0xABCDE,0x124,750003,1000,2000,'Observed name',2000,9)");
+            var target = new StatsDatabaseMaintenanceRequest.TalkerAlias("p25:abcde:123",
+                "v1-r-abcde-123-750003", "Observed name");
+            assertTrue(ReceiverActivityDeletion.delete(connection, target).found());
+            assertEquals(1, count(connection, "radio_system_identity_summary WHERE last_talker_alias IS NULL"));
+            assertEquals(1, count(connection, "radio_system_identity_summary WHERE id=1 AND " +
+                "logical_call_count=17 AND last_seen_ms=2000 AND last_talker_alias_seen_ms IS NULL"));
+            assertEquals(2, count(connection, "radio_system_identity_summary"));
+            execute(connection, "UPDATE radio_system_identity_summary SET last_talker_alias='Fresh name'," +
+                "last_talker_alias_seen_ms=3000 WHERE id=1");
+            assertFalse(ReceiverActivityDeletion.delete(connection, target).found());
+            assertEquals(1, count(connection, "radio_system_identity_summary WHERE last_talker_alias='Fresh name'"));
+        }
+    }
+
     private static final String CHANNEL_A = "123e4567-e89b-42d3-a456-426614174000";
     private static final String CHANNEL_B = "223e4567-e89b-42d3-a456-426614174000";
 

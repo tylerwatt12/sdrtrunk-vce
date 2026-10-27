@@ -19,7 +19,7 @@ import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=41';
+import { createGuideController } from './guides/controller.js?v=42';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -2728,12 +2728,19 @@ function detailedHistoryAvailable(logging = statsLoggingState()) {
   return !logging.available || logging.historyActive || logging.historyRetained;
 }
 
+function statisticsResetPauseNotice() {
+  return node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
+    'Statistics are paused while lifetime statistics are reset. Receiving, audio, and uploads continue. ' +
+    'Activity during this pause is not saved.');
+}
+
 function detailedHistoryNotice(logging = statsLoggingState()) {
   if (!logging.available) {
     return node('div', 'ui-notice ui-notice-danger ui-notice-spaced ui-inset-notice',
       'Saved activity status could not be checked. Previously saved activity may still be available.');
   }
   if (logging.historyActive) return null;
+  if (logging.state === 'PAUSED') return statisticsResetPauseNotice();
   const lastSaved = logging.historyRetained && logging.lastHistoryMs ?
     ` The newest saved activity is from ${exactDateTime(logging.lastHistoryMs)}.` : '';
   if (!logging.summaryConfigured || !logging.historyConfigured) {
@@ -2769,6 +2776,7 @@ function databaseLoggingNotice(view) {
   if (serviceStatusWarningRequired()) return node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
     'Saved statistics couldn’t be checked. This page may show older information.');
   if (!logging.available || logging.summaryActive) return null;
+  if (logging.state === 'PAUSED') return statisticsResetPauseNotice();
   if (!logging.summaryConfigured) {
     const notice = node('div', 'ui-notice ui-notice-warning ui-notice-spaced',
       'Saved activity summaries are off. Statistics on this page show the last saved information. ');
@@ -22751,7 +22759,46 @@ async function renderRadio() {
     if (radioSystemCapability(radio, 'talker_aliases')) {
       identityValues.push(['Talker Alias', radio.last_talker_alias]);
     }
-    const blocks = [section('Identity', keyValues(identityValues)),
+    const identityDetails = node('div');
+    identityDetails.append(keyValues(identityValues));
+    if (normalizedSiteText(radio.last_talker_alias) && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
+      const form = node('form');
+      const forget = node('button', 'ui-button ui-button-secondary', 'Forget OTA alias');
+      forget.type = 'submit';
+      const status = node('p', 'ui-section-note');
+      const actions = node('div', 'ui-action-row');
+      actions.append(forget);
+      form.append(status, actions);
+      identityDetails.append(form);
+      const workflow = createFormWorkflow({ form, submit: forget, feedback: status,
+        hideCleanSubmit: false, allowUnchangedSubmit: true });
+      const body = { request_id: crypto.randomUUID(), target: { kind: 'talker_alias',
+        radio_system_key: radioSystem.radio_system_key, identity_key: identityKey,
+        expected_alias: radio.last_talker_alias } };
+      let acceptedJob = null;
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (workflow.isBusy()) return;
+        if (!acceptedJob && !await confirmAction(
+          `Forget “${radio.last_talker_alias}” for this radio? Activity history stays. Future traffic can teach this name again.`,
+          { title: 'Forget OTA alias?', confirmLabel: 'Forget alias' })) return;
+        await workflow.save(async () => {
+          const { runRetainedStatisticsJob } = await import('./features/retained-statistics.js?v=14');
+          return runRetainedStatisticsJob(requestJson, { body, initialJob: acceptedJob,
+            signal: renderContext.signal, onProgress: (current) => { acceptedJob = current; } });
+        }, { saving: 'Forgetting OTA alias…', onSuccess: async () => {
+          if (renderIsCurrent(renderContext)) await renderRadio();
+        }, onError: (error) => {
+          if (error.job && ['failed', 'cancelled'].includes(error.job.state)) {
+            acceptedJob = null;
+            body.request_id = crypto.randomUUID();
+          }
+          forget.textContent = acceptedJob ? 'Check alias action' : 'Retry forgetting alias';
+          return { message: error?.name === 'AbortError' ? '' : error.message };
+        } });
+      }, { signal: renderContext.signal });
+    }
+    const blocks = [section('Identity', identityDetails),
       systemCallCounts('Calls involving this radio', radio)];
     if (radioSystemCapability(radio, 'current_affiliations')) {
       blocks.push(section('Current Affiliation', keyValues([
@@ -35850,7 +35897,7 @@ async function renderAdmin(options = {}) {
   }
   else if (active === 'transcription') await recordingWorkspace.renderAdminTranscription();
   else if (active === 'retained-statistics') {
-    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=13');
+    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=14');
     if (!renderIsCurrent(renderContext)) return;
     content.append(createRetainedStatisticsWorkspace({
       node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost, browsingWorkflows,

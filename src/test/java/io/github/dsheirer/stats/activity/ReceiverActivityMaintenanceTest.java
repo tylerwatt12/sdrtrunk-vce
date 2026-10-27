@@ -8,6 +8,7 @@ package io.github.dsheirer.stats.activity;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -48,14 +49,14 @@ class ReceiverActivityMaintenanceTest
 
             ReceiverActivityMaintenance.runLightMaintenance(connection, 30);
             assertTrue(ReceiverActivitySchema.readStatusLong(connection, "last_maintenance_ms") > 123);
-            assertEquals(1, scalar(connection,
+            assertEquals(0, scalar(connection,
                 "SELECT count(*) FROM sqlite_stat1 WHERE idx='idx_optimization_fixture' AND length(stat)>0"),
-                "the same analysis candidate must still be optimized by explicit maintenance");
+                "routine maintenance must not start an unbounded ANALYZE");
         }
     }
 
     @Test
-    void explicitMaintenanceStillFinishesOptimization(@TempDir Path temporary) throws Exception
+    void explicitMaintenanceCompletesWithoutUnboundedOptimization(@TempDir Path temporary) throws Exception
     {
         Path database = temporary.resolve("manual.sqlite");
         try(Connection connection = openActivityDatabase(database))
@@ -68,7 +69,7 @@ class ReceiverActivityMaintenanceTest
             assertTrue(result.checkOk());
             assertTrue(ReceiverActivitySchema.readStatusLong(connection, "last_maintenance_ms") > 0);
             assertEquals(5_000, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
-            assertEquals(1, scalar(connection, """
+            assertEquals(0, scalar(connection, """
                 SELECT count(*) FROM sqlite_stat1 WHERE idx='idx_receiver_activity_event_channel_time'
                     AND length(stat)>0
                 """));
@@ -97,11 +98,34 @@ class ReceiverActivityMaintenanceTest
             assertEquals(0, scalar(connection, "PRAGMA freelist_count"));
             assertEquals(5_000, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
             assertTrue(ReceiverActivitySchema.readStatusLong(connection, "last_shrink_ms") > 0);
-            assertEquals(1, scalar(connection, """
+            assertEquals(0, scalar(connection, """
                 SELECT count(*) FROM sqlite_stat1 WHERE idx='idx_receiver_activity_event_channel_time'
                     AND length(stat)>0
                 """));
         }
+    }
+
+    @Test
+    void fullReadCheckCompletesAndCancellationNeverClaimsPass(@TempDir Path temporary) throws Exception
+    {
+        Path database = temporary.resolve("read-check.sqlite");
+        try(Connection connection = openActivityDatabase(database)) { seedRecentActivity(connection); }
+        var checked = ReceiverActivityMaintenance.check(database, () -> false);
+        assertTrue(checked.checkOk());
+        assertEquals("ok", checked.checkResult());
+        var cancelled = ReceiverActivityMaintenance.check(database, () -> true);
+        assertEquals(ReceiverActivityMaintenance.DeletionOutcome.INTERRUPTED, cancelled.deletionOutcome());
+        assertFalse(cancelled.checkOk());
+        assertTrue(cancelled.summary().contains("without a final result"));
+    }
+
+    @Test
+    void shrinkRequiresFullRebuildWorkspaceAndHeadroom()
+    {
+        long reserve = 5L * 1024 * 1024 * 1024;
+        long required = 2 * 10_000L * 4096 + reserve;
+        assertFalse(ReceiverActivityMaintenance.shrinkCapacity(10_000, 4096, required - 1).sufficient());
+        assertTrue(ReceiverActivityMaintenance.shrinkCapacity(10_000, 4096, required).sufficient());
     }
 
     @Test

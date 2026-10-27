@@ -32,10 +32,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Bounded, read-only target discovery for retained-statistics administration. */
 final class RetainedStatisticsCatalog
 {
+    private static final Logger LOG = LoggerFactory.getLogger(RetainedStatisticsCatalog.class);
     private static final long CURRENT_STATE_WINDOW_MS = 6L * 60 * 60 * 1000;
     private static final String CHANNEL_LABEL = "coalesce(nullif(trim(config.name), ''), " +
         "nullif(trim(config.site_name), ''), config.configuration_id)";
@@ -188,6 +191,7 @@ final class RetainedStatisticsCatalog
     /** Captured once when a job is submitted; polling never repeats source discovery queries. */
     String jobLabel(StatsDatabaseMaintenanceRequest.DeletionTarget target)
     {
+        if(target instanceof StatsDatabaseMaintenanceRequest.TalkerAlias) return "Forget OTA alias";
         if(!(target instanceof ScopedData scoped)) return "Saved statistics";
         if("alias_activity".equals(scoped.sourceKind()))
         {
@@ -1413,6 +1417,7 @@ final class RetainedStatisticsCatalog
         }
         catch(IOException | SQLException exception)
         {
+            LOG.warn("Unable to load retained statistics", exception);
             throw new StatsApiException(503, "statistics_unavailable",
                 "Retained statistics could not be loaded");
         }

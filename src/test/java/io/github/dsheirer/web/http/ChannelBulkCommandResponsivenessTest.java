@@ -49,6 +49,11 @@ import org.junit.jupiter.api.io.TempDir;
 /** Exercises the real HTTP/command boundary with deterministic stand-ins for hardware and maintenance. */
 class ChannelBulkCommandResponsivenessTest
 {
+    @org.junit.jupiter.api.BeforeAll
+    static void isolatePreferences() throws Exception
+    {
+        io.github.dsheirer.preference.portable.PortablePreferencesTestSupport.install();
+    }
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @Test
@@ -102,7 +107,7 @@ class ChannelBulkCommandResponsivenessTest
     }
 
     @Test
-    void waitingForStatisticsMaintenanceLeavesBrowsingAvailableAndReleasesAdmissionAfterFailure(@TempDir Path data)
+    void statisticsClearReturnsAcceptedAndOnlyFencesChannelStartUntilItsTerminalState(@TempDir Path data)
         throws Exception
     {
         try(Fixture fixture = new Fixture(data))
@@ -110,17 +115,17 @@ class ChannelBulkCommandResponsivenessTest
             String id = fixture.ids.getFirst();
             for(boolean fail: List.of(true, false))
             {
-                var clear = fixture.client.sendAsync(HttpRequest.newBuilder(fixture.origin.resolve(
-                    ChannelAdminHttpController.PATH + "/" + id + "/statistics/clear"))
-                    .timeout(Duration.ofSeconds(4)).POST(HttpRequest.BodyPublishers.noBody()).build(),
-                    HttpResponse.BodyHandlers.ofString());
+                var response = fixture.send(fixture.post(ChannelAdminHttpController.PATH + "/" + id +
+                    "/statistics/clear", Map.of("request_id", java.util.UUID.randomUUID().toString())));
+                assertEquals(202, response.statusCode(), response.body());
                 StatsDatabaseMaintenanceRequest request = fixture.maintenance.poll(2, TimeUnit.SECONDS);
                 assertNotNull(request);
                 try
                 {
                     fixture.assertBrowsing();
-                    assertEquals(429, fixture.send(fixture.action("CLONE", List.of(id))).statusCode());
-                    assertFalse(clear.isDone(), "The actual maintenance response must still be pending");
+                    assertEquals(200, fixture.send(fixture.action("CLONE", List.of(id))).statusCode());
+                    assertEquals(409, fixture.send(fixture.action("START", List.of(id))).statusCode());
+                    assertFalse(request.result().isDone(), "Acceptance must not claim that cleanup has finished");
                 }
                 finally
                 {
@@ -128,10 +133,10 @@ class ChannelBulkCommandResponsivenessTest
                     else request.result().complete(new ReceiverActivityMaintenance.Result(request.operation(),
                         123, "ok", 0, 0, 0, 0));
                 }
-                var response = clear.get(3, TimeUnit.SECONDS);
-                assertEquals(fail ? 503 : 200, response.statusCode(), response.body());
                 assertEquals(200, fixture.send(fixture.action("CLONE", List.of(id))).statusCode(),
                     "Both success and failure must release channel command admission");
+                assertEquals(200, fixture.send(fixture.action("START", List.of(id))).statusCode());
+                assertEquals(200, fixture.send(fixture.action("STOP", List.of(id))).statusCode());
             }
         }
     }
@@ -181,11 +186,17 @@ class ChannelBulkCommandResponsivenessTest
             }
             repository.commitChannelConfiguration(new ChannelConfigurationSnapshot(seeded));
             manager.init();
-            channels = ChannelAdministrationServiceTestSupport.create(manager);
+            channels = manager.getChannelAdministrationService();
             ids = seeded.stream().map(Channel::getConfigurationId).toList();
             server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.setExecutor(executor);
-            ChannelAdminHttpController controller = new ChannelAdminHttpController(channels);
+            ChannelAdminHttpController controller = new ChannelAdminHttpController(channels, () -> false, null,
+                (requestId, configurationId) -> {
+                    var request = StatsDatabaseMaintenanceRequest.delete(
+                        new StatsDatabaseMaintenanceRequest.Channel(configurationId));
+                    manager.dispatchMaintenance(request);
+                    return Map.of("job_id", requestId, "state", "running");
+                });
             server.createContext(ChannelAdminHttpController.PATH, controller::handle);
             server.createContext(ChannelAdminHttpController.READ_PATH, controller::handleCatalog);
             server.start();

@@ -41,6 +41,7 @@ import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupPreLoadDataContent;
@@ -138,7 +139,7 @@ import org.slf4j.LoggerFactory;
  * available traffic channel lists and queues.
  */
 public class P25TrafficChannelManager extends TrafficChannelManager implements IDecodeEventProvider, IChannelEventListener,
-    IChannelEventProvider, IMessageListener
+    IChannelEventProvider, IMessageListener, TalkerAliasManagerProvider
 {
     private static final Logger mLog = LoggerFactory.getLogger(P25TrafficChannelManager.class);
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);

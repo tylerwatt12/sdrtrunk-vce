@@ -55,6 +55,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BiConsumer;
@@ -97,6 +98,12 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
     private final ExecutorService mObservationWorker = Executors.newSingleThreadExecutor(
         new ObserverThreadFactory("sdrtrunk activity observation mapper"));
+    private final ExecutorService mCheckWorker = Executors.newSingleThreadExecutor(
+        new ObserverThreadFactory("sdrtrunk activity database check"));
+    private final AtomicReference<StatsDatabaseMaintenanceRequest> mActiveCheck = new AtomicReference<>();
+    private final AtomicReference<StatsDatabaseMaintenanceRequest> mPausedForReset = new AtomicReference<>();
+    private volatile ResetAdmissionBoundary mLastResetBoundary;
+    private final AtomicInteger mObservationAdmissions = new AtomicInteger();
     private final Semaphore mObservationWakeup = new Semaphore(0);
     private final AtomicLong mObservationDrops = new AtomicLong();
     private final AtomicLong mLastObservationDropMs = new AtomicLong();
@@ -192,6 +199,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
         mObservationWakeup.release();
         mObservationWorker.shutdownNow();
+        mCheckWorker.shutdownNow();
 
         try
         {
@@ -335,7 +343,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         while(true)
         {
-            if(mDisposed.get())
+            if(mDisposed.get() || mPausedForReset.get() != null)
             {
                 return false;
             }
@@ -629,6 +637,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
         try
         {
+            long remainingNanos = timeoutNanos - (System.nanoTime() - startedNanos);
+            if(!mCheckWorker.isTerminated() && (remainingNanos <= 0 ||
+                !mCheckWorker.awaitTermination(remainingNanos, TimeUnit.NANOSECONDS))) return false;
             return awaitStartedWritersUntil(startedNanos, timeoutNanos);
         }
         catch(InterruptedException exception)
@@ -679,6 +690,11 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             mCollectionEnabled = false;
             mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
             failPendingDeletionRequests(null);
+            StatsDatabaseMaintenanceRequest check = mActiveCheck.get();
+            if(check != null) check.cancel();
+            StatsDatabaseMaintenanceRequest reset = mPausedForReset.get();
+            if(reset != null) reset.cancel();
+            mCheckWorker.shutdownNow();
             MyEventBus.getGlobalEventBus().unregister(this);
             //The observer worker remains the only ingress consumer and owns state and writer cleanup.
             mObservationWakeup.release();
@@ -905,17 +921,22 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private void receiveDecodeEvent(Channel channel, IDecodeEvent event)
     {
         BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
-        afterIngressSnapshotForTest();
-
-        if(channel == null || event == null || !mCollectionEnabled || mDisposed.get())
+        mObservationAdmissions.incrementAndGet();
+        try
         {
-            return;
+            afterIngressSnapshotForTest();
+            if(channel == null || event == null || !mCollectionEnabled || mDisposed.get() ||
+                skipDuringReset(ingress)) return;
+
+            if(!ingress.offer(channel, event))
+            {
+                mObservationDrops.incrementAndGet();
+                mLastObservationDropMs.set(System.currentTimeMillis());
+            }
         }
-
-        if(!ingress.offer(channel, event))
+        finally
         {
-            mObservationDrops.incrementAndGet();
-            mLastObservationDropMs.set(System.currentTimeMillis());
+            mObservationAdmissions.decrementAndGet();
         }
     }
 
@@ -944,18 +965,36 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     private void offerObservation(Object first, Object second)
     {
         BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
-        afterIngressSnapshotForTest();
-
-        if(first == null || second == null || !mCollectionEnabled || mDisposed.get())
+        mObservationAdmissions.incrementAndGet();
+        try
         {
-            return;
-        }
+            afterIngressSnapshotForTest();
+            if(first == null || second == null || !mCollectionEnabled || mDisposed.get() || skipDuringReset(ingress)) return;
 
-        if(!ingress.offer(first, second))
-        {
-            mObservationDrops.incrementAndGet();
-            mLastObservationDropMs.set(System.currentTimeMillis());
+            if(!ingress.offer(first, second))
+            {
+                mObservationDrops.incrementAndGet();
+                mLastObservationDropMs.set(System.currentTimeMillis());
+            }
         }
+        finally
+        {
+            mObservationAdmissions.decrementAndGet();
+        }
+    }
+
+    /** Only atomic reads/counters on receiver callbacks; the administrator's barrier drains admitted observations. */
+    private boolean skipDuringReset(BoundedMpscPairQueue<Object,Object> ingress)
+    {
+        StatsDatabaseMaintenanceRequest reset = mPausedForReset.get();
+        if(reset != null || ingress != mObservationIngress)
+        {
+            ResetAdmissionBoundary boundary = mLastResetBoundary;
+            if(reset == null && boundary != null && boundary.ingress() == ingress) reset = boundary.request();
+            if(reset != null) reset.skippedObservation();
+            return true;
+        }
+        return false;
     }
 
     private void drainObservationsSafely()
@@ -1084,8 +1123,7 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         {
             processMaintenanceObservation(reset.request(), reset.requestedAt());
         }
-        else if(observation instanceof StatsDatabaseMaintenanceRequest request &&
-            request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS)
+        else if(observation instanceof StatsDatabaseMaintenanceRequest request)
         {
             processMaintenanceObservation(request, 0);
         }
@@ -1502,6 +1540,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
     {
     }
 
+    private record ResetAdmissionBoundary(StatsDatabaseMaintenanceRequest request,
+                                          BoundedMpscPairQueue<Object,Object> ingress) {}
+
     private void processMaintenanceObservation(StatsDatabaseMaintenanceRequest request, long resetBoundary)
     {
         synchronized(this)
@@ -1515,6 +1556,13 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
                 {
                     mP25CollectionEpoch++;
                     mObservationCollectionStartedAt = Math.max(mObservationCollectionStartedAt, resetBoundary);
+                    //Retire the drained epoch. A producer that captured it before the pause can never populate
+                    //the new collection epoch, even if its callback was delayed while the reset ran.
+                    BoundedMpscPairQueue<Object,Object> retired = mObservationIngress;
+                    mLastResetBoundary = new ResetAdmissionBoundary(request, retired);
+                    mObservationIngress = new BoundedMpscPairQueue<>(OBSERVATION_QUEUE_SIZE);
+                    failPendingDeletionRequests(retired);
+                    clearObservationStateOnWorker();
                 }
                 writer.submitMaintenance(request);
             }
@@ -1537,9 +1585,48 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
             return;
         }
 
+        if(request.operation() == ReceiverActivityMaintenance.Operation.CHECK)
+        {
+            receiveCheckRequest(request);
+            return;
+        }
+        boolean reset = request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS;
+        if(reset)
+        {
+            if(!mPausedForReset.compareAndSet(null, request))
+            {
+                request.result().completeExceptionally(new IllegalStateException("Statistics reset is already running"));
+                return;
+            }
+            request.result().whenComplete((result, failure) -> mPausedForReset.compareAndSet(request, null));
+            StatsDatabaseMaintenanceRequest check = mActiveCheck.get();
+            if(check != null) check.cancel(); //A check of history being reset has no useful completion result.
+            //A callback that already passed admission must finish its nonblocking queue offer before the barrier.
+            //Only this administrator thread waits, with a fixed bound; receiver callbacks never wait for reset.
+            if(!awaitObservationAdmissions())
+            {
+                request.result().completeExceptionally(new IllegalStateException(
+                    "Statistics observation boundary is busy; no reset was started. Try again"));
+                return;
+            }
+        }
+        else if(mPausedForReset.get() != null)
+        {
+            request.result().completeExceptionally(new IllegalStateException("Statistics reset is running; try again after it finishes"));
+            return;
+        }
+        if(request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.TalkerAlias &&
+            !awaitObservationAdmissions())
+        {
+            request.result().completeExceptionally(new IllegalStateException(
+                "Statistics observation boundary is busy; the saved OTA alias was not cleared. Try again"));
+            return;
+        }
+
         ReceiverActivityWriter writer = !mDisposed.get() ? mWriter : null;
         boolean requiresObservationBarrier = request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS ||
-            request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS;
+            request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS ||
+            request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS;
 
         if(requiresObservationBarrier && mWriterTransitionActive.get())
         {
@@ -1605,6 +1692,81 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         {
             request.result().completeExceptionally(
                 new IllegalStateException("Statistics database writer is not available"));
+        }
+    }
+
+    /** Administrator-only boundary; every producer that already entered must finish its nonblocking offer. */
+    private boolean awaitObservationAdmissions()
+    {
+        long deadline = System.nanoTime() + DELETION_ENQUEUE_TIMEOUT_NANOS;
+        while(mObservationAdmissions.get() != 0)
+        {
+            if(System.nanoTime() >= deadline || mDisposed.get() || Thread.currentThread().isInterrupted()) return false;
+            LockSupport.parkNanos(this, DRAIN_BARRIER_RETRY_NANOS);
+        }
+        return !mDisposed.get();
+    }
+
+    /** Full quick_check reads can take minutes on large history files. They never occupy the single writer. */
+    private void receiveCheckRequest(StatsDatabaseMaintenanceRequest request)
+    {
+        if(mPausedForReset.get() != null)
+        {
+            request.result().completeExceptionally(new IllegalStateException("Statistics reset is running; check the database after it finishes"));
+            return;
+        }
+        if(mDisposed.get() || !mActiveCheck.compareAndSet(null, request))
+        {
+            request.result().completeExceptionally(new IllegalStateException("A database check is already running or VCE is stopping"));
+            return;
+        }
+        request.result().whenComplete((result, failure) -> mActiveCheck.compareAndSet(request, null));
+        if(mPausedForReset.get() != null)
+        {
+            request.result().completeExceptionally(new IllegalStateException("Statistics reset is running; check the database after it finishes"));
+            return;
+        }
+        try
+        {
+            mCheckWorker.execute(() -> {
+                try
+                {
+                    Path databasePath;
+                    ReceiverActivityWriter writer;
+                    synchronized(this)
+                    {
+                        databasePath = mCurrentDatabasePath;
+                        writer = mWriter;
+                    }
+                    if(databasePath == null || writer == null)
+                        throw new IllegalStateException("Statistics database is not available");
+                    ReceiverActivityMaintenance.Result checked = ReceiverActivityMaintenance.check(databasePath,
+                        () -> request.cancelled() || mDisposed.get());
+                    if(checked.deletionOutcome() == ReceiverActivityMaintenance.DeletionOutcome.INTERRUPTED)
+                        request.result().complete(checked);
+                    else
+                    {
+                        synchronized(this)
+                        {
+                            if(mDisposed.get() || writer != mWriter || mWriterTransitionActive.get())
+                                request.result().complete(checked);
+                            else
+                            {
+                                request.checkResult(checked);
+                                writer.submitMaintenance(request);
+                            }
+                        }
+                    }
+                }
+                catch(Exception failure)
+                {
+                    request.result().completeExceptionally(failure);
+                }
+            });
+        }
+        catch(java.util.concurrent.RejectedExecutionException failure)
+        {
+            request.result().completeExceptionally(failure);
         }
     }
 
@@ -1750,6 +1912,11 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
         }
 
         boolean summaryActive = summaryConfigured && state == ReceiverActivityStatus.State.RUNNING;
+        if(mPausedForReset.get() != null)
+        {
+            state = ReceiverActivityStatus.State.PAUSED;
+            summaryActive = false;
+        }
         boolean historyActive = summaryActive && historyConfigured && historyWriterEnabled;
         return new ReceiverActivityStatus(summaryConfigured, historyConfigured, summaryActive, historyActive,
             preference.getStatsLoggingRetentionDays(), state,

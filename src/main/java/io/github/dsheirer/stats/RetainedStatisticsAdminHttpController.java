@@ -215,6 +215,12 @@ final class RetainedStatisticsAdminHttpController
         String kind = requiredText(target, "kind", 32);
         return switch(kind)
         {
+            case "talker_alias" -> {
+                requireFields(target, Set.of("kind", "radio_system_key", "identity_key", "expected_alias"));
+                yield new StatsDatabaseMaintenanceRequest.TalkerAlias(
+                    requiredText(target, "radio_system_key", 512), requiredText(target, "identity_key", 256),
+                    requiredText(target, "expected_alias", 255));
+            }
             case "scoped_data" -> {
                 requireAllowedFields(target, Set.of("kind", "source_kind", "source_key",
                     "site_configuration_id", "expected_site_key", "data_type", "record_key", "parts",

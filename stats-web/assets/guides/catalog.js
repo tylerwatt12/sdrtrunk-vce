@@ -48,7 +48,7 @@ const pageOverviewCopy = Object.freeze({
   'group-identity': ['Follow a talkgroup’s activity',
     'Review calls and radios associated with this talkgroup. Its activity history can help you recognize how the group is used.'],
   radio: ['Follow an individual radio',
-    'Review this radio’s activity and the talkgroups it has used. Compare its identity and history as you work out who is operating it.'],
+    'Review this radio’s activity and the talkgroups it has used. Administrators can use Forget OTA alias to remove an incorrect observed name while keeping activity history. Future traffic can teach the name again.'],
   'channel-setup': ['Choose the signals VCE receives',
     'A channel tells VCE which frequency or trunked system to receive. Start channels here, then use Scan Lists to choose which calls you hear.'],
   channel: ['Understand reception on this channel',

@@ -492,8 +492,9 @@ class ReceiverActivityWriter implements AutoCloseable
 
                 if(pendingRecord == null)
                 {
-                    pendingRecord = mQueue.poll(mDeletionJobs.isEmpty() ? POLL_TIMEOUT_MILLISECONDS :
-                        CLEANUP_YIELD_MILLISECONDS, TimeUnit.MILLISECONDS);
+                    pendingRecord = mQueue.poll(fullResetRunning() &&
+                        !mDeletionJobs.peekFirst().resetWaitingForReaders() ? 0 : mDeletionJobs.isEmpty() ?
+                        POLL_TIMEOUT_MILLISECONDS : CLEANUP_YIELD_MILLISECONDS, TimeUnit.MILLISECONDS);
                 }
 
                 command = mMaintenanceQueue.peek();
@@ -620,8 +621,16 @@ class ReceiverActivityWriter implements AutoCloseable
             try
             {
                 StatsDatabaseMaintenanceRequest request = command.request();
-                if(request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.ScopedData)
+                if(request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.ScopedData ||
+                    request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.Channel ||
+                    request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS ||
+                    request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS)
                 {
+                    if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS && !mDeletionJobs.isEmpty())
+                        throw new IllegalStateException("Another statistics cleanup is running; finish or stop it before resetting");
+                    if(mDeletionJobs.stream().anyMatch(job ->
+                        job.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS))
+                        throw new IllegalStateException("Statistics reset is running; try again after it finishes");
                     mDeletionJobs.addLast(request);
                     processDeletionPass(connection);
                 }
@@ -660,17 +669,30 @@ class ReceiverActivityWriter implements AutoCloseable
                     mDroppedRecords.get(), mHistoryGeneration) : ReceiverActivityMaintenance.interruptRetainedStats(mDatabasePath, request);
             request.observeWriter(mQueue.size(), mDroppedRecords.get());
             if(result == null) mDeletionJobs.addLast(request);
-            else request.result().complete(result);
+            else
+            {
+                if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS) clearResetCaches();
+                request.result().complete(result);
+            }
         }
         catch(Exception failure)
         {
             if(failure instanceof SQLException sql && isDatabaseBusy(sql)) request.databaseBusy();
-            request.setResumable(true);
+            request.setResumable(request.operation() != ReceiverActivityMaintenance.Operation.RESET_STATS);
+            if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS) clearResetCaches();
             request.observeWriter(mQueue.size(), mDroppedRecords.get());
             request.result().completeExceptionally(failure);
             mLog.warn("Statistics cleanup paused after a batch failure; committed progress is retained", failure);
         }
-        mNextDeletionPassNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CLEANUP_YIELD_MILLISECONDS);
+        mNextDeletionPassNanos = request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS &&
+            !request.resetWaitingForReaders() ? 0 :
+            System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CLEANUP_YIELD_MILLISECONDS);
+    }
+
+    private boolean fullResetRunning()
+    {
+        return !mDeletionJobs.isEmpty() &&
+            mDeletionJobs.peekFirst().operation() == ReceiverActivityMaintenance.Operation.RESET_STATS;
     }
 
     private void interruptDeletionJobs()
@@ -685,7 +707,7 @@ class ReceiverActivityWriter implements AutoCloseable
             }
             catch(IOException failure)
             {
-                request.setResumable(true);
+                request.setResumable(request.operation() != ReceiverActivityMaintenance.Operation.RESET_STATS);
                 request.result().completeExceptionally(failure);
             }
         }
@@ -693,7 +715,7 @@ class ReceiverActivityWriter implements AutoCloseable
 
     private void runScheduledRetention(Connection connection) throws SQLException, InterruptedException
     {
-        if(!mRunning.get())
+        if(!mRunning.get() || fullResetRunning())
         {
             return; //Shutdown drains observations and explicit commands without starting routine cleanup.
         }
@@ -719,10 +741,11 @@ class ReceiverActivityWriter implements AutoCloseable
                 StatsDatabaseMaintenanceRequest request = command.request();
                 ReceiverActivityMaintenance.Result result;
 
-                if(request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS)
+                if(request.operation() == ReceiverActivityMaintenance.Operation.CHECK)
                 {
-                    result = ReceiverActivityMaintenance.clearChannelStats(connection, mDatabasePath,
-                        request.configurationId(), mHistoryGeneration);
+                    if(request.checkResult() == null)
+                        throw new IllegalStateException("Database checks must run on a separate read connection");
+                    result = ReceiverActivityMaintenance.recordCheck(connection, request.checkResult());
                 }
                 else if(request.operation() == ReceiverActivityMaintenance.Operation.DELETE_RETAINED_STATS)
                 {
@@ -742,11 +765,7 @@ class ReceiverActivityWriter implements AutoCloseable
                 }
                 else if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS)
                 {
-                    mResolvedLogicalCalls.clear();
-                    mCompletedToneReceipts.clear();
-                    mActivityToneAssociations = new ActivityToneAssociations();
-                    mP25Calls.clear();
-                    mP25CallRecoveryFloor = System.currentTimeMillis();
+                    clearResetCaches();
                 }
 
                 return result;
@@ -759,6 +778,15 @@ class ReceiverActivityWriter implements AutoCloseable
                 }
             }
         }
+    }
+
+    private void clearResetCaches()
+    {
+        mResolvedLogicalCalls.clear();
+        mCompletedToneReceipts.clear();
+        mActivityToneAssociations = new ActivityToneAssociations();
+        mP25Calls.clear();
+        mP25CallRecoveryFloor = System.currentTimeMillis();
     }
 
     private void failPendingMaintenance(Exception failure)

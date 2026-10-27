@@ -17,6 +17,9 @@ import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.ReceiverActivityPath;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import java.util.Optional;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
+import javafx.util.Duration;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
@@ -42,6 +45,8 @@ public class StatsServerPreferenceEditor extends HBox
     private Button mShrinkButton;
     private Button mCheckButton;
     private Button mResetButton;
+    private Button mStopButton;
+    private StatsDatabaseMaintenanceRequest mActiveRequest;
 
     public StatsServerPreferenceEditor(UserPreferences userPreferences)
     {
@@ -78,7 +83,7 @@ public class StatsServerPreferenceEditor extends HBox
             mEditorPane.add(path, 0, row++);
             mEditorPane.add(new Label("Maintenance actions"), 0, row++);
             FlowPane actions = new FlowPane(8, 8, getMaintainButton(), getCheckButton(), getShrinkButton(),
-                getResetButton());
+                getResetButton(), getStopButton());
             actions.setPrefWrapLength(320);
             mEditorPane.add(actions, 0, row++);
             mEditorPane.add(getMaintenanceStatusLabel(), 0, row);
@@ -92,7 +97,7 @@ public class StatsServerPreferenceEditor extends HBox
         if(mMaintainButton == null)
         {
             mMaintainButton = new Button("Run Maintenance");
-            mMaintainButton.setTooltip(new Tooltip("Runs retention cleanup, WAL checkpoint, and query optimization."));
+            mMaintainButton.setTooltip(new Tooltip("Removes one bounded batch of expired statistics."));
             mMaintainButton.setOnAction(event -> run(ReceiverActivityMaintenance.Operation.MAINTAIN));
         }
 
@@ -107,7 +112,8 @@ public class StatsServerPreferenceEditor extends HBox
             mShrinkButton.setTooltip(new Tooltip("Rebuilds the database to reclaim unused disk space."));
             mShrinkButton.setOnAction(event -> {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
-                    "Shrink can take time and temporarily needs extra disk space. Continue?",
+                    "Shrink rebuilds the statistics database and can delay saving new activity. " +
+                        "VCE checks for enough temporary disk space before starting. Continue?",
                     ButtonType.YES, ButtonType.NO);
                 alert.setHeaderText("Shrink Stats Database");
                 Optional<ButtonType> result = alert.showAndWait();
@@ -127,7 +133,7 @@ public class StatsServerPreferenceEditor extends HBox
         if(mCheckButton == null)
         {
             mCheckButton = new Button("Check Database");
-            mCheckButton.setTooltip(new Tooltip("Runs SQLite quick_check and reports the result."));
+            mCheckButton.setTooltip(new Tooltip("Checks the full statistics database while activity continues to be saved. You can stop the check."));
             mCheckButton.setOnAction(event -> run(ReceiverActivityMaintenance.Operation.CHECK));
         }
 
@@ -143,7 +149,9 @@ public class StatsServerPreferenceEditor extends HBox
                 "Deletes P25, DMR, and NXDN Stats Server summaries and history only."));
             mResetButton.setOnAction(event -> {
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
-                    "Reset deletes Stats Server summaries and history. VCE configuration is unchanged. Continue?",
+                    "Reset deletes saved statistics and history. Statistics pause until it finishes; activity during " +
+                        "this pause is not saved. Receiving, audio, and uploads continue. " +
+                        "VCE configuration is unchanged. Stopping leaves completed batches removed. Continue?",
                     ButtonType.YES, ButtonType.NO);
                 alert.setHeaderText("Reset Lifetime Stats");
                 Optional<ButtonType> result = alert.showAndWait();
@@ -156,6 +164,20 @@ public class StatsServerPreferenceEditor extends HBox
         }
 
         return mResetButton;
+    }
+
+    private Button getStopButton()
+    {
+        if(mStopButton == null)
+        {
+            mStopButton = new Button("Stop");
+            mStopButton.setDisable(true);
+            mStopButton.setOnAction(event -> {
+                if(mActiveRequest != null) mActiveRequest.cancel();
+                mStopButton.setDisable(true);
+            });
+        }
+        return mStopButton;
     }
 
     private Label getMaintenanceStatusLabel()
@@ -173,20 +195,37 @@ public class StatsServerPreferenceEditor extends HBox
     private void run(ReceiverActivityMaintenance.Operation operation)
     {
         StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.forOperation(operation);
+        mActiveRequest = request;
         setMaintenanceRunning(true, operation);
+        Timeline progress = new Timeline(new KeyFrame(Duration.seconds(1), event -> {
+            if(operation == ReceiverActivityMaintenance.Operation.RESET_STATS)
+                getMaintenanceStatusLabel().setText((request.resetWaitingForReaders() ?
+                    "Waiting for saved activity readers to finish. " : "") + "Statistics paused for reset. Cleared " +
+                    request.progress().rowsDeleted() + " rows in " + request.progress().batchesCompleted() +
+                    " batches. Skipped " + request.observationsSkipped() + " observations. " +
+                    "Receiving, audio, and uploads continue.");
+        }));
+        progress.setCycleCount(Timeline.INDEFINITE);
+        progress.play();
         MyEventBus.getGlobalEventBus().post(request);
 
         request.result().whenComplete((result, throwable) -> Platform.runLater(() -> {
+            progress.stop();
+            mActiveRequest = null;
             setMaintenanceRunning(false, operation);
+            String resetStatus = operation == ReceiverActivityMaintenance.Operation.RESET_STATS ?
+                " Statistics pause ended. Skipped " + request.observationsSkipped() + " observations during the pause." : "";
 
             if(throwable != null)
             {
                 Throwable cause = throwable.getCause() != null ? throwable.getCause() : throwable;
-                getMaintenanceStatusLabel().setText(operation + " failed: " + cause.getMessage());
+                getMaintenanceStatusLabel().setText(operation + " failed: " + cause.getMessage() +
+                    (request.progress().batchesCompleted() > 0 ? " Completed batches remain removed (" +
+                        request.progress().rowsDeleted() + " rows)." : "") + resetStatus);
             }
             else
             {
-                getMaintenanceStatusLabel().setText(result.summary());
+                getMaintenanceStatusLabel().setText(result.summary() + resetStatus);
             }
         }));
     }
@@ -197,10 +236,15 @@ public class StatsServerPreferenceEditor extends HBox
         getShrinkButton().setDisable(running);
         getCheckButton().setDisable(running);
         getResetButton().setDisable(running);
+        getStopButton().setDisable(!running || (operation != ReceiverActivityMaintenance.Operation.CHECK &&
+            operation != ReceiverActivityMaintenance.Operation.RESET_STATS));
 
         if(running)
         {
-            getMaintenanceStatusLabel().setText(operation + " running...");
+            getMaintenanceStatusLabel().setText(operation == ReceiverActivityMaintenance.Operation.CHECK ?
+                "Checking the full database. Activity continues to be saved. This may take several minutes." :
+                operation == ReceiverActivityMaintenance.Operation.RESET_STATS ?
+                    "Statistics paused for reset. Receiving, audio, and uploads continue." : operation + " running...");
         }
     }
 }

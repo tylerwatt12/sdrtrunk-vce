@@ -36,13 +36,24 @@ final class StatsIdentitySearch
         String pattern = like(search);
         // Resolve each distinct home once for this statement, rather than once for every identity.
         // IS preserves the original empty-name behavior for unknown home components as well.
-        sql.insert(0, "WITH identity_search_homes AS MATERIALIZED (" +
+        sql.insert(0, "WITH identity_search_system AS MATERIALIZED (" +
+            "SELECT id,configuration_id,protocol_code FROM radio_system WHERE system_key=?), " +
+            "identity_search_homes AS MATERIALIZED (" +
             "SELECT keys.home_wacn,keys.home_system_id FROM (" +
             "SELECT DISTINCT home_wacn,home_system_id FROM radio_system_identity_summary " +
-            "WHERE radio_system_id=(SELECT id FROM radio_system WHERE system_key=?)) keys " +
+            "WHERE radio_system_id=(SELECT id FROM identity_search_system)) keys " +
             "WHERE lower(coalesce(" + StatsSystemNameResolver.p25NameSql("keys.home_wacn", "keys.home_system_id") +
-            ",'')) LIKE ? ESCAPE '\\') ");
-        parameters.addAll(0, List.of(radioSystemKey, pattern));
+            ",'')) LIKE ? ESCAPE '\\'), identity_search_aliases AS MATERIALIZED (" +
+            "SELECT definition.id,definition.matcher_type FROM alias definition WHERE definition.matcher_type IN ('" +
+            aliasMatcher + "','" + aliasMatcher + "_RANGE'" +
+            ("RADIO_ID".equals(aliasMatcher) ? ",'P25_SUBSCRIBER_IDENTITY') AND " : ") AND ") +
+            aliasTextSearch() + " AND definition.alias_list_id IN (" +
+            "SELECT config.alias_list_id FROM configuration_channel config WHERE config.configuration_id IN (" +
+            "SELECT channel.configuration_id FROM receiver_channel channel " +
+            "WHERE channel.radio_system_id=(SELECT id FROM identity_search_system) UNION " +
+            "SELECT configuration_id FROM identity_search_system)))" +
+            ("TALKGROUP".equals(aliasMatcher) ? groupEvidenceCtes() : "") + " ");
+        parameters.addAll(0, List.of(radioSystemKey, pattern, pattern, pattern, pattern));
         sql.append(" AND (CAST(summary.identity_id AS TEXT) LIKE ? ESCAPE '\\' ")
             .append("OR (system.protocol_code=4 AND system.address_domain_code=2 AND ")
             .append("printf('%02d-%04d', ((summary.identity_id >> 11) & 31), ")
@@ -61,13 +72,7 @@ final class StatsIdentitySearch
         }
         // Alias text is independent of the retained identity being tested. Resolve it once and avoid
         // reading any historical address evidence when no configured Alias can match the search.
-        sql.append(" OR EXISTS (WITH identity_search_aliases AS MATERIALIZED (")
-            .append("SELECT definition.id,definition.matcher_type FROM alias definition WHERE definition.matcher_type IN ('")
-            .append(aliasMatcher).append("','").append(aliasMatcher).append("_RANGE'")
-            .append("RADIO_ID".equals(aliasMatcher) ? ",'P25_SUBSCRIBER_IDENTITY') AND " : ") AND ")
-            .append(aliasTextSearch())
-            .append(") SELECT 1 WHERE EXISTS (SELECT 1 FROM identity_search_aliases) AND (0");
-        addTextParameters(parameters, pattern);
+        sql.append(" OR EXISTS (SELECT 1 WHERE EXISTS (SELECT 1 FROM identity_search_aliases) AND (0");
         if("RADIO_ID".equals(aliasMatcher))
         {
             sql.append(" OR EXISTS (SELECT 1 FROM alias_p25_subscriber_identity canonical_match ")
@@ -84,6 +89,13 @@ final class StatsIdentitySearch
         appendAliasSearch(sql, aliasMatcher, false);
         appendAliasSearch(sql, aliasMatcher, true);
         sql.append(")))");
+        // The configuration relation can itself be a union of current and detached historical channels. Its
+        // many identity/evidence probes must share one projection, rather than materializing that view again
+        // inside each correlated branch. This is statement-local read state, with no persisted cache or writes.
+        String query = sql.toString().replace("configuration_channel", "identity_search_configuration");
+        sql.setLength(0);
+        sql.append("WITH identity_search_configuration AS MATERIALIZED (SELECT * FROM configuration_channel), ")
+            .append(query, "WITH ".length(), query.length());
     }
 
     /** Matches friendly labels in SQL before the subscriber page is ordered or limited. */
@@ -193,14 +205,21 @@ final class StatsIdentitySearch
                 StatsAliasResolver.homeSystemSql("summary", "system") + " AND ")
             .append("NOT (")
             .append(p25ProjectedEvidencePresent(kind)).append(")))");
-        for(LocalEvidenceSource source: compactSources(kind))
+        if(kind == 1)
         {
-            appendLocalAliasSearch(sql, matcher, source, ranged, null);
+            sql.append(" OR summary.id IN (SELECT summary_id FROM identity_search_group_alias_matches ")
+                .append("WHERE matcher_type='").append(matcher).append("')");
         }
-        for(LocalEvidenceSource source: detailSources())
+        else
         {
-            appendLocalAliasSearch(sql, matcher, source, ranged,
-                p25RawCompactEvidencePresent(kind));
+            for(LocalEvidenceSource source: compactSources(kind))
+            {
+                appendLocalAliasSearch(sql, matcher, source, ranged, null);
+            }
+            for(LocalEvidenceSource source: detailSources())
+            {
+                appendLocalAliasSearch(sql, matcher, source, ranged, p25RawCompactEvidencePresent(kind));
+            }
         }
         sql.append("))");
     }
@@ -278,6 +297,10 @@ final class StatsIdentitySearch
 
     private static String p25ProjectedEvidencePresent(int kind)
     {
+        if(kind == 1)
+        {
+            return "summary.id IN (SELECT summary_id FROM identity_search_group_addresses)";
+        }
         List<String> compact = new ArrayList<>();
         for(LocalEvidenceSource source: compactSources(kind))
         {
@@ -303,6 +326,64 @@ final class StatsIdentitySearch
                 (kind == 2 ? " AND " + radioLocalEvidence(source) : "") + ")");
         }
         return String.join(" OR ", clauses);
+    }
+
+    /**
+     * Group aliases use observed local addresses, which can differ from the canonical directory ID. Reduce the
+     * scoped compact history to distinct address/list pairs once, then match the named aliases to that relation.
+     * This avoids probing every named alias in every evidence table for each directory identity. Raw compact
+     * presence still suppresses detail fallback even when its saved channel no longer supplies an Alias List.
+     */
+    private static String groupEvidenceCtes()
+    {
+        List<String> compact = new ArrayList<>();
+        for(LocalEvidenceSource source: compactSources(1))
+        {
+            compact.add("SELECT DISTINCT summary.id AS summary_id," + source.observedId() +
+                " AS observed_id,CASE WHEN observed_channel.radio_system_id=system.id THEN " +
+                "observed_config.alias_list_id END AS alias_list_id " + groupEvidenceFrom(source, true));
+        }
+        List<String> addresses = new ArrayList<>();
+        addresses.add("SELECT summary_id,observed_id,alias_list_id FROM identity_search_group_compact " +
+            "WHERE alias_list_id IS NOT NULL");
+        for(LocalEvidenceSource source: detailSources())
+        {
+            addresses.add("SELECT DISTINCT summary.id," + source.observedId() +
+                ",observed_config.alias_list_id " + groupEvidenceFrom(source, false) +
+                " AND summary.id NOT IN (SELECT summary_id FROM identity_search_group_compact)");
+        }
+        StringBuilder sql = new StringBuilder(", identity_search_group_compact AS MATERIALIZED (")
+            .append(String.join(" UNION ", compact))
+            .append("), identity_search_group_addresses AS MATERIALIZED (")
+            .append(String.join(" UNION ", addresses))
+            .append("), identity_search_group_alias_matches AS MATERIALIZED (");
+        for(boolean ranged: List.of(false, true))
+        {
+            if(ranged) sql.append(" UNION ");
+            sql.append("SELECT DISTINCT addresses.summary_id,definition.matcher_type ")
+                .append("FROM identity_search_aliases named CROSS JOIN alias definition ON definition.id=named.id ")
+                .append("CROSS JOIN identity_search_group_addresses addresses WHERE definition.matcher_type='")
+                .append(ranged ? "TALKGROUP_RANGE" : "TALKGROUP")
+                .append("' AND definition.protocol IN ('APCO25','APCO25_PHASE2') ")
+                .append("AND addresses.alias_list_id=definition.alias_list_id AND ")
+                .append(aliasMatch("addresses.observed_id", ranged));
+        }
+        return sql.append(')').toString();
+    }
+
+    private static String groupEvidenceFrom(LocalEvidenceSource source, boolean preserveRawPresence)
+    {
+        String join = preserveRawPresence ? " LEFT JOIN " : " CROSS JOIN ";
+        return "FROM identity_search_system system CROSS JOIN radio_system_identity_summary summary " +
+            "ON summary.radio_system_id=system.id CROSS JOIN " + source.from() + join +
+            "receiver_channel observed_channel ON observed_channel.id=" + source.channelId() + join +
+            "configuration_channel observed_config ON observed_config.configuration_id=" +
+            "observed_channel.configuration_id WHERE system.protocol_code=1 AND " +
+            "summary.identity_kind_code IN (1,3) AND " +
+            source.summaryId() + "=summary.id AND " + source.observedId() + ">0" +
+            (source.systemId() == null ? "" : " AND " + source.systemId() + "=system.id") +
+            (preserveRawPresence ? "" : " AND observed_channel.radio_system_id=system.id " +
+                "AND observed_config.alias_list_id IS NOT NULL");
     }
 
     private static List<LocalEvidenceSource> compactSources(int kind)

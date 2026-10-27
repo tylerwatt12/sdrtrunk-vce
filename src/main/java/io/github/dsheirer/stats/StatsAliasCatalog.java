@@ -43,8 +43,6 @@ final class StatsAliasCatalog
     static final int MAX_COVERAGE_ROWS = 500;
     static final int MAX_COVERAGE_PAIRS = 10_000;
     static final int MAX_EVIDENCE_ROWS = 10_000;
-    private static final int MAX_LEGACY_EXPORT_ENRICH_ALIASES =
-        Math.max(1, MAX_COVERAGE_PAIRS / MAX_COVERAGE_ROWS);
     static final int MAX_BULK_ALIAS_SELECTION = 10_000;
     private static final int MIGRATION_EVIDENCE_PAGE_ROWS = 2_000;
     private static final int MIGRATION_SOURCE_PAGE_ROWS = 500;
@@ -125,6 +123,7 @@ final class StatsAliasCatalog
         "signaling_observation_count", "relationship_count",
         "join_relationship_count", "current_affiliation_count");
     private static final List<String> PERSISTED_METRIC_FIELDS = METRIC_FIELDS.subList(0, 13);
+    private static final List<String> RELATIONSHIP_METRIC_FIELDS = METRIC_FIELDS.subList(13, 16);
     private static final String SIGNALING_SQL = "summary.grant_count + summary.join_count + " +
         "summary.register_count + summary.active_count + summary.denial_count + summary.emergency_count + " +
         "summary.request_count + summary.busy_count + summary.queued_count + summary.acknowledge_count + " +
@@ -344,7 +343,7 @@ final class StatsAliasCatalog
 
         if(rows.size() <= maximumRows)
         {
-            enrichLegacyExportRelationshipMetrics(connection, rows);
+            enrichExportRelationshipMetrics(connection, rows);
         }
 
         return rows;
@@ -352,29 +351,57 @@ final class StatsAliasCatalog
 
     /**
      * The original bounded Activity CSV includes live relationship and affiliation values that are deliberately not
-     * persisted in the sortable Alias Activity summary.  Recalculate only for this legacy report, using copies so
-     * the durable call/signaling values already selected by SQL remain authoritative.  The small batches preserve
-     * the existing coverage-pair and evidence bounds even when one Alias List is assigned to many receiver sources.
+     * persisted in the sortable Alias Activity summary. Query only those three fields: call/signaling evidence and
+     * configuration breakdowns do not contribute to them. Coverage is shared across batches with the same selected
+     * lists. Dense batches split before returning results, retaining the existing per-query coverage/evidence bounds.
      */
-    private void enrichLegacyExportRelationshipMetrics(Connection connection, List<Map<String,Object>> rows)
+    private void enrichExportRelationshipMetrics(Connection connection, List<Map<String,Object>> rows)
         throws SQLException
     {
-        for(int start = 0; start < rows.size(); start += MAX_LEGACY_EXPORT_ENRICH_ALIASES)
+        if(rows.isEmpty())
         {
-            int end = Math.min(start + MAX_LEGACY_EXPORT_ENRICH_ALIASES, rows.size());
-            List<Map<String,Object>> enriched = new ArrayList<>(end - start);
+            return;
+        }
 
-            for(int index = start; index < end; index++)
+        ENRICHMENT_ADMISSION.execute(() ->
+        {
+            Map<Map<Integer,Set<Long>>,List<CoverageSource>> coverageCache = new LinkedHashMap<>();
+            enrichExportRelationships(connection, rows, coverageCache);
+            return null;
+        });
+    }
+
+    private void enrichExportRelationships(Connection connection, List<Map<String,Object>> rows,
+        Map<Map<Integer,Set<Long>>,List<CoverageSource>> coverageCache) throws SQLException
+    {
+        try
+        {
+            IdentityTargets targets = IdentityTargets.from(rows, false);
+            Map<Integer,Set<Long>> key = targets.mAliasListIds;
+            List<CoverageSource> sources = coverageCache.get(key);
+            if(sources == null)
             {
-                enriched.add(new LinkedHashMap<>(rows.get(index)));
+                sources = targets.isEmpty() ? List.of() : loadCoverageSources(connection, targets);
+                //Keep cached receiver projections within the same bound as one coverage query.
+                int cachedSources = coverageCache.values().stream().mapToInt(List::size).sum();
+                if(cachedSources + sources.size() > MAX_COVERAGE_ROWS ||
+                    coverageCache.size() >= MAX_TARGET_ALIAS_LISTS)
+                {
+                    coverageCache.clear();
+                }
+                coverageCache.put(key, sources);
             }
-
-            enrich(connection, enriched, false);
-
-            for(int index = 0; index < enriched.size(); index++)
+            enrichAdmitted(connection, rows, false, sources, true);
+        }
+        catch(StatsApiException e)
+        {
+            if(e.status() != 413 || rows.size() == 1)
             {
-                copyRelationshipMetrics(enriched.get(index), rows.get(start + index));
+                throw e;
             }
+            int middle = rows.size() / 2;
+            enrichExportRelationships(connection, rows.subList(0, middle), coverageCache);
+            enrichExportRelationships(connection, rows.subList(middle, rows.size()), coverageCache);
         }
     }
 
@@ -1638,6 +1665,15 @@ final class StatsAliasCatalog
                                                                boolean includeBreakdown,
                                                                List<CoverageSource> preloadedSources) throws SQLException
     {
+        return enrichAdmitted(connection, aliases, includeBreakdown, preloadedSources, false);
+    }
+
+    private Map<Long,List<Map<String,Object>>> enrichAdmitted(Connection connection,
+                                                               List<Map<String,Object>> aliases,
+                                                               boolean includeBreakdown,
+                                                               List<CoverageSource> preloadedSources,
+                                                               boolean relationshipsOnly) throws SQLException
+    {
         Map<Long,Map<String,MetricAccumulator>> metrics = new LinkedHashMap<>();
         List<CoverageSource> sources = preloadedSources;
 
@@ -1655,6 +1691,11 @@ final class StatsAliasCatalog
 
         if(sources.isEmpty())
         {
+            if(relationshipsOnly)
+            {
+                aliases.forEach(alias -> aggregateFields(alias, List.of(), RELATIONSHIP_METRIC_FIELDS));
+                return Map.of();
+            }
             return applyNoCoverageMetrics(aliases, includeBreakdown);
         }
 
@@ -1716,10 +1757,13 @@ final class StatsAliasCatalog
         Map<Long,List<CoverageSource>> systemSourcesById = sourceProjections(sources, true);
         Map<Long,List<CoverageSource>> channelSourcesById = sourceProjections(sources, false);
         SourceIdentityTargets sourceTargets = SourceIdentityTargets.from(aliases, coverage);
-        applyTrunkedEvidence(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
-            new EvidenceBudget(MAX_EVIDENCE_ROWS));
-        applyConventionalEvidence(connection, metrics, conventionalChannelIds, channelSourcesById, sourceTargets,
-            new EvidenceBudget(MAX_EVIDENCE_ROWS));
+        if(!relationshipsOnly)
+        {
+            applyTrunkedEvidence(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
+                new EvidenceBudget(MAX_EVIDENCE_ROWS));
+            applyConventionalEvidence(connection, metrics, conventionalChannelIds, channelSourcesById, sourceTargets,
+                new EvidenceBudget(MAX_EVIDENCE_ROWS));
+        }
         applyRelationships(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
             new EvidenceBudget(MAX_EVIDENCE_ROWS));
         applyCurrentAffiliations(connection, metrics, radioSystemIds, systemSourcesById, sourceTargets,
@@ -1731,6 +1775,11 @@ final class StatsAliasCatalog
         {
             long aliasId = number(alias.get("alias_id"));
             Map<String,MetricAccumulator> aliasMetrics = metrics.getOrDefault(aliasId, Map.of());
+            if(relationshipsOnly)
+            {
+                aggregateFields(alias, aliasMetrics.values(), RELATIONSHIP_METRIC_FIELDS);
+                continue;
+            }
             boolean supported = isSupportedIdentity(alias);
             int observedSources = (int)aliasMetrics.values().stream().filter(MetricAccumulator::observed).count();
             alias.put("coverage_source_count", aliasMetrics.size());
@@ -2437,6 +2486,7 @@ final class StatsAliasCatalog
         List<Object> parameters = new ArrayList<>();
         StringBuilder sql = new StringBuilder();
         targets.appendCte(sql, parameters, true);
+        targets.appendMatchedSummaryCte(sql);
         sql.append("""
             SELECT relationship.radio_system_id, 2 AS identity_kind_code,
                 identity.identity_id AS identity_id,
@@ -2457,8 +2507,7 @@ final class StatsAliasCatalog
               AND
             """.formatted(placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
-        targets.appendPredicate(sql, "relationship.radio_system_id", "2",
-            "identity.identity_id", "identity.p25_subscriber_identity_id");
+        sql.append("identity.id IN (SELECT id FROM requested_summary) ");
         sql.append("""
             GROUP BY relationship.radio_system_id, identity.id, identity.identity_id,
                 identity.home_wacn, identity.home_system_id, identity.p25_subscriber_identity_id,
@@ -2485,8 +2534,7 @@ final class StatsAliasCatalog
               AND
             """.formatted(placeholders(radioSystemIds.size())));
         parameters.addAll(radioSystemIds);
-        targets.appendPredicate(sql, "relationship.radio_system_id", "relationship.group_kind_code",
-            "target.identity_id", "target.p25_subscriber_identity_id");
+        sql.append("target.id IN (SELECT id FROM requested_summary) ");
         sql.append("""
             GROUP BY relationship.radio_system_id, relationship.group_kind_code, target.id, target.identity_id,
                 target.home_wacn, target.home_system_id, target.p25_subscriber_identity_id,
@@ -2662,7 +2710,20 @@ final class StatsAliasCatalog
 
     private static void aggregate(Map<String,Object> alias, java.util.Collection<MetricAccumulator> rows)
     {
-        for(String field: METRIC_FIELDS)
+        aggregateFields(alias, rows, METRIC_FIELDS);
+
+        Long first = rows.stream().map(row -> row.firstEvidenceMs).filter(java.util.Objects::nonNull)
+            .min(Long::compareTo).orElse(null);
+        Long last = rows.stream().map(row -> row.lastEvidenceMs).filter(java.util.Objects::nonNull)
+            .max(Long::compareTo).orElse(null);
+        alias.put("first_evidence_ms", first);
+        alias.put("last_evidence_ms", last);
+    }
+
+    private static void aggregateFields(Map<String,Object> alias, java.util.Collection<MetricAccumulator> rows,
+                                        List<String> fields)
+    {
+        for(String field: fields)
         {
             boolean available = false;
             long total = 0;
@@ -2681,12 +2742,6 @@ final class StatsAliasCatalog
             alias.put(field, available ? total : null);
         }
 
-        Long first = rows.stream().map(row -> row.firstEvidenceMs).filter(java.util.Objects::nonNull)
-            .min(Long::compareTo).orElse(null);
-        Long last = rows.stream().map(row -> row.lastEvidenceMs).filter(java.util.Objects::nonNull)
-            .max(Long::compareTo).orElse(null);
-        alias.put("first_evidence_ms", first);
-        alias.put("last_evidence_ms", last);
     }
 
     private static boolean isSupportedIdentity(Map<String,Object> alias)
@@ -3111,6 +3166,12 @@ final class StatsAliasCatalog
 
         private static IdentityTargets from(List<Map<String,Object>> aliases)
         {
+            return from(aliases, true);
+        }
+
+        /** Coverage SQL consumes only list/protocol targets; source-specific evidence owns its separate range bound. */
+        private static IdentityTargets from(List<Map<String,Object>> aliases, boolean validateIdentityRanges)
+        {
             Map<TargetKey,List<IdentityRange>> ranges = new LinkedHashMap<>();
             Map<Integer,Set<Long>> aliasListIds = new LinkedHashMap<>();
 
@@ -3155,7 +3216,7 @@ final class StatsAliasCatalog
                 rangeCount += result.size();
             }
 
-            if(rangeCount > MAX_TARGET_RANGES)
+            if(validateIdentityRanges && rangeCount > MAX_TARGET_RANGES)
             {
                 throw new StatsApiException(413, "Alias enrichment exceeds the bounded identity-range limit");
             }
@@ -3330,7 +3391,7 @@ final class StatsAliasCatalog
             }
 
             sql.append("WITH ").append(CTE_NAME)
-                .append("(radio_system_id, identity_kind_code, minimum, maximum) AS (");
+                .append("(radio_system_id, identity_kind_code, minimum, maximum) AS MATERIALIZED (");
 
             if(targets.isEmpty())
             {
@@ -3368,7 +3429,7 @@ final class StatsAliasCatalog
             }
 
             sql.append(", ").append(P25_SUBSCRIBER_CTE_NAME)
-                .append("(radio_system_id, p25_subscriber_identity_id) AS (");
+                .append("(radio_system_id, p25_subscriber_identity_id) AS MATERIALIZED (");
             if(p25Subscribers.isEmpty())
             {
                 sql.append("SELECT NULL, NULL WHERE 0");
@@ -3383,6 +3444,19 @@ final class StatsAliasCatalog
                     parameters.add(target.p25SubscriberIdentityId());
                 }
             }
+            sql.append(") ");
+        }
+
+        /** Match the small identity directory once, rather than repeating every range for every relationship. */
+        private void appendMatchedSummaryCte(StringBuilder sql)
+        {
+            sql.append(", requested_summary AS MATERIALIZED (SELECT directory.id ")
+                .append("FROM radio_system_identity_summary directory WHERE directory.radio_system_id IN (")
+                .append("SELECT radio_system_id FROM ").append(CTE_NAME)
+                .append(" UNION SELECT radio_system_id FROM ").append(P25_SUBSCRIBER_CTE_NAME)
+                .append(") AND ");
+            appendPredicate(sql, "directory.radio_system_id", "directory.identity_kind_code",
+                "directory.identity_id", "directory.p25_subscriber_identity_id");
             sql.append(") ");
         }
 

@@ -24,6 +24,36 @@ class ReceiverActivityLinkedHistoryDeletionTest
     private static final String FOREIGN_RADIO = "v1-r-abcde-321-9001";
 
     @Test
+    void systemSummaryCleanupKeepsUnlinkedEventsAndRemovesIndependentIdentityMembers() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            seedP25(connection, 2);
+            execute(connection, "INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
+                "identity_id,first_seen_ms,last_seen_ms) VALUES(4,1,1,100,1000,1000)");
+            execute(connection, "INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms," +
+                "action_code,source_identity_summary_id,target_identity_summary_id,target_kind_code,target_observed_local_id) VALUES" +
+                "(1,1,1,1000,4,1,NULL,NULL,NULL),(2,1,1,1000,4,NULL,1,2,9001),(3,1,1,1000,4,NULL,NULL,NULL,NULL)," +
+                "(4,2,2,1000,4,2,NULL,NULL,NULL)");
+            execute(connection, "INSERT INTO activity_event_identity_member(event_id,radio_system_id," +
+                "identity_summary_id,channel_id) VALUES(3,1,4,1)");
+            execute(connection, "INSERT INTO receiver_activity_tone_sequence(event_id,source_code,method_code," +
+                "call_started_at_ms,completed_at_ms,tone_count) VALUES(1,1,1,900,1000,1),(3,1,1,900,1000,1)");
+            execute(connection, "INSERT INTO receiver_activity_tone(event_id,ordinal,frequency_1_millihz,duration_ms) " +
+                "VALUES(1,0,1000000,10),(3,0,1000000,10)");
+            ScopedData target = new ScopedData("radio_system", SYSTEM, null, null, "all", null, List.of("summary"));
+            assertEquals(5, ReceiverActivityMaintenance.preview(connection, target).countsByPart().get("events"));
+            finish(connection, StatsDatabaseMaintenanceRequest.delete(target));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE id IN (3,4)"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM activity_event_identity_member"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_tone WHERE event_id=3"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM radio_system_identity_summary WHERE id=2"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
+        }
+    }
+
+    @Test
     void radioSummaryDeletionIncludesProvenAssociatedHistoryAutomatically() throws Exception
     {
         try(Connection connection = open())
@@ -146,7 +176,7 @@ class ReceiverActivityLinkedHistoryDeletionTest
             assertFalse(plan.contains("TEMP B-TREE"), plan);
             StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(radio());
             assertNull(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
-            assertEquals(512, request.progress().rowsDeleted());
+            assertTrue(request.progress().rowsDeleted() > 0 && request.progress().rowsDeleted() <= 512);
             long cutoff = request.progress().cutoffMs();
             long later = cutoff + 1;
             execute(connection, "UPDATE p25_wuid_assignment_observation_summary SET last_observed_ms=" + later +
@@ -237,8 +267,9 @@ class ReceiverActivityLinkedHistoryDeletionTest
             var request = StatsDatabaseMaintenanceRequest.delete(calls(List.of("summary", "buckets", "events")));
             long changesBefore = scalar(connection, "SELECT total_changes()");
             assertNull(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
-            assertEquals(512, scalar(connection, "SELECT total_changes()") - changesBefore);
-            assertEquals(512, request.progress().rowsDeleted(), "The reset boundary consumes one changed-row slot");
+            assertTrue(scalar(connection, "SELECT total_changes()") - changesBefore <= 512);
+            assertTrue(request.progress().rowsDeleted() > 0 && request.progress().rowsDeleted() <= 512,
+                "The pass bounds examined candidates as well as changed rows, including its reset fence");
             String boundaryQuery = "SELECT reset_at_ms FROM receiver_channel_statistics_reset " +
                 "WHERE configuration_id='" + CHANNEL + "'";
             long boundary = scalar(connection, boundaryQuery);

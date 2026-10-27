@@ -2576,40 +2576,39 @@ class StatsWebDatabase
     {
         return readSnapshot(connection -> {
             requireRadioSystem(connection, radioSystemKey);
-            List<Map<String,Object>> rows = queryRadioSystemGroupIdentities(connection, radioSystemKey, request,
-                request.limit() + 1, request.offset(), queryObserver);
-            Map<String,Object> response = page(rows, request);
-            response.put("total_count", countRadioSystemGroupIdentities(connection, radioSystemKey, request));
+            GroupIdentityPage result = queryRadioSystemGroupIdentities(connection, radioSystemKey, request,
+                request.limit() + 1, request.offset(), true, queryObserver);
+            Map<String,Object> response = page(result.rows(), request);
+            response.put("total_count", result.totalCount());
             return response;
         });
-    }
-
-    private static long countRadioSystemGroupIdentities(Connection connection, String radioSystemKey,
-                                                         StatsRequest request) throws SQLException
-    {
-        StringBuilder sql = new StringBuilder("""
-            SELECT COUNT(*)
-            FROM radio_system_identity_summary summary
-            JOIN radio_system system ON system.id = summary.radio_system_id
-            WHERE system.system_key = ? AND summary.identity_kind_code IN (1, 3)
-            """);
-        List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "TALKGROUP", false);
-        return scalarLong(connection, sql.toString(), parameters.toArray());
     }
 
     private List<Map<String,Object>> queryRadioSystemGroupIdentities(Connection connection, String radioSystemKey,
                                                                       StatsRequest request, int limit, int offset)
         throws SQLException
     {
-        return queryRadioSystemGroupIdentities(connection, radioSystemKey, request, limit, offset, ignored -> {});
+        return queryRadioSystemGroupIdentities(connection, radioSystemKey, request, limit, offset, false,
+            ignored -> {}).rows();
     }
 
-    private List<Map<String,Object>> queryRadioSystemGroupIdentities(Connection connection, String radioSystemKey,
+    private GroupIdentityPage queryRadioSystemGroupIdentities(Connection connection, String radioSystemKey,
                                                                       StatsRequest request, int limit, int offset,
+                                                                      boolean includeTotal,
                                                                       Consumer<IdentityDirectoryQuery> queryObserver)
         throws SQLException
     {
+        StringBuilder matches = new StringBuilder("""
+            SELECT summary.id
+            FROM radio_system_identity_summary summary
+            JOIN radio_system system ON system.id = summary.radio_system_id
+            WHERE system.system_key = ? AND summary.identity_kind_code IN (1, 3)
+            """);
+        List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
+        StatsIdentitySearch.append(matches, parameters, radioSystemKey, request.search(), "TALKGROUP", false);
+        String ordering = order(request, GROUP_IDENTITY_SORT_COLUMNS, "logical_call_count")
+            .replace("signaling_observation_count", "(" + GROUP_IDENTITY_SIGNALING_COUNT_SQL + ")") +
+            ", summary.identity_kind_code, summary.identity_id";
         StringBuilder sql = new StringBuilder("""
                 SELECT system.id AS radio_system_id, system.system_key AS radio_system_key,
                     system.protocol_code, system.address_domain_code AS address_domain_code,
@@ -2633,21 +2632,35 @@ class StatsWebDatabase
                           AND site_calls.identity_role_code = 1
                           AND site_calls.identity_summary_id = summary.id
                     ), 0) ELSE summary.logical_call_count END AS channel_observation_count,
-                    %s AS signaling_observation_count
-                FROM radio_system_identity_summary summary
+                    %s AS signaling_observation_count,
+                    selected_groups.result_order AS _result_order
+                FROM selected_groups
+                JOIN radio_system_identity_summary summary ON summary.id=selected_groups.id
                 JOIN radio_system system ON system.id = summary.radio_system_id
-                WHERE system.system_key = ? AND summary.identity_kind_code IN (1, 3)
                 """.formatted(RADIO_SYSTEM_IDENTITY_PROJECTION_SQL,
                 IDENTITY_KEY_SQL.formatted("summary"),
                 GROUP_IDENTITY_SIGNALING_COUNT_SQL));
-        List<Object> parameters = new ArrayList<>(List.of(radioSystemKey));
-        StatsIdentitySearch.append(sql, parameters, radioSystemKey, request.search(), "TALKGROUP", false);
-        sql.append(" ORDER BY ").append(order(request, GROUP_IDENTITY_SORT_COLUMNS, "logical_call_count"))
-            .append(", summary.identity_kind_code, summary.identity_id LIMIT ? OFFSET ?");
+        // Search the complete scope once, share it with the total, and project expensive observation counts and
+        // labels only for the selected page. The left join retains an exact total even beyond the final page.
+        sql.insert(0, "WITH group_identity_matches AS MATERIALIZED (" + matches + "), " +
+            "selected_groups AS MATERIALIZED (SELECT summary.id, row_number() OVER (ORDER BY " + ordering +
+            ") AS result_order FROM group_identity_matches matched JOIN radio_system_identity_summary summary " +
+            "ON summary.id=matched.id JOIN radio_system system ON system.id=summary.radio_system_id ORDER BY " +
+            ordering + " LIMIT ? OFFSET ?), group_identity_rows AS (");
+        sql.append(includeTotal ? ") SELECT group_identity_rows.*, totals.total_count AS _total_count " +
+            "FROM (SELECT count(*) AS total_count FROM group_identity_matches) totals " +
+            "LEFT JOIN group_identity_rows ON 1=1 ORDER BY group_identity_rows._result_order" :
+            ") SELECT * FROM group_identity_rows ORDER BY _result_order");
         addLimitOffset(parameters, limit, offset);
         IdentityDirectoryQuery query = new IdentityDirectoryQuery(sql.toString(), parameters);
         queryObserver.accept(query);
         List<Map<String,Object>> rows = queryRows(connection, query.sql(), query.parameters().toArray());
+        long totalCount = includeTotal && !rows.isEmpty() ? number(rows.getFirst().get("_total_count")) : 0;
+        rows.removeIf(row -> row.get("identity_summary_id") == null);
+        rows.forEach(row -> {
+            row.remove("_total_count");
+            row.remove("_result_order");
+        });
         enrichRadioSystemGroupIdentities(connection, rows, "native_id", "alias_");
 
         for(Map<String,Object> row: rows)
@@ -2656,8 +2669,10 @@ class StatsWebDatabase
             WebEntityRef.put(row, identityReference(row, kind, textValue(row.get("identity_key"))));
         }
 
-        return rows;
+        return new GroupIdentityPage(rows, totalCount);
     }
+
+    private record GroupIdentityPage(List<Map<String,Object>> rows, long totalCount) {}
 
     Map<String,Object> radioSystemRadios(String radioSystemKey, StatsRequest request)
     {

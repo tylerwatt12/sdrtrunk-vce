@@ -59,6 +59,7 @@ vm.runInContext(`
   ${functionSource('function statsLoggingState(')}
   ${functionSource('function p25VisualizerMenuAvailable()')}
   ${functionSource('function detailedHistoryAvailable(')}
+  ${functionSource('function statisticsResetPauseNotice()')}
   ${functionSource('function detailedHistoryNotice(')}
   ${functionSource('function databaseLoggingNotice(view)')}
   globalThis.statusState = () => ({
@@ -143,6 +144,12 @@ async function main() {
   const starting = plainNotice();
   assert.match(starting.className, /ui-notice-warning/);
   assert.match(noticeText(starting), /summaries are starting/);
+
+  context.acceptStatus({ stats_logging: { summary_configured: true, summary_active: false,
+    state: 'PAUSED' } });
+  assert.match(noticeText(plainNotice()), /Statistics are paused while lifetime statistics are reset/);
+  assert.match(noticeText(plainNotice()), /Receiving, audio, and uploads continue/);
+  assert.match(noticeText(plainNotice()), /Activity during this pause is not saved/);
 
   context.acceptStatus({ stats_logging: { summary_configured: true, summary_active: false,
     state: 'FAILED', last_successful_write_ms: 42 } });

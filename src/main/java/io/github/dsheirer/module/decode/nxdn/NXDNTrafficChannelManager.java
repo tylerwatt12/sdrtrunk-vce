@@ -37,6 +37,7 @@ import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
 import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
@@ -92,7 +93,7 @@ import org.slf4j.LoggerFactory;
  * Manages trunked system traffic channel activations
  */
 public class NXDNTrafficChannelManager extends TrafficChannelManager implements IDecodeEventProvider,
-        IChannelEventListener, IChannelEventProvider
+        IChannelEventListener, IChannelEventProvider, TalkerAliasManagerProvider
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(NXDNTrafficChannelManager.class);
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";

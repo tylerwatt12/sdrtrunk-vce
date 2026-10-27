@@ -618,7 +618,19 @@ public class StatsWebServerService implements AutoCloseable
                 .getVoiceDecryptionModulePreference().getModuleManager().isLoaded(),
                 new ChannelAdminHttpController.ReceiverOperations(mServices.mTunerAdministrationService,
                     mServices.mTunerSettingsService,
-                    exchange -> mWebRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.ADMIN_TUNERS)));
+                    exchange -> mWebRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.ADMIN_TUNERS)),
+                (requestId, configurationId) -> {
+                    try
+                    {
+                        return mServices.mRetainedStatisticsJobs.submit(requestId,
+                            new io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.Channel(configurationId));
+                    }
+                    catch(StatsApiException exception)
+                    {
+                        throw new ChannelAdminHttpController.StatisticsSubmissionException(exception.status(),
+                            exception.code(), exception.getMessage());
+                    }
+                });
         server.createContext(ChannelAdminHttpController.READ_PATH, mWebRequestSecurity.protectApi(
             WebCapability.RADIO_VIEW, channelController::handleCatalog));
         server.createContext(ChannelAdminHttpController.PATH, mWebRequestSecurity.protectApi(

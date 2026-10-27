@@ -853,6 +853,7 @@ public final class ReceiverHealthService implements AutoCloseable
                 case DISABLED -> "Off";
                 case STARTING -> "Starting";
                 case RUNNING -> "On";
+                case PAUSED -> "Paused for reset";
                 case STOPPED -> "Not running";
                 case FAILED -> "Error";
             };

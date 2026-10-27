@@ -36,6 +36,9 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
+import io.github.dsheirer.identifier.alias.TalkerAliasManager;
+import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
@@ -106,6 +109,22 @@ import org.slf4j.LoggerFactory;
  */
 public class ChannelProcessingManager implements Listener<ChannelEvent>
 {
+    /** Runs on the administrative caller, without scheduling work on a decoder callback. */
+    public void forgetTalkerAlias(String systemKey, RadioSystemIdentityKey.Identity identity, String expectedAlias)
+    {
+        Set<TalkerAliasManager> caches = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for(ProcessingChain chain : mProcessingChainsMap.values())
+        {
+            for(Module module : chain.getModules())
+            {
+                if(module instanceof TalkerAliasManagerProvider provider)
+                {
+                    TalkerAliasManager cache = provider.getTalkerAliasManager();
+                    if(cache != null && caches.add(cache)) cache.forget(systemKey, identity, expectedAlias);
+                }
+            }
+        }
+    }
     public enum RemoteTrafficOpenResult
     {
         STARTING,

@@ -47,6 +47,7 @@ public final class ChannelAdminHttpController
     private final ChannelAdministrationService mService;
     private final BooleanSupplier mVoiceDecryptionModuleLoaded;
     private final ReceiverOperations mReceiverOperations;
+    private final java.util.function.BiFunction<String,String,Map<String,Object>> mStatisticsClearSubmission;
 
     public ChannelAdminHttpController(ChannelAdministrationService service)
     {
@@ -63,10 +64,19 @@ public final class ChannelAdminHttpController
                                       BooleanSupplier voiceDecryptionModuleLoaded,
                                       ReceiverOperations receiverOperations)
     {
+        this(service, voiceDecryptionModuleLoaded, receiverOperations, null);
+    }
+
+    public ChannelAdminHttpController(ChannelAdministrationService service,
+                                      BooleanSupplier voiceDecryptionModuleLoaded,
+                                      ReceiverOperations receiverOperations,
+                                      java.util.function.BiFunction<String,String,Map<String,Object>> statisticsClearSubmission)
+    {
         mService = Objects.requireNonNull(service, "Channel administration service cannot be null");
         mVoiceDecryptionModuleLoaded = Objects.requireNonNull(voiceDecryptionModuleLoaded,
             "Voice decryption module status cannot be null");
         mReceiverOperations = receiverOperations;
+        mStatisticsClearSubmission = statisticsClearSubmission;
     }
 
     public void handle(HttpExchange exchange) throws IOException
@@ -128,10 +138,10 @@ public final class ChannelAdminHttpController
             sendError(exchange, 409, "lifecycle_failed", safeMessage(exception,
                 "The channel lifecycle command failed"));
         }
-        catch(ChannelAdministrationService.StatisticsException exception)
+        catch(StatisticsSubmissionException exception)
         {
-            mLog.warn("Unable to clear channel statistics", exception);
-            sendError(exchange, 503, "statistics_unavailable", "Channel statistics could not be cleared");
+            if(exception.status == 429) exchange.getResponseHeaders().set("Retry-After", "1");
+            sendError(exchange, exception.status, exception.code, exception.getMessage());
         }
         catch(IllegalArgumentException exception)
         {
@@ -251,8 +261,20 @@ public final class ChannelAdminHttpController
             String id = itemId(path.substring(0, path.length() - statisticsSuffix.length()));
             requireMethod(exchange, "POST");
             requireNoQuery(exchange);
-            requireNoBody(exchange);
-            sendData(exchange, 200, mService.clearStatistics(id));
+            StatisticsClearRequest request = readJson(exchange, StatisticsClearRequest.class);
+            String requestId = request.requestId();
+            try
+            {
+                if(requestId == null || !java.util.UUID.fromString(requestId).toString().equals(requestId))
+                    throw new IllegalArgumentException();
+            }
+            catch(IllegalArgumentException exception)
+            {
+                throw error(400, "invalid_request", "A valid request_id is required");
+            }
+            if(mStatisticsClearSubmission == null)
+                throw error(503, "statistics_unavailable", "Statistics cleanup is not available");
+            sendData(exchange, 202, mStatisticsClearSubmission.apply(requestId, id));
             return;
         }
 
@@ -287,6 +309,21 @@ public final class ChannelAdminHttpController
                     requiredRevision(request.revision())));
             }
             default -> methodNotAllowed(exchange, "GET, PUT, DELETE");
+        }
+    }
+
+    private record StatisticsClearRequest(String requestId) {}
+
+    /** Preserves the existing cleanup registry's HTTP admission and retry-key errors across this adapter. */
+    public static final class StatisticsSubmissionException extends RuntimeException
+    {
+        private final int status;
+        private final String code;
+        public StatisticsSubmissionException(int status, String code, String message)
+        {
+            super(message);
+            this.status = status;
+            this.code = code;
         }
     }
 

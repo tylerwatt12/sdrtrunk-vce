@@ -320,6 +320,7 @@ final class RetainedStatisticsJobs implements AutoCloseable
                 case StatsDatabaseMaintenanceRequest.SavedSite ignored -> "saved_site";
                 case StatsDatabaseMaintenanceRequest.Channel ignored -> "channel";
                 case StatsDatabaseMaintenanceRequest.System ignored -> "system";
+                case StatsDatabaseMaintenanceRequest.TalkerAlias ignored -> "talker_alias";
             };
             var targetFields = (com.fasterxml.jackson.databind.node.ObjectNode)ApiHttpResponse.normalizePayload(target);
             targetFields.put("kind", kind);

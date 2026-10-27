@@ -237,7 +237,7 @@ class ReceiverActivityScopedDeletionTest
             ReceiverActivityMaintenance.Preview preview = ReceiverActivityMaintenance.preview(connection, target);
             assertEquals(3, preview.rowsTotal());
             assertTrue(preview.effects().stream().anyMatch(effect -> effect.contains("linked hourly history")));
-            assertEquals(1, ReceiverActivityDeletion.delete(connection, target).rowsDeleted());
+            assertEquals(3, ReceiverActivityDeletion.delete(connection, target).rowsDeleted());
             assertEquals(0, count(connection, "radio_system_identity_summary"));
             assertEquals(0, count(connection, "trunked_logical_call_identity_bucket"));
             assertEquals(0, count(connection, "receiver_activity_event"));
@@ -364,7 +364,7 @@ class ReceiverActivityScopedDeletionTest
                 """);
             ScopedData target = new ScopedData("saved_channel", CHANNEL, null, null,
                 "radios", "451000000:1:321", List.of("summary"));
-            assertEquals(1, ReceiverActivityDeletion.delete(connection, target).rowsDeleted());
+            assertEquals(3, ReceiverActivityDeletion.delete(connection, target).rowsDeleted());
             assertEquals(1, count(connection,
                 "dmr_conventional_radio_summary WHERE radio_id=322 AND last_peer_radio_id IS NULL"));
             assertEquals(1, count(connection,
@@ -438,6 +438,38 @@ class ReceiverActivityScopedDeletionTest
             assertEquals(1, count(connection, "conventional_activity_summary WHERE channel_id=2"));
             assertEquals(2, count(connection, "configuration_channel"));
             assertEquals(1, count(connection, "alias"));
+        }
+    }
+
+    @Test
+    void trunkedCallTotalsUseStoredCountersAndPreserveNamesAndSignaling() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            p25Site(connection);
+            execute(connection, "INSERT INTO radio_system_identity_summary " +
+                "(id,radio_system_id,identity_kind_code,identity_id,first_seen_ms,last_seen_ms," +
+                "logical_call_count,source_logical_call_count,target_logical_call_count,encrypted_logical_call_count," +
+                "recorded_output_count,streamed_output_count,grant_count,last_talker_alias,last_talker_alias_seen_ms) " +
+                "VALUES(1,1,2,321,1000,1000,5,3,2,1,2,3,7,'Unit 321',1000)," +
+                "(2,1,1,45,1000,1000,5,3,2,1,2,3,7,NULL,NULL)");
+            execute(connection, "INSERT INTO trunked_radio_group_summary " +
+                "(radio_system_id,radio_identity_id,group_identity_id,group_kind_code,first_seen_ms,last_seen_ms," +
+                "logical_call_count,encrypted_logical_call_count,recorded_output_count,streamed_output_count,grant_count) " +
+                "VALUES(1,1,2,1,1000,1000,5,1,2,3,7)");
+            var calls = new ScopedData("radio_system", SYSTEM, null, null, "call_activity", null, List.of("summary"));
+            assertEquals(3, ReceiverActivityMaintenance.preview(connection, calls).rowsTotal());
+            assertEquals(3, ReceiverActivityDeletion.delete(connection, calls).rowsDeleted());
+            assertEquals(2, count(connection, "radio_system_identity_summary WHERE logical_call_count=0 " +
+                "AND source_logical_call_count=0 AND target_logical_call_count=0 AND encrypted_logical_call_count=0 " +
+                "AND recorded_output_count=0 AND streamed_output_count=0 AND grant_count=7"));
+            assertEquals(1, count(connection, "radio_system_identity_summary WHERE last_talker_alias='Unit 321'"));
+            assertEquals(1, count(connection, "trunked_radio_group_summary WHERE logical_call_count=0 " +
+                "AND encrypted_logical_call_count=0 AND recorded_output_count=0 AND streamed_output_count=0 AND grant_count=7"));
+            var signaling = new ScopedData("radio_system", SYSTEM, null, null, "signaling_activity", null, List.of("summary"));
+            assertEquals(3, ReceiverActivityDeletion.delete(connection, signaling).rowsDeleted());
+            assertEquals(2, count(connection, "radio_system_identity_summary WHERE grant_count=0 AND logical_call_count=0"));
+            assertEquals(1, count(connection, "radio_system_identity_summary WHERE last_talker_alias='Unit 321'"));
         }
     }
 

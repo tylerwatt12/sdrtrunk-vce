@@ -23,11 +23,14 @@ import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.portable.PortablePreferencesTestSupport;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.io.StringReader;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
@@ -81,6 +84,7 @@ class StatsWebDatabaseTest
     @BeforeEach
     void setUp() throws Exception
     {
+        PortablePreferencesTestSupport.install();
         mDatabasePath = mTemporaryFolder.resolve("sdrtrunk.sqlite");
         createCurrentWebTestDatabase();
         seedCurrentRadioModel();
@@ -1751,6 +1755,90 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void analyticalAliasExportSharesCoverageAndQueriesOnlyLiveRelationshipFields() throws Exception
+    {
+        List<String> statements = new ArrayList<>();
+        try(Connection connection = openFixture();
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE configuration_channel SET alias_list_id=71 WHERE configuration_id='" +
+                P25_CHANNEL_B + "'");
+            statement.executeUpdate("""
+                WITH RECURSIVE ids(value) AS (
+                    VALUES(10000) UNION ALL SELECT value+1 FROM ids WHERE value<10600)
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                SELECT value+10000,71,printf('Alias %05d',value),'TALKGROUP','APCO25',value FROM ids
+                """);
+            statement.executeUpdate("INSERT INTO alias(id,alias_list_id,name,matcher_type,numeric_value) " +
+                "VALUES(99999,71,'Unsupported status','STATUS',1)");
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,
+                    home_wacn,home_system_id,identity_id,first_seen_ms,last_seen_ms,logical_call_count)
+                VALUES(9101,71,1,0xBEE00,0x49F,10600,1000,4000,3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_group_summary(radio_system_id,radio_identity_id,group_identity_id,
+                    group_kind_code,first_seen_ms,last_seen_ms,join_count,logical_call_count)
+                VALUES(71,7102,9101,1,1000,4000,2,3)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO trunked_radio_affiliation(radio_system_id,radio_identity_id,talkgroup_identity_id,
+                    channel_id,radio_observed_local_id,talkgroup_observed_local_id,confirmed_at_ms)
+                VALUES(71,7102,9101,71,202,10600,4000)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_activity_summary(alias_id,alias_list_id,protocol_code,metrics_state,
+                    logical_call_count,recorded_logical_call_count,stream_submitted_logical_call_count,
+                    grant_observation_count,signaling_observation_count,first_evidence_ms,last_evidence_ms,
+                    updated_at_ms)
+                VALUES(20600,71,1,'observed',777,666,555,444,333,77,88,4000)
+                """);
+            Connection observed = (Connection)Proxy.newProxyInstance(Connection.class.getClassLoader(),
+                new Class<?>[]{Connection.class}, (proxy, method, arguments) -> {
+                    if(method.getName().equals("prepareStatement"))
+                    {
+                        statements.add((String)arguments[0]);
+                    }
+                    try
+                    {
+                        return method.invoke(connection, arguments);
+                    }
+                    catch(InvocationTargetException e)
+                    {
+                        throw e.getCause();
+                    }
+                });
+            List<Map<String,Object>> exported = new StatsAliasCatalog(new StatsAliasResolver()).exportRows(observed,
+                request("/?list=71&sort=name&direction=asc"), StatsCsvExport.MAX_ROWS);
+            assertEquals(603, exported.size());
+            Map<String,Object> historical = rowWith(exported, "alias_id", 20600);
+            assertEquals(List.of(777L,666L,555L,444L,333L,77L,88L), List.of(
+                historical.get("logical_call_count"), historical.get("recorded_logical_call_count"),
+                historical.get("stream_submitted_logical_call_count"), historical.get("grant_observation_count"),
+                historical.get("signaling_observation_count"), historical.get("first_evidence_ms"),
+                historical.get("last_evidence_ms")).stream().map(StatsWebDatabaseTest::number).toList());
+            assertEquals(1, number(historical.get("relationship_count")));
+            assertEquals(1, number(historical.get("join_relationship_count")));
+            assertEquals(1, number(historical.get("current_affiliation_count")));
+            assertEquals(0, number(rowWith(exported,"alias_id",20000).get("relationship_count")));
+            assertNull(rowWith(exported,"alias_id",99999).get("relationship_count"));
+            assertEquals(1, statements.stream().filter(sql -> sql.contains("WITH coverage AS (")).count(),
+                "Receiver coverage must be loaded once across multiple export batches");
+            assertEquals(1, statements.stream().filter(sql ->
+                sql.contains("FROM trunked_radio_group_summary relationship")).count(),
+                "The report must share one bounded bulk relationship query instead of twenty-alias full enrichment");
+            assertFalse(statements.stream().anyMatch(sql ->
+                sql.startsWith("WITH requested_identity") && sql.contains("summary.logical_call_count")),
+                "Live call/signaling evidence cannot change the durable exported values");
+
+            Map<String,Object> conventional = rowWith(new StatsAliasCatalog(new StatsAliasResolver())
+                .exportRows(connection, request("/?list=74"), StatsCsvExport.MAX_ROWS), "alias_id",7401);
+            assertNull(conventional.get("relationship_count"));
+            assertNull(conventional.get("current_affiliation_count"));
+        }
+    }
+
+    @Test
     void talkgroupAndPatchGroupWithTheSameNumberStayDistinct() throws Exception
     {
         try(Connection connection = openFixture();
@@ -3125,6 +3213,23 @@ class StatsWebDatabaseTest
             request("/?q=1149&limit=25"));
         assertEquals(1, number(filtered.get("total_count")));
         assertEquals(1149, number(rows(filtered).getFirst().get("native_id")));
+
+        List<StatsWebDatabase.IdentityDirectoryQuery> selected = new ArrayList<>();
+        Map<String,Object> beyondEnd = mDatabase.radioSystemGroupIdentities(RADIO_SYSTEM_KEY,
+            request("/?q=shared%20p25&limit=25&offset=200"), selected::add);
+        assertEquals(151, number(beyondEnd.get("total_count")));
+        assertTrue(rows(beyondEnd).isEmpty());
+        assertEquals(false, beyondEnd.get("has_more"));
+        assertEquals(1, selected.size());
+        try(Connection connection = openFixture())
+        {
+            List<String> plan = explain(connection, selected.getFirst().sql(),
+                selected.getFirst().parameters().toArray());
+            assertEquals(1, plan.stream().filter(detail ->
+                detail.contains("MATERIALIZE group_identity_matches")).count(), plan.toString());
+            assertEquals(1, plan.stream().filter(detail ->
+                detail.contains("MATERIALIZE identity_search_configuration")).count(), plan.toString());
+        }
     }
 
     @Test
@@ -3384,6 +3489,9 @@ class StatsWebDatabaseTest
             assertTrue(groupPlan.stream().noneMatch(detail -> detail.contains("SCAN evidence") ||
                     detail.contains("SCAN receiver_activity_event")),
                 () -> "Identity alias search must not scan retained evidence: " + groupPlan);
+            assertEquals(1, groupPlan.stream().filter(detail ->
+                detail.contains("MATERIALIZE identity_search_group_addresses")).count(),
+                "Named group aliases must share one scoped address projection");
 
             List<String> radioPlan = explain(connection, radioQuery[0].sql(),
                 radioQuery[0].parameters().toArray());

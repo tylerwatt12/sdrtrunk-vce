@@ -114,6 +114,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 class ReceiverActivityServiceLifecycleTest
 {
+    @org.junit.jupiter.api.BeforeAll
+    static void isolatePreferences() throws Exception
+    {
+        io.github.dsheirer.preference.portable.PortablePreferencesTestSupport.install();
+    }
     private static final String ACTIVITY_CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174000";
     private static final String LEARNED_P25_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000902";
     private static final ReceiverActivityService.WriterFactory FAST_WRITER_FACTORY =
@@ -122,6 +127,168 @@ class ReceiverActivityServiceLifecycleTest
 
     @TempDir
     Path mTemporaryFolder;
+
+    @Test
+    void forgettingAliasDrainsAProducerAlreadyInsideAdmissionAndAllowsLaterOtaLearning() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        Channel channel = p25TrunkedChannel(ACTIVITY_CONFIGURATION_ID);
+        persistChannels(database, channel);
+        long start = System.currentTimeMillis() - 1_000;
+        try(Connection connection = ActivityTestDatabase.openPair(database); Statement sql = connection.createStatement())
+        {
+            ReceiverActivitySchema.recordActivity(connection, activity(start), true);
+            sql.executeUpdate("UPDATE radio_system_identity_summary SET last_talker_alias='Old cached alias'," +
+                "last_talker_alias_seen_ms=" + start + " WHERE identity_kind_code=2 AND identity_id=1811524");
+        }
+        String identity = scalarText(database, "SELECT 'v1-r-' || CASE WHEN home_wacn=-1 THEN 'x' ELSE " +
+            "printf('%05x',home_wacn) END || '-' || CASE WHEN home_system_id=-1 THEN 'x' ELSE " +
+            "printf('%03x',home_system_id) END || '-' || identity_id FROM radio_system_identity_summary " +
+            "WHERE identity_kind_code=2 AND identity_id=1811524");
+        String system = scalarText(database, "SELECT system_key FROM radio_system LIMIT 1");
+        CountDownLatch captured = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicBoolean holdNext = new AtomicBoolean(true);
+        Runnable hook = () -> {
+            if(holdNext.getAndSet(false))
+            {
+                captured.countDown();
+                try { release.await(); }
+                catch(InterruptedException failure) { Thread.currentThread().interrupt(); }
+            }
+        };
+        var preferences = new TestUserPreferences(new TestApplicationPreference(true, 30, true),
+            new TestDirectoryPreference(mTemporaryFolder));
+        var service = new ReceiverActivityService(preferences, 2, TimeUnit.SECONDS, hook, null, FAST_WRITER_FACTORY);
+        var radio = APCO25RadioIdentifier.createFrom(1_811_524);
+        var identifiers = List.<Identifier>of(radio, APCO25Wacn.create(0xBEE00), APCO25System.create(0x348));
+        var old = new io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent(ACTIVITY_CONFIGURATION_ID,
+            DecoderType.P25_PHASE1, Protocol.APCO25, radio, "Old cached alias", identifiers,
+            TrunkedIdentityDomain.STANDARD, start + 500, start, system);
+        Thread producer = new Thread(() -> service.receiveTalkerAlias(old));
+        try
+        {
+            producer.start();
+            assertTrue(captured.await(2, TimeUnit.SECONDS));
+            var request = StatsDatabaseMaintenanceRequest.delete(
+                new StatsDatabaseMaintenanceRequest.TalkerAlias(system, identity, "Old cached alias"));
+            CountDownLatch submitting = new CountDownLatch(1);
+            var submission = java.util.concurrent.CompletableFuture.runAsync(() -> {
+                submitting.countDown();
+                service.receiveMaintenanceRequest(request);
+            });
+            assertTrue(submitting.await(2, TimeUnit.SECONDS));
+            Thread.sleep(50);
+            assertFalse(submission.isDone(), "Forget must drain the producer that already captured ingress");
+            assertFalse(service.getStatus().state() == ReceiverActivityStatus.State.PAUSED);
+            release.countDown();
+            producer.join(2_000);
+            submission.get(3, TimeUnit.SECONDS);
+            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.DELETED,
+                request.result().get(5, TimeUnit.SECONDS).deletionOutcome());
+            assertEquals(1, scalar(database, "SELECT count(*) FROM radio_system_identity_summary " +
+                "WHERE identity_kind_code=2 AND identity_id=1811524 AND last_talker_alias IS NULL " +
+                "AND last_talker_alias_seen_ms IS NULL"));
+            assertEquals(1, count(database, "receiver_activity_event"));
+            service.receiveTalkerAlias(new io.github.dsheirer.module.decode.traffic.TrunkedTalkerAliasEvent(
+                ACTIVITY_CONFIGURATION_ID, DecoderType.P25_PHASE1, Protocol.APCO25, radio, "Newly learned alias",
+                identifiers, TrunkedIdentityDomain.STANDARD, start + 3_000, start + 2_000, system));
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitScalar(database, "SELECT count(*) FROM radio_system_identity_summary WHERE identity_kind_code=2 " +
+                "AND identity_id=1811524 AND last_talker_alias='Newly learned alias'", 1);
+        }
+        finally { release.countDown(); producer.join(2_000); disposeAndAwait(service); }
+    }
+
+    @Test
+    void fullResetPausesOnlyAdmissionAndEndsItsPauseOnCancelFailureAndSuccess() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder);
+        SdrTrunkTestDatabase.create(database);
+        Channel channel = nbfmChannel(ACTIVITY_CONFIGURATION_ID);
+        persistChannels(database, channel);
+        var writer = new HeldMaintenanceWriter(database);
+        var preferences = new TestUserPreferences(new TestApplicationPreference(true, 30, true),
+            new TestDirectoryPreference(mTemporaryFolder));
+        var service = new ReceiverActivityService(preferences, 2, TimeUnit.SECONDS, null, null,
+            (path, days, detailed) -> writer);
+        try
+        {
+            //The writer is real; holding only its maintenance admission makes the pause race deterministic.
+            var cancelled = StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.RESET_STATS);
+            service.receiveMaintenanceRequest(cancelled);
+            writer.awaitRequest();
+            assertEquals(ReceiverActivityStatus.State.PAUSED, service.getStatus().state());
+            for(int i = 0; i < 100; i++)
+                service.getDecodeEventListener().accept(channel, conventionalEvent(System.currentTimeMillis() + i));
+            assertEquals(100, cancelled.observationsSkipped());
+            assertFalse(service.awaitObservationDrain(10, TimeUnit.MILLISECONDS));
+            cancelled.cancel();
+            writer.releaseRequest();
+            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.INTERRUPTED,
+                cancelled.result().get(5, TimeUnit.SECONDS).deletionOutcome());
+            assertFalse(cancelled.progress().resumable());
+            assertThrows(IllegalStateException.class, cancelled::resume);
+            awaitResetPauseEnded(service);
+
+            long first = System.currentTimeMillis() + 1_000;
+            service.getDecodeEventListener().accept(channel, conventionalEvent(first));
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitCount(database, "receiver_activity_event", 1);
+            try(Connection connection = ActivityTestDatabase.openPair(database); Statement sql = connection.createStatement())
+            {
+                sql.execute("CREATE TRIGGER reset_failure BEFORE DELETE ON receiver_activity_event " +
+                    "BEGIN SELECT RAISE(ABORT,'controlled reset failure'); END");
+            }
+            var failed = StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.RESET_STATS);
+            service.receiveMaintenanceRequest(failed);
+            writer.awaitRequest();
+            writer.releaseRequest();
+            assertThrows(ExecutionException.class, () -> failed.result().get(5, TimeUnit.SECONDS));
+            assertFalse(failed.progress().resumable());
+            awaitResetPauseEnded(service);
+            try(Connection connection = ActivityTestDatabase.openPair(database); Statement sql = connection.createStatement())
+            {
+                sql.execute("DROP TRIGGER reset_failure");
+            }
+            var completed = StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.RESET_STATS);
+            service.receiveMaintenanceRequest(completed);
+            writer.awaitRequest();
+            writer.releaseRequest();
+            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.DELETED,
+                completed.result().get(5, TimeUnit.SECONDS).deletionOutcome());
+            awaitResetPauseEnded(service);
+            assertEquals(0, count(database, "receiver_activity_event"));
+            assertEquals(1, scalar(database, "SELECT count(*) FROM configuration_channel"));
+            service.getDecodeEventListener().accept(channel, conventionalEvent(System.currentTimeMillis() + 2_000));
+            assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
+            awaitCount(database, "receiver_activity_event", 1);
+        }
+        finally { disposeAndAwait(service); }
+    }
+
+    private static void awaitResetPauseEnded(ReceiverActivityService service) throws Exception
+    {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while(service.getStatus().state() == ReceiverActivityStatus.State.PAUSED && System.nanoTime() < deadline)
+            Thread.sleep(5);
+        assertTrue(service.getStatus().summaryActive(), "Saving statistics should resume after reset terminates");
+    }
+
+    private static final class HeldMaintenanceWriter extends ReceiverActivityWriter
+    {
+        private final java.util.concurrent.BlockingQueue<StatsDatabaseMaintenanceRequest> requests =
+            new java.util.concurrent.LinkedBlockingQueue<>();
+        private StatsDatabaseMaintenanceRequest held;
+        private HeldMaintenanceWriter(Path database) { super(database, 30, true, 10_000, 1_250, 25); }
+        @Override void submitMaintenance(StatsDatabaseMaintenanceRequest request) { requests.add(request); }
+        private void awaitRequest() throws InterruptedException
+        {
+            held = requests.poll(2, TimeUnit.SECONDS);
+            assertTrue(held != null, "Reset must reach the writer through the observation barrier");
+        }
+        private void releaseRequest() { super.submitMaintenance(held); held = null; }
+    }
 
     @Test
     void shutdownBarrierPersistsImmediatelyAcceptedLogicalCallAndOutputsOnce() throws Exception
@@ -1388,10 +1555,7 @@ class ReceiverActivityServiceLifecycleTest
             assertFalse(staleProducer.isAlive());
             assertEquals(null, producerFailure.get());
             var retiredOutput = retiredIngress.poll();
-            assertTrue(retiredOutput != null && retiredOutput.first() instanceof CompletedAudioCall,
-                "the bounded statistics queue must retain the resolved logical-call metadata");
-            assertFalse(((CompletedAudioCall)retiredOutput.first()).hasAudio(),
-                "completed-call audio buffers must never be retained by statistics ingress");
+            assertEquals(null, retiredOutput, "A callback from an expired collection epoch must be rejected before enqueue");
 
             service.receiveRecordedCall(current);
             awaitScalar(database,

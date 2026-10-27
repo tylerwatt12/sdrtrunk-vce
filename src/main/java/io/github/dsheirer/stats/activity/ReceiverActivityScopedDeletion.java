@@ -10,7 +10,6 @@
  */
 package io.github.dsheirer.stats.activity;
 
-import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.Identity;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.IdentityKind;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
@@ -36,17 +35,17 @@ final class ReceiverActivityScopedDeletion
     private static final String CONVENTIONAL_CALL_MATCH =
         "call_count>0 OR encrypted_count>0 OR recorded_count>0 OR streamed_count>0";
     private static final String IDENTITY_CALL_RESET =
-        "call_count=0,logical_call_count=0,source_logical_call_count=0,target_logical_call_count=0," +
+        "logical_call_count=0,source_logical_call_count=0,target_logical_call_count=0," +
             "encrypted_logical_call_count=0,recorded_output_count=0,streamed_output_count=0";
     private static final String IDENTITY_CALL_MATCH =
-        "call_count>0 OR logical_call_count>0 OR source_logical_call_count>0 OR " +
+        "logical_call_count>0 OR source_logical_call_count>0 OR " +
             "target_logical_call_count>0 OR encrypted_logical_call_count>0 OR " +
             "recorded_output_count>0 OR streamed_output_count>0";
     private static final String GROUP_CALL_RESET =
-        "call_count=0,logical_call_count=0,encrypted_logical_call_count=0," +
+        "logical_call_count=0,encrypted_logical_call_count=0," +
             "recorded_output_count=0,streamed_output_count=0";
     private static final String GROUP_CALL_MATCH =
-        "call_count>0 OR logical_call_count>0 OR encrypted_logical_call_count>0 OR " +
+        "logical_call_count>0 OR encrypted_logical_call_count>0 OR " +
             "recorded_output_count>0 OR streamed_output_count>0";
     private static final String CURRENT_ALIAS_PROTOCOL = """
         CASE WHEN matcher_type='P25_SUBSCRIBER_IDENTITY' THEN 1
@@ -81,41 +80,14 @@ final class ReceiverActivityScopedDeletion
 
     static ReceiverActivityDeletion.Result delete(Connection connection, ScopedData target) throws SQLException
     {
-        Plan plan = plan(connection, target);
-        if(plan.outcome == ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND)
+        Batch batch = Batch.start(connection, target, System.currentTimeMillis());
+        if(batch.outcome() == ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND)
             return ReceiverActivityDeletion.Result.missing();
-        if(plan.outcome == ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE)
+        if(batch.outcome() == ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE)
             return ReceiverActivityDeletion.Result.staleSite();
-        if("alias_activity".equals(target.sourceKind()))
-        {
-            int removed = target.recordKey() == null ? AliasActivitySummaryMaintenance.resetAll(connection) :
-                resetOneAlias(connection, parsePositive(target.recordKey()));
-            return ReceiverActivityDeletion.Result.deleted(removed);
-        }
-
-        int deleted = resetAnalogBoundary(connection, plan, System.currentTimeMillis());
-        for(Step step: plan.steps)
-        {
-            String sql = step.updateSet == null ?
-                "DELETE FROM " + step.table + " WHERE " + step.predicate :
-                "UPDATE " + step.table + " SET " + step.updateSet + " WHERE " + step.predicate;
-            try(PreparedStatement statement = connection.prepareStatement(sql))
-            {
-                bind(statement, step.parameters);
-                deleted = Math.addExact(deleted, statement.executeUpdate());
-            }
-        }
-        if("frequencies".equals(target.dataType()) && target.recordKey() != null &&
-            target.parts().contains("current"))
-        {
-            deleted = Math.addExact(deleted,
-                clearSnapshotFrequency(connection, plan.scope, parsePositive(target.recordKey())));
-        }
-        if(plan.scope.conventional && target.parts().contains("summary") &&
-            Set.of("radios", "talkgroups").contains(target.dataType()))
-            clearConventionalLastReferences(connection, plan.scope.channelId, target);
-        return deleted > 0 ? ReceiverActivityDeletion.Result.deleted(deleted) :
-            ReceiverActivityDeletion.Result.missing();
+        int removed = 0;
+        while(!batch.done()) removed = Math.addExact(removed, batch.runPass(connection));
+        return ReceiverActivityDeletion.Result.deleted(removed);
     }
 
     private static Plan plan(Connection connection, ScopedData target) throws SQLException
@@ -184,6 +156,11 @@ final class ReceiverActivityScopedDeletion
             {
                 plan.system("summary", "trunked_radio_group_summary");
                 plan.system("summary", "radio_system_identity_summary");
+                if(!has(target, "events"))
+                    for(String reference: List.of("source_identity_summary_id", "target_identity_summary_id"))
+                        plan.add("events", "receiver_activity_event", reference +
+                            " IN (SELECT id FROM radio_system_identity_summary WHERE radio_system_id=?)",
+                            List.of(scope.systemId), null, List.of());
                 if(scope.protocol == 1) addIssiAssignmentHistory(plan);
                 plan.effects.add("Deleting system identity summaries also removes linked identity history, " +
                     "detailed events, and radio relationships through database foreign keys.");
@@ -537,7 +514,9 @@ final class ReceiverActivityScopedDeletion
                         plan.systemOwnedChannel("buckets", "trunked_signaling_activity_bucket");
                 }
                 if(has(target, "events")) plan.event("events", "receiver_activity_event",
-                    "action_code<>4", List.of());
+                    "action_code IN (" + ReceiverActivityCodes.actionCodes().stream()
+                        .filter(action -> action != ReceiverActivityRecords.Action.CALL)
+                        .map(action -> Integer.toString(action.code())).collect(Collectors.joining(",")) + ")", List.of());
                 if(has(target, "summary")) plan.effects.add("Signaling counters are reset in place; identity names " +
                     "and call counters remain.");
             }
@@ -597,25 +576,20 @@ final class ReceiverActivityScopedDeletion
                     List.of(kind));
             if(has(target, "events"))
             {
-                // Conventional event IDs are local, not FK-linked to the DMR summary.
-                // A bulk identity clear owns every conventional event on this channel.
-                if(key == null) plan.event("events", "receiver_activity_event",
-                    radio ? "source_observed_local_id IS NOT NULL OR " +
-                        "(target_kind_code=2 AND target_observed_local_id IS NOT NULL)" :
-                        "target_kind_code=1 AND target_observed_local_id IS NOT NULL", List.of());
-                else
+                // Conventional IDs are local observations, not foreign keys to the call summaries.
+                String suffix = "";
+                List<Object> values = List.of();
+                if(key != null)
                 {
                     String[] pieces = key.split(":", -1);
-                    plan.event("events", "receiver_activity_event",
-                        radio ? "frequency_hz=? AND timeslot=? AND (source_observed_local_id=? " +
-                            "OR (target_kind_code=2 AND target_observed_local_id=?))" :
-                            "frequency_hz=? AND timeslot=? AND target_kind_code=1 " +
-                                "AND target_observed_local_id=?",
-                        radio ? List.of(parsePositive(pieces[0]), parseRange(pieces[1], 1, 2),
-                            parseRange(pieces[2], 1, 16_777_215), parseRange(pieces[2], 1, 16_777_215)) :
-                            List.of(parsePositive(pieces[0]), parseRange(pieces[1], 1, 2),
-                                parseRange(pieces[2], 1, 16_777_215)));
+                    suffix = "frequency_hz=? AND timeslot=? AND ";
+                    values = List.of(parsePositive(pieces[0]), parseRange(pieces[1], 1, 2),
+                        parseRange(pieces[2], 1, 16_777_215));
                 }
+                if(radio) plan.event("events", "receiver_activity_event", suffix +
+                    (key == null ? "source_observed_local_id IS NOT NULL" : "source_observed_local_id=?"), values);
+                plan.event("events", "receiver_activity_event", suffix + "target_kind_code=" + kind + " AND " +
+                    (key == null ? "target_observed_local_id IS NOT NULL" : "target_observed_local_id=?"), values);
             }
             return;
         }
@@ -634,24 +608,25 @@ final class ReceiverActivityScopedDeletion
             predicate = "id=?";
             args = List.of(summaryId);
         }
-        if(has(target, "events"))
+        if(has(target, "events") && !has(target, "summary"))
         {
             if(key == null)
+            {
+                if(radio) plan.event("events", "receiver_activity_event",
+                    "source_identity_summary_id IN (SELECT id FROM radio_system_identity_summary " +
+                        "WHERE radio_system_id=? AND identity_kind_code=2)", List.of(scope.systemId));
                 plan.event("events", "receiver_activity_event",
-                    radio ? "source_identity_summary_id IN (SELECT id FROM radio_system_identity_summary " +
-                        "WHERE radio_system_id=? AND identity_kind_code=2) OR " +
-                        "target_identity_summary_id IN (SELECT id FROM radio_system_identity_summary " +
-                        "WHERE radio_system_id=? AND identity_kind_code=2)" :
-                        "target_identity_summary_id IN (SELECT id FROM radio_system_identity_summary " +
-                        "WHERE radio_system_id=? AND identity_kind_code=1)",
-                    radio ? List.of(scope.systemId, scope.systemId) : List.of(scope.systemId));
+                    "target_identity_summary_id IN (SELECT id FROM radio_system_identity_summary " +
+                        "WHERE radio_system_id=? AND identity_kind_code=?)", List.of(scope.systemId, kind));
+            }
             else
+            {
+                if(radio) plan.event("events", "receiver_activity_event", "source_identity_summary_id=?", List.of(summaryId));
                 plan.event("events", "receiver_activity_event",
-                    radio ? "(source_identity_summary_id=? OR target_identity_summary_id=?)" :
-                        "target_identity_summary_id=?",
-                    radio ? List.of(summaryId, summaryId) : List.of(summaryId));
+                    "target_identity_summary_id=?", List.of(summaryId));
+            }
         }
-        if(has(target, "buckets"))
+        if(has(target, "buckets") && !has(target, "summary"))
         {
             if(key == null)
                 plan.system("buckets", "trunked_logical_call_identity_bucket", "identity_kind_code=?",
@@ -759,113 +734,6 @@ final class ReceiverActivityScopedDeletion
     {
         return scalar(connection, "SELECT EXISTS(SELECT 1 FROM alias WHERE id=?) OR " +
             "EXISTS(SELECT 1 FROM alias_activity_summary WHERE alias_id=?)", List.of(aliasId, aliasId)) != 0;
-    }
-
-    private static int resetOneAlias(Connection connection, long aliasId) throws SQLException
-    {
-        // Establish the live matcher identity before resetting its history-owned counters.
-        try(PreparedStatement current = connection.prepareStatement(
-            "SELECT " + CURRENT_ALIAS_PROTOCOL + " FROM alias WHERE id=?"))
-        {
-            current.setLong(1, aliasId);
-            try(ResultSet row = current.executeQuery())
-            {
-                if(row.next()) io.github.dsheirer.stats.AliasActivitySummaryMaintenance.ensureCurrent(
-                    connection, aliasId, row.getInt(1), Math.max(1L, System.currentTimeMillis()));
-                else
-                {
-                    try(PreparedStatement remove = connection.prepareStatement(
-                        "DELETE FROM alias_activity_summary WHERE alias_id=?"))
-                    {
-                        remove.setLong(1, aliasId);
-                        return remove.executeUpdate();
-                    }
-                }
-            }
-        }
-        try(PreparedStatement statement = connection.prepareStatement("""
-            UPDATE alias_activity_summary
-            SET metrics_state=CASE WHEN protocol_code=0 THEN 'unsupported' ELSE 'not_collected' END,
-                logical_call_count=NULL, recorded_logical_call_count=NULL,
-                stream_submitted_logical_call_count=NULL, encrypted_logical_call_count=NULL,
-                grant_observation_count=NULL, join_observation_count=NULL,
-                emergency_observation_count=NULL, register_observation_count=NULL,
-                logout_observation_count=NULL, denial_observation_count=NULL,
-                data_observation_count=NULL, other_signaling_observation_count=NULL,
-                signaling_observation_count=NULL, first_evidence_ms=NULL, last_evidence_ms=NULL,
-                updated_at_ms=?,last_reset_ms=?
-            WHERE alias_id=?
-            """))
-        {
-            statement.setLong(1, Math.max(1L, System.currentTimeMillis()));
-            statement.setLong(2, Math.max(1L, System.currentTimeMillis()));
-            statement.setLong(3, aliasId);
-            return statement.executeUpdate();
-        }
-    }
-
-    private static void clearConventionalLastReferences(Connection connection, long channelId,
-                                                         ScopedData target) throws SQLException
-    {
-        boolean radio = "radios".equals(target.dataType());
-        String key = target.recordKey();
-        String extra = "";
-        List<Object> args = new ArrayList<>(List.of(channelId));
-        if(key != null)
-        {
-            String[] parts = key.split(":", -1);
-            extra = " AND frequency_hz=? AND timeslot=? AND " +
-                (radio ? "last_source_radio_id=?" : "last_talkgroup_id=?");
-            args.add(parsePositive(parts[0]));
-            args.add(parseRange(parts[1], 1, 2));
-            args.add(parseRange(parts[2], 1, 16_777_215));
-        }
-        if(radio)
-        {
-            updateNull(connection, "dmr_conventional_talkgroup_summary", "last_source_radio_id",
-                "channel_id=?" + extra, args);
-            List<Object> peerArgs = new ArrayList<>(args);
-            String peerExtra = key == null ? "" : " AND frequency_hz=? AND timeslot=? AND last_peer_radio_id=?";
-            updateNull(connection, "dmr_conventional_radio_summary", "last_peer_radio_id",
-                "channel_id=?" + peerExtra, peerArgs);
-        }
-        else updateNull(connection, "dmr_conventional_radio_summary", "last_talkgroup_id",
-            "channel_id=?" + extra, args);
-    }
-
-    private static void updateNull(Connection connection, String table, String column, String predicate,
-                                   List<Object> args) throws SQLException
-    {
-        try(PreparedStatement statement = connection.prepareStatement(
-            "UPDATE " + table + " SET " + column + "=NULL WHERE " + predicate))
-        {
-            bind(statement, args);
-            statement.executeUpdate();
-        }
-    }
-
-    private static int clearSnapshotFrequency(Connection connection, Scope scope, long frequencyHz)
-        throws SQLException
-    {
-        int changed = 0;
-        for(String table: List.of("p25_site_snapshot", "trunked_site_snapshot"))
-        {
-            String predicate = scope.channelPredicate();
-            try(PreparedStatement statement = connection.prepareStatement("UPDATE " + table + " SET " +
-                "primary_frequency_hz=CASE WHEN primary_frequency_hz=? THEN NULL ELSE primary_frequency_hz END," +
-                "current_control_hz=CASE WHEN current_control_hz=? THEN NULL ELSE current_control_hz END WHERE " +
-                predicate + " AND (primary_frequency_hz=? OR current_control_hz=?)"))
-            {
-                int index = 1;
-                statement.setLong(index++, frequencyHz);
-                statement.setLong(index++, frequencyHz);
-                for(Object arg: scope.channelArguments()) statement.setObject(index++, arg);
-                statement.setLong(index++, frequencyHz);
-                statement.setLong(index, frequencyHz);
-                changed = Math.addExact(changed, statement.executeUpdate());
-            }
-        }
-        return changed;
     }
 
     private static boolean has(ScopedData target, String part)
@@ -992,18 +860,30 @@ final class ReceiverActivityScopedDeletion
         private final long cutoffMs;
         private final Map<String,Integer> countsByPart;
         private final long rowsTotal;
+        private final String channelConfigurationId;
+        private final boolean allStatistics;
+        private boolean boundariesPending;
         private int cursor;
         private boolean aliasSeedsPending;
         private String aliasSeedPredicate;
         private List<Object> aliasSeedParameters = List.of();
         private boolean removedOwnSnapshot;
+        private boolean removedOwnChannel;
         private ReceiverActivityMaintenance.DeletionOutcome outcome;
 
         private Batch(Connection connection, ScopedData target, long cutoffMs) throws SQLException
         {
+            this(connection, target, plan(connection, target), cutoffMs, null, false);
+        }
+
+        private Batch(Connection connection, ScopedData target, Plan selectedPlan, long cutoffMs,
+                      String channelConfigurationId, boolean allStatistics) throws SQLException
+        {
             this.target = target;
             this.cutoffMs = cutoffMs;
-            plan = plan(connection, target);
+            this.channelConfigurationId = channelConfigurationId;
+            this.allStatistics = allStatistics;
+            plan = selectedPlan;
             outcome = plan.outcome;
             steps = new ArrayList<>();
             countsByPart = new LinkedHashMap<>();
@@ -1012,25 +892,39 @@ final class ReceiverActivityScopedDeletion
                 rowsTotal = 0;
                 return;
             }
-            if("alias_activity".equals(target.sourceKind())) addAliasReset(plan, target, cutoffMs);
-            addFinalReferences(plan, target);
+            boolean resetAliases = allStatistics || target != null && "alias_activity".equals(target.sourceKind());
+            ScopedData aliasTarget = allStatistics ? new ScopedData("alias_activity", null, null, null,
+                "alias_activity", null, List.of("summary")) : target;
+            if(resetAliases) addAliasReset(plan, aliasTarget, cutoffMs);
+            if(target != null) addFinalReferences(plan, target);
             Metadata metadata = new Metadata(connection);
             Map<String,Step> expanded = new LinkedHashMap<>();
-            for(Step step: plan.steps) expand(step, metadata, expanded, new LinkedHashSet<>());
+            boolean systemIdentityEventsCovered = target != null && "all".equals(target.dataType()) &&
+                plan.scope != null && plan.scope.systemWide && has(target, "summary");
+            for(Step step: plan.steps)
+            {
+                // Every channel-owned table is already selected directly below; event-only children
+                // are selected through their indexed event FKs. Do not repeat the owner subtree.
+                if(allStatistics || channelConfigurationId != null && step.table.equals("receiver_channel"))
+                    expanded.put(step.table + "|" + step.updateSet, step);
+                else expand(step, metadata, expanded, new LinkedHashSet<>(), systemIdentityEventsCovered);
+            }
             List<Step> ordered = new ArrayList<>(expanded.values());
             ordered.sort(Comparator.comparingInt((Step step) -> metadata.rank(step.table))
                 .thenComparingInt(ReceiverActivityScopedDeletion::priority));
-            int boundaryRows = analogBoundaryRows(connection, plan, cutoffMs);
-            if("alias_activity".equals(target.sourceKind()))
+            int boundaryRows = channelConfigurationId != null || allStatistics ? boundaryRows(connection) :
+                analogBoundaryRows(connection, plan, cutoffMs);
+            boundariesPending = (channelConfigurationId != null || allStatistics) && boundaryRows > 0;
+            if(resetAliases)
             {
                 aliasSeedPredicate = "configured.id<=? AND NOT EXISTS(SELECT 1 FROM alias_activity_summary " +
                     "WHERE alias_id=configured.id)";
                 aliasSeedParameters = new ArrayList<>(List.of(scalar(connection,
                     "SELECT coalesce(max(id),0) FROM alias", List.of())));
-                if(target.recordKey() != null)
+                if(aliasTarget.recordKey() != null)
                 {
                     aliasSeedPredicate += " AND configured.id=?";
-                    aliasSeedParameters.add(parsePositive(target.recordKey()));
+                    aliasSeedParameters.add(parsePositive(aliasTarget.recordKey()));
                 }
                 int missing = count(connection, "alias configured", aliasSeedPredicate, aliasSeedParameters);
                 aliasSeedsPending = missing > 0;
@@ -1038,28 +932,77 @@ final class ReceiverActivityScopedDeletion
             }
             if(boundaryRows > 0) countsByPart.put("summary", boundaryRows);
             long total = boundaryRows;
+            long maximumEventId = scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_activity_event", List.of());
+            Map<String,List<BatchStep>> counted = new LinkedHashMap<>();
+            Map<String,Boolean> populated = new LinkedHashMap<>();
             for(Step step: ordered)
             {
                 Table table = metadata.tables.get(step.table);
-                Step eligible = boundedByTime(connection, step, table, cutoffMs);
+                Boolean hasRows = populated.get(step.table);
+                if(hasRows == null)
+                {
+                    hasRows = scalar(connection, "SELECT EXISTS(SELECT 1 FROM " + step.table + " LIMIT 1)", List.of()) != 0;
+                    populated.put(step.table, hasRows);
+                }
+                if(!hasRows)
+                {
+                    countsByPart.putIfAbsent(step.part, 0);
+                    continue;
+                }
                 String guards = step.updateSet == null ? metadata.childGuards(table) : "";
-                int rows = count(connection, lookupTable(eligible), eligible.predicate, eligible.parameters);
-                countsByPart.merge(step.part, rows, Math::addExact);
-                total += rows;
-                steps.add(new BatchStep(eligible, table, guards));
+                BatchStep selected = new BatchStep(connection, step, table, guards, metadata,
+                    allStatistics ? Long.MAX_VALUE : cutoffMs, maximumEventId);
+                steps.add(selected);
+                counted.computeIfAbsent(step.table + "|" + step.updateSet, ignored -> new ArrayList<>()).add(selected);
             }
-            for(String part: target.parts()) countsByPart.putIfAbsent(part, 0);
+            // Writer-owned full/channel maintenance has no blocking preflight scan. Normal previews retain exact totals.
+            if(target != null)
+            {
+                for(List<BatchStep> selected: counted.values())
+                {
+                    List<Object> values = new ArrayList<>();
+                    List<String> alternatives = new ArrayList<>();
+                    for(BatchStep step: selected)
+                    {
+                        alternatives.add(step.keysQuery());
+                        values.addAll(step.selection.parameters);
+                        values.addAll(step.bounds.parameters);
+                    }
+                    try(PreparedStatement statement = connection.prepareStatement("SELECT count(*) FROM (" +
+                        String.join(" UNION ", alternatives) + ")"))
+                    {
+                        bind(statement, values);
+                        try(ResultSet rows = statement.executeQuery())
+                        {
+                            int count = rows.next() ? rows.getInt(1) : 0;
+                            countsByPart.merge(selected.getFirst().step.part, count, Math::addExact);
+                            total += count;
+                            // Exact preflight has already proved this ownership set empty. New child
+                            // rows remain protected by their parent's FK guard and original event fence.
+                            if(count == 0) steps.removeAll(selected);
+                        }
+                    }
+                }
+            }
+            for(String part: target != null ? target.parts() : List.of("current", "summary", "buckets", "events"))
+                countsByPart.putIfAbsent(part, 0);
             rowsTotal = total;
         }
 
-        record Position(int cursor, boolean aliasSeedsPending, boolean removedOwnSnapshot,
+        record Position(int cursor, boolean aliasSeedsPending, boolean boundariesPending, boolean removedOwnSnapshot,
+                        boolean removedOwnChannel,
+                        List<BatchStep.Position> selections,
                         ReceiverActivityMaintenance.DeletionOutcome outcome) { }
-        Position position() { return new Position(cursor, aliasSeedsPending, removedOwnSnapshot, outcome); }
+        Position position() { return new Position(cursor, aliasSeedsPending, boundariesPending, removedOwnSnapshot,
+            removedOwnChannel, steps.stream().map(BatchStep::position).toList(), outcome); }
         void restore(Position position)
         {
             cursor = position.cursor;
             aliasSeedsPending = position.aliasSeedsPending;
+            boundariesPending = position.boundariesPending;
             removedOwnSnapshot = position.removedOwnSnapshot;
+            removedOwnChannel = position.removedOwnChannel;
+            for(int index = 0; index < steps.size(); index++) steps.get(index).restore(position.selections.get(index));
             outcome = position.outcome;
         }
 
@@ -1068,11 +1011,70 @@ final class ReceiverActivityScopedDeletion
             return new Batch(connection, target, cutoffMs);
         }
 
+        /** Clears one retained channel owner without scanning or deleting configuration. */
+        static Batch startChannel(Connection connection, String configurationId, long cutoffMs) throws SQLException
+        {
+            if(configurationId == null || configurationId.isBlank())
+                throw new IllegalArgumentException("Channel configuration ID is required");
+            io.github.dsheirer.stats.StatsHistoryContext.installSubscriberContext(connection);
+            long channelId = scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_channel WHERE configuration_id=?",
+                List.of(configurationId));
+            if(channelId == 0 && scalar(connection, "SELECT EXISTS(SELECT 1 FROM configured_channel WHERE configuration_id=?) " +
+                "OR EXISTS(SELECT 1 FROM radio_system WHERE configuration_id=?)", List.of(configurationId, configurationId)) == 0)
+                return new Batch(connection, null, Plan.missing(), cutoffMs, configurationId, false);
+            Plan plan = new Plan(connection, new Scope(0, channelId, 0, false, false, false));
+            Metadata metadata = new Metadata(connection);
+            for(Table table: metadata.tables.values())
+            {
+                // Members have no channel-leading index. Their event FK selects exactly the same
+                // channel through the event_id primary key, without scanning other channels' members.
+                if(table.columns.contains("channel_id") && !table.name.equals("activity_event_identity_member"))
+                    plan.add(partFor(table.name), table.name, "channel_id=?", List.of(channelId), null, List.of());
+            }
+            plan.add("summary", "alias_list_analog_activity_summary", "channel_configuration_id=?",
+                List.of(configurationId), null, List.of());
+            plan.add("current", "receiver_channel", "id=?", List.of(channelId), null, List.of());
+            // A channel-scoped fallback system belongs to this configuration; native shared systems have no such owner.
+            plan.add("summary", "radio_system", "configuration_id=?", List.of(configurationId), null, List.of());
+            return new Batch(connection, null, plan, cutoffMs, configurationId, false);
+        }
+
+        /** The caller pauses statistics admission and drains old observations before capturing this cutoff. */
+        static Batch startAll(Connection connection, long cutoffMs) throws SQLException
+        {
+            io.github.dsheirer.stats.StatsHistoryContext.installSubscriberContext(connection);
+            Plan plan = new Plan(connection, null);
+            Metadata metadata = new Metadata(connection);
+            for(Table table: metadata.tables.values())
+            {
+                if(table.name.equals("alias_activity_summary")) continue;
+                String predicate = "1=1";
+                List<Object> parameters = List.of();
+                if(table.name.equals("receiver_channel_statistics_reset"))
+                {
+                    predicate = "NOT EXISTS(SELECT 1 FROM configured_channel configured WHERE " +
+                        "configured.configuration_id=receiver_channel_statistics_reset.configuration_id)";
+                }
+                else if(table.name.equals("p25_subscriber_identity"))
+                {
+                    String configured = "SELECT 1 FROM configured_p25_subscriber_identity configured ";
+                    if(!io.github.dsheirer.stats.StatsHistoryContext.configurationAttached(connection))
+                        configured += "JOIN alias_p25_subscriber_identity alias_identity " +
+                            "ON alias_identity.p25_subscriber_identity_id=configured.id ";
+                    predicate = "NOT EXISTS(" + configured + "WHERE configured.home_wacn=p25_subscriber_identity.home_wacn " +
+                        "AND configured.home_system_id=p25_subscriber_identity.home_system_id " +
+                        "AND configured.subscriber_id=p25_subscriber_identity.subscriber_id)";
+                }
+                plan.add(partFor(table.name), table.name, predicate, parameters, null, List.of());
+            }
+            return new Batch(connection, null, plan, cutoffMs, null, true);
+        }
+
         long rowsTotal() { return rowsTotal; }
         long cutoffMs() { return cutoffMs; }
         ReceiverActivityMaintenance.DeletionOutcome outcome() { return outcome; }
         boolean done() { return outcome != ReceiverActivityMaintenance.DeletionOutcome.DELETED ||
-            !aliasSeedsPending && cursor >= steps.size(); }
+            !boundariesPending && !aliasSeedsPending && cursor >= steps.size(); }
 
         Preview preview()
         {
@@ -1080,7 +1082,7 @@ final class ReceiverActivityScopedDeletion
             if(outcome == ReceiverActivityMaintenance.DeletionOutcome.DELETED)
             {
                 effects.add("Cleanup runs in small background batches. New observations and active history buckets are kept.");
-                if(target.frequencyHz() != null && "hourly_history".equals(target.dataType()))
+                if(target != null && target.frequencyHz() != null && "hourly_history".equals(target.dataType()))
                     effects.add("Frequency filtering omits hourly totals without frequency attribution.");
             }
             return new Preview(outcome, Map.copyOf(countsByPart), Math.toIntExact(rowsTotal), List.copyOf(effects));
@@ -1097,7 +1099,8 @@ final class ReceiverActivityScopedDeletion
                 return 0;
             }
             // Advancing the late-observation fence is one real row change within the same writer budget.
-            int changed = resetAnalogBoundary(connection, plan, cutoffMs);
+            int changed = boundariesPending ? writeBoundaries(connection, MAXIMUM_ROWS_PER_PASS) :
+                resetAnalogBoundary(connection, plan, cutoffMs);
             if(aliasSeedsPending)
             {
                 int capacity = MAXIMUM_ROWS_PER_PASS - changed;
@@ -1110,12 +1113,14 @@ final class ReceiverActivityScopedDeletion
             while(remaining > 0 && nextCursor < steps.size())
             {
                 BatchStep step = steps.get(nextCursor);
-                int rows = step.change(connection, remaining);
+                BatchStep.Pass pass = step.change(connection, remaining);
+                int rows = pass.changed;
                 changed = Math.addExact(changed, rows);
-                remaining -= rows;
+                remaining -= pass.scanned;
                 if(rows > 0 && (step.step.table.equals("p25_site_snapshot") ||
                     step.step.table.equals("trunked_site_snapshot"))) removedOwnSnapshot = true;
-                if(rows < remaining + rows) nextCursor++;
+                if(rows > 0 && step.step.table.equals("receiver_channel")) removedOwnChannel = true;
+                if(pass.done) nextCursor++;
                 else break;
             }
             cursor = nextCursor;
@@ -1152,6 +1157,15 @@ final class ReceiverActivityScopedDeletion
 
         private ReceiverActivityMaintenance.DeletionOutcome revalidate(Connection connection) throws SQLException
         {
+            if(allStatistics) return ReceiverActivityMaintenance.DeletionOutcome.DELETED;
+            if(channelConfigurationId != null)
+            {
+                long current = scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_channel WHERE configuration_id=?",
+                    List.of(channelConfigurationId));
+                return current == plan.scope.channelId || current == 0 && removedOwnChannel ?
+                    ReceiverActivityMaintenance.DeletionOutcome.DELETED :
+                    ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND;
+            }
             if("alias_activity".equals(target.sourceKind()))
             {
                 if(target.recordKey() == null || aliasActivityExists(connection, parsePositive(target.recordKey())))
@@ -1171,6 +1185,38 @@ final class ReceiverActivityScopedDeletion
                     return ReceiverActivityMaintenance.DeletionOutcome.DELETED;
             }
             return ReceiverActivityMaintenance.DeletionOutcome.STALE_SITE;
+        }
+
+        private int boundaryRows(Connection connection) throws SQLException
+        {
+            return count(connection, "configured_channel configured",
+                "coalesce((SELECT reset_at_ms FROM receiver_channel_statistics_reset reset " +
+                    "WHERE reset.configuration_id=configured.configuration_id),0)" + (allStatistics ? "<>?" : "<?") +
+                    (channelConfigurationId == null ? "" : " AND configured.configuration_id=?"),
+                channelConfigurationId == null ? List.of(Math.max(1, cutoffMs + 1)) :
+                    List.of(Math.max(1, cutoffMs + 1), channelConfigurationId));
+        }
+
+        private int writeBoundaries(Connection connection, int maximumRows) throws SQLException
+        {
+            String sql = "INSERT INTO receiver_channel_statistics_reset(configuration_id,reset_at_ms) " +
+                "SELECT configured.configuration_id,? FROM configured_channel configured WHERE " +
+                "coalesce((SELECT reset_at_ms FROM receiver_channel_statistics_reset reset " +
+                    "WHERE reset.configuration_id=configured.configuration_id),0)" + (allStatistics ? "<>?" : "<?") +
+                (channelConfigurationId == null ? "" : " AND configured.configuration_id=?") +
+                " ORDER BY configured.configuration_id LIMIT ? ON CONFLICT(configuration_id) " +
+                "DO UPDATE SET reset_at_ms=excluded.reset_at_ms";
+            try(PreparedStatement statement = connection.prepareStatement(sql))
+            {
+                long boundary = Math.max(1, cutoffMs + 1);
+                List<Object> values = new ArrayList<>(List.of(boundary, boundary));
+                if(channelConfigurationId != null) values.add(channelConfigurationId);
+                values.add(maximumRows);
+                bind(statement, values);
+                int changed = statement.executeUpdate();
+                boundariesPending = changed == maximumRows;
+                return changed;
+            }
         }
 
         private static void addAliasReset(Plan plan, ScopedData target, long cutoffMs)
@@ -1230,28 +1276,31 @@ final class ReceiverActivityScopedDeletion
             }
         }
 
-        private static void expand(Step step, Metadata metadata, Map<String,Step> expanded, Set<String> ancestry)
+        private static void expand(Step step, Metadata metadata, Map<String,Step> expanded, Set<String> ancestry,
+                                   boolean systemIdentityEventsCovered)
         {
             if(!ancestry.add(step.table)) throw new IllegalArgumentException("Cyclic retained-data ownership");
-            String key = step.table + "|" + step.updateSet;
-            Step existing = expanded.get(key);
-            if(existing == null) expanded.put(key, step);
-            else if(!existing.predicate.equals(step.predicate) || !existing.parameters.equals(step.parameters))
-            {
-                List<Object> arguments = new ArrayList<>(existing.parameters);
-                arguments.addAll(step.parameters);
-                expanded.put(key, new Step(existing.part, existing.table,
-                    "(" + existing.predicate + ") OR (" + step.predicate + ")", List.copyOf(arguments), step.updateSet));
-            }
+            String key = step.table + "|" + step.updateSet + "|" + step.owner() + "|" + step.ownership;
+            if(expanded.putIfAbsent(key, step) != null) return;
             if(step.updateSet == null)
             {
                 for(ForeignKey child: metadata.children.getOrDefault(step.table, List.of()))
                 {
-                    String match = child.match(step.table);
-                    Step descendant = new Step(partFor(child.child), child.child,
-                        "EXISTS (SELECT 1 FROM " + step.table + " WHERE (" + step.predicate + ") AND " + match + ")",
-                        step.parameters, null);
-                    expand(descendant, metadata, expanded, new LinkedHashSet<>(ancestry));
+                    // All system identities own exactly the system events with either identity reference set.
+                    // Select that event set once instead of repeating it for every source and target identity.
+                    if(systemIdentityEventsCovered && step.table.equals("radio_system_identity_summary") &&
+                        child.child.equals("receiver_activity_event")) continue;
+                    // Every member in this system is already selected by its own identity FK, including
+                    // members attached to events whose source and target references are both unknown.
+                    if(systemIdentityEventsCovered && step.table.equals("receiver_activity_event") &&
+                        child.child.equals("activity_event_identity_member")) continue;
+                    if(!step.ownership.isEmpty() && metadata.directOwnershipCovers(step.ownership.getLast(), child))
+                        continue;
+                    List<ForeignKey> ownership = new ArrayList<>(step.ownership);
+                    ownership.add(child);
+                    Step descendant = new Step(partFor(child.child), child.child, "", step.parameters, null,
+                        step.owner(), List.copyOf(ownership));
+                    expand(descendant, metadata, expanded, new LinkedHashSet<>(ancestry), systemIdentityEventsCovered);
                 }
             }
         }
@@ -1264,63 +1313,215 @@ final class ReceiverActivityScopedDeletion
             return "current";
         }
 
-        private static Step boundedByTime(Connection connection, Step step, Table table, long cutoffMs) throws SQLException
+    }
+
+    /** One indexed ownership path, scanned once with a rollback-safe access-key cursor. */
+    private static final class BatchStep
+    {
+        private final Step step;
+        private final Table table;
+        private final String guards;
+        private final Selection selection;
+        private final Conditions bounds;
+        private List<Object> cursor;
+        private boolean exhausted;
+
+        private BatchStep(Connection connection, Step step, Table table, String guards, Metadata metadata,
+                          long cutoff, long maximumEventId) throws SQLException
         {
-            String predicate = "(" + step.predicate + ")";
-            List<Object> arguments = new ArrayList<>(step.parameters);
-            if(table.columns.contains("bucket_start_ms"))
+            this.step = step;
+            this.table = table;
+            this.guards = guards;
+            selection = new Selection(connection, step, metadata, cutoff, maximumEventId);
+            bounds = rowBounds(table, cutoff, maximumEventId);
+        }
+
+        record Position(List<Object> cursor, boolean exhausted) { }
+        Position position() { return new Position(cursor == null ? null : new ArrayList<>(cursor), exhausted); }
+        void restore(Position position)
+        {
+            cursor = position.cursor == null ? null : new ArrayList<>(position.cursor);
+            exhausted = position.exhausted;
+        }
+
+        String keysQuery()
+        {
+            return "SELECT " + columns(table.name, table.primaryKey) + " FROM " + selection.from +
+                " WHERE " + table.name + "." + table.primaryKey.getFirst() + " IS NOT NULL AND " + bounds.sql;
+        }
+
+        record Pass(int changed, int scanned, boolean done) { }
+        private Pass change(Connection connection, int maximumRows) throws SQLException
+        {
+            if(exhausted) return new Pass(0, 0, true);
+            List<List<Object>> selected = new ArrayList<>();
+            int scanned = 0;
+            int seek = cursor == null ? -1 : selection.order.size() - 1;
+            while(scanned < maximumRows && !exhausted)
             {
-                long interval = table.name.equals("trunked_control_channel_quality") ? 10_000 : 3_600_000;
-                predicate += " AND bucket_start_ms<?";
-                arguments.add(cutoffMs - Math.floorMod(cutoffMs, interval));
-            }
-            for(String time: List.of("last_seen_ms", "last_observed_ms", "confirmed_at_ms", "observed_at_ms", "cleared_at_ms", "updated_at_ms"))
-            {
-                if(table.columns.contains(time))
+                List<Object> values = new ArrayList<>(bounds.parameters);
+                values.addAll(selection.parameters);
+                String range = "1=1";
+                if(seek >= 0)
                 {
-                    predicate += " AND " + time + "<=?";
-                    arguments.add(cutoffMs);
-                    break;
+                    List<String> conditions = new ArrayList<>();
+                    for(int index = 0; index < seek; index++)
+                    {
+                        conditions.add(selection.order.get(index).sql + " IS ?");
+                        values.add(cursor.get(index));
+                    }
+                    OrderColumn column = selection.order.get(seek);
+                    Object last = cursor.get(seek);
+                    if(last == null)
+                        conditions.add(column.descending ? "0=1" : column.sql + " IS NOT NULL");
+                    else
+                    {
+                        conditions.add("(" + column.sql + (column.descending ? "<? OR " + column.sql + " IS NULL)" : ">?)"));
+                        values.add(last);
+                    }
+                    range = String.join(" AND ", conditions);
+                }
+                List<String> fields = new ArrayList<>();
+                fields.add(columns(table.name, table.primaryKey));
+                for(OrderColumn column: selection.order) fields.add(column.sql);
+                fields.add("CASE WHEN " + table.name + "." + table.primaryKey.getFirst() + " IS NOT NULL AND " +
+                    bounds.sql + guards + " THEN 1 ELSE 0 END");
+                // CASE precedes FROM, so its bound parameters precede the ownership parameters above.
+                String query = "SELECT " + String.join(",", fields) + " FROM " + selection.from + " WHERE " + range +
+                    " ORDER BY " + selection.order.subList(Math.max(0, seek), selection.order.size()).stream()
+                        .map(OrderColumn::ordering).collect(Collectors.joining(",")) + " LIMIT ?";
+                int capacity = maximumRows - scanned;
+                values.add(capacity);
+                int read = 0;
+                try(PreparedStatement statement = connection.prepareStatement(query))
+                {
+                    bind(statement, values);
+                    try(ResultSet rows = statement.executeQuery())
+                    {
+                        while(rows.next())
+                        {
+                            read++;
+                            List<Object> key = new ArrayList<>();
+                            for(int index = 0; index < table.primaryKey.size(); index++) key.add(rows.getObject(index + 1));
+                            List<Object> next = new ArrayList<>();
+                            for(int index = 0; index < selection.order.size(); index++)
+                                next.add(rows.getObject(table.primaryKey.size() + index + 1));
+                            cursor = next;
+                            if(rows.getInt(table.primaryKey.size() + selection.order.size() + 1) != 0) selected.add(key);
+                        }
+                    }
+                }
+                scanned += read;
+                if(read == capacity) break;
+                if(seek < 0) exhausted = true;
+                else if(--seek < 0) exhausted = true;
+            }
+            int changed = 0;
+            if(!selected.isEmpty())
+            {
+                String tuple = table.primaryKey.size() == 1 ? table.primaryKey.getFirst() :
+                    "(" + String.join(",", table.primaryKey) + ")";
+                String row = "(" + String.join(",", java.util.Collections.nCopies(table.primaryKey.size(), "?")) + ")";
+                String sql = (step.updateSet == null ? "DELETE FROM " + table.name :
+                    "UPDATE " + table.name + " SET " + step.updateSet) + " WHERE " + tuple +
+                    " IN (VALUES " + String.join(",", java.util.Collections.nCopies(selected.size(), row)) +
+                    ") AND " + bounds.sql + guards;
+                try(PreparedStatement statement = connection.prepareStatement(sql))
+                {
+                    List<Object> values = new ArrayList<>();
+                    for(List<Object> key: selected) values.addAll(key);
+                    values.addAll(bounds.parameters);
+                    bind(statement, values);
+                    changed = statement.executeUpdate();
                 }
             }
-            if(table.name.equals("receiver_activity_event"))
-            {
-                predicate += " AND id<=?";
-                arguments.add(scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_activity_event", List.of()));
-            }
-            // Member rows have no timestamp; bind their ownership to the same fixed event cutoff.
-            if(table.name.equals("activity_event_identity_member") || table.name.startsWith("receiver_activity_tone"))
-            {
-                predicate += " AND EXISTS (SELECT 1 FROM receiver_activity_event cutoff_event WHERE cutoff_event.id=" +
-                    table.name + ".event_id AND cutoff_event.observed_at_ms<=? AND cutoff_event.id<=?)";
-                arguments.add(cutoffMs);
-                arguments.add(scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_activity_event", List.of()));
-            }
-            return new Step(step.part, step.table, predicate, List.copyOf(arguments), step.updateSet);
+            return new Pass(changed, scanned, exhausted);
         }
     }
 
-    private record BatchStep(Step step, Table table, String guards)
+    private record Conditions(String sql, List<Object> parameters) { }
+    private record OrderColumn(String sql, boolean descending)
     {
-        int change(Connection connection, int limit) throws SQLException
+        String ordering() { return sql + (descending ? " DESC" : " ASC"); }
+    }
+    private record Access(String name, List<OrderColumn> order, boolean partial, String definition) { }
+
+    /** Selected owners stay on the left; every child is sought by an existing foreign-key index. */
+    private static final class Selection
+    {
+        private final String from;
+        private final List<Object> parameters;
+        private final List<OrderColumn> order;
+
+        private Selection(Connection connection, Step step, Metadata metadata, long cutoff, long maximumEventId)
+            throws SQLException
         {
-            String keys = String.join(",", table.primaryKey);
-            String tuple = table.primaryKey.size() == 1 ? keys : "(" + keys + ")";
-            // The subscriber/time index is the exact associated-history seek. Its order avoids
-            // walking every unrelated Working ID in the receiving system on each small pass.
-            String order = "issi_assignment_history".equals(step.part) ?
-                "p25_subscriber_identity_id,last_observed_ms DESC" : keys;
-            String statement = (step.updateSet == null ? "DELETE FROM " + step.table :
-                "UPDATE " + step.table + " SET " + step.updateSet) + " WHERE " + tuple + " IN (SELECT " + keys +
-                " FROM " + lookupTable(step) + " WHERE (" + step.predicate + ")" + guards +
-                " ORDER BY " + order + " LIMIT ?)";
-            try(PreparedStatement sql = connection.prepareStatement(statement))
+            Step owner = step.owner();
+            Access root = metadata.access(connection, owner);
+            List<Object> values = new ArrayList<>(owner.parameters);
+            String ownerCondition = owner.predicate;
+            if(owner.table.equals("receiver_activity_event"))
             {
-                bind(sql, step.parameters);
-                sql.setInt(step.parameters.size() + 1, limit);
-                return sql.executeUpdate();
+                ownerCondition += " AND observed_at_ms<=? AND id<=?";
+                values.add(cutoff); values.add(maximumEventId);
             }
+            StringBuilder source = new StringBuilder("(SELECT * FROM ").append(owner.table);
+            if(root.name != null) source.append(" INDEXED BY ").append(root.name);
+            source.append(" WHERE ").append(ownerCondition).append(") AS ").append(owner.table);
+            List<OrderColumn> columns = new ArrayList<>();
+            for(OrderColumn column: root.order)
+                columns.add(new OrderColumn(owner.table + "." + column.sql, column.descending));
+            for(ForeignKey link: step.ownership)
+            {
+                Access child = metadata.childAccess(link);
+                source.append(" LEFT JOIN ").append(link.child);
+                if(child.name != null) source.append(" INDEXED BY ").append(child.name);
+                source.append(" ON ").append(link.match(link.parent));
+                if(link.child.equals("receiver_activity_event"))
+                {
+                    source.append(" AND receiver_activity_event.observed_at_ms<=? AND receiver_activity_event.id<=?");
+                    values.add(cutoff); values.add(maximumEventId);
+                }
+                for(OrderColumn column: child.order)
+                    if(!link.from.contains(column.sql))
+                        columns.add(new OrderColumn(link.child + "." + column.sql, column.descending));
+            }
+            from = source.toString();
+            parameters = List.copyOf(values);
+            order = List.copyOf(columns);
         }
+    }
+
+    private static String columns(String table, List<String> columns)
+    {
+        return columns.stream().map(column -> table + "." + column).collect(Collectors.joining(","));
+    }
+
+    private static Conditions rowBounds(Table table, long cutoff, long maximumEventId)
+    {
+        List<String> predicates = new ArrayList<>(List.of("1=1"));
+        List<Object> values = new ArrayList<>();
+        if(table.columns.contains("bucket_start_ms"))
+        {
+            long interval = table.name.equals("trunked_control_channel_quality") ? 10_000 : 3_600_000;
+            predicates.add(table.name + ".bucket_start_ms<?"); values.add(cutoff - Math.floorMod(cutoff, interval));
+        }
+        for(String time: List.of("last_seen_ms", "last_observed_ms", "confirmed_at_ms", "observed_at_ms", "cleared_at_ms", "updated_at_ms"))
+            if(table.columns.contains(time))
+            {
+                predicates.add(table.name + "." + time + "<=?"); values.add(cutoff); break;
+            }
+        if(table.name.equals("receiver_activity_event"))
+        {
+            predicates.add("receiver_activity_event.id<=?"); values.add(maximumEventId);
+        }
+        if(table.name.equals("activity_event_identity_member") || table.name.startsWith("receiver_activity_tone"))
+        {
+            predicates.add("EXISTS(SELECT 1 FROM receiver_activity_event cutoff_event WHERE cutoff_event.id=" +
+                table.name + ".event_id AND cutoff_event.observed_at_ms<=? AND cutoff_event.id<=?)");
+            values.add(cutoff); values.add(maximumEventId);
+        }
+        return new Conditions(String.join(" AND ", predicates), List.copyOf(values));
     }
 
     private record Table(String name, Set<String> columns, List<String> primaryKey) { }
@@ -1339,6 +1540,7 @@ final class ReceiverActivityScopedDeletion
     {
         private final Map<String,Table> tables = new LinkedHashMap<>();
         private final Map<String,List<ForeignKey>> children = new LinkedHashMap<>();
+        private final Map<String,List<Access>> indexes = new LinkedHashMap<>();
 
         private Metadata(Connection connection) throws SQLException
         {
@@ -1346,7 +1548,8 @@ final class ReceiverActivityScopedDeletion
             try(var statement = connection.createStatement(); var rows = statement.executeQuery(
                 "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'p25_%' OR name LIKE 'trunked_%' " +
                     "OR name LIKE 'conventional_%' OR name LIKE 'dmr_conventional_%' OR name LIKE 'radio_system%' " +
-                    "OR name LIKE 'receiver_activity_tone%' OR name IN ('receiver_channel','receiver_activity_event','activity_event_identity_member','alias_activity_summary','alias_list_analog_activity_summary'))"))
+                    "OR name LIKE 'receiver_activity_tone%' OR name IN ('receiver_channel','receiver_channel_statistics_reset'," +
+                    "'receiver_activity_event','activity_event_identity_member','alias_activity_summary','alias_list_analog_activity_summary'))"))
             {
                 while(rows.next()) names.add(rows.getString(1));
             }
@@ -1364,6 +1567,41 @@ final class ReceiverActivityScopedDeletion
                 }
                 if(primaryKey.isEmpty()) throw new SQLException("Retained-data table has no bounded primary key: " + name);
                 tables.put(name, new Table(name, Set.copyOf(columns), List.copyOf(primaryKey.values())));
+            }
+            for(Table table: tables.values())
+            {
+                List<Access> available = new ArrayList<>();
+                try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA index_list(" + table.name + ")"))
+                {
+                    while(rows.next())
+                    {
+                        String index = rows.getString("name");
+                        boolean partial = rows.getInt("partial") != 0;
+                        List<OrderColumn> order = new ArrayList<>();
+                        Set<String> included = new LinkedHashSet<>();
+                        try(var details = connection.createStatement(); var fields = details.executeQuery("PRAGMA index_xinfo(" + index + ")"))
+                        {
+                            while(fields.next())
+                            {
+                                String field = fields.getString("name");
+                                if(field == null || fields.getInt("cid") < 0) continue;
+                                order.add(new OrderColumn(field, fields.getInt("desc") != 0));
+                                included.add(field);
+                                if(included.containsAll(table.primaryKey)) break;
+                            }
+                        }
+                        for(String key: table.primaryKey)
+                            if(included.add(key)) order.add(new OrderColumn(key, false));
+                        String definition = "";
+                        try(var sql = connection.prepareStatement("SELECT coalesce(sql,'') FROM sqlite_master WHERE name=?"))
+                        {
+                            sql.setString(1, index);
+                            try(var result = sql.executeQuery()) { if(result.next()) definition = result.getString(1); }
+                        }
+                        available.add(new Access(index, List.copyOf(order), partial, definition));
+                    }
+                }
+                indexes.put(table.name, List.copyOf(available));
             }
             for(String name: names)
             {
@@ -1385,6 +1623,129 @@ final class ReceiverActivityScopedDeletion
                 for(var parent: parents.entrySet()) children.computeIfAbsent(parent.getValue(), ignored -> new ArrayList<>())
                     .add(new ForeignKey(name, parent.getValue(), List.copyOf(from.get(parent.getKey())), List.copyOf(to.get(parent.getKey()))));
             }
+            for(var parent: children.entrySet())
+            {
+                Map<String,ForeignKey> unique = new LinkedHashMap<>();
+                for(ForeignKey link: parent.getValue())
+                {
+                    List<String> owner = new ArrayList<>();
+                    for(String key: tables.get(parent.getKey()).primaryKey)
+                    {
+                        int index = link.to.indexOf(key);
+                        if(index < 0) { owner.clear(); break; }
+                        owner.add(link.from.get(index));
+                    }
+                    // Composite validation FKs may add channel/system/kind to the same unique owner.
+                    // The shared parent primary key makes those ownership paths equivalent.
+                    String key = link.child + "|" + (owner.isEmpty() ? link : owner);
+                    unique.putIfAbsent(key, link);
+                }
+                parent.setValue(new ArrayList<>(unique.values()));
+            }
+        }
+
+        /** A direct FK also selects every row reached through an equivalent two-link ownership path. */
+        private boolean directOwnershipCovers(ForeignKey first, ForeignKey second)
+        {
+            for(ForeignKey direct: children.getOrDefault(first.parent, List.of()))
+            {
+                if(!direct.child.equals(second.child)) continue;
+                boolean implied = true;
+                for(int index = 0; index < direct.from.size(); index++)
+                {
+                    int middle = second.from.indexOf(direct.from.get(index));
+                    int parent = middle < 0 ? -1 : first.from.indexOf(second.to.get(middle));
+                    if(parent < 0 || !first.to.get(parent).equals(direct.to.get(index)))
+                    {
+                        implied = false;
+                        break;
+                    }
+                }
+                if(implied) return true;
+            }
+            return false;
+        }
+
+        private Access access(Connection connection, Step owner) throws SQLException
+        {
+            if(owner.table.equals("receiver_activity_event"))
+            {
+                String predicate = owner.predicate;
+                String preferred = null;
+                if(predicate.contains("source_identity_summary_id=?") || predicate.contains("source_identity_summary_id IN"))
+                    preferred = "idx_receiver_activity_event_source_time";
+                else if(predicate.contains("target_identity_summary_id=?") || predicate.contains("target_identity_summary_id IN"))
+                    preferred = "idx_receiver_activity_event_target_time";
+                else if(predicate.contains("source_observed_local_id")) preferred = "idx_receiver_activity_event_channel_source_id_time";
+                else if(predicate.contains("target_observed_local_id")) preferred = "idx_receiver_activity_event_channel_target_id_time";
+                else if(predicate.contains("frequency_hz=?")) preferred = predicate.contains("channel_id") ?
+                    "idx_receiver_activity_event_channel_frequency_time" : "idx_receiver_activity_event_frequency_time";
+                else if(predicate.contains("action_code")) preferred = predicate.contains("channel_id") ?
+                    "idx_receiver_activity_event_channel_action_time" : "idx_receiver_activity_event_system_action_time";
+                else if(predicate.contains("channel_id")) preferred = "idx_receiver_activity_event_channel_time";
+                else if(predicate.contains("radio_system_id")) preferred = "idx_receiver_activity_event_system_time";
+                if(preferred != null)
+                    for(Access access: indexes.get(owner.table)) if(access.name.equals(preferred)) return access;
+            }
+            String selected = null;
+            try(PreparedStatement statement = connection.prepareStatement("EXPLAIN QUERY PLAN SELECT * FROM " +
+                lookupTable(owner) + " WHERE " + owner.predicate))
+            {
+                bind(statement, owner.parameters);
+                try(ResultSet rows = statement.executeQuery())
+                {
+                    while(rows.next())
+                    {
+                        String detail = rows.getString(4);
+                        if(!detail.startsWith("SEARCH " + owner.table + " ") && !detail.startsWith("SCAN " + owner.table + " "))
+                            continue;
+                        var match = java.util.regex.Pattern.compile("(?:COVERING )?INDEX ([^ ]+)").matcher(detail);
+                        if(match.find()) selected = match.group(1);
+                    }
+                }
+            }
+            if(selected != null)
+                for(Access access: indexes.get(owner.table)) if(access.name.equals(selected)) return access;
+            return primary(tables.get(owner.table));
+        }
+
+        private Access childAccess(ForeignKey link) throws SQLException
+        {
+            Access best = null;
+            int bestPrefix = 0;
+            for(Access access: indexes.get(link.child))
+            {
+                int prefix = 0;
+                for(OrderColumn column: access.order)
+                {
+                    if(!link.from.contains(column.sql)) break;
+                    prefix++;
+                }
+                if(prefix == 0) continue;
+                if(access.partial && !access.definition.matches("(?is).*\\bWHERE\\s+" +
+                    java.util.regex.Pattern.quote(access.order.getFirst().sql) + "\\s+IS\\s+NOT\\s+NULL\\s*")) continue;
+                if(prefix > bestPrefix || prefix == bestPrefix && best != null && access.order.size() < best.order.size())
+                {
+                    best = access;
+                    bestPrefix = prefix;
+                }
+            }
+            Access primary = primary(tables.get(link.child));
+            int prefix = 0;
+            for(OrderColumn column: primary.order)
+            {
+                if(!link.from.contains(column.sql)) break;
+                prefix++;
+            }
+            if(prefix > bestPrefix) return primary;
+            if(best != null) return best;
+            if(prefix > 0) return primary;
+            throw new SQLException("Retained-data ownership has no indexed child lookup: " + link.child + " -> " + link.parent);
+        }
+
+        private static Access primary(Table table)
+        {
+            return new Access(null, table.primaryKey.stream().map(key -> new OrderColumn(key, false)).toList(), false, "");
         }
 
         private int rank(String table)
@@ -1418,8 +1779,15 @@ final class ReceiverActivityScopedDeletion
         }
     }
 
-    private record Step(String part, String table, String predicate, List<Object> parameters, String updateSet)
+    private record Step(String part, String table, String predicate, List<Object> parameters, String updateSet,
+                        Step origin, List<ForeignKey> ownership)
     {
+        Step(String part, String table, String predicate, List<Object> parameters, String updateSet)
+        {
+            this(part, table, predicate, parameters, updateSet, null, List.of());
+        }
+
+        Step owner() { return origin == null ? this : origin; }
     }
 
     private static final class Plan
@@ -1498,19 +1866,6 @@ final class ReceiverActivityScopedDeletion
             if(scope.systemWide) system(part, table);
             else if(scope.conventional) channel(part, table);
             else add(part, table, "channel_id=? AND radio_system_id=?",
-                    List.of(scope.channelId, scope.systemId), null, List.of());
-        }
-
-        void eventMembers(String part)
-        {
-            String predicate = scope.systemWide ?
-                "event_id IN (SELECT id FROM receiver_activity_event WHERE radio_system_id=?)" :
-                scope.conventional ?
-                    "event_id IN (SELECT id FROM receiver_activity_event WHERE channel_id=?)" :
-                    "event_id IN (SELECT id FROM receiver_activity_event WHERE channel_id=? " +
-                        "AND radio_system_id=?)";
-            add(part, "activity_event_identity_member", predicate,
-                scope.systemWide ? List.of(scope.systemId) : scope.conventional ? List.of(scope.channelId) :
                     List.of(scope.channelId, scope.systemId), null, List.of());
         }
 

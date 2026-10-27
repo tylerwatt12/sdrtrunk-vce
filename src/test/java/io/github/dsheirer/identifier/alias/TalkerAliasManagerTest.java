@@ -32,6 +32,113 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TalkerAliasManagerTest
 {
     @Test
+    void forgetsOnlyTheSelectedObservedNameAndAllowsFreshLearning()
+    {
+        TalkerAliasManager manager = new TalkerAliasManager();
+        var radio = APCO25RadioIdentifier.createFrom(750003);
+        var foreign = APCO25FullyQualifiedRadioIdentifier.createFrom(750003, 0xABCDE, 0x321, 750003);
+        var identity = io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey.parse("v1-r-bee00-123-750003");
+        var alias = P25TalkerAliasIdentifier.create("Observed name");
+        manager.update(radio, alias, "p25:bee00:123");
+        manager.update(radio, alias, "p25:bee00:124");
+        manager.update(foreign, alias, "p25:bee00:123");
+        manager.forget("p25:bee00:123", identity, "Different name");
+        assertTrue(manager.hasAlias(radio, "p25:bee00:123"));
+        manager.forget("p25:bee00:123", identity, "Observed name");
+        assertTrue(!manager.hasAlias(radio, "p25:bee00:123"));
+        assertTrue(manager.hasAlias(radio, "p25:bee00:124"));
+        assertTrue(manager.hasAlias(foreign, "p25:bee00:123"));
+        manager.update(radio, P25TalkerAliasIdentifier.create("Fresh name"), "p25:bee00:123");
+        manager.forget("p25:bee00:123", identity, "Observed name");
+        assertTrue(manager.hasAlias(radio, "p25:bee00:123"));
+    }
+
+    @Test
+    void forgetDiscardsAnOldNameAlreadyInFlightAndKeepsFreshLearning() throws Exception
+    {
+        assertDelayedUpdateAcrossForget(true, "OLD", true, "FRESH");
+    }
+
+    @Test
+    void forgetPreservesAnUnrelatedUpdateAlreadyInFlight() throws Exception
+    {
+        assertDelayedUpdateAcrossForget(false, "UNRELATED", false, null);
+    }
+
+    @Test
+    void forgetPreservesADifferentNameAlreadyInFlight() throws Exception
+    {
+        assertDelayedUpdateAcrossForget(true, "REPLACEMENT", false, "REPLACEMENT");
+    }
+
+    private static void assertDelayedUpdateAcrossForget(boolean selectedRadio, String delayedName,
+                                                        boolean learnAfterForget, String expectedSelected)
+        throws Exception
+    {
+        TalkerAliasManager manager = new TalkerAliasManager();
+        var selected = APCO25RadioIdentifier.createFrom(501);
+        var unrelated = APCO25RadioIdentifier.createFrom(502);
+        var retained = APCO25RadioIdentifier.createFrom(503);
+        String system = "p25:bee00:123";
+        manager.update(selected, P25TalkerAliasIdentifier.create("OLD"), system);
+        manager.update(retained, P25TalkerAliasIdentifier.create("KEPT"), system);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch resume = new CountDownLatch(1);
+        TalkerAliasIdentifier delayed = new TalkerAliasIdentifier(delayedName)
+        {
+            @Override
+            public io.github.dsheirer.protocol.Protocol getProtocol()
+            {
+                return io.github.dsheirer.protocol.Protocol.APCO25;
+            }
+
+            @Override
+            public boolean isValid()
+            {
+                entered.countDown();
+                try
+                {
+                    return resume.await(5, TimeUnit.SECONDS) && super.isValid();
+                }
+                catch(InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        };
+        try(var executor = Executors.newSingleThreadExecutor())
+        {
+            var updating = executor.submit(() -> manager.update(selectedRadio ? selected : unrelated, delayed, system));
+            try
+            {
+                assertTrue(entered.await(1, TimeUnit.SECONDS));
+                manager.forget(system,
+                    io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey.parse("v1-r-bee00-123-501"), "OLD");
+                if(learnAfterForget) manager.update(selected, P25TalkerAliasIdentifier.create("FRESH"), system);
+            }
+            finally
+            {
+                resume.countDown();
+            }
+            updating.get(1, TimeUnit.SECONDS);
+        }
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(selected);
+        manager.enrichMutable(identifiers, system);
+        assertEquals(expectedSelected, TalkerAliasIdentifier.valueFor(identifiers));
+        identifiers.update(retained);
+        manager.enrichMutable(identifiers, system);
+        assertEquals("KEPT", TalkerAliasIdentifier.valueFor(identifiers));
+        if(!selectedRadio)
+        {
+            identifiers.update(unrelated);
+            manager.enrichMutable(identifiers, system);
+            assertEquals(delayedName, TalkerAliasIdentifier.valueFor(identifiers));
+        }
+    }
+
+    @Test
     void removesPreviousAliasWhenFromRadioChanges()
     {
         TalkerAliasManager manager = new TalkerAliasManager();
@@ -166,6 +273,8 @@ class TalkerAliasManagerTest
         {
             synchronized(manager)
             {
+                executor.submit(() -> manager.update(radio, alias, "p25:bee00:123"))
+                    .get(1, TimeUnit.SECONDS);
                 executor.submit(() -> manager.enrichMutable(identifiers, 0xBEE00, 0x123))
                     .get(1, TimeUnit.SECONDS);
             }

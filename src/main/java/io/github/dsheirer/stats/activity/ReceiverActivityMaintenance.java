@@ -12,7 +12,6 @@
 package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.database.SdrTrunkDatabase;
-import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -21,18 +20,27 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 import java.util.function.ToLongFunction;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.apache.commons.io.FileUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.sqlite.ProgressHandler;
 
 /**
  * SQLite maintenance actions for the sdrtrunk-vce stats database.
  */
 public final class ReceiverActivityMaintenance
 {
+    private static final Logger LOG = LoggerFactory.getLogger(ReceiverActivityMaintenance.class);
+    private static final long FREE_SPACE_RESERVE = 5L * 1024 * 1024 * 1024;
+    private static final long CHECK_MAXIMUM_WAL_GROWTH = 1024L * 1024 * 1024;
+    private static final long RESET_MAXIMUM_PENDING_WAL = 256L * 1024 * 1024;
     private ReceiverActivityMaintenance()
     {
     }
@@ -71,8 +79,20 @@ public final class ReceiverActivityMaintenance
 
     public record Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
                          long databaseBytesAfter, long walBytesBefore, long walBytesAfter,
-                         DeletionOutcome deletionOutcome)
+                         DeletionOutcome deletionOutcome, List<String> warnings)
     {
+        public Result
+        {
+            warnings = List.copyOf(warnings);
+        }
+
+        public Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
+                      long databaseBytesAfter, long walBytesBefore, long walBytesAfter,
+                      DeletionOutcome deletionOutcome)
+        {
+            this(operation, rowsDeleted, checkResult, databaseBytesBefore, databaseBytesAfter, walBytesBefore,
+                walBytesAfter, deletionOutcome, List.of());
+        }
         public Result(Operation operation, int rowsDeleted, String checkResult, long databaseBytesBefore,
                       long databaseBytesAfter, long walBytesBefore, long walBytesAfter)
         {
@@ -93,9 +113,13 @@ public final class ReceiverActivityMaintenance
             {
                 case MAINTAIN -> sb.append("Maintenance complete");
                 case SHRINK -> sb.append("Shrink complete");
-                case CHECK -> sb.append(checkOk() ? "Database check passed" : "Database check failed");
-                case RESET_STATS -> sb.append("Lifetime stats reset");
-                case CLEAR_CHANNEL_STATS -> sb.append("Channel statistics cleared");
+                case CHECK -> sb.append(deletionOutcome == DeletionOutcome.INTERRUPTED ?
+                    "Database check stopped without a final result" : checkOk() ?
+                    "Database check passed" : "Database check failed");
+                case RESET_STATS -> sb.append(deletionOutcome == DeletionOutcome.INTERRUPTED ?
+                    "Reset stopped; completed batches remain removed" : "Lifetime stats reset");
+                case CLEAR_CHANNEL_STATS -> sb.append(deletionOutcome == DeletionOutcome.INTERRUPTED ?
+                    "Channel cleanup stopped; completed batches remain removed" : "Channel statistics cleared");
                 case DELETE_RETAINED_STATS -> sb.append(switch(deletionOutcome)
                 {
                     case NOT_FOUND -> "Target is no longer available";
@@ -114,7 +138,8 @@ public final class ReceiverActivityMaintenance
             else if(operation != Operation.CHECK && deletionOutcome != DeletionOutcome.NOT_FOUND &&
                 deletionOutcome != DeletionOutcome.STALE_SITE && deletionOutcome != DeletionOutcome.TOO_LARGE)
             {
-                sb.append(". Deleted ").append(rowsDeleted).append(
+                sb.append(operation == Operation.RESET_STATS ? ". Reset " :
+                    operation == Operation.CLEAR_CHANNEL_STATS ? ". Cleared " : ". Deleted ").append(rowsDeleted).append(
                     operation == Operation.RESET_STATS || operation == Operation.CLEAR_CHANNEL_STATS ||
                         operation == Operation.DELETE_RETAINED_STATS ?
                     " stats row(s)" : " expired row(s)");
@@ -128,6 +153,8 @@ public final class ReceiverActivityMaintenance
                 sb.append(". Check: ").append(checkResult);
             }
 
+            warnings.forEach(warning -> sb.append(". ").append(warning));
+
             return sb.toString();
         }
 
@@ -139,6 +166,10 @@ public final class ReceiverActivityMaintenance
 
     public static Result run(Path databasePath, int retentionDays, Operation operation) throws IOException, SQLException
     {
+        if(operation == Operation.CHECK)
+        {
+            return check(databasePath, () -> false);
+        }
         try(Connection connection = SdrTrunkDatabase.openHistory(databasePath))
         {
             return run(connection, databasePath, retentionDays, operation);
@@ -162,30 +193,24 @@ public final class ReceiverActivityMaintenance
         long walBytesBefore = size(walPath(activityPath(databasePath)));
         int rowsDeleted = 0;
         String checkResult = null;
+        List<String> warnings = new ArrayList<>();
 
         switch(operation)
         {
             case MAINTAIN -> rowsDeleted = runLightMaintenancePass(connection, retentionDays, historyGeneration).deletedRows();
             case SHRINK ->
             {
+                requireShrinkCapacity(connection, databasePath);
                 rowsDeleted = runLightMaintenancePass(connection, retentionDays, historyGeneration).deletedRows();
                 vacuum(connection);
-                checkpoint(connection);
-                optimize(connection);
-                updateStatus(connection, "last_shrink_ms");
+                checkpointAfterCommit(connection, warnings);
+                statusAfterCommit(connection, "last_shrink_ms", warnings);
             }
-            case CHECK ->
-            {
-                checkResult = quickCheck(connection);
-                ReceiverActivitySchema.updateStatus(connection, "last_integrity_check_ms",
-                    Long.toString(System.currentTimeMillis()));
-                ReceiverActivitySchema.updateStatus(connection, "last_integrity_check_result", checkResult);
-            }
+            case CHECK -> { return recordCheck(connection, check(databasePath, () -> false)); }
             case RESET_STATS ->
             {
-                rowsDeleted = resetStats(connection, historyGeneration);
-                checkpoint(connection);
-                optimize(connection);
+                return runBatchesToCompletion(connection, databasePath,
+                    StatsDatabaseMaintenanceRequest.forOperation(Operation.RESET_STATS), historyGeneration);
             }
             case CLEAR_CHANNEL_STATS -> throw new IllegalArgumentException(
                 "CLEAR_CHANNEL_STATS requires a channel configuration ID");
@@ -194,7 +219,7 @@ public final class ReceiverActivityMaintenance
         }
 
         return new Result(operation, rowsDeleted, checkResult, databaseBytesBefore, size(activityPath(databasePath)), walBytesBefore,
-            size(walPath(activityPath(databasePath))));
+            size(walPath(activityPath(databasePath))), DeletionOutcome.NOT_APPLICABLE, warnings);
     }
 
     /**
@@ -226,13 +251,18 @@ public final class ReceiverActivityMaintenance
             throw new IllegalArgumentException("Channel configuration ID is required");
         }
 
-        long databaseBytesBefore = size(activityPath(databasePath));
-        long walBytesBefore = size(walPath(activityPath(databasePath)));
-        int rowsDeleted = clearChannelStats(connection, configurationId, historyGeneration);
-        checkpoint(connection);
-        optimize(connection);
-        return new Result(Operation.CLEAR_CHANNEL_STATS, rowsDeleted, null, databaseBytesBefore, size(activityPath(databasePath)),
-            walBytesBefore, size(walPath(activityPath(databasePath))));
+        return runBatchesToCompletion(connection, databasePath,
+            StatsDatabaseMaintenanceRequest.clearChannel(configurationId), historyGeneration);
+    }
+
+    /** Offline callers use the same bounded deletion engine; the live service yields between these passes. */
+    private static Result runBatchesToCompletion(Connection connection, Path databasePath,
+        StatsDatabaseMaintenanceRequest request, AtomicLong historyGeneration) throws IOException, SQLException
+    {
+        Result result;
+        do { result = deleteRetainedStatsPass(connection, databasePath, request, 0, historyGeneration); }
+        while(result == null);
+        return result;
     }
 
     /** Deletes one selected target on the single writer connection after re-resolving its ownership. */
@@ -275,15 +305,23 @@ public final class ReceiverActivityMaintenance
                                           StatsDatabaseMaintenanceRequest request, long droppedRecords,
                                           AtomicLong historyGeneration) throws IOException, SQLException
     {
-        if(!(request.deletionTarget() instanceof ScopedData target))
-            throw new IllegalArgumentException("Batched cleanup requires a scoped retained-data target");
+        boolean reset = request.operation() == Operation.RESET_STATS;
+        String channel = request.operation() == Operation.CLEAR_CHANNEL_STATS ? request.configurationId() :
+            request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.Channel target ?
+                target.configurationId() : null;
+        ScopedData scoped = request.deletionTarget() instanceof ScopedData target ? target : null;
+        if(!reset && channel == null && scoped == null)
+            throw new IllegalArgumentException("Batched cleanup requires a retained-data target or reset");
         long before = size(activityPath(databasePath));
         long walBefore = size(walPath(activityPath(databasePath)));
         if(request.cancelled())
         {
-            request.setResumable(true);
+            request.setResumable(!reset);
             return deletionResult(request, databasePath, before, walBefore, DeletionOutcome.INTERRUPTED);
         }
+        if(reset && request.resetResourceCheckDue())
+            request.resetWaitingForReaders(!resetResourcesReady(connection, databasePath));
+        if(reset && request.resetWaitingForReaders()) return null;
         ReceiverActivityScopedDeletion.Batch batch = request.deletionBatch();
         if(batch == null)
         {
@@ -292,9 +330,13 @@ public final class ReceiverActivityMaintenance
                 request.initializeProgress(0, System.currentTimeMillis(), droppedRecords);
             try
             {
-                batch = ReceiverActivityScopedDeletion.Batch.start(connection, target, request.progress().cutoffMs());
+                batch = reset ? ReceiverActivityScopedDeletion.Batch.startAll(connection, request.progress().cutoffMs()) :
+                    channel != null ? ReceiverActivityScopedDeletion.Batch.startChannel(connection, channel,
+                        request.progress().cutoffMs()) : ReceiverActivityScopedDeletion.Batch.start(connection,
+                        scoped, request.progress().cutoffMs());
                 request.deletionBatch(batch);
-                request.matchedRows(batch.rowsTotal());
+                //Maintenance factories deliberately avoid a full-history count on the live writer.
+                request.matchedRows(reset || channel != null ? 0 : batch.rowsTotal());
             }
             finally
             {
@@ -316,13 +358,18 @@ public final class ReceiverActivityMaintenance
             {
                 batch.restore(position);
                 request.preparationDuration(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
-                request.setResumable(true);
+                request.setResumable(!reset);
                 throw failure;
             }
         }
         if(batch.done())
         {
+            if(reset || channel != null) request.matchedRows(request.progress().rowsDeleted());
             request.setResumable(false);
+            if(reset)
+            {
+                inTransaction(connection, () -> { completeReset(connection); return 0; }, null, Integer::longValue);
+            }
             return deletionResult(request, databasePath, before, walBefore, batch.outcome());
         }
         return null;
@@ -331,7 +378,7 @@ public final class ReceiverActivityMaintenance
     static Result interruptRetainedStats(Path databasePath, StatsDatabaseMaintenanceRequest request)
         throws IOException
     {
-        request.setResumable(true);
+        request.setResumable(request.operation() != Operation.RESET_STATS);
         return deletionResult(request, databasePath, size(activityPath(databasePath)), size(walPath(activityPath(databasePath))),
             DeletionOutcome.INTERRUPTED);
     }
@@ -339,7 +386,7 @@ public final class ReceiverActivityMaintenance
     private static Result deletionResult(StatsDatabaseMaintenanceRequest request, Path databasePath,
                                           long before, long walBefore, DeletionOutcome outcome) throws IOException
     {
-        return new Result(Operation.DELETE_RETAINED_STATS, Math.toIntExact(request.progress().rowsDeleted()), null,
+        return new Result(request.operation(), Math.toIntExact(request.progress().rowsDeleted()), null,
             before, size(activityPath(databasePath)), walBefore, size(walPath(activityPath(databasePath))), outcome);
     }
 
@@ -358,8 +405,6 @@ public final class ReceiverActivityMaintenance
     {
         RetentionResult retention = cleanupRetentionPass(connection, retentionDays, historyGeneration);
         int deleted = retention.deletedRows();
-        checkpoint(connection);
-        optimize(connection);
         updateStatus(connection, "last_maintenance_ms");
         ReceiverActivitySchema.updateStatus(connection, "last_maintenance_deleted_rows", Integer.toString(deleted));
         return retention;
@@ -386,29 +431,6 @@ public final class ReceiverActivityMaintenance
 
     record RetentionResult(int deletedRows, boolean moreWorkLikely)
     {
-    }
-
-    private static int resetStats(Connection connection, AtomicLong historyGeneration) throws SQLException
-    {
-        return inTransaction(connection, () -> {
-            int deleted = DmrActivitySchema.resetStats(connection) + ReceiverActivitySchema.resetStats(connection) +
-                TrunkedSiteSchema.resetStats(connection);
-            updateStatus(connection, "last_stats_reset_ms");
-            return deleted;
-        }, historyGeneration, Integer::longValue);
-    }
-
-    private static int clearChannelStats(Connection connection, String configurationId, AtomicLong historyGeneration)
-        throws SQLException
-    {
-        return inTransaction(connection, () -> {
-            int deleted = DmrActivitySchema.clearChannelStats(connection, configurationId) +
-                ReceiverActivitySchema.clearChannelStats(connection, configurationId) +
-                TrunkedSiteSchema.clearChannelStats(connection, configurationId);
-            ReceiverActivitySchema.updateStatus(connection, "last_channel_stats_clear_ms",
-                Long.toString(System.currentTimeMillis()));
-            return deleted;
-        }, historyGeneration, Integer::longValue);
     }
 
     private static <T> T inTransaction(Connection connection, SqlOperation<T> operation, AtomicLong historyGeneration,
@@ -458,11 +480,16 @@ public final class ReceiverActivityMaintenance
         T run() throws SQLException;
     }
 
-    private static void optimize(Connection connection) throws SQLException
+    private static void checkpointAfterCommit(Connection connection, List<String> warnings)
     {
-        try(Statement statement = connection.createStatement())
+        try
         {
-            statement.execute("PRAGMA main.optimize");
+            checkpoint(connection);
+        }
+        catch(SQLException exception)
+        {
+            warnings.add("Data changes completed; checkpoint will be retried later");
+            LOG.debug("Statistics changes committed; optional checkpoint was deferred", exception);
         }
     }
 
@@ -470,7 +497,7 @@ public final class ReceiverActivityMaintenance
     {
         try(Statement statement = connection.createStatement())
         {
-            statement.execute("PRAGMA main.wal_checkpoint(TRUNCATE)");
+            statement.execute("PRAGMA main.wal_checkpoint(PASSIVE)");
         }
     }
 
@@ -487,8 +514,164 @@ public final class ReceiverActivityMaintenance
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("PRAGMA main.quick_check"))
         {
-            return resultSet.next() ? resultSet.getString(1) : "no result";
+            List<String> findings = new ArrayList<>();
+            while(resultSet.next()) findings.add(resultSet.getString(1));
+            return findings.isEmpty() ? "no result" : String.join("; ", findings);
         }
+    }
+
+    /** A full SQLite check on a WAL-aware read connection; never owns the observation writer. */
+    public static Result check(Path databasePath, BooleanSupplier cancelled) throws IOException, SQLException
+    {
+        Path activity = activityPath(databasePath);
+        long before = size(activity);
+        long walBefore = size(walPath(activity));
+        String[] stopped = {null};
+        long[] nextSpaceCheck = {0};
+        try(Connection connection = SdrTrunkDatabase.openHistoryRead(databasePath))
+        {
+            //Full checks revisit B-tree and overflow pages. The default ~2MiB cache amplified reads on a31GiB
+            //history file; cap this diagnostic reader at64MiB without changing the observation writer's cache.
+            try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA main.cache_size=-65536"); }
+            ProgressHandler.setHandler(connection, 20_000, new ProgressHandler()
+            {
+                @Override protected int progress()
+                {
+                    if(cancelled.getAsBoolean() || Thread.currentThread().isInterrupted())
+                        stopped[0] = "Check cancelled; run it again when ready";
+                    else if(System.nanoTime() >= nextSpaceCheck[0])
+                    {
+                        nextSpaceCheck[0] = System.nanoTime() + TimeUnit.SECONDS.toNanos(1);
+                        try
+                        {
+                            if(Files.getFileStore(activity).getUsableSpace() < FREE_SPACE_RESERVE)
+                                stopped[0] = "Check stopped to preserve free disk space; free space and try again";
+                            else if(size(walPath(activity)) - walBefore > CHECK_MAXIMUM_WAL_GROWTH)
+                                stopped[0] = "Check stopped because incoming activity needs a checkpoint; try again during a quieter period";
+                        }
+                        catch(IOException exception)
+                        {
+                            stopped[0] = "Check stopped because available disk space could not be verified";
+                        }
+                    }
+                    return stopped[0] == null ? 0 : 1;
+                }
+            });
+            String result;
+            try
+            {
+                if(cancelled.getAsBoolean()) stopped[0] = "Check cancelled; run it again when ready";
+                result = stopped[0] == null ? quickCheck(connection) : null;
+            }
+            catch(SQLException exception)
+            {
+                if(stopped[0] == null) throw exception;
+                result = null;
+            }
+            finally
+            {
+                ProgressHandler.clearHandler(connection);
+            }
+            return new Result(Operation.CHECK, 0, stopped[0] != null ? stopped[0] : result, before,
+                size(activity), walBefore, size(walPath(activity)), stopped[0] != null ?
+                DeletionOutcome.INTERRUPTED : DeletionOutcome.NOT_APPLICABLE);
+        }
+    }
+
+    /** Records a completed read-side check in one short writer action. A failed status write does not undo its result. */
+    static Result recordCheck(Connection connection, Result checked)
+    {
+        if(checked.operation() != Operation.CHECK) throw new IllegalArgumentException("Database check result required");
+        if(checked.deletionOutcome() == DeletionOutcome.INTERRUPTED) return checked;
+        List<String> warnings = new ArrayList<>(checked.warnings());
+        try
+        {
+            ReceiverActivitySchema.updateStatus(connection, "last_integrity_check_ms",
+                Long.toString(System.currentTimeMillis()));
+            ReceiverActivitySchema.updateStatus(connection, "last_integrity_check_result", checked.checkResult());
+        }
+        catch(SQLException exception)
+        {
+            warnings.add("The check finished; its saved status could not be updated");
+            LOG.debug("Completed statistics check status could not be saved", exception);
+        }
+        return new Result(checked.operation(), checked.rowsDeleted(), checked.checkResult(),
+            checked.databaseBytesBefore(), checked.databaseBytesAfter(), checked.walBytesBefore(),
+            checked.walBytesAfter(), checked.deletionOutcome(), warnings);
+    }
+
+    public record ShrinkCapacity(long requiredBytes, long availableBytes)
+    {
+        public boolean sufficient() { return availableBytes >= requiredBytes; }
+    }
+
+    static ShrinkCapacity shrinkCapacity(long databasePages, long pageSize, long availableBytes)
+    {
+        // VACUUM can need both a rebuilt database and its rollback/WAL copy, in addition to normal receiver headroom.
+        return new ShrinkCapacity(Math.addExact(Math.multiplyExact(Math.multiplyExact(databasePages, pageSize), 2),
+            FREE_SPACE_RESERVE), availableBytes);
+    }
+
+    private static void requireShrinkCapacity(Connection connection, Path configuration) throws SQLException, IOException
+    {
+        long pages = pragma(connection, "page_count");
+        Path activity = activityPath(configuration);
+        if(activity == null || !Files.isRegularFile(activity))
+            throw new IOException("Shrink cannot verify database storage; restart VCE and try again");
+        ShrinkCapacity capacity = shrinkCapacity(pages, pragma(connection, "page_size"),
+            Files.getFileStore(activity).getUsableSpace());
+        if(!capacity.sufficient())
+            throw new IOException("Shrink needs " + FileUtils.byteCountToDisplaySize(capacity.requiredBytes()) +
+                " free, including temporary workspace and receiver headroom; " +
+                FileUtils.byteCountToDisplaySize(capacity.availableBytes()) + " is available");
+    }
+
+    private static boolean resetResourcesReady(Connection connection, Path configuration) throws SQLException, IOException
+    {
+        if(Files.getFileStore(activityPath(configuration)).getUsableSpace() < FREE_SPACE_RESERVE)
+            throw new IOException("Reset stopped to preserve free disk space. Completed batches remain removed. " +
+                "Free disk space and start a new reset");
+        //A separate long-lived reader may pin old history even though statistics admission is paused.
+        //Yield before that reader can turn the bounded reset into a database-sized retained WAL.
+        long pageSize = pragma(connection, "page_size");
+        try(Statement statement = connection.createStatement();
+            ResultSet checkpoint = statement.executeQuery("PRAGMA main.wal_checkpoint(PASSIVE)"))
+        {
+            if(checkpoint.next())
+            {
+                long pendingPages = Math.max(0L, checkpoint.getLong(2) - checkpoint.getLong(3));
+                return pendingPages * pageSize <= RESET_MAXIMUM_PENDING_WAL;
+            }
+        }
+        return true;
+    }
+
+    private static long pragma(Connection connection, String name) throws SQLException
+    {
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery("PRAGMA main." + name))
+        {
+            return rows.next() ? rows.getLong(1) : 0;
+        }
+    }
+
+    private static void statusAfterCommit(Connection connection, String key, List<String> warnings)
+    {
+        try { updateStatus(connection, key); }
+        catch(SQLException exception)
+        {
+            warnings.add("Data changes completed; their saved status could not be updated");
+            LOG.debug("Committed statistics maintenance status could not be saved", exception);
+        }
+    }
+
+    private static void completeReset(Connection connection) throws SQLException
+    {
+        updateStatus(connection, "last_stats_reset_ms");
+        for(String key: List.of(ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY,
+            ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,
+            ReceiverActivitySchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY))
+            io.github.dsheirer.database.SdrTrunkDatabaseStartup.setMetadata(connection, key,
+                Long.toString(System.currentTimeMillis()));
     }
 
     private static void updateStatus(Connection connection, String key) throws SQLException

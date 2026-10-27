@@ -71,7 +71,7 @@ final class ReceiverActivityDeletion
     /** Legacy atomic operations keep a safety cap; current scoped requests use the yielding batch engine. */
     static boolean legacySelectionTooLarge(Connection connection, DeletionTarget target) throws SQLException
     {
-        if(target instanceof ScopedData) return false;
+        if(target instanceof ScopedData || target instanceof StatsDatabaseMaintenanceRequest.TalkerAlias) return false;
         ScopedData estimate = switch(target)
         {
             case Identity identity -> new ScopedData("radio_system", identity.radioSystemKey(), null, null,
@@ -91,6 +91,7 @@ final class ReceiverActivityDeletion
             case Frequency frequency -> legacyChannelScope(connection, frequency.configurationId(), "frequencies",
                 Long.toString(frequency.frequencyHz()), List.of("current", "summary"));
             case ScopedData ignored -> null;
+            case StatsDatabaseMaintenanceRequest.TalkerAlias ignored -> null;
         };
         if(estimate != null)
             return ReceiverActivityScopedDeletion.Batch.start(connection, estimate, Long.MAX_VALUE).rowsTotal() > 100_000;
@@ -195,7 +196,23 @@ final class ReceiverActivityDeletion
             case Channel channel -> deleteChannel(connection, channel);
             case System system -> deleteSystem(connection, system);
             case ScopedData scoped -> ReceiverActivityScopedDeletion.delete(connection, scoped);
+            case StatsDatabaseMaintenanceRequest.TalkerAlias alias -> forgetTalkerAlias(connection, alias);
         };
+    }
+
+    private static Result forgetTalkerAlias(Connection connection, StatsDatabaseMaintenanceRequest.TalkerAlias target)
+        throws SQLException
+    {
+        long system = systemId(connection, target.radioSystemKey());
+        var identity = io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey.parse(target.identityKey());
+        Long summary = RadioSystemIdentityLookup.find(connection, system, 2, identity.homeWacn(),
+            identity.homeSystemId(), identity.identityId());
+        if(summary == null) return Result.missing();
+        int changed = execute(connection, """
+            UPDATE radio_system_identity_summary SET last_talker_alias=NULL, last_talker_alias_seen_ms=NULL
+            WHERE id=? AND radio_system_id=? AND identity_kind_code=2 AND last_talker_alias=?
+            """, summary, system, target.expectedAlias());
+        return changed > 0 ? Result.deleted(changed) : Result.missing();
     }
 
     private static Result deleteFrequency(Connection connection, Frequency target) throws SQLException
@@ -436,9 +453,11 @@ final class ReceiverActivityDeletion
 
     private static int clearChannel(Connection connection, String configurationId) throws SQLException
     {
-        int deleted = DmrActivitySchema.clearChannelStats(connection, configurationId);
-        deleted = Math.addExact(deleted, ReceiverActivitySchema.clearChannelStats(connection, configurationId));
-        return Math.addExact(deleted, TrunkedSiteSchema.clearChannelStats(connection, configurationId));
+        ReceiverActivityScopedDeletion.Batch batch = ReceiverActivityScopedDeletion.Batch.startChannel(
+            connection, configurationId, java.lang.System.currentTimeMillis());
+        int deleted = 0;
+        while(!batch.done()) deleted = Math.addExact(deleted, batch.runPass(connection));
+        return deleted;
     }
 
     private static Result deleteSystem(Connection connection, System target) throws SQLException

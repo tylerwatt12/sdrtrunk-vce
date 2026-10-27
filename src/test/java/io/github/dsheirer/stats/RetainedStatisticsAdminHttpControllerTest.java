@@ -133,6 +133,22 @@ class RetainedStatisticsAdminHttpControllerTest
     }
 
     @Test
+    void otaAliasActionUsesExactRadioAndRetryAdmission() throws Exception
+    {
+        Session admin = login();
+        String id = UUID.randomUUID().toString();
+        String path = RetainedStatisticsAdminHttpController.PATH + "/deletions";
+        String body = MAPPER.writeValueAsString(Map.of("request_id", id, "target", Map.of(
+            "kind", "talker_alias", "radio_system_key", "p25:abcde:123",
+            "identity_key", "v1-r-abcde-123-750003", "expected_alias", "Observed name")));
+        assertEquals(202, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        assertEquals(new StatsDatabaseMaintenanceRequest.TalkerAlias("p25:abcde:123",
+            "v1-r-abcde-123-750003", "Observed name"), mDispatched.get().deletionTarget());
+        assertEquals(202, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        assertEquals(1, mDispatchCount.get());
+    }
+
+    @Test
     void replacingHttpRoutesRetainsActiveJobsRetryKeysAndOneDeletionAdmission() throws Exception
     {
         Session admin = login();

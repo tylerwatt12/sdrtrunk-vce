@@ -35,6 +35,7 @@ public record ReceiverActivityStatus(boolean summaryConfigured, boolean detailed
         DISABLED,
         STARTING,
         RUNNING,
+        PAUSED,
         STOPPED,
         FAILED
     }

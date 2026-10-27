@@ -53,8 +53,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -79,6 +77,7 @@ public final class ChannelAdministrationService
     private final Function<String,String> mDiscoverySystemNames;
     /** One web mutation or receiver lifecycle batch at a time; saturation fails without blocking request workers. */
     private final Semaphore mCommandAdmission = new Semaphore(1);
+    private final Map<String,StatsDatabaseMaintenanceRequest> mStatisticsClears = new java.util.concurrent.ConcurrentHashMap<>();
     private final Map<String,SquelchPreviewLease> mSquelchPreviews = new HashMap<>();
     private volatile Supplier<Map<String,String>> mTunerDisplayNames = Map::of;
     private volatile CommittedConfiguration mCommittedConfiguration =
@@ -1193,7 +1192,11 @@ public final class ChannelAdministrationService
             Map<String,Channel> channels = onConfigurationThread(() ->
             {
                 Map<String,Channel> selected = new LinkedHashMap<>();
-                ids.forEach(id -> selected.put(id, requireChannel(id)));
+                ids.forEach(id -> {
+                    if(start && mStatisticsClears.containsKey(id))
+                        throw new IllegalStateException("Channel statistics are being cleared; start it after cleanup finishes");
+                    selected.put(id, requireChannel(id));
+                });
                 return selected;
             });
             List<LifecycleResult> results = new ArrayList<>();
@@ -1226,34 +1229,27 @@ public final class ChannelAdministrationService
         });
     }
 
-    /** Clears observation and activity rows owned by one stopped saved channel. */
-    public StatisticsResult clearStatistics(String configurationId)
+    /** Reserves a stopped channel for an asynchronous cleanup. The configuration remains available for other commands. */
+    public void prepareStatisticsMaintenance(StatsDatabaseMaintenanceRequest request)
     {
+        String configurationId = request.operation() == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS ?
+            request.configurationId() : request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.Channel target ?
+                target.configurationId() : null;
+        if(configurationId == null) return;
         String id = requireConfigurationId(configurationId);
-        return admitted(() ->
+        admitted(() ->
         {
             onConfigurationThread(() ->
             {
                 requireChannel(id);
                 if(isProcessing(id)) throw new ChannelRunningException(id);
+                StatsDatabaseMaintenanceRequest current = mStatisticsClears.putIfAbsent(id, request);
+                if(current != null && current != request)
+                    throw new IllegalStateException("Channel statistics cleanup is already running");
                 return null;
             });
-            StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearChannel(id);
-            mConfigurationManager.dispatchMaintenance(request);
-            try
-            {
-                ReceiverActivityMaintenance.Result result = request.result().get(30, TimeUnit.SECONDS);
-                return new StatisticsResult(id, result.rowsDeleted(), result.summary());
-            }
-            catch(InterruptedException exception)
-            {
-                Thread.currentThread().interrupt();
-                throw new StatisticsException("Channel statistics clearing was interrupted", exception);
-            }
-            catch(ExecutionException | TimeoutException exception)
-            {
-                throw new StatisticsException("Channel statistics could not be cleared", exception);
-            }
+            request.result().whenComplete((result, failure) -> mStatisticsClears.remove(id, request));
+            return null;
         });
     }
 
@@ -1640,7 +1636,6 @@ public final class ChannelAdministrationService
     {
         public BatchResult { results = List.copyOf(results); }
     }
-    public record StatisticsResult(String configurationId, int rowsDeleted, String summary) {}
     public record SquelchPreviewResult(String leaseId, long expiresAtEpochMs) {}
 
     private static final class SquelchPreviewLease
@@ -1725,9 +1720,5 @@ public final class ChannelAdministrationService
     public static class LifecycleException extends RuntimeException
     {
         public LifecycleException(String message, Throwable cause) { super(message, cause); }
-    }
-    public static class StatisticsException extends RuntimeException
-    {
-        public StatisticsException(String message, Throwable cause) { super(message, cause); }
     }
 }

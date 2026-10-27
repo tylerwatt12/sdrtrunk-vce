@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Requests database maintenance on the single statistics database writer.
@@ -29,6 +30,9 @@ public final class StatsDatabaseMaintenanceRequest
     private final AtomicBoolean mCancelled = new AtomicBoolean();
     private final AtomicBoolean mSubmitted = new AtomicBoolean();
     private final AtomicBoolean mResumeClaimed = new AtomicBoolean();
+    private volatile ReceiverActivityMaintenance.Result mCheckResult;
+    private long mNextResetResourceCheckNanos;
+    private volatile boolean mResetWaitingForReaders;
     private ProgressState mProgress = new ProgressState();
     private ReceiverActivityScopedDeletion.Batch mDeletionBatch;
 
@@ -44,6 +48,17 @@ public final class StatsDatabaseMaintenanceRequest
         return mProgress.snapshot;
     }
 
+    /** Observations deliberately omitted while an administrator pauses collection for a full reset. */
+    public long observationsSkipped()
+    {
+        return mProgress.observationsSkipped.get();
+    }
+
+    void skippedObservation()
+    {
+        mProgress.observationsSkipped.incrementAndGet();
+    }
+
     /** Stops before the next committed batch; rows already removed remain removed. */
     public void cancel()
     {
@@ -53,9 +68,12 @@ public final class StatsDatabaseMaintenanceRequest
     /** Creates one continuation with the same cutoff, plan, and committed counters. */
     public StatsDatabaseMaintenanceRequest resume()
     {
+        if(mOperation == ReceiverActivityMaintenance.Operation.RESET_STATS)
+            throw new IllegalStateException("Start a new full reset; collection resumed after this reset stopped");
         if(!mResult.isDone() || !progress().resumable() || !mResumeClaimed.compareAndSet(false, true))
             throw new IllegalStateException("Deletion is not available to resume");
-        StatsDatabaseMaintenanceRequest continuation = delete(mDeletionTarget);
+        StatsDatabaseMaintenanceRequest continuation = mOperation == ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS ?
+            clearChannel(mConfigurationId) : delete(mDeletionTarget);
         continuation.mProgress = mProgress;
         continuation.mDeletionBatch = mDeletionBatch;
         return continuation;
@@ -64,6 +82,35 @@ public final class StatsDatabaseMaintenanceRequest
     boolean claimSubmission()
     {
         return mSubmitted.compareAndSet(false, true);
+    }
+
+    void checkResult(ReceiverActivityMaintenance.Result result)
+    {
+        mCheckResult = result;
+    }
+
+    ReceiverActivityMaintenance.Result checkResult()
+    {
+        return mCheckResult;
+    }
+
+    /** Writer-owned reset guard; filesystem/checkpoint work never runs on receiver callbacks. */
+    boolean resetResourceCheckDue()
+    {
+        long now = java.lang.System.nanoTime();
+        if(now < mNextResetResourceCheckNanos) return false;
+        mNextResetResourceCheckNanos = now + java.util.concurrent.TimeUnit.SECONDS.toNanos(1);
+        return true;
+    }
+
+    public boolean resetWaitingForReaders()
+    {
+        return mResetWaitingForReaders;
+    }
+
+    void resetWaitingForReaders(boolean waiting)
+    {
+        mResetWaitingForReaders = waiting;
     }
 
     boolean cancelled()
@@ -143,6 +190,7 @@ public final class StatsDatabaseMaintenanceRequest
     {
         private volatile Progress snapshot = new Progress(0, 0, 0, 0, false, 0, 0, 0, 0, 0);
         private long droppedAtStart;
+        private final AtomicLong observationsSkipped = new AtomicLong();
     }
 
     private StatsDatabaseMaintenanceRequest(ReceiverActivityMaintenance.Operation operation, String configurationId,
@@ -201,8 +249,22 @@ public final class StatsDatabaseMaintenanceRequest
     }
 
     public sealed interface DeletionTarget permits Frequency, Identity, ConventionalIdentity, LearnedSite,
-        SavedSite, Channel, System, ScopedData
+        SavedSite, Channel, System, ScopedData, TalkerAlias
     {
+    }
+
+    /** One observed name; forgetting it never removes the radio or its activity. */
+    public record TalkerAlias(String radioSystemKey, String identityKey, String expectedAlias) implements DeletionTarget
+    {
+        public TalkerAlias
+        {
+            requireText(radioSystemKey, "Radio system key");
+            var identity = io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey.parse(identityKey);
+            if(identity.kindCode() != 2) throw new IllegalArgumentException("A radio identity is required");
+            requireText(expectedAlias, "Observed name");
+            if(expectedAlias.length() > RadioSystemSchema.MAX_TALKER_ALIAS_CHARACTERS)
+                throw new IllegalArgumentException("Observed name is too long");
+        }
     }
 
     public record Frequency(String configurationId, String expectedSiteKey, long frequencyHz)

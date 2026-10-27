@@ -29,10 +29,12 @@ import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.protocol.Protocol;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BiPredicate;
 
 /**
  * Talker alias cache manager.  Collects observed talker aliases and inserts them into an identifier collection when
@@ -42,12 +44,41 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public class TalkerAliasManager
 {
-    private volatile Map<AliasKey,TalkerAliasIdentifier> mAliasMap = new ConcurrentHashMap<>();
+    private final AtomicReference<AliasGeneration> mGeneration = new AtomicReference<>(new AliasGeneration());
 
     /** O(1) retirement of a reception/system generation; retained immutable call snapshots remain valid. */
     public void clear()
     {
-        mAliasMap = new ConcurrentHashMap<>();
+        mGeneration.set(new AliasGeneration());
+    }
+
+    /** Administrative removal of one observed name. A later OTA observation may learn it again. */
+    public synchronized void forget(String systemKey, RadioSystemIdentityKey.Identity identity, String expectedAlias)
+    {
+        boolean p25 = RadioSystemKey.isP25Native(systemKey);
+        int servingWacn = p25 ? Integer.parseInt(systemKey, 4, 9, 16) : -1;
+        int servingSystem = p25 ? Integer.parseInt(systemKey, 10, 13, 16) : -1;
+        int homeWacn = identity.hasHome() ? identity.homeWacn() : servingWacn;
+        int homeSystem = identity.hasHome() ? identity.homeSystemId() : servingSystem;
+        BiPredicate<AliasKey,TalkerAliasIdentifier> forgotten = (key, alias) ->
+        {
+            boolean scopeMatches = p25 ? key.protocol() == Protocol.APCO25 &&
+                key.homeWacn() == homeWacn && key.homeSystem() == homeSystem &&
+                alias.servingWacn() == servingWacn && alias.servingSystem() == servingSystem :
+                systemKey.equals(key.nativeSystemKey());
+            return scopeMatches && key.radio() == identity.identityId() && expectedAlias.equals(alias.getValue());
+        };
+        AliasGeneration generation = mGeneration.get();
+        AliasGeneration retained = new AliasGeneration();
+        // Publish the handoff before copying. In-flight unrelated observations forward to retained; the copy
+        // cannot overwrite them. Decoder callbacks never take this administrative monitor.
+        generation.retirement = new AliasRetirement(retained, forgotten);
+        generation.forEach((key, alias) ->
+        {
+            if(!forgotten.test(key, alias)) retained.putIfAbsent(key, alias);
+        });
+        // A simultaneous reception clear retires both generations and must never be undone by this copy.
+        mGeneration.compareAndSet(generation, retained);
     }
 
     /**
@@ -64,7 +95,7 @@ public class TalkerAliasManager
     public void update(RadioIdentifier identifier, TalkerAliasIdentifier alias, String servingSystemKey)
     {
         //An in-flight observation may finish after clear(). It belongs only to the generation it entered.
-        Map<AliasKey,TalkerAliasIdentifier> generation = mAliasMap;
+        AliasGeneration generation = mGeneration.get();
         if(RadioSystemKey.isChannelScoped(servingSystemKey)) servingSystemKey = null;
         if(identifier == null || identifier.getRole() != Role.FROM || alias == null) return;
         TalkerAliasIdentifier owned = alias.bindTo(identifier, servingSystemKey);
@@ -72,7 +103,16 @@ public class TalkerAliasManager
         //Omitted caller scope cannot turn a previously scoped observation into an unscoped cache entry.
         AliasKey key = servingSystemKey != null ? aliasKey(identifier, servingSystemKey) :
             aliasKey(identifier, owned.servingWacn(), owned.servingSystem(), owned.nativeSystemKey());
-        if(key != null) generation.put(key, owned);
+        if(key != null)
+        {
+            while(true)
+            {
+                generation.put(key, owned);
+                AliasRetirement retirement = generation.retirement;
+                if(retirement == null || retirement.forgotten().test(key, owned)) return;
+                generation = retirement.next();
+            }
+        }
     }
 
     /**
@@ -88,7 +128,7 @@ public class TalkerAliasManager
     public boolean hasAlias(RadioIdentifier radioIdentifier, String servingSystemKey)
     {
         AliasKey key = aliasKey(radioIdentifier, servingSystemKey);
-        return key != null && mAliasMap.containsKey(key);
+        return key != null && mGeneration.get().containsKey(key);
     }
 
     /**
@@ -158,7 +198,7 @@ public class TalkerAliasManager
         if(fromRadio instanceof RadioIdentifier rid)
         {
             AliasKey key = aliasKey(rid, servingWacn, servingSystem, nativeSystemKey);
-            TalkerAliasIdentifier alias = key != null ? mAliasMap.get(key) : null;
+            TalkerAliasIdentifier alias = key != null ? mGeneration.get().get(key) : null;
 
             if(alias != null)
             {
@@ -171,8 +211,16 @@ public class TalkerAliasManager
     private TalkerAliasIdentifier lookup(RadioIdentifier radio, String servingSystemKey)
     {
         AliasKey key = aliasKey(radio, servingSystemKey);
-        return key != null ? mAliasMap.get(key) : null;
+        return key != null ? mGeneration.get().get(key) : null;
     }
+
+    private static final class AliasGeneration extends ConcurrentHashMap<AliasKey,TalkerAliasIdentifier>
+    {
+        private volatile AliasRetirement retirement;
+    }
+
+    private record AliasRetirement(AliasGeneration next,
+                                    BiPredicate<AliasKey,TalkerAliasIdentifier> forgotten) {}
 
     /** One cache key for a home-system subscriber and its native address; visiting subscriber tuples remain exact. */
     private static AliasKey aliasKey(RadioIdentifier radio, String servingSystemKey)

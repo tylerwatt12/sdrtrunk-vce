@@ -117,6 +117,31 @@ class StatsAliasCatalogBoundsTest
         }
     }
 
+    @Test
+    void analyticalExportSplitsWideListSelectionsWithoutChangingUnavailableMetrics() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("wide-export.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                WITH RECURSIVE lists(value) AS (
+                    VALUES(10000) UNION ALL SELECT value+1 FROM lists WHERE value<10599)
+                INSERT INTO alias_list(id,name,family) SELECT value,'List '||value,'DMR' FROM lists
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                SELECT id,id,'Alias '||id,'TALKGROUP','DMR',1 FROM alias_list WHERE id>=10000
+                """);
+            List<Map<String,Object>> rows = new StatsAliasCatalog(new StatsAliasResolver()).exportRows(connection,
+                new StatsRequest(Map.of("q","Alias 10","sort","name","direction","asc")), 10000);
+            assertEquals(600, rows.size(), "The bulk export must retain selections beyond one query's list bound");
+            assertTrue(rows.stream().allMatch(row -> row.get("relationship_count") == null &&
+                row.get("join_relationship_count") == null && row.get("current_affiliation_count") == null));
+        }
+    }
+
     private static String queryPlan(Connection connection, String sql, Object... parameters) throws Exception
     {
         StringBuilder plan = new StringBuilder();

@@ -958,7 +958,7 @@ class ReceiverActivityWriterTest
     }
 
     @Test
-    void rolledBackClearDoesNotAdvanceHistoryUntilADeletionCommits() throws Exception
+    void rolledBackFirstClearPassDoesNotInvalidateHistoryUntilADeletionCommits() throws Exception
     {
         Path database = createDatabase(mTemporaryFolder.resolve("rollback-history-generation.sqlite"));
         insertConfiguredChannel(database);
@@ -978,17 +978,16 @@ class ReceiverActivityWriterTest
                 StatsDatabaseMaintenanceRequest rollback = StatsDatabaseMaintenanceRequest.clearChannel(CONFIGURATION_ID);
                 writer.submitMaintenance(rollback);
                 assertThrows(ExecutionException.class, () -> rollback.result().get(5, TimeUnit.SECONDS));
-                assertEquals(0, writer.historyGeneration());
+                long partialGeneration = writer.historyGeneration();
+                assertEquals(0, partialGeneration, "The failing first transaction must roll back its reset fence too");
+                assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_channel_statistics_reset"));
                 assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
                 statement.execute("DROP TRIGGER prevent_history_delete");
                 StatsDatabaseMaintenanceRequest deletion = StatsDatabaseMaintenanceRequest.clearChannel(CONFIGURATION_ID);
                 writer.submitMaintenance(deletion);
                 assertTrue(deletion.result().get(5, TimeUnit.SECONDS).rowsDeleted() > 0);
-                assertEquals(1, writer.historyGeneration());
-                StatsDatabaseMaintenanceRequest noOp = StatsDatabaseMaintenanceRequest.clearChannel(CONFIGURATION_ID);
-                writer.submitMaintenance(noOp);
-                assertEquals(0, noOp.result().get(5, TimeUnit.SECONDS).rowsDeleted());
-                assertEquals(1, writer.historyGeneration());
+                assertTrue(writer.historyGeneration() > partialGeneration);
+                assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
             }
         }
         finally { writer.close(); }
@@ -1043,9 +1042,9 @@ class ReceiverActivityWriterTest
         writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, before));
         StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.clearChannel(CONFIGURATION_ID);
         writer.submitMaintenance(request);
-        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, after));
 
         ReceiverActivityMaintenance.Result result = request.result().get(5, TimeUnit.SECONDS);
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, after));
         assertEquals(ReceiverActivityMaintenance.Operation.CLEAR_CHANNEL_STATS, result.operation());
         writer.close();
         try(Connection connection = ActivityTestDatabase.openPair(database))
@@ -1070,9 +1069,9 @@ class ReceiverActivityWriterTest
         StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(
             new StatsDatabaseMaintenanceRequest.Channel(CONFIGURATION_ID));
         writer.submitMaintenance(request);
-        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, after));
 
         ReceiverActivityMaintenance.Result result = request.result().get(5, TimeUnit.SECONDS);
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, after));
         assertEquals(ReceiverActivityMaintenance.DeletionOutcome.DELETED, result.deletionOutcome());
         StatsDatabaseMaintenanceRequest missing = StatsDatabaseMaintenanceRequest.delete(
             new StatsDatabaseMaintenanceRequest.Channel("223e4567-e89b-42d3-a456-426614174000"));
@@ -1112,9 +1111,9 @@ class ReceiverActivityWriterTest
         StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.forOperation(
             ReceiverActivityMaintenance.Operation.RESET_STATS);
         writer.submitMaintenance(request);
-        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, after));
 
         ReceiverActivityMaintenance.Result result = request.result().get(5, TimeUnit.SECONDS);
+        writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, after));
         assertEquals(ReceiverActivityMaintenance.Operation.RESET_STATS, result.operation());
         writer.close();
         try(Connection connection = ActivityTestDatabase.openPair(database))
@@ -1274,7 +1273,7 @@ class ReceiverActivityWriterTest
         writer.start();
         writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis()));
         StatsDatabaseMaintenanceRequest barrier = StatsDatabaseMaintenanceRequest.forOperation(
-            ReceiverActivityMaintenance.Operation.CHECK);
+            ReceiverActivityMaintenance.Operation.MAINTAIN);
         writer.submitMaintenance(barrier);
         barrier.result().get(5, TimeUnit.SECONDS);
         awaitWritten(writer, 1);

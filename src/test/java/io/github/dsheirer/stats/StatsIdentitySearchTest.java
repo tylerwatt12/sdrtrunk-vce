@@ -42,7 +42,7 @@ class StatsIdentitySearchTest
                     "configuration_id TEXT)",
                 "CREATE TABLE radio_system_identity_summary(id INTEGER PRIMARY KEY,radio_system_id INTEGER," +
                     "identity_id INTEGER,home_wacn INTEGER,home_system_id INTEGER," +
-                    "p25_subscriber_identity_id INTEGER,last_talker_alias TEXT)",
+                    "p25_subscriber_identity_id INTEGER,last_talker_alias TEXT,identity_kind_code INTEGER DEFAULT 1)",
                 "CREATE TABLE alias(id INTEGER PRIMARY KEY,alias_list_id INTEGER,name TEXT,description TEXT," +
                     "group_name TEXT,matcher_type TEXT,protocol TEXT,value INTEGER,min_value INTEGER,max_value INTEGER)",
                 "CREATE TABLE alias_p25_subscriber_identity(alias_id INTEGER,p25_subscriber_identity_id INTEGER)",
@@ -98,7 +98,8 @@ class StatsIdentitySearchTest
                 INSERT INTO receiver_channel VALUES (1,1,'one'),(11,1,'one-b'),(2,2,'two'),(3,3,'three');
                 """);
             statement.executeUpdate("""
-                INSERT INTO radio_system_identity_summary VALUES
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_id,home_wacn,home_system_id,
+                    p25_subscriber_identity_id,last_talker_alias) VALUES
                     (1001,1,202,0xBEE00,1,NULL,'Unit Alpha'),
                     (1002,1,203,0xBEE00,1,NULL,NULL),
                     (1003,1,204,0xBEE00,1,NULL,NULL),
@@ -197,7 +198,8 @@ class StatsIdentitySearchTest
         try(Statement statement = mConnection.createStatement())
         {
             statement.executeUpdate("""
-                INSERT INTO radio_system_identity_summary VALUES
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_id,home_wacn,home_system_id,
+                    p25_subscriber_identity_id,last_talker_alias) VALUES
                     (1101,1,9000,0xBEE00,1,NULL,NULL),
                     (1102,1,9000,0xBEE00,2,NULL,NULL)
                 """);
@@ -252,10 +254,45 @@ class StatsIdentitySearchTest
         List<String> plan = plan(query);
         assertTrue(plan.stream().anyMatch(detail -> detail.contains("MATERIALIZE identity_search_aliases")),
             () -> "Alias text candidates must be materialized: " + plan);
+        assertEquals(1, plan.stream().filter(detail ->
+            detail.contains("MATERIALIZE identity_search_configuration")).count(),
+            () -> "Every correlated branch must share one configuration projection: " + plan);
+        assertEquals(1, plan.stream().filter(detail ->
+            detail.contains("MATERIALIZE identity_search_aliases")).count(),
+            () -> "Alias text candidates must be shared by the complete identity scope: " + plan);
         assertFalse(plan.stream().anyMatch(detail -> detail.contains("SCAN evidence") ||
             detail.contains("SCAN receiver_activity_event")), () -> "Evidence must remain identity indexed: " + plan);
         assertEquals(10, query.parameters().size(),
             "Scoped home names, owner, native forms, serving name, OTA and Alias fields are bound once");
+    }
+
+    @Test
+    void groupSearchKeepsRawCompactPresenceWhenItsChannelHasNoAliasList() throws Exception
+    {
+        try(Statement statement = mConnection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_id,home_wacn,home_system_id)
+                VALUES(1102,1,9000,0xBEE00,2)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias(id,alias_list_id,name,matcher_type,protocol,value)
+                VALUES(100,10,'Local Dispatch','TALKGROUP','APCO25',301)
+                """);
+            statement.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,target_identity_summary_id,target_observed_local_id)
+                VALUES(90,1,1102,301)
+                """);
+            assertEquals(List.of(1102L),search(1,"local dispatch","TALKGROUP"));
+            statement.executeUpdate("""
+                INSERT INTO p25_site_call_identity_bucket(identity_summary_id,channel_id,observed_local_id)
+                VALUES(1102,999,301)
+                """);
+            assertEquals(List.of(),search(1,"local dispatch","TALKGROUP"),
+                "Raw compact evidence must suppress detail fallback even without a matching channel assignment");
+            statement.executeUpdate("DELETE FROM p25_site_call_identity_bucket WHERE identity_summary_id=1102");
+            assertEquals(List.of(1102L),search(1,"local dispatch","TALKGROUP"));
+        }
     }
 
     @Test

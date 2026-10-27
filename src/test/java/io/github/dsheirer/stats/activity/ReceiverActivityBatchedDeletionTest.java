@@ -19,6 +19,7 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import org.sqlite.ProgressHandler;
 
 class ReceiverActivityBatchedDeletionTest
 {
@@ -82,36 +83,35 @@ class ReceiverActivityBatchedDeletionTest
     @Test
     void emptyChildPreviewAndActualPassDoNotEnumerateUnrelatedHistory() throws Exception
     {
-        try(Connection real = open())
+        try(Connection connection = open())
         {
-            execute(real,"WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<5000) " +
-                "INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code,frequency_hz) " +
-                "SELECT 1,1,1000,4,851000000 FROM n");
-            List<String> queries = new java.util.ArrayList<>();
-            Connection observed = (Connection)Proxy.newProxyInstance(Connection.class.getClassLoader(),
-                new Class<?>[]{Connection.class},(proxy,method,args) -> {
-                    if(method.getName().equals("prepareStatement") && args[0] instanceof String sql &&
-                        List.of("activity_event_identity_member","receiver_activity_tone_sequence","receiver_activity_tone")
-                            .stream().anyMatch(table -> sql.startsWith("SELECT count(*) FROM "+table+" ") ||
-                                sql.startsWith("DELETE FROM "+table+" "))) queries.add(sql);
-                    try { return method.invoke(real,args); }
-                    catch(InvocationTargetException failure) { throw failure.getCause(); }
-                });
-            ScopedData target = new ScopedData("radio_system",SYSTEM,null,null,"detailed_events",null,
-                List.of("events"),null,null,852000000L);
-            var batch = ReceiverActivityScopedDeletion.Batch.start(observed,target,2000);
-            assertEquals(0,batch.rowsTotal());
-            assertEquals(0,batch.runPass(observed));
-            assertTrue(batch.done());
-            assertEquals(6,queries.size(),"Inspect all three child counts and their actual deletion statements");
-            for(String query: queries)
+            ScopedData target = new ScopedData("radio_system", SYSTEM, null, null, "detailed_events", null,
+                List.of("events"), null, null, 852000000L);
+            long[] work = new long[2];
+            for(int pass = 0; pass < 2; pass++)
             {
-                String plan = queryPlan(real,query);
-                assertTrue(plan.contains("INTEGER PRIMARY KEY"),plan);
-                assertFalse(plan.contains("idx_receiver_activity_event_retention"),
-                    "Child reads must seek their owner rather than build the global cutoff event list: "+plan);
+                int count = pass == 0 ? 5_000 : 50_000;
+                execute(connection, "WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<" + count + ") " +
+                    "INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code,frequency_hz) " +
+                    "SELECT 1,1,1000,4,851000000 FROM n");
+                long[] instructions = {0};
+                ProgressHandler.setHandler(connection, 1_000, new ProgressHandler()
+                {
+                    @Override protected int progress() { instructions[0] += 1_000; return 0; }
+                });
+                try
+                {
+                    var batch = ReceiverActivityScopedDeletion.Batch.start(connection, target, 2000);
+                    assertEquals(0, batch.rowsTotal());
+                    assertEquals(0, batch.runPass(connection));
+                    assertTrue(batch.done());
+                }
+                finally { ProgressHandler.clearHandler(connection); }
+                work[pass] = instructions[0];
             }
-            assertEquals(5000,scalar(real,"SELECT count(*) FROM receiver_activity_event"));
+            assertTrue(work[1] <= work[0] + 20_000,
+                "Ten times more unrelated events must not add a history scan: " + java.util.Arrays.toString(work));
+            assertEquals(55_000, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
         }
     }
 
@@ -123,6 +123,113 @@ class ReceiverActivityBatchedDeletionTest
             "SELECT id,1,1,1,observed_at_ms,observed_at_ms,observed_at_ms+400,2 FROM receiver_activity_event WHERE id>="+firstId);
         for(int ordinal=0;ordinal<2;ordinal++) execute(connection,"INSERT INTO receiver_activity_tone " +
             "SELECT id,"+ordinal+",600000,NULL,NULL,"+(ordinal*200)+",200,NULL FROM receiver_activity_event WHERE id>="+firstId);
+    }
+
+    @Test
+    void channelCleanupDoesNotScanOtherChannelsIdentityMembers() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            execute(connection, "INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code," +
+                "identity_id,first_seen_ms,last_seen_ms) VALUES(101,1,1,45,1000,1000)");
+            long[] work = new long[2];
+            for(int pass = 0; pass < 2; pass++)
+            {
+                int count = pass == 0 ? 5_000 : 50_000;
+                execute(connection, "WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<" + count + ") " +
+                    "INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code) " +
+                    "SELECT 2,1,1000,4 FROM n");
+                execute(connection, "INSERT OR IGNORE INTO activity_event_identity_member(event_id,radio_system_id," +
+                    "identity_summary_id,channel_id) SELECT id,1,101,2 FROM receiver_activity_event");
+                long[] instructions = {0};
+                connection.setAutoCommit(false);
+                ProgressHandler.setHandler(connection, 1_000, new ProgressHandler()
+                {
+                    @Override protected int progress() { instructions[0] += 1_000; return 0; }
+                });
+                try
+                {
+                    var batch = ReceiverActivityScopedDeletion.Batch.startChannel(connection, CHANNEL, 2000);
+                    while(!batch.done()) batch.runPass(connection);
+                }
+                finally
+                {
+                    ProgressHandler.clearHandler(connection);
+                    connection.rollback();
+                    connection.setAutoCommit(true);
+                }
+                work[pass] = instructions[0];
+            }
+            assertTrue(work[1] <= work[0] + 20_000,
+                "Other channels' members must not add a table scan: " + java.util.Arrays.toString(work));
+            assertEquals(55_000, scalar(connection, "SELECT count(*) FROM activity_event_identity_member"));
+        }
+    }
+
+    @Test
+    void channelFactoryKeepsNewAndBackdatedEventsAndTheirOwner() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            execute(connection, "WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<1500) " +
+                "INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code) " +
+                "SELECT 1,1,1000,4 FROM n");
+            var batch = ReceiverActivityScopedDeletion.Batch.startChannel(connection, CHANNEL, 2000);
+            execute(connection, "INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code) " +
+                "VALUES(1,1,2001,4),(1,1,1000,4),(2,1,1000,4)");
+            while(!batch.done())
+            {
+                connection.setAutoCommit(false);
+                long before = scalar(connection, "SELECT total_changes()");
+                batch.runPass(connection);
+                assertTrue(scalar(connection, "SELECT total_changes()") - before <= 512);
+                connection.commit();
+                connection.setAutoCommit(true);
+            }
+            assertEquals(3, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_channel"));
+            assertEquals(2001, scalar(connection, "SELECT reset_at_ms FROM receiver_channel_statistics_reset " +
+                "WHERE configuration_id='" + CHANNEL + "'"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM configuration_channel"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
+        }
+    }
+
+    @Test
+    void globalFactoryClearsFutureClockHistoryAndKeepsConfiguredCanonicalIdentity() throws Exception
+    {
+        try(Connection connection = open())
+        {
+            execute(connection, "INSERT INTO p25_subscriber_identity(id,home_wacn,home_system_id,subscriber_id) " +
+                "VALUES(1,703710,291,321),(2,703710,291,322)");
+            execute(connection, "INSERT INTO alias(alias_list_id,name,matcher_type) " +
+                "SELECT id,'Configured subscriber','P25_SUBSCRIBER_IDENTITY' FROM alias_list WHERE family='P25' LIMIT 1");
+            execute(connection, "INSERT INTO alias_p25_subscriber_identity(alias_id,p25_subscriber_identity_id) " +
+                "SELECT id,1 FROM alias WHERE name='Configured subscriber'");
+            execute(connection, "INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,action_code) " +
+                "VALUES(1,1,99999999,4)");
+            execute(connection, "INSERT INTO receiver_channel_statistics_reset(configuration_id,reset_at_ms) " +
+                "VALUES('" + CHANNEL + "',99999999)");
+            var batch = ReceiverActivityScopedDeletion.Batch.startAll(connection, 2000);
+            while(!batch.done())
+            {
+                connection.setAutoCommit(false);
+                long before = scalar(connection, "SELECT total_changes()");
+                batch.runPass(connection);
+                assertTrue(scalar(connection, "SELECT total_changes()") - before <= 512);
+                connection.commit();
+                connection.setAutoCommit(true);
+            }
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_channel"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM radio_system"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_subscriber_identity WHERE id=1"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM p25_subscriber_identity WHERE id=2"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM alias"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM configuration_channel"));
+            assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_channel_statistics_reset WHERE reset_at_ms=2001"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM pragma_foreign_key_check"));
+        }
     }
 
     @Test
@@ -287,24 +394,30 @@ class ReceiverActivityBatchedDeletionTest
     }
 
     @Test
-    void selfDeletedSnapshotDoesNotPermitContinuationAfterChannelSystemReassignment() throws Exception
+    void replacementSnapshotAndSystemReassignmentStopRemainingPasses() throws Exception
     {
         try(Connection connection = open())
         {
-            execute(connection, "WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<511) " +
+            execute(connection, "WITH RECURSIVE n(value) AS (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<1500) " +
                 "INSERT INTO p25_site_channel(channel_id,channel_key,downlink_hz,confirmed_at_ms) " +
                 "SELECT 1,'1-'||value,851000000,1000 FROM n");
-            StatsDatabaseMaintenanceRequest request = StatsDatabaseMaintenanceRequest.delete(new ScopedData(
+            var request = StatsDatabaseMaintenanceRequest.delete(new ScopedData(
                 "radio_system", SYSTEM, CHANNEL, SITE, "site_state", null, List.of("current")));
             assertNull(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0));
-            assertEquals(0, scalar(connection, "SELECT count(*) FROM p25_site_snapshot WHERE channel_id=1"));
+            long removed = request.progress().rowsDeleted();
+            assertTrue(removed <= 512, "Empty child windows also consume the bounded scan budget");
+            assertEquals(1, request.progress().batchesCompleted());
+            execute(connection, "DELETE FROM p25_site_snapshot WHERE channel_id=1");
             execute(connection, "INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id,first_seen_ms,last_seen_ms) " +
                 "VALUES(2,'p25:abcde:124',1,703710,292,1000,1000)");
             execute(connection, "UPDATE receiver_channel SET radio_system_id=2 WHERE id=1");
-            ReceiverActivityMaintenance.Result stopped = ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0);
+            execute(connection, "INSERT INTO p25_site_snapshot(channel_id,first_seen_ms,last_seen_ms,rfss,site) VALUES(1,2000,2000,1,4)");
+            execute(connection, "INSERT INTO p25_site_channel(channel_id,channel_key,downlink_hz,confirmed_at_ms) VALUES(1,'new',852000000,2000)");
+            var stopped = ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, null, request, 0);
             assertEquals(ReceiverActivityMaintenance.DeletionOutcome.NOT_FOUND, stopped.deletionOutcome());
-            assertEquals(512, stopped.rowsDeleted());
+            assertEquals(removed, stopped.rowsDeleted());
             assertEquals(2, scalar(connection, "SELECT radio_system_id FROM receiver_channel WHERE id=1"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_site_channel WHERE channel_key='new'"));
         }
     }
 

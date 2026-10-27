@@ -232,6 +232,13 @@ public class ConfigurationManager implements AutoCloseable
 
     public void dispatchMaintenance(StatsDatabaseMaintenanceRequest request)
     {
+        mChannelAdministrationService.prepareStatisticsMaintenance(request);
+        if(request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.TalkerAlias target)
+        {
+            mChannelProcessingManager.forgetTalkerAlias(target.radioSystemKey(),
+                io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey.parse(target.identityKey()),
+                target.expectedAlias());
+        }
         mMaintenanceDispatcher.accept(request);
     }
 
