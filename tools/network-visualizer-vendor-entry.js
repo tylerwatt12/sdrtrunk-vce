@@ -24,6 +24,7 @@ export {
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
+  Raycaster,
   SphereGeometry,
   TOUCH,
   TorusGeometry,

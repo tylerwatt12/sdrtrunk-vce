@@ -1,6 +1,6 @@
 'use strict';
 
-const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=3';
+const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=4';
 const SYSTEM_RADIUS = 300;
 const LABEL_LIMIT = 90;
 const AUTO_ROTATE_SPEED = 0.34;
@@ -143,6 +143,12 @@ async function createP25Renderer(options = {}) {
   let labelRevision = 0;
   let labelPointer = null;
   let hoveredLabelKey = '';
+  let nativeHoveredLabelKey = '';
+  let hoveredShapeKey = '';
+  let pointerInsideHost = false;
+  let pointerInsideShapeSurface = false;
+  let shapeHoverAt = -Infinity;
+  const shapeRaycaster = new library.Raycaster();
   const affiliationMoves = new Map();
   const movementParticipants = new Set();
   let labelCandidates = [];
@@ -726,6 +732,12 @@ async function createP25Renderer(options = {}) {
       updateAutoRotate();
     };
     labelGestureReleases.set(label, release);
+    label.addEventListener('pointerenter', () => {
+      if (!label.disabled) { nativeHoveredLabelKey = label.dataset.nodeKey; pointerInsideHost = true; }
+    });
+    label.addEventListener('pointerleave', () => {
+      if (nativeHoveredLabelKey === label.dataset.nodeKey) nativeHoveredLabelKey = '';
+    });
     label.addEventListener('pointerdown', event => {
       if (event.button !== 0 || !event.isPrimary || label.disabled) return;
       pointerId = event.pointerId;
@@ -790,13 +802,47 @@ async function createP25Renderer(options = {}) {
   }
 
   function rememberLabelPointer(event) {
-    if (event.pointerType === 'touch') { clearLabelPointer(); return; }
-    labelPointer = { x: event.clientX, y: event.clientY };
+    pointerInsideHost = true;
+    labelPointer = event.pointerType === 'touch' ? null : { x: event.clientX, y: event.clientY };
+  }
+
+  function enterShapeSurface() {
+    if (pointerInsideShapeSurface) return;
+    pointerInsideShapeSurface = true;
+    shapeHoverAt = -Infinity;
+  }
+
+  function leaveShapeSurface() {
+    pointerInsideShapeSurface = false;
+    hoveredShapeKey = '';
+  }
+
+  function updateShapeHover(camera) {
+    if (!pointerInsideShapeSurface || !labelPointer || renderingPaused()) {
+      hoveredShapeKey = '';
+      return;
+    }
+    const at = performance.now();
+    if (at - shapeHoverAt < 50) return;
+    shapeHoverAt = at;
+    const bounds = canvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) { hoveredShapeKey = ''; return; }
+    shapeRaycaster.setFromCamera({ x: (labelPointer.x - bounds.left) / bounds.width * 2 - 1,
+      y: 1 - (labelPointer.y - bounds.top) / bounds.height * 2 }, camera);
+    const objects = [...nodeObjects.values()].filter(object => object.parent && object.visible &&
+      ['talkgroup', 'radio'].includes(object.userData.p25Node?.type));
+    objects.forEach(object => object.updateWorldMatrix(true, false));
+    // Pick our meshes directly: the vendor retains hover across DOM overlays and same-shape reentry.
+    // This only promotes names; native graph clicks and mesh paint/order stay independent.
+    hoveredShapeKey = shapeRaycaster.intersectObjects(objects, false)[0]?.object.userData.p25Node?.id || '';
   }
 
   function clearLabelPointer() {
     labelPointer = null;
     hoveredLabelKey = '';
+    nativeHoveredLabelKey = '';
+    pointerInsideHost = false;
+    leaveShapeSurface();
   }
 
   function onWindowBlur() {
@@ -871,14 +917,16 @@ async function createP25Renderer(options = {}) {
       return labelPointer.x >= bounds.left && labelPointer.x <= bounds.right &&
         labelPointer.y >= bounds.top && labelPointer.y <= bounds.bottom;
     };
+    // Native action hover is authoritative; it must not depend on separately cached coordinates.
     let hovered = hoverable.find(entry => entry.label.hasAttribute('data-direct-listen-target-key') &&
-      entry.label.matches(':hover') && containsPointer(entry));
-    hovered ||= hoverable.find(entry => entry.node.id === hoveredLabelKey && containsPointer(entry));
+      (entry.node.id === nativeHoveredLabelKey || pointerInsideHost && entry.label.matches(':hover')));
+    const readOnly = hoverable.filter(entry => !entry.label.hasAttribute('data-direct-listen-target-key'));
+    hovered ||= readOnly.find(entry => entry.node.id === hoveredLabelKey && containsPointer(entry));
+    hovered ||= readOnly.filter(containsPointer).sort((left, right) =>
+      Number(right.active) - Number(left.active) || right.rank - left.rank)[0];
     if (!hovered) {
-      // Native interactive hit targets win a tie over coincident read-only annotations.
-      hovered = hoverable.filter(containsPointer).sort((left, right) =>
-        Number(right.label.matches(':hover')) - Number(left.label.matches(':hover')) ||
-        Number(right.active) - Number(left.active) || right.rank - left.rank)[0];
+      updateShapeHover(camera);
+      hovered = hoverable.find(entry => entry.node.id === hoveredShapeKey);
     }
     hoveredLabelKey = hovered?.node.id || '';
     for (const { node, label, viewDepth, attention, active, rank } of entries) {
@@ -1046,9 +1094,12 @@ async function createP25Renderer(options = {}) {
   themeObserver.observe(documentValue.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   documentValue.addEventListener('visibilitychange', onVisibility);
   documentValue.defaultView?.addEventListener('blur', onWindowBlur);
-  host.addEventListener('pointerenter', rememberLabelPointer, { passive: true });
-  host.addEventListener('pointermove', rememberLabelPointer, { passive: true });
+  host.addEventListener('pointerenter', rememberLabelPointer, { passive: true, capture: true });
+  host.addEventListener('pointermove', rememberLabelPointer, { passive: true, capture: true });
   host.addEventListener('pointerleave', clearLabelPointer, { passive: true });
+  surface.addEventListener('pointerenter', enterShapeSurface, { passive: true });
+  surface.addEventListener('pointermove', enterShapeSurface, { passive: true, capture: true });
+  surface.addEventListener('pointerleave', leaveShapeSurface, { passive: true });
   async function enterFullscreen() {
     const target = host.closest('.network-visualizer-layout') || host;
     if (documentValue.fullscreenElement === target) return true;
@@ -1079,9 +1130,12 @@ async function createP25Renderer(options = {}) {
     themeObserver?.disconnect();
     documentValue.removeEventListener('visibilitychange', onVisibility);
     documentValue.defaultView?.removeEventListener('blur', onWindowBlur);
-    host.removeEventListener('pointerenter', rememberLabelPointer);
-    host.removeEventListener('pointermove', rememberLabelPointer);
+    host.removeEventListener('pointerenter', rememberLabelPointer, true);
+    host.removeEventListener('pointermove', rememberLabelPointer, true);
     host.removeEventListener('pointerleave', clearLabelPointer);
+    surface.removeEventListener('pointerenter', enterShapeSurface);
+    surface.removeEventListener('pointermove', enterShapeSurface, true);
+    surface.removeEventListener('pointerleave', leaveShapeSurface);
     clearLabelPointer();
     controls?.removeEventListener('start', onControlsStart);
     controls?.removeEventListener('end', onControlsEnd);

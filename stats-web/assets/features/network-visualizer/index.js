@@ -13,7 +13,7 @@ import {
 } from './history.js?v=20';
 import { createP25ActivityFeed } from './live.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=5';
-import { createP25Renderer } from './renderer.js?v=15';
+import { createP25Renderer } from './renderer.js?v=16';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=6';
 import {
   P25_EVENT_SETTINGS,
