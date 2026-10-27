@@ -217,6 +217,29 @@ class ApplicationDatabaseMigratorOwnedProfileTest
         assertTrue(output.contains("Owned complete-profile relocation and bounded validation complete"), output);
     }
 
+    @Test
+    void fullPairedNicknameUpgradeLeavesPrivateActivityAndOriginalPairUnchanged() throws Exception
+    {
+        Profile profile = profile("paired-nicknames", 63);
+        Path sourceActivity = ActivityDatabasePath.forConfiguration(profile.sourceDatabase());
+        Path stagedActivity = ActivityDatabasePath.forConfiguration(profile.stage());
+        Files.copy(profile.sourceDatabase(), profile.stage());
+        Files.copy(sourceActivity, stagedActivity);
+        byte[] configuration = Files.readAllBytes(profile.sourceDatabase());
+        byte[] activity = Files.readAllBytes(sourceActivity);
+        assertEquals(Files.size(profile.stage()),
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(profile.stage(), MigrationContent.FULL));
+
+        Result result = run(profile.stage().toString(), profile.source().toString(), profile.target().toString(), OWNED);
+        assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.code(), result::error);
+        ConfigurationHistoryDatabase.validatePair(profile.stage());
+        assertEquals("64", scalar(profile.stage(), "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+        assertEquals("63", scalar(stagedActivity, "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+        assertArrayEquals(configuration, Files.readAllBytes(profile.sourceDatabase()));
+        assertArrayEquals(activity, Files.readAllBytes(sourceActivity));
+        assertArrayEquals(activity, Files.readAllBytes(stagedActivity));
+    }
+
     private Profile profile(String name, int version) throws Exception
     {
         Path source = Files.createDirectories(mTemporaryFolder.resolve(name + "-old/data"));

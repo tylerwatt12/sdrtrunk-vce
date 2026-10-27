@@ -665,6 +665,7 @@ public final class ApplicationMigrationService
      * Additional workspace for migrating an application-owned database, after exact source admission. This excludes
      * any profile copy, selected backup and free-space reserve, which the caller must budget separately. Format 62's
      * full migration keeps detailed history pages in place and budgets only the compact structures it changes.
+     * The exact full-content 63-to-64 plan changes configuration only and leaves its paired activity file untouched.
      */
     public static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content)
         throws IOException, SQLException
@@ -677,8 +678,13 @@ public final class ApplicationMigrationService
     private static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content,
         DatabaseMigrationChain.PreflightReport plan) throws IOException, SQLException
     {
-        return plan.source().version() == 62 && content == MigrationContent.FULL ?
-            splitWorkspace(database) : sqliteFootprint(database);
+        if(content == MigrationContent.FULL)
+        {
+            if(plan.source().version() == 62) return splitWorkspace(database);
+            if(plan.source().version() == 63 && plan.target().version() == 64)
+                return sqliteFileFootprint(database);
+        }
+        return sqliteFootprint(database);
     }
 
     /** Format 62 keeps detailed event pages in their original file; only compact owners and indexes change. */
@@ -1912,13 +1918,19 @@ public final class ApplicationMigrationService
         long size = 0;
         for(Path member: List.of(database, ActivityDatabasePath.forConfiguration(database)))
         {
-            if(!Files.isRegularFile(member)) continue;
-            size = safeAdd(size, Files.size(member));
-            for(String suffix : List.of("-wal", "-journal"))
+            size = safeAdd(size, sqliteFileFootprint(member));
+        }
+        return size;
+    }
+
+    private static long sqliteFileFootprint(Path database) throws IOException
+    {
+        if(!Files.isRegularFile(database)) return 0;
+        long size = Files.size(database);
+        for(String suffix : List.of("-wal", "-journal"))
         {
-            Path sidecar = Path.of(member + suffix);
+            Path sidecar = Path.of(database + suffix);
             if(Files.isRegularFile(sidecar)) size = safeAdd(size, Files.size(sidecar));
-            }
         }
         return size;
     }
