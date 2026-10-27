@@ -207,7 +207,7 @@ async function expectLessonState(page, id) {
     for (const selector of ['#scanner-play', '#scanner-stop', '#scanner-replay']) await expect(page.locator(selector)).toBeEnabled();
   }
   if (id === 'hold') {
-    await expect(page.locator('#scanner-hold')).toHaveText('H');
+    await expect(page.locator('#scanner-hold')).toHaveText('Hd');
     await expect(page.locator('#scanner-hold')).toHaveAttribute('aria-pressed', 'false');
     await expect(guide(page)).toContainText('Select Hold to hear only the current talkgroup or channel. Select Hold again to resume your Scan Lists.');
     await expect(guide(page)).not.toContainText('H stands for');

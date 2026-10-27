@@ -603,10 +603,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   transportMain.append(previous, rewind, replay, play, forward, skip, stop);
   const options = node('div', 'audio-dock-transport-options');
   options.setAttribute('role', 'group'); options.setAttribute('aria-label', 'Additional playback controls');
-  const hold = textButton('H', () => getLivePlayer()?.toggleHold());
+  const hold = textButton('Hd', () => getLivePlayer()?.toggleHold());
   hold.className = 'ui-button ui-button-quiet ui-icon-button audio-dock-hold';
   const avoids = node('div', 'audio-dock-avoid-actions'); avoids.setAttribute('role', 'group'); avoids.setAttribute('aria-label', 'Avoid controls');
-  const avoid = textButton('Avoid', () => getLivePlayer()?.avoidCurrent()); avoid.className = 'ui-button ui-button-quiet audio-dock-avoid-action';
+  const avoid = textButton('Av', () => getLivePlayer()?.avoidCurrent()); avoid.className = 'ui-button ui-button-quiet audio-dock-avoid-action';
+  setLabel(avoid, 'Avoid');
   avoids.append(avoid);
   const fullMenu = makeMenuTrigger('audio-dock-menu');
   const expandedVolume = makeVolumeTrigger('audio-dock-expanded-volume'); options.append(hold, avoids, fullMenu, expandedVolume);

@@ -47,7 +47,7 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=37';
+import { createAudioDock } from './core/audio-dock.js?v=38';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
@@ -12069,14 +12069,14 @@ function arrangeScannerPlayback(bar, player, signal, options = {}) {
   const skip = action(iconButton('icon-skip', 'Skip current call'), 'scanner-skip', () => player.skip());
   const replay = action(iconButton('icon-replay', 'Replay last call'), 'scanner-replay',
     () => void player.replayLastCall());
-  const hold = action(node('button', 'ui-button ui-button-secondary ui-icon-button', 'H'),
+  const hold = action(node('button', 'ui-button ui-button-secondary ui-icon-button', 'Hd'),
     'scanner-hold', () => player.toggleHold());
   controls.append(primary, skip, replay, hold);
   const textAction = (text, id, callback) => action(node('button', 'ui-button ui-button-secondary', text), id, callback);
   const stop = textAction('Stop', 'scanner-stop', () => {
     if (!player.viewState().stopped) void player.togglePlayback();
   });
-  const avoid = textAction('Avoid', 'scanner-avoid', () => player.avoidCurrent());
+  const avoid = textAction('Av', 'scanner-avoid', () => player.avoidCurrent());
   const menu = action(iconButton('icon-menu', 'Player menu'), 'scanner-player-menu', () => openMenu(menu));
   const clear = textAction('Clear', 'scanner-clear-queue', () => player.clearQueue());
   secondary.append(stop, avoid, menu, clear);
