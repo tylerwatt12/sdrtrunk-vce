@@ -2180,7 +2180,14 @@ function directListenAction(row, reference, options = {}) {
     target.radio_system_key?.includes(':channel:') ? target.radio_system_key.split(':').at(-1) : '',
     channel].filter(Boolean))].join(' · ');
   const button = iconButton('icon-direct-listen', `Add ${label} to Direct Listen and play`,
-    'ui-button ui-button-quiet ui-icon-button ui-icon-button-inline');
+    options.labelButton ? 'ui-button ui-button-secondary ui-button-compact' :
+      'ui-button ui-button-quiet ui-icon-button ui-icon-button-inline');
+  if (options.labelButton) {
+    button.dataset.directListenLabelButton = '';
+    const text = node('span', 'ui-text-truncate', label);
+    text.dataset.directListenText = '';
+    button.append(text);
+  }
   button.dataset.directListenAction = 'add';
   button.dataset.directListenTargetKey = JSON.stringify(target);
   button.dataset.directListenLabel = label;
@@ -2192,7 +2199,7 @@ function directListenAction(row, reference, options = {}) {
       control.setAttribute('aria-label', description);
       control.setAttribute('aria-pressed', String(member));
       control.dataset.uiHint = description;
-      control.hidden = !allowed;
+      control.hidden = !allowed && !control.hasAttribute('data-direct-listen-label-button');
       control.disabled = !allowed;
       control.querySelector('use')?.setAttribute('href', member ? '#icon-check' : '#icon-direct-listen');
     };
@@ -2226,7 +2233,7 @@ function directListenAction(row, reference, options = {}) {
         audioDock.synchronize();
         return;
       }
-      const result = webCallPlayer?.addDirectListenTarget(target, label, context);
+      const result = webCallPlayer?.addDirectListenTarget(target, button.dataset.directListenLabel, context);
       if (!result) return;
       // Starting here keeps AudioContext.resume inside the headphone click's user gesture.
       void webCallPlayer.startDirectListen().then(started => {
@@ -8341,7 +8348,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const [feature, presentation] = await Promise.all(mapTour ? [
       import('./features/listen-map.js?v=16'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=61'), import('./guides/network-visualizer-presentation.js?v=2')
+      import('./features/network-visualizer/index.js?v=62'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
       import('./features/alerts.js?v=24'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
@@ -19558,8 +19565,12 @@ function liveEventsPanel(onCollapse, options = {}) {
       if (event.protocol) value.append(node('small', '', event.protocol));
       return value;
     } },
-    { id: 'from', label: 'From', render: (event) => liveEventParty(event, 'from') },
-    { id: 'to', label: 'To', render: (event) => liveEventParty(event, 'to') },
+    { id: 'from', label: 'From', render: (event) => liveEventParty(event, 'from'),
+      reconcileKey: (event) => JSON.stringify([event.from_aliases, event.from_identifiers,
+        event.from_party, p25ServingSystemKey(event), capabilityAllowed(ACCESS_CAPABILITIES.RADIO)]) },
+    { id: 'to', label: 'To', render: (event) => liveEventParty(event, 'to'),
+      reconcileKey: (event) => JSON.stringify([event.to_aliases, event.to_identifiers,
+        event.to_party, p25ServingSystemKey(event), capabilityAllowed(ACCESS_CAPABILITIES.RADIO)]) },
     { id: 'channel', label: 'Channel', className: 'live-event-stack', render: (event) =>
       liveDetailOrigin(event, selection?.kind === LIVE_DETAIL_SELECTION_KINDS.CONVENTIONAL ?
         event.channel_name || event.channel : event.channel,
@@ -19601,8 +19612,8 @@ function liveEventsPanel(onCollapse, options = {}) {
     const rows = order.map((id) => events.get(id)).filter((event) => event && eventMatches(event))
       .slice(0, liveDetailMatchingRowLimit());
     eventsTable.tableController.setEmptyText(selection ?
-      'No matching events have appeared in this view' : 'Select a live row above');
-    eventsTable.tableController.replaceRows(selection ? rows : []);
+      'No matching events have appeared in this view' : 'Select a live row above', { render: false });
+    eventsTable.tableController.reconcileRows(selection ? rows : []);
   };
 
   scheduleRender = () => {
@@ -20960,9 +20971,9 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
       source.onerror = () => callbacks.error?.();
       return source;
     },
-    createDirectListenAction: (group, system) => directListenAction({ radio_system_name: system.name || system.label },
+    createDirectListenAction: (group, system, options = {}) => directListenAction({ radio_system_name: system.name || system.label },
       { kind: group.identityKey.startsWith('v1-p-') ? 'patch_group' : 'talkgroup',
-        radio_system_key: system.key, identity_key: group.identityKey }, { label: group.label }),
+        radio_system_key: system.key, identity_key: group.identityKey }, { ...options, label: group.label }),
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
     signal: renderContext.signal,
@@ -20972,7 +20983,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=61');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=62');
   // The live scene does not wait for an optional label catalog or historical data.
   void loadActivityMessageTypes();
   const visualizerModule = await p25VisualizerModulePromise;
@@ -25057,6 +25068,14 @@ async function renderActivity(scopeParameters, title = 'Activity') {
     });
     pageConnections.add(callPlayback);
     const columns = activityColumnsForContext({ ...activityContext, callPlayback }, filters);
+    for (const column of columns) if (column.id === 'source' || column.id === 'target') {
+      const kind = column.id;
+      column.reconcileKey = row => JSON.stringify([activityPartyName(row, kind),
+        activityPartyIdentifier(row, kind), activityCellFilterPatch(activityContext, row, kind),
+        kind === 'target' ? directListenEntryTarget(row, row.target_entity_ref || row.entity_ref) : null,
+        systemLabels.systemLabel(row), systemLabels.systemIdentity(row), row.channel_name, row.name,
+        directListenAllowed()]);
+    }
     const initialRows = filters.includeGrants ? data.rows : withoutGrantActions(data.rows);
     const emptyMessage = historyNotice ? 'No saved activity matches this view.' :
       'Detailed event history is enabled, but no matching activity has been recorded yet.';
@@ -25144,7 +25163,7 @@ async function renderActivity(scopeParameters, title = 'Activity') {
           const newIds = new Set(rows.map(activityRowKey)
             .filter((key) => key !== null && !currentIds.has(key)));
           if (JSON.stringify(rows) !== JSON.stringify(currentRows)) {
-            activityTable.tableController.replaceRows(rows);
+            activityTable.tableController.reconcileRows(rows);
             highlightActivityRows(newIds);
           }
           updatePager(refreshed);

@@ -94,14 +94,16 @@ test('a live affiliation creates both talkgroups and restores rotation after arr
   expect(fixture.pageErrors).toEqual([]);
 });
 
-test('an enabled affiliation outside the selected talkgroup opens the system before animating', async ({ page }) => {
+test('unrelated affiliations preserve the selected talkgroup while related highlighting and Back remain available', async ({ page }) => {
   const fixture = await openVisualizer(page);
   await page.clock.setSystemTime(new Date('2026-10-01T12:00:00Z'));
-  await append(page, 1, 2, [{ ...row(2), source_identity_key: 'v1-r-00001-001-30915',
+  await append(page, 1, 2, [{ ...row(2, 'JOIN'), source_identity_key: 'v1-r-00001-001-30915',
     source_radio_id: 30915, source_alias_name: 'Patrol 2', target_identity_key: 'v1-g-00001-001-1203',
     target_id: 1203, target_alias_name: 'Operations' }]);
   expect(await page.evaluate(() => window.p25SelectTalkgroup('p25:00001:001:v1-g-00001-001-1203'))).toBe(true);
   await expect(page.locator('.network-visualizer-scope-title')).toContainText('Operations');
+  const operations = page.locator('.network-visualizer-label[data-type="talkgroup"]').filter({ hasText: 'Operations' });
+  await expect(operations).not.toHaveAttribute('data-signal', 'call');
   await page.evaluate(({ systemKey, channelId, groupKey, radioKey }) => {
     const previous = { radio_system_key: systemKey, radio_identity_key: radioKey,
       talkgroup_identity_key: groupKey, configuration_id: channelId, confirmed_at_ms: Date.now() - 2_000,
@@ -111,20 +113,28 @@ test('an enabled affiliation outside the selected talkgroup opens the system bef
       affiliations: [{ ...previous, confirmed_at_ms: Date.now(), talkgroup_identity_key: 'v1-g-00001-001-1202',
         talkgroup_id: 1202, talkgroup_alias_name: 'Fire Tactical', previous_affiliation: previous }] });
   }, { systemKey, channelId, groupKey, radioKey });
-  await expect(page.locator('.network-visualizer-auto-focus-title')).toContainText('Observed affiliation change');
+  await expect(page.locator('.network-visualizer-back')).toHaveText('← System');
+  await expect(page.locator('.network-visualizer-scope-title strong:visible')).toHaveText('Operations');
+  await expect(page.locator('.network-visualizer-auto-focus')).toBeHidden();
+  expect(await page.evaluate(() => window.p25Scene.nodes().filter(node => node.type === 'talkgroup')
+    .map(node => node.id))).toEqual([`${systemKey}:v1-g-00001-001-1203`]);
+  await append(page, 2, 3, [{ ...row(3), observed_at_ms: await page.evaluate(() => Date.now()),
+    source_identity_key: 'v1-r-00001-001-30915', source_radio_id: 30915, source_alias_name: 'Patrol 2',
+    target_identity_key: 'v1-g-00001-001-1203', target_id: 1203, target_alias_name: 'Operations' }]);
+  await page.evaluate(({ systemKey, channelId }) => window.fixtureSendLiveSnapshot({ revision: 2,
+    tables: [{ table_id: channelId, configuration_id: channelId, channel_running: true, rows: [{
+      key: 'operations-call', configuration_id: channelId, protocol: 'P25', serving_system_key: systemKey,
+      status: 'CALL', tags: ['VOICE'], activation_order: 1, source_id: 30915, source_alias: 'Patrol 2',
+      source_identity_key: 'v1-r-00001-001-30915', source_identity_kind_code: 2,
+      target_id: 1203, target_identity_key: 'v1-g-00001-001-1203', target_kind: 'talkgroup', target_alias: 'Operations'
+    }] }] }), { systemKey, channelId });
+  await expect(operations).toHaveAttribute('data-signal', 'call');
+  await page.locator('.network-visualizer-back').click();
   await expect(page.locator('.network-visualizer-back')).toHaveText('← All systems');
-  const distances = () => page.evaluate(({ systemKey, groupKey, radioKey }) => {
-    const nodes = window.p25Scene.nodes(), radio = nodes.find(node => node.id === `${systemKey}:${radioKey}`);
-    const source = nodes.find(node => node.id === `${systemKey}:${groupKey}`);
-    const destination = nodes.find(node => node.id === `${systemKey}:v1-g-00001-001-1202`);
-    const distance = group => Math.hypot(radio.x - group.x, radio.y - group.y, radio.z - group.z);
-    return { source: distance(source), destination: distance(destination) };
-  }, { systemKey, groupKey, radioKey });
-  const started = await distances();
-  expect(started.source).toBeLessThan(started.destination);
-  await page.clock.fastForward(2_500);
-  await page.clock.runFor(20);
-  const arrived = await distances();
-  expect(arrived.destination).toBeLessThan(arrived.source);
+  await expect.poll(() => page.evaluate(() => window.p25Scene.nodes().filter(node => node.type === 'talkgroup').length))
+    .toBe(3);
+  await page.locator('.network-visualizer-back').click();
+  await expect(page.locator('.network-visualizer-back')).toBeHidden();
+  await expect(page.locator('.network-visualizer-scope-title')).toContainText('P25 radio systems');
   expect(fixture.pageErrors).toEqual([]);
 });

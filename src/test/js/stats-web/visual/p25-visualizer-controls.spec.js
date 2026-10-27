@@ -14,7 +14,7 @@ for (const [theme, width] of [['light', 1280], ['light', 390]]) {
       back.className = 'ui-button ui-button-secondary network-visualizer-back';
       back.textContent = '← All systems';
       const label = document.createElement('span');
-      label.className = 'network-visualizer-label';
+      label.className = 'network-visualizer-label network-visualizer-label-text';
       label.dataset.signal = 'call';
       label.textContent = 'Dispatch · call activity';
       label.style.left = '50%';

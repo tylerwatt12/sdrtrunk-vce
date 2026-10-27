@@ -82,6 +82,44 @@ test('Live channels resume on visibility without a focus event', async ({ page }
   expect(app.fixture.unexpected).toEqual([]);
 });
 
+test('Live Events preserve an unchanged identity link and focus while rows arrive and call details change', async ({ page }) => {
+  const app = await openLive(page, 'light');
+  await expect.poll(() => app.latest().decode_events?.scope).toBe('conventional');
+  const observed = { ...event(origins[0], 'linked', 3000, 'Initial call'), protocol: 'P25',
+    serving_system_key: 'p25:bee00:123', from_aliases: 'Engine 7',
+    from_party: [{ form: 'RADIO', text: '7007', protocol: 'P25',
+      canonical_identity: { wacn: 0xBEE00, system_id: 0x123, subscriber_id: 7007 } }] };
+  await app.send(2, 'decode_event', observed);
+  const events = page.locator('.live-events-table tbody tr[data-id]');
+  const row = events.filter({ hasText: 'Initial call' });
+  const link = row.locator('[data-column="from"] a');
+  await expect(link).toHaveText('7007');
+  await link.focus();
+  await link.evaluate(element => { window.retainedEventLink = element; window.retainedEventRow = element.closest('tr'); });
+  await app.send(2, 'decode_event', event(origins[1], 'older', 2000, 'Another channel call'));
+  await expect(events).toHaveCount(2);
+  await expect(link).toBeFocused();
+  await app.send(2, 'decode_event', { ...observed, duration_ms: 3500, details: 'Updated call details' });
+  const updated = events.filter({ hasText: 'Updated call details' });
+  await expect(updated.locator('[data-column="duration"]')).toHaveText('3.5s');
+  const retained = updated.locator('[data-column="from"] a');
+  await expect(retained).toBeFocused();
+  expect(await retained.evaluate(element => element === window.retainedEventLink &&
+    element.closest('tr') === window.retainedEventRow)).toBe(true);
+  // A real identity change must still replace the stale destination and its handler.
+  await app.send(2, 'decode_event', { ...observed, details: 'Changed source identity',
+    from_party: [{ ...observed.from_party[0], text: '7008', canonical_identity: {
+      wacn: 0xBEE00, system_id: 0x123, subscriber_id: 7008 } }] });
+  const changed = events.filter({ hasText: 'Changed source identity' }).locator('[data-column="from"] a');
+  await expect(changed).toHaveText('7008');
+  expect(await changed.evaluate(element => element === window.retainedEventLink)).toBe(false);
+  await page.locator('.channels-live-table tr[data-id="source-0"]').click();
+  await expect.poll(() => app.latest().decode_events?.configuration_id).toBe(channelA);
+  await expect(events).toHaveCount(0);
+  expect(app.fixture.pageErrors).toEqual([]);
+  expect(app.fixture.unexpected).toEqual([]);
+});
+
 test('High-rate Live messages retain ordering, capture, row focus and bounded presentation work', async ({ page }, testInfo) => {
   test.setTimeout(40_000);
   const baseline = process.env.SDRTRUNK_LIVE_CPU_BASELINE;

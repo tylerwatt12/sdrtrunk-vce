@@ -55,7 +55,9 @@ async function openActivity(page, options = {}) {
     const respond = (data) => route.fulfill({ json: { data } });
     if (pathname === '/api/v1/auth/session') {
       await respond({ configured: true, authenticated: true, username: 'operator', tier: 'admin',
-        primary: true, capabilities: { dashboard: true, radio: true, credits: true, recordings: options.recordings === true } });
+        primary: true, capabilities: { dashboard: true, radio: true, credits: true,
+          'call-audio': options.directListen === true, 'direct-listen': options.directListen === true,
+          recordings: options.recordings === true } });
     } else if (pathname === '/api/v1/me/preferences') {
       if (route.request().method() === 'PUT') {
         preferences = route.request().postDataJSON();
@@ -75,6 +77,8 @@ async function openActivity(page, options = {}) {
         p25: true, dmr: true, nxdn: true, sort_order: code })));
     } else if (pathname === '/api/v1/channel-catalog') {
       await respond({ revision: 1, channels: [] });
+    } else if (pathname === '/api/v1/scan-lists' && options.directListen) {
+      await respond({ scan_lists: [] });
     } else if (pathname === radioSystemPath) {
       await respond({ radio_system_key: radioSystemKey, protocol: options.protocol || 'P25', wacn: 1, system_id: 1,
         system_name: 'Metro Public Safety', assignment_state: 'CURRENT',
@@ -256,6 +260,46 @@ test('Activity refresh adds and removes Play when recording availability changes
   await expect(row.locator('[data-column="duration"]')).toHaveText('8.0s');
   expect(requests.activity).toHaveLength(3);
   expect(relationRequests).toHaveLength(0);
+});
+
+test('Activity refresh preserves a focused Direct Listen action while inserting and removing other rows', async ({ page }) => {
+  const retained = { id: 50, observed_at_ms: 1_790_720_000_000, action: 'CALL', event_type: 'CALL_GROUP',
+    protocol: 'P25', radio_system_key: radioSystemKey, channel_kind: 'TRUNKED',
+    target_id: 56131, target_identity_key: talkgroupIdentityKey, target_kind: 'talkgroup',
+    target_alias_name: 'CPD D3 DISP', source_radio_id: 2808137, source_alias_name: 'Engine 12',
+    name: 'GCRCN', configuration_id: '11111111-1111-4111-8111-111111111111' };
+  const rows = [retained];
+  const requests = await openActivity(page, { rows, directListen: true });
+  const row = page.locator('tr[data-id="50"]');
+  const action = row.getByRole('button', { name: 'Add CPD D3 DISP to Direct Listen and play', exact: true });
+  await expect(action).toBeVisible();
+  await action.focus();
+  await action.evaluate(element => { window.retainedActivityAction = element; window.retainedActivityRow = element.closest('tr'); });
+  const refresh = async (refocus = true) => {
+    // Refresh controls intentionally move focus; restore the listening action
+    // before the asynchronous response reaches the mounted table.
+    await page.getByRole('button', { name: 'Pause refresh', exact: true }).click();
+    await page.getByRole('button', { name: 'Resume refresh', exact: true }).click();
+    if (refocus) await action.focus();
+  };
+  rows.push({ ...retained, id: 51, target_id: 56132, target_identity_key: 'v1-g-00001-001-56132',
+    target_alias_name: 'Other dispatch' });
+  await refresh();
+  await expect(page.locator('tr[data-id="51"]')).toBeVisible();
+  await expect(action).toBeFocused();
+  expect(await action.evaluate(element => element === window.retainedActivityAction &&
+    element.closest('tr') === window.retainedActivityRow)).toBe(true);
+  rows.pop();
+  await refresh();
+  await expect(page.locator('tr[data-id="51"]')).toHaveCount(0);
+  await expect(action).toBeFocused();
+  expect(await action.evaluate(element => element === window.retainedActivityAction)).toBe(true);
+  retained.target_alias_name = 'Renamed dispatch';
+  await refresh(false);
+  await expect(row.getByRole('button', { name: 'Add Renamed dispatch to Direct Listen and play', exact: true })).toBeVisible();
+  expect(await row.locator('[data-direct-listen-action="add"]').evaluate(element =>
+    element === window.retainedActivityAction)).toBe(false);
+  expect(requests.activity).toHaveLength(4);
 });
 
 for (const [theme, width] of [['light', 1440], ['dark', 390], ['light', 320]]) {

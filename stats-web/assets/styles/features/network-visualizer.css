@@ -151,6 +151,20 @@ body[data-view="network-visualizer"] .content {
   top: 0;
   left: 0;
   max-width: var(--network-label-max-width);
+  translate: -50% -50%;
+  will-change: transform, opacity, filter;
+}
+
+.network-visualizer-label-action {
+  max-width: min(var(--network-label-max-width), calc(100% - 2 * var(--space-2)));
+  pointer-events: auto;
+}
+
+.network-visualizer-legend {
+  pointer-events: none;
+}
+
+.network-visualizer-label-text {
   padding: 3px 7px;
   overflow: hidden;
   color: var(--network-space-ink);
@@ -163,35 +177,33 @@ body[data-view="network-visualizer"] .content {
   border-radius: var(--radius-compact);
   background: var(--network-panel);
   box-shadow: var(--network-label-shadow);
-  translate: -50% -50%;
-  will-change: transform, opacity, filter;
 }
 
-.network-visualizer-label[data-type="system"] {
+.network-visualizer-label-text[data-type="system"] {
   font-size: var(--network-label-system-size);
   border-color: color-mix(in srgb, var(--network-system) 72%, transparent);
 }
 
-.network-visualizer-label[data-type="talkgroup"] {
+.network-visualizer-label-text[data-type="talkgroup"] {
   font-size: var(--network-label-group-size);
 }
 
-.network-visualizer-label[data-signal="emergency"] {
+.network-visualizer-label-text[data-signal="emergency"] {
   color: var(--network-emergency);
   border-color: var(--network-emergency);
 }
 
-.network-visualizer-label[data-signal="denial"] {
+.network-visualizer-label-text[data-signal="denial"] {
   color: var(--network-denial);
   border-color: var(--network-denial);
 }
 
-.network-visualizer-label[data-signal="movement"] {
+.network-visualizer-label-text[data-signal="movement"] {
   color: var(--network-arrival);
   border-color: var(--network-arrival);
 }
 
-.network-visualizer-label[data-signal="call"] {
+.network-visualizer-label-text[data-signal="call"] {
   color: var(--network-tx);
   border-color: var(--network-tx);
 }

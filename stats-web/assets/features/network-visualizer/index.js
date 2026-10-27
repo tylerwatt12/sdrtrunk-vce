@@ -13,7 +13,7 @@ import {
 } from './history.js?v=20';
 import { createP25ActivityFeed } from './live.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=5';
-import { createP25Renderer } from './renderer.js?v=12';
+import { createP25Renderer } from './renderer.js?v=13';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=6';
 import {
   P25_EVENT_SETTINGS,
@@ -84,7 +84,18 @@ function createP25Visualizer(dependencies = {}) {
   const back = textButton(node, '← All systems',
     'ui-button ui-button-secondary network-visualizer-back');
   back.hidden = true;
-  const scopeTitle = node('div', 'network-visualizer-scope-title', 'P25 radio systems');
+  const scopeTitle = node('div', 'network-visualizer-scope-title');
+  const scopeOverview = node('span', '', 'P25 radio systems');
+  const scopeGroupTitle = node('strong');
+  const scopeSystemContext = node('div');
+  const scopeSystemPrefix = document.createTextNode('');
+  const scopeSystemLink = node('a', 'ui-link-text');
+  const scopeSystemName = node('span');
+  const scopeSystemSuffix = document.createTextNode('');
+  const scopeSystemIdentity = node('div', 'muted');
+  scopeGroupTitle.hidden = scopeSystemContext.hidden = scopeSystemIdentity.hidden = true;
+  scopeSystemContext.append(scopeSystemPrefix, scopeSystemLink, scopeSystemName, scopeSystemSuffix);
+  scopeTitle.append(scopeOverview, scopeGroupTitle, scopeSystemContext, scopeSystemIdentity);
   const autoFocus = node('aside', 'network-visualizer-auto-focus');
   autoFocus.hidden = true;
   autoFocus.setAttribute('role', 'status');
@@ -350,23 +361,35 @@ function createP25Visualizer(dependencies = {}) {
   }
 
   function renderScopeTitle(system, group = null) {
-    const label = system.name || system.identity || system.label;
-    const context = node('div', 'muted');
-    const destination = dependencies.systemHref?.(system);
-    const systemText = destination ? node('a', 'ui-link-text', label) : node('span', '', label);
-    if (destination) systemText.href = destination;
-    if (group) {
-      context.append('System: ', systemText);
-      if (system.identity) context.append(` · ${system.identity}`);
-      scopeTitle.replaceChildren(node('strong', '', group.label), context);
-      if (!guideMode) {
-        const listen = dependencies.createDirectListenAction?.(group, system);
-        if (listen) scopeTitle.append(listen);
-      }
-    } else {
-      scopeTitle.replaceChildren(systemText);
-      if (system.identity && system.identity !== label) scopeTitle.append(node('div', 'muted', system.identity));
+    const setText = (element, value) => {
+      if (element.textContent !== value) element.textContent = value;
+    };
+    const setHidden = (element, value) => {
+      if (element.hidden !== value) element.hidden = value;
+    };
+    setHidden(scopeOverview, Boolean(system));
+    setHidden(scopeGroupTitle, !group);
+    setHidden(scopeSystemContext, !system);
+    if (!system) {
+      setHidden(scopeSystemIdentity, true);
+      return;
     }
+    const label = system.name || system.identity || system.label;
+    const destination = dependencies.systemHref?.(system);
+    setHidden(scopeSystemLink, !destination);
+    setHidden(scopeSystemName, Boolean(destination));
+    setText(scopeSystemLink, label);
+    setText(scopeSystemName, label);
+    if (destination && scopeSystemLink.getAttribute('href') !== destination) scopeSystemLink.href = destination;
+    else if (!destination && scopeSystemLink.hasAttribute('href')) scopeSystemLink.removeAttribute('href');
+    const contextClass = group ? 'muted' : '';
+    if (scopeSystemContext.className !== contextClass) scopeSystemContext.className = contextClass;
+    setText(scopeGroupTitle, group?.label || '');
+    setText(scopeSystemPrefix, group ? 'System: ' : '');
+    setText(scopeSystemSuffix, group && system.identity ? ` · ${system.identity}` : '');
+    const identity = !group && system.identity !== label ? system.identity || '' : '';
+    setText(scopeSystemIdentity, identity);
+    setHidden(scopeSystemIdentity, !identity);
   }
 
   function enterSystem(systemKey, optionsValue = {}) {
@@ -409,7 +432,7 @@ function createP25Visualizer(dependencies = {}) {
     selectedGroupKey = '';
     overviewSelected = true;
     back.hidden = true;
-    scopeTitle.textContent = 'P25 radio systems';
+    renderScopeTitle(null);
     clearAutoFocus();
     camera.reset();
     lastCameraPhase = 'roam';
@@ -419,20 +442,20 @@ function createP25Visualizer(dependencies = {}) {
   }
 
   function applyAttention(candidates) {
-    if (mode !== 'auto' || !selectedSystemKey || document.hidden) return;
+    if (mode !== 'auto' || !selectedSystemKey || document.hidden || renderer?.isInteracting?.()) return;
     const event = candidates.filter(candidate => candidate.systemKey === selectedSystemKey &&
-      autoZoomCategories.has(candidate.category)).reduce((latest, value) =>
+      autoZoomCategories.has(candidate.category) &&
+      (!selectedGroupKey || candidate.focusKeys.includes(selectedGroupKey))).reduce((latest, value) =>
       !latest || value.observedAtMs >= latest.observedAtMs ? value : latest, null);
     if (!event) return;
-    if (selectedGroupKey && event.focusKeys.some(key => !visibleNodeKeys.has(key)))
-      enterSystem(selectedSystemKey, { animate: false, immediate: true });
     const focusKeys = event.focusKeys.filter(key => visibleNodeKeys.has(key));
     if (!focusKeys.length) return;
     const decision = camera.consider({ ...event, focusKeys }, Date.now());
     if (!decision.accepted) return;
     lastCameraPhase = 'focus';
     renderer?.setCameraPhase('focus');
-    const focused = event.affiliationRadioKey && renderer?.focusAffiliation?.(
+    const focused = event.affiliationRadioKey && event.focusKeys.every(key => visibleNodeKeys.has(key)) &&
+      renderer?.focusAffiliation?.(
       event.affiliationRadioKey, decision.state.timing.transitionMs) ||
       renderer?.focus(focusKeys, decision.state.timing.transitionMs);
     if (!focused) { resetAttention(); return; }
@@ -471,18 +494,11 @@ function createP25Visualizer(dependencies = {}) {
       return;
     }
     empty.hidden = true;
-    const leaveDrilldown = mode === 'auto' && selectedGroupKey && (result.focusCandidates || []).some(event =>
-      event.systemKey === systemKey && autoZoomCategories.has(event.category) &&
-      event.focusKeys.some(key => !visibleNodeKeys.has(key)));
-    if (leaveDrilldown) {
-      enterSystem(systemKey, { animate: false, immediate: true });
-      renderGraph(true, result.affiliationChanges || []);
-    } else if (!selectedSystemKey || systemKey !== selectedSystemKey) {
+    if (!selectedSystemKey || systemKey !== selectedSystemKey ||
+        (selectedGroupKey && state.groups.get(selectedGroupKey)?.systemKey !== systemKey)) {
       enterSystem(systemKey, { animate: false, immediate: true });
       if (result.affiliationChanges?.length) renderGraph(true, result.affiliationChanges);
     } else {
-      if (selectedGroupKey && state.groups.get(selectedGroupKey)?.systemKey !== systemKey)
-        selectedGroupKey = '';
       renderScopeTitle(state.systems.get(systemKey), state.groups.get(selectedGroupKey));
       renderGraph(!firstPresentation, result.affiliationChanges || []);
     }
@@ -591,8 +607,8 @@ function createP25Visualizer(dependencies = {}) {
       yaw: Number(pressedKeys.has('ArrowLeft')) - Number(pressedKeys.has('ArrowRight')),
       pitch: Number(pressedKeys.has('ArrowUp')) - Number(pressedKeys.has('ArrowDown'))
     }, delta);
-    const cameraState = camera.update(Date.now());
-    if (mode === 'auto' && cameraState.changed && cameraState.phase !== lastCameraPhase) {
+    const cameraState = renderer?.isInteracting?.() ? null : camera.update(Date.now());
+    if (mode === 'auto' && cameraState?.changed && cameraState.phase !== lastCameraPhase) {
       lastCameraPhase = cameraState.phase;
       renderer?.setCameraPhase(cameraState.phase);
       if (cameraState.phase === 'return') {
@@ -621,6 +637,11 @@ function createP25Visualizer(dependencies = {}) {
   window.addEventListener('keyup', onKeyUp);
   async function initialize() {
     renderer = await createP25Renderer({ host: canvas, mode, signal: dependencies.signal,
+      createDirectListenAction: guideMode ? undefined : selected => {
+        const group = state.groups.get(String(selected?.id || ''));
+        const system = group && state.systems.get(group.systemKey);
+        return group && system ? dependencies.createDirectListenAction?.(group, system, { labelButton: true }) : null;
+      },
       onNodeClick: (selected) => {
         if (selected?.type === 'system' && selectedSystemKey !== selected.systemKey) enterSystem(selected.systemKey);
         else if (selected?.type === 'talkgroup' && selectedSystemKey && selected.id !== selectedGroupKey) {

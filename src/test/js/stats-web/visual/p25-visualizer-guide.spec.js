@@ -34,6 +34,12 @@ async function observeActualRenderer(page) {
 async function openVisualizer(page, options = {}) {
   await observeActualRenderer(page);
   const state = await installTour(page, id, options);
+  if (options.directListenAllowed) await page.route('**/api/v1/auth/session', route => route.fulfill({ json: { data: {
+    configured: true, authenticated: true, username: 'fixture-admin', tier: 'admin', primary: true,
+    csrf_token: 'fixture-csrf', guide_dismissal_scope: 'account-1-100',
+    capabilities: { 'web-access': true, dashboard: true, radio: true, live: true,
+      'call-audio': true, 'direct-listen': true, 'user-settings': true, credits: true }
+  } } }));
   // ForceGraph debounces scene construction with Date.now; keep time advancing.
   await page.clock.setSystemTime(new Date('2026-10-01T12:00:00Z'));
   await page.goto(`/app.html?view=${id}${options.replay === false ? '' : `&guide=${id}`}`);
@@ -72,10 +78,12 @@ async function expectStep(page, step) {
 }
 
 test('P25 sample controls and settings cannot persist, request receiver data or navigate; leaving closes examples', async ({ page }) => {
-  const state = await openVisualizer(page);
+  const state = await openVisualizer(page, { directListenAllowed: true });
   const storage = await nonGuideStorage(page), url = page.url();
   await startTour(page, id, steps[0]);
   for (const step of steps) {
+    await expect(sample(page).locator('.network-visualizer-label[data-type="talkgroup"][data-direct-listen-target-key]'))
+      .toHaveCount(0);
     await sample(page).evaluate(element => {
       for (const control of element.querySelectorAll('button,a,input,select')) {
         control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
@@ -90,5 +98,6 @@ test('P25 sample controls and settings cannot persist, request receiver data or 
   await page.locator('[data-view="topics"]').first().evaluate(link => link.click());
   await expect(page).toHaveURL(/view=topics/);
   await expect(page.locator('[data-guide-example], [data-guide-sample], .ui-setup-guide-highlight, .ui-setup-guide-layer')).toHaveCount(0);
+  expect(state.fixture.requests.filter(request => request === '/api/v1/calls/feed')).toEqual([]);
   expect(await nonGuideStorage(page)).toEqual(storage); isolated(state);
 });

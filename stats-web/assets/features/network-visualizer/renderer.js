@@ -73,7 +73,6 @@ async function createP25Renderer(options = {}) {
   const documentValue = host.ownerDocument;
   const surface = element(documentValue, 'div', 'network-visualizer-graph-surface');
   const labels = element(documentValue, 'div', 'network-visualizer-label-layer');
-  labels.setAttribute('aria-hidden', 'true');
   host.append(surface, labels);
 
   let library;
@@ -139,6 +138,8 @@ async function createP25Renderer(options = {}) {
   const nodeObjects = new Map();
   const linkObjects = new Map();
   const labelElements = new Map();
+  const interactingLabels = new Set();
+  let labelRevision = 0;
   const affiliationMoves = new Map();
   const movementParticipants = new Set();
   let labelCandidates = [];
@@ -264,7 +265,7 @@ async function createP25Renderer(options = {}) {
     for (const [radioKey, trip] of affiliationMoves) {
       for (const key of [radioKey, trip.change.fromGroupKey, trip.change.toGroupKey]) movementParticipants.add(key);
     }
-    const priority = node => focusKeys.has(node.id) ? 6 : node.signalAction || node.active ? 5 :
+    const priority = node => interactingLabels.has(labelElements.get(node.id)) ? 7 : focusKeys.has(node.id) ? 6 : node.signalAction || node.active ? 5 :
       node.type === 'system' ? 4 : node.type === 'talkgroup' ? 3 : 1;
     labelCandidates = [...nodes.values()].sort((left, right) => priority(right) - priority(left)).slice(0, LABEL_LIMIT);
     nodes.forEach((node) => applyNodeStyle(node));
@@ -308,6 +309,8 @@ async function createP25Renderer(options = {}) {
       if (nodeIds.has(key)) continue;
       object.removeFromParent?.();
       nodeObjects.delete(key);
+      const wasInteracting = interactingLabels.delete(labelElements.get(key));
+      if (wasInteracting && !interactingLabels.size) onControlsEnd();
       labelElements.get(key)?.remove();
       labelElements.delete(key);
       affiliationMoves.delete(key);
@@ -367,6 +370,7 @@ async function createP25Renderer(options = {}) {
     if (!graph || disposed) return;
     const animate = optionsValue.animate !== false && !renderingPaused();
     const now = performance.now();
+    labelRevision++;
     const incomingNodes = new Map((value.nodes || []).map((node) => [String(node.id), node]));
     const incomingChanges = new Map((optionsValue.affiliationChanges || []).map((change) => [change.radioKey, change]));
     let cancelled = false;
@@ -466,7 +470,7 @@ async function createP25Renderer(options = {}) {
     if (!controls) return;
     controls.autoRotate = Boolean(mode === 'auto' && cameraPhase === 'roam' &&
       (scope.level === 'system' || scope.level === 'talkgroup') &&
-      !programmatic && performance.now() >= interactionUntil && !documentValue.hidden && !guideSuspended);
+      !programmatic && !interactingLabels.size && performance.now() >= interactionUntil && !documentValue.hidden && !guideSuspended);
     controls.autoRotateSpeed = AUTO_ROTATE_SPEED;
   }
 
@@ -679,36 +683,125 @@ async function createP25Renderer(options = {}) {
     return Boolean(move.lengthSq() || yaw || pitch);
   }
 
+  function wireListenLabel(label) {
+    let pressed = false;
+    const sync = () => {
+      const active = pressed || label.matches(':hover') || label.contains(documentValue.activeElement);
+      const wasActive = interactingLabels.has(label);
+      if (active) interactingLabels.add(label);
+      else interactingLabels.delete(label);
+      if (active && !wasActive) onControlsStart();
+      else if (!active && wasActive && !interactingLabels.size) onControlsEnd();
+    };
+    label.addEventListener('pointerenter', sync);
+    label.addEventListener('pointerleave', sync);
+    label.addEventListener('focusin', sync);
+    label.addEventListener('focusout', sync);
+    label.addEventListener('pointerdown', event => {
+      if (event.button !== 0) return;
+      pressed = true;
+      label.setPointerCapture?.(event.pointerId);
+      sync();
+      event.stopPropagation();
+    });
+    const release = () => { pressed = false; sync(); };
+    label.addEventListener('pointerup', release);
+    label.addEventListener('pointercancel', release);
+    label.addEventListener('lostpointercapture', release);
+  }
+
+  function labelFor(node) {
+    let label = labelElements.get(node.id);
+    if (!label || node.type === 'talkgroup' && !label.hasAttribute('data-direct-listen-target-key') &&
+        label.dataset.labelRevision !== String(labelRevision)) {
+      const action = node.type === 'talkgroup' ? options.createDirectListenAction?.(node) : null;
+      if (action) {
+        action.classList.add('network-visualizer-label', 'network-visualizer-label-action');
+        wireListenLabel(action);
+        if (label) label.replaceWith(action);
+        else labels.append(action);
+        labelElements.set(node.id, action);
+        label = action;
+      } else if (!label) {
+        label = element(documentValue, 'span', 'network-visualizer-label network-visualizer-label-text');
+        label.setAttribute('aria-hidden', 'true');
+        labels.append(label);
+        labelElements.set(node.id, label);
+      }
+      label.dataset.labelRevision = String(labelRevision);
+    }
+    const text = String(node.label || node.id);
+    const content = label.querySelector('[data-direct-listen-text]') || label;
+    if (content.textContent !== text) {
+      content.textContent = text;
+      if (label.hasAttribute('data-direct-listen-target-key')) {
+        label.dataset.directListenLabel = text;
+        const description = label.getAttribute('aria-pressed') === 'true' ?
+          `Remove ${text} from Direct Listen` : `Add ${text} to Direct Listen and play`;
+        label.setAttribute('aria-label', description);
+        label.dataset.uiHint = description;
+      }
+    }
+    if (label.dataset.type !== node.type) label.dataset.type = node.type;
+    const signal = node.signalAction || (node.active ? 'call' : '');
+    if (label.dataset.signal !== signal) label.dataset.signal = signal;
+    label.dataset.nodeKey = node.id;
+    return label;
+  }
+
   function renderLabels() {
     if (!graph || !controls || disposed || documentValue.hidden) return;
     const camera = graph.camera();
     const system = systemNode();
     const width = host.clientWidth, height = host.clientHeight;
+    const hostBounds = host.getBoundingClientRect();
+    const gap = parseFloat(getComputedStyle(host).getPropertyValue('--space-2')) || 8;
+    const overlays = [...(host.parentElement?.querySelectorAll(
+      '.network-visualizer-back, .network-visualizer-scope-title, .network-visualizer-auto-focus, ' +
+      '.network-visualizer-manual-guide, .network-visualizer-legend') || [])]
+      .filter(overlay => !overlay.hidden && overlay.getClientRects().length)
+      .map(overlay => {
+        const bounds = overlay.getBoundingClientRect();
+        return { left: bounds.left - hostBounds.left, right: bounds.right - hostBounds.left,
+          top: bounds.top - hostBounds.top, bottom: bounds.bottom - hostBounds.top };
+      });
     const visible = new Set();
     for (const node of labelCandidates) {
       if (scope.level !== 'overview' && node.type === 'system') continue;
+      const retained = labelElements.get(node.id);
+      // Keep an engaged button mounted and under the pointer through live layout updates.
+      if (retained && interactingLabels.has(retained)) {
+        visible.add(node.id);
+        continue;
+      }
       const screen = graph.graph2ScreenCoords(node.x, node.y, node.z);
       const projected = new library.Vector3(node.x, node.y, node.z).project(camera);
       if (!screen || projected.z < -1 || projected.z > 1 || screen.x < -120 || screen.y < -50 ||
           screen.x > width + 120 || screen.y > height + 50) continue;
-      let label = labelElements.get(node.id);
-      if (!label) {
-        label = element(documentValue, 'span', 'network-visualizer-label');
-        labels.append(label);
-        labelElements.set(node.id, label);
-      }
+      const label = labelFor(node);
       visible.add(node.id);
-      label.textContent = node.label || node.id;
-      label.dataset.type = node.type;
-      label.dataset.signal = node.signalAction || (node.active ? 'call' : '');
       // Keep names beside the shapes instead of painting over the journey's endpoints.
       const distance = Math.max(1, camera.position.distanceTo(new library.Vector3(node.x, node.y, node.z)));
       const screenRadius = finite(node.radius, 8) * height /
         (2 * distance * Math.tan(finite(camera.fov, 50) * Math.PI / 360));
-      const labelY = node.type === 'talkgroup' ? screen.y + screenRadius * 1.75 + 14 :
+      let labelY = node.type === 'talkgroup' ? screen.y + screenRadius * 1.75 + 14 :
         node.type === 'radio' ? screen.y - screenRadius * 1.5 - 14 : screen.y;
-      label.style.transform = `translate3d(${Math.round(screen.x)}px, ${Math.round(labelY)}px, 0)`;
+      let labelX = screen.x;
+      if (label.hasAttribute('data-direct-listen-target-key')) {
+        const halfWidth = label.offsetWidth / 2, halfHeight = label.offsetHeight / 2;
+        labelX = clamp(labelX, halfWidth + gap, width - halfWidth - gap);
+        let top = gap, bottom = height - gap;
+        for (const overlay of overlays) {
+          if (labelX + halfWidth < overlay.left || labelX - halfWidth > overlay.right) continue;
+          if (overlay.top < height / 2) top = Math.max(top, overlay.bottom + gap);
+          else bottom = Math.min(bottom, overlay.top - gap);
+        }
+        labelY = clamp(labelY, top + halfHeight, Math.max(top + halfHeight, bottom - halfHeight));
+      }
+      const transform = `translate3d(${Math.round(labelX)}px, ${Math.round(labelY)}px, 0)`;
+      if (label.style.transform !== transform) label.style.transform = transform;
       label.style.zIndex = String(Math.round((1 - projected.z) * 5_000));
+      if (label.hasAttribute('data-direct-listen-target-key')) continue;
       const participant = movementIncludes(node.id);
       const clear = scope.level === 'overview' || scope.level === 'talkgroup' || Boolean(node.signalAction) ||
         node.active || participant || focusKeys.has(node.id) || node.type === 'system';
@@ -904,6 +997,7 @@ async function createP25Renderer(options = {}) {
     nodeObjects.clear();
     linkObjects.clear();
     labelElements.clear();
+    interactingLabels.clear();
     affiliationMoves.clear();
     canonicalPositions.clear();
     canonicalLinks = [];
@@ -916,6 +1010,7 @@ async function createP25Renderer(options = {}) {
 
   return Object.freeze({ available: true, setData, setMode, setCameraPhase, enterSystem, enterTalkgroup,
     showOverview, focus, focusAffiliation, home, moveManualCamera, enterFullscreen, exitFullscreen,
+    isInteracting: () => interactingLabels.size > 0,
     setGuideSuspended, resetAttention, dispose });
 }
 

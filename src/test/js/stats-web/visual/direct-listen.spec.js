@@ -323,7 +323,9 @@ test('a scoped P25 Visualizer talkgroup adds its system-scoped identity to Direc
     `${systemKey}:${groupKey}`)).toBe(true);
   const scope = page.locator('.network-visualizer-scope-title');
   await expect(scope).toContainText('Fire Dispatch');
-  await scope.getByRole('button', { name: 'Add Fire Dispatch to Direct Listen and play', exact: true }).click();
+  await expect(scope.locator('[data-direct-listen-action]')).toHaveCount(0);
+  await page.locator('.network-visualizer-label[data-type="talkgroup"][data-direct-listen-target-key]')
+    .filter({ hasText: 'Fire Dispatch' }).click();
   const dock = await fullDock(page);
   await selectAudioPanel(dock, 'Scan Lists');
   await expect(dock.getByRole('checkbox', { name: 'Direct Listen', exact: true })).toBeChecked();
