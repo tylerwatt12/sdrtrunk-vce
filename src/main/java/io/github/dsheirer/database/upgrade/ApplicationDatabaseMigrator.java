@@ -247,6 +247,8 @@ public final class ApplicationDatabaseMigrator
             {
                 SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
                 source = requireSupportedFormat(connection);
+                if(source.version() >= 63)
+                    io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(normalized);
                 plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
                 Set<String> legacyKeys = source.version() <= 52 ? LegacyReceiverSettingsMigration.missingKeys(connection) :
                     recoveryDefaults.keySet();
@@ -340,6 +342,8 @@ public final class ApplicationDatabaseMigrator
             {
                 SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
                 source = requireSupportedFormat(connection);
+                if(source.version() >= 63)
+                    io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(database);
                 plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
                 phase.complete();
             }
@@ -419,7 +423,7 @@ public final class ApplicationDatabaseMigrator
         try(Connection connection = open(database))
         {
             DatabaseFormatCatalog.DetectedFormat source = requireSupportedFormat(connection);
-            if(source.version() == 63)
+            if(source.version() >= 63)
             {
                 // Only explicit private stages attach writable history. Owned upgrades never inspect retained rows.
                 io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(database);
@@ -1509,8 +1513,9 @@ public final class ApplicationDatabaseMigrator
 
     static void validateCurrentDatabase(Connection connection) throws SQLException
     {
-        if("63".equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
-            DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
+        String format = io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
+            DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+        if("63".equals(format) || "64".equals(format))
         {
             DatabaseFormatCatalog.requireCurrent(connection);
             if(io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE.equals(

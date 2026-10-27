@@ -347,7 +347,7 @@ class MigrationContentTest
     @Test void configurationOnlyIsRefusedForAnAlreadyCurrentDatabase() throws Exception
     {
         Path root = directory.resolve("already-current");
-        Path source = Format63TestDatabase.create(database(root));
+        Path source = Format64TestDatabase.create(database(root));
         byte[] before = Files.readAllBytes(source);
 
         var failure = assertThrows(IllegalArgumentException.class, () -> service().migrateCurrent(root, false,

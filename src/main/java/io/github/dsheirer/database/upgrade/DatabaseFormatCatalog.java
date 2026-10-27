@@ -37,7 +37,7 @@ public final class DatabaseFormatCatalog
 {
     public static final String FORMAT_VERSION_KEY = "database_format_version";
     public static final int MINIMUM_SUPPORTED_VERSION = 2;
-    public static final int CURRENT_VERSION = 63;
+    public static final int CURRENT_VERSION = 64;
     static final String RETIRED_TRUNKED_IDENTITY_BOUNDARY_KEY = "trunked_identity_metrics_started_at_ms";
     static final List<String> RETIRED_SUBSYSTEM_VERSION_KEYS = List.of(
         "alias_schema_version", "configuration_schema_version", "settings_schema_version", "icon_schema_version",
@@ -685,13 +685,21 @@ public final class DatabaseFormatCatalog
             "Remove configuration-to-history cascades and retain historical owner context until scheduled expiry",
             "Require exact matching role schemas, format markers and profile identity for both files"));
 
+    private static final FormatDescriptor FORMAT_64 = new FormatDescriptor(64, "receiver-nicknames-v1",
+        "Administrator-owned receiver nicknames independent of tuner configuration", FORMAT_63.fingerprint(), Map.of(),
+        List.of("main format 64"), "src/test/java/io/github/dsheirer/database/upgrade/Format64TestDatabase.java", List.of(
+            "Preserve every setting, configuration component, historical row, relationship and allocator",
+            "Initialize one bounded empty receiver nickname map without guessing names from device configuration",
+            "Keep the unchanged activity role at its exact format-63 contract; require the matching profile identity",
+            "Require the global format marker for the new configuration semantics"));
+
     private static final List<FormatDescriptor> FORMATS =
         List.of(FORMAT_2, FORMAT_3, FORMAT_4, FORMAT_5, FORMAT_6, FORMAT_7, FORMAT_8, FORMAT_9,
             FORMAT_10, FORMAT_11, FORMAT_12, FORMAT_13, FORMAT_14, FORMAT_15, FORMAT_16, FORMAT_17, FORMAT_18,
             FORMAT_19, FORMAT_20, FORMAT_21, FORMAT_22, FORMAT_23, FORMAT_24, FORMAT_25, FORMAT_26, FORMAT_27,
             FORMAT_28, FORMAT_29, FORMAT_30, FORMAT_31, FORMAT_32, FORMAT_33, FORMAT_34, FORMAT_35, FORMAT_36,
             FORMAT_37, FORMAT_38, FORMAT_39, FORMAT_40, FORMAT_41, FORMAT_42, FORMAT_43, FORMAT_44, FORMAT_45, FORMAT_46,
-            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53, FORMAT_54, FORMAT_55, FORMAT_56, FORMAT_57, FORMAT_58, FORMAT_59, FORMAT_60, FORMAT_61, FORMAT_62, FORMAT_63);
+            FORMAT_47, FORMAT_48, FORMAT_49, FORMAT_50, FORMAT_51, FORMAT_52, FORMAT_53, FORMAT_54, FORMAT_55, FORMAT_56, FORMAT_57, FORMAT_58, FORMAT_59, FORMAT_60, FORMAT_61, FORMAT_62, FORMAT_63, FORMAT_64);
 
     private static final Map<Integer,FormatDescriptor> BY_VERSION = FORMATS.stream().collect(
         java.util.stream.Collectors.toUnmodifiableMap(FormatDescriptor::version, descriptor -> descriptor));
@@ -746,7 +754,8 @@ public final class DatabaseFormatCatalog
         {
             io.github.dsheirer.database.ConfigurationHistoryDatabase.validateAdmittedRole(connection,
                 io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE, fingerprint);
-            return new DetectedFormat(FORMAT_63, true);
+            int version = parseMarker(metadata(connection, FORMAT_VERSION_KEY));
+            return new DetectedFormat(BY_VERSION.get(version), true);
         }
         List<FormatDescriptor> candidates = BY_FINGERPRINT.get(fingerprint);
 
@@ -884,7 +893,7 @@ public final class DatabaseFormatCatalog
     /** Current catalog descriptor. */
     public static FormatDescriptor current()
     {
-        return FORMAT_63;
+        return FORMAT_64;
     }
 
     /** Ordered manifest used by completeness tests and migration UX. */
@@ -957,7 +966,7 @@ public final class DatabaseFormatCatalog
 
         String fingerprint = SqliteSchemaValidator.fingerprint(connection);
 
-        boolean historyTarget = version == 63 &&
+        boolean historyTarget = (version == 63 || version == 64) &&
             io.github.dsheirer.database.ConfigurationHistoryDatabase.HISTORY_FINGERPRINT.equals(fingerprint) &&
             io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE.equals(
                 io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
@@ -1084,7 +1093,7 @@ public final class DatabaseFormatCatalog
     private static void validateInvariants(Connection connection, FormatDescriptor descriptor,
                                            boolean allowRecoverableCurrentData) throws SQLException
     {
-        if(descriptor.version() == 63 && io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE.equals(
+        if(descriptor.version() >= 63 && io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE.equals(
             io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
                 io.github.dsheirer.database.ConfigurationHistorySchema.ROLE_KEY)))
         {
@@ -1107,6 +1116,10 @@ public final class DatabaseFormatCatalog
         else if(descriptor.version() >= 53)
         {
             Format53ReceiverSettingsSchema.validate(connection);
+        }
+        if(descriptor.version() >= 64)
+        {
+            io.github.dsheirer.database.settings.ReceiverNicknameSchema.validate(connection);
         }
         if(allowRecoverableCurrentData && descriptor.version() == CURRENT_VERSION)
         {
@@ -1137,7 +1150,7 @@ public final class DatabaseFormatCatalog
         {
             Format48TopicAlertSchema.validate(connection);
         }
-        if(descriptor.version() == 63)
+        if(descriptor.version() >= 63)
         {
             io.github.dsheirer.database.ConfigurationHistoryDatabase.validateAdmittedRole(connection,
                 io.github.dsheirer.database.ConfigurationHistorySchema.CONFIGURATION_ROLE, descriptor.fingerprint());
@@ -1236,7 +1249,7 @@ public final class DatabaseFormatCatalog
             case 35 -> 9;
             case 36, 37, 38, 39, 40, 41, 42 -> 10;
             case 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61 -> 11;
-            case 62, 63 -> 12;
+            case 62, 63, 64 -> 12;
             default -> throw new IllegalArgumentException("No web preference version for database format " +
                 descriptor.version());
         };

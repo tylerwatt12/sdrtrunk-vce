@@ -105,7 +105,10 @@ public final class ConfigurationHistoryDatabase
         {
             throw new SQLException("The " + role + " database does not have the exact format-63 schema");
         }
-        if(!"63".equals(ConfigurationHistorySchema.metadata(connection, schema, DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
+        String version = ConfigurationHistorySchema.metadata(connection, schema, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+        // Format 64 changes configuration semantics only. The activity role keeps the exact format-63 contract;
+        // an older monolith passing through the split may be stamped 64 in the same chain transaction.
+        if(!"63".equals(version) && !"64".equals(version))
         {
             throw new SQLException("The " + role + " database format marker is missing or incompatible");
         }
@@ -153,6 +156,11 @@ public final class ConfigurationHistoryDatabase
                 ConfigurationHistorySchema.metadata(activity, ConfigurationHistorySchema.PAIR_ID_KEY)))
             {
                 throw new SQLException("The configuration and activity databases belong to different profiles");
+            }
+            if("63".equals(ConfigurationHistorySchema.metadata(config, DatabaseFormatCatalog.FORMAT_VERSION_KEY)) &&
+                "64".equals(ConfigurationHistorySchema.metadata(activity, DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
+            {
+                throw new SQLException("The configuration and activity database versions are incompatible");
             }
         }
     }

@@ -62,8 +62,10 @@ public final class SdrTrunkDatabaseStartup
                 new io.github.dsheirer.gui.setup.SetupProgress(false, false));
             SpectrumSnapSettings.write(configuration, SpectrumSnapSettings.defaults());
             io.github.dsheirer.database.settings.ReceiverSettingsSchema.initializeMissing(configuration);
+            io.github.dsheirer.database.settings.ReceiverNicknameSchema.initializeMissing(configuration);
             ConfigurationHistorySchema.setIdentity(configuration, ConfigurationHistorySchema.CONFIGURATION_ROLE, pairId);
-            setMetadata(configuration, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "63");
+            setMetadata(configuration, DatabaseFormatCatalog.FORMAT_VERSION_KEY,
+                Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION));
             DatabaseFormatCatalog.requireCurrent(configuration);
             configuration.commit();
         }

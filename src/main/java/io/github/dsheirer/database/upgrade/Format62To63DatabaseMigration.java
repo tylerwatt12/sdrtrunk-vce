@@ -115,7 +115,8 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
                 ConfigurationHistorySchema.setIdentity(target, ConfigurationHistorySchema.CONFIGURATION_ROLE, pairId);
                 SdrTrunkDatabaseStartup.setMetadata(target, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "63");
                 ConfigurationHistoryDatabase.validateRole(target, ConfigurationHistorySchema.CONFIGURATION_ROLE);
-                DatabaseFormatCatalog.requireCurrent(target);
+                // This adjacent step retains its exact format-63 contract when later targets are introduced.
+                DatabaseFormatCatalog.inspect(target);
                 try(Statement query = target.createStatement();
                     ResultSet rows = query.executeQuery("PRAGMA foreign_key_check"))
                 {
@@ -301,7 +302,8 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
             requireIdentity(config, pairId, ConfigurationHistorySchema.CONFIGURATION_ROLE);
         }
         Files.delete(receipt);
-        ConfigurationHistoryDatabase.validatePair(configuration);
+        // Activation also serves frozen historical fixture/recovery callers; runtime current admission follows it.
+        ConfigurationHistoryDatabase.validatePairIdentity(configuration);
     }
 
     private static void requireStage(Path stage, String pairId) throws IOException, SQLException

@@ -249,7 +249,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -932,6 +932,18 @@ rather than repeated in every event. The resolved Activity view reads this histo
 live configuration row. Configuration requests never wait for the history writer; history reads use a read-only
 configuration attachment where current names or filters are needed.
 
+The adjacent 63-to-64 step adds the bounded `receiver.nicknames` setting in configuration. It maps each existing
+opaque receiver identifier to an optional administrator-chosen nickname; an empty nickname removes that mapping.
+The map starts empty, and usable premature names are preserved rather than inferred from hardware labels. Tuner
+configuration saves and reconnections do not overwrite nicknames. Every other setting, retained row, relationship,
+counter and allocator is preserved. Invalid existing nickname settings refuse the update without exposing their contents.
+
+Format 64 changes no table or index. The unchanged activity role retains its exact format-63 schema and semantics;
+an existing paired activity file needs no write merely to upgrade configuration. When an older monolith traverses both
+steps in one transaction, its activity marker may advance to 64 with the same unchanged role contract. Pair admission
+accepts only these explicit role versions with matching profile identities. The frozen format-63 fixture, adjacent
+migration, unchanged-source retry and exact-signature checks remain required; normal startup validates without repair.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -972,7 +984,7 @@ adjacent format-10-to-11 step creates an empty relationship table without guessi
 all recording metadata, files, transcripts, tones, identifiers, counters and allocators. Deleting a recording cascades
 to its own source references. Deleting Activity or alert history does not delete a recording or its source references.
 The populated format-10 fixture remains frozen and supported. The main application database is independently at
-format 63; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+format 64; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

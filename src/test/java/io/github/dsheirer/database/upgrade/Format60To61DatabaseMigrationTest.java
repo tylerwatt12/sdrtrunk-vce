@@ -65,7 +65,7 @@ class Format60To61DatabaseMigrationTest
         byte[] upgraded = Files.readAllBytes(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
         assertArrayEquals(upgraded, Files.readAllBytes(database));
-        Path populated = Format63TestDatabase.create(directory.resolve("current.sqlite"));
+        Path populated = Format64TestDatabase.create(directory.resolve("current.sqlite"));
         try(var connection = open(populated))
         {
             assertTrue(count(connection, "SELECT count(*) FROM web_user_tour_dismissal") >= 3);
@@ -75,7 +75,7 @@ class Format60To61DatabaseMigrationTest
 
     @Test void offlineAccountRepairRemovesOnlyTheDeletedAccountsTourHistory() throws Exception
     {
-        Path database = Format63TestDatabase.create(directory.resolve("account-repair.sqlite"));
+        Path database = Format64TestDatabase.create(directory.resolve("account-repair.sqlite"));
         try(var connection = open(database); var statement = connection.createStatement())
         {
             statement.execute("PRAGMA foreign_keys=OFF");

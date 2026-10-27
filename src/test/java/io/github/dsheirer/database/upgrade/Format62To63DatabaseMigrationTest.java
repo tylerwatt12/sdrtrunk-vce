@@ -44,6 +44,7 @@ class Format62To63DatabaseMigrationTest
     {
         Path fresh=directory.resolve("fresh.sqlite");SdrTrunkDatabaseStartup.createGlobalDatabase(fresh);
         Path migrated=Format63TestDatabase.create(directory.resolve("migrated.sqlite"));
+        ApplicationDatabaseMigrator.migrateInPlace(migrated,null);
         ConfigurationHistoryDatabase.validatePair(fresh);ConfigurationHistoryDatabase.validatePair(migrated);
     }
 
