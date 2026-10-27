@@ -1,5 +1,7 @@
 const { expect, test } = require('@playwright/test');
 const { selectAudioPanel, openAudioVolume } = require('./audio-dock-controls.cjs');
+const { expectContrast } = require('./fixtures/contrast-audit.cjs');
+const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
 
 async function openGallery(page, { theme = 'light', source = 'live', state = 'full',
   panel = '', fixture = 'normal', feedback = '', hidden = false } = {}) {
@@ -19,6 +21,41 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
     settings: 'Listening settings', queue: 'Queue' }[panel]);
   await page.mouse.move(0, 0);
   return dock;
+}
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1280, 390]) {
+    for (const source of ['live', 'recordings']) {
+      test(`talkgroup links and queue inspection remain readable ${source} ${theme} ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        const dock = await openGallery(page, { theme, source, panel: width < 900 ? 'queue' : '' });
+        const queue = dock.locator(width < 900 ? '#audio-dock-panel' : '.audio-dock-up-next');
+        const first = queue.locator('.audio-dock-queue-item').first();
+        await expect(first.getByRole('link', { name: 'Fire Dispatch', exact: true })).toBeVisible();
+        const inspect = first.getByRole('button', { name: /View (playing|queued) call Fire Dispatch/ });
+        await expect(inspect).toBeVisible();
+        await inspect.focus();
+        await expect(inspect).toBeFocused();
+        await expect(dock.locator('button a, a button')).toHaveCount(0);
+        await expectNoHorizontalOverflow(page);
+        await expectContrast(page, { rootSelector: width < 900 ? '#audio-dock-panel' : '.audio-dock-up-next' });
+        if (width >= 900) await expectContrast(page, { rootSelector: '.audio-dock-identity' });
+        await page.keyboard.press('Escape');
+        await page.mouse.move(0, 0);
+        if (process.env.WEB_REVIEW_DIR) await dock.screenshot({
+          path: `${process.env.WEB_REVIEW_DIR}/talkgroup-links-${source}-${theme}-${width}.png` });
+        if (source === 'live') {
+          for (const hue of [0, 120, 280]) {
+            await page.evaluate(value => {
+              document.documentElement.setAttribute('data-custom-hue', '');
+              document.documentElement.style.setProperty('--theme-hue', String(value));
+            }, hue);
+            await expectContrast(page, { rootSelector: width < 900 ? '#audio-dock-panel' : '.audio-dock-up-next' });
+          }
+        }
+      });
+    }
+  }
 }
 
 for (const viewport of [{ width: 320, height: 480 }]) {

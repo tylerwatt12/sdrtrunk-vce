@@ -87,6 +87,9 @@ function createP25Visualizer(dependencies = {}) {
   const scopeTitle = node('div', 'network-visualizer-scope-title');
   const scopeOverview = node('span', '', 'P25 radio systems');
   const scopeGroupTitle = node('strong');
+  const scopeGroupLink = node('a', 'ui-link-text');
+  const scopeGroupName = node('span');
+  scopeGroupTitle.append(scopeGroupLink, scopeGroupName);
   const scopeSystemContext = node('div');
   const scopeSystemPrefix = document.createTextNode('');
   const scopeSystemLink = node('a', 'ui-link-text');
@@ -384,7 +387,13 @@ function createP25Visualizer(dependencies = {}) {
     else if (!destination && scopeSystemLink.hasAttribute('href')) scopeSystemLink.removeAttribute('href');
     const contextClass = group ? 'muted' : '';
     if (scopeSystemContext.className !== contextClass) scopeSystemContext.className = contextClass;
-    setText(scopeGroupTitle, group?.label || '');
+    const groupDestination = group ? dependencies.groupHref?.(group, system) : '';
+    setHidden(scopeGroupLink, !groupDestination);
+    setHidden(scopeGroupName, Boolean(groupDestination));
+    setText(scopeGroupLink, groupDestination ? group?.label || '' : '');
+    setText(scopeGroupName, groupDestination ? '' : group?.label || '');
+    if (groupDestination && scopeGroupLink.getAttribute('href') !== groupDestination) scopeGroupLink.href = groupDestination;
+    else if (!groupDestination && scopeGroupLink.hasAttribute('href')) scopeGroupLink.removeAttribute('href');
     setText(scopeSystemPrefix, group ? 'System: ' : '');
     setText(scopeSystemSuffix, group && system.identity ? ` · ${system.identity}` : '');
     const identity = !group && system.identity !== label ? system.identity || '' : '';

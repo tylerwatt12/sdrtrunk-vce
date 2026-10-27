@@ -118,7 +118,8 @@ export async function mountAudioDockGallery(parameters) {
       description: 'Dispatch and tactical calls', selected: true, enabled: true },
     { id: '2', name: 'Law Dispatch', description: 'County law enforcement operations', selected: false, enabled: true },
     { id: '3', name: 'Public Works', description: 'Temporarily unavailable', selected: false, enabled: false }],
-    avoids: [{ key: 'tg:9100', label: 'Training Channel', system: 'Metro Public Safety' }],
+    avoids: [{ key: 'tg:9100', label: 'Training Channel', system: 'Metro Public Safety',
+      target_entity_ref: { ...targetRef, identity_key: 'v1-g-00001-001-9100' } }],
     targetGrouping: true, targetBurstLimit: 4, holdTarget: null
   };
   if (fixture === 'direct') liveState.directListen = { allowed: true, selected: true, maximumTargets: 32,

@@ -40,18 +40,18 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=62';
+import { createRecordingsFeature } from './features/recordings.js?v=63';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=17';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=39';
+import { createAudioDock } from './core/audio-dock.js?v=40';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=23';
+import { WebCallPlayer } from './web-call-player.js?v=24';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -7558,7 +7558,12 @@ function observedGroupIdentityPromotionReason(row) {
 
 function observedGroupIdentityValue(row) {
   const wrapper = node('div', 'observed-group-identity-value');
-  wrapper.append(node('strong', '', groupIdentifierText(row, row.group_identity_id)));
+  const identifier = groupIdentifierText(row, row.group_identity_id);
+  const reference = row?.entity_ref || (configuredAliasAssignment(row) ? row?.channel_entity_ref : null);
+  const target = entityReferenceAllowed(reference) ? aliasIdentityDetailTarget(row, reference) : '';
+  const primary = node('strong');
+  primary.append(target ? anchor(identifier, target) : identifier);
+  wrapper.append(primary);
   if (configuredAliasAssignment(row)) wrapper.append(node('small', '', 'Assigned number'));
   if (observedGroupIdentityMatchKind(row) === 'range') {
     wrapper.append(node('small', '', `Covered by range · ${row.matched_alias_name ||
@@ -8356,11 +8361,11 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const [feature, presentation] = await Promise.all(mapTour ? [
       import('./features/listen-map.js?v=16'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=65'), import('./guides/network-visualizer-presentation.js?v=2')
+      import('./features/network-visualizer/index.js?v=66'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
       import('./features/alerts.js?v=25'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
-      Promise.resolve(null), import('./guides/scanner-presentation.js?v=4')
+      Promise.resolve(null), import('./guides/scanner-presentation.js?v=5')
     ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
     ] : live ? [
@@ -12913,6 +12918,15 @@ function renderScanner(options = {}) {
   let upNextKey = '';
   const directSelection = state => !guideMode && state.directListen?.allowed && state.directListen.selected &&
     state.directListen.targets.length > 0;
+  const queuedTarget = (call, emptyLabel) => {
+    if (!call) return emptyLabel;
+    const label = player.targetLabel(call);
+    const analog = isAnalogChannel(call);
+    const reference = analog ? call.entity_ref : call.target_entity_ref;
+    const target = !guideMode && entityReferenceAllowed(reference) ?
+      entityTarget(reference, analog ? {} : { channel: 'groups' }) : '';
+    return target ? anchor(label, target) : label;
+  };
   const renderUpNext = (state) => {
     const calls = state.queue;
     const scopeNames = state.scanLists.filter(item => item.enabled && item.selected).map(item => item.name);
@@ -12920,13 +12934,13 @@ function renderScanner(options = {}) {
     const scope = scopeNames.join(' · ');
     upNextCount.textContent = `${state.queuedCount} queued`;
     upNextScope.textContent = scope;
-    const next = calls[0];
-    upNextPreviewTitle.textContent = next ? player.targetLabel(next) : 'Waiting for calls';
-    upNextPreviewDetail.textContent = next ? [scannerSourceAlias(next) || radioIdentifierText(next, next.source_id, 'source'),
-      scannerDuration(next.duration_ms)].filter(Boolean).join(' · ') : '—';
     const key = JSON.stringify([calls, scope]);
     if (upNextKey === key) return;
     upNextKey = key;
+    const next = calls[0];
+    upNextPreviewTitle.replaceChildren(queuedTarget(next, 'Waiting for calls'));
+    upNextPreviewDetail.textContent = next ? [scannerSourceAlias(next) || radioIdentifierText(next, next.source_id, 'source'),
+      scannerDuration(next.duration_ms)].filter(Boolean).join(' · ') : '—';
     const scrollTop = upNextList.scrollTop;
     upNextList.replaceChildren();
     for (let index = 0; index < Math.max(3, calls.length); index++) {
@@ -12936,7 +12950,9 @@ function renderScanner(options = {}) {
       const order = node('span', 'ui-listening-order', String(index + 1));
       order.setAttribute('aria-hidden', 'true');
       const copy = node('div', 'ui-heading-group');
-      copy.append(node('strong', '', call ? player.targetLabel(call) : index ? '—' : 'Waiting for calls'),
+      const title = node('strong');
+      title.append(queuedTarget(call, index ? '—' : 'Waiting for calls'));
+      copy.append(title,
         node('span', 'ui-label ui-muted', call ? [scannerSourceAlias(call) || radioIdentifierText(call, call.source_id, 'source'),
           scannerDuration(call.duration_ms)].filter(Boolean).join(' · ') : '—'));
       if (call) item.dataset.uiHint = player.callDetails(call);
@@ -20975,6 +20991,10 @@ function saveP25VisualizerEventSettings(value) {
 }
 
 function p25VisualizerDependencies(renderContext, overrides = {}) {
+  const groupReference = (group, system) => ({
+    kind: group.identityKey.startsWith('v1-p-') ? 'patch_group' : 'talkgroup',
+    radio_system_key: system.key, identity_key: group.identityKey
+  });
   return {
     node,
     iconGlyph,
@@ -21003,8 +21023,9 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
       return source;
     },
     createDirectListenAction: (group, system, options = {}) => directListenAction({ radio_system_name: system.name || system.label },
-      { kind: group.identityKey.startsWith('v1-p-') ? 'patch_group' : 'talkgroup',
-        radio_system_key: system.key, identity_key: group.identityKey }, { ...options, label: group.label }),
+      groupReference(group, system), { ...options, label: group.label }),
+    groupHref: (group, system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ?
+      entityRefHref(groupReference(group, system)) : '',
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
     signal: renderContext.signal,
@@ -21014,7 +21035,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=65');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=66');
   // The live scene does not wait for an optional label catalog or historical data.
   void loadActivityMessageTypes();
   const visualizerModule = await p25VisualizerModulePromise;
@@ -36175,7 +36196,7 @@ async function openCallRelations(kind, id) {
   let relationsModule;
   try {
     [relationsModule] = await Promise.all([
-      import('./features/call-relations.js?v=8'), loadActivityMessageTypes()
+      import('./features/call-relations.js?v=9'), loadActivityMessageTypes()
     ]);
   } catch (error) {
     if (!renderIsCurrent(renderContext)) return;

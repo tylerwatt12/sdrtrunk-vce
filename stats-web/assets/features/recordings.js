@@ -558,7 +558,7 @@ export function createRecordingsFeature(deps) {
     return filters;
   }
 
-  const entityLink = (text, reference, row, field, filterLabel = text) => {
+  const resultFilterLink = (text, reference, row, field, filterLabel = text) => {
     if (pageHost?.isConnected && row) {
       const match = recordingResultFilter(row, reference, field);
       if (!match) return String(text);
@@ -595,6 +595,12 @@ export function createRecordingsFeature(deps) {
     }
     const target = canViewRadio?.() ? entityRefHref?.(reference) : null;
     return target ? anchor(String(text), target) : String(text);
+  };
+
+  const entityLink = (text, reference, row, field, filterLabel = text) => {
+    const target = ['talkgroup', 'patch_group'].includes(reference?.kind) && canViewRadio?.() ?
+      entityRefHref?.(reference) : null;
+    return target ? anchor(String(text), target) : resultFilterLink(text, reference, row, field, filterLabel);
   };
 
   function query(filters, extra = {}) {
@@ -1447,7 +1453,7 @@ export function createRecordingsFeature(deps) {
       const filter = recordingResultFilter(row, reference, field);
       if (!filter) return;
       const filterLabel = field === 'source' ? sourceLabel(row, getSourceNameDisplay()) : label(row);
-      const link = entityLink(title, reference, row, field, filterLabel);
+      const link = resultFilterLink(title, reference, row, field, filterLabel);
       if (typeof link !== 'string') {
         link.classList.add('ui-button', 'ui-button-secondary');
         actions.append(explain(link, title, description, icon));

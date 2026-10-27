@@ -923,6 +923,7 @@ export class WebCallPlayer {
     this.avoids.set(target, {
       key: target,
       label: this.targetLabel(this.current),
+      target_entity_ref: this.current.target_entity_ref,
       system_scope: systemScope,
       radio_system_key: systemScope ? this.current.playback_target?.radio_system_key || this.current.radio_system_key : '',
       system_name: systemScope ? systemName(this.current) : ''

@@ -4,7 +4,7 @@ const { test, expect } = require('@playwright/test');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
-const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
+const { openAudioApp, liveCall, recording } = require('./fixtures/audio-dock-app.cjs');
 const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 async function openScannerPanel(page, name) {
@@ -119,6 +119,49 @@ async function expectPhoneQueueFits(page, list) {
     const viewportHeight = await page.evaluate(() => window.innerHeight);
     return Boolean(bounds && bounds.y >= 0 && bounds.y + bounds.height <= viewportHeight + 1);
   }).toBe(true);
+}
+
+for (const radio of [true, false]) {
+  test(`Scanner queued talkgroup links preserve identity and Radio access ${radio}`, async ({ page }) => {
+    await openAudioApp(page, { view: 'scanner', feedCallsEnabled: false, capabilities: { radio } });
+    const reference = recording.target_entity_ref;
+    const otherReference = { kind: 'talkgroup', radio_system_key: 'p25:00002:002',
+      identity_key: 'v1-g-00002-002-1201' };
+    const calls = [reference, otherReference, null].map((target, index) => ({ ...liveCall,
+      call_id: `queued-links-${index}`, target_alias: 'Dispatch', target_entity_ref: target,
+      playback_target: { ...liveCall.playback_target, key: `queued-links-${index}`, label: 'Dispatch' },
+      started_at_ms: liveCall.started_at_ms + index * 60_000,
+      completed_at_ms: liveCall.completed_at_ms + index * 60_000 }));
+    let delivered = false;
+    await page.route('**/api/v1/calls/feed*', route => {
+      const next = delivered ? [] : [{ ...calls[0], call_id: 'playing-call' }, ...calls];
+      delivered = true;
+      return route.fulfill({ json: { data: { cursor: '1', reset: false, calls: next } } });
+    });
+    await page.locator('.scanner-playback-primary').click();
+    const queue = page.locator('.scanner-up-next-list > li[data-ui-hint]');
+    await expect(queue).toHaveCount(3);
+    const preview = page.locator('.scanner-up-next-preview strong');
+    await expect(preview).toHaveText('Dispatch · 1201');
+    if (radio) {
+      for (const [index, target] of [reference, otherReference].entries()) {
+        const link = queue.nth(index).getByRole('link');
+        await expect(link).toHaveCount(1);
+        await expect(link).toHaveText(index ? 'Dispatch · 00002.002.1201' : 'Dispatch · 1201');
+        expect(Object.fromEntries(new URL(await link.getAttribute('href'), page.url()).searchParams))
+          .toEqual({ view: 'group-identity', radio_system_key: target.radio_system_key,
+            identity_key: target.identity_key });
+      }
+      await expect(preview.locator('a')).toHaveAttribute('href',
+        await queue.first().getByRole('link').getAttribute('href'));
+      await expect(queue.last().getByRole('link')).toHaveCount(0);
+      await expect(queue.last().locator('strong')).toHaveText('Dispatch');
+    } else {
+      await expect(queue.getByRole('link')).toHaveCount(0);
+      await expect(preview.locator('a')).toHaveCount(0);
+      await expect(queue.first().locator('strong')).toHaveText('Dispatch · 1201');
+    }
+  });
 }
 
 for (const theme of ['light', 'dark']) {

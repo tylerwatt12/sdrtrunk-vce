@@ -102,6 +102,10 @@ test('unrelated affiliations preserve the selected talkgroup while related highl
     target_id: 1203, target_alias_name: 'Operations' }]);
   expect(await page.evaluate(() => window.p25SelectTalkgroup('p25:00001:001:v1-g-00001-001-1203'))).toBe(true);
   await expect(page.locator('.network-visualizer-scope-title')).toContainText('Operations');
+  const groupDetails = page.locator('.network-visualizer-scope-title strong').getByRole('link', { name: 'Operations', exact: true });
+  await expect(groupDetails).toHaveCount(1);
+  expect(Object.fromEntries(new URL(await groupDetails.getAttribute('href'), page.url()).searchParams))
+    .toEqual({ view: 'group-identity', radio_system_key: systemKey, identity_key: 'v1-g-00001-001-1203' });
   const operations = page.locator('.network-visualizer-label[data-type="talkgroup"]').filter({ hasText: 'Operations' });
   await expect(operations).not.toHaveAttribute('data-signal', 'call');
   await page.evaluate(({ systemKey, channelId, groupKey, radioKey }) => {

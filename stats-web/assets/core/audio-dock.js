@@ -110,6 +110,23 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (target !== undefined && target !== null && target !== '') return `${kind} ${targetId(call) ?? target}`;
     return call.playback_target?.label || call.channel_name || call.channel || 'Recorded call';
   };
+  const identityLink = (label, reference, classes = '') => {
+    const target = canViewRadio() ? entityRefHref(reference) : null;
+    if (!target) return document.createTextNode(String(label));
+    const link = node('a', classes, String(label));
+    link.href = target;
+    return link;
+  };
+  const renderTitle = (label, reference) => {
+    const target = canViewRadio() ? entityRefHref(reference) : null;
+    const link = nowTitle.firstElementChild;
+    if (target && link?.tagName === 'A') {
+      if (link.getAttribute('href') !== target) link.href = target;
+      if (link.textContent !== label) link.textContent = label;
+    } else if (target || link || nowTitle.textContent !== label) {
+      nowTitle.replaceChildren(identityLink(label, reference, 'ui-listening-title-action'));
+    }
+  };
   const sourceName = (call) => {
     const name = formatSourceName(call?.source_alias || call?.radio_alias,
       call?.source_ota_alias || call?.source_ota_ta || call?.talker_alias || call?.ota_alias, getSourceNameDisplay());
@@ -838,12 +855,15 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const queueRows = () => state().queue || [];
   function queueItem(call, index, { currentRow = false, detailed = false } = {}) {
     const row = node('li');
-    const button = node('button', 'audio-dock-queue-item ui-listening-queue-item'); button.type = 'button';
+    const item = node('div', 'audio-dock-queue-item ui-listening-queue-item');
+    const button = command(`View ${currentRow ? 'playing' : 'queued'} call ${title(call)}`, 'info-circle', () => {
+      selectedQueueKey = selectedQueueKey === key ? null : key; sidebarKey = ''; panelKey = ''; render();
+    });
     const key = queueEntryKey(call, index); button.dataset.queueKey = key;
-    button.setAttribute('aria-label', `View ${currentRow ? 'playing' : 'queued'} call ${title(call)}`);
     button.setAttribute('aria-pressed', String(selectedQueueKey === key));
     const copy = node('span', 'audio-dock-queue-copy ui-heading-group');
-    copy.append(node('strong', '', String(title(call))), node('span', 'ui-muted ui-label',
+    const heading = node('strong'); heading.append(identityLink(title(call), call.target_entity_ref));
+    copy.append(heading, node('span', 'ui-muted ui-label',
       [sourceName(call), call.duration_ms ? `${Number(call.duration_ms) / 1000}s` : ''].filter(Boolean).join(' · ') || '—'));
     if (currentRow) copy.prepend(node('span', 'ui-muted ui-label', state().stopped ? 'Last played' : state().paused ? 'Paused' : 'Now playing'));
     if (detailed) {
@@ -856,9 +876,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
         typeof call.encrypted === 'boolean' ? call.encrypted ? 'Encrypted' : 'Unencrypted' : '', source === 'live' ? names : '']
         .filter(Boolean).join(' · ')));
     }
-    button.append(node('span', 'audio-dock-queue-order ui-listening-order', currentRow ? '•' : String(index + 1)), copy);
-    button.addEventListener('click', () => { selectedQueueKey = selectedQueueKey === key ? null : key; sidebarKey = ''; panelKey = ''; render(); });
-    row.append(button);
+    item.append(node('span', 'audio-dock-queue-order ui-listening-order', currentRow ? '•' : String(index + 1)), copy, button);
+    row.append(item);
     if (source === 'recordings' && !currentRow && detailed) {
       const actions = node('div', 'audio-dock-inspector-actions');
       actions.append(command(`Play ${title(call)}`, 'play', () => recordings.playQueued(call._queueEntryKey || call.id)),
@@ -901,7 +920,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     preserveContent(inspector, () => {
       inspector.hidden = !call;
       if (!call) return;
-      inspector.append(node('p', '', `${title(call)} · ${sourceName(call)}`),
+      const heading = node('p');
+      heading.append(identityLink(title(call), call.target_entity_ref), ` · ${sourceName(call)}`);
+      inspector.append(heading,
         node('p', 'ui-muted ui-label', [call.channel || call.channel_name, systemLabel(call), date(call),
           Number(call.frequency_hz) > 0 ? `${(Number(call.frequency_hz) / 1e6).toFixed(5)} MHz` : ''].filter(Boolean).join(' · ')));
       if (source === 'recordings') {
@@ -987,13 +1008,19 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
         const section = node('section', 'ui-record-section');
         const row = node('div', 'ui-record-card-header audio-dock-avoid-row');
         const copy = node('div', 'ui-record-card-copy');
-        copy.append(node('strong', '', item.label || 'Unnamed target'));
         const target = item.target || {};
+        const reference = target.kind === 'channel' ? { kind: 'channel', key: target.key } : target;
+        const heading = node('strong'); heading.append(identityLink(item.label || 'Unnamed target', reference));
+        copy.append(heading);
         const scope = target.kind === 'channel' ? `Channel ${target.key}` :
           target.radio_system_key?.includes(':channel:') ? target.radio_system_key.split(':').at(-1) :
             systemIdentity(target.radio_system_key);
         const identity = target.identity_key ? `${target.identity_key.startsWith('v1-p-') ? 'Patch' : 'TG'} ${target.identity_key.split('-').at(-1)}` : '';
-        const detail = node('span', 'ui-muted ui-label', [item.context || scope, identity].filter(Boolean).join(' · '));
+        const detail = node('span', 'ui-muted ui-label', item.context || scope);
+        if (identity) {
+          if (detail.textContent) detail.append(' · ');
+          detail.append(identityLink(identity, reference));
+        }
         detail.dataset.uiHint = [scope, identity].filter(Boolean).join(' · ');
         copy.append(detail);
         const remove = command(`Remove ${item.label || 'target'} from Direct Listen`, 'close', () => {
@@ -1024,7 +1051,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       items.forEach(item => {
         const section = node('section', 'ui-record-section'), row = node('div', 'ui-record-card-header audio-dock-avoid-row');
         const copy = node('div', 'ui-record-card-copy');
-        copy.append(node('strong', '', item.label || item.key), node('span', 'ui-muted ui-label', systemLabel(item) || item.system_scope || item.systemName || 'All systems'));
+        const heading = node('strong'); heading.append(identityLink(item.label || item.key, item.target_entity_ref));
+        copy.append(heading, node('span', 'ui-muted ui-label', systemLabel(item) || item.system_scope || item.systemName || 'All systems'));
         row.append(copy, command(`Remove ${item.label || item.key} from Avoid List`, 'close', () => getLivePlayer()?.removeAvoid(item.key)));
         section.append(row); list.append(section);
       }); panelHost.append(list);
@@ -1188,7 +1216,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     sizeHint.textContent = `${{ collapsed: 'Collapsed player', minimal: 'Compact player', full: 'Expanded player' }[size]}. Drag up or down, or click to change player size.`;
     handle.dataset.uiHint = sizeHint.textContent;
     const call = current(), active = state(), name = String(title(call));
-    compactTitle.textContent = collapsedTitle.textContent = nowTitle.textContent = name;
+    compactTitle.textContent = collapsedTitle.textContent = name;
+    renderTitle(name, call?.target_entity_ref);
     compactTitle.dataset.uiHint = collapsedTitle.dataset.uiHint = nowTitle.dataset.uiHint = name;
     collapsedMeta.textContent = `${source === 'live' ? 'Live' : 'Recording'} · ${queueCount()} queued`;
     compactSubtitle.textContent = subtitle(call) || (source === 'live' ? 'Select a List to listen' : 'Choose a recording to play');

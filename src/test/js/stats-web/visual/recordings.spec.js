@@ -51,9 +51,9 @@ const linkedHrefs = [
 ];
 
 function entityLink(host, href) {
-  // Existing detail identities now refine the recording query in the same view.
   const identity = new URL(href, 'http://127.0.0.1');
   const params = identity.searchParams;
+  if (params.get('view') === 'group-identity') return host.locator(`a[href="${href}"]`).filter({ visible: true });
   const filters = {};
   if (params.get('view') === 'channel') filters.channel_id = params.get('configuration_id');
   else {
@@ -1524,7 +1524,9 @@ test('target picker keeps Cancel local and submits talkgroups plus channels as o
     await expect(page.locator('#recordings-open-targets')).toContainText('2 selected');
   }
   expect(state.requestedFilters).toHaveLength(requests);
-  await page.locator('.recordings-call-title').getByRole('link', { name: 'Fire Dispatch', exact: true }).click();
+  await page.locator('.recordings-call-info').click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
+    .getByRole('link', { name: 'Search this talkgroup', exact: true }).click();
   await expect.poll(() => state.requestedFilters.at(-1).talkgroup_identity_key).toBe('v1-g-00001-001-1201');
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('channel_ids');
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('talkgroups');
@@ -1858,10 +1860,14 @@ for (const [name, overrides, title, route] of [
 ]) {
   test(`call actions open the existing ${name} page separately from a recordings search`, async ({ page }) => {
     const state = await openRecordings(page, { call: { ...linkedCall, ...overrides } });
+    const expectedHref = `/?${new URLSearchParams(route)}`;
+    if (route.view === 'group-identity') {
+      await expect(page.locator('.recordings-call-title a')).toHaveAttribute('href', expectedHref);
+      await expect(page.locator('.recordings-call-identity a')).toHaveAttribute('href', expectedHref);
+    }
     await page.locator('.recordings-call-info').click();
     const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
     const open = actions.getByRole('link', { name: title, exact: true });
-    const expectedHref = `/?${new URLSearchParams(route)}`;
     await expect(open).toHaveAttribute('href', expectedHref);
     await expect(open.locator('.recordings-action-description')).toBeVisible();
     await expect(open.locator('svg')).toHaveCount(1);

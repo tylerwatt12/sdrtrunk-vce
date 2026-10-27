@@ -147,13 +147,11 @@
 .audio-dock-queue-heading h3 { margin: 0; font-size: var(--font-size-section-title); }
 .audio-dock-queue-list { height: 0; min-height: 0; max-height: var(--audio-dock-queue-height); flex: 1 1 auto; overflow: auto; overscroll-behavior: contain; margin: 0; padding: 0; list-style: none; scrollbar-width: thin; }
 .audio-dock-queue-list > li { min-width: 0; }
-.audio-dock-queue-item { width: 100%; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-1); border: 0; border-radius: var(--radius-control); color: var(--ink); background: transparent; text-align: left; font: inherit; cursor: pointer; }
-.audio-dock-queue-item:hover,
-.audio-dock-queue-item[aria-pressed="true"] { background: var(--surface-2); }
-.audio-dock-queue-item:focus-visible { outline: var(--audio-focus-width) solid var(--focus-ring); outline-offset: calc(-1 * var(--audio-focus-width)); }
+.audio-dock-queue-item { width: 100%; display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-1); border: 0; border-radius: var(--radius-control); color: var(--ink); background: transparent; text-align: left; font: inherit; }
+.audio-dock-queue-item:has([aria-pressed="true"]) { background: var(--surface-2); }
 .audio-dock-queue-order { flex: 0 0 var(--audio-queue-order-width); color: var(--muted); font-size: var(--font-size-label); text-align: center; }
 .audio-dock-queue-order.ui-listening-order { width: var(--audio-queue-order-width); height: auto; flex: 0 0 var(--audio-queue-order-width); background: transparent; border-radius: 0; }
-.audio-dock-queue-copy { min-width: 0; display: grid; gap: var(--space-1); }
+.audio-dock-queue-copy { min-width: 0; flex: 1; display: grid; gap: var(--space-1); }
 .audio-dock-queue-copy strong { font-size: var(--font-size-body); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audio-dock-queue-copy span { font-size: var(--font-size-label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audio-dock-queue-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); padding-top: var(--space-3); margin-top: auto; border-top: 1px solid var(--line); }

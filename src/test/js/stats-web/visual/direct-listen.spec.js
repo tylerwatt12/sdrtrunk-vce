@@ -178,6 +178,13 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     const remove = dock.getByRole('button', { name: 'Remove Fire Dispatch from Direct Listen', exact: true });
     await expect(remove).toHaveCount(1);
     await expect(dock.locator('#audio-dock-panel')).toContainText(systemName);
+    const detailLinks = dock.locator('#audio-dock-panel').getByRole('link');
+    await expect(detailLinks).toHaveCount(2);
+    for (const link of await detailLinks.all()) {
+      expect(Object.fromEntries(new URL(await link.getAttribute('href'), page.url()).searchParams))
+        .toEqual({ view: 'group-identity', radio_system_key: systemKey, identity_key: groupKey });
+    }
+    await expect(remove.locator('a')).toHaveCount(0);
 
     // Removing a selected target preserves paused listening; adding it again resumes from the gesture.
     await dock.locator('.audio-dock-play:visible').click();
@@ -293,6 +300,11 @@ test('conventional digital listening keeps the talkgroup qualifier while analog 
   await expect(dock.getByRole('button', { name: 'Remove Transit Dispatch from Direct Listen', exact: true })).toBeVisible();
   await expect(dock.getByRole('button', { name: 'Remove County Fire Mutual Aid from Direct Listen', exact: true })).toBeVisible();
   await expect(dock.locator('#audio-dock-panel')).not.toContainText('Synthetic analog group');
+  for (const [name, channel] of [['Transit Dispatch', digitalChannel], ['County Fire Mutual Aid', analogChannel]]) {
+    const link = dock.locator('#audio-dock-panel').getByRole('link', { name, exact: true });
+    expect(Object.fromEntries(new URL(await link.getAttribute('href'), page.url()).searchParams))
+      .toEqual({ view: 'channel', configuration_id: channel });
+  }
   await expectListening(dock, state);
   await expect.poll(() => state.feedRequests.some(value => new URLSearchParams(value).getAll('direct_target').length === 2)).toBe(true);
   await dock.getByRole('button', { name: 'Stop listening', exact: true }).click();

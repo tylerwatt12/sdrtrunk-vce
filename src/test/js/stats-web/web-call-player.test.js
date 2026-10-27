@@ -967,6 +967,9 @@ async function main() {
     selectionWhilePaused.current = selectionWhilePaused.normalizeCall(overlap);
     selectionWhilePaused.currentBuffer = { duration: 20 };
     selectionWhilePaused.toggleHold();
+    const avoidedTargetReference = { kind: 'talkgroup', radio_system_key: 'p25:bee00:49f',
+      identity_key: 'v1-g-bee00-49f-1201' };
+    selectionWhilePaused.current.target_entity_ref = avoidedTargetReference;
     selectionWhilePaused.avoidCurrent();
     assert.equal(selectionWhilePaused.current, null);
     assert.equal(selectionWhilePaused.heldDisplayCall, null,
@@ -977,6 +980,8 @@ async function main() {
       'Display name can change');
     assert.equal([...selectionWhilePaused.avoids.values()][0].radio_system_key, 'p25:bee00:49f',
       'Avoid entries retain their exact system key for identity and removal');
+    assert.deepEqual([...selectionWhilePaused.avoids.values()][0].target_entity_ref, avoidedTargetReference,
+      'Avoid entries must retain the typed destination after the source call is cleared');
     selectionWhilePaused.setScanListSelected('1', false);
     assert.equal(selectionWhilePaused.stopped, false, 'Removing the last list must retain paused listening intent');
     assert.equal(selectionWhilePaused.paused, true);

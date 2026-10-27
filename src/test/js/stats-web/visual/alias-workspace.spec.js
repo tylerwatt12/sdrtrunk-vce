@@ -242,6 +242,9 @@ test('Discover links preserve canonical systems and promotion refreshes all alia
   const rows = page.locator('.observed-group-identity-row');
   for (const index of [0, 1]) {
     const link = rows.nth(index).getByRole('link', { name: 'Details', exact: true });
+    const identity = rows.nth(index).locator('.observed-group-identity-value strong a');
+    await expect(identity).toHaveText('1201');
+    await expect(identity).toHaveAttribute('href', await link.getAttribute('href'));
     const query = new URL(await link.getAttribute('href'), page.url()).searchParams;
     expect(query.get('view')).toBe('group-identity');
     expect(query.get('radio_system_key')).toBe(`p25:0000${index + 1}:00${index + 1}`);
@@ -292,10 +295,14 @@ test('Discover does not fabricate a destination for unresolved observations or b
     promotion_supported: true, logical_call_count: 1, entity_ref: null }] });
   const row = page.locator('.observed-group-identity-row');
   await expect(row).toContainText('Covered by range');
+  await expect(row.locator('.observed-group-identity-value strong')).toHaveText('77');
+  await expect(row.locator('.observed-group-identity-value a')).toHaveCount(0);
   await expect(row.getByRole('link', { name: 'Details', exact: true })).toHaveCount(0);
   await expect(row.getByRole('button', { name: 'Create Alias', exact: true })).toBeVisible();
   await expect(page.getByRole('dialog')).toHaveCount(0);
   await installEditor(page, 'list=1&aliasTab=discover', { radio: false });
   await expect(page.locator('.observed-group-identity-row')).toHaveCount(2);
   await expect(page.locator('.observed-group-identity-details')).toHaveCount(0);
+  await expect(page.locator('.observed-group-identity-value a')).toHaveCount(0);
+  await expect(page.locator('.observed-group-identity-value strong').first()).toHaveText('1201');
 });
