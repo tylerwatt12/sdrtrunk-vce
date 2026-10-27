@@ -1,4 +1,4 @@
-import { createApplicationLogWorkspace } from '../core/application-log.js?v=5';
+import { createApplicationLogWorkspace } from '../core/application-log.js?v=6';
 import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 
 const ROOT = '/api/v1/admin/web-diagnostic-log';

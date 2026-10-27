@@ -103,11 +103,11 @@ const behavior = vm.runInNewContext(`(() => {
   function entityRefHref(reference) { return reference?.href || ''; }
   function radioSystemContextLink() { return 'Receiving system'; }
   function liveIdentityActionLink(_row, _kind, label) { return label; }
-  function identitySummaryValue(primary, secondary, target) { return primary ? {primary, secondary, target} : ''; }
+  function identitySummaryValue(primary, secondary, target) { return primary ? {primary, secondary, target, dataset: {}} : ''; }
   function withDirectListenAction(value) { return value; }
   function keyValues(values) { return {values, classList: {add() {}}}; }
   function node(tag, className, textContent) {
-    return { tag, className, textContent, setAttribute() {} };
+    return { tag, className, textContent, dataset: {}, setAttribute() {} };
   }
   function radioLink(_row, value, label) { return { value, label }; }
   function groupIdentityLink(_row, value, label, reference) { return { value, label, reference }; }
@@ -289,6 +289,7 @@ assert.match(dockSource, /JSON\.stringify\(\[source, panel, getSourceNameDisplay
   'Changing the source name preference must invalidate an open audio detail or queue panel');
 
 const detailNode = (tag, className = '', initialText = '') => ({
+  dataset: {},
   nodeType: 1, tag, className, childNodes: [], ownText: initialText,
   append(...children) { this.childNodes.push(...children); },
   get children() { return this.childNodes.filter(child => child?.nodeType === 1); },

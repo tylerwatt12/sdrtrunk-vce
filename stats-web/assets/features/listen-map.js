@@ -208,10 +208,10 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   trailControl.append(trailSelect);
   const clearMap = node('button', 'ui-button ui-button-secondary', 'Clear map');
   clearMap.type = 'button';
-  clearMap.title = 'Hide tracks until selected, replotted, or updated';
+  clearMap.dataset.uiHint = 'Hide tracks until selected, replotted, or updated';
   const replotAll = node('button', 'ui-button ui-button-secondary', 'Replot all');
   replotAll.type = 'button';
-  replotAll.title = 'Show all tracks in this browser';
+  replotAll.dataset.uiHint = 'Show all tracks in this browser';
   mapActions.append(trailControl, clearMap, replotAll);
   mapTitle.append(mapActions);
   mapPanel.append(mapTitle);
@@ -250,7 +250,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   sidebarTitle.append(node('span', '', 'Tracks'));
   const removeAll = node('button', 'ui-button ui-button-danger-quiet', 'Remove all');
   removeAll.type = 'button';
-  removeAll.title = 'Remove tracks until their next location update';
+  removeAll.dataset.uiHint = 'Remove tracks until their next location update';
   sidebarTitle.append(removeAll);
   const catalogControls = node('div', 'listen-map-catalog-controls');
   const centerToggle = node('label', 'listen-map-center-toggle');
@@ -276,7 +276,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   centerSelected.type = 'button';
   const removeSelected = node('button', 'ui-button ui-button-danger-quiet', 'Remove');
   removeSelected.type = 'button';
-  removeSelected.title = 'Remove this track until its next location update';
+  removeSelected.dataset.uiHint = 'Remove this track until its next location update';
   selectedActions.append(follow, centerSelected, removeSelected);
   const details = node('div', 'listen-map-details');
   sidebar.append(sidebarTitle, catalogControls, list, selectedActions, details);
@@ -385,7 +385,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
       marker.setAttribute('aria-pressed', String(entity.id === selectedId));
       marker.dataset.entityId = entity.id;
       if (guideMode && entity.id === 'guide-map-patrol12') marker.dataset.guideTarget = 'map-select-radio';
-      marker.title = entity.label;
+      marker.dataset.uiHint = entity.label;
       marker.style.left = `${point.x}px`;
       marker.style.top = `${point.y}px`;
       const icon = document.createElement('img');
@@ -524,7 +524,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
       const latest = selected.positions.at(-1);
       const facts = node('dl', 'ui-facts listen-map-facts');
       const identifier = node('span', '', selected.identifier || '—');
-      if (selected.raw_identifier !== selected.identifier) identifier.title = selected.raw_identifier;
+      if (selected.raw_identifier !== selected.identifier) identifier.dataset.uiHint = selected.raw_identifier;
       for (const [label, value] of [
         ...mapSystemFacts(selected, radioSystemLink),
         ['Identifier', identifier],

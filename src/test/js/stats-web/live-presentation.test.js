@@ -419,7 +419,7 @@ assert.match(channels,
   /channels-tab-quality ui-quality-bars ui-quality-\$\{state\} ui-quality-level-\$\{level\}/,
   'The Live picker must keep decode-quality color and signal-strength bar count as separate cues');
 assert.match(channels,
-  /tab\.title = `\$\{label\} · \$\{operatingState\} · \$\{signalLabel\} · \$\{qualityLabel\}\$\{originSuffix\}`/,
+  /tab\.dataset\.uiHint = `\$\{label\} · \$\{operatingState\} · \$\{signalLabel\} · \$\{qualityLabel\}\$\{originSuffix\}`/,
   'Exact signal strength and decode quality must remain available as a pointer hint');
 assert.match(channels,
   /`Show live channels for \$\{label\}, \$\{operatingState\}, \$\{signalLabel\}, \$\{qualityLabel\}\$\{originSuffix\}`/,

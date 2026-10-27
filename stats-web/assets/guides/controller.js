@@ -1,4 +1,4 @@
-import { openSetupGuide } from '../core/setup-guide.js?v=22';
+import { openSetupGuide } from '../core/setup-guide.js?v=23';
 import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=36';
 import { createGuideMemory } from './persistence.js?v=2';
 

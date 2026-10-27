@@ -1,5 +1,5 @@
 import { systemLabel } from '../core/system-labels.js?v=2';
-import { recordingProtocolLabel, recordingCallTypeLabel } from './recordings.js?v=56';
+import { recordingProtocolLabel, recordingCallTypeLabel } from './recordings.js?v=57';
 
 // Relationships come from the receiver; playback uses the same player as Recordings and the audio dock.
 export function createCallRelations(deps) {
@@ -152,7 +152,7 @@ export function createCallRelations(deps) {
             const open = anchor(iconGlyph('icon-open-details'), href('recordings', { recording_queue: row.id }),
               'ui-button ui-button-secondary ui-icon-button');
             open.setAttribute('aria-label', 'Open in Recordings');
-            open.title = 'Open in Recordings';
+            open.dataset.uiHint = 'Open in Recordings';
             top.append(play, label, open);
             const transport = node('div', 'call-summary-transport');
             const seek = node('input', 'ui-range call-summary-seek');

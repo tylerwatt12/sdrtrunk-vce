@@ -147,7 +147,7 @@ for (const theme of ['light', 'dark']) {
     const summary = upNext.locator('summary');
     const teaser = upNext.locator('.scanner-up-next-preview');
     const list = upNext.locator('.scanner-up-next-list');
-    const queuedCalls = list.locator(':scope > li[title]');
+    const queuedCalls = list.locator(':scope > li[data-ui-hint]');
     for (const id of ['scanner-skip', 'scanner-replay', 'scanner-hold', 'scanner-stop',
       'scanner-avoid', 'scanner-clear-queue']) await expect(page.locator(`#${id}`)).toBeDisabled();
     await expect(page.locator('#scanner-player-menu')).toBeEnabled();
@@ -622,7 +622,7 @@ for (const [theme, viewport, mode] of [
           .filter({ has: page.getByText(label, { exact: true }) })
           .locator('.scanner-field-link, .scanner-field-value');
         await expect(detail).toHaveCSS('white-space', 'nowrap');
-        await expect(detail).toHaveAttribute('title', value);
+        await expect(detail).toHaveAttribute('data-ui-hint', value);
       }
     }
     await expect.poll(() => page.evaluate(() =>
@@ -652,7 +652,7 @@ for (const [theme, viewport, mode] of [
     await expect(display).not.toContainText(call.channel);
     await expect(display).not.toContainText('851.01250 MHz');
     await expect(display.locator('button:enabled, a[href]')).toHaveCount(0);
-    await expect(display.locator('.scanner-field-grid [title]')).toHaveCount(0);
+    await expect(display.locator('.scanner-field-grid [data-ui-hint]')).toHaveCount(0);
     await expect(display.locator('.scanner-group-value[aria-label]')).toHaveCount(0);
     const idle = await display.evaluate(element => {
       const host = element.getBoundingClientRect();

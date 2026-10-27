@@ -154,7 +154,7 @@ export function createAlertsWorkspace(deps) {
     const control = node('a', 'ui-button ui-button-secondary ui-icon-button');
     control.href = href('topics', { topic: topic.id });
     control.setAttribute('aria-label', label);
-    control.title = label;
+    control.dataset.uiHint = label;
     control.append(iconGlyph('icon-open-details'));
     return control;
   }

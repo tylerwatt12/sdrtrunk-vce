@@ -23,7 +23,7 @@ export async function mountAudioDockGallery(parameters) {
     const button = node('button', className);
     button.type = 'button';
     button.setAttribute('aria-label', label);
-    button.title = label;
+    button.dataset.uiHint = label;
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('aria-hidden', 'true');
     const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');

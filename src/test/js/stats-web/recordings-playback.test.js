@@ -30,6 +30,7 @@ class AudioFixture {
 class ElementFixture {
   constructor(tag, className, text) {
     this.tagName = tag;
+    this.dataset = {};
     this.className = className || '';
     this.classList = { add: (...names) => { this.className = [this.className, ...names].filter(Boolean).join(' '); } };
     this.textContent = text || '';

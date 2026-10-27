@@ -673,7 +673,7 @@ export function createStreamingWorkspace(deps) {
 
   const findFeedsAction = markGuide(button('Find Broadcastify feeds', () => perform(findFeeds)), 'feeds-button');
   findFeedsAction.disabled = !radioReferenceAllowed;
-  if (!radioReferenceAllowed) findFeedsAction.title = 'RadioReference settings access is required.';
+  if (!radioReferenceAllowed) findFeedsAction.dataset.uiHint = 'RadioReference settings access is required.';
   const addAction = markGuide(button('Add destination', () => perform(() => openEditor()), true), 'add-button');
   actions.append(findFeedsAction, addAction);
   toolbar.append(summary, actions);

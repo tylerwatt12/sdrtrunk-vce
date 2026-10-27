@@ -106,7 +106,7 @@ test('account cards preserve usernames, access levels, timestamps, primary restr
   await expect(page.locator('.admin-accounts-toolbar')).toContainText('2 managed accounts');
   await expect(page.getByRole('button', { name: 'Create account', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Create account', exact: true }))
-    .toHaveAttribute('title', 'Account limit reached (2).');
+    .toHaveAttribute('data-ui-hint', 'Account limit reached (2).');
   await expect(page.getByRole('link', { name: 'Manage page access' })).toHaveAttribute('href', /tab=access/);
   await expect(page.locator('.admin-settings-content table')).toHaveCount(0);
 });

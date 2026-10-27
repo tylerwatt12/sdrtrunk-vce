@@ -1056,7 +1056,7 @@ async function main() {
   assert.match(resizerSource, /window\.addEventListener\('blur', cancel/);
   assert.match(resizerSource, /finally \{\s+endLayoutMutation\(\)/);
   class ResizeTarget {
-    constructor() { this.listeners = new Map(); }
+    constructor() { this.listeners = new Map(); this.dataset = {}; }
     addEventListener(type, listener) {
       if (!this.listeners.has(type)) this.listeners.set(type, new Set());
       this.listeners.get(type).add(listener);
@@ -1822,10 +1822,10 @@ async function main() {
   assert.match(scannerCallRenderer, /scanner-quality-value[\s\S]*scannerVoiceMeter\(call\)/,
     'The listening stage must pair numeric voice quality with its meter');
   assert.match(scannerCallRenderer,
-    /detailMode === 'normal'[\s\S]*ui-text-truncate[\s\S]*value\.title = value\.textContent/,
-    'Normal metadata truncation must preserve the full channel and scan-list text in a title');
+    /detailMode === 'normal'[\s\S]*ui-text-truncate[\s\S]*value\.dataset\.uiHint = value\.textContent/,
+    'Normal metadata truncation must preserve the full channel and scan-list text in a shared tooltip');
   assert.match(scannerCallRenderer,
-    /values\.forEach\(\(value\) => \{\s*value\.removeAttribute\('title'\)/,
+    /values\.forEach\(\(value\) => \{\s*value\.removeAttribute\('data-ui-hint'\)/,
     'Idle call placeholders must clear retained metadata tooltips');
   assert.match(scannerCallRenderer,
     /scanner-group-value[^;]*removeAttribute\('aria-label'\)/,

@@ -569,7 +569,7 @@ export function createRecordingsFeature(deps) {
       const values = Object.fromEntries(Object.entries({ ...currentFilters, ...match.filters,
         sort: sortControl?.value || 'desc', recording_filters: '1' }).filter(([, item]) => item !== ''));
       const link = anchor(String(text), href('recordings', values));
-      link.title = `Filter recordings by ${filterLabel}`;
+      link.dataset.uiHint = `Filter recordings by ${filterLabel}`;
       link.addEventListener('click', (event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
@@ -1507,7 +1507,7 @@ export function createRecordingsFeature(deps) {
     const card = node('article', 'recordings-call ui-surface ui-surface-soft'); card.dataset.recordingId = String(row.id);
     const action = (icon, glyph, labelText, hint, perform, className) => {
       const control = iconButton ? iconButton(icon, labelText, className) : button(node, glyph, null, className);
-      control.setAttribute('aria-label', labelText); control.title = hint; control.addEventListener('click', perform); return control;
+      control.setAttribute('aria-label', labelText); control.dataset.uiHint = hint; control.addEventListener('click', perform); return control;
     };
     const description = `${label(row)} at ${dateTime(millis(row))}`;
     card.setAttribute('aria-label', description);
@@ -1520,7 +1520,7 @@ export function createRecordingsFeature(deps) {
       info.dataset.guideTarget = 'rec-actions-button';
     }
     const head = node('div', 'recordings-call-head');
-    const time = node('div', 'recordings-call-time'); time.title = dateTime(millis(row)); time.append(node('strong', '', timeOnly(millis(row))));
+    const time = node('div', 'recordings-call-time'); time.dataset.uiHint = dateTime(millis(row)); time.append(node('strong', '', timeOnly(millis(row))));
     const groupId = value(row, 'talkgroup_id', 'group_id');
     const hasGroup = recordingHasTalkgroup(row);
     const conventional = !hasGroup && value(row, 'destination_radio_id') === null;
@@ -1587,7 +1587,7 @@ export function createRecordingsFeature(deps) {
       if (active) card.setAttribute('aria-current', 'true'); else card.removeAttribute('aria-current');
       card.setAttribute('aria-busy', String(Boolean(active && snapshot.loading)));
       const play = card.querySelector('.recordings-card-play');
-      if (play) play.title = { once: 'Play once', continue: 'Continue from here', queue: 'Queue and play' }[clickMode];
+      if (play) play.dataset.uiHint = { once: 'Play once', continue: 'Continue from here', queue: 'Queue and play' }[clickMode];
       if (status) { status.textContent = text; status.hidden = !text; }
     });
   }
@@ -1716,8 +1716,7 @@ export function createRecordingsFeature(deps) {
         node('span', 'recordings-filter-chip-state', pending ? 'Remove on search · Undo' : '×'));
       remove.setAttribute('aria-label', pending ? `Undo removal of ${chip.text} filter` : `Remove ${chip.text} filter`);
       remove.setAttribute('aria-pressed', String(pending));
-      remove.title = `${chip.text} · ${pending ? 'Undo removal · applies on next search' : 'Remove on next search'}`;
-      remove.dataset.uiHint = remove.title;
+      remove.dataset.uiHint = `${chip.text} · ${pending ? 'Undo removal · applies on next search' : 'Remove on next search'}`;
       selectedFiltersHost.append(remove);
     }
   }
@@ -1831,8 +1830,8 @@ export function createRecordingsFeature(deps) {
             const label = recordingGapLabel(gap);
             const divider = node('div', 'recordings-call-gap');
             divider.setAttribute('role', 'separator');
-            divider.title = `Gap between matching calls: ${label}`;
-            divider.setAttribute('aria-label', divider.title);
+            divider.dataset.uiHint = `Gap between matching calls: ${label}`;
+            divider.setAttribute('aria-label', divider.dataset.uiHint);
             divider.append(node('span', 'recordings-call-gap-label', `Gap ${label}`));
             resultHost.append(divider);
           }

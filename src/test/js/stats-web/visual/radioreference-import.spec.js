@@ -1493,11 +1493,11 @@ test('comparison reuses the source catalog and Different shows only incoming fie
   await expect(row).not.toContainText('Operations');
   await expect(row.getByText('Changed', { exact: true })).toHaveCount(3);
   await expect(row.locator('td[data-label="Alpha tag"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
-    .toHaveAttribute('title', 'Alpha tag: Fireground Two → Fireground 2');
+    .toHaveAttribute('data-ui-hint', 'Alpha tag: Fireground Two → Fireground 2');
   await expect(row.locator('td[data-label="Description"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
-    .toHaveAttribute('title', 'Description: Local fireground description → Fireground operations');
+    .toHaveAttribute('data-ui-hint', 'Description: Local fireground description → Fireground operations');
   await expect(row.locator('td[data-label="Category"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
-    .toHaveAttribute('title', 'Category: Operations → Fire');
+    .toHaveAttribute('data-ui-hint', 'Category: Operations → Fire');
   await expect(row.locator('td[data-label="Import status"]')).toHaveText('Different');
   await row.getByRole('checkbox', { name: 'Select Fireground 2', exact: true }).check();
   await page.getByRole('button', { name: 'Import selected', exact: true }).click();
@@ -1520,9 +1520,9 @@ test(`Different highlights only changed imported fields and reveals visually equ
   await expect(row.locator('td[data-label="Alpha tag"]').getByText('Changed', { exact: true })).toHaveCount(0);
   await expect(row.getByText('Changed', { exact: true })).toHaveCount(2);
   await expect(row.locator('td[data-label="Description"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
-    .toHaveAttribute('title', 'Description: "County␠␠fire" → "County␠fire"');
+    .toHaveAttribute('data-ui-hint', 'Description: "County␠␠fire" → "County␠fire"');
   await expect(row.locator('td[data-label="Category"]').locator('.ui-pill').filter({ hasText: /^Changed$/ }))
-    .toHaveAttribute('title', 'Category: "Fire\\u00a0" → "Fire"');
+    .toHaveAttribute('data-ui-hint', 'Category: "Fire\\u00a0" → "Fire"');
   await expect(row.locator('td[data-label="Import status"]')).toHaveText('Different');
   await expect(row.locator('td[data-label="Description"]')).toContainText('"County␠fire"');
   await expect(row.locator('td[data-label="Category"]')).toContainText('"Fire"');

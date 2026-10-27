@@ -39,7 +39,7 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
       const control = node('button', className);
       control.type = 'button';
       control.setAttribute('aria-label', label);
-      control.title = label;
+      control.dataset.uiHint = label;
       control.append(iconGlyph(iconId));
       return control;
     };

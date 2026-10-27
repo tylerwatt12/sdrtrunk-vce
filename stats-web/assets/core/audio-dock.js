@@ -84,7 +84,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   const setLabel = (button, label, icon) => {
     button.setAttribute('aria-label', label);
-    button.title = label;
+    button.dataset.uiHint = label;
     if (icon) button.querySelector('use')?.setAttribute('href', `#icon-${icon}`);
   };
   const state = () => source === 'live' ? liveState : recordingState;
@@ -408,7 +408,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   const hide = iconButton('icon-close', 'Minimize player to header',
     'ui-disclosure-button ui-icon-button ui-audio-dismiss');
-  hide.title = 'Minimize player to header';
+  hide.dataset.uiHint = 'Minimize player to header';
   hide.id = 'audio-dock-hide';
   hide.dataset.guideTarget = 'player-hide';
   hide.setAttribute('aria-controls', presentation.id);
@@ -506,7 +506,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   slimCopy.append(slimWave, collapsedTitle, collapsedMeta);
   const slimPlay = command('Play audio', 'play', toggle, true);
   const slimHide = iconButton('icon-close', 'Minimize player to header', 'ui-disclosure-button ui-icon-button');
-  slimHide.id = 'audio-dock-slim-hide'; slimHide.title = 'Minimize player to header';
+  slimHide.id = 'audio-dock-slim-hide'; slimHide.dataset.uiHint = 'Minimize player to header';
   slimHide.setAttribute('aria-controls', presentation.id);
   slimHide.addEventListener('click', () => setSuperCollapsed(true));
   const slimExpand = iconButton('icon-maximize-corners', 'Expand player', 'ui-disclosure-button ui-icon-button ui-audio-size-action');
@@ -523,10 +523,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const callContext = node('div', 'audio-dock-call-context');
   const age = node('span', 'ui-muted ui-label'); age.id = 'audio-dock-call-age';
   const transcriptButton = iconButton('icon-messages', 'Transcript', 'ui-disclosure-button ui-icon-button ui-audio-transcript-action');
-  transcriptButton.id = 'audio-dock-call-transcript'; transcriptButton.title = 'Transcript';
+  transcriptButton.id = 'audio-dock-call-transcript'; transcriptButton.dataset.uiHint = 'Transcript';
   transcriptButton.addEventListener('click', () => openPanel('transcript', transcriptButton));
   const detailsButton = iconButton('icon-info-circle', 'Call details', 'ui-disclosure-button ui-icon-button ui-audio-info-action');
-  detailsButton.id = 'audio-dock-call-details'; detailsButton.title = 'Call details';
+  detailsButton.id = 'audio-dock-call-details'; detailsButton.dataset.uiHint = 'Call details';
   detailsButton.addEventListener('click', () => openPanel('details', detailsButton));
   callContext.append(age, transcriptButton, detailsButton); listeningStatus.append(status, callContext);
   const identity = node('div', 'audio-dock-identity');
@@ -883,8 +883,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const calls = queueRows(); const next = calls[0];
     const summary = `${queueCount()} queued`;
     sidebarCount.textContent = teaserCount.textContent = summary;
-    count.replaceChildren(document.createTextNode(summary)); appendIcon(count, 'chevron-right'); count.title = `${queueCount()} calls queued`;
-    teaser.title = `${queueCount()} calls queued`; nextTitle.textContent = next ? title(next) : 'Nothing queued';
+    count.replaceChildren(document.createTextNode(summary)); appendIcon(count, 'chevron-right'); count.dataset.uiHint = `${queueCount()} calls queued`;
+    teaser.dataset.uiHint = `${queueCount()} calls queued`; nextTitle.textContent = next ? title(next) : 'Nothing queued';
     nextSubtitle.textContent = next ? [sourceName(next), next.duration_ms ? `${Number(next.duration_ms) / 1000}s` : ''].filter(Boolean).join(' · ') : 'Choose a call to listen';
     clearQueue.disabled = !isAllowed() || !queueCount() && !state().continuation;
     sidebarClickMode.hidden = source !== 'recordings';
@@ -994,7 +994,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
             systemIdentity(target.radio_system_key);
         const identity = target.identity_key ? `${target.identity_key.startsWith('v1-p-') ? 'Patch' : 'TG'} ${target.identity_key.split('-').at(-1)}` : '';
         const detail = node('span', 'ui-muted ui-label', [item.context || scope, identity].filter(Boolean).join(' · '));
-        detail.title = [scope, identity].filter(Boolean).join(' · ');
+        detail.dataset.uiHint = [scope, identity].filter(Boolean).join(' · ');
         copy.append(detail);
         const remove = command(`Remove ${item.label || 'target'} from Direct Listen`, 'close', () => {
           const index = direct.targets.findIndex(target => target.key === item.key);
@@ -1186,13 +1186,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (dock.hidden || size === 'collapsed') focusedSourceControl = null;
     handle.setAttribute('aria-expanded', String(presentationSize !== 'collapsed'));
     sizeHint.textContent = `${{ collapsed: 'Collapsed player', minimal: 'Compact player', full: 'Expanded player' }[size]}. Drag up or down, or click to change player size.`;
-    handle.title = sizeHint.textContent;
+    handle.dataset.uiHint = sizeHint.textContent;
     const call = current(), active = state(), name = String(title(call));
     compactTitle.textContent = collapsedTitle.textContent = nowTitle.textContent = name;
-    compactTitle.title = collapsedTitle.title = nowTitle.title = name;
+    compactTitle.dataset.uiHint = collapsedTitle.dataset.uiHint = nowTitle.dataset.uiHint = name;
     collapsedMeta.textContent = `${source === 'live' ? 'Live' : 'Recording'} · ${queueCount()} queued`;
     compactSubtitle.textContent = subtitle(call) || (source === 'live' ? 'Select a List to listen' : 'Choose a recording to play');
-    compactSubtitle.title = [sourceSummary(call), call?.channel || call?.channel_name].filter(Boolean).join(' · ') || compactSubtitle.textContent;
+    compactSubtitle.dataset.uiHint = [sourceSummary(call), call?.channel || call?.channel_name].filter(Boolean).join(' · ') || compactSubtitle.textContent;
     Object.entries(sourceOptions).forEach(([value, option]) => { option.disabled = !permissions[value]; });
     const sourceLabel = source === 'live' ? 'Live' : 'Recordings'; currentSourceChoice.textContent = sourceLabel;
     if (sourcePicker.value !== '') sourcePicker.value = ''; sourcePicker.disabled = !permissions.live && !permissions.recordings;
@@ -1208,7 +1208,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     nowDescription.textContent = description(call); nowDescription.hidden = !nowDescription.textContent;
     nowSystem.textContent = call ? [systemLabel(call), call.channel_name || call.channel].filter(Boolean).join(' · ') : (live ? 'Select a List to start listening' : 'Choose a recording to play');
     transmittingName.textContent = sourceName(call) || '—'; targetGroup.textContent = call?.target_group || call?.group_name || ''; targetGroup.hidden = !targetGroup.textContent;
-    transmittingName.title = sourceSummary(call) || transmittingName.textContent;
+    transmittingName.dataset.uiHint = sourceSummary(call) || transmittingName.textContent;
     transmitting.hidden = false;
     technical.replaceChildren();
     [Number(call?.frequency_hz) > 0 ? `${(Number(call.frequency_hz) / 1e6).toFixed(5)} MHz` : '', call?.site,
@@ -1226,7 +1226,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       (active.stopped ? 'Stopped' : active.loading ? 'Loading' : playing ? 'Listening' : 'Ready');
     if (status.textContent !== statusLabel) status.textContent = statusLabel;
     status.classList.toggle('ui-pill-success', playing && ['Listening', 'Holding', 'Replaying last call'].includes(statusLabel));
-    status.title = engineStatus || statusLabel;
+    status.dataset.uiHint = engineStatus || statusLabel;
     const ordinary = !engineStatus || Boolean(shortStatus) || engineStatus === statusLabel ||
       ['listening', 'paused', 'stopped', 'playing recording', 'ready to play', 'ready', 'playback finished',
         'choose a recording to play'].includes(ordinaryStatus) || /^paused\s*[—·-]/i.test(engineStatus);

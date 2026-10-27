@@ -28,6 +28,7 @@ function functionSource(signature) {
 class RuntimeNode {
   constructor(tag = 'div', className = '', text = '') {
     this.tag = tag;
+    this.dataset = {};
     this.className = className;
     this.classList = {
       contains: (value) => this.className.split(/\s+/).includes(value),
@@ -93,12 +94,12 @@ const context = {
   iconButton: (_iconId, label, className = '') => {
     const button = new RuntimeNode('button', className);
     button.type = 'button';
-    button.title = label;
+    button.dataset.uiHint = label;
     button.setAttribute('aria-label', label);
     return button;
   },
   setIconButton: (button, _iconId, label) => {
-    button.title = label;
+    button.dataset.uiHint = label;
     button.setAttribute('aria-label', label);
   },
   openReadOnlyModal: (_title, body, options) => {
@@ -272,12 +273,12 @@ const rootChildren = findAll(rootBranch,
 assert.equal(rootDisclosure.attributes.get('aria-expanded'), 'true');
 assert.equal(rootDisclosure.attributes.get('aria-controls'), rootChildren.id);
 assert.equal(rootDisclosure.attributes.get('aria-label'), 'Collapse P25 Phase 1 Messages');
-assert.equal(rootDisclosure.title, 'Collapse P25 Phase 1 Messages');
+assert.equal(rootDisclosure.dataset.uiHint, 'Collapse P25 Phase 1 Messages');
 assert.equal(rootChildren.hidden, false);
 rootDisclosure.dispatch('click');
 assert.equal(rootDisclosure.attributes.get('aria-expanded'), 'false');
 assert.equal(rootDisclosure.attributes.get('aria-label'), 'Expand P25 Phase 1 Messages');
-assert.equal(rootDisclosure.title, 'Expand P25 Phase 1 Messages');
+assert.equal(rootDisclosure.dataset.uiHint, 'Expand P25 Phase 1 Messages');
 assert.equal(rootChildren.hidden, true);
 const rootInput = findAll(rootBranch, (candidate) => candidate.tag === 'input')[0];
 const rootCount = findAll(rootBranch,

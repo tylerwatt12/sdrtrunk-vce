@@ -75,7 +75,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await page.getByRole('checkbox', { name: 'Show Receiver column', exact: true }).check();
     await page.keyboard.press('Escape');
     await expect(cell(app.row, 'receiver')).toHaveText('North antenna');
-    await expect(cell(app.row, 'receiver')).toHaveAttribute('title', 'receiver-a');
+    await expect(cell(app.row, 'receiver')).toHaveAttribute('data-ui-hint', 'receiver-a');
     expect(app.writes.at(-1).tables['live-channels'].hidden_columns).not.toContain('receiver');
     const update = (revision, receiver) => page.evaluate(({ revision, row, tableId }) =>
       window.fixtureSendLiveFrame(1, 'activity_batch', { base_revision: revision - 1, revision,
@@ -83,12 +83,12 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     { revision, tableId: channelId, row: { ...baseRow, ...receiver } });
     await update(2, { receiver_id: 'receiver-b', receiver_nickname: 'South antenna' });
     await expect(cell(app.row, 'receiver')).toHaveText('South antenna');
-    await expect(cell(app.row, 'receiver')).toHaveAttribute('title', 'receiver-b');
+    await expect(cell(app.row, 'receiver')).toHaveAttribute('data-ui-hint', 'receiver-b');
     await update(3, { receiver_id: 'receiver-b' });
     await expect(cell(app.row, 'receiver')).toHaveText('receiver-b');
     await update(4, {});
     await expect(cell(app.row, 'receiver')).toHaveText('—');
-    await expect(cell(app.row, 'receiver')).not.toHaveAttribute('title');
+    await expect(cell(app.row, 'receiver')).not.toHaveAttribute('data-ui-hint');
     await expectNoHorizontalOverflow(page);
     expectClean(app.fixture);
     if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR,

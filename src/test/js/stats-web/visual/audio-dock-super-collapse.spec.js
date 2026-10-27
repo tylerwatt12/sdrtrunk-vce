@@ -67,7 +67,7 @@ async function expectExpandedCloseControl(page) {
   await expect(hide(page)).toHaveText('');
   await expect(hide(page)).toHaveAttribute('aria-expanded', 'true');
   await expect(hide(page)).toHaveAttribute('aria-controls', 'audio-dock-presentation');
-  await expect.poll(() => hide(page).evaluate((element) => element.dataset.uiHint || element.title))
+  await expect.poll(() => hide(page).evaluate((element) => element.dataset.uiHint))
     .toBe('Minimize player to header');
   await expect(hide(page).locator('svg')).toHaveAttribute('aria-hidden', 'true');
   await expect(hide(page).locator('use')).toHaveAttribute('href', '#icon-close');

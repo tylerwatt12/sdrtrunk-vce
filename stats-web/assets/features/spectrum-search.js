@@ -659,7 +659,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const labels = selectedBandLabels();
       bandSummary.textContent = labels.length <= 2 ? labels.join(', ') || 'Choose bands' :
         `${labels.slice(0, 2).join(', ')} +${labels.length - 2}`;
-      bandTrigger.title = labels.join(', ');
+      bandTrigger.dataset.uiHint = labels.join(', ');
       const invalid = configuredRangeFailures();
       coverageNotice.hidden = !invalid.length;
       coverageNotice.replaceChildren();

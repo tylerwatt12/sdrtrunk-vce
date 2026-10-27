@@ -222,8 +222,8 @@ async function siteBandPlanChecks() {
   assert.equal(siteLink.textContent, channel.name);
   assert.equal(new URL(siteLink.href, 'https://fixture.invalid').searchParams.get('configuration_id'), configurationId,
     'Heard On must link to the exact observed site entity.');
-  assert.match(heardOn.title, /RFSS 01 · Site 07/);
-  assert.match(heardOn.title, /different long broadcast site name/);
+  assert.match(heardOn.dataset.uiHint, /RFSS 01 · Site 07/);
+  assert.match(heardOn.dataset.uiHint, /different long broadcast site name/);
   assert.equal(descendant(behavior.issiObservedOnCell({ observed_on: { ...channel } }), 'a'), null,
     'A matching site name without a typed entity reference must not manufacture a link.');
   mayViewRadio = false;
@@ -341,7 +341,7 @@ async function main() {
     entityRefHref: reference => reference?.href || '',
     entityTarget: reference => reference?.href || '', radioDisplayId: row => row.native_id,
     radioIdentifierText: (_row, id) => id == null ? '' : String(id), specialIdentifierLabel: () => '',
-    identitySummaryValue: (primary, secondary, target) => ({primary,secondary,target}),
+    identitySummaryValue: (primary, secondary, target) => ({primary,secondary,target,dataset:{}}),
     systemLabels: { systemName: () => '', homeSystemName: (row, prefix = '') =>
       row?.[`${prefix ? `${prefix}_` : ''}home_system_name`] || '' },
     hex: (value, width) => Number(value).toString(16).toUpperCase().padStart(width, '0'),
@@ -492,7 +492,7 @@ async function main() {
   const named = behavior.issiSubscriberCell({canonical_identity:canonical,alias_name:'Engine 4'});
   assert.equal(named.primary, 'Engine 4');
   assert.equal(named.secondary, '34006', 'Home identity has its own column, so the Radio cell needs only its number.');
-  assert.match(named.title, /34006/, 'The full address remains available on the cell.');
+  assert.match(named.dataset.uiHint, /34006/, 'The full address remains available on the cell.');
   const unnamed = behavior.issiSubscriberCell({canonical_identity:canonical});
   assert.equal(unnamed.primary, '34006');
   assert.equal(unnamed.secondary, '');

@@ -1055,7 +1055,7 @@ test('card play immediately obeys the player preference for queue, once, and con
   const state = await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18, start_ms: call.start_ms + 60_000 }] });
   const cards = page.locator('.recordings-call');
   const dock = page.locator('#audio-dock');
-  await expect(cards.first().locator('.recordings-card-play')).toHaveAttribute('title', 'Queue and play');
+  await expect(cards.first().locator('.recordings-card-play')).toHaveAttribute('data-ui-hint', 'Queue and play');
   await cards.first().locator('.recordings-card-play').click();
   await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
   await expect(cards.first()).toHaveClass(/recordings-call-playing/);

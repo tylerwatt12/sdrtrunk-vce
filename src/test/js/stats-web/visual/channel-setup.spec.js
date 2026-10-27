@@ -522,7 +522,7 @@ test('bulk Clone is unavailable whenever the selection includes a remote channel
   await expect(clone).toBeEnabled();
   await page.getByRole('checkbox', { name: 'Select Remote Control' }).check();
   await expect(clone).toBeDisabled();
-  await expect(clone).toHaveAttribute('title', 'Remote channels cannot be cloned.');
+  await expect(clone).toHaveAttribute('data-ui-hint', 'Remote channels cannot be cloned.');
 
   await page.getByRole('searchbox', { name: 'Search channels, systems, protocols, frequencies, or alias lists' })
     .fill('Local Control');

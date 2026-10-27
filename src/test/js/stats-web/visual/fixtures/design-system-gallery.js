@@ -158,7 +158,7 @@ function initializeGuidanceTable() {
       handle.setAttribute('aria-valuemin', String(tableLayouts.MINIMUM_WIDTH));
       handle.setAttribute('aria-valuemax', String(tableLayouts.MAXIMUM_WIDTH));
       handle.setAttribute('aria-valuenow', String(widths[index]));
-      handle.title = 'Drag to resize.';
+      handle.dataset.uiHint = 'Drag to resize.';
       const saveWidth = (width) => apply(tableLayouts.resize(layout, column.id, Math.round(width)));
       handle.addEventListener('keydown', (event) => {
         if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
@@ -228,7 +228,7 @@ function initializeGuidanceTable() {
     trigger.className = 'ui-button ui-button-secondary ui-button-compact table-layout-trigger';
     trigger.type = 'button';
     trigger.setAttribute('aria-label', 'Choose table columns');
-    trigger.title = 'Choose table columns';
+    trigger.dataset.uiHint = 'Choose table columns';
     const panelId = 'visual-guidance-table-layout';
     trigger.setAttribute('popovertarget', panelId);
     trigger.setAttribute('aria-haspopup', 'dialog');
@@ -371,10 +371,10 @@ function initializeScanListCatalog() {
     deleteButton.setAttribute('aria-label', `Delete ${name}`);
     if(isDefault) {
       deleteButton.setAttribute('aria-disabled', 'true');
-      deleteButton.title = 'Choose another default scan list before deleting this one';
+      deleteButton.dataset.uiHint = 'Choose another default scan list before deleting this one';
     } else {
       deleteButton.removeAttribute('aria-disabled');
-      deleteButton.removeAttribute('title');
+      deleteButton.removeAttribute('data-ui-hint');
     }
   };
   const draw = () => {
@@ -1095,7 +1095,7 @@ if (view === 'table-overflow') {
     button.type = 'button';
     button.className = className;
     button.setAttribute('aria-label', text);
-    button.title = text;
+    button.dataset.uiHint = text;
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     icon.setAttribute('aria-hidden', 'true');
     const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
@@ -1499,7 +1499,7 @@ if (view === 'activity-filters' || view === 'scanner') {
         .map(element => ({ element, height: element.getBoundingClientRect().height }))
         .forEach(({ element, height: elementHeight }) => { element.style.minHeight = `${elementHeight}px`; });
       values.forEach(value => {
-        value.removeAttribute('title');
+        value.removeAttribute('data-ui-hint');
         if (value.classList.contains('scanner-group-value')) value.removeAttribute('aria-label');
         value.textContent = value.classList.contains('scanner-call-title') ? 'Waiting for a call' : '—';
       });
@@ -1568,7 +1568,7 @@ document.querySelectorAll('.live-filter-expand').forEach((button) => {
     const label = `${opening ? 'Collapse' : 'Expand'} ${noun}`;
     button.setAttribute('aria-expanded', String(opening));
     button.setAttribute('aria-label', label);
-    button.title = label;
+    button.dataset.uiHint = label;
     const children = document.getElementById(button.getAttribute('aria-controls'));
     if (children) children.hidden = !opening;
   });
@@ -1609,7 +1609,7 @@ if(view === 'live-notice') {
     collapse.setAttribute('aria-expanded', String(!collapsed));
     const label = collapsed ? 'Expand live view picker' : 'Collapse live view picker';
     collapse.setAttribute('aria-label', label);
-    collapse.title = label;
+    collapse.dataset.uiHint = label;
   });
   const workspace = split?.querySelector('.live-right-workspace');
   const resizer = workspace?.querySelector('.live-workspace-resizer');
@@ -1690,7 +1690,7 @@ if(view === 'live-notice') {
       detailsCollapse.setAttribute('aria-expanded', String(!collapsed));
       const label = collapsed ? 'Expand live details' : 'Collapse live details';
       detailsCollapse.setAttribute('aria-label', label);
-      detailsCollapse.title = label;
+      detailsCollapse.dataset.uiHint = label;
       detailsCollapseIcon?.setAttribute('href', collapsed ? '#visual-icon-arrow-up' :
         '#visual-icon-arrow-down');
     }
@@ -1714,7 +1714,7 @@ if(view === 'live-notice') {
     detailsPause.setAttribute('aria-pressed', String(paused));
     const label = paused ? 'Resume live details' : 'Pause live details';
     detailsPause.setAttribute('aria-label', label);
-    detailsPause.title = label;
+    detailsPause.dataset.uiHint = label;
     detailsPauseIcon?.setAttribute('href', paused ? '#visual-icon-play' : '#visual-icon-pause');
   });
   if(window.matchMedia('(max-width: 760px)').matches) setDetailsCollapsed(true);
@@ -1728,7 +1728,7 @@ if(view === 'tuner-spectrum') {
   const syncSpectrumOptionsLabel = () => {
     const text = compactSpectrum.matches ? 'More spectrum actions' : 'Display options';
     spectrumOptions?.setAttribute('aria-label', text);
-    if(spectrumOptions) spectrumOptions.title = text;
+    if(spectrumOptions) spectrumOptions.dataset.uiHint = text;
   };
   syncSpectrumOptionsLabel();
   compactSpectrum.addEventListener('change', syncSpectrumOptionsLabel);

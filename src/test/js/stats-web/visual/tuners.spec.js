@@ -345,7 +345,7 @@ test('receiver nickname is the primary name on a phone while hardware remains id
   await expect(page.locator('.tuners-detail-identity h2')).toHaveText('North antenna');
   await expect(page.locator('.tuners-detail-name > span')).toHaveText('Airspy R2');
   await expect(page.locator('.tuners-list-item-name')).toHaveText('North antenna');
-  await expect(page.locator('.tuners-list-item')).toHaveAttribute('title', 'Airspy R2');
+  await expect(page.locator('.tuners-list-item')).toHaveAttribute('data-ui-hint', 'Airspy R2');
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
 });
 
@@ -384,7 +384,7 @@ test('embedded signal view reuses cursor and zoom with HiRes and LoRes controls'
   await expect(quality).toHaveAttribute('aria-label', 'Signal detail');
   await expect(hiRes).toHaveAttribute('aria-pressed', 'false');
   await expect(loRes).toHaveAttribute('aria-pressed', 'true');
-  await expect(hiRes).toHaveAttribute('title', 'Sharper signal display; uses more CPU');
+  await expect(hiRes).toHaveAttribute('data-ui-hint', 'Sharper signal display; uses more CPU');
   await hiRes.click();
   await expect(hiRes).toHaveAttribute('aria-pressed', 'true');
   await expect(loRes).toHaveAttribute('aria-pressed', 'false');
@@ -900,7 +900,7 @@ test('segmented Setup mode stops channels once and offers one restore attempt', 
   const setup = mode.getByRole('button', { name: 'Setup' });
   await expect(setup).toBeVisible();
   await expect(mode.getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(setup).toHaveAttribute('title', 'Keep tuner on for adjustments; active channels stop');
+  await expect(setup).toHaveAttribute('data-ui-hint', 'Keep tuner on for adjustments; active channels stop');
   await setup.click();
   const stop = page.getByRole('dialog', { name: 'Enter Setup' });
   await expect(stop).toContainText('2 active channels will stop');
@@ -971,7 +971,7 @@ test('segmented Setup mode starts a disabled tuner and prompts for stopped chann
   const mode = page.getByRole('group', { name: 'Tuner mode' });
   await expect(mode.getByRole('button', { name: 'Disabled' })).toHaveAttribute('aria-pressed', 'true');
   await expect(mode.getByRole('button', { name: 'Live' })).toHaveAttribute('aria-disabled', 'true');
-  await expect(mode.getByRole('button', { name: 'Live' })).toHaveAttribute('title', 'Start Setup first');
+  await expect(mode.getByRole('button', { name: 'Live' })).toHaveAttribute('data-ui-hint', 'Start Setup first');
   await mode.getByRole('button', { name: 'Setup' }).click();
   await expect(page.getByRole('dialog', { name: 'Resume previous channels' })).toBeVisible();
   await expect(page.getByText('1 channel stopped when this tuner entered Setup')).toBeVisible();

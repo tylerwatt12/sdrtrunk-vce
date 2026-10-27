@@ -14,12 +14,12 @@ import { directListenEntryTarget } from './core/direct-listen-entry.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
-import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=6';
+import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=7';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=39';
+import { createGuideController } from './guides/controller.js?v=40';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -40,18 +40,18 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=59';
+import { createRecordingsFeature } from './features/recordings.js?v=60';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=17';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=38';
+import { createAudioDock } from './core/audio-dock.js?v=39';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=22';
+import { WebCallPlayer } from './web-call-player.js?v=23';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -542,7 +542,7 @@ function iconGlyph(id) {
 function setIconButton(button, iconId, label) {
   button.replaceChildren(iconGlyph(iconId));
   button.setAttribute('aria-label', label);
-  button.title = label;
+  button.dataset.uiHint = label;
   return button;
 }
 
@@ -670,7 +670,7 @@ function updateThemeButton(toggle, theme) {
   const dark = theme === 'dark';
   toggle.setAttribute('aria-pressed', String(dark));
   toggle.setAttribute('aria-label', `Use ${dark ? 'light' : 'dark'} theme`);
-  toggle.title = `Use ${dark ? 'light' : 'dark'} theme`;
+  toggle.dataset.uiHint = `Use ${dark ? 'light' : 'dark'} theme`;
   const use = toggle.querySelector('use');
   if (use) use.setAttribute('href', dark ? '#icon-sun' : '#icon-moon');
 }
@@ -814,7 +814,7 @@ function updateNavigationAccess() {
     if (lock) lock.toggleAttribute('hidden', !locked);
     const label = link.querySelector('.ui-navigation-label')?.textContent?.trim() || routeViewLabel(link.dataset.view);
     link.setAttribute('aria-describedby', `nav-${link.dataset.view}-description${locked ? ` nav-${link.dataset.view}-access` : ''}`);
-    link.title = locked ? `${label}: access required` : '';
+    link.dataset.uiHint = locked ? `${label}: access required` : '';
   });
   document.querySelectorAll('.primary-nav .nav-group').forEach((group) => {
     group.hidden = !group.querySelector('a[data-view]:not([hidden])');
@@ -857,26 +857,26 @@ function updateAccessControls() {
   settings.hidden = true;
   if (!accessSessionAvailable) {
     status.textContent = 'Access unavailable';
-    status.title = 'The receiver did not return its current access policy.';
+    status.dataset.uiHint = 'The receiver did not return its current access policy.';
     action.textContent = 'Retry sign in';
     action.disabled = false;
   } else if (!accessSession.configured) {
     status.textContent = 'Primary admin not set';
-    status.title = 'Set the primary administrator password in the desktop application.';
+    status.dataset.uiHint = 'Set the primary administrator password in the desktop application.';
     action.textContent = 'Sign In';
     action.disabled = false;
   } else if (accessSession.authenticated) {
     status.hidden = true;
     settings.hidden = false;
     settings.textContent = accessSession.username;
-    settings.title = `Open My Settings · ${accessTierLabel(accessSession.tier)} access`;
+    settings.dataset.uiHint = `Open My Settings · ${accessTierLabel(accessSession.tier)} access`;
     settings.setAttribute('aria-label', `Open My Settings for ${accessSession.username}`);
     action.textContent = 'Sign Out';
     action.disabled = false;
   } else {
     const signInRequired = accessSession.capabilities?.[ACCESS_CAPABILITIES.WEB_ACCESS] === false;
     status.textContent = signInRequired ? 'Sign in required' : 'Public';
-    status.title = signInRequired ? 'This receiver requires an account for the web interface' : 'Using public access';
+    status.dataset.uiHint = signInRequired ? 'This receiver requires an account for the web interface' : 'Using public access';
     action.textContent = 'Sign In';
     action.disabled = false;
   }
@@ -1307,7 +1307,7 @@ function encryptionActivityValue(row) {
   if (!row.encrypted) return '';
   const value = node('span', '', row.encryption_display || 'ENC');
   if (row.encryption_full_display && row.encryption_full_display !== row.encryption_display) {
-    value.title = row.encryption_full_display;
+    value.dataset.uiHint = row.encryption_full_display;
   }
   return value;
 }
@@ -1332,7 +1332,7 @@ function dateTime(value) {
   const time = node('time', 'exact-time', exact);
   time.dateTime = new Date(timestamp).toISOString();
   dateTime.formatter ||= new Intl.DateTimeFormat([], { dateStyle: 'full', timeStyle: 'long' });
-  time.title = dateTime.formatter.format(new Date(timestamp));
+  time.dataset.uiHint = dateTime.formatter.format(new Date(timestamp));
   return time;
 }
 
@@ -1389,7 +1389,7 @@ function decoderDisplay(value) {
   const label = decoderLabel(value, true);
   if (!label) return '';
   const display = node('span', '', label);
-  display.title = decoderLabel(value);
+  display.dataset.uiHint = decoderLabel(value);
   return display;
 }
 
@@ -1532,7 +1532,7 @@ function identitySummaryValue(primary, secondary, target = '') {
   if (!primary) return '';
   const summary = node('span', 'identity-summary');
   const text = (value) => String(value?.textContent ?? value ?? '').trim();
-  summary.title = [text(primary), text(secondary)].filter(Boolean).join(' · ');
+  summary.dataset.uiHint = [text(primary), text(secondary)].filter(Boolean).join(' · ');
   const heading = node('span', 'identity-summary-primary');
   heading.append(target ? anchor(primary, target) : valueNode(primary));
   summary.append(heading);
@@ -1613,7 +1613,7 @@ function channelPresenceCell(row) {
   primary.append(channelLink(presence.channel, display.primary));
   summary.append(primary);
   if (display.secondary) summary.append(node('small', 'identity-summary-context', display.secondary));
-  summary.title = [display.primary, display.secondary].filter(Boolean).join(' · ');
+  summary.dataset.uiHint = [display.primary, display.secondary].filter(Boolean).join(' · ');
   return summary;
 }
 
@@ -1776,7 +1776,7 @@ function identityDomainLabel(row) {
 
 function badge(label, className = '', title = '') {
   const element = node('span', `badge ui-pill ${className}`.trim(), label);
-  if (title) element.title = title;
+  if (title) element.dataset.uiHint = title;
   return element;
 }
 
@@ -1926,7 +1926,7 @@ function exportCsvLink(dataset, context = {}, options = {}) {
     disabled.setAttribute('role', 'button');
     disabled.setAttribute('aria-disabled', 'true');
     disabled.setAttribute('aria-label', label);
-    disabled.title = accessSession.authenticated ? `${label} is not available to this account.` :
+    disabled.dataset.uiHint = accessSession.authenticated ? `${label} is not available to this account.` :
       `${label} requires sign-in.`;
     return disabled;
   }
@@ -1934,7 +1934,7 @@ function exportCsvLink(dataset, context = {}, options = {}) {
     'ui-button ui-button-secondary ui-icon-button export-csv-action');
   link.setAttribute('download', '');
   link.setAttribute('aria-label', label);
-  link.title = label;
+  link.dataset.uiHint = label;
   if (options.loading !== false) {
     let activeController = null;
     const reset = (errorMessage = '') => {
@@ -1942,7 +1942,7 @@ function exportCsvLink(dataset, context = {}, options = {}) {
       link.removeAttribute('aria-busy');
       link.replaceChildren(iconGlyph('icon-share'));
       link.setAttribute('aria-label', label);
-      link.title = errorMessage || label;
+      link.dataset.uiHint = errorMessage || label;
       if (errorMessage) openReadOnlyModal('CSV export unavailable',
         node('div', 'ui-feedback ui-feedback-error', errorMessage));
     };
@@ -1958,7 +1958,7 @@ function exportCsvLink(dataset, context = {}, options = {}) {
       link.classList.add('is-loading');
       link.setAttribute('aria-busy', 'true');
       link.setAttribute('aria-label', `Preparing ${label.toLowerCase()}; click to cancel`);
-      link.title = 'Preparing CSV export. Click again to cancel.';
+      link.dataset.uiHint = 'Preparing CSV export. Click again to cancel.';
       link.replaceChildren();
       void (async () => {
         let errorMessage = '';
@@ -2191,7 +2191,7 @@ function directListenAction(row, reference, options = {}) {
       const description = member ? `Remove ${name} from Direct Listen` : `Add ${name} to Direct Listen and play`;
       control.setAttribute('aria-label', description);
       control.setAttribute('aria-pressed', String(member));
-      control.title = description;
+      control.dataset.uiHint = description;
       control.hidden = !allowed;
       control.disabled = !allowed;
       control.querySelector('use')?.setAttribute('href', member ? '#icon-check' : '#icon-direct-listen');
@@ -2583,7 +2583,7 @@ function openReadOnlyModal(title, body, options = {}) {
     setTitle: (value) => {
       heading.textContent = String(value);
       close.setAttribute('aria-label', options.closeLabel || `Close ${value}`);
-      close.title = options.closeLabel || `Close ${value}`;
+      close.dataset.uiHint = options.closeLabel || `Close ${value}`;
     },
     setDirty: (value = true) => { dirty = Boolean(value); },
     setDiscardMessage: (value) => { discardMessage = String(value || 'Discard your unsaved changes?'); },
@@ -2796,7 +2796,7 @@ function tabs(items, active) {
       const disabled = node('span', `ui-segmented-option disabled ${item.id === active ? 'active' : ''}`.trim(),
         item.label);
       disabled.setAttribute('aria-disabled', 'true');
-      disabled.title = item.disabledReason || 'Detailed history is not running';
+      disabled.dataset.uiHint = item.disabledReason || 'Detailed history is not running';
       bar.append(disabled);
     } else {
       const link = anchor(item.label, item.href,
@@ -2962,7 +2962,7 @@ function renderTableCell(data, column) {
   cell.dataset.label = column.fullLabel || column.label || '';
   cell.dataset.column = column.id;
   const title = typeof column.title === 'function' ? column.title(data) : column.title;
-  if (title) cell.title = String(title);
+  if (title) cell.dataset.uiHint = String(title);
   const value = column.render ? column.render(data) : data[column.key];
   cell.append(valueNode(value));
   if (typeof column.reconcileKey === 'function') cell.tableReconcileKey = column.reconcileKey(data);
@@ -3040,7 +3040,7 @@ function renderTableRowGroup(group, count, columnCount, noun = 'row', collapsed 
       `${number(count)} ${count === 1 ? noun : `${noun}s`}`));
   if (temporarilyExpanded) {
     disclosure.disabled = true;
-    disclosure.title = 'Matching groups stay expanded while searching';
+    disclosure.dataset.uiHint = 'Matching groups stay expanded while searching';
     disclosure.setAttribute('aria-label', `${group.label} is expanded while searching`);
   } else if (typeof onToggle === 'function') {
     disclosure.addEventListener('click', () => onToggle(group.key, !collapsed, disclosure));
@@ -3159,7 +3159,7 @@ function addColumnResizers(element, columns, columnElements, headers, tableType,
     handle.setAttribute('aria-valuemin', String(TABLE_WIDTH_MINIMUM));
     handle.setAttribute('aria-valuemax', String(TABLE_WIDTH_MAXIMUM));
     handle.setAttribute('aria-valuenow', String(Math.round(header.getBoundingClientRect().width)));
-    handle.title = 'Drag to resize. Double-click to fit visible content.';
+    handle.dataset.uiHint = 'Drag to resize. Double-click to fit visible content.';
     handle.tabIndex = 0;
     handle.addEventListener('focus', () => handle.setAttribute('aria-valuenow',
       String(Math.round(header.getBoundingClientRect().width))));
@@ -3428,8 +3428,8 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
             if (previousCell.className !== (classes || '')) previousCell.className = classes || '';
             const title = typeof column.title === 'function' ? column.title(data) : column.title;
             if (title) {
-              if (previousCell.title !== String(title)) previousCell.title = String(title);
-            } else if (previousCell.hasAttribute('title')) previousCell.removeAttribute('title');
+              if (previousCell.dataset.uiHint !== String(title)) previousCell.dataset.uiHint = String(title);
+            } else if (previousCell.hasAttribute('data-ui-hint')) previousCell.removeAttribute('data-ui-hint');
             return;
           }
           const nextCell = renderTableCell(data, column);
@@ -3474,7 +3474,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
     const header = node('th', column.className || '');
     header.dataset.column = column.id;
     const fullLabel = column.fullLabel || column.label;
-    if (fullLabel) header.title = fullLabel;
+    if (fullLabel) header.dataset.uiHint = fullLabel;
     const serverSortable = options.serverSort && column.sort;
     if (typeof column.renderHeader === 'function') {
       header.append(valueNode(column.renderHeader({ column, tableType, controller: tableController })));
@@ -4203,7 +4203,7 @@ function aliasConflictButton(row, label = 'Conflict', detailsHost = null) {
   const button = node('button', 'ui-button ui-button-secondary alias-conflict-button', label);
   button.type = 'button';
   button.dataset.aliasId = String(id);
-  button.title = 'Show aliases with overlapping identifiers';
+  button.dataset.uiHint = 'Show aliases with overlapping identifiers';
   button.addEventListener('click', async (event) => {
     event.stopPropagation();
     if (!detailsHost) {
@@ -6317,7 +6317,7 @@ function aliasBulkBinaryOperation(ariaLabel, positiveDescription, negativeDescri
     .forEach(([value, label, description]) => {
       const button = node('button', 'ui-segmented-option', label);
       button.type = 'button';
-      button.title = description;
+      button.dataset.uiHint = description;
       button.setAttribute('aria-label', description);
       button.setAttribute('aria-pressed', String(value === selected));
       button.addEventListener('click', () => {
@@ -8342,13 +8342,13 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const mapTour = view === 'map';
     const visualizerTour = view === 'network-visualizer';
     const [feature, presentation] = await Promise.all(mapTour ? [
-      import('./features/listen-map.js?v=14'), import('./guides/map-presentation.js?v=1')
+      import('./features/listen-map.js?v=15'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
       import('./features/network-visualizer/index.js?v=61'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
-      import('./features/alerts.js?v=23'), import('./guides/topics-presentation.js?v=1')
+      import('./features/alerts.js?v=24'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
-      Promise.resolve(null), import('./guides/scanner-presentation.js?v=2')
+      Promise.resolve(null), import('./guides/scanner-presentation.js?v=3')
     ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
     ] : live ? [
@@ -8358,9 +8358,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : tuners ? [
       Promise.resolve(null), import('./guides/tuners-presentation.js?v=3')
     ] : streaming ? [
-      import('./features/streaming.js?v=16'), import('./guides/streaming-presentation.js?v=1')
+      import('./features/streaming.js?v=17'), import('./guides/streaming-presentation.js?v=1')
     ] : [
-      import('./features/radioreference-import.js?v=40'), import('./guides/radioreference-presentation.js?v=1')
+      import('./features/radioreference-import.js?v=41'), import('./guides/radioreference-presentation.js?v=1')
     ]);
     if (closed || !context.isCurrent()) { restore(); return restore; }
     const sample = (mapTour ? presentation.createMapGuideData : visualizerTour ? presentation.createNetworkVisualizerGuideData : topics ? presentation.createTopicsGuideData : scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
@@ -9332,7 +9332,7 @@ function dashboardMode(row) {
   const topology = channelKind === 'TRUNKED' ? 'Trunked' :
     channelKind === 'CONVENTIONAL' ? 'Conventional' : 'Unknown topology';
   const value = node('span', 'dashboard-mode', dashboardModeLabel(row));
-  value.title = `${family} · ${topology}`;
+  value.dataset.uiHint = `${family} · ${topology}`;
   value.setAttribute('aria-label', `${family}, ${topology}`);
   return value;
 }
@@ -9463,7 +9463,6 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
       role: 'img', 'aria-label': (options.ariaLabel || 'Hourly activity counts') +
         `. Use left and right arrow keys to inspect each ${hourly ? 'hour' : 'interval'}.` });
     svg.style.height = `${height}px`;
-    svg.append(svgNode('title', {}, options.ariaLabel || 'Hourly activity counts'));
     svg.append(svgNode('text', { x: margin.left, y: 13, class: 'chart-axis-label' },
       axisLabel));
     for (let index = 0; index <= 4; index += 1) {
@@ -9486,8 +9485,8 @@ function countTimeSeriesChart(rows, configurations, options = {}) {
           width: barWidth * widthScale, height: Math.max(0, yFor(0) - yFor(count)), rx: 2,
           class: 'count-time-chart-bar' });
         if (!combined && series.length > 1 && series[index].color) bar.style.fill = series[index].color;
-        bar.append(svgNode('title', {}, new Date(row.time_ms).toLocaleString() + ' · ' +
-          (combined ? 'Total' : series[index].label) + ': ' + number(count)));
+        bar.setAttribute('aria-label', new Date(row.time_ms).toLocaleString() + ' · ' +
+          (combined ? 'Total' : series[index].label) + ': ' + number(count));
         svg.append(bar);
       });
     });
@@ -9724,7 +9723,7 @@ function dashboardCallActivityChart(activity) {
         if (status === 'PARTIAL') button.append(node('span', 'activity-series-status', 'Partial history'));
       }
       else button.append(node('span', 'activity-series-status', 'Unavailable'));
-      button.title = status === 'PARTIAL' ? `${configuration.label} is available for part of this range` :
+      button.dataset.uiHint = status === 'PARTIAL' ? `${configuration.label} is available for part of this range` :
         collected ? `Show or hide ${configuration.label}` :
           `${configuration.label} activity is unavailable for this channel type`;
       const update = () => {
@@ -9770,7 +9769,7 @@ function dashboardCallActivityChart(activity) {
     const coverageStatus = dashboardMetricCoverageStatus(activity, metric.field);
     if (coverageStatus === 'NOT_COLLECTED') {
       button.append(node('small', 'dashboard-metric-coverage', 'Unavailable'));
-      button.title = `${metric.label} is unavailable`;
+      button.dataset.uiHint = `${metric.label} is unavailable`;
       button.disabled = true;
     }
     button.addEventListener('click', () => {
@@ -10770,7 +10769,7 @@ class ReceiverHealthController {
       indicator.classList.remove(`receiver-health-${status}`);
     });
     indicator.classList.add(`receiver-health-${className}`);
-    indicator.title = detail;
+    indicator.dataset.uiHint = detail;
     indicator.setAttribute('aria-label', `Receiver status: ${label}. ${detail}`);
   }
 }
@@ -10869,7 +10868,7 @@ function createAsyncSection(title, options = {}) {
       onReady: (value) => {
         cleanupTableLayoutMenu(tableController);
         replaceAsyncContent(host, present(value));
-        host.removeAttribute('title');
+        host.removeAttribute('data-ui-hint');
         host.setAttribute('aria-busy', 'false');
         if (focusAfterAttempt) {
           host.tabIndex = -1;
@@ -10878,7 +10877,7 @@ function createAsyncSection(title, options = {}) {
       },
       onError: (error, retry) => {
         if (background) {
-          host.title = error?.message || options.errorMessage || 'This section could not be updated.';
+          host.dataset.uiHint = error?.message || options.errorMessage || 'This section could not be updated.';
           return;
         }
         const failure = asyncSectionFailure(error, options.errorMessage, retry);
@@ -12104,7 +12103,7 @@ function arrangeScannerPlayback(bar, player, signal, options = {}) {
   bar.append(controls, secondary, volumeControl);
   const label = (button, text) => {
     button.setAttribute('aria-label', text);
-    button.title = text;
+    button.dataset.uiHint = text;
   };
   const draw = (state) => {
     const access = allowed();
@@ -12640,7 +12639,7 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
         const value = field.querySelector('.scanner-field-value, .scanner-field-link');
         if (value) {
           value.classList.add('ui-text-truncate');
-          value.title = value.textContent;
+          value.dataset.uiHint = value.textContent;
         }
       });
   }
@@ -12675,7 +12674,7 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
       .map(element => ({ element, height: element.getBoundingClientRect().height }))
       .forEach(({ element, height: elementHeight }) => { element.style.minHeight = `${elementHeight}px`; });
     values.forEach((value) => {
-      value.removeAttribute('title');
+      value.removeAttribute('data-ui-hint');
       value.textContent = value.classList.contains('scanner-call-title') ?
         (state.stopped ? 'Ready to listen' : state.paused ? 'Playback paused' : 'Waiting for a call') : '—';
     });
@@ -12927,7 +12926,7 @@ function renderScanner(options = {}) {
       copy.append(node('strong', '', call ? player.targetLabel(call) : index ? '—' : 'Waiting for calls'),
         node('span', 'ui-label ui-muted', call ? [scannerSourceAlias(call) || radioIdentifierText(call, call.source_id, 'source'),
           scannerDuration(call.duration_ms)].filter(Boolean).join(' · ') : '—'));
-      if (call) item.title = player.callDetails(call);
+      if (call) item.dataset.uiHint = player.callDetails(call);
       item.append(order, copy);
       upNextList.append(item);
     }
@@ -13485,8 +13484,7 @@ function dashboardActivityMix(response, selectedAction, onSelect, catalog = acti
     });
     segment.dataset.action = row.action;
     segment.style.stroke = row.color;
-    segment.append(svgNode('title', {},
-      `${row.label}: ${number(row.count)} events (${percentage.toFixed(1)}%)`));
+    segment.dataset.uiHint = `${row.label}: ${number(row.count)} events (${percentage.toFixed(1)}%)`;
     segment.addEventListener('click', () => updateSelection(row.action));
     segment.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
@@ -14211,7 +14209,7 @@ function liveDetailOrigin(value, label = value?.channel_name,
   const detail = [frequencyHz ? `${frequency(frequencyHz)} MHz` : '',
     value?.timeslot == null ? '' : `TS ${value.timeslot}`].filter(Boolean).join(' · ');
   if (detail) content.append(node(label ? 'small' : 'span', '', detail));
-  content.title = [label, detail].filter(Boolean).join(' · ');
+  content.dataset.uiHint = [label, detail].filter(Boolean).join(' · ');
   return content;
 }
 
@@ -14336,7 +14334,7 @@ function liveEventParty(event, side) {
             group.canonical.talkgroup_id, text, groupRef) : document.createTextNode(text));
       });
     } else content.textContent = identifiers;
-    content.title = event?.[`${side}_identifiers`] || '';
+    content.dataset.uiHint = event?.[`${side}_identifiers`] || '';
     value.append(content);
   }
   return value;
@@ -14776,7 +14774,7 @@ function liveMessagesPane(options = {}) {
       const date = new Date(Number(message.timestamp_ms));
       const text = Number.isFinite(date.getTime()) ? clockFormatter.format(date) : '';
       const value = node('span', '', text);
-      if (text) value.title = exactDateTime(message.timestamp_ms);
+      if (text) value.dataset.uiHint = exactDateTime(message.timestamp_ms);
       return value;
     } },
     { id: 'channel', label: 'Channel', className: 'live-event-stack',
@@ -14791,7 +14789,7 @@ function liveMessagesPane(options = {}) {
     { id: 'message', label: 'Message', className: 'live-message-text',
       reconcileKey: (message) => message.text || '', render: (message) => {
       const value = node('span', '', message.text || '');
-      value.title = message.text || '';
+      value.dataset.uiHint = message.text || '';
       return value;
     } }
   ], 'Select a live row above', {
@@ -16590,7 +16588,7 @@ function tunerFrequencyAction(label, icon, hint, disabled = false, showLabel = f
     `ui-button ${primary ? 'ui-button-primary tuner-frequency-action-primary' : 'ui-button-secondary'} tuner-frequency-action${
       showLabel ? ' tuner-frequency-action-labeled' : ' ui-icon-button'}`);
   if (!disabled) button.type = 'button';
-  button.title = hint;
+  button.dataset.uiHint = hint;
   button.setAttribute('aria-label', showLabel ? visibleLabel : label);
   button.append(iconGlyph(icon));
   if (showLabel) button.append(node('span', 'tuner-frequency-action-label', visibleLabel));
@@ -16810,7 +16808,7 @@ function openTunerFrequencyActions(selection, options = {}) {
     }).then((eligibility) => {
       if (!body.isConnected || actionController.signal.aborted) return;
       addSystem.disabled = eligibility.eligible !== true;
-      addSystem.title = addSystem.disabled ? eligibility.reason || 'This frequency is already configured.' :
+      addSystem.dataset.uiHint = addSystem.disabled ? eligibility.reason || 'This frequency is already configured.' :
         'Add a channel or P25 system from this signal';
       const owners = [...new Map((eligibility.matches || []).filter((match) => match?.name)
         .map((match) => [String(match.configuration_id || match.configurationId || match.name), match])).values()];
@@ -16822,18 +16820,18 @@ function openTunerFrequencyActions(selection, options = {}) {
         message.replaceChildren('This frequency belongs to ', channel,
           owners.length > 1 ? ` and ${owners.length - 1} other channel${owners.length === 2 ? '' : 's'}.` : '.');
       } else {
-        message.textContent = addSystem.disabled ? addSystem.title :
+        message.textContent = addSystem.disabled ? addSystem.dataset.uiHint :
           (inline ? 'No configured channel uses this frequency.' : '');
       }
     }).catch((error) => {
       if (!body.isConnected || actionController.signal.aborted) return;
-      addSystem.title = inline ? 'Could not check this frequency. Select the signal again to retry.' :
+      addSystem.dataset.uiHint = inline ? 'Could not check this frequency. Select the signal again to retry.' :
         'Could not check this frequency. Close and try again.';
-      message.textContent = error.message || addSystem.title;
+      message.textContent = error.message || addSystem.dataset.uiHint;
     });
   } else {
-    addSystem.title = 'Channel setup access is required.';
-    message.textContent = addSystem.title;
+    addSystem.dataset.uiHint = 'Channel setup access is required.';
+    message.textContent = addSystem.dataset.uiHint;
   }
   addSystem.addEventListener('click', () => {
     if (guideMode || addSystem.disabled) return;
@@ -16863,7 +16861,7 @@ function openTunerFrequencyActions(selection, options = {}) {
     audioStream = null;
     player.stop();
     listen.classList.remove('active');
-    listen.title = 'Listen to this frequency in NBFM';
+    listen.dataset.uiHint = 'Listen to this frequency in NBFM';
     listen.setAttribute('aria-label', inline ? 'Listen in NBFM' : 'Listen to NBFM');
     if (listenLabel) listenLabel.textContent = 'Listen in NBFM';
   };
@@ -16889,7 +16887,7 @@ function openTunerFrequencyActions(selection, options = {}) {
         onError: (error) => { message.textContent = error.message || 'Frequency listening is unavailable.'; }
       });
       listen.classList.add('active');
-      listen.title = 'Stop listening';
+      listen.dataset.uiHint = 'Stop listening';
       listen.setAttribute('aria-label', 'Stop listening');
       if (listenLabel) listenLabel.textContent = 'Stop listening';
       message.textContent = 'Listening for NBFM audio…';
@@ -16960,7 +16958,7 @@ function openTunerFrequencyActions(selection, options = {}) {
   close.type = 'button';
   close.append(iconGlyph('icon-close'));
   close.setAttribute('aria-label', 'Close frequency actions');
-  close.title = 'Close frequency actions';
+  close.dataset.uiHint = 'Close frequency actions';
   close.addEventListener('click', () => panel.hidePopover());
   panel.append(close, body);
   sizeObserver = new ResizeObserver(position);
@@ -17263,7 +17261,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   optionsSummary.append(iconGlyph('icon-playback-controls'));
   optionsSummary.setAttribute('role', 'button');
   optionsSummary.setAttribute('aria-label', 'Display options');
-  optionsSummary.title = 'Display options';
+  optionsSummary.dataset.uiHint = 'Display options';
   optionsSummary.setAttribute('aria-expanded', 'false');
   const optionsPanel = node('div', 'tuner-spectrum-options-panel ui-surface');
   optionsPanel.setAttribute('role', 'group');
@@ -17375,8 +17373,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const hiRes = node('button', 'ui-segmented-option', 'HiRes');
   const loRes = node('button', 'ui-segmented-option', 'LoRes');
   for (const button of [hiRes, loRes]) button.type = 'button';
-  hiRes.title = 'Sharper signal display; uses more CPU';
-  loRes.title = 'Lower CPU use';
+  hiRes.dataset.uiHint = 'Sharper signal display; uses more CPU';
+  loRes.dataset.uiHint = 'Lower CPU use';
   qualityControl.append(hiRes, loRes);
   const syncOperatorQuality = () => {
     const detailed = profileSelect.value !== 'efficient';
@@ -17490,7 +17488,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const moreSummary = node('summary', 'ui-button ui-button-secondary ui-icon-button');
   moreSummary.append(iconGlyph('icon-about'));
   moreSummary.setAttribute('aria-label', 'More measurements');
-  moreSummary.title = 'More measurements';
+  moreSummary.dataset.uiHint = 'More measurements';
   moreMeasurements.append(moreSummary, moreReadouts);
   const readoutPanel = node('div', 'tuner-spectrum-measurement-panel ui-surface');
   readoutPanel.append(readouts, moreMeasurements);
@@ -17612,7 +17610,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       marker.style.left = `${((segment.startHz - viewport.startHz) / spanHz * 100).toFixed(4)}%`;
       marker.style.width = `${((segment.endHz - segment.startHz) / spanHz * 100).toFixed(4)}%`;
       marker.setAttribute('aria-label', `${labels.join(' and ')}, ${start} to ${end}`);
-      marker.title = fullBounds;
+      marker.dataset.uiHint = fullBounds;
       marker.append(node('span', 'tuner-spectrum-band-bound', visibleStart),
         node('span', 'tuner-spectrum-band-label', labels.join(' / ')),
         node('span', 'tuner-spectrum-band-bound', visibleEnd));
@@ -17866,7 +17864,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
         button.disabled = !basicOperator && unavailable;
         if (basicOperator) {
           button.setAttribute('aria-disabled', String(unavailable));
-          button.title = unavailable ? (viewportReady ? limitHint :
+          button.dataset.uiHint = unavailable ? (viewportReady ? limitHint :
             'Start Setup or use this tuner for a channel to view signal') : label;
         }
       }
@@ -17877,7 +17875,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       if (basicOperator) {
         for (const button of [hiRes, loRes]) {
           button.setAttribute('aria-disabled', String(profileSelect.disabled));
-          button.title = profileSelect.disabled ? 'Start Setup or use this tuner for a channel to view signal' :
+          button.dataset.uiHint = profileSelect.disabled ? 'Start Setup or use this tuner for a channel to view signal' :
             button === hiRes ? 'Sharper signal display; uses more CPU' : 'Lower CPU use';
         }
       }
@@ -19548,13 +19546,13 @@ function liveEventsPanel(onCollapse, options = {}) {
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       }) : '';
       const value = node('strong', '', text);
-      if (text) value.title = exactDateTime(event.time_start_ms);
+      if (text) value.dataset.uiHint = exactDateTime(event.time_start_ms);
       return value;
     } },
     { id: 'duration', label: 'Duration', className: 'live-event-duration', render: (event) => {
       const text = liveEventDuration(event.duration_ms);
       const value = node('strong', 'live-event-duration-value', text);
-      value.title = `Duration ${text}`;
+      value.dataset.uiHint = `Duration ${text}`;
       return value;
     } },
     { id: 'event', label: 'Event', className: 'live-event-stack', render: (event) => {
@@ -19572,7 +19570,7 @@ function liveEventsPanel(onCollapse, options = {}) {
         event.source_frequency_hz || event.frequency_hz : event.frequency_hz) },
     { id: 'details', label: 'Details', className: 'live-event-details', render: (event) => {
       const value = node('span', '', liveEventDetailsText(event));
-      if (event.details) value.title = event.details;
+      if (event.details) value.dataset.uiHint = event.details;
       return value;
     } }
   ], 'Select a live row above', {
@@ -19878,7 +19876,7 @@ function liveIdentityActionLink(row, kind, label) {
   const info = liveIdentityInfo(row, kind);
   if (!info?.target) return label;
   const link = anchor(label, info.target, 'live-alias-link');
-  link.title = info.title;
+  link.dataset.uiHint = info.title;
   return link;
 }
 
@@ -19953,7 +19951,6 @@ function remoteOriginIcon(origin, { focusable = true } = {}) {
   const label = liveRemoteOriginLabel(origin);
   if (!label) return null;
   const badge = node('span', 'ui-origin-indicator');
-  badge.title = label;
   badge.dataset.uiHint = label;
   badge.setAttribute('role', 'img');
   badge.setAttribute('aria-label', label);
@@ -20043,7 +20040,7 @@ async function activateLivePresentationSettings(button) {
     button.classList.add('is-loading');
     button.replaceChildren();
     button.setAttribute('aria-label', 'Loading Live presentation settings');
-    button.removeAttribute('title');
+    button.removeAttribute('data-ui-hint');
     snapshot = await synchronizeUserPreferences();
     if (!button.isConnected) return;
     button.disabled = false;
@@ -20423,7 +20420,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     const label = pickerCollapsed ? 'Expand live view picker' : 'Collapse live view picker';
     pickerCollapse.setAttribute('aria-expanded', String(!pickerCollapsed));
     pickerCollapse.setAttribute('aria-label', label);
-    pickerCollapse.title = label;
+    pickerCollapse.dataset.uiHint = label;
     if (persist) saveUiState({ picker_collapsed: pickerCollapsed });
   };
   pickerCollapse.addEventListener('click', () => setPickerCollapsed(!pickerCollapsed));
@@ -20651,12 +20648,12 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     if (qualitySignature !== tab.liveQualitySignature) {
       tab.liveQualitySignature = qualitySignature;
       quality.replaceChildren();
-      quality.removeAttribute('title');
+      quality.removeAttribute('data-ui-hint');
       if (remoteLabel && value.table_id !== 'conventional') quality.append(iconGlyph('icon-cloud'));
       else for (let index = 0; index < 4; index += 1) quality.append(node('span'));
       if (value.table_id === 'conventional') {
         quality.className = 'channels-tab-quality ui-quality-bars ui-quality-neutral';
-        tab.title = `${label} · ${operatingState}${originSuffix}`;
+        tab.dataset.uiHint = `${label} · ${operatingState}${originSuffix}`;
         select.setAttribute('aria-label', `Show live channels for ${label}, ${operatingState}${originSuffix}`);
         stateLabel.textContent = operatingState;
       } else if (remoteLabel) {
@@ -20668,14 +20665,14 @@ function liveChannelsSection(onSelectionChange, options = {}) {
           (tone ? ` ui-origin-indicator-${tone}` : '');
         const qualityLabel = !available ? 'Decode quality unavailable' :
           `${decodeQuality.toFixed(1)}% decode quality`;
-        quality.title = `${qualityLabel}${originSuffix}`;
-        tab.title = `${label} · ${operatingState} · ${qualityLabel}${originSuffix}`;
+        quality.dataset.uiHint = `${qualityLabel}${originSuffix}`;
+        tab.dataset.uiHint = `${label} · ${operatingState} · ${qualityLabel}${originSuffix}`;
         select.setAttribute('aria-label',
           `Show live channels for ${label}, ${operatingState}, ${qualityLabel}${originSuffix}`);
         stateLabel.textContent = operatingState;
       } else if (signalStrength === null && decodeQuality === null) {
         quality.className = 'channels-tab-quality ui-quality-bars ui-quality-unavailable';
-        tab.title = `${label} · ${operatingState} · Signal strength and decode quality unavailable${originSuffix}`;
+        tab.dataset.uiHint = `${label} · ${operatingState} · Signal strength and decode quality unavailable${originSuffix}`;
         select.setAttribute('aria-label',
           `Show live channels for ${label}, ${operatingState}; signal strength and decode quality unavailable${originSuffix}`);
         stateLabel.textContent = operatingState;
@@ -20689,7 +20686,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
           `${signalStrength.toFixed(1)} dBFS signal strength`;
         const qualityLabel = decodeQuality === null ? 'Decode quality unavailable' :
           `${decodeQuality.toFixed(1)}% decode quality`;
-        tab.title = `${label} · ${operatingState} · ${signalLabel} · ${qualityLabel}${originSuffix}`;
+        tab.dataset.uiHint = `${label} · ${operatingState} · ${signalLabel} · ${qualityLabel}${originSuffix}`;
         select.setAttribute('aria-label',
           `Show live channels for ${label}, ${operatingState}, ${signalLabel}, ${qualityLabel}${originSuffix}`);
         stateLabel.textContent = operatingState;
@@ -21140,7 +21137,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     const button = node('button', 'ui-segmented-option', next === 'live' ? 'Live' : 'Setup');
     button.type = 'button';
     button.dataset.mode = next;
-    button.title = next === 'live' ? 'Resume the channels this Spectrum session stopped' :
+    button.dataset.uiHint = next === 'live' ? 'Resume the channels this Spectrum session stopped' :
       'Keep tuner on for adjustments; active channels stop';
     button.addEventListener('click', () => {
       if (button.getAttribute('aria-disabled') === 'true' || button.getAttribute('aria-pressed') === 'true') return;
@@ -21724,7 +21721,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
   const syncOptionsLabel = () => {
     const label = compactOptions.matches ? 'More spectrum actions' : 'Display options';
     optionsSummary.setAttribute('aria-label', label);
-    optionsSummary.title = label;
+    optionsSummary.dataset.uiHint = label;
   };
   const syncOptionsTriggers = () => {
     const expanded = String(options.open);
@@ -22001,7 +21998,7 @@ function issiSubscriberCell(row) {
   const subscriber = p25CanonicalSubscriber({ protocol: 'P25', canonical_identity: row.canonical_identity });
   const identifier = subscriber ? String(subscriber.subscriber_id) : '';
   const summary = radioIdentityValue(row, { identifier, fallback: 'Unknown radio' });
-  if (subscriber) summary.title = canonicalSubscriberText(subscriber);
+  if (subscriber) summary.dataset.uiHint = canonicalSubscriberText(subscriber);
   return summary;
 }
 
@@ -22704,7 +22701,7 @@ async function renderRadio() {
   } else {
     const infoColumn = node('div', 'entity-info-column entity-info-standalone');
     const identifierFact = node('span', '', formattedId);
-    if (permanentIdentity) identifierFact.title = canonicalSubscriberText(permanentIdentity);
+    if (permanentIdentity) identifierFact.dataset.uiHint = canonicalSubscriberText(permanentIdentity);
     const identityValues = [
       [radioSystemOwnerLabel(radio), radioSystemInfoFact(radio)],
       ['Radio ID', identifierFact],
@@ -23390,7 +23387,7 @@ function activityIdentifier(row, value, kind, reference, linked = true, prefix =
   if (specialLabel) {
     const protocol = protocolFamily(row);
     const result = node('span', 'special-identifier', specialLabel);
-    result.title = `${protocol} ${specialLabel} (${identifier}): system or special signaling identifier`;
+    result.dataset.uiHint = `${protocol} ${specialLabel} (${identifier}): system or special signaling identifier`;
     result.setAttribute('aria-label',
       `${specialLabel}, ${protocol} system or special signaling identifier ${identifier}`);
     return result;
@@ -24801,7 +24798,7 @@ function showActivityCellActionTooltip(trigger, dimension, text, filterTarget, n
     const link = anchor(iconGlyph(icon), target,
       'ui-button ui-button-secondary ui-icon-button activity-cell-action-icon');
     link.setAttribute('aria-label', label);
-    link.title = label;
+    link.dataset.uiHint = label;
     return link;
   };
   const filter = action(filterTarget, 'icon-filter', `Filter activity by this ${dimension}`);
@@ -24869,7 +24866,7 @@ function showActivityCellActionTooltip(trigger, dimension, text, filterTarget, n
 
 function activityCellValue(displayValue, row, columnId, context, filters) {
   const text = displayValue instanceof Node ?
-    (displayValue.getAttribute?.('title') || displayValue.textContent).trim() : String(displayValue || '').trim();
+    (displayValue.getAttribute?.('data-ui-hint') || displayValue.textContent).trim() : String(displayValue || '').trim();
   if (!text) return displayValue;
   const filterOverrides = activityCellFilterRouteOverrides(filters, context, row, columnId);
   const filterTarget = filterOverrides ? currentHref(filterOverrides) : '';
@@ -24878,12 +24875,12 @@ function activityCellValue(displayValue, row, columnId, context, filters) {
   if (!filterTarget && !navigation) return displayValue;
   if (!filterTarget) {
     const link = anchor(displayValue, navigation.target);
-    link.title = navigation.title;
+    link.dataset.uiHint = navigation.title;
     return link;
   }
   if (!navigation) {
     const link = anchor(displayValue, filterTarget, 'activity-cell-filter-link');
-    link.title = `Filter Activity by this ${dimension}`;
+    link.dataset.uiHint = `Filter Activity by this ${dimension}`;
     link.setAttribute('aria-label', `Filter Activity by ${dimension} ${text}`);
     return link;
   }
@@ -25378,12 +25375,12 @@ function channelInlineNavigation(row, nameLinksToDetails = false) {
   if (!nameLinksToDetails) {
     const details = anchor('Details',
       href('channel', { configuration_id: row.configuration_id }), 'ui-link-text');
-    details.title = channelViewLabel(row);
+    details.dataset.uiHint = channelViewLabel(row);
     links.append(details);
   }
   const live = anchor('Live',
     href('live', { channel: row.configuration_id }), 'ui-link-text');
-  live.title = `Open ${row.name || 'channel'} in Live`;
+  live.dataset.uiHint = `Open ${row.name || 'channel'} in Live`;
   links.append(live);
   return links;
 }
@@ -25512,7 +25509,7 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
       }
       if (row.editable === false) {
         const locked = uiPill('Compatibility', 'warning', 'icon-lock');
-        locked.title = row.restriction_message || 'This configuration is read-only on the web';
+        locked.dataset.uiHint = row.restriction_message || 'This configuration is read-only on the web';
         summary.append(locked);
       }
       actions.append(summary);
@@ -25541,8 +25538,8 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
         }
       }, 'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact');
       earlier.dataset.channelOrderDirection = 'EARLIER';
-      earlier.title = row.auto_start_order == null ? 'Enable auto start at the end' : 'Start earlier';
-      earlier.setAttribute('aria-label', earlier.title);
+      earlier.dataset.uiHint = row.auto_start_order == null ? 'Enable auto start at the end' : 'Start earlier';
+      earlier.setAttribute('aria-label', earlier.dataset.uiHint);
       const order = node('span', 'channel-order-number', row.auto_start_order == null ? 'Off' : row.auto_start_order);
       const later = uiActionButton('', 'icon-arrow-down', async () => {
         if (row.auto_start_order == null) return;
@@ -25558,8 +25555,8 @@ function channelAdminColumns(selected, state, selectionChanged, renderSelectionH
       }, 'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact');
       later.dataset.channelOrderDirection = 'LATER';
       later.disabled = row.auto_start_order == null;
-      later.title = 'Start later; moving the last channel later disables auto start';
-      later.setAttribute('aria-label', later.title);
+      later.dataset.uiHint = 'Start later; moving the last channel later disables auto start';
+      later.setAttribute('aria-label', later.dataset.uiHint);
       controls.append(earlier, order, later);
       return controls;
     }, sortValue: (row) => row.auto_start_order == null ? Number.MAX_SAFE_INTEGER : row.auto_start_order },
@@ -25718,9 +25715,8 @@ function radioDirectoryLiveLink(children) {
   const link = anchor('Live', href('live', target ? { channel: target.configuration_id } : {}),
     'ui-button ui-button-secondary ui-button-compact radio-directory-live-action');
   const label = target?.name || target?.site || target?.site_name || 'channel';
-  link.title = target ? `Open ${label} in Live${running.length > 1 ? '; first running channel in this panel' : ''}` :
+  link.dataset.uiHint = target ? `Open ${label} in Live${running.length > 1 ? '; first running channel in this panel' : ''}` :
     'Open Live; this panel has no running channels';
-  link.dataset.uiHint = link.title;
   link.setAttribute('aria-label', target ? `Open ${label} in Live` : 'Open Live');
   return radioDirectoryField(link, 'live');
 }
@@ -25944,8 +25940,8 @@ function renderNestedRadioDirectory(renderContext, directory, currentQuality = [
   const exportLink = exportCsvLink('channels');
   const refresh = uiActionButton('', 'icon-refresh', () => { if (!options.guideMode) void render(); },
     'ui-button ui-button-secondary ui-icon-button');
-  refresh.title = 'Refresh radio directory';
-  refresh.setAttribute('aria-label', refresh.title);
+  refresh.dataset.uiHint = 'Refresh radio directory';
+  refresh.setAttribute('aria-label', refresh.dataset.uiHint);
   toolbar.append(searchWrap);
   if (hasDirectory) toolbar.append(filters, exportLink);
   toolbar.append(exportCsvLink('signal-health'), refresh);
@@ -26087,7 +26083,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=44');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=45');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -26120,7 +26116,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     const refresh = uiActionButton('', 'icon-refresh', () => renderChannelSetup(),
       'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact');
     refresh.setAttribute('aria-label', 'Refresh channels');
-    refresh.title = 'Refresh channels';
+    refresh.dataset.uiHint = 'Refresh channels';
     toolbar.append(searchWrap, uiSelectFrame(statusFilter, 'channel-status-filter-frame'),
       uiSelectFrame(protocolFilter, 'channel-status-filter-frame'), viewToggle);
     tools.append(exportLink, refresh);
@@ -26157,7 +26153,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
         selectedRows.every((row) => row.auto_start_order == null);
       if (cloneSelected) {
         cloneSelected.disabled = selectedRows.some((row) => row.remote_origin?.remote === true);
-        cloneSelected.title = cloneSelected.disabled ? 'Remote channels cannot be cloned.' : '';
+        cloneSelected.dataset.uiHint = cloneSelected.disabled ? 'Remote channels cannot be cloned.' : '';
       }
       if (selectAll) {
         selectAll.checked = state.visibleRows.length > 0 && visibleSelected === state.visibleRows.length;
@@ -26668,7 +26664,7 @@ function channelEditorControl(field, profile, options, channel, protocolCatalog)
       dataControl.dataset.channelPreservedValue = String(Boolean(value ?? field.default));
       setUiToggle(dataControl, false);
       dataControl.disabled = true;
-      dataControl.title = CHANNEL_ENCRYPTED_SKIP_LOCK_HELP;
+      dataControl.dataset.uiHint = CHANNEL_ENCRYPTED_SKIP_LOCK_HELP;
     }
   }
   return control;
@@ -27129,7 +27125,7 @@ function channelSquelchTuner(profile, channel, entry, advancedFields) {
       const item = historyValues[index - offset];
       cell.dataset.quality = item == null ? '' : item >= 80 ? 'excellent' : item >= 60 ? 'good' :
         item >= 40 ? 'fair' : item >= 20 ? 'weak' : 'poor';
-      cell.title = item == null ? '' : `${item}% quality`;
+      cell.dataset.uiHint = item == null ? '' : `${item}% quality`;
     });
   };
   const stopAudio = () => {
@@ -28751,7 +28747,7 @@ async function renderAdminUsers(renderContext = captureRenderContext()) {
   const maximumUsers = Number(response?.maximum_users || 0);
   if (maximumUsers > 0 && users.filter((account) => !account.primaryAdmin).length >= maximumUsers) {
     create.disabled = true;
-    create.title = `Account limit reached (${number(maximumUsers)}).`;
+    create.dataset.uiHint = `Account limit reached (${number(maximumUsers)}).`;
   }
   create.addEventListener('click', () => openManagedUserModal(null, statusHost, '#admin-create-user'));
   create.prepend(iconGlyph('icon-plus'));
@@ -28797,7 +28793,7 @@ function accessPolicyTierControl(policy, statusHost) {
   });
   const fixedAdmin = policy.id.startsWith('admin-');
   select.disabled = !policy.configurable || fixedAdmin;
-  if (select.disabled) select.title = 'This access level cannot be changed.';
+  if (select.disabled) select.dataset.uiHint = 'This access level cannot be changed.';
   select.addEventListener('change', async () => {
     const previous = policy.requiredTier;
     const requested = accessTierValue(select.value);
@@ -29095,7 +29091,7 @@ function adminScanListActions(scanList, presentation = null) {
     const reason = 'Choose another default scan list before deleting this one.';
     remove.setAttribute('aria-disabled', 'true');
     remove.setAttribute('aria-description', reason);
-    remove.title = reason;
+    remove.dataset.uiHint = reason;
   } else {
     remove.addEventListener('click', () => {
       if (!presentation?.guide) openDeleteScanListAdminModal(scanList);
@@ -29442,7 +29438,7 @@ function radioReferenceWorkspaceDependencies(overrides = {}) {
 
 async function renderAdminRadioReferenceSettings() {
   const renderContext = captureRenderContext();
-  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=40');
+  const { createRadioReferenceImportWorkspace, sortRadioReferenceCountries } = await import('./features/radioreference-import.js?v=41');
   if (!renderIsCurrent(renderContext)) return;
   if (!beginPage(renderContext, radioReferencePageHeader())) return;
   const { page, loadingState, gate, workspace, workspaceHeader, accountStatus, settingsButton } =
@@ -31635,7 +31631,7 @@ async function activateScannerSettings(button) {
     button.classList.add('is-loading');
     button.replaceChildren();
     button.setAttribute('aria-label', 'Loading Scanner settings');
-    button.removeAttribute('title');
+    button.removeAttribute('data-ui-hint');
     snapshot = await synchronizeUserPreferences();
     if (!button.isConnected) return;
     button.disabled = false;
@@ -31824,7 +31820,7 @@ function streamingPageSurface(workspace) {
 
 async function renderStreaming() {
   const renderContext = captureRenderContext();
-  const { createStreamingWorkspace } = await import('./features/streaming.js?v=16');
+  const { createStreamingWorkspace } = await import('./features/streaming.js?v=17');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createStreamingWorkspace(streamingWorkspaceDependencies({ signal: renderContext.signal }));
   const surface = streamingPageSurface(workspace);
@@ -31869,7 +31865,7 @@ function alertsWorkspaceDependencies(renderContext, view, overrides = {}) {
 }
 
 async function alertsWorkspace(renderContext, view, overrides = {}) {
-  const { createAlertsWorkspace } = await import('./features/alerts.js?v=23');
+  const { createAlertsWorkspace } = await import('./features/alerts.js?v=24');
   if (!renderIsCurrent(renderContext)) return;
   return createAlertsWorkspace(alertsWorkspaceDependencies(renderContext, view, overrides));
 }
@@ -31899,7 +31895,7 @@ async function renderAlertManagement() {
 
 async function renderAdminApplicationLog(renderContext) {
   const { api, registerConnection } = administrationRequestDependencies(renderContext);
-  const { createApplicationLogWorkspace } = await import('./core/application-log.js?v=5');
+  const { createApplicationLogWorkspace } = await import('./core/application-log.js?v=6');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createApplicationLogWorkspace({
     node, formField, uiSelectFrame, uiStatus, iconButton, setIconButton, uiActionButton,
@@ -31911,7 +31907,7 @@ async function renderAdminApplicationLog(renderContext) {
 
 async function renderAdminWebDiagnosticLog(renderContext) {
   const { api, requestJson, registerConnection } = administrationRequestDependencies(renderContext);
-  const { createWebDiagnosticLogWorkspace } = await import('./features/web-diagnostic-log.js?v=4');
+  const { createWebDiagnosticLogWorkspace } = await import('./features/web-diagnostic-log.js?v=5');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createWebDiagnosticLogWorkspace({
     node, section, sectionActionHost, formField, uiSelectFrame, uiToggleField, setUiToggle,
@@ -31923,7 +31919,7 @@ async function renderAdminWebDiagnosticLog(renderContext) {
 
 async function renderListenMap() {
   const renderContext = captureRenderContext();
-  const { createListenMap } = await import('./features/listen-map.js?v=14');
+  const { createListenMap } = await import('./features/listen-map.js?v=15');
   if (!renderIsCurrent(renderContext)) return;
   const map = createListenMap({
     node, iconGlyph, iconButton, radioSystemLink,
@@ -32384,7 +32380,7 @@ async function renderTuners(options = {}) {
     'Plan tuner placement');
   analyzeButton.type = 'button';
   analyzeButton.disabled = true;
-  analyzeButton.title = 'Open RadioResolve in a new tab with all tuners and running channels';
+  analyzeButton.dataset.uiHint = 'Open RadioResolve in a new tab with all tuners and running channels';
   analyzeButton.prepend(iconGlyph('icon-share'));
   const tunerCount = node('span', 'tuners-sidebar-count', 'Loading tuners…');
   const tunerListActions = node('div', 'tuners-sidebar-actions ui-action-row');
@@ -33025,7 +33021,7 @@ async function renderTuners(options = {}) {
     for (const row of rows) {
       const button = node('button', 'tuners-list-item ui-button ui-button-secondary');
       button.type = 'button';
-      if (row.name !== receiverDisplayName(row)) button.title = row.name;
+      if (row.name !== receiverDisplayName(row)) button.dataset.uiHint = row.name;
       button.setAttribute('aria-pressed', String(row.id === selectedId));
       const main = node('span', 'tuners-list-item-main');
       const copy = node('span', 'tuners-list-item-copy');
@@ -33118,7 +33114,7 @@ async function renderTuners(options = {}) {
       button.setAttribute('aria-pressed', String(next === state));
       const unavailable = transitioning || (state === 'disabled' && next === 'live');
       button.setAttribute('aria-disabled', String(unavailable));
-      button.title = unavailable ? (transitioning ? 'Wait for the tuner to finish changing state' :
+      button.dataset.uiHint = unavailable ? (transitioning ? 'Wait for the tuner to finish changing state' :
         'Start Setup first') : next === 'live' ? 'Available to channels' :
         next === 'setup' ? 'Keep tuner on for adjustments; active channels stop' :
           'Stop channels and turn off tuner hardware';
@@ -34073,7 +34069,7 @@ function callMatchingComparison(decision, signal) {
     const title = node('h3', 'ui-record-title');
     title.append(...primary.childNodes);
     primary.replaceWith(title);
-    group.title = identitySummary.title;
+    group.dataset.uiHint = identitySummary.dataset.uiHint;
     group.append(node('span', 'ui-label ui-muted', label), ...identitySummary.childNodes);
     intro.append(group);
   }
@@ -34679,7 +34675,7 @@ function tunerAllocationWindowChart(windows, frequencies = [], requestedFrequenc
   const x = (value) => left + (Number(value) - minimum) / (maximum - minimum) * (right - left);
   const svg = svgNode('svg', { class: 'chart-frequency-windows', viewBox: `0 0 ${width} ${height}`,
     role: 'img', 'aria-label': 'Tuner receiving windows in MHz' });
-  svg.append(svgNode('title', {}, 'Receiving windows in MHz. Shaded bands show usable bandwidth; markers show receiving frequencies.'));
+  svg.dataset.uiHint = 'Receiving windows in MHz. Shaded bands show usable bandwidth; markers show receiving frequencies.';
   for (let index = 0; index < 5; index++) {
     const value = minimum + (maximum - minimum) * index / 4;
     const position = x(value);
@@ -34700,7 +34696,8 @@ function tunerAllocationWindowChart(windows, frequencies = [], requestedFrequenc
     if (gap > 0) svg.append(svgNode('rect', { class: 'chart-window-gap', x: x(center - gap / 2), y: y + 8,
       width: x(center + gap / 2) - x(center - gap / 2), height: 19 }));
     const marker = svgNode('line', { class: 'chart-window-center', x1: x(center), x2: x(center), y1: y + 6, y2: y + 29 });
-    marker.append(svgNode('title', {}, `Center ${tunerAllocationFrequency(center)}`));
+    marker.dataset.uiHint = `Center ${tunerAllocationFrequency(center)}`;
+    marker.setAttribute('aria-label', marker.dataset.uiHint);
     svg.append(marker);
     (item.receiving || []).forEach((received) => {
       const value = Number(received.frequencyHz);
@@ -34708,20 +34705,23 @@ function tunerAllocationWindowChart(windows, frequencies = [], requestedFrequenc
       const mark = received.role === 'control' ? svgNode('rect', { class: 'chart-window-control',
         x: x(value) - 4, y: y + 12, width: 8, height: 8 }) :
         svgNode('circle', { class: 'chart-window-call', cx: x(value), cy: y + 16, r: 4 });
-      mark.append(svgNode('title', {}, `${received.role === 'control' ? 'Control' : 'Receiving'} ${tunerAllocationFrequency(value)}`));
+      mark.dataset.uiHint = `${received.role === 'control' ? 'Control' : 'Receiving'} ${tunerAllocationFrequency(value)}`;
+      mark.setAttribute('aria-label', mark.dataset.uiHint);
       svg.append(mark);
     });
     frequencies.forEach((item) => {
       const value = Number(item.frequencyHz);
       if (!(value >= start && value <= end) || (gap > 0 && Math.abs(value - center) < gap / 2)) return;
       const mark = svgNode('line', { class: 'chart-window-known', x1: x(value), x2: x(value), y1: y + 30, y2: y + 34 });
-      mark.append(svgNode('title', {}, `Known ${tunerAllocationFrequency(value)}`));
+      mark.dataset.uiHint = `Known ${tunerAllocationFrequency(value)}`;
+      mark.setAttribute('aria-label', mark.dataset.uiHint);
       svg.append(mark);
     });
     if (Number(requestedFrequencyHz) >= minimum && Number(requestedFrequencyHz) <= maximum) {
       const mark = svgNode('path', { class: 'chart-window-request',
         d: `M ${x(requestedFrequencyHz)} ${y + 6} l -5 -7 h 10 Z` });
-      mark.append(svgNode('title', {}, `Requested call ${tunerAllocationFrequency(requestedFrequencyHz)}`));
+      mark.dataset.uiHint = `Requested call ${tunerAllocationFrequency(requestedFrequencyHz)}`;
+      mark.setAttribute('aria-label', mark.dataset.uiHint);
       svg.append(mark);
     }
   });
@@ -34849,9 +34849,10 @@ function tunerAllocationMapPlot(host, group, kind, tuner, highlighted, selectedS
   const svg = svgNode('svg', { class: 'chart-frequency-windows chart-frequency-window-row',
     viewBox: `0 0 ${width} ${height}`, role: 'img' });
   const x = (value) => 8 + (Number(value) - group.minimum) / (group.maximum - group.minimum) * (width - 16);
-  svg.append(svgNode('title', {}, kind === 'ruler' ? 'Frequency scale in MHz' : kind === 'known' ?
+  svg.dataset.uiHint = kind === 'ruler' ? 'Frequency scale in MHz' : kind === 'known' ?
     'Known frequencies. Triangles show frequencies outside current windows.' :
-    `${tuner.name}: ${tuner.available === false ? 'Unavailable' : tunerAllocationWork(tuner.receiving)}. Center ${tunerAllocationFrequency(tuner.frequencyHz)}`));
+    `${tuner.name}: ${tuner.available === false ? 'Unavailable' : tunerAllocationWork(tuner.receiving)}. Center ${tunerAllocationFrequency(tuner.frequencyHz)}`;
+  svg.setAttribute('aria-label', svg.dataset.uiHint);
   const ticks = width < 370 ? 3 : 5;
   for (let index = 0; index < ticks; index++) {
     const value = group.minimum + (group.maximum - group.minimum) * index / (ticks - 1);
@@ -34874,7 +34875,8 @@ function tunerAllocationMapPlot(host, group, kind, tuner, highlighted, selectedS
       x: x(Math.max(bounds.start, center - gap / 2)), y: 12,
       width: Math.max(0, x(Math.min(bounds.end, center + gap / 2)) - x(Math.max(bounds.start, center - gap / 2))), height: 20 }));
     const mark = svgNode('line', { class: 'chart-window-center', x1: x(center), x2: x(center), y1: 9, y2: 35 });
-    mark.append(svgNode('title', {}, `Center ${tunerAllocationFrequency(center)}`));
+    mark.dataset.uiHint = `Center ${tunerAllocationFrequency(center)}`;
+    mark.setAttribute('aria-label', mark.dataset.uiHint);
     svg.append(mark);
     // Draw selected reception last. A larger hollow marker still shows shared-frequency reception underneath it.
     const receiving = [...(tuner.receiving || [])].sort((left, right) =>
@@ -34893,7 +34895,8 @@ function tunerAllocationMapPlot(host, group, kind, tuner, highlighted, selectedS
       const scopeLabel = scope === 'selected' ? 'Selected channel' : scope === 'other' ? 'Other channel' : 'Unknown channel';
       const role = control ? 'Control channel' : item.role === 'conventional' ? 'Conventional channel' :
         item.role === 'call' ? 'Call' : 'Receiving channel';
-      marker.append(svgNode('title', {}, `${scopeLabel} · ${role} ${tunerAllocationFrequency(item.frequencyHz)}${item.channelName ? ` · ${item.channelName}` : ''}`));
+      marker.dataset.uiHint = `${scopeLabel} · ${role} ${tunerAllocationFrequency(item.frequencyHz)}${item.channelName ? ` · ${item.channelName}` : ''}`;
+      marker.setAttribute('aria-label', marker.dataset.uiHint);
       svg.append(marker);
     });
   }
@@ -34901,7 +34904,8 @@ function tunerAllocationMapPlot(host, group, kind, tuner, highlighted, selectedS
     const position = x(item.frequencyHz);
     const marker = item.covered ? svgNode('circle', { class: 'chart-window-known-dot', cx: position, cy: 14, r: 3.5 }) :
       svgNode('path', { class: 'chart-window-outside', d: `M ${position} 7 l 5 11 h -10 Z` });
-    marker.append(svgNode('title', {}, `${tunerAllocationFrequency(item.frequencyHz)} · ${tunerAllocationFrequencyUse(item)} · ${item.covered ? 'In current windows' : 'Outside current windows'}`));
+    marker.dataset.uiHint = `${tunerAllocationFrequency(item.frequencyHz)} · ${tunerAllocationFrequencyUse(item)} · ${item.covered ? 'In current windows' : 'Outside current windows'}`;
+    marker.setAttribute('aria-label', marker.dataset.uiHint);
     svg.append(marker);
   });
   if (tuner) group.frequencies.filter((item) => !item.covered).forEach((item) => svg.append(svgNode('line', {
@@ -36093,7 +36097,7 @@ async function openCallRelations(kind, id) {
   let relationsModule;
   try {
     [relationsModule] = await Promise.all([
-      import('./features/call-relations.js?v=5'), loadActivityMessageTypes()
+      import('./features/call-relations.js?v=6'), loadActivityMessageTypes()
     ]);
   } catch (error) {
     if (!renderIsCurrent(renderContext)) return;

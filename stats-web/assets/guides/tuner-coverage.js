@@ -228,8 +228,9 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
   const sceneCopy = node('span');
   scene.append(sceneTitle, sceneCopy);
   const svg = svgNode('svg', { class: 'ui-setup-guide-coverage-chart', role: 'img',
-    'aria-labelledby': `${idPrefix}-title`, 'aria-describedby': `${idPrefix}-description` });
-  const title = svgNode('title', { id: `${idPrefix}-title` }, 'Calls moving through receiving windows over time');
+    'aria-label': 'Calls moving through receiving windows over time',
+    'data-ui-hint': 'Calls moving through receiving windows over time',
+    'aria-describedby': `${idPrefix}-description` });
   const description = svgNode('desc', { id: `${idPrefix}-description` });
   const legend = node('div', 'ui-setup-guide-coverage-legend');
   for (const [kind, text] of [['received', 'Received'], ['missed', 'Missed'],
@@ -291,7 +292,7 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
     renderBands();
     chart.append(bands, grid, controlTraces, callTraces);
     const annotations = svgNode('g');
-    svg.replaceChildren(title, description, defs, chart, annotations);
+    svg.replaceChildren(description, defs, chart, annotations);
     const activeCalls = new Map();
     const sceneAt = () => {
       if (example === 'airspy') return ['One wider window covers this system',
@@ -362,7 +363,8 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
           const receiver = coverageReceiverFor(call, true, example);
           trace = svgNode('line', { class: `coverage-call ${call.type} ${receiver ? 'received' : 'missed'}`,
             'data-call': call.id, 'data-received': String(Boolean(receiver)) });
-          trace.append(svgNode('title', {}, `${call.name} · ${call.frequency.toFixed(4)} MHz · ${receiver ? `Received by ${receiver}` : 'Missed outside usable coverage'}`));
+          trace.dataset.uiHint = `${call.name} · ${call.frequency.toFixed(4)} MHz · ${receiver ? `Received by ${receiver}` : 'Missed outside usable coverage'}`;
+          trace.setAttribute('aria-label', trace.dataset.uiHint);
           activeCalls.set(key, trace);
           callTraces.append(trace);
         }
@@ -392,7 +394,8 @@ export function createTunerCoverageDiagram({ document, idPrefix }) {
       controlTraces.replaceChildren(...model.controls.map(control => {
         const trace = svgNode('line', { x1: x(control.frequency), x2: x(control.frequency), y1: top,
           y2: top + plotHeight, class: 'coverage-control', 'data-control': control.name });
-        trace.append(svgNode('title', {}, `${control.name} · ${control.frequency.toFixed(4)} MHz`));
+        trace.dataset.uiHint = `${control.name} · ${control.frequency.toFixed(4)} MHz`;
+        trace.setAttribute('aria-label', trace.dataset.uiHint);
         return trace;
       }));
       render();

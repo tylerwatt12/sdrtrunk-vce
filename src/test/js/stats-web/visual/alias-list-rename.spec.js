@@ -76,7 +76,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await filter.fill('Pending filter draft');
     const originalUrl = page.url(), reads = fixture.reads.length;
     await page.evaluate(() => { window.renameWorkspace = document.querySelector('.alias-editor-workspace'); });
-    await expect(trigger).toHaveAttribute('title', 'Rename Alias List');
+    await expect(trigger).toHaveAttribute('data-ui-hint', 'Rename Alias List');
     await expectContrast(page, { rootSelector: '.alias-list-summary', reportName: `alias-rename-header-${theme}-${width}` });
     await expectNoHorizontalOverflow(page);
     await page.locator('.alias-list-summary').screenshot({ path: testInfo.outputPath(`alias-rename-header-${theme}-${width}.png`),

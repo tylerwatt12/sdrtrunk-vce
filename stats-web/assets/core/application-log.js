@@ -179,7 +179,7 @@ export function createApplicationLogWorkspace(deps) {
         hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 }) : '—');
     if (entry.time) {
       time.dateTime = entry.time;
-      time.title = entry.time;
+      time.dataset.uiHint = entry.time;
     }
     const severity = String(entry.level || 'TEXT').toUpperCase();
     const tone = severity === 'ERROR' ? 'danger' : severity === 'WARN' ? 'warning' : 'neutral';

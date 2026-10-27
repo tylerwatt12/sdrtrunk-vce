@@ -566,11 +566,11 @@ export class WebCallPlayer {
     if (this.ui.scanListSummary) {
       if (!this.scanListCatalogReady) {
         this.ui.scanListSummary.textContent = this.scanListCatalogState === 'loading' ? 'Loading' : 'Unavailable';
-        this.ui.scanListSummary.removeAttribute('title');
+        this.ui.scanListSummary.removeAttribute('data-ui-hint');
       } else {
         const selected = this.scanLists.filter((item) => this.selectedScanListIds.has(item.id));
         this.ui.scanListSummary.textContent = String(selected.length);
-        this.ui.scanListSummary.title = selected.length ? selected.map((item) => item.name).join(', ') :
+        this.ui.scanListSummary.dataset.uiHint = selected.length ? selected.map((item) => item.name).join(', ') :
           'No scan lists selected';
       }
     }
@@ -1441,13 +1441,13 @@ export class WebCallPlayer {
         secondary.textContent = details;
         this.ui.current.append(secondary);
       }
-      this.ui.current.title = details ? `${label}\n${details}` : label;
+      this.ui.current.dataset.uiHint = details ? `${label}\n${details}` : label;
     } else {
       const idle = document.createElement('strong');
       idle.className = 'playback-current-primary';
       idle.textContent = 'Idle';
       this.ui.current.append(idle);
-      this.ui.current.removeAttribute('title');
+      this.ui.current.removeAttribute('data-ui-hint');
     }
     this.ui.queued.textContent = String(this.queuedCount);
     this.ui.queueList.replaceChildren();
@@ -1460,7 +1460,7 @@ export class WebCallPlayer {
       const copy = document.createElement('span');
       copy.textContent = this.callLabel(call);
       const details = this.callDetails(call);
-      if (details) copy.title = details;
+      if (details) copy.dataset.uiHint = details;
       item.append(order, copy);
       this.ui.queueList.append(item);
     });
@@ -1477,7 +1477,7 @@ export class WebCallPlayer {
     this.ui.play.classList.toggle('active', !this.stopped);
     this.ui.play.setAttribute('aria-pressed', String(!this.stopped));
     this.ui.play.setAttribute('aria-label', playLabel);
-    this.ui.play.title = playLabel;
+    this.ui.play.dataset.uiHint = playLabel;
     if (this.ui.pause) {
       const pauseLabel = this.paused ? 'Resume browser call audio' :
         'Pause audio and keep collecting calls (queue is limited)';
@@ -1485,26 +1485,26 @@ export class WebCallPlayer {
       this.ui.pause.classList.toggle('active', this.paused);
       this.ui.pause.setAttribute('aria-pressed', String(this.paused));
       this.ui.pause.setAttribute('aria-label', pauseLabel);
-      this.ui.pause.title = pauseLabel;
+      this.ui.pause.dataset.uiHint = pauseLabel;
       this.ui.pause.querySelector('use')?.setAttribute('href', this.paused ? '#icon-play' : '#icon-pause');
     }
     this.ui.replay.disabled = !lastCallReady || this.paused;
     this.ui.replay.setAttribute('aria-label', 'Replay last call');
-    this.ui.replay.title = 'Replay last call';
+    this.ui.replay.dataset.uiHint = 'Replay last call';
     this.ui.hold.classList.toggle('active', Boolean(this.holdTarget));
     this.ui.hold.disabled = this.replayingLast || (!this.holdTarget && !currentReady);
-    this.ui.hold.title = this.holdTarget ? 'Release browser hold' : 'Hold the current target in this browser';
-    this.ui.hold.setAttribute('aria-label', this.ui.hold.title);
+    this.ui.hold.dataset.uiHint = this.holdTarget ? 'Release browser hold' : 'Hold the current target in this browser';
+    this.ui.hold.setAttribute('aria-label', this.ui.hold.dataset.uiHint);
     this.ui.avoid.disabled = !currentReady || this.replayingLast;
     if (this.ui.avoidList) {
       const avoidListLabel = `View ${this.avoids.size} browser avoid(s)`;
       this.ui.avoidList.setAttribute('aria-label', avoidListLabel);
-      this.ui.avoidList.title = avoidListLabel;
+      this.ui.avoidList.dataset.uiHint = avoidListLabel;
     }
     if (this.ui.clearQueue) {
       this.ui.clearQueue.disabled = !this.queuedCount;
-      this.ui.clearQueue.title = `Clear ${this.queuedCount} queued browser call(s)`;
-      this.ui.clearQueue.setAttribute('aria-label', this.ui.clearQueue.title);
+      this.ui.clearQueue.dataset.uiHint = `Clear ${this.queuedCount} queued browser call(s)`;
+      this.ui.clearQueue.setAttribute('aria-label', this.ui.clearQueue.dataset.uiHint);
     }
     this.ui.skip.disabled = !this.current && !this.queuedCount;
     this.renderProgress();

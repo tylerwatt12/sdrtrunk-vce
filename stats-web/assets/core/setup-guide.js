@@ -1,7 +1,7 @@
 // Shared page guidance: the modal foundation owns focus, dismissal and replacement.
 // Steps only describe copy, existing targets and temporary presentation work.
 import { createGuideDiagram } from '../guides/diagrams.js?v=1';
-import { createTunerCoverageDiagram } from '../guides/tuner-coverage.js?v=7';
+import { createTunerCoverageDiagram } from '../guides/tuner-coverage.js?v=8';
 
 const dynamicGuideDiagrams = Object.freeze({ 'tuner-coverage': createTunerCoverageDiagram });
 
@@ -540,7 +540,7 @@ export function openSetupGuide({ node, openReadOnlyModal, mountAccessWireframe, 
             control.type = 'button';
             control.dataset.guideChoice = choice.id;
             if (choice.description) {
-              control.title = choice.description;
+              control.dataset.uiHint = choice.description;
               control.setAttribute('aria-description', choice.description);
             }
             control.setAttribute('aria-pressed', String(choice.id === step.selectedChoice));

@@ -183,7 +183,7 @@ const sitePanel = (page) => page.locator('.tuner-allocation-site[data-site-id="a
 const tunerRow = (page, id) => sitePanel(page).locator(`.tuner-allocation-window-row[data-tuner-id="safe-tuner-${id}"]`);
 const centerReadout = (dialog) => dialog.locator('.ui-fact-row:has(dt:text-is("Center")) dd');
 const receivingMarker = (host, titleText) => host.locator(
-  '.chart-window-selected, .chart-window-other, .chart-window-unscoped').filter({ hasText: titleText });
+  '.chart-window-selected, .chart-window-other, .chart-window-unscoped').and(host.getByLabel(titleText, { exact: false }));
 
 for (const theme of ['light']) {
   test(`compact channel catalog starts with running channels and keeps recognizable names in ${theme}`, async ({ page }, testInfo) => {
@@ -478,8 +478,8 @@ test('real Albany coverage shows current windows, overlap, and uncovered known f
   await expect(page.locator('.tuner-allocation-selected-channel')).toContainText('Albany/Schenectady Counties');
   await expect(site).toContainText('9 of 11 within windows');
   await expect(site.locator('.tuner-allocation-window-row[data-tuner-id]')).toHaveCount(4);
-  await expect(tunerRow(page, 1).locator('.chart-window-center title')).toHaveText('Center 855.36250 MHz');
-  await expect(tunerRow(page, 2).locator('.chart-window-center title')).toHaveText('Center 852.21250 MHz');
+  await expect(tunerRow(page, 1).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 855.36250 MHz');
+  await expect(tunerRow(page, 2).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 852.21250 MHz');
   await expect(tunerRow(page, 3)).toContainText('Unused');
   await expect(tunerRow(page, 4)).toContainText('Unused');
   await expect(tunerRow(page, 1).locator('.chart-window-control')).toHaveCount(1);
@@ -509,7 +509,7 @@ test('live page and focused tuner follow retunes while preserving disclosure, fo
   const changed = snapshot();
   changed.tuners[2].frequency_hz = 859_212_500;
   app.respond({ data: changed });
-  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.21250 MHz');
+  await expect(tunerRow(page, 3).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 859.21250 MHz');
   await expect(known).toHaveAttribute('open', '');
   await expect(known.locator('summary')).toBeFocused();
   await expect(page.getByRole('button', { name: 'Highlight 853.73750 MHz', exact: true })).toHaveAttribute('aria-pressed', 'true');
@@ -518,14 +518,14 @@ test('live page and focused tuner follow retunes while preserving disclosure, fo
     .getByRole('button', { name: 'Details for RTL-SDR 4', exact: true });
   await tableTuner.focus();
   app.respond({ data: snapshot() });
-  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.46250 MHz');
+  await expect(tunerRow(page, 3).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 859.46250 MHz');
   await expect(tableTuner).toBeFocused();
   await tableTuner.click();
   await expect(centerReadout(page.getByRole('dialog'))).toHaveText('856.96250 MHz');
   await page.keyboard.press('Escape');
   await expect(tableTuner).toBeFocused();
   app.respond({ data: changed });
-  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.21250 MHz');
+  await expect(tunerRow(page, 3).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 859.21250 MHz');
   await tunerRow(page, 3).getByRole('button', { name: 'Details for RTL-SDR 3', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('859.21250 MHz');
@@ -534,7 +534,7 @@ test('live page and focused tuner follow retunes while preserving disclosure, fo
   await settings.locator('summary').focus();
   app.respond({ data: snapshot() });
   await expect(centerReadout(dialog)).toHaveText('859.46250 MHz');
-  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.46250 MHz');
+  await expect(tunerRow(page, 3).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 859.46250 MHz');
   await expect(settings).toHaveAttribute('open', '');
   await expect(settings.locator('summary')).toBeFocused();
   await page.keyboard.press('Escape');
@@ -549,7 +549,7 @@ test('live page and focused tuner follow retunes while preserving disclosure, fo
   await expect(centerReadout(page.getByRole('dialog'))).toHaveText('859.46250 MHz');
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Resume tuner allocation monitor' }).click();
-  await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.21250 MHz');
+  await expect(tunerRow(page, 3).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 859.21250 MHz');
 });
 
 test('history keeps grouped decisions and captured windows while current positions change', async ({ page }) => {
@@ -564,12 +564,14 @@ test('history keeps grouped decisions and captured windows while current positio
   await page.getByRole('button', { name: 'Details for tuner decision 1' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toContainText('Receiving windows at this decision');
-  await expect(dialog.locator('.chart-window-center title')).toHaveText(['Center 859.46250 MHz', 'Center 859.21250 MHz']);
+  await expect.poll(() => dialog.locator('.chart-window-center').evaluateAll((markers) =>
+    markers.map((marker) => marker.dataset.uiHint))).toEqual(['Center 859.46250 MHz', 'Center 859.21250 MHz']);
   const changed = snapshot([decision(1, { after_frequency_hz: 858_912_500 }), failed]);
   changed.tuners[2].frequency_hz = 858_912_500;
   app.respond({ data: changed });
   await page.waitForTimeout(1150);
-  await expect(dialog.locator('.chart-window-center title')).toHaveText(['Center 859.46250 MHz', 'Center 859.21250 MHz']);
+  await expect.poll(() => dialog.locator('.chart-window-center').evaluateAll((markers) =>
+    markers.map((marker) => marker.dataset.uiHint))).toEqual(['Center 859.46250 MHz', 'Center 859.21250 MHz']);
   await page.keyboard.press('Escape');
   await page.getByRole('button', { name: 'Details for tuner decision 2' }).click();
   await expect(page.getByRole('dialog')).toContainText('Requests12');
@@ -796,7 +798,7 @@ test('selected channel markers distinguish shared tuner work by site identity th
   const changed = sharedTunerSnapshot();
   changed.tuners[3].frequency_hz = 857_112_500;
   app.respond({ data: changed });
-  await expect(row('colonie', 4).locator('.chart-window-center title')).toHaveText('Center 857.11250 MHz');
+  await expect(row('colonie', 4).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 857.11250 MHz');
   await expect(receivingMarker(row('colonie', 4), 'Call 856.21250 MHz · Colonie Simulcast'))
     .toHaveClass(/chart-window-selected/);
   await expect(receivingMarker(row('colonie', 1), 'Call 856.21250 MHz · Albany County Simulcast'))
@@ -889,7 +891,7 @@ for (const theme of ['light']) {
     const changed = structuredClone(data);
     changed.tuners[2].frequency_hz = 859_212_500;
     app.respond({ data: changed });
-    await expect(tunerRow(page, 3).locator('.chart-window-center title')).toHaveText('Center 859.21250 MHz');
+    await expect(tunerRow(page, 3).locator('.chart-window-center')).toHaveAttribute('data-ui-hint', 'Center 859.21250 MHz');
     await expect(isolated).toBeFocused();
     await expect(isolated).toHaveAttribute('aria-pressed', 'true');
     await page.getByRole('button', { name: 'Pause tuner allocation monitor' }).click();

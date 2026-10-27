@@ -98,7 +98,7 @@ for (const theme of ['light']) {
         + '<span class="column-resizer"></span></th>'
         + '<th data-column="channel"><button class="table-sort-control">Channel</button></th>'
         + '</tr></thead><tbody>'
-        + '<tr><td>IDLE</td><td data-column="tags" title="Current control channel">CC</td>'
+        + '<tr><td>IDLE</td><td data-column="tags" data-ui-hint="Current control channel">CC</td>'
         + '<td>Regional Emergency Services Dispatch Channel</td></tr>'
         + '<tr><td>ACTIVE</td><td data-column="tags">V + D</td><td>Dispatch</td></tr>'
         + '</tbody>';
@@ -189,6 +189,83 @@ test('disabled icon hint stays visible outside a table', async ({ page }) => {
   await deleteDefault.hover();
   await expect(hint).toBeVisible();
 });
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1280, 390]) {
+    test(`shared text hints update and preserve multiline details ${theme} ${width}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
+      const action = page.locator('[data-visual-text-hint]');
+      const time = page.locator('[data-visual-time-hint]');
+      const hint = page.locator('.ui-icon-hint');
+      await expect(hint).toHaveCount(1);
+      await action.scrollIntoViewIfNeeded();
+      await page.mouse.move(0, 0);
+      await action.evaluate((element) => element.setAttribute('aria-describedby', 'existing-help'));
+      await action.hover();
+      await expect(hint).toHaveText('Open details for the selected call');
+      await expect(hint).toBeVisible();
+      const hintId = await hint.getAttribute('id');
+      await expect(action).toHaveAttribute('aria-describedby', `existing-help ${hintId}`);
+      await expect(action).not.toHaveAttribute('title');
+      await action.evaluate((element) => { element.dataset.uiHint = 'Details are being refreshed'; });
+      await expect(hint).toHaveText('Details are being refreshed');
+      await action.evaluate((element) => { element.dataset.uiHint = ''; });
+      await expect(hint).toBeHidden();
+      await expect(action).toHaveAttribute('aria-describedby', 'existing-help');
+      await action.evaluate((element) => { element.dataset.uiHint = 'Open details for the selected call'; });
+      await expect(hint).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(hint).toBeHidden();
+      await expect(action).toHaveAttribute('aria-describedby', 'existing-help');
+
+      await time.scrollIntoViewIfNeeded();
+      await page.mouse.move(0, 0);
+      await time.hover();
+      await expect(hint).toHaveText('October 27, 2026, 10:08:00 AM\nCall length: 42 seconds');
+      await expect(hint).toHaveCSS('white-space', 'pre-line');
+      await expect(time).not.toHaveAttribute('title');
+      await expect(hint).toHaveScreenshot(`text-hint-${theme}-${width}.png`);
+      const bounds = await hint.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(844);
+      await hint.hover();
+      await expect(hint).toBeVisible();
+      await page.mouse.move(0, 0);
+      await expect(hint).toBeHidden();
+
+      // A hint on a wrapping label is also available from its focused input.
+      await action.evaluate((element) => {
+        const label = document.createElement('label');
+        label.dataset.uiHint = 'Browser playback volume';
+        label.dataset.visualWrappedHint = '';
+        const input = document.createElement('input');
+        input.type = 'range';
+        input.setAttribute('aria-label', 'Example volume');
+        label.append(input);
+        element.after(label);
+      });
+      await action.focus();
+      await page.keyboard.press('Tab');
+      const volume = page.getByRole('slider', { name: 'Example volume' });
+      await expect(volume).toBeFocused();
+      await expect(hint).toHaveText('Browser playback volume');
+      await expect(hint).toBeVisible();
+      await expect(volume).toHaveAttribute('aria-describedby', hintId);
+      await volume.evaluate((element) => {
+        element.value = '50';
+        element.parentElement.dataset.uiHint = Array(80).fill('Additional volume details').join('\n');
+      });
+      await expect.poll(() => hint.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+      await volume.press('ArrowRight');
+      await expect(volume).toHaveValue('51');
+      await page.keyboard.press('Escape');
+      await expect(hint).toBeHidden();
+      await expect(volume).not.toHaveAttribute('aria-describedby');
+    });
+  }
+}
 
 test('scan list catalog keeps one selected detail in sync with search and availability filters', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -419,7 +496,7 @@ for (const theme of ['light']) {
         const tab = tabs.getByRole('tab', { name: label, exact: true });
         await expect(tab).toBeVisible();
         await expect(tab).toHaveClass(/ui-segmented-option-icon/);
-        await expect(tab).toHaveAttribute('title', label);
+        await expect(tab).toHaveAttribute('data-ui-hint', label);
         await expect(tab).toHaveText('');
         await expect(tab.locator('svg')).toHaveCSS('width', '18px');
         await expect(tab.locator('use')).toHaveAttribute('href', `#visual-icon-${glyph}`);

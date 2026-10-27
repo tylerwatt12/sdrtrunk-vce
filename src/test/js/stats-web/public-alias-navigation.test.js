@@ -30,7 +30,7 @@ function declaration(name) {
 
 class Element {
   constructor(tag, className = '', textContent = '') {
-    Object.assign(this, { tag, className, textContent, children: [], listeners: {} });
+    Object.assign(this, { tag, className, textContent, children: [], listeners: {}, dataset: {} });
   }
   append(...values) { this.children.push(...values); }
   setAttribute(name, value) { this[name] = value; }

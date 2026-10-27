@@ -147,7 +147,7 @@ for (const [width, dark] of [[1280, false], [320, true]]) {
     await page.setViewportSize({ width, height: 900 });
     const liveSnapshot = structuredClone(snapshot);
     const remote = liveSnapshot.tables[0];
-    remote.title = 'P25-1: BEE00:348 02-03 (Remote site with a long configured name)';
+    remote.dataset.uiHint = 'P25-1: BEE00:348 02-03 (Remote site with a long configured name)';
     remote.control_active = true;
     Object.assign(remote.rows[0], { role: 'CURRENT_CONTROL', quality_observed_at_ms: Date.now(), decode_health_pct: 98.7,
       signal_dbfs: null });
@@ -173,7 +173,7 @@ for (const [width, dark] of [[1280, false], [320, true]]) {
     await expect(pickerRow.locator('.channels-tab-quality')).toHaveClass(/ui-origin-indicator-success/);
     await expect(pickerRow.locator('.channels-tab-quality')).not.toHaveClass(/ui-quality-bars/);
     await expect(pickerRow.locator('.channels-tab-quality use')).toHaveAttribute('href', '#icon-cloud');
-    await expect(pickerRow.locator('.channels-tab-quality')).toHaveAttribute('title', /98\.7% decode quality.*Received from another receiver./);
+    await expect(pickerRow.locator('.channels-tab-quality')).toHaveAttribute('data-ui-hint', /98\.7% decode quality.*Received from another receiver./);
     await expect(pickerRow.getByRole('tab')).toHaveAttribute('aria-label', /98\.7% decode quality.*Received from another receiver./);
     await expect(pickerRow.getByRole('tab')).not.toHaveAttribute('aria-label', /signal strength/i);
     await expect(pickerRow.locator('.channels-tab-title .live-remote-origin')).toHaveCount(0);

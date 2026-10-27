@@ -87,7 +87,7 @@ function declaration(name) {
 }
 
 function node(_tag, _className, value = '') {
-  return { children: [value], classList: { add() {} }, append(...values) { this.children.push(...values); },
+  return { dataset: {}, children: [value], classList: { add() {} }, append(...values) { this.children.push(...values); },
     get textContent() { return this.children.map((child) => child?.textContent ?? child ?? '').join(''); } };
 }
 const headers = [];

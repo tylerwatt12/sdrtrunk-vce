@@ -586,12 +586,12 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       control.textContent = saved ? '★' : '☆';
       control.setAttribute('aria-pressed', String(saved));
       control.setAttribute('aria-label', `${saved ? 'Remove' : 'Add'} bookmark: ${value.name}`);
-      control.title = `${saved ? 'Remove bookmark' : 'Bookmark'}: ${value.name}`;
+      control.dataset.uiHint = `${saved ? 'Remove bookmark' : 'Bookmark'}: ${value.name}`;
       control.disabled = false;
       onChanged?.();
     } catch (error) {
       control.disabled = false;
-      control.title = `Bookmark failed: ${error.message}`;
+      control.dataset.uiHint = `Bookmark failed: ${error.message}`;
     }
   };
   const starButton = (value, onChanged) => {
@@ -600,7 +600,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       'ui-button ui-button-secondary ui-icon-button radioreference-bookmark');
     control.setAttribute('aria-label', `${saved ? 'Remove' : 'Add'} bookmark: ${value.name}`);
     control.setAttribute('aria-pressed', String(saved));
-    control.title = `${saved ? 'Remove bookmark' : 'Bookmark'}: ${value.name}`;
+    control.dataset.uiHint = `${saved ? 'Remove bookmark' : 'Bookmark'}: ${value.name}`;
     control.addEventListener('click', () => track(toggleBookmark(value, control, onChanged)));
     return control;
   };
@@ -836,7 +836,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       radio.value = value;
       radio.checked = value === defaultMode;
       radio.disabled = !hasControl && (value === 'CONTROL' || value === 'CONTROL_AND_ALTERNATES');
-      if (radio.disabled) choice.title = capacityPlus(system) ?
+      if (radio.disabled) choice.dataset.uiHint = capacityPlus(system) ?
         'Capacity Plus uses a moving rest channel, not a dedicated control channel.' :
         conventionalNetworked(system) ? 'Conventional networked systems do not use a control channel.' :
         'RadioReference does not identify a primary control frequency for this site.';
@@ -1035,7 +1035,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
           const numberLabel = siteNumberLabel(site);
           const open = button(textValue(site, ['name', 'description'],
             numberLabel ? `Site ${numberLabel}` : 'Site'), 'link-button radioreference-site-import');
-          open.title = 'Review this site for import';
+          open.dataset.uiHint = 'Review this site for import';
           guideTarget(open, 'site-button');
           open.addEventListener('click', () => track(openSiteImport(systemDetails, site, site)));
           identity.append(open);
@@ -1166,7 +1166,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       importAll.disabled = !ready || !aliasList.value || !state.talkgroupCatalogId;
       const selectionLocksAliasList = count > 0 && Boolean(aliasList.value);
       aliasList.disabled = catalogState === 'loading' || selectionLocksAliasList;
-      aliasList.title = selectionLocksAliasList ? 'Clear the current selection before changing Alias Lists.' : '';
+      aliasList.dataset.uiHint = selectionLocksAliasList ? 'Clear the current selection before changing Alias Lists.' : '';
       filter.dataset.value = state.talkgroupStatus;
       filter.querySelectorAll('button').forEach((control) => {
         const active = control.dataset.value === state.talkgroupStatus;
@@ -1202,7 +1202,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
       const changedValues = change ? importedChangeValues(change) : null;
       if (change) {
         const pill = uiPill('Changed', 'warning');
-        pill.title = `${IMPORTED_FIELD_LABELS[importedField]}: ${changedValues.before} → ${changedValues.after}`;
+        pill.dataset.uiHint = `${IMPORTED_FIELD_LABELS[importedField]}: ${changedValues.before} → ${changedValues.after}`;
         value.append(pill);
       }
       value.append(node('span', '', changedValues?.after ?? (incoming || '—')));
@@ -1649,7 +1649,7 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             { id: 'alpha-tag', label: 'Alpha tag', render: (value) => {
               const open = button(textValue(value, ['alpha_tag', 'alphaTag', 'name'], 'Unnamed'),
                 'link-button radioreference-conventional-import');
-              open.title = 'Review this channel for import';
+              open.dataset.uiHint = 'Review this channel for import';
               const defaults = names[frequencyId(value)];
               open.disabled = !defaults;
               open.addEventListener('click', () => openConventionalImport(entry, value, subCategoryId, defaults));

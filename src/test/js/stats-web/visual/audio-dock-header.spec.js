@@ -49,7 +49,7 @@ async function expectSingleRow(dock, state, source, queued, title) {
   await expect(right).toBeVisible();
   if (state === 'collapsed') {
     await expect(row.locator('.audio-dock-single-line')).toHaveText(title);
-    await expect(row.locator('.audio-dock-single-line')).toHaveAttribute('title', title);
+    await expect(row.locator('.audio-dock-single-line')).toHaveAttribute('data-ui-hint', title);
     await expect(row.locator('.audio-dock-collapsed-meta')).toHaveText(`${source === 'live' ? 'Live' : 'Recording'} · ${queued} queued`);
     await expect(dock.getByRole('group', { name: 'Audio source', exact: true })).toBeHidden();
     await expect(dock.getByRole('combobox', { name: 'Audio source', exact: true })).toBeHidden();

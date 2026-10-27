@@ -4,6 +4,7 @@ const ICON_CONTROL_SELECTOR = [
 ].join(', ');
 
 const hintDetails = new WeakMap();
+let hintSequence = 0;
 
 // Keep structured hints in the shared hover/focus lifecycle without interpreting HTML.
 export function setIconHintDetails(control, { heading, columns, rows }) {
@@ -13,20 +14,37 @@ export function setIconHintDetails(control, { heading, columns, rows }) {
 export function installIconHints(root = document) {
   const hint = root.createElement('div');
   hint.className = 'ui-icon-hint';
+  hint.id = `ui-icon-hint-${++hintSequence}`;
   hint.setAttribute('role', 'tooltip');
   hint.setAttribute('popover', 'manual');
   root.body.append(hint);
   let active = null;
   let timer = null;
   let hideTimer = null;
+  let describedControl = null;
+
+  const clearDescription = () => {
+    if (!describedControl) return;
+    const ids = (describedControl.getAttribute('aria-describedby') || '').split(/\s+/)
+      .filter((id) => id && id !== hint.id);
+    if (ids.length) describedControl.setAttribute('aria-describedby', ids.join(' '));
+    else describedControl.removeAttribute('aria-describedby');
+    describedControl = null;
+  };
+  const closeHint = () => {
+    clearDescription();
+    if (hint.matches(':popover-open')) hint.hidePopover();
+  };
+  const updates = new MutationObserver(() => { if (active) show(active); });
 
   const hide = () => {
     clearTimeout(timer);
     clearTimeout(hideTimer);
     timer = null;
     hideTimer = null;
+    updates.disconnect();
     active = null;
-    if (hint.matches(':popover-open')) hint.hidePopover();
+    closeHint();
   };
   const scheduleHide = () => {
     clearTimeout(hideTimer);
@@ -73,15 +91,22 @@ export function installIconHints(root = document) {
     hint.style.top = `${Math.round(top)}px`;
   };
   const show = (control) => {
-    if (active !== control || !control.isConnected) return;
-    const title = control.getAttribute('title');
-    if (title) {
-      control.dataset.uiHint = title;
-      control.removeAttribute('title');
+    if (active !== control) return;
+    if (!control.isConnected) {
+      hide();
+      return;
     }
-    const label = control.dataset.uiHint || control.getAttribute('aria-label');
-    if (!label) return;
+    const label = control.hasAttribute('data-ui-hint') ? control.dataset.uiHint :
+      control.matches(ICON_CONTROL_SELECTOR) ? control.getAttribute('aria-label') : '';
+    if (!label) {
+      closeHint();
+      return;
+    }
     render(control, label);
+    clearDescription();
+    describedControl = control.contains(root.activeElement) ? root.activeElement : control;
+    const ids = (describedControl.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+    describedControl.setAttribute('aria-describedby', [...new Set([...ids, hint.id])].join(' '));
     if (!hint.matches(':popover-open')) hint.showPopover();
     position(control);
   };
@@ -90,8 +115,9 @@ export function installIconHints(root = document) {
     if (!control || control === active) return;
     hide();
     active = control;
-    if (delay) timer = window.setTimeout(() => show(control), delay);
-    else show(control);
+    const watch = () => updates.observe(control, { attributes: true, attributeFilter: ['data-ui-hint', 'aria-label'] });
+    if (delay) timer = window.setTimeout(() => { show(control); if (active === control) watch(); }, delay);
+    else { show(control); if (active === control) watch(); }
   };
 
   root.addEventListener('pointerover', (event) => {
@@ -110,11 +136,12 @@ export function installIconHints(root = document) {
   });
   root.addEventListener('focusin', (event) => {
     const control = controlFor(event.target);
-    if (!control?.matches(':focus-visible')) return;
+    if (!control || !event.target.matches(':focus-visible')) return;
     if (control === active) {
       clearTimeout(timer);
       timer = null;
       show(control);
+      updates.observe(control, { attributes: true, attributeFilter: ['data-ui-hint', 'aria-label'] });
       return;
     }
     activate(control, 0);
@@ -132,7 +159,7 @@ export function installIconHints(root = document) {
   root.addEventListener('pointerdown', (event) => { if (!withinHint(event.target)) hide(); });
   root.addEventListener('scroll', (event) => {
     if (withinHint(event.target)) return;
-    if (active === root.activeElement && hint.matches(':popover-open')) position(active);
+    if (active?.contains(root.activeElement) && hint.matches(':popover-open')) position(active);
     else hide();
   }, true);
   root.addEventListener('keydown', (event) => {
@@ -141,7 +168,8 @@ export function installIconHints(root = document) {
       return;
     }
     if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey ||
-        active !== root.activeElement || !hintDetails.has(active) || !hint.matches(':popover-open')) return;
+        event.target.closest('input, select, textarea, [contenteditable]:not([contenteditable="false"])') ||
+        !active?.contains(root.activeElement) || !hint.matches(':popover-open')) return;
     const maximum = hint.scrollHeight - hint.clientHeight;
     if (maximum <= 0) return;
     const line = hint.querySelector('tbody tr')?.getBoundingClientRect().height || hint.clientHeight / 8;

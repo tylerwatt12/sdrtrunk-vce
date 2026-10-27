@@ -193,7 +193,7 @@ async function expectLessonState(page, id) {
   }
   if (id === 'queue') {
     await expect(guide(page)).toContainText('When several calls arrive together, VCE reorders them in queue so you hear them in turn.');
-    const queue = page.locator('.scanner-up-next-list > li[title]');
+    const queue = page.locator('.scanner-up-next-list > li[data-ui-hint]');
     await expect(queue).toHaveCount(4);
     await expect(queue.nth(0)).toContainText('Regional Fire');
     await expect(queue.nth(0)).toContainText('Engine 7');

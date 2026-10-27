@@ -93,7 +93,7 @@ for (const width of [320, 390, 430]) {
     for (const value of await truncatedMetadata.all()) {
       await expect(value).toHaveCSS('white-space', 'nowrap');
       await expect(value).toHaveCSS('text-overflow', 'ellipsis');
-      await expect(value).toHaveAttribute('title', await value.textContent());
+      await expect(value).toHaveAttribute('data-ui-hint', await value.textContent());
     }
     await expect(transport.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
     const disclosure = page.locator('.scanner-queue-disclosure');

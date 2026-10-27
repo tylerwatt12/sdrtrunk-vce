@@ -541,17 +541,17 @@
   font-weight: var(--font-weight-control);
   line-height: 1.35;
   text-align: center;
-  pointer-events: none;
+  white-space: pre-line;
+  max-height: calc(100dvh - var(--space-4));
+  overflow: auto;
+  pointer-events: auto;
   overflow-wrap: anywhere;
 }
 
 .ui-icon-hint-details {
   max-width: min(var(--hint-details-max-width), calc(100vw - var(--space-4)));
-  max-height: calc(100dvh - var(--space-4));
-  overflow: auto;
   text-align: start;
   font-weight: var(--font-weight-normal);
-  pointer-events: auto;
 }
 
 .ui-icon-hint-heading {

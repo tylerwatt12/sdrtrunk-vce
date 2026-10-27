@@ -407,7 +407,7 @@ assert.match(aliasExportLink, /ui-button ui-button-secondary ui-icon-button expo
   'CSV exports must use the shared icon-button treatment.');
 assert.match(aliasExportLink, /iconGlyph\('icon-share'\)/,
   'CSV exports must show the share glyph.');
-assert.match(aliasExportLink, /link\.title = label/,
+assert.match(aliasExportLink, /link\.dataset\.uiHint = label/,
   'CSV exports must explain their action on hover.');
 assert.match(aliasExportLink, /new AbortController\(\)/,
   'Report downloads must have a cancellable request lifecycle.');

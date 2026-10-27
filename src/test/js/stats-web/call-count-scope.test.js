@@ -51,7 +51,7 @@ function functionSource(name) {
 
 function node(tag, className = '', value = '') {
   const element = {
-    tag, className, children: [], attributes: {}, hidden: false,
+    tag, className, children: [], attributes: {}, dataset: {}, hidden: false,
     classList: { add() {}, toggle() {} },
     append(...children) { this.children.push(...children.filter((child) => child != null)); },
     replaceChildren(...children) { this.children = children.filter((child) => child != null); },
