@@ -28,7 +28,8 @@ export function channelSetupSteps(documentValue, preparePlayer, preparePage, can
     'new-channel': '.channel-catalog-overview', 'channel-choice': '.read-only-modal',
     'channel-choice-close': '.read-only-modal', discover: '.channel-catalog-overview',
     'select-channel': 'tr', receiving: 'tr, .channel-selection-bar', startup: '.channel-admin-toolbar',
-    'player-overview': '.audio-dock', 'listening-controls': '.audio-dock', listening: '.audio-dock'
+    'player-overview': '.audio-dock', 'listening-controls': '.audio-dock', 'listening-menu': '.audio-dock',
+    listening: '.audio-dock', 'listening-back': '.audio-dock', 'player-back': '.audio-dock'
   };
   const steps = [
     { id: 'new-channel', title: 'Add a channel',
@@ -65,14 +66,26 @@ export function channelSetupSteps(documentValue, preparePlayer, preparePage, can
       paragraphs: ['The player plays completed calls from the Scan Lists you choose.'] },
     { id: 'listening-controls', title: 'Open your listening choices', prepare: prepare('listening-controls'),
       samples: [catalogSample(), guideSample('listening-controls')],
-      targets: targets(documentValue, 'player-lists'),
-      paragraphs: ['Open Lists in the player to choose your listening groups.'] },
+      targets: targets(documentValue, 'player-menu'),
+      paragraphs: ['Open Player menu for your listening choices and playback preferences.'] },
+    { id: 'listening-menu', title: 'Choose your listening groups', prepare: prepare('listening-menu'),
+      samples: [catalogSample(), guideSample('listening-menu')],
+      targets: targets(documentValue, 'player-menu-lists'),
+      paragraphs: ['Open Lists to choose the groups whose calls reach your player.'] },
     { id: 'listening', title: 'Choose what you hear', prepare: prepare('listening'),
       samples: [catalogSample(), guideSample('listening')],
       targets: targets(documentValue, 'scan-lists-player-lists'),
-      paragraphs: ['Select the Scan Lists you want to hear. VCE plays each completed call after the transmission finishes.'] }
+      paragraphs: ['Select the Scan Lists you want to hear. VCE plays each completed call after the transmission finishes.'] },
+    { id: 'listening-back', title: 'Return to Player menu', prepare: prepare('listening-back'),
+      samples: [catalogSample(), guideSample('listening-back')],
+      targets: targets(documentValue, 'player-menu-back'),
+      paragraphs: ['Back returns to Player menu.'] },
+    { id: 'player-back', title: 'Return to your channels', prepare: prepare('player-back'),
+      samples: [catalogSample(), guideSample('player-back')],
+      targets: targets(documentValue, 'player-menu-back'),
+      paragraphs: ['Back closes Player menu and returns you to your channels.'] }
   ].filter((step) => (step.id !== 'discover' || canDiscover) &&
-    (!['player-overview', 'listening-controls', 'listening'].includes(step.id) || canListen));
+    (!['player-overview', 'listening-controls', 'listening-menu', 'listening', 'listening-back', 'player-back'].includes(step.id) || canListen));
   return steps.map((step, index) => ({ ...step,
     contextTargets: contextualTargets(step.targets, contexts[step.id]),
     ...(index === steps.length - 1 ? { nextLabel: 'Finish' } : {})

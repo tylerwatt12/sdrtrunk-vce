@@ -3,6 +3,23 @@
  * Data workspaces remain compact while sharing the same radii and elevation
  * as comfortable editor workspaces.
  */
+.ui-identity-action {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.ui-identity-action-label {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 :where(.data-workspace, [data-ui-density="compact"]) {
   --ui-control-height: var(--control-height-compact);
   --ui-control-radius: var(--radius-control);

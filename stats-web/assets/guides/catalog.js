@@ -1,7 +1,7 @@
 import { pageGuidePresentation } from './presentation.js?v=1';
 import { contextualTargets } from './context.js?v=1';
 import { definitions as routes } from '../core/routes.js?v=11';
-import { channelSetupSteps } from './pages/channel-setup.js?v=3';
+import { channelSetupSteps } from './pages/channel-setup.js?v=4';
 import { aliasesSteps } from './pages/aliases.js?v=3';
 import { radioReferenceSteps } from './pages/radioreference.js?v=3';
 import { streamingSteps } from './pages/streaming.js?v=4';
@@ -9,7 +9,7 @@ import { tunersSteps } from './pages/tuners.js?v=6';
 import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spectrum.js?v=7';
 import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=3';
 import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=3';
-import { scannerSteps } from './pages/scanner.js?v=4';
+import { scannerSteps } from './pages/scanner.js?v=5';
 import { recordingsSteps } from './pages/recordings.js?v=4';
 import { topicsSteps } from './pages/topics.js?v=1';
 import { mapSteps, mapOverviewPresentation } from './pages/map.js?v=1';
@@ -80,7 +80,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 4, aliases: 5, 'scan-lists': 7, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5, live: 3, dashboard: 3, scanner: 4, recordings: 4, topics: 3, map: 3, 'network-visualizer': 4, admin: 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 5, aliases: 5, 'scan-lists': 8, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5, live: 3, dashboard: 3, scanner: 5, recordings: 4, topics: 3, map: 3, 'network-visualizer': 4, admin: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));
@@ -161,7 +161,7 @@ function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport
       items: [
         { label: 'Live or Recordings', text: 'Follow incoming calls or play saved calls.' },
         { label: 'Make room', text: 'Click the handle to change the player’s size, or drag it to adjust the height.' },
-        { label: 'Lists', text: 'Choose which Scan Lists you hear. Select several to listen to them together.' },
+        { label: 'Player menu', text: 'Choose your listening groups, manage avoided traffic, and adjust playback.' },
         { label: 'Keep it close', text: 'X minimizes the player to the header while audio continues. Select Player there to bring it back.' }
       ] },
     { id: 'page-help', title: 'A guide for every page',
@@ -215,7 +215,7 @@ function welcomeSteps(documentValue, preparePlayer, canSetup, canView, canReport
     }
     if (step.id === 'listening' && !canUsePlayer) step.paragraphs = [];
     if (step.id === 'player') {
-      if (!allowed('scanner')) step.items = step.items.filter(({ label }) => label !== 'Lists');
+      if (!allowed('scanner')) step.items = step.items.filter(({ label }) => label !== 'Player menu');
       if (!allowed('scanner') || !allowed('recordings')) {
         step.items[0] = allowed('scanner') ? { label: 'Live', text: 'Follow incoming calls from your selected Scan Lists.' } :
           { label: 'Recordings', text: 'Play saved calls as you move between pages.' };
@@ -236,7 +236,8 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
   const contexts = {
     lists: '.scan-list-detail', 'add-list-button': '.scan-list-member-summary',
     'add-alias-list': '.read-only-modal', 'back-to-lists': '.scan-list-member-summary',
-    'player-overview': '.audio-dock', 'listening-controls': '.audio-dock', listening: '.audio-dock'
+    'player-overview': '.audio-dock', 'listening-controls': '.audio-dock', 'listening-menu': '.audio-dock',
+    listening: '.audio-dock', 'listening-back': '.audio-dock', 'player-back': '.audio-dock'
   };
   return [
     { id: 'lists', title: canManageAliases ? 'Review your listening group' : 'Your listening groups',
@@ -260,15 +261,23 @@ function scanListsSteps(documentValue, preparePlayer, preparePage, canView) {
       targets: focus('player'),
       paragraphs: ['The player plays completed calls from the Scan Lists you choose.'] },
     { id: 'listening-controls', title: 'Choose your listening mix',
-      targets: focus('player-lists'),
-      paragraphs: ['Each listener chooses a listening mix here. Your choices are saved for your sign-in.'] },
+      targets: focus('player-menu'),
+      paragraphs: ['Open Player menu for your listening choices and playback preferences.'] },
+    { id: 'listening-menu', title: 'Choose your listening groups',
+      targets: focus('player-menu-lists'),
+      paragraphs: ['Open Lists to choose the groups whose calls reach your player. Your Scan List choices are saved for your sign-in.'] },
     { id: 'listening', title: 'Hear your selected traffic together',
       targets: focus('scan-lists-player-lists'),
-      paragraphs: ['VCE queues completed calls from your selected lists and plays them one at a time. A call shared by several selected lists plays once.'],
-      nextLabel: 'Finish' }
+      paragraphs: ['VCE queues completed calls from your selected lists and plays them one at a time. A call shared by several selected lists plays once.'] },
+    { id: 'listening-back', title: 'Return to Player menu',
+      targets: focus('player-menu-back'),
+      paragraphs: ['Back returns to Player menu.'] },
+    { id: 'player-back', title: 'Return to your Scan Lists',
+      targets: focus('player-menu-back'),
+      paragraphs: ['Back closes Player menu and returns you to your Scan Lists.'] }
   ].filter((step) => {
     if (typeof canView !== 'function') return true;
-    if (['player-overview', 'listening-controls', 'listening'].includes(step.id)) return canView('scanner') !== false;
+    if (['player-overview', 'listening-controls', 'listening-menu', 'listening', 'listening-back', 'player-back'].includes(step.id)) return canView('scanner') !== false;
     if (['members', 'add-list-button', 'add-alias-list', 'back-to-lists'].includes(step.id)) {
       return canView('aliases') !== false;
     }

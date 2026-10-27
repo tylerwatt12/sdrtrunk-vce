@@ -48,14 +48,8 @@ for (const scenario of [
     const status = scanner ? page.locator('.scanner-live-status') : dock.locator('.audio-dock-listening-status [role="status"]');
     const title = scanner ? page.locator('.scanner-call-title') : dock.locator('h2.audio-dock-title');
     const choose = async (id, checked) => {
-      let lists;
-      if (scanner) {
-        lists = page.getByRole('dialog', { name: 'Listen to scan lists', exact: true });
-        if (!await lists.isVisible()) await page.locator('.scanner-scan-trigger').click();
-      } else {
-        await selectAudioPanel(dock, 'Scan Lists');
-        lists = dock.locator('#audio-dock-panel');
-      }
+      await selectAudioPanel(dock, 'Lists');
+      const lists = dock.locator('#audio-dock-panel');
       const name = scanLists.find(list => list.id === id).name;
       await lists.getByRole('checkbox', { name: new RegExp(`^${name}(?:\\s|$)`) }).setChecked(checked);
       if (scanner) await page.keyboard.press('Escape');

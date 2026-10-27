@@ -2,6 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 const path = require('node:path');
+const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 const { pathToFileURL } = require('node:url');
 let defaults;
 test.beforeAll(async () => {
@@ -12,7 +13,7 @@ test.beforeAll(async () => {
 async function openForms(page, view, theme = 'light', scanList = {}) {
   let preferences = structuredClone(defaults);
   let preferenceRevision = 1;
-  const history = { version: 1, dismissed: { welcome: 1, 'scan-lists': 7, scanner: 4, live: 3, admin: 3 } };
+  const history = { version: 1, dismissed: { welcome: 1, 'scan-lists': 8, scanner: 5, live: 3, admin: 3 } };
   preferences.appearance.theme = theme;
   const state = { writes: [], pending: [], scanLists: [{ id: 1, name: 'Public Safety',
     description: 'Dispatch and mutual aid', edit_revision: 'scan-list-1-1',
@@ -231,8 +232,7 @@ test('failure mapping cannot strand a form busy or enable a permanently disabled
 for (const [theme, width] of [['light', 1280], ['light', 390]]) {
 for (const [view, trigger, title, setting, saveLabel] of [
   ['admin&tab=health', '#receiver-health-alert-settings', 'Status icon issues', null, 'Save choices'],
-  ['live', '.live-presentation-button', 'Live presentation', 'Matching rows shown', 'Save Live Presentation'],
-  ['scanner', '#scanner-settings', 'Scanner settings', 'Calls before switching targets', 'Save Scanner Settings']
+  ['live', '.live-presentation-button', 'Live presentation', 'Matching rows shown', 'Save Live Presentation']
 ]) {
   test(`${title} shares busy, failure, retry, and conflict handling in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 740 });
@@ -287,4 +287,33 @@ for (const [view, trigger, title, setting, saveLabel] of [
     expect(app.state.writes.map(write => write.revision)).toEqual(['"1"', '"1"', '"1"']);
   });
 }
+}
+
+for (const width of [1280, 390]) {
+  test(`Scanner Listening settings restore failed edits and retry from the shared menu at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 740 });
+    const app = await openForms(page, 'view=scanner');
+    await page.locator('#scanner-player-menu').click();
+    const dock = page.locator('#audio-dock');
+    await selectAudioPanel(dock, 'Listening settings');
+    const burst = dock.getByRole('spinbutton', { name: 'Calls per target', exact: true });
+    const previous = await burst.inputValue();
+    await burst.fill('7');
+    await burst.press('Tab');
+    await expect.poll(() => app.state.pending.length).toBe(1);
+    app.finish(503);
+    const notice = page.locator('#preference-status');
+    await expect(notice).toHaveAttribute('role', 'alert');
+    await expect(notice).toContainText('Your previous values are still active.');
+    await expect(burst).toHaveValue(previous);
+    await notice.getByRole('button', { name: 'Retry', exact: true }).click();
+    await expect.poll(() => app.state.pending.length).toBe(1);
+    app.finish();
+    await expect(notice).toBeHidden();
+    await expect(burst).toHaveValue('7');
+    expect(app.state.writes.map(write => write.body.playback.target_burst_limit)).toEqual([7, 7]);
+    expect(app.state.writes.map(write => write.revision)).toEqual(['"1"', '"1"']);
+    await dock.getByRole('button', { name: 'Back to menu', exact: true }).click();
+    await expect(dock.locator('#audio-dock-context-title')).toHaveText('Player menu');
+  });
 }

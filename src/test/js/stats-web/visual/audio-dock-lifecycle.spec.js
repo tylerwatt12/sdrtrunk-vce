@@ -2,7 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
-const { openAudioVolume } = require('./audio-dock-controls.cjs');
+const { openAudioVolume, selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 test('visible Live spectrum and relative age stop updating when presentation is hidden or destroyed', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -57,7 +57,7 @@ test('visible Live spectrum and relative age stop updating when presentation is 
   await expect.poll(() => page.evaluate(() => window.dockLifecycle.events.reads)).toBeGreaterThan(2);
   await expect(dock.getByRole('img', { name: 'Voice frequency spectrum' })).toBeVisible();
   await expect.poll(() => dock.locator('.audio-dock-wave > i').first().evaluate(element => parseFloat(element.style.height))).toBeGreaterThan(3);
-  await dock.locator('#audio-dock-settings').click();
+  await selectAudioPanel(dock, 'Listening settings');
   const burst = dock.getByRole('spinbutton', { name: 'Calls per target' });
   await burst.focus();
   await burst.evaluate(element => { element.dataset.focusWitness = 'same-control'; });

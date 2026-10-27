@@ -4,9 +4,30 @@ const { expect } = require('@playwright/test');
 
 async function selectAudioPanel(dock, name) {
   const back = dock.locator('#audio-dock-context-back');
-  if (await back.isVisible()) await back.click();
-  const selector = { Details: '#audio-dock-call-details', Transcript: '#audio-dock-call-transcript',
-    'Scan Lists': '.audio-dock-lists-trigger:visible', Settings: '#audio-dock-settings' }[name];
+  const title = dock.locator('#audio-dock-context-title');
+  const labels = { Details: 'Call details', Transcript: 'Transcript', Queue: 'Queue',
+    'Player menu': 'Player menu', 'Scan Lists': 'Lists', Lists: 'Lists',
+    Settings: 'Listening settings', 'Listening settings': 'Listening settings',
+    'Direct Listen': 'Direct Listen', 'Avoid List': 'Avoid List' };
+  const targetTitle = labels[name];
+  if (!targetTitle) throw new Error(`Unknown audio panel: ${name}`);
+  if (await title.isVisible() && await title.textContent() === targetTitle) return;
+  const menuItem = { 'Scan Lists': 'Lists', Lists: 'Lists', Settings: 'Listening settings',
+    'Listening settings': 'Listening settings', 'Direct Listen': 'Direct Listen', 'Avoid List': 'Avoid List' }[name];
+  if (menuItem || name === 'Player menu') {
+    if (await back.isVisible() && await title.textContent() !== 'Player menu') await back.click();
+    if (!await title.isVisible() || await title.textContent() !== 'Player menu') {
+      const trigger = dock.getByRole('button', { name: 'Player menu', exact: true }).filter({ visible: true });
+      if (await trigger.count()) await trigger.first().click();
+      else await dock.page().getByRole('button', { name: 'Player menu', exact: true }).filter({ visible: true }).first().click();
+    }
+    await expect(title).toHaveText('Player menu');
+    if (menuItem) await dock.getByRole('button', { name: menuItem, exact: true }).click();
+    await expect(title).toHaveText(targetTitle);
+    return;
+  }
+  for (let depth = 0; depth < 3 && await back.isVisible(); depth++) await back.click();
+  const selector = { Details: '#audio-dock-call-details', Transcript: '#audio-dock-call-transcript' }[name];
   if (name === 'Queue') {
     const queue = dock.getByRole('button', { name: 'Open queue', exact: true });
     if (!await queue.first().isVisible() && !await queue.last().isVisible()) {
@@ -14,8 +35,7 @@ async function selectAudioPanel(dock, name) {
     }
     await dock.getByRole('button', { name: 'Open queue', exact: true }).filter({ visible: true }).click();
   } else await dock.locator(selector).click();
-  await expect(dock.locator('#audio-dock-context-title')).toHaveText({ Details: 'Call details',
-    Transcript: 'Transcript', Queue: 'Queue', 'Scan Lists': 'Lists', Settings: 'Listening settings' }[name]);
+  await expect(title).toHaveText(targetTitle);
 }
 
 async function openAudioVolume(page) {

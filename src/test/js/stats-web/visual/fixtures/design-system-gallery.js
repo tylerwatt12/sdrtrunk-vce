@@ -1470,7 +1470,6 @@ if (view === 'activity-filters' || view === 'scanner') {
     bindVisualAnchoredPopover('#visual-activity-destination-trigger', '#visual-activity-destination-popover');
     bindVisualAnchoredPopover('#visual-activity-more-trigger', '#visual-activity-more-panel');
   } else {
-    bindVisualAnchoredPopover('.scanner-scan-trigger', '#visual-scanner-scan-lists');
     const scannerPage = document.querySelector('.visual-scanner-example .scanner-page');
     const queueDisclosure = scannerPage.querySelector('.scanner-queue-disclosure');
     const queueViewport = window.matchMedia('(max-width: 680px), (max-height: 500px) and (pointer: coarse)');

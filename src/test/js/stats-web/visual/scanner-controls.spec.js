@@ -5,6 +5,13 @@ const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
 const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
+const { selectAudioPanel } = require('./audio-dock-controls.cjs');
+
+async function openScannerPanel(page, name) {
+  const dock = page.locator('#audio-dock');
+  await selectAudioPanel(dock, name);
+  return dock.locator('#audio-dock-panel');
+}
 
 async function expectFullWidthScannerActions(page) {
   await page.locator('#scanner-playback-bar').scrollIntoViewIfNeeded();
@@ -143,7 +150,7 @@ for (const theme of ['light', 'dark']) {
     const queuedCalls = list.locator(':scope > li[title]');
     for (const id of ['scanner-skip', 'scanner-replay', 'scanner-hold', 'scanner-stop',
       'scanner-avoid', 'scanner-clear-queue']) await expect(page.locator(`#${id}`)).toBeDisabled();
-    await expect(page.locator('#scanner-avoid-list')).toBeEnabled();
+    await expect(page.locator('#scanner-player-menu')).toBeEnabled();
     if (desktop) await expectCompactDesktopScannerActions(page);
     else await expectFullWidthScannerActions(page);
     await expect(queuedCalls).toHaveCount(0);
@@ -239,13 +246,11 @@ for (const theme of ['light', 'dark']) {
     await page.locator('#scanner-avoid').click();
     await expect(title).toHaveText('Medical Dispatch');
     await expect(count).toHaveText('0 queued');
-    await expect(page.locator('#scanner-avoid-list')).toHaveAttribute('aria-label', 'View 1 browser avoid(s)');
-    await page.locator('#scanner-avoid-list').click();
-    const avoids = page.getByRole('dialog', { name: 'Avoid List', exact: true });
+    const avoids = await openScannerPanel(page, 'Avoid List');
     await expect(avoids).toContainText('Police Dispatch');
-    await avoids.getByRole('button', { name: 'Remove', exact: true }).click();
-    await expect(avoids).toContainText('No browser avoids are active.');
-    await expect(page.locator('#scanner-avoid-list')).toHaveAttribute('aria-label', 'View 0 browser avoid(s)');
+    await avoids.getByRole('button', { name: 'Remove Police Dispatch from Avoid List', exact: true }).click();
+    await expect(avoids).toContainText('No avoided targets');
+    await expect(page.locator('#audio-dock-context-title + span')).toHaveText('0 avoided');
     await page.keyboard.press('Escape');
 
     pending.push(call('Police Dispatch', 'Unit 10'));
@@ -293,7 +298,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['dark
     await expect(modes.locator('option')).toHaveText(['Simple', 'Normal', 'Advanced', 'Engineer']);
     await expect(page.locator('.scanner-playback-primary')).toBeVisible();
     for (const id of ['scanner-skip', 'scanner-replay', 'scanner-hold', 'scanner-stop',
-      'scanner-avoid', 'scanner-avoid-list', 'scanner-clear-queue', 'scanner-volume']) {
+      'scanner-avoid', 'scanner-player-menu', 'scanner-clear-queue', 'scanner-volume']) {
       await expect(page.locator(`#${id}`)).toBeVisible();
     }
     await expect(page.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
@@ -307,10 +312,9 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['dark
     if (viewport.width >= 1181) await expectCompactDesktopScannerActions(page);
     await page.screenshot({ path: test.info().outputPath(`scanner-${theme}-${viewport.width}.png`), fullPage: true });
     await expect(page.locator('.scanner-scan-rail')).toHaveCount(0);
-    await page.locator('.scanner-scan-trigger').click();
-    const lists = page.getByRole('dialog', { name: 'Listen to scan lists', exact: true });
+    const lists = await openScannerPanel(page, 'Lists');
     await expect(lists).toBeVisible();
-    const checkboxes = lists.getByRole('checkbox');
+    const checkboxes = lists.locator('input[id^="audio-dock-scan-list-"]');
     expect(await checkboxes.count()).toBeGreaterThan(1);
     const first = checkboxes.first();
     const before = await first.isChecked();
@@ -320,9 +324,9 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['dark
     await first.press('Escape');
     await expect(lists).toBeHidden();
     await expect.poll(() => preferences.playback.selected_scan_list_ids.includes(1)).toBe(!before);
-    await page.reload();
-    await page.locator('.scanner-scan-trigger').click();
-    await expect(lists.getByRole('checkbox').first()).toBeChecked({ checked: !before });
+    await page.goto('/app.html?view=scanner');
+    await openScannerPanel(page, 'Lists');
+    await expect(lists.locator('input[id^="audio-dock-scan-list-"]').first()).toBeChecked({ checked: !before });
     await page.keyboard.press('Escape');
     const primary = page.locator('.scanner-playback-primary');
     await primary.click();
@@ -402,13 +406,12 @@ test('Scanner scan-list loading, retry and selection limit', async ({ page }) =>
     })) } } });
   });
   await page.goto('/app.html?view=scanner');
-  await page.locator('.scanner-scan-trigger').click();
-  const lists = page.getByRole('dialog', { name: 'Listen to scan lists', exact: true });
-  await expect(lists.getByRole('status')).toHaveText('Loading available scan lists…');
+  const lists = await openScannerPanel(page, 'Lists');
+  await expect(lists.getByRole('status')).toHaveText('Lists are loading…');
   release();
-  await expect(lists.getByRole('status')).toHaveText('Unable to load scan lists. Try again.');
+  await expect(lists.getByRole('status')).toHaveText('Unable to load lists. Try again.');
   await lists.getByRole('button', { name: 'Retry scan lists', exact: true }).click();
-  await expect(lists.getByRole('checkbox')).toHaveCount(17);
+  await expect(lists.locator('input[id^="audio-dock-scan-list-"]')).toHaveCount(17);
   await expect(lists.getByRole('checkbox', { name: 'Scan list 17', exact: true })).toBeDisabled();
   await expect(lists.getByRole('checkbox', { name: 'Scan list 1', exact: true })).toBeEnabled();
   expect(fixture.pageErrors).toEqual([]);
@@ -506,8 +509,8 @@ for (const theme of ['light']) {
  test(`A scrolled live call stays still when Engineer changes to Simple ${theme}`, async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openAudioApp(page, { view: 'scanner', theme });
-  await page.locator('.scanner-scan-trigger').click();
-  await page.getByRole('dialog', { name: 'Listen to scan lists', exact: true }).getByRole('checkbox').first().check();
+  const lists = await openScannerPanel(page, 'Lists');
+  await lists.locator('input[id^="audio-dock-scan-list-"]').first().check();
   await page.keyboard.press('Escape');
   await page.locator('.scanner-playback-primary').click();
   await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
@@ -528,23 +531,21 @@ for (const theme of ['light']) {
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollY);
   await page.locator('#scanner-clear-queue').click();
   await expect(page.locator('.scanner-up-next-count')).toHaveText('0 queued');
-  await page.locator('#scanner-avoid-list').click();
-  await expect(page.getByRole('dialog', { name: 'Avoid List', exact: true })).toBeVisible();
+  const avoids = await openScannerPanel(page, 'Avoid List');
+  await expect(avoids).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Avoid List', exact: true })).toBeHidden();
+  await expect(avoids).toBeHidden();
 });
 }
 
 test('Revoked call-audio access disables Scanner controls and blocks stale selection events', async ({ page }) => {
   await page.clock.install();
   const state = await openAudioApp(page, { view: 'scanner' });
-  await page.locator('.scanner-scan-trigger').click();
-  const lists = page.getByRole('dialog', { name: 'Listen to scan lists', exact: true });
-  const checkbox = await lists.getByRole('checkbox').first().elementHandle();
-  const trigger = await page.locator('.scanner-scan-trigger').elementHandle();
+  const lists = await openScannerPanel(page, 'Lists');
+  const checkbox = await lists.locator('input[id^="audio-dock-scan-list-"]').first().elementHandle();
+  const trigger = await page.locator('#scanner-player-menu').elementHandle();
   const volume = await page.locator('#scanner-volume').elementHandle();
   const primary = await page.locator('.scanner-playback-primary').elementHandle();
-  const avoids = await page.locator('#scanner-avoid-list').elementHandle();
   const writes = state.preferenceWrites.length;
   state.session.capabilities['call-audio'] = false;
   await page.clock.runFor(10_010);
@@ -552,8 +553,7 @@ test('Revoked call-audio access disables Scanner controls and blocks stale selec
   expect(await trigger.evaluate(element => element.disabled)).toBe(true);
   expect(await volume.evaluate(element => element.disabled)).toBe(true);
   expect(await primary.evaluate(element => element.disabled)).toBe(true);
-  expect(await avoids.evaluate(element => element.disabled)).toBe(true);
-  expect(await lists.count()).toBe(0);
+  await expect(lists).toBeHidden();
   await checkbox.evaluate(element => {
     element.checked = !element.checked;
     element.dispatchEvent(new Event('change', { bubbles: true }));

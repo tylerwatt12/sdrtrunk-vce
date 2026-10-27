@@ -2,6 +2,7 @@
 
 const { expect, test } = require('@playwright/test');
 const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
+const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 test('Page title save failures retain previous values and offer a working retry without an unhandled rejection', async ({ page }) => {
   const browserErrors = [];
@@ -27,7 +28,7 @@ test('Page title save failures retain previous values and offer a working retry 
   const dock = page.locator('#audio-dock');
   const handle = dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
   await handle.press('End');
-  await dock.locator('#audio-dock-settings').click();
+  await selectAudioPanel(dock, 'Listening settings');
   const setting = dock.getByRole('checkbox', { name: 'Playing call in page title', exact: true });
   const previous = await setting.isChecked();
   await setting.locator('..').locator('.ui-toggle-track').click();

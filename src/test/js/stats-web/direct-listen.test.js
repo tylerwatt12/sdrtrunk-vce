@@ -122,6 +122,73 @@ async function main() {
   assert.deepEqual(url.searchParams.getAll('scan_list_id'), []);
   assert.equal(url.searchParams.getAll('direct_target').length, 1);
 
+  function playablePlayer() {
+    const value = player();
+    const events = [];
+    value.addDirectListenTarget(target, 'Dispatch');
+    value.ensureAudioContext = () => { events.push('context'); };
+    value.audioContext = { state: 'suspended', resume() {
+      events.push('resume');
+      return Promise.resolve().then(() => { this.state = 'running'; });
+    }, async suspend() { events.push('suspend'); this.state = 'suspended'; } };
+    value.ensureConnected = () => { events.push('feed'); value.feedActive = true; return true; };
+    value.render = () => { if (!value.stopped && !value.paused) events.push('playing-observers'); };
+    value.playNext = () => { events.push('next'); };
+    value.startProgress = () => { events.push('progress'); };
+    value.setStatus = status => { value.statusValue = status; };
+    return { value, events };
+  }
+  const starting = playablePlayer();
+  starting.value.avoids.set('other-target', { key: 'other-target' });
+  const start = starting.value.startDirectListen();
+  assert.deepEqual(starting.events, ['context', 'resume'],
+    'AudioContext.resume starts synchronously in the headphone gesture before awaiting or fetching.');
+  assert.equal(await start, true);
+  assert.equal(starting.value.stopped, false);
+  assert.equal(starting.value.paused, false);
+  assert.deepEqual([...starting.value.selectedScanListIds], ['1']);
+  assert.equal(starting.value.avoids.has('other-target'), true, 'Starting leaves Avoid choices intact.');
+  assert.ok(starting.events.indexOf('playing-observers') < starting.events.indexOf('next'),
+    'Shared playback observers can stop recordings before queued audio begins.');
+
+  const resuming = playablePlayer();
+  resuming.value.stopped = false; resuming.value.paused = true;
+  const playingCall = { _callId: 'paused-current' }, playingSource = {};
+  resuming.value.current = playingCall;
+  resuming.value.currentBuffer = { duration: 3 };
+  resuming.value.source = playingSource;
+  assert.equal(await resuming.value.startDirectListen(), true);
+  assert.equal(resuming.value.paused, false);
+  assert.equal(resuming.value.current, playingCall);
+  assert.equal(resuming.value.source, playingSource, 'Resuming continues the same call without restarting its source.');
+  assert.ok(resuming.events.includes('progress'));
+  assert.equal(resuming.events.includes('next'), false);
+  const resumes = resuming.events.filter(event => event === 'resume').length;
+  const transport = resuming.value.transportToken;
+  assert.equal(await resuming.value.startDirectListen(), true);
+  assert.equal(resuming.events.filter(event => event === 'resume').length, resumes,
+    'An already playing session does not repeat the audio transition.');
+  assert.equal(resuming.value.transportToken, transport);
+
+  const blockedAudio = playablePlayer();
+  blockedAudio.value.audioContext.resume = () => Promise.reject(new Error('browser policy'));
+  await assert.rejects(blockedAudio.value.startDirectListen(), /browser sound settings/);
+  assert.equal(blockedAudio.value.stopped, true);
+  assert.equal(blockedAudio.value.paused, false);
+  assert.equal(blockedAudio.events.includes('feed'), false, 'A failed audio transition cannot arm new playback.');
+
+  const permissionRace = playablePlayer();
+  permissionRace.value.stopped = false; permissionRace.value.paused = true;
+  let finishResume;
+  permissionRace.value.audioContext.resume = () => new Promise(done => { finishResume = done; });
+  const pendingStart = permissionRace.value.startDirectListen();
+  permissionRace.value.directListenAllowed = false;
+  finishResume();
+  assert.equal(await pendingStart, false);
+  assert.equal(permissionRace.value.paused, true);
+  assert.ok(permissionRace.events.includes('suspend'), 'Revocation restores the original suspended audio state.');
+  assert.equal(permissionRace.events.includes('feed'), false);
+
   const stale = player();
   stale.selectedScanListIds.clear();
   stale.addDirectListenTarget(target);

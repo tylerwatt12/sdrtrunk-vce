@@ -19,7 +19,7 @@ import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=38';
+import { createGuideController } from './guides/controller.js?v=39';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -47,11 +47,11 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=36';
+import { createAudioDock } from './core/audio-dock.js?v=37';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=21';
+import { WebCallPlayer } from './web-call-player.js?v=22';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -2179,24 +2179,62 @@ function directListenAction(row, reference, options = {}) {
   const context = [...new Set([systemLabels.systemLabel(scopeRow), systemLabels.systemIdentity(scopeRow),
     target.radio_system_key?.includes(':channel:') ? target.radio_system_key.split(':').at(-1) : '',
     channel].filter(Boolean))].join(' · ');
-  const button = iconButton('icon-direct-listen', `Add ${label} to Direct Listen`,
-    'ui-button ui-button-quiet ui-icon-button');
+  const button = iconButton('icon-direct-listen', `Add ${label} to Direct Listen and play`,
+    'ui-button ui-button-quiet ui-icon-button ui-icon-button-inline');
   button.dataset.directListenAction = 'add';
+  button.dataset.directListenTargetKey = JSON.stringify(target);
+  button.dataset.directListenLabel = label;
+  if (!directListenAction.renderMembership) {
+    directListenAction.renderMembership = (control, keys, allowed) => {
+      const member = keys.has(control.dataset.directListenTargetKey);
+      const name = control.dataset.directListenLabel;
+      const description = member ? `Remove ${name} from Direct Listen` : `Add ${name} to Direct Listen and play`;
+      control.setAttribute('aria-label', description);
+      control.setAttribute('aria-pressed', String(member));
+      control.title = description;
+      control.hidden = !allowed;
+      control.disabled = !allowed;
+      control.querySelector('use')?.setAttribute('href', member ? '#icon-check' : '#icon-direct-listen');
+    };
+    directListenAction.synchronize = state => {
+      const keys = new Set((state.directListen?.targets || []).map(item => item.key));
+      const allowed = directListenAllowed() && Boolean(state.directListen?.allowed);
+      const signature = JSON.stringify([allowed, [...keys].sort()]);
+      if (signature === directListenAction.membershipSignature) return;
+      directListenAction.membershipSignature = signature;
+      document.querySelectorAll('[data-direct-listen-target-key]').forEach(control =>
+        directListenAction.renderMembership(control, keys, allowed));
+    };
+  }
+  const directState = webCallPlayer?.viewState().directListen;
+  directListenAction.renderMembership(button, new Set((directState?.targets || []).map(item => item.key)),
+    directListenAllowed() && Boolean(directState?.allowed));
+  const showFailure = error => {
+    const feedback = node('p', 'ui-feedback ui-feedback-error',
+      error.message || 'Unable to start listening. Try again.');
+    feedback.setAttribute('role', 'alert');
+    openReadOnlyModal('Direct Listen', feedback, { id: 'direct-listen-feedback' });
+  };
   button.addEventListener('click', event => {
     event.preventDefault(); event.stopPropagation();
     if (!directListenAllowed() || document.querySelector('.ui-setup-guide')) return;
     try {
+      const member = webCallPlayer?.viewState().directListen?.targets
+        .some(item => item.key === button.dataset.directListenTargetKey);
+      if (member) {
+        webCallPlayer.removeDirectListenTarget(button.dataset.directListenTargetKey);
+        audioDock.synchronize();
+        return;
+      }
       const result = webCallPlayer?.addDirectListenTarget(target, label, context);
       if (!result) return;
-      button.setAttribute('aria-label', `${label} added to Direct Listen`);
-      button.title = `${label} added to Direct Listen`;
-      button.querySelector('use')?.setAttribute('href', '#icon-check');
-      audioDock.synchronize();
+      // Starting here keeps AudioContext.resume inside the headphone click's user gesture.
+      void webCallPlayer.startDirectListen().then(started => {
+        if (!started) return;
+        audioDock.synchronize();
+      }).catch(showFailure);
     } catch (error) {
-      const feedback = node('p', 'ui-feedback ui-feedback-error',
-        error.message || 'Unable to add this target. Try again.');
-      feedback.setAttribute('role', 'alert');
-      openReadOnlyModal('Direct Listen', feedback, { id: 'direct-listen-feedback' });
+      showFailure(error);
     }
   });
   return button;
@@ -2205,8 +2243,10 @@ function directListenAction(row, reference, options = {}) {
 function withDirectListenAction(value, row, reference, options = {}) {
   const action = directListenAction(row, reference, options);
   if (!action) return value;
-  const result = node('span', 'ui-action-row ui-action-row-start');
-  result.append(value instanceof Node ? value : document.createTextNode(String(value || '')), action);
+  const result = node('span', 'ui-identity-action');
+  const label = node('span', 'ui-identity-action-label');
+  label.append(value instanceof Node ? value : document.createTextNode(String(value || '')));
+  result.append(label, action);
   return result;
 }
 
@@ -8219,9 +8259,9 @@ async function prepareChannelGuideSample(section, context) {
       const close = modal.dialog.querySelector('.modal-close');
       if (close) close.dataset.guideTarget = 'channel-choice-close';
       releases.push(guideSampleData.register('channel-guide', () => {}, { root: modal.dialog }));
-    } else if (['player-overview', 'listening-controls', 'listening'].includes(section)) {
+    } else if (['player-overview', 'listening-controls', 'listening-menu', 'listening', 'listening-back', 'player-back'].includes(section)) {
       releases.push(audioDock.prepareGuide({ sampleScanLists: getScanListsGuideData().scanLists.map(item => ({
-        ...item, selected: item.default === true })), openSampleLists: section === 'listening' }));
+        ...item, selected: item.default === true })), guidePanel: ['listening', 'listening-back'].includes(section) ? 'listening' : ['listening-menu', 'player-back'].includes(section) ? 'menu' : null, openSampleLists: false }));
       const dock = document.getElementById('audio-dock');
       if (dock) releases.push(guideSampleData.register('channel-guide', () => {}, { root: dock }));
     }
@@ -8715,9 +8755,9 @@ async function preparePageGuideSample(view, section, context) {
       if (section === 'add-alias-list') {
         targetModal = openFullScanListMembershipModal(data.selectedScanList, 'add', data);
         if (targetModal) targetModal.dialog.querySelector('[name="aliasListId"]').value = String(data.list.id);
-      } else if (['player-overview', 'listening-controls', 'listening'].includes(section)) {
+      } else if (['player-overview', 'listening-controls', 'listening-menu', 'listening', 'listening-back', 'player-back'].includes(section)) {
         data.releases.push(audioDock.prepareGuide({ sampleScanLists: data.scanLists.map(item => ({ ...item,
-          selected: item.default === true })), openSampleLists: section === 'listening' }));
+          selected: item.default === true })), guidePanel: ['listening', 'listening-back'].includes(section) ? 'listening' : ['listening-menu', 'player-back'].includes(section) ? 'menu' : null, openSampleLists: false }));
         const dock = document.getElementById('audio-dock');
         if (dock) data.releases.push(guideSampleData.register(data.region, () => {}, { root: dock }));
       }
@@ -12005,7 +12045,7 @@ function placePlaybackBar() {
 }
 
 function arrangeScannerPlayback(bar, player, signal, options = {}) {
-  const openAvoids = options.openAvoidList || openPlaybackAvoidList;
+  const openMenu = options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker));
   const controls = node('div', 'scanner-playback-controls');
   controls.setAttribute('role', 'group');
   controls.setAttribute('aria-label', 'Playback controls');
@@ -12037,9 +12077,9 @@ function arrangeScannerPlayback(bar, player, signal, options = {}) {
     if (!player.viewState().stopped) void player.togglePlayback();
   });
   const avoid = textAction('Avoid', 'scanner-avoid', () => player.avoidCurrent());
-  const avoids = textAction('Avoids', 'scanner-avoid-list', () => openAvoids(player));
+  const menu = action(iconButton('icon-menu', 'Player menu'), 'scanner-player-menu', () => openMenu(menu));
   const clear = textAction('Clear', 'scanner-clear-queue', () => player.clearQueue());
-  secondary.append(stop, avoid, avoids, clear);
+  secondary.append(stop, avoid, menu, clear);
 
   const volumeControl = node('label', 'ui-audio-volume-control');
   volumeControl.append(node('span', 'ui-audio-volume-label', 'Volume'));
@@ -12085,8 +12125,7 @@ function arrangeScannerPlayback(bar, player, signal, options = {}) {
     label(stop, 'Stop browser call audio');
     avoid.disabled = !access || !state.currentReady || state.replayingLast;
     label(avoid, 'Avoid current target');
-    avoids.disabled = !access;
-    label(avoids, `View ${state.avoids.length} browser avoid(s)`);
+    menu.disabled = !access;
     clear.disabled = !access || !state.queuedCount;
     label(clear, `Clear ${state.queuedCount} queued browser call(s)`);
     volume.disabled = !access;
@@ -12097,7 +12136,7 @@ function arrangeScannerPlayback(bar, player, signal, options = {}) {
   };
   const unsubscribe = player.subscribeState(draw);
   signal?.addEventListener('abort', unsubscribe, { once: true });
-  return { openAvoids: () => openAvoids(player), close: unsubscribe };
+  return { close: unsubscribe };
 }
 
 function initializePlaybackHeader() {
@@ -12204,13 +12243,14 @@ function synchronizePlaybackAccess(accessChanged = false) {
       { identity: userPreferenceController.snapshot().identity });
     webCallPlayer.subscribeState((playerState) =>
       pageTitleController.update({ playerState }));
+    webCallPlayer.subscribeState(playerState => directListenAction.synchronize?.(playerState));
     webCallPlayer.subscribeState((playerState) => {
       if (previousLivePlaybackStopped && !playerState.stopped) recordingsFeature.stopAudio();
       previousLivePlaybackStopped = playerState.stopped;
     });
   }
   webCallPlayer.setActions({
-    openAvoidList: openPlaybackAvoidList
+    openAvoidList: () => audioDock.openPlayerMenu(document.activeElement)
   });
   webCallPlayer.setDirectListenIdentity(userPreferenceController.snapshot().identity);
   webCallPlayer.setDirectListenAllowed(directListenAllowed());
@@ -12650,48 +12690,6 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
   }
 }
 
-function openPlaybackAvoidList(player = webCallPlayer, options = {}) {
-  if (!player) return;
-  const invoker = document.activeElement;
-  const openModal = options.openReadOnlyModal || openReadOnlyModal;
-  const body = node('div', 'scanner-modal-list');
-  let modal = null;
-  const removeAvoid = key => { player.removeAvoid(key); renderRows(); };
-  const renderRows = () => {
-    body.replaceChildren();
-    const avoids = player.viewState().avoids;
-    if (!avoids.length) {
-      body.append(node('div', 'empty', 'No browser avoids are active.'));
-    }
-    avoids.forEach((avoid) => {
-      const row = node('div', 'scanner-modal-row');
-      row.dataset.avoidKey = avoid.key;
-      const copy = node('div');
-      copy.append(node('strong', '', avoid.label || 'Avoided target'));
-      if (avoid.system_scope) copy.append(node('span', '', avoid.system_scope));
-      const remove = node('button', 'ui-button ui-button-secondary', 'Remove');
-      remove.type = 'button';
-      remove.addEventListener('click', () => removeAvoid(avoid.key));
-      row.append(copy, remove);
-      body.append(row);
-    });
-    if (options.guideMode !== true && player.viewState().directListen?.allowed) {
-      const actions = node('div', 'ui-action-row ui-action-row-start');
-      const manage = node('button', 'ui-button ui-button-secondary', 'Manage Direct Listen');
-      manage.type = 'button';
-      manage.addEventListener('click', () => {
-        if (!player.viewState().directListen?.allowed || !modal) return;
-        modal.close(() => audioDock.openDirectListen(invoker));
-      });
-      actions.append(manage);
-      body.append(actions);
-    }
-  };
-  renderRows();
-  modal = openModal('Avoid List', body, { id: 'scanner-avoids', className: 'scanner-list-modal' });
-  return modal ? Object.assign(modal, { removeAvoid }) : null;
-}
-
 function scanListCoverageTree(coverage) {
   const host = node('div', 'scanner-coverage-tree');
   const aliases = Array.isArray(coverage?.aliases) ? coverage.aliases : [];
@@ -12813,7 +12811,6 @@ function renderScanner(options = {}) {
   });
   let disposed = false;
   let guideSuspended = false;
-  let restoreScanPanel = false;
   let ageTimer = null;
   let metadataReady = Promise.resolve();
   let metadataFailure = null;
@@ -12879,59 +12876,12 @@ function renderScanner(options = {}) {
   queueViewport.addEventListener('change', updateQueueDisclosure, { signal: renderContext.signal });
   updateQueueDisclosure();
 
-  const scanChooser = node('div', 'scanner-scan-chooser');
-  const scanTrigger = node('button', 'ui-button ui-button-secondary scanner-scan-trigger');
-  scanTrigger.type = 'button';
-  scanTrigger.setAttribute('popovertarget', 'scanner-scan-lists');
-  scanTrigger.setAttribute('aria-haspopup', 'dialog');
-  scanTrigger.setAttribute('aria-controls', 'scanner-scan-lists');
-  scanTrigger.setAttribute('aria-expanded', 'false');
-  scanTrigger.append(node('span', 'scanner-scan-summary', 'Scan Lists'), iconGlyph('icon-chevron-down'));
-  const scanPanel = node('div', 'ui-popover scanner-scan-lists');
-  scanPanel.id = 'scanner-scan-lists';
-  scanPanel.setAttribute('popover', 'auto');
-  scanPanel.setAttribute('role', 'dialog');
-  scanPanel.setAttribute('aria-label', 'Listen to scan lists');
-  const scanHeading = node('div', 'scanner-scan-heading ui-surface-header');
-  const scanCopy = node('div');
-  scanCopy.append(node('strong', '', 'Scan Lists'));
-  const coverage = iconButton('icon-scan-lists', 'View scan-list coverage',
-    'ui-button ui-button-secondary ui-icon-button scanner-coverage-action');
-  coverage.addEventListener('click', () => {
-    if (!capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) return;
-    if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
-    if (!guideMode) openPlaybackScanListCoverage(player);
-  });
-  scanHeading.append(scanCopy, coverage);
-  const scanButtons = node('div', 'scanner-scan-buttons');
-  const scanStatus = node('div', 'ui-feedback ui-feedback-loading scanner-scan-status', 'Loading available scan lists…');
-  scanStatus.setAttribute('role', 'status');
-  const scanRetry = node('button', 'ui-button ui-button-secondary', 'Retry scan lists');
-  scanRetry.type = 'button';
-  scanRetry.hidden = true;
-  scanRetry.addEventListener('click', () => {
-    if (!guideMode && capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)) void refreshPlaybackScanLists(true);
-  });
-  scanPanel.append(scanHeading, scanButtons, scanStatus, scanRetry);
-  scanChooser.append(scanTrigger, scanPanel);
-  const releaseScanAnchor = bindAnchoredDropdown(scanTrigger, scanPanel, renderContext.signal);
-  if (!guideMode) scanPanel.addEventListener('beforetoggle', event => {
-    if (event.oldState === 'open' && event.newState === 'closed' &&
-        document.querySelector('.ui-setup-guide')) restoreScanPanel = true;
-  }, { signal: renderContext.signal });
-
   consoleMain.append(nowPlaying, upNext);
   chassis.append(playerHost, consoleMain);
   page.append(chassis);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
-  const scannerSettings = iconButton('icon-live-presentation', 'Scanner settings',
-    'ui-button ui-button-secondary ui-icon-button scanner-settings');
-  scannerSettings.id = 'scanner-settings';
-  const openSettings = () => guideMode ? openScannerSettings(`#${scannerSettings.id}`, options) :
-    activateScannerSettings(scannerSettings);
-  scannerSettings.addEventListener('click', () => void openSettings());
-  headingActions.append(modeBar, scanChooser, scannerSettings);
+  headingActions.append(modeBar);
   heading.append(headingActions);
   const host = node('div', 'scanner-page-host');
   host.append(page);
@@ -12941,8 +12891,7 @@ function renderScanner(options = {}) {
     options.mount(heading, host);
   } else if (!beginPage(renderContext, heading, host)) return;
   const playbackControls = arrangeScannerPlayback(transport, player, renderContext.signal, {
-    openAvoidList: currentPlayer => openPlaybackAvoidList(currentPlayer,
-      guideMode ? { openReadOnlyModal: options.openReadOnlyModal, guideMode: true } : {})
+    openPlayerMenu: invoker => { if (!guideMode) audioDock.openPlayerMenu(invoker); }
   });
 
   let latestState = player.viewState();
@@ -12950,7 +12899,6 @@ function renderScanner(options = {}) {
   let currentChannel = null;
   let displayedCallId = '';
   let upNextKey = '';
-  let directScanRow = null;
   const directSelection = state => !guideMode && state.directListen?.allowed && state.directListen.selected &&
     state.directListen.targets.length > 0;
   const renderUpNext = (state) => {
@@ -13008,104 +12956,6 @@ function renderScanner(options = {}) {
     age.textContent = displayedCall ? scannerRelativeAge(displayedCall.completed_at_ms) :
       'Waiting for a call';
   };
-  const renderScanButtons = (state) => {
-    const allowed = capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
-    scanTrigger.disabled = !allowed;
-    coverage.disabled = !allowed;
-    scanRetry.disabled = !allowed;
-    if (!allowed && scanPanel.matches(':popover-open')) scanPanel.hidePopover();
-    const selectedCount = state.scanLists.filter((item) => item.selected && item.enabled).length;
-    const direct = !guideMode && state.directListen?.allowed ? state.directListen : null;
-    const totalSelectedCount = selectedCount + (directSelection(state) ? 1 : 0);
-    const totalListCount = state.scanLists.length + (direct ? 1 : 0);
-    const selectionFull = selectedCount >= state.maximumSelectedScanLists;
-    const unavailable = state.scanListCatalogState === 'unavailable';
-    scanStatus.hidden = state.scanListCatalogReady;
-    scanStatus.classList.toggle('ui-feedback-loading', !unavailable);
-    scanStatus.classList.toggle('ui-feedback-error', unavailable);
-    scanStatus.textContent = unavailable ? 'Unable to load scan lists. Try again.' : 'Loading available scan lists…';
-    scanRetry.hidden = !unavailable;
-    scanTrigger.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady || direct ?
-      `Scan Lists · ${totalSelectedCount}` : 'Scan Lists · Loading';
-    scanTrigger.setAttribute('aria-label', state.scanListCatalogReady || direct ?
-      `Scan Lists, ${totalSelectedCount} of ${totalListCount} listening` : 'Scan Lists, loading available lists');
-    const existing = new Map([...scanButtons.querySelectorAll('.scanner-scan-button[data-scan-list-id]')]
-      .map((button) => [button.dataset.scanListId, button]));
-    const desired = state.scanLists.map((item) => {
-      const id = String(item.id);
-      let button = existing.get(id);
-      if (!button) {
-        button = node('label', 'ui-select-list-item scanner-scan-button');
-        button.dataset.scanListId = id;
-        const marker = node('input', 'ui-selection-check scanner-scan-check');
-        marker.type = 'checkbox';
-        const copy = node('span', 'scanner-scan-copy');
-        copy.append(node('strong'), node('small'));
-        button.append(copy, marker);
-        marker.addEventListener('change', () => {
-          if (!capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO) || marker.disabled) {
-            renderScanButtons(player.viewState());
-            return;
-          }
-          player.setScanListSelected(button.dataset.scanListId, marker.checked);
-        });
-      }
-      existing.delete(id);
-      const marker = button.querySelector('.scanner-scan-check');
-      marker.disabled = !allowed || !state.scanListCatalogReady || !item.enabled ||
-        (selectionFull && !item.selected);
-      marker.checked = item.selected;
-      marker.setAttribute('aria-label', item.name);
-      button.querySelector('.scanner-scan-copy strong').textContent = item.name;
-      button.querySelector('.scanner-scan-copy small').textContent =
-        item.description || (item.default ? 'Default list' : 'Available to listeners');
-      return button;
-    });
-    if (direct) {
-      if (!directScanRow) {
-        directScanRow = node('div', 'ui-select-list-item scanner-scan-button');
-        directScanRow.dataset.directListen = 'list';
-        const label = node('label', 'ui-action-row ui-action-row-start');
-        const copy = node('span', 'scanner-scan-copy');
-        copy.append(node('strong', '', 'Direct Listen'), node('small'));
-        const marker = node('input', 'ui-selection-check scanner-scan-check');
-        marker.type = 'checkbox';
-        marker.setAttribute('aria-label', 'Direct Listen');
-        marker.addEventListener('change', () => {
-          if (guideMode || marker.disabled || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO) ||
-              !player.viewState().directListen?.allowed) return;
-          player.setDirectListenSelected(marker.checked);
-        });
-        label.append(copy, marker);
-        const manage = iconButton('icon-direct-listen', 'Manage Direct Listen',
-          'ui-button ui-button-secondary ui-icon-button');
-        manage.addEventListener('click', () => {
-          if (guideMode || !player.viewState().directListen?.allowed) return;
-          if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
-          audioDock.openDirectListen(scanTrigger);
-        });
-        directScanRow.append(label, manage);
-      }
-      const marker = directScanRow.querySelector('.scanner-scan-check');
-      marker.checked = direct.selected;
-      marker.disabled = !allowed || !direct.targets.length;
-      directScanRow.querySelector('.scanner-scan-copy small').textContent = `${direct.targets.length} targets · This session`;
-      directScanRow.querySelector('button').disabled = !allowed;
-      desired.unshift(directScanRow);
-    } else {
-      directScanRow?.remove();
-      directScanRow = null;
-    }
-    existing.forEach((button) => button.remove());
-    scanButtons.querySelector('.scanner-scan-empty')?.remove();
-    desired.forEach((button, index) => {
-      const current = scanButtons.children[index];
-      if (current !== button) scanButtons.insertBefore(button, current || null);
-    });
-    if (state.scanListCatalogReady && !desired.length) {
-      scanButtons.append(node('div', 'empty scanner-scan-empty', 'No scan lists are available.'));
-    }
-  };
   const draw = (state) => {
     latestState = state;
     const nextCallId = String((state.displayCall || state.current)?.call_id || '');
@@ -13125,7 +12975,6 @@ function renderScanner(options = {}) {
     updateAge();
     paintCall(display, state, currentChannel);
 
-    renderScanButtons(state);
     renderUpNext(state);
 
     if (channelChanged) {
@@ -13150,11 +12999,6 @@ function renderScanner(options = {}) {
   let spectrumFrame = null;
   const drawSpectrum = () => {
     if (disposed || !renderIsCurrent(renderContext)) return;
-    if (restoreScanPanel && !guideSuspended && !guideMode && content.contains(page) &&
-        route.get('view') === 'scanner' && !document.querySelector('.ui-setup-guide')) {
-      restoreScanPanel = false;
-      if (!scanPanel.matches(':popover-open')) scanPanel.showPopover();
-    }
     const wave = !guideSuspended && display.querySelector('.scanner-audio-wave');
     if (wave) {
       const playing = player.readAudioSpectrum(spectrumLevels, 8_000);
@@ -13191,49 +13035,51 @@ function renderScanner(options = {}) {
     setGuideSuspended(value) {
       if (guideMode || disposed) return;
       guideSuspended = Boolean(value);
-      if (guideSuspended) {
-        restoreScanPanel ||= scanPanel.matches(':popover-open');
-        if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
-      }
+
     },
     async prepareGuide(section, context) {
       if (!guideMode || disposed || context.signal.aborted || !context.isCurrent()) return;
       if (['detail-level', 'details', 'settings-button', 'playback-order', 'settings-close',
-        'avoids-button', 'avoids', 'avoids-close'].includes(section)) {
+        'settings-menu', 'avoids-button', 'avoids', 'avoids-close', 'player-close'].includes(section)) {
         await player.avoidCurrent();
       }
-      if (['details', 'settings-button', 'playback-order', 'settings-close', 'avoids-button', 'avoids',
-        'avoids-close'].includes(section)) renderDetailMode('advanced');
+      if (['details', 'settings-button', 'settings-menu', 'playback-order', 'settings-close', 'avoids-button', 'avoids',
+        'avoids-close', 'player-close'].includes(section)) renderDetailMode('advanced');
       await metadataReady;
       if (metadataFailure) throw new Error('The Scanner tour could not be loaded. Try opening it again.');
       await new Promise(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
       if (disposed || context.signal.aborted || !context.isCurrent()) return;
       const releases = [];
-      let modal = null;
-      if (section === 'lists') {
-        scanPanel.showPopover();
-        await new Promise(resolve => window.requestAnimationFrame(resolve));
-        if (disposed || context.signal.aborted || !context.isCurrent()) return;
-        releases.push(context.registerLayer(scanPanel, { anchor: scanTrigger }));
+      const panels = {
+        'lists-menu': 'menu', lists: 'listening', 'lists-back': 'listening', 'lists-menu-close': 'menu',
+        'settings-menu': 'menu', 'playback-order': 'settings', 'settings-close': 'settings',
+        'avoids-button': 'menu', avoids: 'avoids', 'avoids-close': 'avoids', 'player-close': 'menu'
+      };
+      if (['avoids-close', 'player-close'].includes(section)) {
+        const avoided = player.viewState().avoids[0]; if (avoided) player.removeAvoid(avoided.key);
       }
-      if (['playback-order', 'settings-close'].includes(section)) modal = await openSettings();
-      if (['avoids', 'avoids-close'].includes(section)) modal = playbackControls.openAvoids();
-      if (modal?.ready && !await modal.ready) return;
-      if (disposed || context.signal.aborted || !context.isCurrent()) { modal?.close(); return; }
-      if (section === 'avoids-close') {
-        const avoid = player.viewState().avoids[0];
-        if (avoid) modal.removeAvoid(avoid.key);
+      if (Object.hasOwn(panels, section)) {
+        releases.push(audioDock.prepareGuide({ sampleLiveState: player.viewState(), guidePanel: panels[section] }));
+        const dock = document.getElementById('audio-dock');
+        if (dock) releases.push(guideSampleData.register('scanner-workspace', () => {}, { root: dock }));
       }
       const mark = (element, id = section) => { if (element) element.dataset.guideTarget = `sc-${id}`; };
+      const dock = document.getElementById('audio-dock');
       const targets = {
-        'lists-button': scanTrigger, lists: scanPanel,
+        'lists-button': transport.querySelector('#scanner-player-menu'),
+        'settings-button': transport.querySelector('#scanner-player-menu'),
+        'lists-menu': dock?.querySelector('[data-player-menu-panel="listening"]'),
+        lists: dock?.querySelector('[data-guide-target="scan-lists-player-lists"]'),
+        'lists-back': dock?.querySelector('#audio-dock-context-back'),
+        'lists-menu-close': dock?.querySelector('#audio-dock-context-back'),
+        'settings-menu': dock?.querySelector('[data-player-menu-panel="settings"]'),
         queue: upNext, hold: transport.querySelector('#scanner-hold'), avoid: transport.querySelector('#scanner-avoid'),
-        'detail-level': modeSelect, 'settings-button': scannerSettings,
-        'playback-order': modal?.content.querySelector('.settings-card'),
-        'settings-close': modal?.dialog.querySelector('.modal-close'),
-        'avoids-button': transport.querySelector('#scanner-avoid-list'),
-        avoids: modal?.content.querySelector('.scanner-modal-row'),
-        'avoids-close': modal?.dialog.querySelector('.modal-close')
+        'detail-level': modeSelect, 'playback-order': dock?.querySelector('.audio-dock-settings'),
+        'settings-close': dock?.querySelector('#audio-dock-context-back'),
+        'avoids-button': dock?.querySelector('[data-player-menu-panel="avoids"]'),
+        avoids: dock?.querySelector('#audio-dock-panel .ui-record-section'),
+        'avoids-close': dock?.querySelector('#audio-dock-context-back'),
+        'player-close': dock?.querySelector('#audio-dock-context-back')
       };
       if (section === 'call') {
         [display.querySelector('.scanner-call-intro .ui-heading-group'), display.querySelector('.scanner-source-fields')]
@@ -13245,7 +13091,7 @@ function renderScanner(options = {}) {
       } else mark(targets[section]);
       const highlighted = [...document.querySelectorAll(`[data-guide-target="sc-${section}"]`)];
       if (!highlighted.length) throw new Error('The Scanner tour could not be loaded. Try opening it again.');
-      if (!modal && section !== 'lists') {
+      if (!Object.hasOwn(panels, section)) {
         highlighted[0].scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
         const bounds = highlighted.map(element => element.getBoundingClientRect());
         const top = Math.min(...bounds.map(value => value.top));
@@ -13262,8 +13108,7 @@ function renderScanner(options = {}) {
       await new Promise(resolve => window.requestAnimationFrame(resolve));
       return () => {
         releases.reverse().forEach(release => release());
-        if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
-        modal?.close();
+
       };
     },
     dispose() {
@@ -13273,11 +13118,9 @@ function renderScanner(options = {}) {
       unsubscribe();
       playbackControls.close();
       idleLayoutObserver.disconnect();
-      releaseScanAnchor();
       if (spectrumFrame !== null) window.cancelAnimationFrame(spectrumFrame);
       if (ageTimer !== null) window.clearInterval(ageTimer);
       scannerCallTemplates.delete(display);
-      if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
       if (scannerDetailModeRenderer === renderDetailMode) scannerDetailModeRenderer = null;
     }
   };
@@ -36277,6 +36120,8 @@ const audioDock = createAudioDock({
   openRecordings: () => {
     return route.get('view') === 'recordings' || navigateTo(href('recordings'));
   },
+  openScanListCoverage: () => openPlaybackScanListCoverage(),
+  refreshScanLists: () => refreshPlaybackScanLists(true),
   getLivePlayer: () => webCallPlayer,
   access: () => ({ live: capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO),
     recordings: capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS) }),

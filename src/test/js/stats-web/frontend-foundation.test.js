@@ -951,8 +951,9 @@ async function main() {
   assert.match(scannerPlaybackSource, /preferences\.playback\.target_burst_limit =/);
   assert.match(scannerPlaybackSource, /preferences\.page_titles\.prepend_playing_call =/);
   assert.doesNotMatch(scannerPlaybackSource, /preferences\.presentation/);
-  assert.match(appSource, /id = 'scanner-settings'/);
-  assert.match(appSource, /activateScannerSettings\(scannerSettings\)/);
+  assert.match(appSource, /'scanner-player-menu'/);
+  assert.match(appSource, /audioDock\.openPlayerMenu\(invoker\)/,
+    'Scanner listening preferences use the shared Player menu.');
   const scannerSettingsActivationSource = functionBinding(appSource, 'activateScannerSettings');
   assert.match(scannerSettingsActivationSource, /!snapshot\.loaded && !accessSession\.authenticated/);
   assert.match(scannerSettingsActivationSource, /showLoginModal\(returnFocusSelector\)/);
@@ -1750,9 +1751,11 @@ async function main() {
     'The full queue must support keyboard scrolling with an accessible name');
   assert.match(scannerRenderer, /queueViewport\.matches \? phoneQueueOpen : true/,
     'Desktop must show the queue while preserving the phone disclosure state');
-  assert.match(scannerRenderer, /ui-popover scanner-scan-lists/);
-  assert.match(scannerRenderer, /bindAnchoredDropdown\(scanTrigger, scanPanel, renderContext\.signal\)/);
-  assert.match(scannerRenderer, /scanner-coverage-action/);
+  assert.match(scannerRenderer, /openPlayerMenu: invoker =>/);
+  assert.match(scannerRenderer, /if \(!guideMode\) audioDock\.openPlayerMenu\(invoker\)/,
+    'Scanner opens the common Player menu while protecting its isolated guide sample.');
+  assert.doesNotMatch(scannerRenderer, /scanner-scan-lists|scanner-coverage-action|scanner-settings/,
+    'Scanner must not recreate the shared listening menus in its header.');
   assert.match(scannerRenderer, /let detailMode = guideMode \? 'normal' : scannerDetailMode/,
     'The real page retains its saved disclosure mode while guide data stays local');
   assert.match(scannerRenderer, /page\.dataset\.scannerMode = detailMode/);
@@ -1764,8 +1767,8 @@ async function main() {
     'Preference rollbacks must restore the selected dropdown value');
   assert.match(scannerRenderer, /page\.style\.minHeight = .*visibleExtent/,
     'A shorter detail mode must preserve the current scrolled page extent');
-  assert.match(scannerRenderer, /scanner-scan-check/);
-  assert.match(scannerRenderer, /scanner-scan-copy/);
+  assert.match(scannerRenderer, /audioDock\.prepareGuide\(\{ sampleLiveState: player\.viewState\(\), guidePanel: panels\[section\] \}\)/,
+    'Scanner tours render the actual common Player menu with their isolated sample state.');
   assert.doesNotMatch(scannerRenderer, /scannerControl\(|scanner-controls|scanner-utility-row/,
     'Scanner must avoid bespoke oversized controls');
   const scannerPlayback = functionBinding(appSource, 'arrangeScannerPlayback');
@@ -1773,8 +1776,8 @@ async function main() {
     'Skip, Replay and Hold must remain directly visible');
   assert.match(scannerPlayback, /player\.togglePlayback\(\)[\s\S]*player\.togglePause\(\)/,
     'The Scanner primary action must use the shared player directly');
-  assert.match(scannerPlayback, /secondary\.append\(stop, avoid, avoids, clear\)/,
-    'Secondary playback actions must remain directly visible');
+  assert.match(scannerPlayback, /secondary\.append\(stop, avoid, menu, clear\)/,
+    'Secondary playback actions keep one shared Player menu directly visible');
   assert.doesNotMatch(scannerPlayback, /scanner-queue-trigger|scanner-queue-panel|queueTrigger|queuePanel/,
     'Scanner transport must leave queued calls in the listening stage');
   assert.doesNotMatch(scannerPlayback, /document\.getElementById\('playback-|marker\.replaceWith|scanner-expanded/,
@@ -1841,11 +1844,8 @@ async function main() {
   assert.match(functionBinding(appSource, 'setScannerDetailMode'),
     /scannerDetailModeRenderer\(normalized\)/,
     'Scanner detail mode changes must synchronize the rendered mode controls and content');
-  assert.doesNotMatch(scannerRenderer, /scanButtons\.replaceChildren\(/,
-    'Scanner state refreshes must not replace focused scan-list controls');
-  assert.match(scannerRenderer, /scanner-scan-button\[data-scan-list-id\]/);
-  assert.match(scannerRenderer, /scanButtons\.insertBefore\(button, current \|\| null\)/,
-    'Scanner scan-list controls must reconcile stable keyed checkboxes in place');
+  assert.doesNotMatch(scannerRenderer, /scanButtons|setScanListSelected/,
+    'Scanner must delegate list selection and its focus lifecycle to the common player.');
   assert.match(scannerRenderer,
     /const mutation = \+\+scannerDetailModeMutation[\s\S]*mutation !== scannerDetailModeMutation/,
     'Queued Scanner mode saves must not repaint over a newer local choice');

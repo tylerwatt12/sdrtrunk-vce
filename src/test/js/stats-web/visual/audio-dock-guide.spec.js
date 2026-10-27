@@ -1,6 +1,7 @@
 'use strict';
 
 const { expect, test } = require('@playwright/test');
+const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 async function mountDock(page) {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -104,7 +105,7 @@ test('recording examples use the actual player and restore incoming engine state
 
 test('guide uses the same Lists panel and choices as ordinary Live listening', async ({ page }) => {
   await mountDock(page);
-  await page.locator('#audio-dock-source-context').click();
+  await selectAudioPanel(page.locator('#audio-dock'), 'Lists');
   const panel = page.locator('#audio-dock-panel');
   const ordinary = await panel.innerHTML();
   await page.evaluate(() => window.dockGuide.prepare());
@@ -122,10 +123,10 @@ test('guide uses the same Lists panel and choices as ordinary Live listening', a
   expect(await page.evaluate(() => window.dockGuide.events.commands)).toEqual([]);
 });
 
-test('guide shows the actual Lists opening button before the sample panel and protects its controls', async ({ page }) => {
+test('guide shows the actual Player menu opening button before the sample menu and protects its controls', async ({ page }) => {
   await mountDock(page);
   const dock = page.locator('#audio-dock');
-  const opener = dock.locator('[data-guide-target="player-lists"]');
+  const opener = dock.locator('[data-guide-target="player-menu"]').filter({ visible: true });
   const originalButton = await opener.evaluate(button => {
     window.originalListsOpener = button;
     return button.outerHTML;
@@ -156,7 +157,7 @@ test('guide shows the actual Lists opening button before the sample panel and pr
   expect(await page.evaluate(() => window.dockGuide.events.commands)).toEqual([]);
 });
 
-test('Next opens the real sample Lists panel and Back restores the opening button before restoring incoming player state', async ({ page }) => {
+test('Next opens Player menu then Lists and Back restores each actual opening state before incoming player state', async ({ page }) => {
   await mountDock(page);
   const dock = page.locator('#audio-dock');
   await dock.locator('.ui-audio-source-picker').selectOption('recordings');
@@ -166,22 +167,33 @@ test('Next opens the real sample Lists panel and Back restores the opening butto
     window.dockGuide.events.commands.length = 0;
     window.dockGuide.prepare({ openSampleLists: false });
   });
-  const opener = dock.locator('[data-guide-target="player-lists"]');
+  const opener = dock.locator('[data-guide-target="player-menu"]').filter({ visible: true });
   const openingButton = await opener.evaluate(button => button.outerHTML);
   for (let visit = 0; visit < 2; visit++) {
     await page.evaluate(() => {
+      window.releasePlayerMenu = window.dockGuide.component.prepareGuide({
+        sampleScanLists: window.dockGuide.sampleScanLists, guidePanel: 'menu' });
+    });
+    await expect(dock.locator('#audio-dock-context-title')).toHaveText('Player menu');
+    await expect(dock.getByRole('button', { name: 'Lists', exact: true })).toBeVisible();
+    await expect(dock.locator('#audio-dock-context-back')).toHaveAccessibleName('Back to player');
+    await page.evaluate(() => {
       window.releaseListsPanel = window.dockGuide.component.prepareGuide({
-        sampleScanLists: window.dockGuide.sampleScanLists });
+        sampleScanLists: window.dockGuide.sampleScanLists, guidePanel: 'listening' });
       window.dockGuide.emitLive({ stopped: false, current: { target_alias: 'Incoming live call' },
         displayCall: { target_alias: 'Incoming live call' }, queuedCount: 3, queue: [] });
       window.dockGuide.emitRecording({ current: { id: 43, talkgroup_alias: 'Updated recording' }, playing: true });
     });
     await expect(dock).toHaveAttribute('data-state', 'full');
     await expect(dock.locator('#audio-dock-context-title')).toHaveText('Lists');
+    await expect(dock.locator('#audio-dock-context-back')).toHaveAccessibleName('Back to menu');
     await expect(dock.locator('#audio-dock-panel').getByRole('checkbox')).toHaveCount(2);
     await expect(dock.locator('#audio-dock-panel')).toContainText('Public Safety');
     await expect(dock.locator('#audio-dock-panel')).not.toContainText('Incoming live call');
     await page.evaluate(() => { window.releaseListsPanel(); window.releaseListsPanel(); });
+    await expect(dock.locator('#audio-dock-context-title')).toHaveText('Player menu');
+    await expect(dock.getByRole('button', { name: 'Lists', exact: true })).toBeVisible();
+    await page.evaluate(() => { window.releasePlayerMenu(); window.releasePlayerMenu(); });
     await expect(dock).toHaveAttribute('data-state', 'minimal');
     await expect(opener).toBeVisible();
     expect(await opener.evaluate(button => button.outerHTML)).toBe(openingButton);
@@ -250,7 +262,7 @@ for (const initial of ['recordings', 'recordings-player', 'minimal', 'hidden']) 
       await dock.locator('#audio-dock-size-handle').press('End');
       if (initial === 'recordings') await dock.locator('#audio-dock-call-details').click();
     } else if (initial === 'hidden') {
-      await dock.locator('#audio-dock-settings').click();
+      await selectAudioPanel(dock, 'Listening settings');
       await dock.locator('#audio-dock-hide').click();
     }
     const original = await dock.evaluate(element => ({ source: element.dataset.source, state: element.dataset.state,

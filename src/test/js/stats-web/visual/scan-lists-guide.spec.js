@@ -11,7 +11,7 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 test.use({ viewport: { width: 1280, height: 800 } });
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="scan-lists"]');
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:7';
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:8';
 const steps = [
   { id: 'lists', targets: ['scan-lists-manage-aliases'],
     copy: 'Open this Scan List’s members to see the aliases that feed your listening group.' },
@@ -25,10 +25,14 @@ const steps = [
     copy: 'Return to Scan Lists to review your listening groups.' },
   { id: 'player-overview', targets: ['player'],
     copy: 'The player plays completed calls from the Scan Lists you choose.' },
-  { id: 'listening-controls', targets: ['player-lists'],
-    copy: 'Each listener chooses a listening mix here.' },
+  { id: 'listening-controls', targets: ['player-menu'],
+    copy: 'Open Player menu for your listening choices and playback preferences.' },
+  { id: 'listening-menu', targets: ['player-menu-lists'],
+    copy: 'Open Lists to choose the groups whose calls reach your player.' },
   { id: 'listening', targets: ['scan-lists-player-lists'],
-    copy: 'VCE queues completed calls from your selected lists and plays them one at a time.' }
+    copy: 'VCE queues completed calls from your selected lists and plays them one at a time.' },
+  { id: 'listening-back', targets: ['player-menu-back'], copy: 'Back returns to Player menu.' },
+  { id: 'player-back', targets: ['player-menu-back'], copy: 'Back closes Player menu and returns you to your Scan Lists.' }
 ];
 
 async function sampleData() {
@@ -80,10 +84,10 @@ async function openScanLists(page, { theme = 'light', replay = true, firstVisit 
   });
   const fixture = await installSiteStyleApplication(page, theme, undefined, { guides: firstVisit });
   if (firstVisit) await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['channel-setup', 4], ['aliases', 5]]) {
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 5], ['aliases', 5]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${version}`, '1');
     }
-    for (const version of [1, 2, 3, 4, 5, 6]) {
+    for (const version of [1, 2, 3, 4, 5, 6, 7]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scan-lists:${version}`, '1');
     }
   });
@@ -280,7 +284,7 @@ test('Scan Lists sample controls cannot save, navigate, delete, change membershi
   const originalStorage = await page.evaluate(() => Object.fromEntries(Object.entries(localStorage)));
   let exercised = 0;
   for (const [index, step] of steps.entries()) {
-    await expect(guide(page)).toHaveAttribute('data-guide-step', step.id);
+    await expectStep(page, step, index);
     exercised += await page.evaluate(() => {
       const roots = [...document.querySelectorAll('[data-guide-sample], .scan-list-admin-modal, .alias-confirm-modal, .alias-record-modal')];
       const controls = [...new Set(roots.flatMap(root => [...root.querySelectorAll('button, a, input, select, form')]))];

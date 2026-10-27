@@ -15,7 +15,8 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
     .map((icon) => icon.getAttribute('href')).filter((href) => !document.getElementById(href?.slice(1))));
   expect(missingIcons).toEqual([]);
   if (state === 'full' && panel) await selectAudioPanel(dock, { details: 'Details', transcript: 'Transcript',
-    listening: 'Scan Lists', settings: 'Settings', queue: 'Queue' }[panel]);
+    menu: 'Player menu', listening: 'Lists', direct: 'Direct Listen', avoids: 'Avoid List',
+    settings: 'Listening settings', queue: 'Queue' }[panel]);
   await page.mouse.move(0, 0);
   return dock;
 }

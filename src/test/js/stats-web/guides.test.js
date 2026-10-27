@@ -82,7 +82,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('welcome').steps.length, 11);
   assert.equal(createGuideDefinition('welcome').steps.some(step => step.overview), false,
     'The general welcome retains its own introduction and numbered progression.');
-  assert.equal(createGuideDefinition('channel-setup').version, 4);
+  assert.equal(createGuideDefinition('channel-setup').version, 5);
   assert.equal(createGuideDefinition('aliases').version, 5);
   assert.equal(createGuideDefinition('radioreference').version, 3);
   assert.equal(createGuideDefinition('streaming').version, 3);
@@ -90,7 +90,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('tuner-spectrum').version, 5);
   assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('dashboard').version, 3);
-  assert.equal(createGuideDefinition('scanner').version, 4);
+  assert.equal(createGuideDefinition('scanner').version, 5);
   assert.equal(createGuideDefinition('recordings').version, 4);
   assert.equal(createGuideDefinition('topics').version, 3);
   assert.equal(createGuideDefinition('map').version, 3);
@@ -180,19 +180,23 @@ async function checkGuides(assetsRoot) {
     }
   });
   const channelSections = ['overview', 'new-channel', 'channel-choice', 'channel-choice-close',
-    'discover', 'select-channel', 'receiving', 'startup', 'player-overview', 'listening-controls', 'listening'];
+    'discover', 'select-channel', 'receiving', 'startup', 'player-overview', 'listening-controls',
+    'listening-menu', 'listening', 'listening-back', 'player-back'];
+  const channelPlayerSections = ['player-overview', 'listening-controls', 'listening-menu',
+    'listening', 'listening-back', 'player-back'];
   assert.deepEqual(channelTour.steps.map(step => step.id), channelSections,
     'Channel Setup teaches the chooser opening and return actions, then the actual player entry point.');
   const channelStop = id => channelTour.steps.find(step => step.id === id);
   for (const [id, target] of [['new-channel', 'channel-new'], ['channel-choice', 'channel-choice'],
     ['channel-choice-close', 'channel-choice-close'], ['discover', 'channel-discover'],
     ['select-channel', 'channel-sample-select'],
-    ['startup', 'channel-startup'], ['player-overview', 'player'], ['listening-controls', 'player-lists'],
-    ['listening', 'scan-lists-player-lists']]) {
+    ['startup', 'channel-startup'], ['player-overview', 'player'], ['listening-controls', 'player-menu'],
+    ['listening-menu', 'player-menu-lists'], ['listening', 'scan-lists-player-lists'],
+    ['listening-back', 'player-menu-back'], ['player-back', 'player-menu-back']]) {
     assert.deepEqual(targetNames(channelStop(id)), [target],
       `${id} highlights its own control or destination instead of a later feature’s opener.`);
   }
-  for (const id of ['channel-choice', 'channel-choice-close', 'player-overview', 'listening-controls', 'listening']) {
+  for (const id of ['channel-choice', 'channel-choice-close', ...channelPlayerSections]) {
     const context = { registerLayer() {} };
     const release = await channelStop(id).prepare(context);
     assert.deepEqual(prepared.splice(0), [['channel-setup', id, context]],
@@ -200,7 +204,7 @@ async function checkGuides(assetsRoot) {
     release();
     assert.deepEqual(released.splice(0), [id], 'Leaving each prepared channel step restores its actual interface.');
   }
-  assert.ok(channelTour.steps.filter(step => !['channel-choice', 'channel-choice-close', 'player-overview', 'listening-controls', 'listening'].includes(step.id))
+  assert.ok(channelTour.steps.filter(step => !['channel-choice', 'channel-choice-close', ...channelPlayerSections].includes(step.id))
     .every(step => step.prepare === undefined), 'Channel steps open a dialog or player only when their lesson needs it.');
   assert.deepEqual(channelStop('receiving').samples[0].value.selected_channel_ids, ['guide-sample-channel']);
   assert.deepEqual(channelStop('select-channel').samples[0].value.selected_channel_ids, [],
@@ -212,7 +216,7 @@ async function checkGuides(assetsRoot) {
     'The Channel Setup tour omits the self-explanatory filter lesson.');
   const channelOnly = createGuideDefinition('channel-setup', { canView: view => view === 'channel-setup' });
   assert.deepEqual(channelOnly.steps.map(step => step.id), channelSections.filter(id =>
-    !['discover', 'player-overview', 'listening-controls', 'listening'].includes(id)),
+    !['discover', ...channelPlayerSections].includes(id)),
   'Unavailable tuner and player actions are omitted together with their destinations.');
   assert.equal(channelOnly.steps.at(-1).nextLabel, 'Finish');
   const channelOnlyCopy = channelOnly.steps.flatMap(step => step.paragraphs || []).join(' ');
@@ -894,8 +898,8 @@ async function checkGuides(assetsRoot) {
     }
   });
   const scanListSections = ['overview', 'lists', 'members', 'add-list-button', 'add-alias-list',
-    'back-to-lists', 'player-overview', 'listening-controls', 'listening'];
-  assert.equal(scanListsTour.version, 7, 'The focused Scan Lists tour introduces the player before its listening controls.');
+    'back-to-lists', 'player-overview', 'listening-controls', 'listening-menu', 'listening', 'listening-back', 'player-back'];
+  assert.equal(scanListsTour.version, 8, 'The focused Scan Lists tour introduces the Player menu and its return controls.');
   assert.equal(scanListsTour.steps[0].diagram, 'scan-lists',
     'The opening overview uses the approved relationship chart without preparing a sample workspace.');
   assert.deepEqual(scanListsTour.steps.map(({ id }) => id), scanListSections);
@@ -915,7 +919,7 @@ async function checkGuides(assetsRoot) {
   assert.doesNotMatch(scanListCopy, /display order|lower numbers|name and organize|available to listeners|choose the default/i,
     'The tour omits self-explanatory list settings.');
   assert.match(scanListsTour.steps.find(({ id }) => id === 'add-list-button').paragraphs[1], /individual aliases.*Manage > Aliases/);
-  assert.match(scanListsTour.steps.at(-1).paragraphs[0], /queues completed calls.*one at a time.*plays once/);
+  assert.match(scanListsTour.steps.find(step => step.id === 'listening').paragraphs[0], /queues completed calls.*one at a time.*plays once/);
   const scanListTargets = createGuideDefinition('scan-lists', { documentValue: {
     querySelectorAll: selector => [{ selector }]
   } });
@@ -939,10 +943,13 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(targetNames(scanStop('player-overview')), ['player']);
   assert.equal(scanListTargets.steps.indexOf(scanStop('player-overview')) + 1,
     scanListTargets.steps.indexOf(scanStop('listening-controls')),
-    'The player is introduced before its Lists control.');
-  assert.deepEqual(targetNames(scanStop('listening-controls')), ['player-lists'],
-    'The actual Lists button is shown before its player panel opens.');
+    'The player is introduced before its Player menu control.');
+  assert.deepEqual(targetNames(scanStop('listening-controls')), ['player-menu'],
+    'The actual Player menu trigger is shown before its menu opens.');
+  assert.deepEqual(targetNames(scanStop('listening-menu')), ['player-menu-lists']);
   assert.deepEqual(targetNames(scanStop('listening')), ['scan-lists-player-lists']);
+  assert.deepEqual(targetNames(scanStop('listening-back')), ['player-menu-back']);
+  assert.deepEqual(targetNames(scanStop('player-back')), ['player-menu-back']);
   assert.equal(scanListTargets.steps.indexOf(scanStop('add-list-button')) + 1,
     scanListTargets.steps.indexOf(scanStop('add-alias-list')),
     'A dialog’s own opening control is introduced immediately before that dialog.');
@@ -950,14 +957,14 @@ async function checkGuides(assetsRoot) {
     'The add-list dialog lesson stays on its own operation.');
   assert.equal(scanListsTour.steps.at(-1).nextLabel, 'Finish');
   const noAudioScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'scanner' });
-  assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -3),
+  assert.deepEqual(noAudioScanListsTour.steps.map(({ id }) => id), scanListSections.slice(0, -6),
     'An account without Live audio access is not shown player listening choices.');
   assert.equal(noAudioScanListsTour.steps.at(-1).id, 'back-to-lists');
   assert.equal(noAudioScanListsTour.steps.at(-1).nextLabel, 'Finish');
   assert.ok(noAudioScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
   const noAliasesScanListsTour = createGuideDefinition('scan-lists', { canView: view => view !== 'aliases' });
   assert.deepEqual(noAliasesScanListsTour.steps.map(({ id }) => id),
-    ['overview', 'lists', 'player-overview', 'listening-controls', 'listening'],
+    ['overview', 'lists', 'player-overview', 'listening-controls', 'listening-menu', 'listening', 'listening-back', 'player-back'],
     'An account without Alias administration is not sent into member management.');
   assert.equal(noAliasesScanListsTour.steps.at(-1).nextLabel, 'Finish');
   assert.ok(noAliasesScanListsTour.steps.slice(0, -1).every(step => step.nextLabel === undefined));
@@ -1043,9 +1050,9 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const scannerSections = ['overview', 'lists-button', 'lists', 'call', 'queue',
-    'playback', 'hold', 'avoid', 'detail-level', 'details', 'settings-button', 'playback-order',
-    'settings-close', 'avoids-button', 'avoids', 'avoids-close'];
+  const scannerSections = ['overview', 'lists-button', 'lists-menu', 'lists', 'lists-back', 'lists-menu-close', 'call', 'queue',
+    'playback', 'hold', 'avoid', 'detail-level', 'details', 'settings-button', 'settings-menu', 'playback-order',
+    'settings-close', 'avoids-button', 'avoids', 'avoids-close', 'player-close'];
   assert.deepEqual(scannerTour.steps.map(step => step.id), scannerSections);
   assert.equal(scannerTour.steps[0].title, 'Listen to your Scan Lists');
   assert.equal(scannerTour.steps[0].prepare, undefined,
@@ -1061,9 +1068,9 @@ async function checkGuides(assetsRoot) {
     'The Scan Lists explanation works with any real names and does not present examples as fixed groups.');
   assert.equal(scannerStop('playback').items[0].text, 'Pause audio while calls continue to queue.');
   assert.equal(scannerStop('settings-button').paragraphs[0],
-    'Open Scanner settings for playback order and page title options.');
+    'Open Player menu to adjust playback order and page title options.');
   assert.equal(scannerStop('playback-order').compact, true,
-    'The shorter playback-order lesson leaves room beside the centered settings dialog.');
+    'The shorter playback-order lesson leaves room beside the shared listening settings panel.');
   assert.deepEqual(scannerStop('playback').items.map(item => item.label), ['Pause', 'Stop', 'Replay']);
   for (const step of scannerTour.steps.slice(1)) {
     assert.deepEqual(targetNames(step), [`sc-${step.id}`]);
@@ -1074,20 +1081,22 @@ async function checkGuides(assetsRoot) {
     release();
     assert.deepEqual(released.splice(0), [step.id, 'scanner-player']);
   }
-  for (const [opener, destination] of [['lists-button', 'lists'], ['detail-level', 'details'],
-    ['settings-button', 'playback-order'], ['avoids-button', 'avoids']]) {
+  for (const [opener, destination] of [['lists-button', 'lists-menu'], ['lists-menu', 'lists'], ['detail-level', 'details'],
+    ['settings-button', 'settings-menu'], ['settings-menu', 'playback-order'], ['avoids-button', 'avoids']]) {
     assert.equal(scannerSections.indexOf(opener) + 1, scannerSections.indexOf(destination),
       'Scanner teaches each actual opening control before the destination it opens.');
   }
-  assert.equal(scannerSections.indexOf('lists') + 1, scannerSections.indexOf('call'),
-    'The Scan Lists popover closes when advancing without a redundant return stop.');
+  assert.equal(scannerSections.indexOf('lists') + 1, scannerSections.indexOf('lists-back'),
+    'The Lists panel teaches the common Back control before returning to Player menu.');
+  assert.equal(scannerSections.indexOf('lists-menu-close') + 1, scannerSections.indexOf('call'),
+    'The menu teaches its return control before restoring the call display.');
   for (const [returnStep, nextStep] of [['settings-close', 'avoids-button']]) {
     assert.equal(scannerSections.indexOf(returnStep) + 1, scannerSections.indexOf(nextStep),
       'An actual return control precedes the next Scanner workspace lesson.');
   }
   assert.equal(scannerTour.steps.at(-1).nextLabel, 'Finish');
-  assert.equal(scannerTour.steps.at(-1).id, 'avoids-close',
-    'The final dialog has a visible close-control lesson before completion.');
+  assert.equal(scannerTour.steps.at(-1).id, 'player-close',
+    'The final Player menu has a visible return-control lesson before completion.');
   const restrictedScanner = createGuideDefinition('scanner', { canAccess: capability => capability !== 'radio' });
   assert.deepEqual(restrictedScanner.steps.map(step => step.id), scannerSections.filter(id => id !== 'details'),
     'The tour preserves listening access without offering restricted radio-detail navigation.');
@@ -1572,17 +1581,17 @@ async function checkGuides(assetsRoot) {
   deniedMain.controller.destroy();
 
   const firstScannerVisit = makeHarness({ context: { view: 'scanner' }, storage: {
-    getItem: key => /:welcome:1$|:scanner:[123]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scanner:[1234]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await firstScannerVisit.controller.pageReady();
   assert.equal(firstScannerVisit.shown.at(-1).options.id, 'scanner');
-  assert.equal(firstScannerVisit.shown.at(-1).options.version, 4,
+  assert.equal(firstScannerVisit.shown.at(-1).options.version, 5,
     'Earlier Scanner tour versions do not suppress the revised walkthrough.');
   firstScannerVisit.finish();
   firstScannerVisit.controller.destroy();
   const completedScanner = makeHarness({ context: { view: 'scanner' }, storage: {
-    getItem: key => /:welcome:1$|:scanner:4$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scanner:5$/.test(key) ? '1' : null,
     setItem() {}
   } });
   assert.equal(await completedScanner.controller.pageReady(), false);
@@ -1740,12 +1749,12 @@ async function checkGuides(assetsRoot) {
     'Completing an older Aliases tour cannot suppress the walkthrough with visible navigation actions.');
 
   const dismissedScanListPlaceholder = makeHarness({ context: { view: 'scan-lists' }, storage: {
-    getItem: key => /:welcome:1$|:scan-lists:[123456]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scan-lists:[1234567]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await dismissedScanListPlaceholder.controller.pageReady();
   assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.id, 'scan-lists');
-  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 7,
+  assert.equal(dismissedScanListPlaceholder.shown.at(-1).options.version, 8,
     'Completing an older Scan Lists tour cannot suppress its focused membership and listening walkthrough.');
   dismissedScanListPlaceholder.finish();
   await dismissedScanListPlaceholder.controller.openPage();
@@ -1847,7 +1856,7 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(listener.steps.find(({ id }) => id === 'listening').items.map(({ label }) => label), ['Main', 'Scanner']);
   const listenerPlayer = listener.steps.find(({ id }) => id === 'player');
   assert.equal(listenerPlayer.items[0].label, 'Live');
-  assert.ok(listenerPlayer.items.some(({ label }) => label === 'Lists'), 'Listeners can still choose available Scan Lists in the player.');
+  assert.ok(listenerPlayer.items.some(({ label }) => label === 'Player menu'), 'Listeners can still open their available listening choices in the player.');
   const noAudio = createGuideDefinition('welcome', { canView: (view) => view === 'dashboard', canReport: false, canSetup: false });
   assert.equal(noAudio.steps.some(({ id }) => id === 'player'), false, 'Accounts without audio access do not receive a player step.');
   const denied = makeHarness({ context: { canView: () => false } });

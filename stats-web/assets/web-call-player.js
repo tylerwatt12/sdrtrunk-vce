@@ -293,6 +293,52 @@ export class WebCallPlayer {
     return result;
   }
 
+  // Called directly by a listener gesture. Resume browser audio before awaiting any work or starting a new feed.
+  async startDirectListen() {
+    if (!this.directListenAllowed || !this.activeDirectListenTargets().length) {
+      throw new Error('Direct Listen is unavailable.');
+    }
+    if (!this.stopped && !this.paused && !this.stopAfterReplay && this.audioContext?.state === 'running') return true;
+    const wasStopped = this.stopped;
+    const wasPaused = this.paused;
+    const token = ++this.transportToken;
+    try {
+      this.ensureAudioContext();
+      await this.audioContext.resume();
+    } catch (_) {
+      if (token !== this.transportToken) return false;
+      throw new Error('Unable to start browser audio. Check your browser sound settings and try again.');
+    }
+    if (token !== this.transportToken) return false;
+    if (!this.directListenAllowed || !this.activeDirectListenTargets().length) {
+      if (wasStopped || wasPaused) await this.audioContext.suspend().catch(() => {});
+      return false;
+    }
+    this.stopped = false;
+    this.paused = false;
+    this.stopAfterReplay = false;
+    if (!this.ensureConnected()) {
+      this.stopped = wasStopped;
+      this.paused = wasPaused;
+      this.render();
+      throw new Error('Unable to start listening. Refresh the page and try again.');
+    }
+    // Shared observers stop recorded playback before the current source or queued calls can begin.
+    this.render();
+    if (this.source) {
+      this.setStatus(this.replayingLast ? 'Replaying last call' : 'Listening');
+      this.startProgress();
+    } else if (this.currentBuffer) {
+      this.startCurrent();
+    } else if (!this.current) {
+      void this.playNext();
+    } else {
+      this.setStatus('Buffering');
+    }
+    this.render();
+    return true;
+  }
+
   removeDirectListenTarget(key) {
     if (!this.directListenSession?.remove(key)) return false;
     this.directListenChanged();

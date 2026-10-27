@@ -57,7 +57,12 @@ async function checkGuideContext(assetsRoot) {
     ['aliases', 'defaults-new-button', 'aliases-defaults-new-tab', '.read-only-modal'],
     ['channel-setup', 'channel-choice-close', 'channel-choice-close', '.read-only-modal'],
     ['scan-lists', 'add-alias-list', 'scan-lists-add-list-dialog', '.read-only-modal'],
-    ['scan-lists', 'listening-controls', 'player-lists', '.audio-dock'],
+    ['scan-lists', 'listening-controls', 'player-menu', '.audio-dock'],
+    ['scan-lists', 'listening-menu', 'player-menu-lists', '.audio-dock'],
+    ['scan-lists', 'listening-back', 'player-menu-back', '.audio-dock'],
+    ['channel-setup', 'listening-controls', 'player-menu', '.audio-dock'],
+    ['channel-setup', 'listening-menu', 'player-menu-lists', '.audio-dock'],
+    ['channel-setup', 'player-back', 'player-menu-back', '.audio-dock'],
     ['radioreference', 'channel-review-button', 'rr-channel-review-button', '.read-only-modal'],
     ['streaming', 'manage-button', 'st-manage-button', '.streaming-destination-card'],
     ['streaming', 'sections', 'st-sections', '.read-only-modal'],
@@ -65,8 +70,11 @@ async function checkGuideContext(assetsRoot) {
     ['tuner-spectrum', 'listen', 'bs-listen', '.spectrum-browse-control-rail'],
     ['live', 'pause', 'lv-pause', '.live-details'],
     ['dashboard', 'reception', 'mn-reception', '[data-directory-card-key]'],
-    ['scanner', 'playback-order', 'sc-playback-order', '.read-only-modal'],
-    ['scanner', 'settings-close', 'sc-settings-close', '.read-only-modal']
+    ['scanner', 'lists-button', 'sc-lists-button', '.scanner-playback-transport'],
+    ['scanner', 'lists-menu', 'sc-lists-menu', '.audio-dock'],
+    ['scanner', 'playback-order', 'sc-playback-order', '.audio-dock'],
+    ['scanner', 'settings-close', 'sc-settings-close', '.audio-dock'],
+    ['scanner', 'player-close', 'sc-player-close', '.audio-dock']
   ];
   for (const [page, id, marker, ownerSelector] of contexts) {
     const owner = element([ownerSelector]);

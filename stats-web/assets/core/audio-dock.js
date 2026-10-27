@@ -8,7 +8,7 @@ import { callAudioDetailGroups } from './call-audio-details.js?v=7';
  * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
  * and recording-choice modal retain their lifecycle. One live engine and one
  * recording adapter; the dock owns presentation only, in light/dark and all sizes. */
-export function createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer, access, openRecordings,
+export function createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer: getRealLivePlayer, access, openRecordings, openScanListCoverage, refreshScanLists,
   entityRefHref, canViewRadio, href, getTitlePreference, setTitlePreference,
   getSourceNameDisplay = () => 'talker_alias',
   radioIdentifier = (_call, value) => value }) {
@@ -22,7 +22,15 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   // Desktop hiding is presentation only: retain the size, source and both engines.
   let superCollapsed = false;
   let externalManagement = false;
+  let managementSource = null;
   let guidePresentation = false;
+  let guideControlValues = new WeakMap();
+  // Detached sample controls must remain read-only after a guide rerenders them.
+  const getLivePlayer = () => guidePresentation || !access().live ? null : getRealLivePlayer();
+  const userAction = action => {
+    const sampleControl = guidePresentation;
+    return event => { if (!sampleControl && !guidePresentation) return action(event); };
+  };
   const mobileLayout = window.matchMedia('(max-width: 900px), (max-height: 500px) and (pointer: coarse)');
   let presentationMotion = null;
   let sizeGesture = null;
@@ -47,6 +55,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   let sidebarKey = '';
   let selectedQueueKey = null;
   let contextInvoker = null;
+  let menuReturnSize = null;
+  const menuPanels = new Set(['menu', 'listening', 'direct', 'avoids', 'settings']);
+  const menuTriggers = [];
   let volumeInvoker = null;
   let volumeReturnFocus = true;
   let sharedQueueKey = '';
@@ -62,13 +73,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const command = (label, icon, action, primary = false) => {
     const button = iconButton(`icon-${icon}`, label,
       `ui-button ui-icon-button${primary ? ' ui-button-primary ui-audio-command-primary audio-dock-play' : ' ui-button-quiet'}`);
-    button.addEventListener('click', action);
+    button.addEventListener('click', userAction(action));
     return button;
   };
   const textButton = (label, action) => {
     const button = node('button', 'ui-button', label);
     button.type = 'button';
-    button.addEventListener('click', action);
+    button.addEventListener('click', userAction(action));
     return button;
   };
   const setLabel = (button, label, icon) => {
@@ -132,6 +143,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const queueCount = () => source === 'live' ? Number(liveState.queuedCount) || 0 : recordingState.queue?.length || 0;
   const isAllowed = () => Boolean(access()[source]);
   const setSize = (value) => {
+    if (guidePresentation) return;
     if (externalManagement && value !== 'full') { closePanel(); return; }
     cancelSizeGesture();
     closeVolume(false);
@@ -143,13 +155,14 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const sizes = ['collapsed', 'minimal', 'full'];
   const shiftSize = (direction) => setSize(sizes[Math.max(0, Math.min(2, sizes.indexOf(size) + direction))]);
   const switchSource = (value) => {
+    if (guidePresentation) return;
     if (source === value || !access()[value]) return;
     cancelSizeGesture();
     if (source === 'recordings') recordings.stop();
     else if (getLivePlayer() && !liveState.stopped) void getLivePlayer().togglePlayback();
     closeVolume(false);
     source = value;
-    externalManagement = false;
+    managementSource = null; externalManagement = false;
     panel = null;
     selectedQueueKey = null;
     panelKey = '';
@@ -167,6 +180,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   const next = () => source === 'recordings' ? void recordings.next() : getLivePlayer()?.skip();
   const changeVolume = (value, persist = true) => {
+    if (guidePresentation) return;
     const bounded = Math.max(0, Math.min(1, Number(value)));
     if (!Number.isFinite(bounded)) return;
     if (source === 'recordings') recordings.setVolume(bounded);
@@ -261,7 +275,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const wireSizeControl = (control, activate) => {
     let suppressClick = false;
     control.addEventListener('pointerdown', (event) => {
-      if (!event.isPrimary || event.button !== 0 || sizeGesture) return;
+      if (guidePresentation || !event.isPrimary || event.button !== 0 || sizeGesture) return;
       suppressClick = false;
       const bounds = dock.getBoundingClientRect();
       sizeGesture = { id: event.pointerId, control, x: event.clientX, y: event.clientY,
@@ -294,6 +308,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
 
   const header = node('div', 'audio-dock-header');
   const chooseSource = (value) => {
+    if (guidePresentation) return;
     if (!access()[value] || (value === 'recordings' && openRecordings?.() === false)) {
       render();
       return;
@@ -375,6 +390,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }, () => {});
   };
   const setSuperCollapsed = (value) => {
+    if (guidePresentation) return;
     if (externalManagement && value) { closePanel(); return; }
     if (mobileLayout.matches || superCollapsed === value) return;
     cancelSizeGesture();
@@ -428,28 +444,17 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   sourceFrame.append(node('span', 'visually-hidden', 'Audio source'), sourcePicker);
   appendIcon(sourceFrame, 'chevron-down');
   headerStart.append(sourceFrame);
-  const contextButton = (label, icon, name, id, classes = '') => {
-    const button = iconButton(`icon-${icon}`, label, `ui-button ui-button-secondary ui-audio-context-trigger ${classes}`);
-    button.id = id;
-    const text = node('span', 'audio-dock-scan-label', label);
-    const badge = node('span', 'ui-pill ui-pill-compact ui-audio-context-count');
-    button.append(text, badge);
-    button.addEventListener('click', () => openPanel(name, button));
-    return { button, badge };
+  const makeMenuTrigger = id => {
+    const button = iconButton('icon-menu', 'Player menu', 'ui-button ui-button-quiet ui-icon-button');
+    button.id = id; button.dataset.playerMenuTrigger = ''; button.dataset.guideTarget = 'player-menu';
+    button.setAttribute('aria-controls', 'audio-dock-panel'); button.setAttribute('aria-expanded', 'false');
+    button.addEventListener('click', () => openPlayerMenu(button));
+    menuTriggers.push(button); return button;
   };
-  const desktopLists = contextButton('Lists', 'scan-lists', 'listening', 'audio-dock-source-context', 'audio-dock-desktop-scanlists audio-dock-lists-trigger');
-  desktopLists.button.dataset.guideTarget = 'player-lists';
-  const mobileLists = contextButton('Lists', 'scan-lists', 'listening', 'audio-dock-mobile-lists', 'audio-dock-mobile-scanlists audio-dock-lists-trigger');
-  const library = iconButton('icon-recording', 'Browse recording library', 'ui-button ui-button-secondary ui-audio-context-trigger audio-dock-library-control');
-  library.append(node('span', 'audio-dock-scan-label', 'Library'));
-  library.addEventListener('click', () => { closeVolume(false); openRecordings?.(); });
-  const settingsButton = iconButton('icon-playback-controls', 'Listening settings', 'ui-disclosure-button ui-icon-button');
-  settingsButton.id = 'audio-dock-settings';
-  settingsButton.addEventListener('click', () => openPanel('settings', settingsButton));
   const shrink = iconButton('icon-chevron-down', 'Make player compact', 'ui-disclosure-button ui-icon-button');
   shrink.id = 'audio-dock-shrink';
   shrink.addEventListener('click', () => setSize(size === 'full' ? 'minimal' : 'collapsed'));
-  headerEnd.append(desktopLists.button, mobileLists.button, library, settingsButton, shrink, hide);
+  headerEnd.append(shrink, hide);
   header.append(headerStart, handle, headerEnd);
 
   const createSpectrum = (classes, backdrop = false) => {
@@ -482,7 +487,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     return button;
   };
   const miniVolume = makeVolumeTrigger('audio-dock-compact-volume');
-  miniControls.append(miniPlay, miniNext, miniVolume);
+  const miniMenu = makeMenuTrigger('audio-dock-compact-menu');
+  miniControls.append(miniPlay, miniNext, miniMenu, miniVolume);
   now.append(compactCopy, miniControls);
   const compactTiming = node('div', 'audio-dock-compact-bottom');
   const compactElapsed = node('span', 'audio-dock-time');
@@ -505,7 +511,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   slimHide.addEventListener('click', () => setSuperCollapsed(true));
   const slimExpand = iconButton('icon-maximize-corners', 'Expand player', 'ui-disclosure-button ui-icon-button ui-audio-size-action');
   slimExpand.id = 'audio-dock-slim-expand'; wireSizeControl(slimExpand, () => setSize('minimal'));
-  slim.append(slimCopy, slimPlay, slimHide, slimExpand);
+  const slimMenu = makeMenuTrigger('audio-dock-slim-menu');
+  slim.append(slimCopy, slimPlay, slimMenu, slimHide, slimExpand);
 
   const body = node('div', 'audio-dock-body audio-dock-expanded'); body.id = 'audio-dock-content';
   const main = node('div', 'audio-dock-player-main ui-listening-stage-main');
@@ -548,7 +555,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const context = node('section', 'audio-dock-context'); context.hidden = true;
   const contextHeader = node('div', 'audio-dock-context-heading');
   const back = iconButton('icon-chevron-left', 'Back to player', 'ui-disclosure-button ui-icon-button');
-  back.id = 'audio-dock-context-back'; back.addEventListener('click', closePanel);
+  back.id = 'audio-dock-context-back'; back.dataset.guideTarget = 'player-menu-back';
+  back.addEventListener('click', () => {
+    if (menuPanels.has(panel) && panel !== 'menu') {
+      const previous = panel; openPanel('menu');
+      panelHost.querySelector(`[data-player-menu-panel="${previous}"]`)?.focus({ preventScroll: true });
+    } else closePanel();
+  });
   const contextCopy = node('div', 'ui-heading-group');
   const contextTitle = node('h3', 'ui-section-heading'); contextTitle.id = 'audio-dock-context-title';
   const contextSubtitle = node('span', 'ui-muted ui-label');
@@ -570,7 +583,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const seek = node('input', 'ui-range ui-audio-range');
   seek.type = 'range'; seek.min = '0'; seek.max = '1'; seek.step = '0.1'; seek.value = '0';
   seek.setAttribute('aria-label', 'Recording position');
-  seek.addEventListener('input', () => recordings.seek(Number(seek.value)));
+  seek.addEventListener('input', userAction(() => recordings.seek(Number(seek.value))));
   const progress = node('progress', 'ui-audio-progress');
   progress.max = 1; progress.value = 0; progress.setAttribute('aria-label', 'Live call progress');
   const duration = node('span', 'audio-dock-time'); timing.append(elapsed, seek, progress, duration);
@@ -594,9 +607,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   hold.className = 'ui-button ui-button-quiet ui-icon-button audio-dock-hold';
   const avoids = node('div', 'audio-dock-avoid-actions'); avoids.setAttribute('role', 'group'); avoids.setAttribute('aria-label', 'Avoid controls');
   const avoid = textButton('Avoid', () => getLivePlayer()?.avoidCurrent()); avoid.className = 'ui-button ui-button-quiet audio-dock-avoid-action';
-  const avoidList = iconButton('icon-chevron-down', 'Open Avoid List', 'ui-button ui-button-quiet ui-icon-button');
-  avoidList.addEventListener('click', () => openPanel('avoids', avoidList)); avoids.append(avoid, avoidList);
-  const expandedVolume = makeVolumeTrigger('audio-dock-expanded-volume'); options.append(hold, avoids, expandedVolume);
+  avoids.append(avoid);
+  const fullMenu = makeMenuTrigger('audio-dock-menu');
+  const expandedVolume = makeVolumeTrigger('audio-dock-expanded-volume'); options.append(hold, avoids, fullMenu, expandedVolume);
   transport.append(transportMain, options); controls.append(timing, transport); main.append(mainScroll, controls);
 
   const sidebar = node('aside', 'audio-dock-up-next ui-listening-queue');
@@ -660,13 +673,54 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     item.setAttribute('role', error ? 'alert' : 'status'); return item;
   };
   function openPanel(value, invoker) {
+    if (guidePresentation) return;
     if (!isAllowed() || source === 'recordings' && ['listening', 'direct', 'settings', 'avoids'].includes(value)) return;
-    closeVolume(false); contextInvoker = invoker || contextInvoker; panel = value; panelKey = ''; setSize('full');
-    back.focus({ preventScroll: true });
+    if (menuPanels.has(value)) {
+      if (!menuPanels.has(panel)) { menuReturnSize = size; contextInvoker = invoker || contextInvoker; }
+    } else { menuReturnSize = null; contextInvoker = invoker || contextInvoker; }
+    closeVolume(false); panel = value; panelKey = ''; setSize('full');
+    (value === 'menu' ? panelHost.querySelector('button') || back : back).focus({ preventScroll: true });
+  }
+  function openPlayerMenu(invoker) {
+    if (guidePresentation) return;
+    if (!access()[source]) return;
+    if (panel === 'menu') { closePanel(); return; }
+    superCollapsed = false;
+    externalManagement = document.body.dataset.view === 'scanner';
+    openPanel('menu', invoker);
   }
   function closePanel() {
-    closeVolume(false); panel = null; externalManagement = false; panelKey = ''; render();
+    if (guidePresentation) return;
+    closeVolume(false); panel = null; externalManagement = false;
+    if (managementSource !== null) { source = managementSource; managementSource = null; }
+    if (menuReturnSize !== null) size = menuReturnSize;
+    menuReturnSize = null; panelKey = ''; render();
     (contextInvoker?.getClientRects().length ? contextInvoker : handle).focus({ preventScroll: true });
+  }
+  function renderMenu() {
+    const items = source === 'live' ? [
+      ['Lists', 'scan-lists', 'listening', (liveState.scanLists || []).filter(item => item.selected).length + (liveState.directListen?.selected ? 1 : 0)],
+      ...(liveState.directListen?.allowed ? [['Direct Listen', 'direct-listen', 'direct', liveState.directListen.targets.length]] : []),
+      ['Avoid List', 'skip', 'avoids', (liveState.avoids || []).length],
+      ['Listening settings', 'playback-controls', 'settings']
+    ] : [['Call details', 'info-circle', 'details'], ['Queue', 'scan-lists', 'queue', queueCount()],
+      ['Transcript', 'messages', 'transcript'], ['Recording library', 'recording', 'library']];
+    const choices = node('div', 'ui-surface audio-dock-selection-list');
+    items.forEach(([label, icon, destination, count]) => {
+      const button = node('button', 'ui-select-list-item'); button.type = 'button';
+      button.setAttribute('aria-label', label); button.dataset.playerMenuPanel = destination;
+      button.dataset.guideTarget = `player-menu-${({ listening: 'lists', settings: 'settings', avoids: 'avoids' })[destination] || destination}`;
+      const leading = node('span', 'ui-record-card-icon'); appendIcon(leading, icon); button.append(leading);
+      button.append(node('span', 'ui-record-card-copy', label));
+      if (count !== undefined) button.append(node('span', 'ui-pill ui-pill-compact', String(count)));
+      const trailing = node('span', 'ui-record-card-icon'); appendIcon(trailing, 'chevron-right'); button.append(trailing);
+      button.addEventListener('click', userAction(() => {
+        if (destination === 'library') { closePanel(); openRecordings?.(); }
+        else openPanel(destination);
+      }));
+      choices.append(button);
+    });
+    panelHost.append(choices);
   }
   function clickModeField(id) {
     const label = node('label', 'ui-field ui-audio-queue-setting audio-dock-click-mode');
@@ -675,10 +729,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     [['queue', 'Queue clicked calls'], ['once', 'Play once'], ['continue', 'Continue matching calls']].forEach(([value, text]) => {
       const option = node('option', '', text); option.value = value; select.append(option);
     });
-    select.addEventListener('change', () => {
+    select.addEventListener('change', userAction(() => {
       recordings.setClickMode(select.value);
       dock.querySelectorAll('[data-click-mode]').forEach(control => { control.value = recordingState.clickMode; });
-    });
+    }));
     frame.append(select); appendIcon(frame, 'chevron-down'); label.append(node('span', 'ui-field-label', 'When a call is clicked'), frame);
     return label;
   }
@@ -877,8 +931,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const lists = liveState.scanLists || [], maximum = liveState.maximumSelectedScanLists || 16;
     const selected = lists.filter(item => item.selected).length;
     panelHost.append(node('p', 'ui-muted ui-label audio-dock-selection-summary', 'Only selected lists add calls to your Live queue.'));
-    if (!liveState.scanListCatalogReady) panelHost.append(message(liveState.scanListCatalogState === 'unavailable' ?
-      'Lists are unavailable. Try listening again when the receiver is available.' : 'Lists are loading…'));
+    if (!liveState.scanListCatalogReady) {
+      const unavailable = liveState.scanListCatalogState === 'unavailable';
+      panelHost.append(message(unavailable ? 'Unable to load lists. Try again.' : 'Lists are loading…'));
+      if (unavailable && refreshScanLists) panelHost.append(textButton('Retry scan lists', refreshScanLists));
+    }
     else if (!lists.length) panelHost.append(message('No lists are available.'));
     const choices = node('div', 'ui-surface audio-dock-selection-list');
     choices.dataset.guideTarget = 'scan-lists-player-lists';
@@ -890,20 +947,19 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       checkbox.type = 'checkbox'; checkbox.checked = direct.selected;
       checkbox.setAttribute('aria-label', 'Direct Listen');
       checkbox.disabled = !direct.targets.length;
-      checkbox.addEventListener('change', () => getLivePlayer()?.setDirectListenSelected(checkbox.checked));
+      checkbox.addEventListener('change', userAction(() => getLivePlayer()?.setDirectListenSelected(checkbox.checked)));
       const copy = node('span', 'ui-heading-group audio-dock-selection-copy');
       copy.append(node('strong', '', 'Direct Listen'),
         node('span', 'ui-muted ui-label', `${direct.targets.length} ${direct.targets.length === 1 ? 'target' : 'targets'} · This session`));
       label.append(checkbox, copy);
-      const manage = command('Manage Direct Listen', 'direct-listen', () => openPanel('direct', manage));
-      row.append(label, manage); choices.append(row);
+      row.append(label); choices.append(row);
     }
     lists.forEach(item => {
       const label = node('label', 'ui-select-list-item ui-audio-selection-row audio-dock-selection-row');
       const checkbox = node('input', 'ui-selection-check'); checkbox.type = 'checkbox'; checkbox.checked = item.selected;
       checkbox.id = `audio-dock-scan-list-${item.id}`;
       checkbox.disabled = !isAllowed() || !item.enabled || selected >= maximum && !item.selected;
-      checkbox.addEventListener('change', () => getLivePlayer()?.setScanListSelected(item.id, checkbox.checked));
+      checkbox.addEventListener('change', userAction(() => getLivePlayer()?.setScanListSelected(item.id, checkbox.checked)));
       const copy = node('span', 'ui-heading-group audio-dock-selection-copy'); copy.append(node('strong', '', item.name));
       if (item.description) copy.append(node('span', 'ui-muted ui-label', item.description));
       label.append(checkbox, copy); choices.append(label);
@@ -912,9 +968,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (liveState.scanListCatalogReady && lists.length && !selected && !direct?.selected) panelHost.append(message('Select a List to start adding live calls.'));
     const footer = node('div', 'audio-dock-context-footer');
     footer.append(node('span', 'ui-muted ui-label', `Up to ${maximum} lists`));
-    const button = textButton('Avoid List', () => openPanel('avoids', button));
-    button.className = 'ui-button ui-button-quiet ui-audio-context-trigger'; button.append(node('span', 'ui-pill ui-pill-compact', String((liveState.avoids || []).length)));
-    footer.append(button); panelHost.append(footer);
+    if (openScanListCoverage) footer.append(textButton('View coverage', openScanListCoverage));
+    panelHost.append(footer);
   }
   function renderDirectListen() {
     const direct = liveState.directListen;
@@ -954,9 +1009,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }
     const footer = node('div', 'audio-dock-context-footer');
     footer.append(node('span', 'ui-muted ui-label', `Up to ${direct.maximumTargets} targets`));
-    const lists = textButton('Lists', () => openPanel('listening', lists));
-    const avoids = textButton('Avoid List', () => openPanel('avoids', avoids));
-    footer.append(lists, avoids); panelHost.append(footer);
+    panelHost.append(footer);
   }
   function renderAvoids() {
     const items = liveState.avoids || [];
@@ -976,12 +1029,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       }); panelHost.append(list);
     }
     const footer = node('div', 'audio-dock-context-footer'); footer.append(node('span', 'ui-muted ui-label', 'Live listening'));
-    if (liveState.directListen?.allowed) {
-      const direct = textButton('Direct Listen', () => openPanel('direct', direct)); footer.append(direct);
-    }
-    const button = textButton('Lists', () => openPanel('listening', button)); button.className = 'ui-button ui-button-quiet ui-audio-context-trigger';
-    button.append(node('span', 'ui-pill ui-pill-compact', String((liveState.scanLists || []).filter(item => item.selected).length + (liveState.directListen?.selected ? 1 : 0))));
-    footer.append(button); panelHost.append(footer);
+    panelHost.append(footer);
   }
   function renderSettings() {
     const settings = node('div', 'audio-dock-settings');
@@ -991,10 +1039,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const grouping = groupField.querySelector('input'); grouping.id = 'audio-dock-target-grouping';
     const groupHelp = groupField.querySelector('.ui-toggle-copy small');
     if (groupHelp) { groupHelp.id = 'audio-dock-grouping-help'; grouping.setAttribute('aria-describedby', groupHelp.id); }
-    grouping.addEventListener('change', () => {
+    grouping.addEventListener('change', userAction(() => {
       const player = getLivePlayer(); if (!player) return;
       player.applyPreferences({ target_grouping: grouping.checked }); player.writePreferences();
-    });
+    }));
     settings.append(groupField);
     const burstLabel = node('label', 'ui-toggle-field'); burstLabel.htmlFor = 'audio-dock-target-burst';
     const burstCopy = node('span', 'ui-toggle-copy');
@@ -1004,21 +1052,21 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const burst = node('input', 'ui-input'); burst.id = 'audio-dock-target-burst'; burst.type = 'number'; burst.min = '1'; burst.max = '20'; burst.value = liveState.targetBurstLimit || 4;
     burst.setAttribute('aria-label', 'Calls per target');
     burst.setAttribute('aria-describedby', burstHelp.id);
-    burst.addEventListener('change', () => {
+    burst.addEventListener('change', userAction(() => {
       if (!burst.checkValidity()) { burst.reportValidity(); return; }
       const player = getLivePlayer(); if (!player) return;
       player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences();
-    });
+    }));
     burstLabel.append(burstCopy, burst); settings.append(burstLabel);
     const titleField = uiToggleField('Playing call in page title', getTitlePreference(),
       'Playing call in page title', 'Show the playing Live call in browser tab titles outside Scanner.');
     const prepend = titleField.querySelector('input'); prepend.id = 'audio-dock-title-preference';
     const titleHelp = titleField.querySelector('.ui-toggle-copy small');
     if (titleHelp) { titleHelp.id = 'audio-dock-title-help'; prepend.setAttribute('aria-describedby', titleHelp.id); }
-    prepend.addEventListener('change', () => {
+    prepend.addEventListener('change', userAction(() => {
       const refresh = () => { panelKey = ''; render(); };
       void Promise.resolve(setTitlePreference(prepend.checked)).then(refresh, refresh);
-    });
+    }));
     settings.append(titleField);
   }
 
@@ -1068,12 +1116,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (!panel || size !== 'full' || dock.hidden) return;
     const active = state(), call = current();
     const selected = (liveState.scanLists || []).filter(item => item.selected).length + (liveState.directListen?.selected ? 1 : 0);
-    const names = { details: 'Call details', transcript: 'Transcript', queue: 'Queue', listening: 'Lists', direct: 'Direct Listen', settings: 'Listening settings', avoids: 'Avoid List' };
+    const names = { menu: 'Player menu', details: 'Call details', transcript: 'Transcript', queue: 'Queue', listening: 'Lists', direct: 'Direct Listen', settings: 'Listening settings', avoids: 'Avoid List' };
     contextTitle.textContent = names[panel];
-    contextSubtitle.textContent = panel === 'listening' ? `${selected} of ${(liveState.scanLists || []).length + (liveState.directListen?.allowed ? 1 : 0)} selected` :
+    setLabel(back, menuPanels.has(panel) && panel !== 'menu' ? 'Back to menu' : externalManagement ? 'Back to Scanner' : 'Back to player');
+    contextSubtitle.textContent = panel === 'menu' ? (source === 'live' ? 'Live listening' : 'Recordings') : panel === 'listening' ? `${selected} of ${(liveState.scanLists || []).length + (liveState.directListen?.allowed ? 1 : 0)} selected` :
       panel === 'direct' ? `${liveState.directListen?.targets.length || 0} ${liveState.directListen?.targets.length === 1 ? 'target' : 'targets'} · This session` : panel === 'queue' ? `${queueCount()} queued` : panel === 'avoids' ? `${(liveState.avoids || []).length} avoided` : panel === 'settings' ? 'Live listening preferences' :
       source === 'live' && panel === 'details' && !active.current ? 'Waiting for a call' : title(call);
-    const panelState = panel === 'listening' ? [active.scanLists, active.directListen, active.maximumSelectedScanLists, active.scanListCatalogReady, active.scanListCatalogState] :
+    const panelState = panel === 'menu' ? [liveState.scanLists, liveState.directListen, liveState.avoids, queueCount()] : panel === 'listening' ? [active.scanLists, active.directListen, active.maximumSelectedScanLists, active.scanListCatalogReady, active.scanListCatalogState] :
       panel === 'direct' ? [liveState.directListen] :
       panel === 'avoids' ? [liveState.avoids, liveState.scanLists, liveState.directListen?.allowed] : panel === 'settings' ? [liveState.targetGrouping, liveState.targetBurstLimit, getTitlePreference()] :
       panel === 'queue' ? [active.current, active.queue, active.scanLists, active.continuation, active.stopped, active.paused, selectedQueueKey] :
@@ -1084,7 +1133,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     panelHost.querySelectorAll('details').forEach(item => disclosureStates.set(`${renderedPanel}:${item.querySelector('summary')?.textContent}`, item.open));
     preserveContent(panelHost, () => {
       renderedPanel = `${source}:${panel}`;
-      if (panel === 'details') {
+      if (panel === 'menu') renderMenu();
+      else if (panel === 'details') {
         if (source === 'recordings') {
           const mount = node('div'); panelHost.append(mount);
           recordings.renderDetails(mount, active.current, { shell: true, empty: !active.current || active.stopped });
@@ -1106,7 +1156,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   function render() {
     if (destroyed) return;
     const permissions = access();
-    if (!permissions[source] && (permissions.live || permissions.recordings)) { closeVolume(false); source = permissions.live ? 'live' : 'recordings'; panelKey = ''; }
+    if (!permissions[source] && (permissions.live || permissions.recordings)) {
+      closeVolume(false);
+      panelHost.querySelectorAll('button, input, select').forEach(control => { control.disabled = true; });
+      source = permissions.live ? 'live' : 'recordings'; panel = null; externalManagement = false; managementSource = null;
+      if (menuReturnSize !== null) size = menuReturnSize;
+      menuReturnSize = null; panelKey = '';
+    }
     const unavailable = (!guidePresentation && document.body.dataset.view === 'scanner' && !externalManagement) ||
       document.body.dataset.view === 'access-landing' || !permissions.live && !permissions.recordings;
     if (unavailable && sizeGesture) cancelSizeGesture();
@@ -1140,9 +1196,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const sourceLabel = source === 'live' ? 'Live' : 'Recordings'; currentSourceChoice.textContent = sourceLabel;
     if (sourcePicker.value !== '') sourcePicker.value = ''; sourcePicker.disabled = !permissions.live && !permissions.recordings;
     const live = source === 'live';
-    desktopLists.button.hidden = mobileLists.button.hidden = settingsButton.hidden = !live; library.hidden = live;
+
     const selected = (liveState.scanLists || []).filter(item => item.selected && item.enabled).length + (liveState.directListen?.selected ? 1 : 0);
-    [desktopLists, mobileLists].forEach(({button, badge}) => { badge.textContent = String(selected); button.setAttribute('aria-label', `Lists, ${selected} selected`); button.disabled = !permissions.live; });
+    menuTriggers.forEach(button => { button.disabled = !isAllowed(); button.setAttribute('aria-expanded', String(menuPanels.has(panel))); });
     shrink.querySelector('use').setAttribute('href', mobileLayout.matches ? '#icon-close' : '#icon-chevron-down');
     setLabel(shrink, presentationSize === 'full' ? 'Make player compact' : 'Collapse player');
     transcriptButton.hidden = live; transcriptButton.disabled = !permissions.recordings;
@@ -1198,6 +1254,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (source === 'live' && panel === 'transcript' || source === 'recordings' && ['listening', 'direct', 'settings', 'avoids'].includes(panel)) { panel = null; panelKey = ''; }
     renderSidebar(); renderPanel(); dock.querySelectorAll('[data-click-mode]').forEach(select => { if (select.value !== recordingState.clickMode) select.value = recordingState.clickMode; });
     updateProgress(); measure(); synchronizeLoops();
+    if (guidePresentation) [dock, volumePopover].forEach(root => root.querySelectorAll('input, select, textarea').forEach(control => {
+      if (!guideControlValues.has(control)) guideControlValues.set(control, { value: control.value, checked: control.checked });
+    }));
   }
   function positionPlaybackFeedback() {
     if (playbackFeedback.hidden) return;
@@ -1236,7 +1295,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const resizeObserver = new ResizeObserver(measure); resizeObserver.observe(dock);
   const viewportChanged = () => { cancelSizeGesture(); closeVolume(false); cancelPresentationMotion(); measure(); };
   const visibilityChanged = () => { if (document.hidden) { cancelSizeGesture(); closeVolume(false); } synchronizeLoops(); };
-  const escapeContext = event => { if (!guideScanListState && event.key === 'Escape' && !volumePopover.matches(':popover-open') && panel) { event.preventDefault(); closePanel(); } };
+  const escapeContext = event => { if (!guidePresentation && event.key === 'Escape' && !volumePopover.matches(':popover-open') && panel) { event.preventDefault(); closePanel(); } };
   mobileLayout.addEventListener('change', updatePresentationLayout);
   window.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('resize', viewportChanged); window.visualViewport?.addEventListener('scroll', viewportChanged);
   window.addEventListener('blur', cancelSizeGesture);
@@ -1253,19 +1312,19 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   });
   function synchronize() {
     if (!access().recordings) sharedQueueKey = '';
-    const player = getLivePlayer();
+    const player = getRealLivePlayer();
     if (player !== boundLive) {
       unsubscribeLive(); boundLive = player;
       unsubscribeLive = player?.subscribeState(value => {
         latestLiveState = value;
         if (!guideScanListState) liveState = value;
-        if (!guidePresentation && !value.stopped && !previousLiveActive && access().live) { closeVolume(false); source = 'live'; panelKey = ''; }
+        if (!guidePresentation && !value.stopped && !previousLiveActive && access().live) { closeVolume(false); managementSource = null; source = 'live'; panelKey = ''; }
         previousLiveActive = !value.stopped; render();
       }) || (() => {});
     }
     render();
     const params = new URLSearchParams(window.location.search), queue = params.get('recording_queue');
-    if (access().recordings && queue && queue !== sharedQueueKey) { sharedQueueKey = queue; closeVolume(false); source = 'recordings'; size = 'full'; panel = 'queue'; void recordings.loadSharedQueue(params).then(render); }
+    if (!guidePresentation && access().recordings && queue && queue !== sharedQueueKey) { sharedQueueKey = queue; closeVolume(false); source = 'recordings'; size = 'full'; panel = 'queue'; void recordings.loadSharedQueue(params).then(render); }
   }
   synchronize();
   // Tours use the normal player renderers with a separate, read-only view of
@@ -1275,17 +1334,21 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const protectGuideCommands = (event) => {
     if ((!guideScanListState && !guideRecordingState) || event.type === 'keydown' && ['Tab', 'Escape'].includes(event.key)) return;
     event.preventDefault(); event.stopImmediatePropagation();
-    if (['input', 'change'].includes(event.type)) { panelKey = ''; render(); }
+    if (['input', 'change'].includes(event.type)) {
+      const original = guideControlValues.get(event.target);
+      if (original) Object.assign(event.target, original);
+    }
   };
   [dock, volumePopover, restore].forEach(root => guideCommandEvents.forEach(type =>
     root.addEventListener(type, protectGuideCommands, true)));
   function prepareGuide({ minimized = false, sampleScanLists = null, openSampleLists = true,
-    sampleRecordings = null, recordingsSize = 'minimal' } = {}) {
-    const previous = { size, superCollapsed, source, panel, guidePresentation, guideScanListState, guideRecordingState,
+    sampleRecordings = null, recordingsSize = 'minimal', sampleLiveState = null, guidePanel = undefined } = {}) {
+    const previous = { size, superCollapsed, source, panel, externalManagement, managementSource, menuReturnSize, guidePresentation, guideScanListState, guideRecordingState,
       contextInvoker, selectedQueueKey, focus: document.activeElement,
       scroll: [mainScroll.scrollTop, panelHost.scrollTop, sidebarList.scrollTop] };
     cancelSizeGesture(); closeVolume(false); cancelPresentationMotion();
     guidePresentation = true;
+    guideControlValues = new WeakMap();
     superCollapsed = minimized;
     if (!minimized) {
       size = 'minimal';
@@ -1302,7 +1365,15 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       liveState = guideScanListState;
       superCollapsed = false; size = openSampleLists ? 'full' : 'minimal'; source = 'live';
       panel = openSampleLists ? 'listening' : null;
-      contextInvoker = desktopLists.button;
+      contextInvoker = miniMenu;
+    }
+    if (sampleLiveState) {
+      guideScanListState = { ...sampleLiveState }; liveState = guideScanListState;
+      source = 'live'; superCollapsed = false; size = 'minimal'; panel = null;
+      externalManagement = document.body.dataset.view === 'scanner';
+    }
+    if (guidePanel !== undefined && source === 'live') {
+      panel = guidePanel; if (panel) size = 'full';
     }
     let unsubscribeSampleRecordings = () => {};
     if (sampleRecordings && access().recordings) {
@@ -1325,7 +1396,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       restored = true;
       unsubscribeSampleRecordings();
       if (guideScanListState || guideRecordingState) { panelHost.replaceChildren(); renderedPanel = ''; }
-      ({ size, superCollapsed, source, panel, guidePresentation, guideScanListState, guideRecordingState,
+      ({ size, superCollapsed, source, panel, externalManagement, managementSource, menuReturnSize, guidePresentation, guideScanListState, guideRecordingState,
         contextInvoker, selectedQueueKey } = previous);
       liveState = guideScanListState || latestLiveState;
       recordingState = guideRecordingState || latestRecordingState;
@@ -1337,7 +1408,12 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       }
     };
   }
-  return { synchronize, prepareGuide, openDirectListen(invoker) {
+  return { synchronize, prepareGuide, openPlayerMenu(invoker) {
+    if (guidePresentation || document.body.dataset.view === 'scanner' && !access().live) return;
+    if (document.body.dataset.view === 'scanner' && source !== 'live') { managementSource = source; source = 'live'; }
+    openPlayerMenu(invoker);
+  }, openDirectListen(invoker) {
+    if (guidePresentation) return;
     if (!access().live || !liveState.directListen?.allowed) return;
     if (source !== 'live') switchSource('live');
     superCollapsed = false;

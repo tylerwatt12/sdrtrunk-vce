@@ -212,17 +212,16 @@ export async function mountAudioDockGallery(parameters) {
   if (size !== 'minimal') handle.dispatchEvent(new KeyboardEvent('keydown', {
     key: size === 'collapsed' ? 'Home' : 'End', bubbles: true }));
   const panel = parameters.get('audioPanel');
-  if (size === 'full' && panel === 'direct') audioDock.openDirectListen();
-  else if (size === 'full' && panel) {
-    const labels = { details: 'Call details', transcript: 'Transcript', listening: 'Lists',
-      avoids: 'Open Avoid List', settings: 'Listening settings', queue: 'Open queue' };
-    const selector = panel === 'listening' ? '#audio-dock-source-context, #audio-dock-mobile-lists' : null;
+  if (size === 'full' && panel) {
+    const menuLabels = { listening: 'Lists', direct: 'Direct Listen', avoids: 'Avoid List', settings: 'Listening settings' };
+    const labels = { details: 'Call details', transcript: 'Transcript', queue: 'Open queue' };
+    if (panel === 'menu' || menuLabels[panel]) clickNamed('Player menu');
     if (panel === 'queue' && ![...dock.querySelectorAll('button')].some((button) =>
       button.getClientRects().length && button.getAttribute('aria-label') === 'Open queue')) {
       handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
     }
-    if (selector) [...dock.querySelectorAll(selector)].find((button) => button.getClientRects().length)?.click();
-    else clickNamed(labels[panel]);
+    if (menuLabels[panel]) clickNamed(menuLabels[panel]);
+    else if (labels[panel]) clickNamed(labels[panel]);
   }
   if (parameters.get('audioHidden') === 'true') clickNamed('Minimize player to header');
   document.querySelector('.visual-audio-dock-example').dataset.ready = 'true';

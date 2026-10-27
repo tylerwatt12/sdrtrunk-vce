@@ -29,6 +29,7 @@
     <symbol id="visual-icon-check" viewBox="0 0 24 24">
       <path d="m5 13 4 4L19 7"></path>
     </symbol>
+    <symbol id="visual-icon-direct-listen" viewBox="0 0 24 24"><path d="M4 14v-3a8 8 0 0 1 16 0v3"></path><rect x="3" y="12" width="5" height="9" rx="2"></rect><rect x="16" y="12" width="5" height="9" rx="2"></rect></symbol>
     <symbol id="visual-icon-cloud" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" d="M7 18h11a4 4 0 0 0 .6-7.95A6.5 6.5 0 0 0 6.15 8.5 4.75 4.75 0 0 0 7 18Z"></path></symbol>
     <symbol id="visual-icon-search" viewBox="0 0 24 24">
       <circle cx="11" cy="11" r="7"></circle><path d="m16 16 4 4"></path>
@@ -282,6 +283,16 @@
         <div class="visual-text-links-example">
           <p>System: <a class="ui-link-text" href="#system-details">Metro Public Safety</a></p>
           <p class="muted">System: <a class="ui-link-text" href="#system-details">Metro Public Safety</a></p>
+        </div>
+        <div data-visual-inline-identity>
+          <span class="ui-identity-action">
+            <span class="ui-identity-action-label"><a class="ui-link-text" href="#talkgroup">Regional Fire Dispatch and Mutual Aid</a></span>
+            <button class="ui-button ui-button-quiet ui-icon-button ui-icon-button-inline" type="button"
+                    aria-label="Add Regional Fire Dispatch and Mutual Aid to Direct Listen and play"
+                    title="Add Regional Fire Dispatch and Mutual Aid to Direct Listen and play">
+              <svg aria-hidden="true"><use href="#visual-icon-direct-listen"></use></svg>
+            </button>
+          </span>
         </div>
       </section>
 
@@ -1152,14 +1163,18 @@
 
 
   <main class="visual-feature-example visual-scanner-example">
-    <header class="visual-feature-header"><div><p class="visual-settings-eyebrow">Listen</p><h1>Scanner</h1><p>Listen to completed calls from this receiver.</p></div><div class="scanner-header-actions"><span class="ui-select-frame scanner-view-modes"><select class="ui-select" aria-label="Scanner detail level"><option value="simple">Simple</option><option value="normal" selected>Normal</option><option value="advanced">Advanced</option><option value="engineer">Engineer</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span><div class="scanner-scan-chooser"><button type="button" class="ui-button ui-button-secondary scanner-scan-trigger" popovertarget="visual-scanner-scan-lists" aria-controls="visual-scanner-scan-lists" aria-haspopup="dialog" aria-expanded="false"><span class="scanner-scan-summary">Scan Lists · 2</span><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></button>            <div id="visual-scanner-scan-lists" class="ui-popover scanner-scan-lists" popover="auto" role="dialog" aria-label="Listen to scan lists"><div class="scanner-scan-heading ui-surface-header"><div><strong>Scan Lists</strong></div><button class="ui-button ui-button-secondary ui-icon-button scanner-coverage-action" type="button" aria-label="View scan-list coverage" title="View scan-list coverage"><svg aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg></button></div><div class="scanner-scan-buttons">
-              <label class="ui-select-list-item scanner-scan-button"><span class="scanner-scan-copy"><strong>Fire &amp; EMS</strong><small>Primary dispatch</small></span><input class="ui-selection-check scanner-scan-check" type="checkbox" aria-label="Fire &amp; EMS" checked></label>
-              <label class="ui-select-list-item scanner-scan-button"><span class="scanner-scan-copy"><strong>Law Dispatch</strong><small>County operations</small></span><input class="ui-selection-check scanner-scan-check" type="checkbox" aria-label="Law Dispatch" checked></label>
-              <label class="ui-select-list-item scanner-scan-button"><span class="scanner-scan-copy"><strong>Utilities</strong><small>Public works</small></span><input class="ui-selection-check scanner-scan-check" type="checkbox" aria-label="Utilities"></label>
-              <label class="ui-select-list-item scanner-scan-button"><span class="scanner-scan-copy"><strong>Regional Interop</strong><small>Mutual aid</small></span><input class="ui-selection-check scanner-scan-check" type="checkbox" aria-label="Regional Interop"></label>
-              <label class="ui-select-list-item scanner-scan-button"><span class="scanner-scan-copy"><strong>Airport</strong><small>Operations</small></span><input class="ui-selection-check scanner-scan-check" type="checkbox" aria-label="Airport"></label>
-              <label class="ui-select-list-item scanner-scan-button"><span class="scanner-scan-copy"><strong>Public Service</strong><small>Municipal services</small></span><input class="ui-selection-check scanner-scan-check" type="checkbox" aria-label="Public Service"></label>
-            </div></div></div><button class="ui-button ui-button-secondary ui-icon-button scanner-settings" type="button" aria-label="Scanner settings" title="Scanner settings"><svg aria-hidden="true"><use href="#visual-icon-controls"></use></svg></button></div></header>
+    <header class="visual-feature-header">
+      <div><p class="visual-settings-eyebrow">Listen</p><h1>Scanner</h1><p>Listen to completed calls from this receiver.</p></div>
+      <div class="scanner-header-actions">
+        <span class="ui-select-frame scanner-view-modes">
+          <select id="scanner-detail-mode" class="ui-select" aria-label="Scanner detail level">
+            <option value="simple">Simple</option><option value="normal" selected>Normal</option>
+            <option value="advanced">Advanced</option><option value="engineer">Engineer</option>
+          </select>
+          <svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg>
+        </span>
+      </div>
+    </header>
     <div class="scanner-page-host">
       <div class="scanner-page" data-scanner-mode="normal">
         <section class="scanner-workspace scanner-console ui-surface ui-listening-stage" data-scanner-mode="normal">
@@ -1174,7 +1189,7 @@
               <div class="scanner-playback-secondary" role="group" aria-label="Target and queue actions">
                 <button id="scanner-stop" class="ui-button ui-button-secondary" type="button" aria-label="Stop browser call audio" title="Stop browser call audio">Stop</button>
                 <button id="scanner-avoid" class="ui-button ui-button-secondary" type="button" aria-label="Avoid current target" title="Avoid current target">Avoid</button>
-                <button id="scanner-avoid-list" class="ui-button ui-button-secondary" type="button" aria-label="View 0 browser avoid(s)" title="View 0 browser avoid(s)">Avoids</button>
+                <button id="scanner-player-menu" class="ui-button ui-button-secondary ui-icon-button" type="button" aria-label="Player menu" title="Player menu"><svg aria-hidden="true"><use href="#visual-icon-menu"></use></svg></button>
                 <button id="scanner-clear-queue" class="ui-button ui-button-secondary" type="button" aria-label="Clear 8 queued browser call(s)" title="Clear 8 queued browser call(s)">Clear</button>
               </div>
               <label class="ui-audio-volume-control" title="Browser playback volume"><span class="ui-audio-volume-label" aria-hidden="true">Volume</span><input id="scanner-volume" class="ui-range ui-audio-range" type="range" min="0" max="1" step="0.05" value="0.75" aria-label="Browser playback volume" aria-valuetext="75 percent"><output class="ui-audio-volume-output" for="scanner-volume" aria-hidden="true">75%</output></label>

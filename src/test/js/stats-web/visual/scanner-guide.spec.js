@@ -6,11 +6,13 @@ const path = require('node:path');
 const { installSiteStyleApplication } = require('./fixtures/site-style-app.cjs');
 const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
 const { expectContrast } = require('./fixtures/contrast-audit.cjs');
+const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="scanner"]');
-const steps = ['lists-button', 'lists', 'call', 'queue', 'playback', 'hold', 'avoid',
-  'detail-level', 'details', 'settings-button', 'playback-order', 'settings-close', 'avoids-button', 'avoids', 'avoids-close'];
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:4';
+const steps = ['lists-button', 'lists-menu', 'lists', 'lists-back', 'lists-menu-close', 'call', 'queue', 'playback', 'hold', 'avoid',
+  'detail-level', 'details', 'settings-button', 'settings-menu', 'playback-order', 'settings-close',
+  'avoids-button', 'avoids', 'avoids-close', 'player-close'];
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:5';
 const evidence = process.env.SCANNER_GUIDE_EVIDENCE ||
   path.resolve(__dirname, '../../../../../build/playwright-results/scanner-guide-evidence');
 const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
@@ -40,7 +42,7 @@ async function openScanner(page, { theme = 'light', replay = true, firstVisit = 
   const fixture = await installSiteStyleApplication(page, theme, { revision: 1, tables: [] }, { guides: firstVisit });
   await page.addInitScript(({ firstVisit, key }) => {
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1', '1');
-    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:3', '1');
+    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:4', '1');
     if (!firstVisit) localStorage.setItem(key, '1');
     window.scannerGuideAudioEvents = [];
     for (const name of ['AudioContext', 'webkitAudioContext']) {
@@ -131,46 +133,46 @@ async function expectSpotlight(page, id) {
   }), { message: 'The guide clears the header and keeps navigation side by side' }).toBe(true);
 }
 
-async function expectCenteredSettings(dialog) {
-  await expectInViewport(dialog);
-  await expect.poll(async () => {
-    const box = await dialog.boundingBox(), viewport = dialog.page().viewportSize();
-    return box && Math.abs(box.x + box.width / 2 - viewport.width / 2) <= 1 &&
-      Math.abs(box.y + box.height / 2 - viewport.height / 2) <= 1;
-  }, { message: 'The actual Scanner settings dialog stays centered in the viewport' }).toBe(true);
-  const viewport = dialog.page().viewportSize();
-  if (viewport.width >= 1181) expect((await dialog.boundingBox()).width).toBeCloseTo(540, 0);
-  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
-}
-
 async function expectLessonState(page, id) {
-  const settings = page.locator('.read-only-modal.scanner-settings-modal');
-  const avoids = page.locator('.read-only-modal.scanner-list-modal');
-  const lists = page.locator('.scanner-scan-lists');
-  const listOpen = id === 'lists';
-  await expect(page.locator('.scanner-scan-trigger')).toHaveAttribute('aria-expanded', String(listOpen));
+  const dock = page.locator('#audio-dock');
+  const settings = dock.locator('.audio-dock-settings');
+  const avoids = dock.locator('#audio-dock-panel');
+  const lists = dock.locator('[data-guide-target="scan-lists-player-lists"], [data-guide-target="sc-lists"]');
+  const panelTitles = { 'lists-menu': 'Player menu', lists: 'Lists', 'lists-back': 'Lists',
+    'lists-menu-close': 'Player menu', 'settings-menu': 'Player menu', 'playback-order': 'Listening settings',
+    'settings-close': 'Listening settings', 'avoids-button': 'Player menu', avoids: 'Avoid List',
+    'avoids-close': 'Avoid List', 'player-close': 'Player menu' };
+  const panelTitle = panelTitles[id];
+  if (panelTitle) {
+    await expect(dock).toBeVisible();
+    await expect(dock.locator('#audio-dock-context-title')).toHaveText(panelTitle);
+    await expectInViewport(dock);
+    expect(await dock.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  } else await expect(dock).toBeHidden();
+  await expect(page.locator('.scanner-scan-lists, .scanner-settings-modal')).toHaveCount(0);
+  const listOpen = ['lists', 'lists-back'].includes(id);
   if (listOpen) {
-    await expect(guide(page)).toContainText('Select one or more Scan Lists to listen to their calls together.');
-    await expect(guide(page)).not.toContainText('County Sheriff');
+    if (id === 'lists') {
+      await expect(guide(page)).toContainText('Select one or more Scan Lists to listen to their calls together.');
+      await expect(guide(page)).not.toContainText('County Sheriff');
+    }
     await expect(lists).toBeVisible();
-    await expect(lists.getByRole('checkbox', { name: 'Law Enforcement', exact: true })).toBeChecked();
-    await expect(lists.getByRole('checkbox', { name: 'Fire/EMS', exact: true })).toBeChecked();
+    await expect(lists.getByRole('checkbox', { name: /^Law Enforcement(?:\s|$)/ })).toBeChecked();
+    await expect(lists.getByRole('checkbox', { name: /^Fire\/EMS(?:\s|$)/ })).toBeChecked();
     await expect(page.locator('[data-guide-example="scanner"]')).toBeVisible();
   } else await expect(lists).toBeHidden();
   await expect(settings).toHaveCount(['playback-order', 'settings-close'].includes(id) ? 1 : 0);
-  await expect(avoids).toHaveCount(['avoids', 'avoids-close'].includes(id) ? 1 : 0);
   if (['playback-order', 'settings-close'].includes(id)) {
     await expect(settings).toBeVisible();
-    await expectCenteredSettings(settings);
     await expect.poll(() => settings.evaluate(element => {
       const target = element.getBoundingClientRect();
       const coach = document.querySelector('.ui-setup-guide').getBoundingClientRect();
       return Math.min(target.right, coach.right) <= Math.max(target.left, coach.left) + 1 ||
         Math.min(target.bottom, coach.bottom) <= Math.max(target.top, coach.top) + 1;
     })).toBe(true);
-    await expect(settings.getByRole('checkbox', { name: 'Group calls by playback target', exact: true })).toBeVisible();
-    await expect(settings.getByRole('spinbutton', { name: /^Calls before switching targets/ })).toBeVisible();
-    await expect(settings.getByRole('button', { name: 'Save Scanner Settings', exact: true })).toBeVisible();
+    await expect(settings.getByRole('checkbox', { name: 'Group calls by target', exact: true })).toBeVisible();
+    await expect(settings.getByRole('spinbutton', { name: 'Calls per target', exact: true })).toBeVisible();
+    await expect(dock.locator('#audio-dock-context-back')).toHaveAccessibleName('Back to menu');
     await expect(page.locator('.scanner-call-title')).toHaveText('Regional Fire');
   }
   const afterAvoid = steps.indexOf(id) >= steps.indexOf('detail-level');
@@ -219,22 +221,31 @@ async function expectLessonState(page, id) {
     await expect(page.locator('.scanner-participant-grid')).toContainText('Source');
     await expect(page.locator('.scanner-display button.link-button, .scanner-display button.scanner-field-link').first()).toBeVisible();
   }
-  if (id === 'settings-button') {
-    await expect(page.getByRole('button', { name: 'Scanner settings', exact: true })).toBeVisible();
-    await expect(guide(page)).toContainText('Open Scanner settings for playback order and page title options.');
+  if (['lists-button', 'settings-button'].includes(id)) {
+    await expect(page.locator('#scanner-player-menu')).toBeVisible();
+    await expect(page.locator('#scanner-player-menu')).toHaveAccessibleName('Player menu');
+    if (id === 'settings-button') await expect(guide(page)).toContainText('Open Player menu to adjust playback order and page title options.');
   }
   if (id === 'playback-order') await expect(guide(page)).toContainText('Group queued calls by talkgroup or channel and set how many play before switching.');
-  if (id === 'avoids-button') await expect(page.locator('#scanner-avoid-list')).toHaveAttribute('aria-label', 'View 1 browser avoid(s)');
+  if (id === 'avoids-button') {
+    const item = dock.getByRole('button', { name: 'Avoid List', exact: true });
+    await expect(item).toContainText('1');
+  }
   if (id === 'avoids') {
     await expect(avoids).toBeVisible();
     await expect(avoids).toContainText('Sheriff Dispatch');
-    await expect(avoids.getByRole('button', { name: 'Remove', exact: true })).toBeVisible();
+    await expect(avoids.getByRole('button', { name: 'Remove Sheriff Dispatch · 1001 from Avoid List', exact: true })).toBeVisible();
   }
   if (id === 'avoids-close') {
     await expect(avoids).toBeVisible();
-    await expect(avoids).toContainText('No browser avoids are active.');
-    await expect(avoids.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(0);
-    await expect(page.locator('#scanner-avoid-list')).toHaveAttribute('aria-label', 'View 0 browser avoid(s)');
+    await expect(avoids).toContainText('No avoided targets');
+    await expect(avoids.getByRole('button', { name: /^Remove .* from Avoid List$/ })).toHaveCount(0);
+  }
+  if (['lists-back', 'settings-close', 'avoids-close'].includes(id)) {
+    await expect(dock.locator('#audio-dock-context-back')).toHaveAccessibleName('Back to menu');
+  }
+  if (['lists-menu-close', 'player-close'].includes(id)) {
+    await expect(dock.locator('#audio-dock-context-back')).toHaveAccessibleName('Back to Scanner');
   }
 }
 
@@ -255,19 +266,23 @@ async function screenshot(page, name) {
 }
 
 for (const { theme, width, height } of [{ theme: 'light', width: 390, height: 844 }]) {
-  test(`normal Scanner settings fits and closes on a ${width}px phone`, async ({ page }) => {
+  test(`normal Scanner listening settings fits and returns through Player menu on a ${width}px phone`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     const { fixture, effects } = await openScanner(page, { theme, replay: false });
-    await page.getByRole('button', { name: 'Scanner settings', exact: true }).click();
-    const settings = page.getByRole('dialog', { name: 'Scanner settings', exact: true });
-    await expectCenteredSettings(settings);
-    await expect(settings.getByRole('button', { name: 'Save Scanner Settings', exact: true })).toBeInViewport();
+    const dock = page.locator('#audio-dock');
+    await selectAudioPanel(dock, 'Listening settings');
+    const settings = dock.locator('.audio-dock-settings');
+    await expectInViewport(dock);
     await screenshot(page, `scanner-normal-settings-${theme}-${width}`);
-    const titleToggle = settings.getByRole('checkbox', { name: 'Show the playing call in every page title', exact: true });
+    const titleToggle = settings.getByRole('checkbox', { name: 'Playing call in page title', exact: true });
     await titleToggle.scrollIntoViewIfNeeded();
     await expect(titleToggle).toBeInViewport({ ratio: 1 });
-    await settings.getByRole('button', { name: 'Close Scanner settings', exact: true }).click();
+    await dock.locator('#audio-dock-context-back').click();
     await expect(settings).toHaveCount(0);
+    await expect(dock.locator('#audio-dock-context-title')).toHaveText('Player menu');
+    await dock.locator('#audio-dock-context-back').click();
+    await expect(dock).toBeHidden();
+    await expect(page.locator('#scanner-player-menu')).toBeFocused();
     await expectIsolated(page, fixture, effects);
   });
 }
@@ -279,6 +294,7 @@ test('Scanner sample controls cannot start audio, fetch calls, save settings, or
   let exercised = 0;
   for (const id of steps) {
     await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+    await expectSpotlight(page, id);
     exercised += await page.evaluate(() => {
       const roots = [...document.querySelectorAll('[data-guide-sample]')];
       const controls = [...new Set(roots.flatMap(root => [...root.querySelectorAll('button, a, input, select, form, summary')]))];
@@ -301,11 +317,11 @@ test('Scanner sample controls cannot start audio, fetch calls, save settings, or
   await expectIsolated(page, fixture, effects);
 });
 
-test('Scanner restores a paused original call, Engineer view, volume and original list popover after the tour', async ({ page }) => {
+test('Scanner restores a paused original call, Engineer view, volume and shared Lists panel after the tour', async ({ page }) => {
   const effects = observeEffects(page), errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({ width: 1280, height: 720 });
-  await page.addInitScript(() => localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-listener:audio-fixture-account:scanner:4', '1'));
+  await page.addInitScript(() => localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-listener:audio-fixture-account:scanner:5', '1'));
   const fixture = await openAudioApp(page, { view: 'scanner', volume: .35 });
   await page.locator('#scanner-play').click();
   await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
@@ -313,28 +329,25 @@ test('Scanner restores a paused original call, Engineer view, volume and origina
   await expect(page.locator('#scanner-play')).toHaveAttribute('aria-label', 'Resume browser call audio');
   await page.getByRole('combobox', { name: 'Scanner detail level', exact: true }).selectOption('engineer');
   await expect.poll(() => fixture.preferenceWrites.length).toBeGreaterThan(0);
-  await page.locator('.scanner-scan-trigger').click();
-  await expect(page.locator('.scanner-scan-lists')).toBeVisible();
+  const dock = page.locator('#audio-dock');
+  await selectAudioPanel(dock, 'Lists');
+  await expect(dock).toBeVisible();
   await page.evaluate(() => {
     const content = document.getElementById('content');
     window.originalPausedScanner = { nodes: [...content.childNodes], page: content.querySelector('.scanner-page'),
-      mode: content.querySelector('#scanner-detail-mode'), popover: content.querySelector('.scanner-scan-lists') };
-    window.originalScannerPopoverEvents = [];
-    window.originalPausedScanner.popover.addEventListener('beforetoggle', event => window.originalScannerPopoverEvents.push({
-      oldState: event.oldState, newState: event.newState, guide: Boolean(document.querySelector('.ui-setup-guide')),
-      connected: event.target.isConnected, time: performance.now(), scroll: [scrollX, scrollY] }));
+      mode: content.querySelector('#scanner-detail-mode') };
   });
   await page.evaluate(() => window.scrollTo({ top: 100, behavior: 'instant' }));
   const originalScroll = await page.evaluate(() => [scrollX, scrollY]);
   expect(originalScroll[1]).toBeGreaterThan(0);
   const storage = await nonGuideStorage(page), writes = fixture.preferenceWrites.length;
-  const selectedLists = await page.locator('.scanner-scan-lists input[type=checkbox]').evaluateAll(inputs =>
+  const selectedLists = await dock.locator('#audio-dock-panel input[type=checkbox]').evaluateAll(inputs =>
     inputs.map(input => [input.getAttribute('aria-label'), input.checked]));
   const audioBefore = await page.evaluate(() => ({ contexts: window.audioTest.contexts.length,
     sources: window.audioTest.liveSources.length, recordings: window.audioTest.recordings.length }));
   await page.locator('#page-guide-button').evaluate(button => { button.focus({ preventScroll: true }); button.click(); });
   await expectOverview(page);
-  const enteredPopoverOpen = await page.locator('.scanner-scan-lists').evaluate(element => element.matches(':popover-open'));
+  await expect(dock.locator('#audio-dock-context-title')).toHaveText('Lists');
   await start(page);
   await goTo(page, 'playback-order');
   await page.keyboard.press('Escape');
@@ -343,32 +356,22 @@ test('Scanner restores a paused original call, Engineer view, volume and origina
     const original = window.originalPausedScanner;
     return element.querySelector('.scanner-page') === original.page &&
       element.querySelector('#scanner-detail-mode') === original.mode &&
-      element.querySelector('.scanner-scan-lists') === original.popover &&
       original.nodes.every((node, index) => element.childNodes[index] === node);
   })).toBe(true);
   await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
   await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('engineer');
   await expect(page.locator('#scanner-volume')).toHaveValue('0.35');
   await expect(page.locator('#scanner-play')).toHaveAttribute('aria-label', 'Resume browser call audio');
-  try {
-    await expect.poll(() => page.locator('.scanner-scan-lists').evaluate(element => element.matches(':popover-open'))).toBe(enteredPopoverOpen);
-  } finally {
-    fs.mkdirSync(evidence, { recursive: true });
-    fs.writeFileSync(path.join(evidence, 'original-popover-restoration.json'), JSON.stringify(await page.evaluate(() => ({
-      events: window.originalScannerPopoverEvents, scroll: [scrollX, scrollY],
-      trigger: document.querySelector('.scanner-scan-trigger')?.getBoundingClientRect().toJSON(),
-      popoverOpen: document.querySelector('.scanner-scan-lists')?.matches(':popover-open')
-    })), null, 2));
-  }
-  expect(await page.locator('.scanner-scan-lists input[type=checkbox]').evaluateAll(inputs =>
+  await expect(dock).toBeVisible();
+  await expect(dock.locator('#audio-dock-context-title')).toHaveText('Lists');
+  expect(await dock.locator('#audio-dock-panel input[type=checkbox]').evaluateAll(inputs =>
     inputs.map(input => [input.getAttribute('aria-label'), input.checked]))).toEqual(selectedLists);
   expect(await page.evaluate(() => [scrollX, scrollY])).toEqual(originalScroll);
-  if (enteredPopoverOpen) {
-    await page.keyboard.press('Escape');
-    await expect(page.locator('.scanner-scan-lists')).toBeHidden();
-    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-    await expect(page.locator('.scanner-scan-lists')).toBeHidden();
-  }
+  await dock.locator('#audio-dock-context-back').click();
+  await expect(dock.locator('#audio-dock-context-title')).toHaveText('Player menu');
+  await dock.locator('#audio-dock-context-back').click();
+  await expect(dock).toBeHidden();
+  await expect(page.locator('#scanner-player-menu')).toBeFocused();
   expect(await nonGuideStorage(page)).toEqual(storage);
   expect(fixture.preferenceWrites.length).toBe(writes);
   expect(await page.evaluate(() => ({ contexts: window.audioTest.contexts.length,
@@ -377,22 +380,24 @@ test('Scanner restores a paused original call, Engineer view, volume and origina
   expect(errors).toEqual([]);
 });
 
-test('Scanner Help preserves an existing dirty settings dialog', async ({ page }) => {
+test('Scanner Help restores the original shared listening settings without changing preferences', async ({ page }) => {
   const { fixture, effects } = await openScanner(page, { replay: false });
-  await page.getByRole('button', { name: 'Scanner settings', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Scanner settings', exact: true });
-  const grouping = dialog.getByRole('checkbox', { name: 'Group calls by playback target', exact: true });
-  await dialog.getByRole('spinbutton', { name: /^Calls before switching targets/ }).fill('13');
-  await grouping.focus();
-  await grouping.press('Space');
+  const dock = page.locator('#audio-dock');
+  await selectAudioPanel(dock, 'Listening settings');
+  const settings = dock.locator('.audio-dock-settings');
+  const grouping = settings.getByRole('checkbox', { name: 'Group calls by target', exact: true });
   const checked = await grouping.isChecked();
-  await dialog.evaluate(element => { window.originalScannerDirtyDialog = element; });
+  const burst = await settings.getByRole('spinbutton', { name: 'Calls per target', exact: true }).inputValue();
   await page.locator('#page-guide-button').evaluate(button => button.click());
+  await expectOverview(page);
+  await start(page);
+  await goTo(page, 'avoids');
+  await page.keyboard.press('Escape');
   await expect(page.locator('.ui-setup-guide, [data-guide-sample], [data-guide-example]')).toHaveCount(0);
-  await expect(dialog).toBeVisible();
-  expect(await dialog.evaluate(element => element === window.originalScannerDirtyDialog)).toBe(true);
+  await expect(settings).toBeVisible();
+  await expect(dock.locator('#audio-dock-context-title')).toHaveText('Listening settings');
   expect(await grouping.isChecked()).toBe(checked);
-  await expect(dialog.getByRole('spinbutton', { name: /^Calls before switching targets/ })).toHaveValue('13');
+  await expect(settings.getByRole('spinbutton', { name: 'Calls per target', exact: true })).toHaveValue(burst);
   await expectIsolated(page, fixture, effects);
 });
 

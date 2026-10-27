@@ -416,8 +416,10 @@
   --toggle-thumb-size-compact: 16px;
   --status-dot-size: 7px;
   --icon-action-size: 40px;
+  --icon-action-size-inline: 24px;
   --icon-action-radius: var(--radius-control);
   --icon-glyph-size: 18px;
+  --icon-glyph-size-inline: 16px;
   --hint-max-width: 260px;
   --hint-details-max-width: 380px;
   --hint-font-size: 12px;

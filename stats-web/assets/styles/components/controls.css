@@ -383,6 +383,14 @@
   --icon-action-radius: var(--radius-control);
 }
 
+.ui-icon-button-inline {
+  --icon-action-size: var(--icon-action-size-inline);
+  --icon-glyph-size: var(--icon-glyph-size-inline);
+  height: min(var(--icon-action-size-inline), 1lh);
+  min-height: min(var(--icon-action-size-inline), 1lh);
+  font: inherit;
+}
+
 .ui-icon-button svg {
   width: var(--icon-glyph-size);
   height: var(--icon-glyph-size);
