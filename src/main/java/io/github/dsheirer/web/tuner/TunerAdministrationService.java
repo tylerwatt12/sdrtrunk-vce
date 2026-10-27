@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.web.tuner;
 
+import io.github.dsheirer.database.settings.ReceiverNicknameStore;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerType;
@@ -19,32 +20,45 @@ import io.github.dsheirer.source.tuner.recording.RecordingTunerController;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
 import io.github.dsheirer.stats.TunerDiagnosticService;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-/** Read-only projection of the receiver-owned tuner inventory for administrator HTTP requests. */
+/** Receiver-owned tuner inventory and independently persisted display nicknames. */
 public final class TunerAdministrationService
 {
     private final Supplier<List<DiscoveredTuner>> mInventory;
     private final Supplier<Function<Tuner,String>> mSpectrumTargets;
     private final TunerSettingsService mSettings;
     private final Function<DiscoveredTuner,Object> mSettingsDescription;
+    private final ReceiverNicknameStore mNicknames;
+    private volatile ReferenceSnapshot mReceiverReferences;
 
     public TunerAdministrationService(TunerManager manager, TunerDiagnosticService diagnostics,
                                       TunerSettingsService settings)
     {
+        this(manager, diagnostics, settings, null);
+    }
+
+    public TunerAdministrationService(TunerManager manager, TunerDiagnosticService diagnostics,
+                                      TunerSettingsService settings, ReceiverNicknameStore nicknames)
+    {
         this(Objects.requireNonNull(manager).getDiscoveredTunerRegistry()::snapshot,
-            () -> Objects.requireNonNull(diagnostics).targetIds()::get, Objects.requireNonNull(settings), settings::describe);
+            () -> Objects.requireNonNull(diagnostics).targetIds()::get, Objects.requireNonNull(settings),
+            settings::describe, nicknames);
     }
 
     TunerAdministrationService(Supplier<List<DiscoveredTuner>> inventory,
@@ -64,10 +78,18 @@ public final class TunerAdministrationService
                                        Supplier<Function<Tuner,String>> spectrumTargets, TunerSettingsService settings,
                                        Function<DiscoveredTuner,Object> settingsDescription)
     {
+        this(inventory, spectrumTargets, settings, settingsDescription, null);
+    }
+
+    TunerAdministrationService(Supplier<List<DiscoveredTuner>> inventory,
+                               Supplier<Function<Tuner,String>> spectrumTargets, TunerSettingsService settings,
+                               Function<DiscoveredTuner,Object> settingsDescription, ReceiverNicknameStore nicknames)
+    {
         mInventory = Objects.requireNonNull(inventory);
         mSpectrumTargets = Objects.requireNonNull(spectrumTargets);
         mSettings = settings;
         mSettingsDescription = Objects.requireNonNull(settingsDescription);
+        mNicknames = nicknames;
     }
 
     public Snapshot snapshot()
@@ -89,6 +111,62 @@ public final class TunerAdministrationService
     }
 
     public Item item(DiscoveredTuner tuner) { return project(Objects.requireNonNull(tuner), mSpectrumTargets.get()); }
+
+    /** Only HTTP mutation workers write nicknames; a failed save leaves the published cache untouched. */
+    public Nickname setNickname(DiscoveredTuner tuner, String nickname) throws IOException, SQLException
+    {
+        if(mNicknames == null)
+        {
+            throw new IllegalStateException("Receiver nicknames are unavailable");
+        }
+        String receiverId = opaqueId(Objects.requireNonNull(tuner));
+        mNicknames.set(receiverId, nickname);
+        return new Nickname(mNicknames.get(receiverId));
+    }
+
+    /**
+     * Worker-side identity projection for Live. Reads the registry and immutable nickname cache only; it never
+     * initializes hardware, reads tuner settings/controllers, or accesses the database. Native keys stay internal.
+     */
+    public Map<String,ReceiverReference> receiverReferences()
+    {
+        List<DiscoveredTuner> inventory = mInventory.get();
+        Map<String,String> nicknames = mNicknames != null ? mNicknames.snapshot() : Map.of();
+        ReferenceSnapshot cached = mReceiverReferences;
+        if(cached != null && cached.inventory().equals(inventory) && cached.nicknames() == nicknames)
+        {
+            return cached.references();
+        }
+        Map<String,ReceiverReference> references = new LinkedHashMap<>();
+        for(DiscoveredTuner discovered: inventory)
+        {
+            try
+            {
+                if(discovered instanceof DiscoveredRecordingTuner ||
+                    discovered.getTunerClass() == TunerClass.RECORDING_TUNER)
+                {
+                    continue;
+                }
+                String nativeId = discovered.getId();
+                if(nativeId == null || nativeId.isBlank()) continue;
+                String id = opaqueId(discovered);
+                references.put(nativeId, new ReceiverReference(id, nicknames.get(id)));
+            }
+            catch(RuntimeException ignored)
+            {
+                // A registry entry may retire during projection; a later worker pass repairs the view.
+            }
+        }
+        Map<String,ReceiverReference> snapshot = Map.copyOf(references);
+        mReceiverReferences = new ReferenceSnapshot(List.copyOf(inventory), nicknames, snapshot);
+        return snapshot;
+    }
+
+    private record ReferenceSnapshot(List<DiscoveredTuner> inventory, Map<String,String> nicknames,
+                                     Map<String,ReceiverReference> references) { }
+
+    public record ReceiverReference(String id, String nickname) { }
+    public record Nickname(String nickname) { }
 
     /**
      * Discovered physical SDR profiles for an external RF planner.  Disabled devices use their saved sample rates;
@@ -176,7 +254,8 @@ public final class TunerAdministrationService
             settings = List.of();
             maintenanceError = "Tuner settings are temporarily unavailable";
         }
-        return new Item(opaqueId(discovered), deviceGroup(discovered), displayName(discovered, tuner),
+        String receiverId = opaqueId(discovered);
+        return new Item(receiverId, deviceGroup(discovered), displayName(discovered, tuner),
             discovered.getTunerClass().name().toLowerCase(Locale.ROOT), tunerType.name().toLowerCase(Locale.ROOT),
             discovered.getTunerStatus().name().toLowerCase(Locale.ROOT), available, channelCount, frequency,
             sampleRate, available ? (long)tuner.getTunerController().getUsableBandwidth() : null,
@@ -192,7 +271,8 @@ public final class TunerAdministrationService
             mSettings != null ? mSettings.stoppedChannels(discovered) : List.of(),
             mSettings != null ? mSettings.restoreResult(discovered) : null,
             discovered.hasErrorMessage() ? "Tuner error" : null, recordingPlayback,
-            mSettings != null ? mSettings.operation(discovered) : null);
+            mSettings != null ? mSettings.operation(discovered) : null,
+            mNicknames != null ? mNicknames.get(receiverId) : "");
     }
 
     private static String displayName(DiscoveredTuner discovered, Tuner tuner)
@@ -267,5 +347,5 @@ public final class TunerAdministrationService
                        List<TunerSettingsService.ChannelInfo> stoppedChannels,
                        TunerSettingsService.RestoreResult restoreResult, String errorMessage,
                        RecordingTunerController.PlaybackStatus recordingPlayback,
-                       TunerSettingsService.OperationStatus operation) { }
+                       TunerSettingsService.OperationStatus operation, String nickname) { }
 }

@@ -12,6 +12,7 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.tone.P25PagingToneService;
 import io.github.dsheirer.audio.tone.PagingToneSettingsService;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.database.settings.ReceiverNicknameStore;
 import io.github.dsheirer.audio.call.diagnostic.LogicalCallDiagnosticService;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
@@ -146,6 +147,15 @@ public final class ReceiverWebServices implements AutoCloseable
             mEntityCatalog = new WebEntityNavigationCatalog(mDatabase::webEntityNavigationSnapshot);
             ApplicationSettingsStore receiverSettings = new ApplicationSettingsStore(
                 SdrTrunkDatabasePath.getDatabasePath(userPreferences));
+            ReceiverNicknameStore receiverNicknames;
+            try
+            {
+                receiverNicknames = new ReceiverNicknameStore(receiverSettings);
+            }
+            catch(java.io.IOException | java.sql.SQLException exception)
+            {
+                throw new IllegalStateException("Receiver nicknames could not be loaded", exception);
+            }
             mPagingToneSettingsService = new PagingToneSettingsService(receiverSettings,
                 P25PagingToneService.getInstance()::setEnabled);
             mWebCallService = new StatsWebCallService(mScanListModel, mEntityCatalog,
@@ -207,7 +217,7 @@ public final class ReceiverWebServices implements AutoCloseable
             mTunerSettingsService = new TunerSettingsService(tunerManager, channelProcessingManager);
             constructed.add(mTunerSettingsService);
             mTunerAdministrationService = new TunerAdministrationService(tunerManager, mTunerDiagnosticService,
-                mTunerSettingsService);
+                mTunerSettingsService, receiverNicknames);
             mTunerAllocationMonitorService = new TunerAllocationMonitorService(tunerManager, channelProcessingManager);
             mTunerAllocationFrequencySeedService = new TunerAllocationFrequencySeedService(mDatabase, tunerManager,
                 channelProcessingManager);
@@ -227,7 +237,7 @@ public final class ReceiverWebServices implements AutoCloseable
             mSpectrumDiscoveryService.setAliasImporter(mRadioReferenceImportService);
             mSpectrumSearchService.setAliasImporter(mRadioReferenceImportService);
             mLiveService = new StatsLiveService(channelProcessingManager, mEntityCatalog,
-                remoteLinkAdministrationService);
+                remoteLinkAdministrationService, mTunerAdministrationService::receiverReferences);
             constructed.add(mLiveService);
             mP25AssignmentService = new StatsP25AssignmentService(userPreferences.getP25IdentityResolver(), mDatabase);
             constructed.add(mP25AssignmentService);

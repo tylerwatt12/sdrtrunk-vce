@@ -13,6 +13,7 @@ package io.github.dsheirer.source.tuner.channel;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -50,6 +51,61 @@ class MultiFrequencyTunerChannelSourceTest
         List.of(FIRST_FREQUENCY, SECOND_FREQUENCY, THIRD_FREQUENCY);
     private static final ChannelSpecification CHANNEL_SPECIFICATION =
         new ChannelSpecification(50_000, 12_500, 6_250, 7_000);
+
+    @Test
+    void receiverAssignmentDoesNotWaitForReplacementAndPairsItsIdentityWithTheActualSourceFrequency() throws Exception
+    {
+        CountDownLatch startupEntered = new CountDownLatch(1);
+        CountDownLatch releaseStartup = new CountDownLatch(1);
+        TestTunerChannelSource first = new TestTunerChannelSource(FIRST_FREQUENCY);
+        first.setTunerIdentity("receiver-a");
+        TestTunerChannelSource replacement = new TestTunerChannelSource(SECOND_FREQUENCY)
+        {
+            @Override public void start()
+            {
+                startupEntered.countDown();
+                try { assertTrue(releaseStartup.await(2, TimeUnit.SECONDS)); }
+                catch(InterruptedException exception) { Thread.currentThread().interrupt(); throw new AssertionError(exception); }
+                super.start();
+            }
+        };
+        replacement.setTunerIdentity("receiver-b");
+        MultiFrequencyTunerChannelSource source = new MultiFrequencyTunerChannelSource(
+            new TestTunerManager(null, null, replacement), first, FREQUENCIES, CHANNEL_SPECIFICATION,
+            null, "receiver assignment test", null, null);
+        source.setSourceEventListener(event -> {});
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread rotation = new Thread(() -> {
+            try { source.process(SourceEvent.frequencyRotationRequest()); }
+            catch(Throwable exception) { failure.set(exception); }
+        }, "receiver-assignment-rotation");
+        try
+        {
+            assertNull(source.getReceiverAssignment(), "a source not started yet has no receiving assignment");
+            source.start();
+            assertEquals(new TunerChannelSource.ReceiverAssignment("receiver-a", FIRST_FREQUENCY),
+                source.getReceiverAssignment());
+            rotation.start();
+            assertTrue(startupEntered.await(2, TimeUnit.SECONDS));
+            long started = System.nanoTime();
+            assertNull(source.getReceiverAssignment(), "published replacement must remain unassigned until startup completes");
+            assertTrue(System.nanoTime() - started < TimeUnit.MILLISECONDS.toNanos(250),
+                "receiver observation must not wait for a blocked rotation/startup");
+            releaseStartup.countDown();
+            rotation.join(2_000);
+            assertFalse(rotation.isAlive());
+            assertNull(failure.get());
+            assertEquals(new TunerChannelSource.ReceiverAssignment("receiver-b", SECOND_FREQUENCY),
+                source.getReceiverAssignment());
+        }
+        finally
+        {
+            releaseStartup.countDown();
+            rotation.join(2_000);
+            source.stop();
+        }
+        assertNull(source.getReceiverAssignment(), "a stopped wrapper must not retain its last receiver");
+    }
 
     @Test
     void runningRotationSeesCommittedLearnedListReplacementsWithoutAChannelRestart() throws Exception
@@ -187,6 +243,7 @@ class MultiFrequencyTunerChannelSourceTest
                 throw new IllegalStateException("Injected replacement startup failure");
             }
         };
+        failing.setTunerIdentity("failed-receiver");
         MultiFrequencyTunerChannelSource source = source(FIRST_FREQUENCY,
             new TestTunerManager(null, null, failing));
         source.setSourceEventListener(event -> {});
@@ -196,6 +253,7 @@ class MultiFrequencyTunerChannelSourceTest
             source.start();
             assertThrows(IllegalStateException.class, () -> source.process(SourceEvent.frequencyRotationRequest()));
             assertEquals(FIRST_FREQUENCY, source.getFrequency());
+            assertNull(source.getReceiverAssignment(), "failed replacement startup cannot claim a receiver");
         }
         finally
         {

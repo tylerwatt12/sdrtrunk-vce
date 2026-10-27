@@ -40,6 +40,72 @@ import org.junit.jupiter.api.Test;
 class StatsLiveServiceTest
 {
     @Test
+    void currentReceiverUsesOpaqueReferenceAndNicknameChangesRefreshWithoutActivity() throws Exception
+    {
+        String nativeId = "private-hardware-identity";
+        String opaqueId = "tuner-0123456789abcdef0123456789abcdef";
+        var references = new AtomicReference<>(Map.of(nativeId,
+            new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, "Roof")));
+        var source = new TestChannelActivitySource();
+        try(StatsLiveService service = StatsLiveService.withReceivers(source, references::get))
+        {
+            service.start();
+            try(var subscription = service.subscribeChannelActivity();
+                var markers = service.subscribeChannelActivity(true))
+            {
+                source.publish(conventionalActivity("IDLE", nativeId));
+                var row = firstRow(subscription.poll(2, TimeUnit.SECONDS));
+                assertEquals(opaqueId, row.get("receiver_id"));
+                assertEquals("Roof", row.get("receiver_nickname"));
+                assertFalse(row.toString().contains(nativeId));
+                var marker = firstRow(markers.poll(2, TimeUnit.SECONDS));
+                assertFalse(marker.containsKey("receiver_id"));
+                assertFalse(marker.containsKey("receiver_nickname"));
+
+                references.set(Map.of(nativeId,
+                    new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, "Desk")));
+                var renamed = subscription.poll(2, TimeUnit.SECONDS);
+                assertNotNull(renamed);
+                assertEquals("activity_resync", renamed.name());
+                assertEquals("Desk", tables(service).getFirst().get("rows") instanceof List<?> rows ?
+                    ((Map<?,?>)rows.getFirst()).get("receiver_nickname") : null);
+
+                references.set(Map.of(nativeId,
+                    new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, null)));
+                assertNotNull(subscription.poll(2, TimeUnit.SECONDS));
+                @SuppressWarnings("unchecked")
+                var cleared = ((List<Map<String,Object>>)tables(service).getFirst().get("rows")).getFirst();
+                assertEquals(opaqueId, cleared.get("receiver_id"));
+                assertFalse(cleared.containsKey("receiver_nickname"));
+
+                source.publish(conventionalActivity("IDLE"));
+                var released = firstRow(subscription.poll(2, TimeUnit.SECONDS));
+                assertFalse(released.containsKey("receiver_id"));
+                assertFalse(released.containsKey("receiver_nickname"));
+            }
+        }
+    }
+
+    @Test
+    void receiverCatalogIsCapturedOnceForAnEntireSnapshotAndUnresolvedIdentitiesStayPrivate()
+    {
+        var source = new TestChannelActivitySource();
+        var event = conventionalActivity("IDLE", "private-unknown-hardware");
+        source.publish(event);
+        var reads = new java.util.concurrent.atomic.AtomicInteger();
+        try(StatsLiveService service = StatsLiveService.withReceivers(source, () -> {
+            reads.incrementAndGet();
+            return Map.of();
+        }))
+        {
+            var snapshot = service.snapshot();
+            assertEquals(1, reads.get());
+            assertFalse(snapshot.toString().contains("private-unknown-hardware"));
+            assertFalse(snapshot.toString().contains("receiver_id"));
+        }
+    }
+
+    @Test
     void twoHundredBrowsersShareTheSameProjectedActivityEvent() throws Exception
     {
         TestChannelActivitySource source = new TestChannelActivitySource();
@@ -443,12 +509,17 @@ class StatsLiveServiceTest
 
     private static ChannelActivityEvent conventionalActivity(String status)
     {
+        return conventionalActivity(status, null);
+    }
+
+    private static ChannelActivityEvent conventionalActivity(String status, String receiverIdentity)
+    {
         ChannelActivitySnapshot.Row row = new ChannelActivitySnapshot.Row("channel-17:155730000:0",
             "Dispatch", "configuration-17", status, List.of("CONVENTIONAL"), 0L, null, 155_730_000L, null,
             null, null, 0L, 0L, 0L, 0L, 0L, 0L, 0L, null, null, null, null, null, null, null, null,
             null, null, null, null, "NBFM", null, null, "CONVENTIONAL",
             new ChannelActivitySnapshot.Transmission("leg-17", "active", 1_050L, 1_000L, 1_075L, false,
-                3L, 1_025L), 12_500);
+                3L, 1_025L), 12_500, null, receiverIdentity);
         ChannelActivitySnapshot snapshot = new ChannelActivitySnapshot("conventional", "Conventional",
             "", "", "Conventional", null, false, true, List.of(), List.of(row));
         return new ChannelActivityEvent(ChannelActivityEvent.Operation.UPSERT, snapshot);

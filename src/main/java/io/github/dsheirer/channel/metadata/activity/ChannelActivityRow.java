@@ -91,6 +91,7 @@ public class ChannelActivityRow
 
     private final String mKey;
     private Channel mChannel;
+    private String mReceiverIdentity;
     private Role mRole;
     private final EnumSet<ChannelTag> mTags = EnumSet.noneOf(ChannelTag.class);
     private Origin mOrigin;
@@ -156,6 +157,18 @@ public class ChannelActivityRow
         return mChannel;
     }
 
+    public String getReceiverIdentity()
+    {
+        return mReceiverIdentity;
+    }
+
+    public boolean setReceiverIdentity(String identity)
+    {
+        if(java.util.Objects.equals(mReceiverIdentity, identity)) return false;
+        mReceiverIdentity = identity;
+        return true;
+    }
+
     public String getChannelName()
     {
         return mChannel != null ? mChannel.getName() : null;
@@ -163,6 +176,7 @@ public class ChannelActivityRow
 
     public void setChannel(Channel channel)
     {
+        if(mChannel != channel) mReceiverIdentity = null;
         mChannel = channel;
     }
 
@@ -303,6 +317,7 @@ public class ChannelActivityRow
 
     public void setFrequency(long frequency)
     {
+        if(mFrequency != frequency) mReceiverIdentity = null;
         mFrequency = frequency;
     }
 
@@ -821,6 +836,7 @@ public class ChannelActivityRow
         copy.mTags.clear();
         copy.mTags.addAll(mTags);
         copy.mOrigin = mOrigin;
+        copy.mReceiverIdentity = mReceiverIdentity;
         copy.mState = mState;
         copy.mActivationOrder = mActivationOrder;
         copy.mLcn = mLcn;

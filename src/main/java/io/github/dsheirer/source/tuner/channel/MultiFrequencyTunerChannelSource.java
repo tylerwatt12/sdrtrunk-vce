@@ -329,6 +329,16 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
         return mStarted && source != null ? source.getFrequency() : 0;
     }
 
+    /** Capture identity and frequency from the same live source without waiting for rotation. */
+    @Override
+    public ReceiverAssignment getReceiverAssignment()
+    {
+        TunerChannelSource source = mTunerChannelSource;
+        if(!mStarted || mChangingChannels.get() || source == null) return null;
+        ReceiverAssignment assignment = source.getReceiverAssignment();
+        return mStarted && !mChangingChannels.get() && source == mTunerChannelSource ? assignment : null;
+    }
+
     /**
      * Fences tuner replacement, cancels any persistent source retry, and reports the stable live source state.
      */

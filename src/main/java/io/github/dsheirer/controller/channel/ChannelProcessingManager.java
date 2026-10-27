@@ -234,9 +234,25 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
 
             if(channel != null && chain != null)
             {
-                List<ChannelMetadata> metadata = chain.getChannelState() != null ?
-                    chain.getChannelState().getChannelMetadata() : List.of();
-                active.add(new ChannelActivityModel.ActiveChannel(channel, metadata, chain));
+                var state = chain.getChannelState();
+                List<ChannelMetadata> metadata = state != null ? state.getChannelMetadata() : List.of();
+                TunerChannelSource.ReceiverAssignment receiver = null;
+                try
+                {
+                    long incarnation = channel.getProcessingIncarnation();
+                    var origin = chain.getDecodeEventSource();
+                    receiver = origin != null && origin.channel() == channel && chain.isProcessing() &&
+                        origin.source() instanceof TunerChannelSource tuner ? tuner.getReceiverAssignment() : null;
+                    if(mProcessingChainsMap.get(channel) != chain ||
+                        !channel.matchesProcessingIncarnation(incarnation, true) ||
+                        origin != chain.getDecodeEventSource() || !chain.isProcessing()) receiver = null;
+                }
+                catch(RuntimeException ignored)
+                {
+                    // A disposed/rebound source cannot retain its prior receiver label or hide another chain.
+                    receiver = null;
+                }
+                active.add(new ChannelActivityModel.ActiveChannel(channel, metadata, chain, receiver));
             }
         }
 

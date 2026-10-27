@@ -8,6 +8,9 @@ package io.github.dsheirer.web.tuner;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.database.settings.ApplicationSettingsStore;
+import io.github.dsheirer.database.settings.ReceiverNicknameStore;
+import io.github.dsheirer.database.settings.ReceiverNicknameSchema;
 import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerClass;
@@ -35,6 +38,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -55,6 +59,84 @@ class TunerAdminHttpControllerTest
 
     @TempDir
     Path mTemporaryDirectory;
+
+    @Test
+    void nicknameRoutePersistsTrimmedNamesWithoutChangingReceiverOperation() throws Exception
+    {
+        FakeManager manager = new FakeManager();
+        ReceiverNicknameStore nicknames = nicknameStore("nicknames.sqlite");
+        try(ServerFixture fixture = new ServerFixture(manager, null, List::of, false, nicknames))
+        {
+            String id = TunerAdministrationService.opaqueId(fixture.mPhysical);
+            String path = TunerAdminHttpController.PATH + "/" + id + "/nickname";
+            var saved = fixture.send(path, "PUT", "{\"nickname\":\"  Roof antenna  \"}");
+            assertEquals(200, saved.statusCode());
+            assertEquals("Roof antenna", MAPPER.readTree(saved.body()).at("/data/nickname").asText());
+            assertEquals("Roof antenna", nicknames.get(id));
+            var inventory = MAPPER.readTree(fixture.send(TunerAdminHttpController.PATH, "GET", null).body());
+            assertEquals("Roof antenna", inventory.at("/data/tuners/1/nickname").asText());
+            assertEquals("physical", inventory.at("/data/tuners/1/name").asText());
+            assertEquals(DiscoveredTuner.OperatorState.LIVE, fixture.mPhysical.getOperatorState());
+            assertFalse(fixture.mPhysical.hasTuner(), "naming cannot initialize receiver hardware");
+            assertEquals(0, manager.mRescanRequests);
+
+            assertEquals(405, fixture.send(path, "POST", "{\"nickname\":\"x\"}").statusCode());
+            assertEquals(400, fixture.send(path, "PUT", "{}").statusCode());
+            assertEquals(400, fixture.send(path, "PUT", "{\"nickname\":null}").statusCode());
+            assertEquals(400, fixture.send(path, "PUT", "{\"nickname\":12}").statusCode());
+            assertEquals(400, fixture.send(path, "PUT", "{\"nickname\":\"x\",\"value\":1}").statusCode());
+            assertEquals(400, fixture.send(path + "?extra=1", "PUT", "{\"nickname\":\"x\"}").statusCode());
+            assertEquals(422, fixture.send(path, "PUT", "{\"nickname\":\"line\\nbreak\"}").statusCode());
+            assertEquals(422, fixture.send(path, "PUT", MAPPER.writeValueAsString(
+                java.util.Map.of("nickname", "x".repeat(81)))).statusCode());
+            assertEquals("Roof antenna", nicknames.get(id), "invalid requests must preserve the saved nickname");
+            assertEquals(404, fixture.send(TunerAdminHttpController.PATH + "/tuner-" + "0".repeat(32) +
+                "/nickname", "PUT", "{\"nickname\":\"x\"}").statusCode());
+            var cleared = fixture.send(path, "PUT", "{\"nickname\":\" \"}");
+            assertEquals(200, cleared.statusCode());
+            assertEquals("", MAPPER.readTree(cleared.body()).at("/data/nickname").asText());
+            assertEquals("", nicknames.get(id));
+        }
+    }
+
+    @Test
+    void nicknameSaveFailurePreservesCacheAndReturnsActionableSafeError() throws Exception
+    {
+        Path database = createDatabase("failed-save.sqlite");
+        ReceiverNicknameStore nicknames = new ReceiverNicknameStore(new ApplicationSettingsStore(database)
+        {
+            @Override public void save(String key, Object value) throws SQLException
+            {
+                throw new SQLException("sensitive receiver database detail");
+            }
+        });
+        try(ServerFixture fixture = new ServerFixture(new FakeManager(), null, List::of, false, nicknames))
+        {
+            String id = TunerAdministrationService.opaqueId(fixture.mPhysical);
+            var response = fixture.send(TunerAdminHttpController.PATH + "/" + id + "/nickname",
+                "PUT", "{\"nickname\":\"Roof\"}");
+            assertEquals(503, response.statusCode());
+            assertTrue(response.body().contains("try again"));
+            assertFalse(response.body().contains("sensitive"));
+            assertEquals("", nicknames.get(id));
+        }
+    }
+
+    private ReceiverNicknameStore nicknameStore(String file) throws Exception
+    {
+        return new ReceiverNicknameStore(createDatabase(file));
+    }
+
+    private Path createDatabase(String file) throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve(file);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            ReceiverNicknameSchema.initializeMissing(connection);
+        }
+        return database;
+    }
 
     @Test
     void browseRouteRequiresExplicitLeaseAndValidMutationBodies() throws Exception
@@ -251,7 +333,8 @@ class TunerAdminHttpControllerTest
         FakeManager manager = new FakeManager();
 
         try(WebRequestSecurity security = new WebRequestSecurity(access, authentication);
-            ServerFixture fixture = new ServerFixture(manager, security))
+            ServerFixture fixture = new ServerFixture(manager, security, List::of, false,
+                nicknameStore("protected-nicknames.sqlite")))
         {
             assertEquals(401, fixture.send(TunerAdminHttpController.PATH, "GET", null).statusCode());
             assertEquals(403, fixture.send(TunerAdminHttpController.PATH, "GET", null,
@@ -273,6 +356,13 @@ class TunerAdminHttpControllerTest
                 listener, true).statusCode());
             assertEquals(200, fixture.send(recordingPath, "DELETE", null,
                 admin, true).statusCode());
+            String nicknamePath = TunerAdminHttpController.PATH + "/" +
+                TunerAdministrationService.opaqueId(fixture.mPhysical) + "/nickname";
+            String nicknameBody = "{\"nickname\":\"Roof\"}";
+            assertEquals(401, fixture.send(nicknamePath, "PUT", nicknameBody).statusCode());
+            assertEquals(403, fixture.send(nicknamePath, "PUT", nicknameBody, listener, true).statusCode());
+            assertEquals(403, fixture.send(nicknamePath, "PUT", nicknameBody, admin, false).statusCode());
+            assertEquals(200, fixture.send(nicknamePath, "PUT", nicknameBody, admin, true).statusCode());
         }
     }
 
@@ -347,6 +437,13 @@ class TunerAdminHttpControllerTest
         private ServerFixture(FakeManager manager, WebRequestSecurity security,
                               Supplier<List<Long>> activeFrequencies, boolean runningPhysical) throws Exception
         {
+            this(manager, security, activeFrequencies, runningPhysical, null);
+        }
+
+        private ServerFixture(FakeManager manager, WebRequestSecurity security,
+                              Supplier<List<Long>> activeFrequencies, boolean runningPhysical,
+                              ReceiverNicknameStore nicknames) throws Exception
+        {
             RecordingTunerConfiguration configuration = RecordingTunerConfiguration.createWithUniqueId();
             configuration.setPath("/not-exposed/recording.wav");
             mRecording = new DiscoveredRecordingTuner(configuration);
@@ -358,7 +455,8 @@ class TunerAdminHttpControllerTest
             };
             manager.getDiscoveredTunerRegistry().add(mPhysical);
             TunerAdministrationService administration = new TunerAdministrationService(
-                () -> List.of(mRecording, mPhysical), tuner -> null);
+                () -> List.of(mRecording, mPhysical), () -> tuner -> null, null,
+                tuner -> List.of(), nicknames);
             mSettings = new TunerSettingsService(manager);
             TunerAdminHttpController controller = new TunerAdminHttpController(administration, mSettings, manager,
                 activeFrequencies);

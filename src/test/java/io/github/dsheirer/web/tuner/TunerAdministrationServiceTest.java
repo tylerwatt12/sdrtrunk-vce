@@ -4,9 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.source.tuner.TunerClass;
+import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.database.settings.ReceiverNicknameStore;
+import io.github.dsheirer.database.settings.ReceiverNicknameSchema;
 import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.manager.DiscoveredRecordingTuner;
@@ -21,11 +25,86 @@ import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
 import io.github.dsheirer.source.tuner.test.TestTuner;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.util.List;
+import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class TunerAdministrationServiceTest
 {
+    @TempDir
+    Path mTemporaryDirectory;
+
+    @Test
+    void nicknamesSurviveReceiverRediscoveryWithoutChangingItsConfiguredName() throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve("receiver.sqlite");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            ReceiverNicknameSchema.initializeMissing(connection);
+        }
+        ReceiverNicknameStore nicknames = new ReceiverNicknameStore(database);
+        FakeDiscoveredTuner first = new FakeDiscoveredTuner("stable-device-id");
+        AtomicReference<List<DiscoveredTuner>> inventory = new AtomicReference<>(List.of(first));
+        TunerAdministrationService service = new TunerAdministrationService(inventory::get,
+            () -> tuner -> null, null, tuner -> List.of(), nicknames);
+        assertEquals("", service.item(first).nickname());
+        assertEquals("stable-device-id", service.item(first).name());
+        var before = service.receiverReferences();
+        assertSame(before, service.receiverReferences(), "unchanged registry/nicknames reuse the immutable snapshot");
+        assertNull(before.get(first.getId()).nickname());
+
+        assertEquals("Roof antenna", service.setNickname(first, "  Roof antenna  ").nickname());
+        assertEquals("Roof antenna", service.item(first).nickname());
+        assertEquals("stable-device-id", service.item(first).name(), "nickname must not change preferred-tuner matching");
+        var renamed = service.receiverReferences().get(first.getId());
+        assertEquals(TunerAdministrationService.opaqueId(first), renamed.id());
+        assertEquals("Roof antenna", renamed.nickname());
+
+        FakeDiscoveredTuner rediscovered = new FakeDiscoveredTuner(first.getId());
+        inventory.set(List.of(rediscovered));
+        ReceiverNicknameStore reloaded = new ReceiverNicknameStore(database);
+        TunerAdministrationService restarted = new TunerAdministrationService(inventory::get,
+            () -> tuner -> null, null, tuner -> List.of(), reloaded);
+        assertEquals("Roof antenna", restarted.item(rediscovered).nickname());
+        restarted.setNickname(rediscovered, " ");
+        assertEquals("", restarted.item(rediscovered).nickname());
+        assertNull(restarted.receiverReferences().get(rediscovered.getId()).nickname());
+        assertEquals("Roof antenna", renamed.nickname(), "published snapshots cannot mutate after a save");
+    }
+
+    @Test
+    void liveReferencesReadOnlyRegistryIdentityAndExcludeRecordingPaths()
+    {
+        DiscoveredTuner physical = new DiscoveredTuner()
+        {
+            @Override public TunerClass getTunerClass() { return TunerClass.UNKNOWN; }
+            @Override public String getId() { return "native-receiver-identity"; }
+            @Override public Tuner getTuner() { throw new AssertionError("Live labels must not read hardware"); }
+            @Override public void start() { throw new AssertionError("Live labels must not initialize hardware"); }
+        };
+        RecordingTunerConfiguration configuration = new RecordingTunerConfiguration("recording-id");
+        configuration.setPath("/private/receiver/recording.wav");
+        DiscoveredRecordingTuner recording = new DiscoveredRecordingTuner(configuration);
+        AtomicReference<List<DiscoveredTuner>> inventory = new AtomicReference<>(List.of(physical, recording));
+        TunerAdministrationService service = new TunerAdministrationService(inventory::get,
+            tuner -> { throw new AssertionError("Live labels must not project diagnostics"); });
+
+        Map<String,TunerAdministrationService.ReceiverReference> references = service.receiverReferences();
+        assertEquals(1, references.size());
+        assertEquals(TunerAdministrationService.opaqueId(physical), references.get(physical.getId()).id());
+        String wire = ApiHttpResponse.normalizePayload(references.values()).toString();
+        assertFalse(wire.contains("native-receiver-identity"));
+        assertFalse(wire.contains("/private/"));
+        inventory.set(List.of(recording));
+        assertEquals(Map.of(), service.receiverReferences(), "removed receivers must disappear from Live labels");
+    }
+
     @Test
     void inventoryCapturesOneDiagnosticTargetProjectionForAllTuners()
     {

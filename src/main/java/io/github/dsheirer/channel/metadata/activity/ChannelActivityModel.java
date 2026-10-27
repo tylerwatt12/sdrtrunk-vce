@@ -72,6 +72,7 @@ import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
+import io.github.dsheirer.source.tuner.channel.TunerChannelSource.ReceiverAssignment;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -126,6 +127,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private final Map<ChannelActivityTableState,Set<ChannelActivityRow>> mPendingTableRefreshes = new IdentityHashMap<>();
     private final Map<Channel,SiteIdentity> mSiteIdentities = new IdentityHashMap<>();
     private final Map<Channel,Object> mActiveIncarnations = new IdentityHashMap<>();
+    private Map<Channel,ActiveChannel> mReceiverChannels = new IdentityHashMap<>();
     private final Map<String,ChannelActivitySnapshot> mLatestSnapshotsById = new HashMap<>();
     private final List<Listener<ChannelActivityEvent>> mActivityListeners = new CopyOnWriteArrayList<>();
     private final ChannelActivityIngressQueue mIngress;
@@ -203,8 +205,14 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     /**
      * One active processing-chain incarnation used to reconcile dropped start/stop observations worker-side.
      */
-    public record ActiveChannel(Channel channel, List<ChannelMetadata> metadata, Object incarnation)
+    public record ActiveChannel(Channel channel, List<ChannelMetadata> metadata, Object incarnation,
+                                ReceiverAssignment receiver)
     {
+        public ActiveChannel(Channel channel, List<ChannelMetadata> metadata, Object incarnation)
+        {
+            this(channel, metadata, incarnation, null);
+        }
+
         public ActiveChannel
         {
             metadata = metadata != null ? List.copyOf(metadata) : List.of();
@@ -1955,6 +1963,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
         mPendingTableRefreshes.clear();
         mSiteIdentities.clear();
         mActiveIncarnations.clear();
+        mReceiverChannels.clear();
         updateTablesSnapshot();
     }
 
@@ -2229,6 +2238,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
     private void runWorker()
     {
         long nextSweep = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
+        long nextReceiverRefresh = 0;
 
         try
         {
@@ -2237,6 +2247,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                 try
                 {
                     int drained = 0;
+                    boolean lifecycleObserved = false;
                     ChannelActivityIngressQueue.Entry entry;
 
                     while(drained < INGRESS_CAPACITY && (entry = mIngress.poll()) != null)
@@ -2244,6 +2255,8 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                         try
                         {
                             process(entry);
+                            lifecycleObserved |= entry.operation() == CHANNEL_STARTED ||
+                                entry.operation() == CHANNEL_STOPPED;
                         }
                         catch(Throwable throwable)
                         {
@@ -2260,15 +2273,23 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
                     long lifecycleReconcileRevision = mRequestedLifecycleReconcileRevision.get();
 
+                    long now = System.nanoTime();
                     if(mAppliedLifecycleReconcileRevision < lifecycleReconcileRevision)
                     {
                         if(reconcileLifecycle())
                         {
                             mAppliedLifecycleReconcileRevision = lifecycleReconcileRevision;
                         }
+                        nextReceiverRefresh = now +
+                            TimeUnit.MILLISECONDS.toNanos(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
                     }
-
-                    long now = System.nanoTime();
+                    else if(now >= nextReceiverRefresh || lifecycleObserved)
+                    {
+                        refreshReceiverChannels();
+                        nextReceiverRefresh = now +
+                            TimeUnit.MILLISECONDS.toNanos(ACTIVITY_SWEEPER_INTERVAL_MILLISECONDS);
+                    }
+                    else if(drained > 0) refreshReceiverAssignments();
 
                     if(mActivitySweeperRunning && now >= nextSweep)
                     {
@@ -2326,16 +2347,7 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
 
         try
         {
-            List<ActiveChannel> activeChannels = supplier.get();
-            Map<Channel,ActiveChannel> activeByChannel = new IdentityHashMap<>();
-
-            for(ActiveChannel active: list(activeChannels))
-            {
-                if(active != null && active.channel() != null)
-                {
-                    activeByChannel.put(active.channel(), active);
-                }
-            }
+            Map<Channel,ActiveChannel> activeByChannel = activeChannelsByChannel(supplier.get());
 
             for(Channel known: new ArrayList<>(mActiveIncarnations.keySet()))
             {
@@ -2353,6 +2365,9 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
                 }
             }
 
+            mReceiverChannels = activeByChannel;
+            refreshReceiverAssignments();
+
             return true;
         }
         catch(RuntimeException runtimeException)
@@ -2360,6 +2375,55 @@ public class ChannelActivityModel implements IChannelMetadataUpdateListener, Aut
             mLog.error("Error reconciling channel activity lifecycle", runtimeException);
             return false;
         }
+    }
+
+    /** Receiver observation must not synthesize lifecycle membership during a transient manager-map transition. */
+    private void refreshReceiverChannels()
+    {
+        Supplier<List<ActiveChannel>> supplier = mActiveChannelSupplier;
+        if(supplier == null) return;
+        try
+        {
+            mReceiverChannels = activeChannelsByChannel(supplier.get());
+        }
+        catch(RuntimeException exception)
+        {
+            mReceiverChannels = new IdentityHashMap<>();
+            mLog.error("Error refreshing channel receiver assignments", exception);
+        }
+        refreshReceiverAssignments();
+    }
+
+    private static Map<Channel,ActiveChannel> activeChannelsByChannel(List<ActiveChannel> channels)
+    {
+        Map<Channel,ActiveChannel> activeByChannel = new IdentityHashMap<>();
+        for(ActiveChannel active: list(channels))
+        {
+            if(active != null && active.channel() != null) activeByChannel.put(active.channel(), active);
+        }
+        return activeByChannel;
+    }
+
+    /** Assignment refreshes share the activity worker; they never query a receiver from a decoder callback. */
+    private void refreshReceiverAssignments()
+    {
+        Map<ChannelActivityTableState,List<ChannelActivityRow>> changed = new IdentityHashMap<>();
+        for(Map.Entry<ChannelActivityRow,ChannelActivityTableState> entry: mRowTables.entrySet())
+        {
+            ChannelActivityRow row = entry.getKey();
+            Channel channel = row.getChannel();
+            ActiveChannel active = mReceiverChannels.get(channel);
+            Object incarnation = active != null && active.incarnation() != null ? active.incarnation() : channel;
+            ReceiverAssignment receiver = active != null && mActiveIncarnations.get(channel) == incarnation ?
+                active.receiver() : null;
+            // Grant-only and released traffic rows use the parent for names, not RF ownership.
+            String identity = receiver != null && receiver.frequencyHz() == row.getFrequency() &&
+                (row.getRole() != ChannelActivityRow.Role.TRAFFIC || channel.isTrafficChannel()) ?
+                receiver.tunerIdentity() : null;
+            if(row.setReceiverIdentity(identity))
+                changed.computeIfAbsent(entry.getValue(), ignored -> new ArrayList<>()).add(row);
+        }
+        changed.forEach(ChannelActivityTableState::refresh);
     }
 
     @SuppressWarnings("unchecked")

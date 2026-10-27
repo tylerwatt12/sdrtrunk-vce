@@ -71,6 +71,7 @@ import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSna
 import io.github.dsheirer.preference.nowplaying.NowPlayingPreference;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.source.config.SourceConfigTuner;
+import io.github.dsheirer.source.tuner.channel.TunerChannelSource.ReceiverAssignment;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -78,6 +79,8 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Collectors;
@@ -86,6 +89,150 @@ import org.junit.jupiter.api.Test;
 
 class ChannelActivityModelTest
 {
+    @Test
+    void quietReceiverChangesRefreshIdleConventionalRowsWithoutSynthesizingLifecycle() throws Exception
+    {
+        Channel first = trunkedChannel("North", "", "", new DecodeConfigAM(), 155_730_000L);
+        Channel second = trunkedChannel("South", "", "", new DecodeConfigAM(), 155_730_000L);
+        ChannelMetadata firstMetadata = new ChannelMetadata(null);
+        ChannelMetadata secondMetadata = new ChannelMetadata(null);
+        Object firstIncarnation = new Object();
+        Object secondIncarnation = new Object();
+        AtomicReference<List<ChannelActivityModel.ActiveChannel>> active = new AtomicReference<>(List.of(
+            new ChannelActivityModel.ActiveChannel(first, List.of(firstMetadata), firstIncarnation,
+                new ReceiverAssignment("receiver-a", 155_730_000L)),
+            new ChannelActivityModel.ActiveChannel(second, List.of(secondMetadata), secondIncarnation,
+                new ReceiverAssignment("receiver-b", 155_730_000L))));
+        AtomicInteger receiverReads = new AtomicInteger();
+        try(ChannelActivityModel model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {})))
+        {
+            model.setActiveChannelSupplier(() -> { receiverReads.incrementAndGet(); return active.get(); });
+            assertTrue(awaitCondition(() -> conventionalReceiver(model, "North", "receiver-a") &&
+                conventionalReceiver(model, "South", "receiver-b"), 2, TimeUnit.SECONDS));
+            assertTrue(model.getConventionalTable().getLatestSnapshot().rows().stream()
+                .allMatch(row -> State.IDLE.name().equals(row.status())), "idle squelch retains the allocated receiver");
+
+            active.set(List.of(new ChannelActivityModel.ActiveChannel(first, List.of(firstMetadata), firstIncarnation,
+                    new ReceiverAssignment("receiver-c", 155_730_000L)),
+                new ChannelActivityModel.ActiveChannel(second, List.of(secondMetadata), secondIncarnation,
+                    new ReceiverAssignment("receiver-b", 155_730_000L))));
+            assertTrue(awaitCondition(() -> conventionalReceiver(model, "North", "receiver-c"),
+                2, TimeUnit.SECONDS), "a same-frequency receiver move must update without metadata or lifecycle events");
+
+            Object replacementIncarnation = new Object();
+            active.set(List.of(new ChannelActivityModel.ActiveChannel(first, List.of(firstMetadata), replacementIncarnation,
+                    new ReceiverAssignment("receiver-d", 155_730_000L)),
+                new ChannelActivityModel.ActiveChannel(second, List.of(secondMetadata), secondIncarnation,
+                    new ReceiverAssignment("receiver-b", 155_730_000L))));
+            assertTrue(awaitCondition(() -> conventionalReceiver(model, "North", null), 2, TimeUnit.SECONDS),
+                "a new incarnation cannot claim a previous incarnation's activity before its lifecycle event");
+            run(model, () -> model.channelStarted(first, List.of(firstMetadata), replacementIncarnation));
+            assertTrue(awaitCondition(() -> conventionalReceiver(model, "North", "receiver-d"), 2, TimeUnit.SECONDS));
+
+            active.set(List.of(new ChannelActivityModel.ActiveChannel(first, List.of(firstMetadata), replacementIncarnation,
+                    new ReceiverAssignment("receiver-d", 156_000_000L)),
+                new ChannelActivityModel.ActiveChannel(second, List.of(secondMetadata), secondIncarnation,
+                    new ReceiverAssignment("receiver-b", 155_730_000L))));
+            assertTrue(awaitCondition(() -> conventionalReceiver(model, "North", null) &&
+                conventionalReceiver(model, "South", "receiver-b"), 2, TimeUnit.SECONDS),
+                "a receiver observed on another RF frequency cannot be attached to the old row");
+
+            active.set(List.of());
+            assertTrue(awaitCondition(() -> conventionalReceiver(model, "South", null), 2, TimeUnit.SECONDS));
+            assertEquals(2, model.getConventionalTable().getLatestSnapshot().rows().size(),
+                "receiver polling cannot synthesize channel stops from a temporary missing manager mapping");
+            assertEquals(2, model.getTrackedActiveChannelCount());
+
+            Channel pending = trunkedChannel("Pending", "", "", new DecodeConfigAM(), 156_000_000L);
+            int beforePending = receiverReads.get();
+            active.set(List.of(new ChannelActivityModel.ActiveChannel(pending, List.of(new ChannelMetadata(null)),
+                new Object(), new ReceiverAssignment("receiver-pending", 156_000_000L))));
+            assertTrue(awaitCondition(() -> receiverReads.get() > beforePending + 1, 2, TimeUnit.SECONDS));
+            assertEquals(2, model.getConventionalTable().getLatestSnapshot().rows().size(),
+                "receiver polling cannot synthesize a channel start before its lifecycle observation");
+            run(model, () -> model.channelStopped(first));
+            assertEquals(1, model.getConventionalTable().getLatestSnapshot().rows().size());
+        }
+    }
+
+    @Test
+    void trafficSlotsShareOnlyTheirAllocatedReceiverAndReleaseOrReuseClearsCurrentOwnership() throws Exception
+    {
+        long controlFrequency = 139_781_250L;
+        long trafficFrequency = 139_968_750L;
+        Channel parent = trunkedChannel("Control", "Bus", "Site", trunkedDmrConfig(), controlFrequency);
+        Channel child = new Channel("Traffic", ChannelType.TRAFFIC);
+        child.setDecodeConfiguration(new DecodeConfigDMR());
+        child.setSystem("Bus");
+        child.setSite("Site");
+        SourceConfigTuner source = new SourceConfigTuner();
+        source.setFrequency(trafficFrequency);
+        child.setSourceConfiguration(source);
+        Object parentIncarnation = new Object();
+        Object firstChildIncarnation = new Object();
+        var parentActive = new ChannelActivityModel.ActiveChannel(parent, List.of(), parentIncarnation,
+            new ReceiverAssignment("control-receiver", controlFrequency));
+        AtomicReference<List<ChannelActivityModel.ActiveChannel>> active = new AtomicReference<>(List.of(parentActive,
+            new ChannelActivityModel.ActiveChannel(child, List.of(), firstChildIncarnation,
+                new ReceiverAssignment("traffic-receiver", trafficFrequency))));
+        DMRAbsoluteChannel slotOne = new DMRAbsoluteChannel(838, 1, trafficFrequency, 0);
+        DMRAbsoluteChannel slotTwo = new DMRAbsoluteChannel(838, 2, trafficFrequency, 0);
+        DMRAbsoluteChannel unallocated = new DMRAbsoluteChannel(1, 1, controlFrequency, 0);
+        try(ChannelActivityModel model = new ChannelActivityModel(new AliasModel(), new NowPlayingPreference(type -> {})))
+        {
+            model.setActiveChannelSupplier(active::get);
+            run(model, () -> {
+                model.trunkedTrafficEvent(parent, child, slotOne, 1, new IdentifierCollection(),
+                    DecodeEventType.CALL_GROUP, controlFrequency);
+                model.trunkedTrafficEvent(parent, child, slotTwo, 2, new IdentifierCollection(),
+                    DecodeEventType.CALL_GROUP, controlFrequency);
+                model.trunkedTrafficEvent(parent, null, unallocated, 1, new IdentifierCollection(),
+                    DecodeEventType.CALL_GROUP, controlFrequency);
+            });
+            assertTrue(awaitCondition(() -> trafficRows(model).stream()
+                    .filter(row -> row.frequencyHz() == trafficFrequency).count() == 2 &&
+                trafficRows(model).stream().filter(row -> row.frequencyHz() == trafficFrequency)
+                    .allMatch(row -> "traffic-receiver".equals(row.receiverIdentity())), 2, TimeUnit.SECONDS));
+            assertTrue(trafficRows(model).stream().filter(row -> row.frequencyHz() == controlFrequency)
+                .allMatch(row -> row.receiverIdentity() == null),
+                "an unallocated grant at the control frequency still cannot claim the control receiver");
+            assertTrue(model.getSnapshotSet().tables().stream().flatMap(table -> table.rows().stream())
+                .anyMatch(row -> !ChannelActivityRow.Role.TRAFFIC.name().equals(row.role()) &&
+                    "control-receiver".equals(row.receiverIdentity())));
+
+            active.set(List.of(parentActive));
+            run(model, () -> model.channelStopped(child));
+            assertTrue(awaitCondition(() -> trafficRows(model).stream().allMatch(row -> row.receiverIdentity() == null),
+                2, TimeUnit.SECONDS), "released rows must not inherit the parent's receiver");
+
+            Object nextChildIncarnation = new Object();
+            active.set(List.of(parentActive, new ChannelActivityModel.ActiveChannel(child, List.of(),
+                nextChildIncarnation, new ReceiverAssignment("replacement-receiver", trafficFrequency))));
+            run(model, () -> {
+                model.channelStarted(child, List.of(), nextChildIncarnation);
+                model.trunkedTrafficEvent(parent, child, slotOne, 1, new IdentifierCollection(),
+                    DecodeEventType.CALL_GROUP, controlFrequency);
+            });
+            assertTrue(awaitCondition(() -> trafficRows(model).stream().anyMatch(row ->
+                row.frequencyHz() == trafficFrequency && Integer.valueOf(1).equals(row.timeslot()) &&
+                    "replacement-receiver".equals(row.receiverIdentity())), 2, TimeUnit.SECONDS));
+            assertTrue(trafficRows(model).stream().filter(row -> row.frequencyHz() == trafficFrequency &&
+                Integer.valueOf(2).equals(row.timeslot())).allMatch(row -> row.receiverIdentity() == null),
+                "reusing a pooled child cannot relabel its previously released slot");
+            active.set(List.of(new ChannelActivityModel.ActiveChannel(parent, List.of(), parentIncarnation, null),
+                new ChannelActivityModel.ActiveChannel(child, List.of(), nextChildIncarnation, null)));
+            assertTrue(awaitCondition(() -> model.getSnapshotSet().tables().stream()
+                .flatMap(table -> table.rows().stream()).allMatch(row -> row.receiverIdentity() == null),
+                2, TimeUnit.SECONDS), "missing or failed sources clear every current assignment");
+        }
+    }
+
+    private static boolean conventionalReceiver(ChannelActivityModel model, String channelName, String receiver)
+    {
+        return model.getConventionalTable().getLatestSnapshot().rows().stream().anyMatch(row ->
+            channelName.equals(row.channelName()) && java.util.Objects.equals(receiver, row.receiverIdentity()));
+    }
+
     @Test
     void audioServingProofUsesOriginalCallSourceAndRawNetworkRatherThanCurrentConfiguration() throws Exception
     {

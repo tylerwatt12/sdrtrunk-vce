@@ -13,6 +13,7 @@ import io.github.dsheirer.source.tuner.manager.TunerSettingsService;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.web.tuner.TunerAdministrationService;
 import java.io.IOException;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -37,6 +38,7 @@ public final class TunerAdminHttpController
     private static final Pattern STATE_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/state$");
     private static final Pattern RESTORE_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/restore$");
     private static final Pattern BROWSE_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/browse$");
+    private static final Pattern NICKNAME_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/nickname$");
     private static final Pattern SETTING_PATH = Pattern.compile("^" + PATH +
         "/(tuner-[0-9a-f]{32})/settings/([a-z][a-z0-9_]*)$");
     private final TunerAdministrationService mAdministration;
@@ -109,6 +111,12 @@ public final class TunerAdminHttpController
         if(setting.matches())
         {
             handleSetting(exchange, setting.group(1), setting.group(2));
+            return;
+        }
+        Matcher nickname = NICKNAME_PATH.matcher(path);
+        if(nickname.matches())
+        {
+            setNickname(exchange, nickname.group(1));
             return;
         }
         WebHttpSupport.notFound(exchange);
@@ -251,6 +259,53 @@ public final class TunerAdminHttpController
         catch(IllegalStateException exception)
         {
             ApiHttpResponse.sendError(exchange, 503, "tuner_maintenance_unavailable", "Tuner maintenance is unavailable");
+        }
+    }
+
+    private void setNickname(HttpExchange exchange, String tunerId) throws IOException
+    {
+        if(!"PUT".equals(exchange.getRequestMethod()))
+        {
+            WebHttpSupport.methodNotAllowed(exchange, "PUT");
+            return;
+        }
+        DiscoveredTuner tuner = find(exchange, tunerId);
+        if(tuner == null) return;
+        try
+        {
+            JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("nickname"));
+            JsonNode nickname = request.get("nickname");
+            if(nickname == null || !nickname.isTextual())
+            {
+                ApiHttpResponse.sendError(exchange, 400, "invalid_request", "nickname must be text");
+                return;
+            }
+            TunerAdministrationService.Nickname saved;
+            try
+            {
+                saved = mAdministration.setNickname(tuner, nickname.textValue());
+            }
+            catch(IOException | SQLException exception)
+            {
+                mLog.warn("Unable to save receiver nickname", exception);
+                ApiHttpResponse.sendError(exchange, 503, "receiver_nickname_unavailable",
+                    "Receiver nickname could not be saved; try again");
+                return;
+            }
+            ApiHttpResponse.sendData(exchange, 200, saved);
+        }
+        catch(WebHttpSupport.RequestException exception)
+        {
+            ApiHttpResponse.sendError(exchange, exception.status(), exception.code(), exception.getMessage());
+        }
+        catch(IllegalArgumentException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 422, "invalid_receiver_nickname", exception.getMessage());
+        }
+        catch(IllegalStateException exception)
+        {
+            ApiHttpResponse.sendError(exchange, 503, "receiver_nickname_unavailable",
+                "Receiver nickname could not be saved; try again");
         }
     }
 

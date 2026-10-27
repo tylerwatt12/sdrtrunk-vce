@@ -127,6 +127,16 @@ public abstract class TunerChannelSource extends ComplexSource implements ISourc
         mTunerIdentity = tunerIdentity;
     }
 
+    /** Observer-only receiving assignment. Native identity stays inside the receiver. */
+    public record ReceiverAssignment(String tunerIdentity, long frequencyHz) {}
+
+    public ReceiverAssignment getReceiverAssignment()
+    {
+        String identity = mTunerIdentity;
+        long frequency = getFrequency();
+        return identity != null && frequency > 0 ? new ReceiverAssignment(identity, frequency) : null;
+    }
+
     /**
      * Starts this tuner channel source producing sample stream.
      */
