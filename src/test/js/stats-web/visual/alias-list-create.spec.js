@@ -40,11 +40,16 @@ async function installCreatorHarness(page, selectionFailsOnce = false) {
       node, valueNode, iconButton);
     let failNextRequest = false;
     let failNextSelection = selectionFailsOnce;
+    let creationBlock = null;
     window.inlineAliasRequests = [];
     window.inlineAliasSubmitted = 0;
     window.failInlineAliasCreate = () => { failNextRequest = true; };
+    window.deferInlineAliasCreate = () => {
+      creationBlock = new Promise(resolve => { window.releaseInlineAliasCreate = resolve; });
+    };
     const requestJson = async (path, options) => {
       window.inlineAliasRequests.push({ path, options });
+      if (creationBlock) { await creationBlock; creationBlock = null; }
       if (failNextRequest) {
         failNextRequest = false;
         throw new Error('Revision changed. Try again.');
@@ -107,6 +112,13 @@ test('Alias List creation uses a child dialog and preserves the channel draft', 
   await expect(child.getByLabel('Name')).toBeFocused();
   await expect(trigger).toHaveAttribute('aria-expanded', 'true');
   expect(await child.evaluate((element) => element.closest('.inline-alias-test-form'))).toBe(null);
+  await child.getByLabel('Name').fill('Cancelled list');
+  await child.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(child).toHaveCount(0);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(parent.getByLabel('Channel draft')).toHaveValue('Draft channel name');
+  expect(await page.evaluate(() => window.inlineAliasRequests.length)).toBe(0);
+  await trigger.click();
   await child.getByLabel('Name').fill('County Public Safety');
   await child.getByLabel('Name').press('Enter');
   await expect(child).toHaveCount(0);
@@ -130,6 +142,7 @@ test('Alias List creation uses a child dialog and preserves the channel draft', 
   await expect(retryDialog.getByLabel('Name')).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(retryDialog).toHaveCount(0);
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
   await expect(parent).toBeVisible();
   await expect(trigger).toBeFocused();
 });
@@ -140,7 +153,16 @@ test('selection retry does not create a second Alias List after a successful POS
   await page.getByRole('button', { name: 'New list' }).click();
   const child = page.getByRole('dialog', { name: 'Create Alias List' });
   await child.getByLabel('Name').fill('County Public Safety');
+  await page.evaluate(() => window.deferInlineAliasCreate());
   await child.getByRole('button', { name: 'Create and use' }).click();
+  await expect(child.getByLabel('Name')).toBeDisabled();
+  await expect(child.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+  await expect(child.getByRole('status')).toHaveText('Creating Alias List…');
+  await child.locator('form').evaluate(form => form.requestSubmit());
+  expect(await page.evaluate(() => window.inlineAliasRequests.length)).toBe(1);
+  await page.keyboard.press('Escape');
+  await expect(child).toBeVisible();
+  await page.evaluate(() => window.releaseInlineAliasCreate());
   await expect(child.getByRole('alert')).toContainText('was created, but could not be selected');
   await expect(child.getByLabel('Name')).toBeDisabled();
   await child.getByRole('button', { name: 'Use created list' }).click();

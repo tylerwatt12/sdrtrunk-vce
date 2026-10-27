@@ -331,6 +331,7 @@ for (const [theme, viewport] of [
     await expect(confirmation).toContainText('This stops sending and clears the destination, saved credentials, and selected feeds.');
     await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
     await expect(confirmation.getByRole('button', { name: 'Delete configuration', exact: true })).toHaveClass(/ui-button-danger/);
+    await expect(editor.locator('.ui-feedback-loading')).toHaveCount(0);
     if (process.env.FORM_WORKFLOW_AUDIT_DIR) await confirmation.screenshot({
       path: path.join(process.env.FORM_WORKFLOW_AUDIT_DIR, `delete-sending-confirm-${theme}-${viewport.width}.png`),
       animations: 'disabled', caret: 'hide'
@@ -466,6 +467,12 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['ligh
     await expect(confirmation.getByRole('button', { name: 'Remove sender', exact: true })).toHaveClass(/ui-button-danger/);
     await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
     expect(app.removals()).toBe(0);
+    await expect(editor.locator('.ui-feedback-loading')).toHaveCount(0);
+    await editor.locator('form').evaluate(form => {
+      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      form.querySelector('.ui-button-danger').dispatchEvent(new Event('click', { bubbles: true }));
+    });
+    await expect(page.getByRole('alertdialog')).toHaveCount(1);
     if (process.env.FORM_WORKFLOW_AUDIT_DIR) await confirmation.screenshot({
       path: path.join(process.env.FORM_WORKFLOW_AUDIT_DIR, `remove-confirm-${theme}-${viewport.width}.png`),
       animations: 'disabled', caret: 'hide'

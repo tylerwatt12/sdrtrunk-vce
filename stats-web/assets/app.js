@@ -36,11 +36,11 @@ import { formatHexDecimal } from './core/call-value-format.js?v=1';
 import {
   createAliasList,
   createAliasListPopupTrigger as buildAliasListPopupTrigger
-} from './features/alias-list-create.js?v=14';
+} from './features/alias-list-create.js?v=15';
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=61';
+import { createRecordingsFeature } from './features/recordings.js?v=62';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=17';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -8358,7 +8358,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : visualizerTour ? [
       import('./features/network-visualizer/index.js?v=65'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
-      import('./features/alerts.js?v=24'), import('./guides/topics-presentation.js?v=1')
+      import('./features/alerts.js?v=25'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
       Promise.resolve(null), import('./guides/scanner-presentation.js?v=4')
     ] : main ? [
@@ -31902,7 +31902,7 @@ async function renderStreaming() {
 
 async function renderAdminRemoteLinks(renderContext) {
   const { requestJson } = administrationRequestDependencies(renderContext);
-  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=22');
+  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=23');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createRemoteLinksWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconGlyph, remoteOriginIcon, createFormWorkflow,
@@ -31933,7 +31933,7 @@ function alertsWorkspaceDependencies(renderContext, view, overrides = {}) {
 }
 
 async function alertsWorkspace(renderContext, view, overrides = {}) {
-  const { createAlertsWorkspace } = await import('./features/alerts.js?v=24');
+  const { createAlertsWorkspace } = await import('./features/alerts.js?v=25');
   if (!renderIsCurrent(renderContext)) return;
   return createAlertsWorkspace(alertsWorkspaceDependencies(renderContext, view, overrides));
 }
@@ -36175,7 +36175,7 @@ async function openCallRelations(kind, id) {
   let relationsModule;
   try {
     [relationsModule] = await Promise.all([
-      import('./features/call-relations.js?v=7'), loadActivityMessageTypes()
+      import('./features/call-relations.js?v=8'), loadActivityMessageTypes()
     ]);
   } catch (error) {
     if (!renderIsCurrent(renderContext)) return;

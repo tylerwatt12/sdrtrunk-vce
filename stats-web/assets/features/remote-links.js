@@ -1,3 +1,5 @@
+import { createActionWorkflow } from '../core/action-workflows.js?v=1';
+
 const ROOT = '/api/v1/admin/remote-links';
 const POLL_MS = 3000;
 
@@ -463,18 +465,10 @@ export function createRemoteLinksWorkspace(deps) {
     const modal = openFormModal(title, form, options);
     if (!modal) return null;
     cancel.addEventListener('click', modal.close);
-    const workflow = createFormWorkflow({ form, submit: save, modal,
-      renderFeedback: (state, text) => {
-        localMessage.setAttribute('role', state === 'error' ? 'alert' : 'status');
-        localMessage.hidden = !text;
-        if (state === 'error') showError(localMessage, { message: text });
-        else localMessage.replaceChildren(...(text ? [state === 'status' ?
-          node('div', 'ui-form-state', text) : state === 'loading' ?
-            node('div', 'ui-feedback ui-feedback-loading', text) : notice(text)] : []));
-      } });
+    const workflow = createFormWorkflow({ form, submit: save, modal, feedback: localMessage });
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
-      if (modal.state?.isBusy?.()) return;
+      if (modal.isActive?.() === false || modal.state?.isBusy?.()) return;
       await workflow.save(() => operation(form, modal), { onSuccess: async (result) => {
         if (result === false) {
           workflow.setReady(false);
@@ -636,35 +630,24 @@ export function createRemoteLinksWorkspace(deps) {
   }
 
   function bindRemovalAction(editor, remove, options) {
-    let removing = false;
+    const workflow = createActionWorkflow({ surface: editor.form, feedback: editor.message, modal: editor.modal });
+    let confirming = false;
     remove.addEventListener('click', async () => {
-      if (removing || editor.modal.state?.isBusy?.()) return;
-      removing = true;
-      const disabled = [...editor.form.elements].map(control => [control, control.disabled]);
-      disabled.forEach(([control]) => { control.disabled = true; });
-      editor.modal.setBusy(true);
+      if (confirming || workflow.isBusy() || editor.modal.state?.isBusy?.()) return;
+      confirming = true;
+      let accepted;
       try {
-        if (!await confirmAction(options.question, {
+        accepted = await confirmAction(options.question, {
           title: options.title, confirmLabel: options.confirmLabel
-        }) || !editor.modal.dialog.isConnected) return;
-        editor.message.hidden = false;
-        editor.message.setAttribute('role', 'status');
-        editor.message.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', options.progress));
-        const result = await write(options.path, 'DELETE',
-          { revision: snapshot.revision });
-        editor.modal.setDirty(false); editor.modal.setBusy(false);
+        });
+      } finally { confirming = false; }
+      if (!accepted || !editor.modal.dialog.isConnected) return;
+      try {
+        const result = await workflow.run(() => write(options.path, 'DELETE',
+          { revision: snapshot.revision }), { pending: options.progress });
+        editor.modal.setDirty(false);
         if (editor.modal.close()) present(result, true);
-      } catch (error) {
-        if (editor.modal.dialog.isConnected) {
-          editor.message.hidden = false;
-          editor.message.setAttribute('role', 'alert');
-          showError(editor.message, error);
-        }
-      } finally {
-        removing = false;
-        editor.modal.setBusy(false);
-        disabled.forEach(([control, wasDisabled]) => { control.disabled = wasDisabled; });
-      }
+      } catch (_) { /* Shared feedback preserves the draft and recovery guidance. */ }
     });
   }
 

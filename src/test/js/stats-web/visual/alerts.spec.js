@@ -86,8 +86,11 @@ async function installAlerts(page, { guest = false, theme = 'light' } = {}) {
     }
     if (p === '/api/v1/admin/alerts/public-test') {
       const value = request.postDataJSON(); state.writes.push({ p, value });
-      if (state.publicTestFailure) return route.fulfill({ status: 503, json: { error: { message: 'Public checker unavailable. Try again.' } } });
-      return data({ public_access: { status: 'passed', checked_url: value.site_url, message: 'Public access passed.' }, test_token: 'synthetic-proof' });
+      const finish = () => state.publicTestFailure ? route.fulfill({ status: 503,
+        json: { error: { message: 'Public checker unavailable. Try again.' } } }) :
+        data({ public_access: { status: 'passed', checked_url: value.site_url, message: 'Public access passed.' }, test_token: 'synthetic-proof' });
+      if (state.holdPublicTest) { state.pending.push(finish); return; }
+      return finish();
     }
     if (p === '/api/v1/admin/alerts/registration') {
       if (request.method() !== 'GET') {
@@ -692,6 +695,42 @@ test('approval failure retains the name and uses the new saved revision on retry
   expect(fixture.pageErrors).toEqual([]);
 });
 
+test('public access tests lock the form, reject duplicate requests and ignore stale URL proof', async ({ page }) => {
+  const { state, fixture } = await installAlerts(page);
+  state.holdPublicTest = true;
+  await page.goto('/app.html?view=admin&tab=push-setup');
+  await page.getByRole('button', { name: 'Direct', exact: true }).click();
+  const url = page.getByRole('textbox', { name: 'VCE site URL', exact: true });
+  const name = page.getByRole('textbox', { name: 'VCE name', exact: true });
+  const test = page.getByRole('button', { name: 'Test public access', exact: true });
+  const save = page.getByRole('button', { name: 'Save settings', exact: true });
+  await url.fill('https://vce.example.net');
+  await test.click();
+  await expect.poll(() => state.pending.length).toBe(1);
+  await expect(page.locator('.alerts-setup-layout').locator('..')).toHaveAttribute('aria-busy', 'true');
+  await expect(url).toBeDisabled();
+  await expect(name).toBeDisabled();
+  await expect(test).toBeDisabled();
+  await test.evaluate(control => control.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  expect(state.writes.filter(write => write.p.endsWith('/public-test'))).toHaveLength(1);
+  // Simulate an external draft update while the old checker response is pending.
+  await url.evaluate(control => {
+    control.value = 'https://other.example.net';
+    control.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(url).toBeDisabled();
+  await state.pending.shift()();
+  await expect(test).toBeEnabled();
+  await expect(save).toBeDisabled();
+  await expect(page.locator('.alerts-setup-layout').locator('..')).not.toHaveAttribute('aria-busy');
+  state.holdPublicTest = false;
+  await test.click();
+  await expect(save).toBeEnabled();
+  expect(state.writes.filter(write => write.p.endsWith('/public-test')).map(write => write.value.site_url))
+    .toEqual(['https://vce.example.net', 'https://other.example.net']);
+  expect(fixture.pageErrors).toEqual([]);
+});
+
 test('Direct public-test errors identify the unavailable checker and keep saving disabled', async ({ page }) => {
   const { state, fixture } = await installAlerts(page);
   state.publicTestFailure = true;
@@ -700,7 +739,7 @@ test('Direct public-test errors identify the unavailable checker and keep saving
   await page.getByRole('textbox', { name: 'VCE site URL', exact: true }).fill('https://vce.example.net');
   await page.getByRole('button', { name: 'Test public access', exact: true }).click();
   await expect(page.locator('.alerts-workspace')).toContainText('Public checker unavailable. Try again.');
-  await expect(page.getByRole('status').filter({ hasText: 'Public checker unavailable. Try again.' })).toHaveAttribute('aria-live', 'polite');
+  await expect(page.getByRole('alert').filter({ hasText: 'Public checker unavailable. Try again.' })).toHaveAttribute('aria-live', 'assertive');
   await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeDisabled();
   expect(state.config.mode).toBe('proxy');
   expect(fixture.pageErrors).toEqual([]);
@@ -1434,7 +1473,7 @@ for (const [theme, width] of [['light', 1280], ['light', 320]]) {
     await dispatch.evaluate(button => button.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(state.writes).toEqual([{ p: '/api/v1/admin/alerts/rules/dispatch%20%2F%20west/test', method: 'POST', value: { revision: 7 } }]);
     await state.pending.shift()();
-    const feedback = page.locator('.alerts-workspace > [role="status"]');
+    const feedback = page.locator('.alerts-workspace > :is([role="status"], [role="alert"])');
     await expect(feedback).toHaveAttribute('aria-live', 'polite');
     await expect(feedback).toHaveText('Test alert queued for subscribed users.');
     await expect(dispatch).toBeEnabled();
@@ -1445,6 +1484,8 @@ for (const [theme, width] of [['light', 1280], ['light', 320]]) {
     await expect(confirmation).toContainText('all users subscribed to the “Fire activity” topic');
     await confirmation.getByRole('button', { name: 'Send test alert', exact: true }).click();
     await expect(feedback).toHaveText('Test alert could not be sent. Try the Test button again.');
+    await expect(feedback).toHaveAttribute('role', 'alert');
+    await expect(feedback).toHaveAttribute('aria-live', 'assertive');
     await expect(weather).toBeEnabled();
     await expect(dispatch).toBeEnabled();
     await feedback.scrollIntoViewIfNeeded();

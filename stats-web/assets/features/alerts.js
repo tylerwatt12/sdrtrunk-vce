@@ -42,10 +42,11 @@ export function createAlertsWorkspace(deps) {
   let expandedAlertId = guideMode ? '' : selectedAlert;
   let cleanupPublicHistory = null;
   let directConnection = { state: 'none' };
-  let ruleTestBusy = false;
   let deletionConfirming = false;
   const deletionWorkflow = createActionWorkflow({ surface: body, feedback,
     controls: () => body.querySelectorAll('[data-alert-delete]') });
+  const ruleTestWorkflow = createActionWorkflow({ surface: host, feedback,
+    controls: () => host.querySelectorAll('[data-alert-rule-test]') });
   let activeTopic = selectedTopic;
   let topicQuery = '';
   let ruleQuery = '';
@@ -139,10 +140,9 @@ export function createAlertsWorkspace(deps) {
     return control;
   }
   function catalogRuleActions(rule) {
-    const test = button('Test', () => void testRule(rule, test));
+    const test = button('Test', () => void testRule(rule));
     test.setAttribute('aria-label', 'Test alert rule: ' + rule.name);
     test.setAttribute('data-alert-rule-test', '');
-    test.disabled = ruleTestBusy;
     const actions = node('div', 'alerts-catalog-action-row');
     const edit = iconButton('icon-edit', 'Edit alert rule: ' + rule.name);
     edit.addEventListener('click', () => void editRule(rule));
@@ -407,6 +407,7 @@ export function createAlertsWorkspace(deps) {
           onClick: () => { ruleOffset += PAGE_SIZE; renderRules(); } }
       }));
       deletionWorkflow.refreshControls();
+      ruleTestWorkflow.refreshControls();
     };
     ruleSearch.addEventListener('input', () => { ruleQuery = ruleSearch.value; ruleOffset = 0; renderRules(); });
     rulesPanel.append(contents, count); main.append(rulesPanel);
@@ -441,25 +442,17 @@ export function createAlertsWorkspace(deps) {
   const deleteTopic = (topic, control) => deleteCatalogItem('topic', topic, control);
   const deleteRule = (rule, control) => deleteCatalogItem('rule', rule, control);
 
-  async function testRule(rule, control) {
-    if (ruleTestBusy || disposed) return;
-    ruleTestBusy = true;
+  async function testRule(rule) {
+    if (ruleTestWorkflow.isBusy() || disposed) return;
     try {
-      const confirmation = confirmAction(`Send a test alert for “${rule.name}”? This will send an alert to all users subscribed to the “${topicName(rule.topic_id)}” topic. The title and text will start with “TEST: ”.`,
-        { title: 'Send test alert', confirmLabel: 'Send test alert', tone: 'primary' });
-      host.querySelectorAll('[data-alert-rule-test]').forEach(button => { button.disabled = true; });
-      if (!await confirmation || disposed) return;
-      feedback.replaceChildren(node('div', 'ui-feedback ui-feedback-loading', 'Sending test alert…'));
-      await write(ADMIN + '/rules/' + encodeURIComponent(rule.id) + '/test', 'POST', { revision: snapshot.revision });
-      if (!disposed) feedback.replaceChildren(notice('Test alert queued for subscribed users.'));
-    } catch (error) {
-      if (!disposed && error?.name !== 'AbortError') feedback.replaceChildren(notice(
-        error?.message || 'Test alert could not be sent. Try the Test button again.', 'danger'));
-    } finally {
-      ruleTestBusy = false;
-      host.querySelectorAll('[data-alert-rule-test]').forEach(button => { button.disabled = false; });
-      if (!disposed && control.isConnected && document.activeElement === document.body) control.focus({ preventScroll: true });
-    }
+      await ruleTestWorkflow.run(async () => {
+        if (!await confirmAction(`Send a test alert for “${rule.name}”? This will send an alert to all users subscribed to the “${topicName(rule.topic_id)}” topic. The title and text will start with “TEST: ”.`,
+          { title: 'Send test alert', confirmLabel: 'Send test alert', tone: 'primary' }) || disposed) return;
+        ruleTestWorkflow.showFeedback('loading', 'Sending test alert…');
+        await write(ADMIN + '/rules/' + encodeURIComponent(rule.id) + '/test', 'POST', { revision: snapshot.revision });
+        if (!disposed) ruleTestWorkflow.showFeedback('status', 'Test alert queued for subscribed users.');
+      }, { pending: '', success: null });
+    } catch { /* Shared feedback retains failure and unknown-result recovery guidance. */ }
   }
 
   async function editTopic(existing = null) {
@@ -929,7 +922,6 @@ export function createAlertsWorkspace(deps) {
     let saved = cloneAlert(snapshot);
     const draft = { enabled: saved.enabled, mode: saved.mode, site_url: saved.site_url || '', sender_label: saved.sender_label || 'VCE installation' };
     let proof = null;
-    let testing = false;
     const form = node('form', 'alerts-form ui-settings-form ui-settings-form-plain');
     const setup = node('div', 'alerts-setup-layout');
     const fields = node('div', 'alerts-form ui-section-body');
@@ -957,6 +949,7 @@ export function createAlertsWorkspace(deps) {
     fields.append(enabled.element, formField('VCE name', senderName), modeHost, detail, footer);
     setup.append(section('Delivery', fields), section('Connection', connection));
     form.append(setup);
+    const setupActions = createActionWorkflow({ surface: form, feedback: status });
     const workflow = createFormWorkflow({ form, surface: fields, submit: save, feedback: status, changed: () =>
       (draft.enabled && draft.mode === 'proxy' && needsApproval()) || draft.enabled !== saved.enabled || draft.mode !== saved.mode ||
       draft.sender_label !== (saved.sender_label || 'VCE installation') ||
@@ -981,6 +974,7 @@ export function createAlertsWorkspace(deps) {
         deliveryStatus.replaceChildren(uiStatus(({ approved: 'Approved', pending: 'Awaiting approval', rejected: 'Not approved', banned: 'Banned',
           deregistered: 'Deregistered', unregistered: 'Not requested' })[status] || 'Not requested', 'neutral'));
       }
+      setupActions.refreshControls();
     }
     function renderMode() {
       detail.replaceChildren();
@@ -1023,32 +1017,28 @@ export function createAlertsWorkspace(deps) {
         testStatus.setAttribute('role', 'status');
         testStatus.setAttribute('aria-live', 'polite');
         testStatus.hidden = true;
-        const showTestStatus = content => {
-          testStatus.replaceChildren(content);
-          testStatus.hidden = false;
-          testStatus.scrollIntoView({ block: 'nearest' });
-        };
+        const testWorkflow = createActionWorkflow({ surface: form, feedback: testStatus });
         const test = button('Test public access', async () => {
-          if (testing) return;
-          if (!validAlertSiteUrl(url.value.trim())) { showTestStatus(notice('Enter an HTTPS domain address, then test again.', 'danger')); return; }
-          testing = true;
-          const controls = [...form.querySelectorAll('input,select,button')];
-          const disabled = controls.map(control => control.disabled);
-          controls.forEach(control => { control.disabled = true; });
-          form.setAttribute('aria-busy', 'true');
-          showTestStatus(node('div', 'ui-feedback ui-feedback-loading', 'Checking public access…'));
+          if (testWorkflow.isBusy() || workflow.isBusy()) return;
+          if (!validAlertSiteUrl(url.value.trim())) {
+            testWorkflow.showFeedback('error', 'Enter an HTTPS domain address, then test again.');
+            testStatus.scrollIntoView({ block: 'nearest' });
+            return;
+          }
           const testedUrl = url.value.trim();
           try {
-            const result = await write(ADMIN + '/public-test', 'POST', { site_url: testedUrl });
+            const result = await testWorkflow.run(() => write(ADMIN + '/public-test', 'POST', { site_url: testedUrl }),
+              { pending: 'Checking public access…', success: null });
             if (draft.site_url !== testedUrl || disposed) return;
             proof = result.test_token ? { url: testedUrl, token: result.test_token } : null;
             const passed = proof && ['passed', 'success', 'verified'].includes(String(result.public_access?.status).toLowerCase());
             if (!passed) proof = null;
-            showTestStatus(notice(passed ? 'Public access verified.' : result.public_access?.message || 'Couldn’t verify VCE. Check the address and HTTPS, then try again.', passed ? '' : 'danger'));
-          } catch (error) { proof = null; showTestStatus(notice(error.message || 'Couldn’t test public access. Try again.', 'danger')); }
+            testWorkflow.showFeedback(passed ? 'status' : 'error', passed ? 'Public access verified.' :
+              result.public_access?.message || 'Couldn’t verify VCE. Check the address and HTTPS, then try again.');
+          } catch { proof = null; /* The shared action workflow keeps failure feedback. */ }
           finally {
-            controls.forEach((control, index) => { control.disabled = disabled[index]; });
-            testing = false; form.removeAttribute('aria-busy'); updateSaveAvailability();
+            updateSaveAvailability();
+            if (!disposed && !testStatus.hidden) testStatus.scrollIntoView({ block: 'nearest' });
           }
         });
         url.addEventListener('input', () => { draft.site_url = url.value.trim(); proof = null; updateSaveAvailability(); testStatus.replaceChildren(); testStatus.hidden = true; });
@@ -1058,15 +1048,16 @@ export function createAlertsWorkspace(deps) {
       updateSaveAvailability();
     }
     async function registrationAction(method) {
-      const controls = [...form.querySelectorAll('input,select,button')];
-      const disabled = controls.map(control => control.disabled);
-      controls.forEach(control => { control.disabled = true; });
+      if (setupActions.isBusy() || workflow.isBusy()) return;
       try {
-        snapshot.registration = method === 'GET' ? await read(ADMIN + '/registration') : await write(ADMIN + '/registration', method, method === 'POST' ? {} : undefined);
+        snapshot.registration = await setupActions.run(() => method === 'GET' ? read(ADMIN + '/registration') :
+          write(ADMIN + '/registration', method, method === 'POST' ? {} : undefined),
+        { pending: 'Updating approval…' });
         renderMode();
-      } catch { status.replaceChildren(notice('Couldn’t update approval. Try again.', 'danger')); }
-      finally { controls.forEach((control, index) => { control.disabled = disabled[index]; }); updateSaveAvailability(); }
+      } catch { /* Shared feedback retains failure and unknown-result recovery guidance. */ }
+      finally { updateSaveAvailability(); }
     }
+
     renderMode();
     form.addEventListener('submit', async event => {
       event.preventDefault();

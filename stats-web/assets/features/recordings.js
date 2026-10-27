@@ -1776,6 +1776,11 @@ export function createRecordingsFeature(deps) {
     body.append(status, modalFooter(cancel, remove));
     const modal = openReadOnlyModal('Delete recordings', body, { id: 'delete-recordings',
       className: 'recordings-detail-modal' });
+    if (!modal) return;
+    modal.dialog.setAttribute('role', 'alertdialog');
+    body.firstElementChild.id = `${modal.dialog.getAttribute('aria-labelledby')}-message`;
+    modal.dialog.setAttribute('aria-describedby', body.firstElementChild.id);
+    modal.focus(cancel);
   }
 
   function updatePagers() {

@@ -1,4 +1,5 @@
 import { ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName } from './discovery-radioreference.js?v=17';
+import { createActionWorkflow } from '../core/action-workflows.js?v=1';
 
 let creatorSequence = 0;
 
@@ -43,7 +44,7 @@ export function createAliasListPopupTrigger(dependencies, options) {
   trigger.setAttribute('aria-expanded', 'false');
   host.append(trigger);
 
-  trigger.addEventListener('click', () => {
+  trigger.addEventListener('click', async () => {
     const form = node('form', 'admin-form');
     const name = node('input', 'ui-input');
     name.type = 'text';
@@ -71,43 +72,41 @@ export function createAliasListPopupTrigger(dependencies, options) {
     if (!modal) return;
     trigger.setAttribute('aria-expanded', 'true');
     cancel.addEventListener('click', () => modal.close());
-    name.focus();
+    const workflow = createActionWorkflow({ surface: form, feedback: error, modal });
     let createdResult = null;
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
+      if (workflow.isBusy()) return;
       const listName = name.value.trim();
-      error.replaceChildren();
       if (!listName) {
-        error.append(node('div', 'ui-notice ui-notice-danger', 'Enter a name for the Alias List.'));
-        name.focus();
+        workflow.showFeedback('error', 'Enter a name for the Alias List.');
+        modal.focus(name);
         return;
       }
-      modal.setBusy(true);
-      name.disabled = true;
-      cancel.disabled = true;
-      submit.disabled = true;
       try {
-        if (!createdResult) {
-          createdResult = await createAliasList(requestJson, { name: listName, family: normalized });
-        }
-        await onCreated(createdResult);
-        modal.setBusy(false);
+        await workflow.run(async () => {
+          if (!createdResult) {
+            createdResult = await createAliasList(requestJson, { name: listName, family: normalized });
+          }
+          await onCreated(createdResult);
+        }, { pending: createdResult ? 'Selecting Alias List…' : 'Creating Alias List…',
+          onError: (cause) => {
+            if (createdResult) workflow.showFeedback('error',
+              `${createdResult.aliasList.name} was created, but could not be selected. ${cause?.message || 'Try again.'}`);
+          } });
         modal.close();
         (select && !select.disabled ? select : trigger).focus({ preventScroll: true });
-      } catch (cause) {
-        error.append(node('div', 'ui-notice ui-notice-danger',
-          createdResult ? `${createdResult.aliasList.name} was created, but could not be selected. ` +
-            `${cause?.message || 'Try again.'}` : cause?.message || 'The Alias List could not be created.'));
-        modal.setBusy(false);
+      } catch (_) {
+        if (!modal.dialog.isConnected) return;
         name.disabled = Boolean(createdResult);
-        cancel.disabled = false;
-        submit.disabled = false;
         if (createdResult) {
           submit.textContent = 'Use created list';
-          submit.focus();
-        } else name.focus();
+          modal.focus(submit);
+        } else modal.focus(name);
       }
     });
+    if (modal.ready && !await modal.ready) return;
+    modal.focus(name);
   });
   return host;
 }
