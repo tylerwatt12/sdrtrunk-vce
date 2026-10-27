@@ -8,12 +8,12 @@ import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.portable.PortableDataRootLock;
+import io.github.dsheirer.portable.PortableFileIdentity;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
@@ -607,7 +607,7 @@ class VceUpgradeServiceTest
     private static Path database(Path root) { return SdrTrunkDatabasePath.getDatabasePath(root); }
     private static Path history(Path root) { return ActivityDatabasePath.forConfiguration(database(root)); }
     private static Connection open(Path file) throws Exception { return DriverManager.getConnection("jdbc:sqlite:" + file); }
-    private static Object identity(Path file) throws IOException { return Files.readAttributes(file, BasicFileAttributes.class).fileKey(); }
+    private static Object identity(Path file) throws IOException { return PortableFileIdentity.read(file); }
     private static long count(Path file, String table) throws Exception
     {
         try(Connection connection = open(file); var query = connection.createStatement();

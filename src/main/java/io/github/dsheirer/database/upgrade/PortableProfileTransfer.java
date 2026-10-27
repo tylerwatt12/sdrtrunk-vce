@@ -2,6 +2,7 @@
 package io.github.dsheirer.database.upgrade;
 
 import io.github.dsheirer.portable.PortableDataRootLock;
+import io.github.dsheirer.portable.PortableFileIdentity;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -23,8 +24,9 @@ import java.util.UUID;
 /**
  * Explicit ownership transfer of one stopped portable profile, without copying its recordings or history.
  * The caller has already obtained the user's backup acknowledgment and holds the source profile lock. This helper
- * borrows that lock; it never closes it. Its channel continues to lock the same file after a successful rename.
- * A filesystem that cannot rename the locked directory is refused without a copy-and-delete fallback.
+ * borrows that lock. Unix retains its open lock across the rename; Windows performs a bounded lock handoff
+ * around the atomic rename and reacquires the same identified lock file before any activation.
+ * A filesystem that cannot rename the directory atomically is refused without a copy-and-delete fallback.
  *
  * <p>The small receipt lives beside the destination, so a directory rename cannot strand it. Directory identity,
  * rather than mere path existence, proves which location owns the transferred profile after an interrupted move.
@@ -195,7 +197,7 @@ public final class PortableProfileTransfer
             if(Files.exists(targetRoot, LinkOption.NOFOLLOW_LINKS)) Files.delete(targetRoot); // Only an empty directory.
             try
             {
-                Files.move(sourceRoot, targetRoot, StandardCopyOption.ATOMIC_MOVE);
+                borrowedLock.moveRootAtomically(targetRoot);
             }
             catch(AtomicMoveNotSupportedException failure)
             {
@@ -233,7 +235,7 @@ public final class PortableProfileTransfer
             {
                 if(Files.exists(sourceRoot, LinkOption.NOFOLLOW_LINKS))
                     throw new IOException("The original data location is occupied. Both locations have been preserved.");
-                Files.move(targetRoot, sourceRoot, StandardCopyOption.ATOMIC_MOVE);
+                borrowedLock.moveRootAtomically(sourceRoot);
                 forceDirectory(sourceRoot.getParent());
                 forceDirectory(targetRoot.getParent());
             }
@@ -262,7 +264,7 @@ public final class PortableProfileTransfer
             if(borrowedLock == null || (!normalize(borrowedLock.getDataRoot()).equals(sourceRoot) &&
                 !normalize(borrowedLock.getDataRoot()).equals(targetRoot)))
                 throw new IOException("The VCE profile transfer no longer holds its data lock.");
-            // This also proves the channel is still open and owns the same lock-file identity after a rename.
+            // Prove ownership of the exact lock file before activating or resuming a transfer.
             borrowedLock.rebindMovedRoot(inspectLocation().currentRoot());
             Transfer disk = read(targetRoot);
             if(!id.equals(disk.id) || !identity.equals(disk.identity))
@@ -383,7 +385,7 @@ public final class PortableProfileTransfer
     private static String identity(Path directory) throws IOException
     {
         requireDirectory(directory);
-        Object key = Files.readAttributes(directory, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+        String key = PortableFileIdentity.read(directory);
         if(key == null) throw new IOException("This filesystem cannot identify a moved VCE data folder reliably. " +
             "Transfer the closed installation manually instead.");
         return key.toString();

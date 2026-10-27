@@ -18,6 +18,8 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.StandardCopyOption;
+import java.util.Locale;
 import java.nio.file.LinkOption;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Objects;
@@ -34,7 +36,7 @@ public final class PortableDataRootLock implements AutoCloseable
 
     private Path mDataRoot;
     private Path mLockFile;
-    private final Object mFileKey;
+    private String mFileKey;
     private FileChannel mChannel;
     private FileLock mLock;
     private boolean mClosed;
@@ -45,7 +47,8 @@ public final class PortableDataRootLock implements AutoCloseable
         mLockFile = lockFile;
         mChannel = channel;
         mLock = lock;
-        mFileKey = Files.readAttributes(lockFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+        Object key = Files.readAttributes(lockFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+        mFileKey = key == null ? null : key.toString();
     }
 
     public static PortableDataRootLock acquire(Path dataRoot) throws IOException
@@ -101,17 +104,85 @@ public final class PortableDataRootLock implements AutoCloseable
         return mLockFile;
     }
 
-    /** Keeps the same OS lock after an atomic whole-profile rename; never releases and reacquires ownership. */
+    /** Validates an already-held lock against the exact lock file at its current profile location. */
     public synchronized void rebindMovedRoot(Path dataRoot) throws IOException
     {
         Path root = dataRoot.toAbsolutePath().normalize();
         Path file = root.resolve(LOCK_FILE_NAME);
+        // Ordinary startup needs only the OS lock; require a stable identity when transfer is actually requested.
+        if(mFileKey == null && !mClosed && mLock != null && mLock.isValid())
+            mFileKey = PortableFileIdentity.read(mLockFile);
         if(mClosed || mLock == null || !mLock.isValid() || Files.isSymbolicLink(file) || mFileKey == null ||
-            !mFileKey.equals(Files.readAttributes(file, BasicFileAttributes.class,
-                LinkOption.NOFOLLOW_LINKS).fileKey()))
+            !mFileKey.equals(PortableFileIdentity.read(file)))
             throw new IOException("The transferred data folder no longer holds the original VCE lock.");
         mDataRoot = root;
         mLockFile = file;
+    }
+
+    /**
+     * Renames a stopped profile without copying its contents. Windows forbids renaming a directory containing an
+     * open file, so its inner lock must close for the atomic rename and then be reacquired on the exact same file.
+     * Any competing Windows process opening the old lock prevents the rename; a competing destination owner
+     * prevents reacquisition. Either failure stops activation and leaves the caller's durable transfer receipt.
+     */
+    public synchronized void moveRootAtomically(Path destination) throws IOException
+    {
+        rebindMovedRoot(mDataRoot);
+        Path source = mDataRoot, target = destination.toAbsolutePath().normalize();
+        if(!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win"))
+        {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+            rebindMovedRoot(target);
+            return;
+        }
+        String directoryIdentity = PortableFileIdentity.read(source);
+        if(directoryIdentity == null) throw new IOException("The VCE data folder has no reliable filesystem identity.");
+        // Close before rename, including the channel: releasing only FileLock still leaves an open child handle.
+        mLock.release();
+        mLock = null;
+        mChannel.close();
+        mChannel = null;
+        IOException failure = null;
+        try
+        {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+        }
+        catch(IOException moveFailure) { failure = moveFailure; }
+        try
+        {
+            boolean atTarget = Files.exists(target, LinkOption.NOFOLLOW_LINKS) &&
+                directoryIdentity.equals(PortableFileIdentity.read(target));
+            Path current = atTarget ? target : source;
+            if(!directoryIdentity.equals(PortableFileIdentity.read(current)))
+                throw new IOException("The VCE data folder changed during the Windows lock handoff.");
+            mDataRoot = current;
+            mLockFile = current.resolve(LOCK_FILE_NAME);
+            if(!mFileKey.equals(PortableFileIdentity.read(mLockFile)))
+                throw new IOException("The VCE lock file changed during the Windows lock handoff.");
+            // Never create a replacement lock file when recovering ownership after the rename.
+            FileChannel channel = FileChannel.open(mLockFile, StandardOpenOption.WRITE);
+            try
+            {
+                FileLock lock;
+                try { lock = channel.tryLock(); }
+                catch(OverlappingFileLockException competing) { throw alreadyInUse(current, competing); }
+                if(lock == null) throw alreadyInUse(current, null);
+                if(!mFileKey.equals(PortableFileIdentity.read(mLockFile)))
+                {
+                    lock.release();
+                    throw new IOException("The transferred VCE lock was replaced during the Windows handoff.");
+                }
+                mChannel = channel;
+                mLock = lock;
+            }
+            finally { if(mChannel != channel) channel.close(); }
+        }
+        catch(IOException ownershipFailure)
+        {
+            if(failure == null) failure = ownershipFailure;
+            else failure.addSuppressed(ownershipFailure);
+        }
+        if(failure != null) throw failure;
     }
 
     @Override

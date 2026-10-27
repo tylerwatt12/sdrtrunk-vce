@@ -7,6 +7,7 @@ import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.gui.setup.SetupProgress;
 import io.github.dsheirer.portable.PortableDataRootLock;
+import io.github.dsheirer.portable.PortableFileIdentity;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
@@ -222,6 +223,9 @@ public final class VceUpgradeService
                 lock.rebindMovedRoot(target);
             }
             if(transferred && !lock.getDataRoot().equals(target)) lock.rebindMovedRoot(target);
+            if(transferred && "PREPARED".equals(phase) && content == MigrationContent.CONFIGURATION_ONLY &&
+                !sourceUnchanged(target, intent))
+                throw new IOException("The VCE settings changed during transfer. Close both installations and retry the upgrade.");
             Path database = SdrTrunkDatabasePath.getDatabasePath(target);
             if(!"COMMITTED".equals(phase))
             {
@@ -276,7 +280,14 @@ public final class VceUpgradeService
             boolean ownsTarget = ownsIntent && !transferred;
             if(ownsIntent && transferred && transfer != null)
             {
-                try { ownsTarget = target.equals(PortableProfileTransfer.inspect(target).currentRoot()); }
+                try
+                {
+                    if(target.equals(PortableProfileTransfer.inspect(target).currentRoot()))
+                    {
+                        lock.rebindMovedRoot(target);
+                        ownsTarget = true;
+                    }
+                }
                 catch(IOException unsafeReceipt) { failure.addSuppressed(unsafeReceipt); }
             }
             report.failed(failure, ownsTarget);
@@ -431,7 +442,7 @@ public final class VceUpgradeService
         if(!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return "absent";
         if(Files.isSymbolicLink(file)) throw new IOException("A saved VCE input became a symbolic link.");
         var attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
-        return attributes.fileKey() + ":" + attributes.size() + ":" + attributes.lastModifiedTime();
+        return PortableFileIdentity.read(file) + ":" + attributes.size() + ":" + attributes.lastModifiedTime();
     }
 
     private static void requireSpace(Path directory, long required) throws IOException
@@ -587,7 +598,7 @@ public final class VceUpgradeService
     private static String identity(Path file) throws IOException
     {
         if(Files.isSymbolicLink(file)) throw new IOException("The VCE database cannot be a symbolic link.");
-        Object key = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
+        String key = PortableFileIdentity.read(file);
         if(key == null) throw new IOException("This filesystem cannot identify transferred VCE databases safely.");
         return key.toString();
     }

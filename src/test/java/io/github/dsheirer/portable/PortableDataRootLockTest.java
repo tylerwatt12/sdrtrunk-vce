@@ -49,6 +49,26 @@ class PortableDataRootLockTest
     }
 
     @Test
+    void atomicallyMovesTheProfileAndRetainsExclusiveOwnership() throws Exception
+    {
+        Path source = mTemporaryFolder.resolve("old-data"), target = mTemporaryFolder.resolve("new-data");
+        try(PortableDataRootLock lock = PortableDataRootLock.acquire(source))
+        {
+            Files.writeString(source.resolve("kept"), "payload");
+            String identity = PortableFileIdentity.read(source.resolve("kept"));
+            lock.moveRootAtomically(target);
+            assertEquals(target, lock.getDataRoot());
+            assertTrue(!Files.exists(source));
+            assertEquals(identity, PortableFileIdentity.read(target.resolve("kept")));
+            assertThrows(IOException.class, () -> PortableDataRootLock.acquire(target));
+            lock.moveRootAtomically(source);
+            assertEquals(source, lock.getDataRoot());
+            assertThrows(IOException.class, () -> PortableDataRootLock.acquire(source));
+        }
+        try(PortableDataRootLock ignored = PortableDataRootLock.acquire(source)) {}
+    }
+
+    @Test
     void closeIsIdempotent() throws Exception
     {
         PortableDataRootLock lock = PortableDataRootLock.acquire(mTemporaryFolder.resolve("data"));
@@ -62,7 +82,7 @@ class PortableDataRootLockTest
         Path dataRoot = mTemporaryFolder.resolve("cross-process-data");
         Path java = Path.of(System.getProperty("java.home"), "bin",
             System.getProperty("os.name", "").toLowerCase().contains("win") ? "java.exe" : "java");
-        Process process = new ProcessBuilder(java.toString(), "-cp", System.getProperty("java.class.path"),
+        Process process = new ProcessBuilder(java.toString(), "--enable-native-access=ALL-UNNAMED", "-cp", System.getProperty("java.class.path"),
             LockHolderProcess.class.getName(), dataRoot.toString()).redirectErrorStream(true).start();
 
         try(BufferedReader output = new BufferedReader(new InputStreamReader(process.getInputStream(),

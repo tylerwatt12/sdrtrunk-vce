@@ -2,13 +2,13 @@
 package io.github.dsheirer.database.upgrade;
 
 import io.github.dsheirer.portable.PortableDataRootLock;
+import io.github.dsheirer.portable.PortableFileIdentity;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -23,7 +23,7 @@ class PortableProfileTransferTest
     {
         Path source = source(), target = target();
         Path audio = source.resolve("recordings-managed/call.wav");
-        Object audioIdentity = Files.readAttributes(audio, BasicFileAttributes.class).fileKey();
+        String audioIdentity = PortableFileIdentity.read(audio);
         try(PortableDataRootLock lock = PortableDataRootLock.acquire(source))
         {
             var transfer = PortableProfileTransfer.prepare(source, target, lock);
@@ -34,8 +34,7 @@ class PortableProfileTransferTest
             assertEquals("vault", Files.readString(target.resolve("vault/keys.sqlite")));
             assertEquals("voice-library", Files.readString(target.resolve("jmbe/library.jar")));
             assertEquals("classic", Files.readString(target.resolve("recordings/call.wav")));
-            assertEquals(audioIdentity, Files.readAttributes(target.resolve("recordings-managed/call.wav"),
-                BasicFileAttributes.class).fileKey());
+            assertEquals(audioIdentity, PortableFileIdentity.read(target.resolve("recordings-managed/call.wav")));
             assertThrows(IOException.class, () -> PortableProfileTransfer.requireActivation(source, target));
             assertThrows(IOException.class, () -> PortableDataRootLock.acquire(target));
             transfer.beginActivation();
@@ -80,7 +79,7 @@ class PortableProfileTransferTest
         try(PortableDataRootLock lock = PortableDataRootLock.acquire(source))
         {
             PortableProfileTransfer.prepare(source, target, lock);
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+            lock.moveRootAtomically(target);
         }
         assertEquals(target, PortableProfileTransfer.lockRoot(target));
         assertEquals(PortableProfileTransfer.Phase.MOVED, PortableProfileTransfer.inspect(target).phase());

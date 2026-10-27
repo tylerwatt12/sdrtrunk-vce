@@ -1082,7 +1082,10 @@ The graphical workflow follows this order:
 3. For a new installation, require an empty destination, independent source and target roots, the source profile
    lock, and the same filesystem. Transfer the portable `data` folder with an explicit transfer receipt rather than a
    recursive copy. The acknowledgement authorizes this ownership change; it does not assert that VCE verified a backup.
-   The same operating-system lock follows the moved folder into the destination; an occupied destination is refused.
+   The lock file keeps its exact filesystem identity at the destination. Where supported, the operating-system lock
+   stays held across the rename. Windows briefly closes the inner lock for the atomic rename, then reacquires that
+   exact moved lock file and checks ownership before activation. A competing owner or changed source stops activation
+   and preserves the pending transfer; an occupied destination is refused.
    An existing active profile stays at its current location.
 4. For settings-only, extract admitted configuration, required metadata, and exact configuration relationships into
    a private working database with empty history. Do not copy, hash, count, delete individual rows from, or physically
@@ -1189,7 +1192,8 @@ every retained format from the Alpha 12 format-2 baseline and exercise:
 - early graphical acknowledgement/history choices before any whole-source copy, digest, scan, or history count;
 - settings-only extraction from every supported source, exact configuration preservation, and empty current history
   without whole-history copying, hashing, counting, row deletion, or physical-integrity scans;
-- same-filesystem folder transfer with continuous profile-lock ownership, external-path preservation, and refusal of cross-filesystem,
+- same-filesystem folder transfer with stable lock-file identity, platform-appropriate ownership checks, external-path
+  preservation, and refusal of cross-filesystem,
   overlapping, in-use, symbolic-link, or nonempty destination profiles before transfer;
 - transfer interruption and failure recovery, including preservation of Managed audio/catalog, Classic audio, vault,
   libraries, optional modules, and existing Recording Tuner files; and
