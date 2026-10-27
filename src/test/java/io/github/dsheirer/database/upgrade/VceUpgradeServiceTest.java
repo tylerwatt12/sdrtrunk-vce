@@ -69,7 +69,7 @@ class VceUpgradeServiceTest
             assertEquals(target.resolve("recordings").toString(), directory(target, "directory.recording"));
             assertEquals(target.resolve("recordings-managed").toString(), directory(target, "directory.recording.managed"));
             assertEquals(external.toString(), directory(target, "directory.streaming"));
-            assertTrue(result.migration().helperOutput().contains("old history was not copied, counted or scanned"));
+            assertTrue(result.migration().helperOutput().contains("Source history was not copied, counted or scanned"));
             assertTrue(progress.stream().anyMatch(label -> label.contains("without copying saved Activity")));
             assertFalse(VceUpgradeService.isPending(target));
             assertFalse(Files.exists(database(target).getParent().resolve("backups")));

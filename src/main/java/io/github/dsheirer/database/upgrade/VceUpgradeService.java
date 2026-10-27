@@ -1,6 +1,7 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.database.upgrade;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.InitialAdminSetup;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
@@ -34,6 +35,8 @@ import java.util.UUID;
  */
 public final class VceUpgradeService
 {
+    private static final ObjectMapper REPORT_JSON = new ObjectMapper();
+    private static final int MAX_INTENT_BYTES = 2 * 1024 * 1024;
     public record Result(ApplicationMigrationService.MigrationResult migration, PortableDataRootLock lock) {}
     private VceUpgradeService() {}
     @FunctionalInterface interface PhaseObserver { void phase(String phase) throws IOException; }
@@ -156,8 +159,11 @@ public final class VceUpgradeService
             Path work = validatedWork(target, intent);
             Path prepared = SdrTrunkDatabasePath.getDatabasePath(work);
             String phase = intent.getProperty("phase");
-            DatabaseMigrationChain.PreflightReport sourcePlan = null;
-            String details = "";
+            SavedPlan savedPlan = savedSourcePlan(intent);
+            DatabaseMigrationChain.PreflightReport sourcePlan = savedPlan.plan();
+            String details = intent.getProperty("helperReport", "");
+            boolean interruptedFullReport = content == MigrationContent.FULL && details.isBlank() &&
+                Boolean.parseBoolean(intent.getProperty("fullAttemptStarted", "false"));
             if("PREPARED".equals(phase) && content == MigrationContent.CONFIGURATION_ONLY &&
                 (!transferred || PortableProfileTransfer.inspect(target).currentRoot().equals(source)) &&
                 !sourceUnchanged(source, intent))
@@ -176,6 +182,10 @@ public final class VceUpgradeService
                 requireSpace(target.getParent(), 5L * 1024 * 1024 * 1024);
                 sourcePlan = ApplicationMigrationService.readStartupPlan(SdrTrunkDatabasePath.getDatabasePath(source))
                     .withContent(content);
+                intent.setProperty("sourcePlan", REPORT_JSON.writeValueAsString(sourcePlan));
+                intent.setProperty("sourceVersion", Integer.toString(sourcePlan.source().version()));
+                intent.setProperty("sourceMarkerPresent", Boolean.toString(sourcePlan.source().markerPresent()));
+                writeIntent(intentPath(target), intent);
                 if(content == MigrationContent.FULL)
                 {
                     long workspace = sourcePlan.source().version() == sourcePlan.target().version() ?
@@ -216,6 +226,7 @@ public final class VceUpgradeService
                 saveIntent(target, intent);
                 phase = "PREPARED";
             }
+            boolean originalPlanKnown = sourcePlan != null;
             if(transferred && "PREPARED".equals(phase))
             {
                 progress.update("Moving the complete VCE data folder, including recordings");
@@ -230,11 +241,15 @@ public final class VceUpgradeService
             if(!"COMMITTED".equals(phase))
             {
                 if(transferred) transfer.beginActivation();
+                if(content == MigrationContent.FULL)
+                {
+                    intent.setProperty("fullAttemptStarted", "true");
+                    writeIntent(intentPath(target), intent);
+                }
                 if(content == MigrationContent.CONFIGURATION_ONLY)
                 {
-                    progress.update("Installing the prepared settings with empty Activity");
-                    installSettings(target, work, intent);
-                    details = Files.readString(work.resolve("report.txt"));
+                    installSettings(target, work, intent, progress);
+                    details = preparedReport(work, details);
                 }
                 else if(transferred)
                 {
@@ -246,18 +261,31 @@ public final class VceUpgradeService
                 else
                 {
                     var result = new ApplicationMigrationService().migrateCurrent(target, false, MigrationContent.FULL, progress);
-                    sourcePlan = result.sourcePlan(); details = result.helperOutput();
+                    if(sourcePlan == null) sourcePlan = result.sourcePlan();
+                    details = result.helperOutput();
                 }
+                if(interruptedFullReport && originalPlanKnown) details = interruptedReport(sourcePlan) + details;
                 SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database);
+                intent.setProperty("helperReport", details);
                 intent.setProperty("phase", "COMMITTED");
                 saveIntent(target, intent);
             }
             if(sourcePlan == null) sourcePlan = ApplicationMigrationService.readStartupPlan(database).withContent(content);
+            if(content == MigrationContent.FULL)
+            {
+                if(originalPlanKnown && details.isBlank()) details = interruptedReport(sourcePlan);
+                if(!originalPlanKnown)
+                    details = "WARNING: The original source plan is unavailable. The database format reported by this retry " +
+                        "describes the current profile. " + (details.isBlank() ?
+                        "Exact completion counts from the earlier attempt are unavailable.\n" : "Any retained report follows.\n") + details;
+            }
+            if(!savedPlan.warning().isBlank()) details = savedPlan.warning() + "\n" + details;
             if(transfer != null && transfer.phase() != PortableProfileTransfer.Phase.COMMITTED) transfer.markCommitted();
             String completed = details + "\nBackup: operator confirmed a separate complete installation backup.\n" +
                 (transferred ? "The complete portable data folder, including recordings and their catalog, was transferred.\n" : "") +
                 (content == MigrationContent.CONFIGURATION_ONLY ?
-                    "Saved Activity was omitted during extraction; the old history was not copied, counted or scanned.\n" : "");
+                    "RESET saved Activity and statistics: excluded by your settings-only choice.\n" +
+                    "Source history was not copied, counted or scanned.\n" : "");
             try
             {
                 deleteTree(work);
@@ -321,7 +349,8 @@ public final class VceUpgradeService
         }
     }
 
-    private static void installSettings(Path target, Path work, Properties intent) throws IOException, SQLException
+    private static void installSettings(Path target, Path work, Properties intent,
+                                        ApplicationMigrationService.ProgressListener progress) throws IOException, SQLException
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(target);
         Path prepared = SdrTrunkDatabasePath.getDatabasePath(work);
@@ -330,17 +359,21 @@ public final class VceUpgradeService
         String phase = intent.getProperty("phase");
         if("PREPARED".equals(phase))
         {
-            finishSqlite(database);
-            if(Files.exists(ActivityDatabasePath.forConfiguration(database))) finishSqlite(ActivityDatabasePath.forConfiguration(database));
+            // Checkpointing can change the original main/WAL even when no settings change. Persist ownership
+            // of that housekeeping first, so a retry cannot mistake our own work for a changed source.
             setPhase(target, intent, "SAVE_CONFIGURATION"); phase = "SAVE_CONFIGURATION";
         }
+        progress.update("Installing the prepared settings with empty Activity");
         if("SAVE_CONFIGURATION".equals(phase))
         {
+            if(Files.exists(database, LinkOption.NOFOLLOW_LINKS)) finishSqlite(database);
             moveBundle(database, original);
             setPhase(target, intent, "SAVE_ACTIVITY"); phase = "SAVE_ACTIVITY";
         }
         if("SAVE_ACTIVITY".equals(phase))
         {
+            if(Files.exists(ActivityDatabasePath.forConfiguration(database), LinkOption.NOFOLLOW_LINKS))
+                finishSqlite(ActivityDatabasePath.forConfiguration(database));
             moveBundle(ActivityDatabasePath.forConfiguration(database), ActivityDatabasePath.forConfiguration(original));
             setPhase(target, intent, "INSTALL_CONFIGURATION"); phase = "INSTALL_CONFIGURATION";
         }
@@ -387,6 +420,24 @@ public final class VceUpgradeService
     {
         return runMigrator(new String[]{database.toString(), source.toString(), target.toString(),
             "--complete-profile-copy", "--configuration-only"});
+    }
+
+    private static String preparedReport(Path work, String cached)
+    {
+        Path file = work.resolve("report.txt");
+        try
+        {
+            if(!Files.isSymbolicLink(file) && Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) &&
+                Files.size(file) <= MAX_INTENT_BYTES)
+            {
+                String report = Files.readString(file);
+                if(!report.isBlank()) return report;
+            }
+        }
+        catch(IOException | SecurityException unavailableReport) { /* Optional reporting cannot block pair activation. */ }
+        return cached.isBlank() ?
+            "WARNING: The earlier detailed settings update report is unavailable. Exact completion counts are unavailable.\n" :
+            "WARNING: The temporary settings update report is unavailable. The saved completion report follows.\n" + cached;
     }
 
     private static String runMigrator(String[] arguments) throws IOException
@@ -466,11 +517,66 @@ public final class VceUpgradeService
         return target.resolveSibling("." + target.getFileName() + ".vce-upgrade").resolve("intent.properties");
     }
 
+    /** Reporting data never authorizes a migration; the database is still inspected under its owned lock. */
+    private record SavedPlan(DatabaseMigrationChain.PreflightReport plan, String warning) {}
+
+    private static SavedPlan savedSourcePlan(Properties intent)
+    {
+        String document = intent.getProperty("sourcePlan");
+        if(document == null && intent.getProperty("sourceVersion") == null) return new SavedPlan(null, "");
+        try
+        {
+            var plan = REPORT_JSON.readValue(document, DatabaseMigrationChain.PreflightReport.class);
+            if(plan.content() != MigrationContent.valueOf(intent.getProperty("content")) ||
+                !DatabaseFormatCatalog.requireVersion(plan.source().version()).equals(plan.source().descriptor()) ||
+                !DatabaseFormatCatalog.requireVersion(plan.target().version()).equals(plan.target()))
+                throw new IllegalArgumentException();
+            return new SavedPlan(plan, "");
+        }
+        catch(IOException | SQLException | RuntimeException unavailableReport)
+        {
+            // Optional report corruption cannot prevent receipt- and database-validated recovery.
+            String warning = "WARNING: The original detailed update plan is unavailable. " +
+                "Exact completed-step counts cannot be recovered from that plan.";
+            try
+            {
+                int version = Integer.parseInt(intent.getProperty("sourceVersion"));
+                String marker = intent.getProperty("sourceMarkerPresent");
+                if(!"true".equals(marker) && !"false".equals(marker)) throw new IllegalArgumentException();
+                var source = new DatabaseFormatCatalog.DetectedFormat(DatabaseFormatCatalog.requireVersion(version),
+                    Boolean.parseBoolean(marker));
+                var plan = DatabaseMigrationChain.plan(source)
+                    .withContent(MigrationContent.valueOf(intent.getProperty("content")));
+                return new SavedPlan(plan, warning + " The planned changes for the original version are shown instead.");
+            }
+            catch(SQLException | RuntimeException unavailableSource)
+            {
+                return new SavedPlan(null, warning + " The original source format is also unavailable; " +
+                    "the database format shown by this retry describes the current profile.");
+            }
+        }
+    }
+
+    private static String interruptedReport(DatabaseMigrationChain.PreflightReport original)
+    {
+        StringBuilder report = new StringBuilder("WARNING: An earlier attempt stopped before its completion report was saved. " +
+            "Its exact completed-step counts are unavailable. The original planned changes are retained below.\n");
+        report.append("Original migration plan: format ").append(original.source().version()).append(" [")
+            .append(original.source().id()).append("] -> format ").append(original.target().version()).append(" [")
+            .append(original.target().id()).append("]\n");
+        original.steps().stream().flatMap(step -> step.effects().stream())
+            .filter(effect -> effect.kind() == DatabaseMigrationEffect.Kind.RESET ||
+                effect.kind() == DatabaseMigrationEffect.Kind.DROP || effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT)
+            .map(effect -> "Planned " + effect.kind() + ": " + effect.subject() + ". " + effect.detail())
+            .distinct().forEach(line -> report.append(line).append('\n'));
+        return report.append("Any report below describes the present retry.\n\n").toString();
+    }
+
     private static Properties readIntent(Path target) throws IOException
     {
         Path file = intentPath(target);
         if(Files.isSymbolicLink(file.getParent()) || Files.isSymbolicLink(file) ||
-            !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > 32768)
+            !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS) || Files.size(file) > MAX_INTENT_BYTES)
             throw new IOException("The pending VCE upgrade record is unavailable. Preserve both installations.");
         Properties intent = new Properties();
         try(var input = Files.newInputStream(file)) { intent.load(input); }
@@ -557,6 +663,7 @@ public final class VceUpgradeService
         {
             intent.store(output, "VCE upgrade activation"); bytes = output.toByteArray();
         }
+        if(bytes.length > MAX_INTENT_BYTES) throw new IOException("The VCE update report exceeds its safe limit. Preserve the pending upgrade.");
         try
         {
             try(FileChannel channel = FileChannel.open(temporary, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE))
