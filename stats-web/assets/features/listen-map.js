@@ -180,8 +180,11 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   radioSystemLink = (_reference, label) => label, guideMode = false }) {
   const root = node('div', 'listen-map-workspace data-workspace');
   const toolbar = node('div', 'listen-map-toolbar ui-toolbar');
-  const status = node('span', 'listen-map-status', 'Loading locations…');
+  const status = node('span', 'listen-map-status ui-form-state');
   status.setAttribute('role', 'status');
+  status.hidden = true;
+  const feedback = node('div', 'ui-feedback ui-feedback-loading', 'Loading locations…');
+  feedback.setAttribute('role', 'status');
   const refresh = node('button', 'ui-button ui-button-secondary', 'Refresh');
   refresh.type = 'button';
   refresh.prepend(iconGlyph('icon-refresh'));
@@ -281,7 +284,7 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
   const details = node('div', 'listen-map-details');
   sidebar.append(sidebarTitle, catalogControls, list, selectedActions, details);
   layout.append(mapPanel, sidebar);
-  root.append(toolbar, layout);
+  root.append(toolbar, feedback, layout);
 
   let snapshot = { entities: [], generated_at_ms: 0, dropped_observations: 0, evicted_entities: 0 };
   let selectedId = '';
@@ -631,10 +634,17 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
     const currentGeneration = generation;
     inFlight = true;
     refresh.disabled = true;
+    if (!feedback.hidden) {
+      feedback.className = 'ui-feedback ui-feedback-loading';
+      feedback.setAttribute('role', 'status');
+      feedback.textContent = 'Loading locations…';
+    }
     try {
       const next = normalizeSnapshot(await fetchSnapshot());
       if (closed || suspended || currentGeneration !== generation) return;
       reconcileSnapshot(next);
+      feedback.hidden = true;
+      status.hidden = false;
       const entities = catalogEntities();
       if (!initialized && entities.length) {
         initialized = true;
@@ -644,8 +654,13 @@ function createListenMap({ node, iconGlyph, iconButton, fetchSnapshot, iconUrl,
       }
       renderSelection();
       scheduleDraw();
-    } catch (error) {
-      if (!closed && !suspended && currentGeneration === generation) status.textContent = error.message || 'Map locations are unavailable.';
+    } catch {
+      if (!closed && !suspended && currentGeneration === generation) {
+        feedback.className = 'ui-feedback ui-feedback-error';
+        feedback.setAttribute('role', 'alert');
+        feedback.textContent = 'Map locations could not be loaded. Select Refresh to try again.';
+        feedback.hidden = false;
+      }
     } finally {
       inFlight = false;
       if (!closed) refresh.disabled = false;

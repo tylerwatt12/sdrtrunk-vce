@@ -47,7 +47,12 @@ test('Scan List member filtering survives a membership change without rebuilding
   await expect(page.locator('.alias-filter-result-count')).toHaveText('1 matching alias');
   await page.getByRole('checkbox', { name: 'Select Fire Dispatch', exact: true }).check();
   await page.getByRole('button', { name: 'Remove from Public Safety', exact: true }).click();
-  const dialog = page.getByRole('dialog', { name: 'Remove aliases · Public Safety', exact: true });
+  const dialog = page.getByRole('alertdialog', { name: 'Remove aliases · Public Safety', exact: true });
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+  await page.getByRole('button', { name: 'Remove from Public Safety', exact: true }).click();
   await dialog.getByRole('button', { name: 'Remove 1 Aliases', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(writes).toEqual([{ edit_revision: 'members-v1', operation: 'remove', alias_ids: [101] }]);

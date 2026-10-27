@@ -356,9 +356,6 @@
   z-index: 2;
   top: calc(100% + 2px);
   left: 0;
-  padding: var(--space-1) var(--space-2);
-  background: var(--surface);
-  border-radius: var(--radius-compact);
 }
 
 .tuners-center-host[hidden] {
@@ -708,11 +705,6 @@
 
 .tuners-setting-actions {
   justify-content: flex-start;
-}
-
-.tuners-setting-message:not(:empty) {
-  color: var(--danger);
-  font-size: var(--font-size-meta);
 }
 
 .tuners-gain-field {

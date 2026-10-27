@@ -254,6 +254,27 @@ test('unchanged refresh preserves history focus without repeating the live statu
   await expect.poll(() => page.evaluate(() => window.__mapStatusMutations)).toBe(0);
 });
 
+test('map refresh failure keeps shared error feedback until Refresh succeeds', async ({ page }) => {
+  await openMap(page);
+  await expect(page.locator('.listen-map-status')).toHaveText('1 track · 1 shown');
+  const feedback = page.locator('.listen-map-workspace > .ui-feedback');
+  await expect(feedback).toBeHidden();
+  await page.route('**/api/v1/listen/map', (route) => route.fulfill({
+    status: 503, json: { error: { message: 'Unavailable' } }
+  }));
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(feedback).toHaveClass(/ui-feedback-error/);
+  await expect(feedback).toHaveAttribute('role', 'alert');
+  await expect(feedback).toHaveText('Map locations could not be loaded. Select Refresh to try again.');
+  await expect(feedback).toBeVisible();
+  await page.getByRole('button', { name: 'Show all', exact: true }).click();
+  await expect(feedback).toBeVisible();
+  await page.route('**/api/v1/listen/map', (route) => route.fulfill({ json: { data: snapshot } }));
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(feedback).toBeHidden();
+  await expect(page.locator('.listen-map-status')).toHaveText('1 track · 1 shown');
+});
+
 test('follow recenters on each newer receiver observation', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   let current = snapshot;

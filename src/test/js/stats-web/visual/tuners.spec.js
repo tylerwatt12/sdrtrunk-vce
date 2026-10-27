@@ -575,7 +575,11 @@ test('boolean settings auto-save without flashing actions and allow failure reco
   await form.locator('.ui-toggle').click();
   await saveStarted;
   await expect(automaticPpm).toBeChecked();
-  await expect(form.locator('.tuners-setting-message')).toHaveText('Saving…');
+  const feedback = form.locator('.tuners-setting-message');
+  await expect(feedback).toHaveText('Saving…');
+  await expect(feedback).toHaveClass(/ui-feedback-loading/);
+  await expect(feedback).toHaveAttribute('role', 'status');
+  const savingColor = await feedback.evaluate((element) => getComputedStyle(element).color);
   await expect(actions).toBeHidden();
   await page.waitForTimeout(100);
   await expect(actions).toBeHidden();
@@ -583,12 +587,16 @@ test('boolean settings auto-save without flashing actions and allow failure reco
   state.pauseSetting = null;
   releaseSave();
   await expect(form.getByText(/Channels won.t fit/)).toBeVisible();
+  await expect(feedback).toHaveClass(/ui-feedback-error/);
+  await expect(feedback).toHaveAttribute('role', 'alert');
+  expect(await feedback.evaluate((element) => getComputedStyle(element).color)).not.toBe(savingColor);
   await expect(form.getByRole('button', { name: 'Save' })).toBeVisible();
   await expect(form.getByRole('button', { name: 'Discard' })).toBeVisible();
 
   await form.getByRole('button', { name: 'Discard' }).click();
   await expect(automaticPpm).not.toBeChecked();
   await expect(form.locator('.ui-toggle-state')).toHaveText('Off');
+  await expect(feedback).toBeHidden();
   await expect(actions).toBeHidden();
 
   await form.locator('.ui-toggle').click();
@@ -902,7 +910,7 @@ test('segmented Setup mode stops channels once and offers one restore attempt', 
   await expect(mode.getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'true');
   await expect(setup).toHaveAttribute('data-ui-hint', 'Keep tuner on for adjustments; active channels stop');
   await setup.click();
-  const stop = page.getByRole('dialog', { name: 'Enter Setup' });
+  const stop = page.getByRole('alertdialog', { name: 'Enter Setup' });
   await expect(stop).toContainText('2 active channels will stop');
   await expect(stop).toContainText('unavailable to channels until you return to Live');
   await stop.getByRole('button', { name: 'Enter Setup', exact: true }).click();
@@ -986,8 +994,13 @@ test('segmented Disabled mode confirms hardware shutdown', async ({ page }) => {
 
   const mode = page.getByRole('group', { name: 'Tuner mode' });
   await mode.getByRole('button', { name: 'Disabled' }).click();
-  const confirmation = page.getByRole('dialog', { name: 'Disable tuner' });
+  const confirmation = page.getByRole('alertdialog', { name: 'Disable tuner' });
   await expect(confirmation).toContainText('The tuner hardware will also stop');
+  await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(confirmation).toBeHidden();
+  expect(mutations.filter((mutation) => mutation.type === 'state')).toHaveLength(0);
+  await mode.getByRole('button', { name: 'Disabled' }).click();
   await confirmation.getByRole('button', { name: 'Disable tuner', exact: true }).click();
   await expect(confirmation).toBeHidden();
   await expect(mode.getByRole('button', { name: 'Disabled' })).toHaveAttribute('aria-pressed', 'true');
@@ -1007,8 +1020,9 @@ test('Go live without resuming explains and clears the stopped-channel choice', 
   const action = page.getByRole('group', { name: 'Tuner mode' })
     .getByRole('button', { name: 'Live' });
   await action.click();
-  const confirmation = page.getByRole('dialog', { name: 'Go live without resuming' });
+  const confirmation = page.getByRole('alertdialog', { name: 'Go live without resuming' });
   await expect(confirmation).toContainText('will no longer remember them for the Resume action');
+  await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
   await confirmation.getByRole('button', { name: 'Go live without resuming', exact: true }).click();
   await expect(confirmation).toBeHidden();
   await expect(page.getByRole('group', { name: 'Tuner mode' })
@@ -1084,9 +1098,14 @@ test('recording removal closes its busy modal and keeps the WAV file', async ({ 
   await mockTuners(page, mutations, { tuners: [recording] });
   await page.goto('/app.html?view=tuners');
   await page.locator('#selected-tuner-remove').click();
-  const dialog = page.getByRole('dialog', { name: 'Remove recording tuner' });
+  const dialog = page.getByRole('alertdialog', { name: 'Remove recording tuner' });
   await expect(dialog.locator('footer.ui-modal-footer')).toHaveCount(1);
   await expect(dialog.getByText('The WAV file will stay on disk.')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(dialog).toBeHidden();
+  expect(mutations.filter((mutation) => mutation.type === 'remove')).toHaveLength(0);
+  await page.locator('#selected-tuner-remove').click();
   await dialog.getByRole('button', { name: 'Remove recording tuner', exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText('No tuners found')).toBeVisible();

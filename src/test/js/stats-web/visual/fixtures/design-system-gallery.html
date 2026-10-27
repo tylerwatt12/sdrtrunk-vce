@@ -576,9 +576,30 @@
             <span class="ui-field-label">Destination</span>
             <button class="ui-button ui-button-secondary activity-filter-picker-trigger" id="visual-activity-destination-trigger" popovertarget="visual-activity-destination-popover" type="button"><svg aria-hidden="true"><use href="#visual-icon-search"></use></svg><span class="activity-filter-picker-label">Any destination</span></button>
           </div>
-          <button class="ui-button ui-button-secondary activity-filter-more-trigger" id="visual-activity-more-trigger" popovertarget="visual-activity-more-panel" type="button"><svg aria-hidden="true"><use href="#visual-icon-filter"></use></svg><span>Filters</span></button>
+          <button class="ui-button ui-button-secondary activity-filter-more-trigger" id="visual-activity-more-trigger" type="button"><svg aria-hidden="true"><use href="#visual-icon-filter"></use></svg><span>Filters</span></button>
           <div class="activity-filter-primary-actions"><button class="ui-button ui-button-primary" type="submit">Apply filters</button></div>
         </div>
+    <div class="activity-filter-more-panel" id="visual-activity-more-panel">
+      <section class="activity-filter-group">
+        <h3>Scope</h3>
+        <div class="activity-filter-grid">
+          <label class="ui-field activity-filter-field"><span class="ui-field-label">Channel / site</span><span class="ui-select-frame"><select class="ui-select"><option>Any channel or site</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
+        </div>
+      </section>
+      <section class="activity-filter-group">
+        <h3>Event details</h3>
+        <div class="activity-filter-grid">
+          <label class="ui-field activity-filter-field"><span class="ui-field-label">Encryption</span><span class="ui-select-frame"><select class="ui-select"><option>Encrypted only</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
+          <label class="ui-field activity-filter-field"><span class="ui-field-label">Event subtype</span><span class="ui-select-frame"><select class="ui-select"><option>All event subtypes</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
+        </div>
+      </section>
+      <section class="activity-filter-group activity-filter-group-technical">
+        <h3>Technical</h3>
+        <div class="activity-filter-grid">
+          <label class="ui-field activity-filter-field"><span class="ui-field-label">Exact frequency</span><span class="ui-select-frame"><select class="ui-select"><option>Any observed frequency</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
+        </div>
+      </section>
+    </div>
         <div class="activity-filter-chips" aria-label="Active filters">
           <button class="ui-button ui-button-secondary activity-filter-chip" type="button"><span class="activity-filter-chip-label">Source:</span><span class="activity-filter-chip-value">2808137 · Engine 12 Portable — Northside Operations</span><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
           <button class="ui-button ui-button-secondary activity-filter-chip" type="button"><span class="activity-filter-chip-label">Destination:</span><span class="activity-filter-chip-value">56131 · CPD D3 DISP — Downtown Dispatch</span><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
@@ -616,32 +637,7 @@
       <div class="activity-identity-picker-footer"><button class="link-button activity-identity-picker-clear" type="button">Any destination</button><p class="ui-field-detail activity-identity-status">4 matching identities</p></div>
     </div>
 
-    <div class="ui-popover activity-filter-more-panel" id="visual-activity-more-panel" popover="auto" role="dialog" aria-label="Activity filters">
-      <div class="activity-filter-more-content">
-      <section class="activity-filter-group">
-        <h3>Scope</h3>
-        <div class="activity-filter-grid">
-          <label class="ui-field activity-filter-field"><span class="ui-field-label">Channel / site</span><span class="ui-select-frame"><select class="ui-select"><option>Any channel or site</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
-        </div>
-      </section>
-      <section class="activity-filter-group">
-        <h3>Event details</h3>
-        <div class="activity-filter-grid">
-          <label class="ui-field activity-filter-field"><span class="ui-field-label">Encryption</span><span class="ui-select-frame"><select class="ui-select"><option>Encrypted only</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
-          <label class="ui-field activity-filter-field"><span class="ui-field-label">Event subtype</span><span class="ui-select-frame"><select class="ui-select"><option>All event subtypes</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
-        </div>
-      </section>
-      <section class="activity-filter-group activity-filter-group-technical">
-        <h3>Technical</h3>
-        <div class="activity-filter-grid">
-          <label class="ui-field activity-filter-field"><span class="ui-field-label">Exact frequency</span><span class="ui-select-frame"><select class="ui-select"><option>Any observed frequency</option></select><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"></path></svg></span></label>
-        </div>
-      </section>
-      </div>
-      <footer class="activity-filter-more-footer">
-        <button class="ui-button ui-button-primary activity-filter-more-done" type="button" popovertarget="visual-activity-more-panel" popovertargetaction="hide">Done</button>
-      </footer>
-    </div>
+
   </main>
 
   <div class="visual-health-alert-modal-example">
@@ -1247,7 +1243,7 @@
                   <span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase 0.00001 MHz place"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease 0.00001 MHz place"></button></span>
                   <span class="tuners-frequency-unit">MHz</span>
                 </div></div></div>
-                <div class="tuners-setting-message" role="status"></div>
+                <div class="tuners-setting-message ui-form-state" role="status" hidden></div>
               </div>
         </div>
         <div class="spectrum-browse-command-cluster">
@@ -1354,7 +1350,7 @@
         <div class="tuners-readouts" data-count="4">
           <div class="tuners-readout tuners-channel-readout"><span class="tuners-readout-label">Active channels</span><strong class="tuners-readout-value">0</strong></div>
           <div class="tuners-common-sample tuners-readout"><form class="tuners-setting"><label class="ui-field"><span>Sample rate</span><span class="ui-select-frame"><select class="ui-select" aria-label="Sample rate"><option>2.4 MHz</option><option>2.048 MHz</option><option>1.024 MHz</option></select><svg aria-hidden="true"><use href="#visual-icon-chevron"></use></svg></span></label></form></div>
-          <div class="tuners-center-host tuners-readout tuners-readout-center"><div class="tuners-center-frequency" role="group" aria-label="Center frequency" aria-disabled="false" tabindex="0"><span class="tuners-center-label tuners-readout-label">Center frequency</span><div class="tuners-center-value"><div class="tuners-frequency-digits"><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">1</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">5</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">5</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-decimal">.</span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">8</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">5</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-unit">MHz</span></div></div><div class="tuners-setting-message" role="status"></div></div></div>
+          <div class="tuners-center-host tuners-readout tuners-readout-center"><div class="tuners-center-frequency" role="group" aria-label="Center frequency" aria-disabled="false" tabindex="0"><span class="tuners-center-label tuners-readout-label">Center frequency</span><div class="tuners-center-value"><div class="tuners-frequency-digits"><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">1</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">5</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">5</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-decimal">.</span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">8</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">5</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-digit"><button class="tuners-frequency-step tuners-frequency-step-up" type="button" tabindex="-1" aria-label="Increase digit"></button><span aria-hidden="true">0</span><button class="tuners-frequency-step tuners-frequency-step-down" type="button" tabindex="-1" aria-label="Decrease digit"></button></span><span class="tuners-frequency-unit">MHz</span></div></div><div class="tuners-setting-message ui-form-state" role="status" hidden></div></div></div>
           <div class="tuners-readout tuners-lock-readout"><span class="tuners-readout-label">Tuning</span><div class="tuners-center-lock"><form class="tuners-setting"><div class="ui-toggle-field tuners-center-lock-field"><span class="ui-toggle-copy"><strong>Lock center</strong></span><label class="ui-toggle"><input type="checkbox"><span class="ui-toggle-track"><span class="ui-toggle-thumb"></span></span><span class="ui-toggle-state">Off</span></label></div></form></div></div>
         </div>
         <div class="tuners-recovery" hidden></div>

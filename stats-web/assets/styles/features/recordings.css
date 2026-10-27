@@ -32,59 +32,22 @@
 .recordings-search-syntax p { margin: var(--space-2) 0 0; }
 .recordings-search-help, .recordings-dialog-help { margin: 0; color: var(--muted); font-size: var(--font-size-meta); }
 .recordings-search-help[hidden] { display: none; }
-.recordings-interest, .recordings-picker-button, .recordings-primary-action,
-.recordings-secondary-action, .recordings-text-action, .recordings-card-action,
-.recordings-selection-chip, .recordings-filter-chip, .recordings-tab, .recordings-load-more,
-.recordings-call-tone {
-  font: inherit;
-  color: var(--ink);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-control);
-  padding: var(--space-2) var(--space-3);
-  min-height: var(--control-height-compact);
-  background: var(--surface);
-  text-decoration: none;
-  cursor: pointer;
-}
-.recordings-primary-action, .recordings-secondary-action { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); font-weight: var(--font-weight-control); }
-.recordings-primary-action { background: var(--primary-control); color: var(--primary-control-ink); border-color: var(--primary-control); }
-.recordings-primary-action:hover:not(:disabled) { background: var(--primary-control-hover); border-color: var(--primary-control-hover); }
-.recordings-interest { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; text-align: left; gap: var(--space-3); padding: var(--space-3); border-color: var(--interactive-border); box-shadow: var(--shadow-button); }
-.recordings-interest-icon { display: inline-flex; color: var(--accent); }
+.recordings-interest { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; text-align: left; gap: var(--space-3); }
 .recordings-interest-copy { display: grid; gap: var(--space-1); min-width: 0; }
 .recordings-interest-copy strong { font-weight: var(--font-weight-control); }
 .recordings-interest-copy small { color: var(--muted); font-size: var(--font-size-meta); }
-.recordings-interest-state { border: 1px solid var(--interactive-border); border-radius: var(--radius-pill); padding: var(--space-1) var(--space-2); color: var(--muted); background: var(--surface-2); font-size: var(--font-size-meta); font-weight: var(--font-weight-control); }
-.recordings-interest[aria-pressed="true"], .recordings-tab[aria-selected="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-.recordings-interest[aria-pressed="true"] .recordings-interest-state { color: var(--primary-control-ink); background: var(--primary-control); border-color: var(--primary-control); }
-.recordings-interest:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
-.recordings-interest[aria-pressed="true"]:hover { background: color-mix(in srgb, var(--accent) 15%, var(--surface)); }
-.recordings-picker-button { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: var(--space-3); padding: var(--space-2); text-align: left; }
+.recordings-picker-button { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: var(--space-3); text-align: left; }
 .recordings-picker-copy { display: grid; gap: var(--space-1); min-width: 0; flex: 1; }
 .recordings-picker-button small { color: var(--muted); overflow-wrap: anywhere; font-size: var(--font-size-meta); }
 .recordings-picker-chevron { color: var(--muted); font-size: var(--font-size-dialog-title); }
-.recordings-control-icon, .recordings-action-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; }
-.recordings-control-icon svg, .recordings-action-icon svg, .recordings-interest-icon svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.recordings-picker-button > .recordings-control-icon { color: var(--accent); }
-.recordings-interest:focus-visible, .recordings-picker-button:focus-visible,
-.recordings-primary-action:focus-visible, .recordings-secondary-action:focus-visible,
-.recordings-text-action:focus-visible, .recordings-card-action:focus-visible,
-.recordings-selection-chip:focus-visible, .recordings-filter-chip:focus-visible,
-.recordings-tab:focus-visible, .recordings-load-more:focus-visible, .recordings-call-tone:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.recordings-picker-button:hover, .recordings-secondary-action:hover:not(:disabled),
-.recordings-card-action:hover:not(:disabled), .recordings-tab:hover,
-.recordings-load-more:hover:not(:disabled), .recordings-selection-chip:hover,
-.recordings-filter-chip:hover, .recordings-call-tone:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); text-decoration: none; }
-.recordings-text-action:hover { color: var(--accent); background: var(--accent-soft); text-decoration: none; }
 .recordings-filter-count { font-size: var(--font-size-meta); color: var(--muted); }
-.recordings-text-action { min-height: 28px; padding: var(--space-1) var(--space-2); border-color: transparent; background: transparent; color: var(--muted); }
 .recordings-selection-paths:empty { display: none; }
 .recordings-selection-paths { display: grid; gap: var(--space-2); }
 .recordings-selection-paths p { margin: 0; border-left: 2px solid var(--line); padding-left: var(--space-2); color: var(--muted); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
 .recordings-draft-feedback { margin: 0; color: var(--accent); font-size: var(--font-size-meta); }
 .recordings-draft-feedback:empty, .recordings-search-error:empty, .recordings-result-status:empty, .recordings-shared:empty { display: none; }
 .recordings-selected-filters { display: flex; flex-wrap: wrap; min-width: 0; gap: var(--space-2); }
-.recordings-filter-chip, .recordings-selection-chip { font-size: var(--font-size-meta); min-height: 28px; max-width: 100%; text-align: left; overflow-wrap: anywhere; border-radius: var(--radius-segment); padding: var(--space-1) var(--space-2); }
+.recordings-filter-chip, .recordings-selection-chip { max-width: 100%; text-align: left; overflow-wrap: anywhere; }
 .recordings-filter-chip { display: inline-flex; align-items: baseline; flex-wrap: wrap; min-width: 0; gap: var(--space-1) var(--space-2); }
 .recordings-filter-chip-label { flex: 0 1 auto; min-width: 0; max-width: 28ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .recordings-filter-chip-state { color: var(--muted); font-weight: var(--font-weight-control); }
@@ -114,9 +77,7 @@
 .recordings-call-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .recordings-call-time, .recordings-call-protocol, .recordings-call-identity { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
 .recordings-call-time strong { font-weight: var(--font-weight-normal); }
-.recordings-call-actions { display: flex; align-items: center; gap: var(--space-1); }
-.recordings-card-action { display: inline-flex; align-items: center; justify-content: center; width: var(--control-height-compact); height: var(--control-height-compact); padding: var(--space-2); }
-.recordings-card-action svg { width: 16px; height: 16px; flex: none; }
+.recordings-call-actions { --icon-action-size: var(--control-height-compact); display: flex; align-items: center; gap: var(--space-1); }
 .recordings-call-main { min-width: 0; display: grid; gap: var(--space-1); }
 .recordings-call-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
 .recordings-call-title { max-width: 100%; font-size: var(--font-size-body); font-weight: var(--font-weight-heading); overflow-wrap: anywhere; }
@@ -131,7 +92,7 @@
 .recordings-transcript-empty { color: var(--muted); font-size: var(--font-size-meta); }
 .recordings-call-summary { font-size: var(--font-size-meta); color: var(--muted); margin-top: var(--space-2); }
 .recordings-call-summary p { margin: var(--space-2) 0 0; }
-.recordings-call-tone { width: fit-content; background: var(--accent-soft); color: var(--accent); font-size: var(--font-size-meta); }
+.recordings-call-tone { width: fit-content; }
 .read-only-modal.recordings-filters-modal { width: min(740px, calc(100vw - var(--space-5))); }
 .recordings-filter-editor, .recordings-dialog-content { display: grid; min-width: 0; gap: var(--space-4); }
 .recordings-picker-tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
@@ -156,7 +117,7 @@
 .recordings-load-more { margin: var(--space-2) 0 var(--space-2) var(--space-5); }
 .recordings-tone-fields, .recordings-property-fields, .recordings-call-menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
 .recordings-call-menu { display: grid; gap: var(--space-4); }
-.recordings-call-menu-grid .recordings-secondary-action { align-items: center; justify-content: flex-start; text-align: left; min-width: 0; overflow-wrap: anywhere; }
+.recordings-call-action { justify-content: flex-start; text-align: left; min-width: 0; overflow-wrap: anywhere; }
 .recordings-call-menu-grid { align-items: stretch; }
 .recordings-playback-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .recordings-call-action-section { display: grid; gap: var(--space-3); }
@@ -166,7 +127,6 @@
 .recordings-action-description { color: var(--muted); font-size: var(--font-size-meta); font-weight: var(--font-weight-normal); line-height: var(--line-height-body); }
 .recordings-checkbox-label { display: flex; align-items: start; gap: var(--space-2); }
 .recordings-exact-filters > div { margin-top: var(--space-3); }
-.recordings-primary-action:disabled, .recordings-secondary-action:disabled, .recordings-load-more:disabled { opacity: .5; cursor: default; }
 .recordings-admin-body { display: grid; gap: var(--space-4); padding: var(--space-4); }
 
 .recordings-detail {
@@ -413,8 +373,6 @@
   .recordings-picker-tools > select { max-width: none; }
 }
 @media (pointer: coarse) {
-  .recordings-picker-button, .recordings-interest, .recordings-tab,
-  .recordings-load-more, .recordings-primary-action, .recordings-secondary-action,
-  .recordings-card-action { min-height: 44px; }
+  .recordings-call-actions { --icon-action-size: var(--control-height-touch); }
   .recordings-field input { font-size: var(--font-size-subheading); }
 }

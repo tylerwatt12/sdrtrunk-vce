@@ -12,7 +12,6 @@
 
 .listen-map-status {
   flex: 1 1 220px;
-  color: var(--muted);
 }
 
 .listen-map-layout {

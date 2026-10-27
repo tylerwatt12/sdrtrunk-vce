@@ -99,7 +99,7 @@ export function createFilterDisclosure({ node, openReadOnlyModal, form, panel, f
     }
     const apply = node('button', 'ui-button ui-button-primary', applyLabel);
     apply.type = 'button';
-    apply.addEventListener('click', () => { modal?.close(); form.requestSubmit(); });
+    apply.addEventListener('click', () => form.requestSubmit());
     actions.append(cancel, apply);
     sheet.append(node('p', 'ui-field-detail',
       `Closing keeps your choices. ${applyLabel} updates the results.`), sheetFields, actions);

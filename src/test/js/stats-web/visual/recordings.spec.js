@@ -346,7 +346,7 @@ async function openCallDetails(page) {
 }
 
 async function expectCallActionDescriptions(dialog, expectedCount = 11) {
-  const actions = dialog.locator('.recordings-secondary-action');
+  const actions = dialog.locator('.recordings-call-action');
   await expect(actions).toHaveCount(expectedCount);
   const playback = dialog.getByRole('region', { name: 'Playback', exact: true });
   const explore = dialog.getByRole('region', { name: 'Explore this call', exact: true });
@@ -354,7 +354,7 @@ async function expectCallActionDescriptions(dialog, expectedCount = 11) {
     .toHaveAccessibleDescription('View activity and alerts saved for this recorded call.');
   await expect(playback.locator('.recordings-action-title'))
     .toHaveText(['Play once', 'Continue from here', 'Add to queue']);
-  await expect(explore.locator('.recordings-secondary-action')).toHaveCount(expectedCount - 3);
+  await expect(explore.locator('.recordings-call-action')).toHaveCount(expectedCount - 3);
   const playbackBounds = await playback.boundingBox(), exploreBounds = await explore.boundingBox();
   expect(exploreBounds.y).toBeGreaterThanOrEqual(playbackBounds.y + playbackBounds.height);
   for (const action of await actions.all()) {
@@ -990,9 +990,9 @@ for (const theme of ['light']) {
     await expectCallActionDescriptions(actions);
     const targetSearch = actions.getByRole('link', { name: 'Search this talkgroup', exact: true });
     await expect(targetSearch).toBeVisible();
-    await expect(targetSearch).toHaveClass(/recordings-secondary-action/);
+    await expect(targetSearch).toHaveClass(/ui-button-secondary/);
     await expect(targetSearch).toHaveAttribute('href', /talkgroup_identity_key=v1-g-00001-001-1201/);
-    for (const control of await actions.locator('.recordings-secondary-action').all()) {
+    for (const control of await actions.locator('.recordings-call-action').all()) {
       await expect(control.locator('svg')).toHaveCount(1);
     }
     await expect(actions).toHaveScreenshot(`recordings-actions-${theme}.png`, componentScreenshot);
@@ -1014,14 +1014,14 @@ for (const theme of ['light']) {
     await expect(actions).toHaveScreenshot(`recordings-actions-mobile-${theme}.png`, componentScreenshot);
     for (const width of [800, 320]) {
       await page.setViewportSize({ width, height: 844 });
-      const controls = await actions.locator('.recordings-secondary-action').all();
+      const controls = await actions.locator('.recordings-call-action').all();
       for (const control of controls) {
         const bounds = await control.boundingBox();
         expect(bounds.x).toBeGreaterThanOrEqual(0);
         expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
       }
       for (const grid of await actions.locator('.recordings-call-menu-grid').all()) {
-        const gridControls = await grid.locator('.recordings-secondary-action').all();
+        const gridControls = await grid.locator('.recordings-call-action').all();
         const columns = width <= 700 ? 1 : await grid.evaluate(element =>
           element.classList.contains('recordings-playback-grid') ? 3 : 2);
         for (let index = 0; index < gridControls.length; index += columns) {
@@ -1047,6 +1047,19 @@ for (const theme of ['light']) {
         await expect(live).toBeInViewport();
       }
     }
+    await page.keyboard.press('Escape');
+    const touch = await page.context().newCDPSession(page);
+    await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+    await expect.poll(() => page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    await firstCard.scrollIntoViewIfNeeded();
+    for (const control of await firstCard.locator('.recordings-call-actions > button').all()) {
+      const bounds = await control.boundingBox();
+      expect(bounds.width).toBeGreaterThanOrEqual(44);
+      expect(bounds.height).toBeGreaterThanOrEqual(44);
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
+    }
+    await touch.detach();
   });
 }
 
@@ -2047,8 +2060,12 @@ test('recordings accents follow every color scheme in day and night themes', asy
     for (const theme of ['light', 'dark']) for (const scheme of APPEARANCE_SCHEMES) {
       if (theme === 'dark') root.dataset.theme = 'dark'; else delete root.dataset.theme;
       applyThemeHue(scheme.hue, root);
-      const primary = getComputedStyle(document.querySelector('.recordings-primary-action'));
-      const interest = getComputedStyle(document.querySelector('.recordings-interest'));
+      const interestControl = document.querySelector('.recordings-interest');
+      await Promise.all(interestControl.getAnimations()
+        .filter(animation => Number.isFinite(animation.effect.getComputedTiming().endTime))
+        .map(animation => animation.finished));
+      const primary = getComputedStyle(document.querySelector('.recordings-search-actions .ui-button-primary'));
+      const interest = getComputedStyle(interestControl);
       const card = getComputedStyle(document.querySelector('.recordings-call-playing'));
       const duration = getComputedStyle(document.querySelector('.recordings-call-duration'));
       colors.push({ theme, scheme: scheme.name, accent: color('--accent'), primary: color('--primary-control'),

@@ -25,7 +25,7 @@ import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
-import * as browsingWorkflows from './core/browsing-workflows.js?v=1';
+import * as browsingWorkflows from './core/browsing-workflows.js?v=2';
 import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
@@ -40,7 +40,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=60';
+import { createRecordingsFeature } from './features/recordings.js?v=61';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=17';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -98,7 +98,7 @@ const ACTIVITY_IDENTITY_SEARCH_DELAY_MILLISECONDS = 250;
 const ACTIVITY_ACTION_INCLUDE_GRANTS = '__include_grants__';
 const ACTIVITY_ROUTE_KEYS = Object.freeze([
   'activity_range', 'activity_from_ms', 'activity_to_ms', 'activity_action',
-  'activity_event_type', 'activity_encryption', 'activity_include_grants',
+  'activity_event_type', 'activity_has_tones', 'activity_encryption', 'activity_include_grants',
   'activity_configuration_id', 'activity_radio_role', 'activity_group_match',
   'activity_source_identity_key', 'activity_target_identity_key', 'activity_source_id',
   'activity_target_id', 'activity_target_kind', 'activity_frequency_hz', 'activity_lcn',
@@ -2883,12 +2883,6 @@ function bindAnchoredDropdown(trigger, panel, signal = null, options = {}) {
     viewportListeners = null;
   };
   const position = () => {
-    if (options.mobileSheet && window.matchMedia?.('(max-width: 720px)').matches) {
-      panel.style.left = '';
-      panel.style.top = '';
-      panel.style.maxHeight = '';
-      return;
-    }
     const anchorRect = trigger.getBoundingClientRect();
     const visibleViewport = options.viewport?.();
     const viewportLeft = Number(visibleViewport?.offsetLeft) || 0;
@@ -6533,6 +6527,9 @@ function openScanListMemberRemoveModal(scanList) {
     returnFocusSelector: '.scan-list-member-remove'
   });
   if (!modal) return;
+  modal.dialog.setAttribute('role', 'alertdialog');
+  body.firstElementChild.id = `${modal.dialog.getAttribute('aria-labelledby')}-message`;
+  modal.dialog.setAttribute('aria-describedby', body.firstElementChild.id);
   cancel.addEventListener('click', modal.close);
   const workflow = createActionWorkflow({ surface: body, feedback: message, modal });
   remove.addEventListener('click', async () => {
@@ -6547,7 +6544,7 @@ function openScanListMemberRemoveModal(scanList) {
         }) });
     } catch (_) { /* The inline error preserves the selection. */ }
   });
-  modal.focus?.(remove);
+  modal.focus?.(cancel);
 }
 
 function fullScanListMembershipRequest(editRevision, operation, aliasListId = null) {
@@ -8342,7 +8339,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const mapTour = view === 'map';
     const visualizerTour = view === 'network-visualizer';
     const [feature, presentation] = await Promise.all(mapTour ? [
-      import('./features/listen-map.js?v=15'), import('./guides/map-presentation.js?v=1')
+      import('./features/listen-map.js?v=16'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
       import('./features/network-visualizer/index.js?v=61'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
@@ -24539,21 +24536,12 @@ function activityFilterToolbar(context, initialFilters) {
   }
 
   const moreSequence = ++activityFilterControlSequence;
-  const morePanelId = `activity-filter-more-${moreSequence}`;
   const moreTrigger = node('button', 'ui-button ui-button-secondary activity-filter-more-trigger');
-  moreTrigger.type = 'button';
-  moreTrigger.setAttribute('popovertarget', morePanelId);
-  moreTrigger.setAttribute('aria-controls', morePanelId);
-  moreTrigger.setAttribute('aria-haspopup', 'dialog');
-  moreTrigger.setAttribute('aria-expanded', 'false');
+  moreTrigger.id = `activity-filter-more-${moreSequence}-toggle`;
   moreTrigger.append(iconGlyph('icon-filter'), node('span', '', 'Filters'));
   const moreCount = activityMoreFilterCount(initialFilters, capabilities);
   if (moreCount) moreTrigger.append(uiPill(number(moreCount), 'neutral'));
-  const morePanel = node('div', 'ui-popover activity-filter-more-panel');
-  morePanel.id = morePanelId;
-  morePanel.setAttribute('popover', 'auto');
-  morePanel.setAttribute('role', 'dialog');
-  morePanel.setAttribute('aria-label', 'Activity filters');
+  const morePanel = node('div', 'activity-filter-more-panel');
   const eventControls = [eventControl.field, toneControl.field];
   if (encryptionControl) eventControls.push(encryptionControl.field);
   const scopeControls = [];
@@ -24563,25 +24551,11 @@ function activityFilterToolbar(context, initialFilters) {
   if (frequencyInput) technicalControls.push(activityFilterField('Frequency (MHz)', frequencyInput));
   if (lcnInput) technicalControls.push(activityFilterField('LCN', lcnInput));
   if (timeslotControl) technicalControls.push(timeslotControl.field);
-  const moreContent = node('div', 'activity-filter-more-content');
   [activityFilterGroup('Scope', scopeControls),
     activityFilterGroup('Event details', eventControls),
     activityFilterGroup('Technical', technicalControls, 'activity-filter-group-technical')]
-    .filter(Boolean).forEach((group) => moreContent.append(group));
-  const moreFooter = node('div', 'activity-filter-more-footer');
-  const moreDone = node('button', 'ui-button ui-button-primary activity-filter-more-done', 'Done');
-  moreDone.type = 'button';
-  moreDone.addEventListener('click', () => {
-    if (morePanel.matches(':popover-open')) morePanel.hidePopover();
-    moreTrigger.focus();
-  });
-  moreFooter.append(moreDone);
-  morePanel.append(moreContent, moreFooter);
-  morePanel.addEventListener('toggle', (event) => {
-    moreTrigger.setAttribute('aria-expanded', String(event.newState === 'open'));
-  });
-  bindAnchoredDropdown(moreTrigger, morePanel, activeRenderController?.signal, { mobileSheet: true });
-  primary.append(moreTrigger, morePanel);
+    .filter(Boolean).forEach((group) => morePanel.append(group));
+  primary.append(moreTrigger);
 
   const primaryActions = node('div', 'activity-filter-primary-actions');
   const apply = node('button', 'ui-button ui-button-primary', 'Apply filters');
@@ -24608,16 +24582,16 @@ function activityFilterToolbar(context, initialFilters) {
     });
     chipsHost.append(chip);
   });
-  if (chipDefinitions.length) {
-    const clear = node('button', 'link-button activity-filter-clear', 'Clear filters');
-    clear.type = 'button';
-    clear.addEventListener('click', () => {
-      const overrides = Object.fromEntries(ACTIVITY_ROUTE_KEYS.map((key) => [key, null]));
-      overrides.before_id = null;
-      navigateTo(currentHref(overrides));
-    });
-    chipsHost.append(clear);
-  } else chipsHost.hidden = true;
+  const clear = node('button', 'link-button activity-filter-clear', 'Clear filters');
+  clear.type = 'button';
+  clear.hidden = !chipDefinitions.length;
+  clear.addEventListener('click', () => {
+    const overrides = Object.fromEntries(ACTIVITY_ROUTE_KEYS.map((key) => [key, null]));
+    overrides.before_id = null;
+    navigateTo(currentHref(overrides));
+  });
+  chipsHost.append(clear);
+  chipsHost.hidden = !chipDefinitions.length;
 
   const status = node('p', 'activity-filter-error ui-notice ui-notice-danger');
   status.setAttribute('role', 'alert');
@@ -24730,11 +24704,13 @@ function activityFilterToolbar(context, initialFilters) {
     destinationChooser?.close();
     radioSourceChooser?.close();
     radioDestinationChooser?.close();
-    if (morePanel.matches(':popover-open')) morePanel.hidePopover();
     navigateTo(currentHref(activityFilterRouteOverrides(next)));
   });
 
-  form.append(primary, customDates, chipsHost, status);
+  form.append(primary, customDates, morePanel, chipsHost, status);
+  browsingWorkflows.createFilterDisclosure({ node, openReadOnlyModal, form, panel: morePanel,
+    button: moreTrigger, clearAction: clear,
+    returnFocusSelector: `#${moreTrigger.id}`, id: `activity-filter-more-${moreSequence}` });
   return form;
 }
 
@@ -31919,7 +31895,7 @@ async function renderAdminWebDiagnosticLog(renderContext) {
 
 async function renderListenMap() {
   const renderContext = captureRenderContext();
-  const { createListenMap } = await import('./features/listen-map.js?v=15');
+  const { createListenMap } = await import('./features/listen-map.js?v=16');
   if (!renderIsCurrent(renderContext)) return;
   const map = createListenMap({
     node, iconGlyph, iconButton, radioSystemLink,
@@ -32146,8 +32122,9 @@ function tunerCenterFrequencyControl(tuner, setting, usability, callbacks = {}) 
   const valueRow = node('div', 'tuners-center-value');
   valueRow.append(digits);
   controlRow.append(valueRow);
-  const message = node('div', 'tuners-setting-message');
+  const message = node('div', 'tuners-setting-message ui-form-state');
   message.setAttribute('role', 'status');
+  message.hidden = true;
   const positions = [1_000, 100, 10, 1, .1, .01, .001, .0001, .00001];
   let hoverIndex = -1;
   let typingStart = -1;
@@ -32162,13 +32139,15 @@ function tunerCenterFrequencyControl(tuner, setting, usability, callbacks = {}) 
       value = Number(setting.value);
       settingDrafts.delete(key);
       draw();
-      message.textContent = 'Out of range';
+      message.className = 'tuners-setting-message ui-feedback ui-feedback-error';
+      message.setAttribute('role', 'alert');
+      message.textContent = 'Choose a frequency within the tuner’s supported range.';
+      message.hidden = false;
       return;
     }
     saving = true;
     draw();
     digits.setAttribute('aria-busy', 'true');
-    message.textContent = 'Saving…';
     try {
       await saveTunerSetting(tuner, setting, Number(next.toFixed(5)), message);
     } catch (error) {
@@ -32176,7 +32155,10 @@ function tunerCenterFrequencyControl(tuner, setting, usability, callbacks = {}) 
       value = Number(setting.value);
       settingDrafts.delete(key);
       digits.removeAttribute('aria-busy');
-      message.textContent = error.message || 'Could not save';
+      message.className = 'tuners-setting-message ui-feedback ui-feedback-error';
+      message.setAttribute('role', 'alert');
+      message.textContent = error.message || 'Could not save this setting. Try again.';
+      message.hidden = false;
       draw();
     }
   };
@@ -32570,10 +32552,15 @@ async function renderTuners(options = {}) {
   const selectedTuner = () => rows.find((row) => row.id === selectedId) || null;
   async function saveTunerSetting(tuner, setting, value, message = null) {
     const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/${setting.id}`;
-    if (message) message.textContent = 'Saving…';
+    if (message) {
+      message.className = 'tuners-setting-message ui-feedback ui-feedback-loading';
+      message.setAttribute('role', 'status');
+      message.textContent = 'Saving…';
+      message.hidden = false;
+    }
     await requestTunerJson(path, { method: 'PUT', body: { value } });
     settingDrafts.delete(`${tuner.id}:${setting.id}`);
-    if (message) message.textContent = '';
+    if (message) { message.textContent = ''; message.hidden = true; }
     await refresh();
   }
 
@@ -32623,8 +32610,9 @@ async function renderTuners(options = {}) {
       } else if (control && setting.id === 'center_frequency_locked') {
         control.element.classList.add('tuners-center-lock-field');
       }
-      const message = node('div', 'tuners-setting-message');
+      const message = node('div', 'tuners-setting-message ui-form-state');
       message.setAttribute('role', 'status');
+      message.hidden = true;
       const actions = node('div', 'tuners-setting-actions ui-action-row');
       const discard = node('button', 'ui-button ui-button-secondary', 'Discard');
       discard.type = 'button';
@@ -32673,6 +32661,7 @@ async function renderTuners(options = {}) {
         const output = control.element.querySelector('.tuners-gain-value');
         if (output) output.textContent = tunerSettingValue(setting, baseValue);
         message.textContent = '';
+        message.hidden = true;
         booleanSaveFailed = false;
         updateActions();
       });
@@ -32686,7 +32675,10 @@ async function renderTuners(options = {}) {
         try {
           await saveTunerSetting(tuner, setting, actionSetting ? true : control.read(control.input), message);
         } catch (error) {
-          message.textContent = error.message || 'Could not save';
+          message.className = 'tuners-setting-message ui-feedback ui-feedback-error';
+          message.setAttribute('role', 'alert');
+          message.textContent = error.message || 'Could not save this setting. Try again.';
+          message.hidden = false;
           save.disabled = false;
           if (setting.kind === 'boolean') {
             booleanSaveFailed = true;
@@ -32868,23 +32860,20 @@ async function renderTuners(options = {}) {
       id: 'tuner-live-without-resuming', returnFocusSelector: '#selected-tuner-live', className: 'admin-modal'
     });
     if (!modal) return;
+    modal.dialog.setAttribute('role', 'alertdialog');
+    body.firstElementChild.id = `${modal.dialog.getAttribute('aria-labelledby')}-message`;
+    modal.dialog.setAttribute('aria-describedby', body.firstElementChild.id);
+    const workflow = createActionWorkflow({ surface: body, feedback: message, modal });
     cancel.addEventListener('click', modal.close);
     confirm.addEventListener('click', () => {
-      confirm.disabled = true;
-      cancel.disabled = true;
-      modal.setBusy(true);
-      message.textContent = 'Going live…';
-      void changeOperatorState(tuner, 'live').then(() => {
-        modal.setBusy(false);
-        modal.close();
-      }).catch((error) => {
-        message.textContent = error.message || 'Could not go live';
-        confirm.disabled = false;
-        cancel.disabled = false;
-        modal.setBusy(false);
+      void perform(async () => {
+        try {
+          await workflow.run(() => changeOperatorState(tuner, 'live'), { pending: 'Going live…' });
+          modal.close();
+        } catch (_) { /* Shared feedback keeps the confirmation available for retry. */ }
       });
     });
-    modal.focus?.(confirm);
+    modal.focus?.(cancel);
   }
 
   function confirmStateChange(tuner, state, returnFocusSelector) {
@@ -32911,23 +32900,22 @@ async function renderTuners(options = {}) {
       id: 'change-tuner-state', returnFocusSelector, className: 'admin-modal'
     });
     if (!modal) return;
+    modal.dialog.setAttribute('role', 'alertdialog');
+    body.firstElementChild.id = `${modal.dialog.getAttribute('aria-labelledby')}-message`;
+    modal.dialog.setAttribute('aria-describedby', body.firstElementChild.id);
+    const workflow = createActionWorkflow({ surface: body, feedback: message, modal });
     cancel.addEventListener('click', modal.close);
     confirm.addEventListener('click', () => {
-      confirm.disabled = true;
-      cancel.disabled = true;
-      modal.setBusy(true);
-      message.textContent = state === 'setup' ? 'Entering Setup…' : 'Stopping…';
-      perform(() => changeOperatorState(tuner, state).then(() => {
-        modal.setBusy(false);
-        modal.close();
-      }).catch((error) => {
-        message.textContent = error.message || 'Could not change state';
-        confirm.disabled = false;
-        cancel.disabled = false;
-        modal.setBusy(false);
-      }));
+      perform(async () => {
+        try {
+          await workflow.run(() => changeOperatorState(tuner, state), {
+            pending: state === 'setup' ? 'Entering Setup…' : 'Stopping…'
+          });
+          modal.close();
+        } catch (_) { /* Shared feedback keeps the confirmation available for retry. */ }
+      });
     });
-    modal.focus?.(confirm);
+    modal.focus?.(cancel);
   }
 
   function confirmRemoveRecording(tuner) {
@@ -32946,27 +32934,25 @@ async function renderTuners(options = {}) {
       id: 'remove-recording-tuner', returnFocusSelector: '#selected-tuner-remove', className: 'admin-modal'
     });
     if (!modal) return;
+    modal.dialog.setAttribute('role', 'alertdialog');
+    body.firstElementChild.id = `${modal.dialog.getAttribute('aria-labelledby')}-message`;
+    modal.dialog.setAttribute('aria-describedby', body.firstElementChild.id);
+    const workflow = createActionWorkflow({ surface: body, feedback: message, modal });
     cancel.addEventListener('click', modal.close);
     remove.addEventListener('click', () => {
-      remove.disabled = true;
-      cancel.disabled = true;
-      modal.setBusy(true);
-      message.textContent = 'Removing recording tuner…';
-      void requestTunerJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}`, { method: 'DELETE' })
-        .then(async () => {
-          selectedId = '';
-          operationNotice = 'Recording tuner removed';
-          modal.setBusy(false);
+      void perform(async () => {
+        try {
+          await workflow.run(() => requestTunerJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}`,
+            { method: 'DELETE' }), { pending: 'Removing recording tuner…', onSuccess: async () => {
+              selectedId = '';
+              operationNotice = 'Recording tuner removed';
+              await refresh();
+            } });
           modal.close();
-          await refresh();
-        }).catch((error) => {
-          message.textContent = error.message || 'Could not remove the recording tuner.';
-          remove.disabled = false;
-          cancel.disabled = false;
-          modal.setBusy(false);
-        });
+        } catch (_) { /* Shared feedback keeps the confirmation available for retry. */ }
+      });
     });
-    modal.focus?.(remove);
+    modal.focus?.(cancel);
   }
 
   async function editNickname(tuner) {
@@ -36097,7 +36083,7 @@ async function openCallRelations(kind, id) {
   let relationsModule;
   try {
     [relationsModule] = await Promise.all([
-      import('./features/call-relations.js?v=6'), loadActivityMessageTypes()
+      import('./features/call-relations.js?v=7'), loadActivityMessageTypes()
     ]);
   } catch (error) {
     if (!renderIsCurrent(renderContext)) return;

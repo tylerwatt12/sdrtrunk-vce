@@ -838,9 +838,12 @@ async function verifyScanListDialogVersionSnapshot() {
     const writes = [];
     const element = (tag, _className = '', textContent = '') => {
       const attributes = new Map();
-      const value = { tag, textContent, disabled: false, handlers: {},
+      const value = { tag, textContent, disabled: false, handlers: {}, children: [],
+        get firstElementChild() { return this.children[0] || null; },
         classList: { add() {}, remove() {} },
-        append() {}, replaceChildren() {}, setAttribute: (key, value) => attributes.set(key, value),
+        append(...children) { this.children.push(...children); },
+        replaceChildren(...children) { this.children = children; },
+        setAttribute: (key, value) => attributes.set(key, value),
         getAttribute: (key) => attributes.get(key) ?? null, removeAttribute: (key) => attributes.delete(key),
         querySelectorAll: () => elements.filter((item) => ['button', 'input', 'select'].includes(item.tag)),
         addEventListener(type, handler) { this.handlers[type] = handler; } };
@@ -849,7 +852,11 @@ async function verifyScanListDialogVersionSnapshot() {
     };
     const probe = { node: element, number: String, aliasMutationSelectionIds: () => [11, 12],
       aliasModalFooter: (...controls) => ({ controls }), ALIAS_BULK_REQUEST_TIMEOUT_MS: 60_000,
-      openReadOnlyModal: () => ({ close() {}, setBusy() {}, focus() {} }),
+      openReadOnlyModal: () => {
+        const dialog = element('div');
+        dialog.setAttribute('aria-labelledby', 'scan-list-dialog-heading');
+        return { dialog, close() {}, setBusy() {}, focus() {} };
+      },
       finishAliasMutation: async () => {},
       requestJson: async (url, options) => { writes.push({ url, body: options.body }); return {}; } };
     vm.createContext(probe);

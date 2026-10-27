@@ -479,6 +479,10 @@ test('call tones preserve group call types and filter independently with alias c
   await expect.poll(() => requests.activity.at(-1)?.has_tones).toBe('true');
   await expect.poll(() => requests.activity.at(-1)?.event_type).toBe('CALL_GROUP');
   await expect(page.locator('.activity-filter-chips')).toContainText('With tones');
+  await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('activity_has_tones')).toBe(null);
+  await expect.poll(() => requests.activity.at(-1)?.has_tones).toBeUndefined();
+  await expect(page.locator('.activity-filter-chips')).not.toContainText('With tones');
   const source = page.locator('tr[data-id="18"] [data-column="source"] .activity-cell-action-link');
   await source.click();
   await expect(page.getByRole('link', { name: 'Open source radio details', exact: true })).toBeVisible();
@@ -554,7 +558,7 @@ test('P25 Activity provides compact identity-first filters in the actual applica
 
   await action.selectOption('__include_grants__');
   await primary.getByRole('button', { name: 'Filters', exact: true }).click();
-  const more = page.getByRole('dialog', { name: 'Activity filters' });
+  const more = page.locator('.activity-filter-more-panel');
   await expect(more.locator('.activity-filter-group-title')).toHaveText([
     'Scope', 'Event details', 'Technical'
   ]);
@@ -566,7 +570,6 @@ test('P25 Activity provides compact identity-first filters in the actual applica
   await more.locator(
     'label.activity-filter-field:has(> .ui-field-label:text-is("Encryption")) select')
     .selectOption('encrypted');
-  await more.getByRole('button', { name: 'Done', exact: true }).click();
   await primary.getByRole('button', { name: 'Apply filters', exact: true }).click();
 
   await expect.poll(() => new URL(page.url()).searchParams.get('activity_include_grants')).toBe('true');
@@ -586,6 +589,7 @@ test('P25 Activity provides compact identity-first filters in the actual applica
   await expect.poll(() => requests.radios.includes('disp')).toBe(true);
   await expect.poll(() => requests.groups.includes('disp')).toBe(true);
   await expect.poll(() => requests.activity.at(-1)?.hide_grants).toBe('false');
+  await expect(toolbar).toHaveScreenshot('activity-shared-filters-desktop.png');
 });
 
 test('P25 Activity Filters is a usable mobile sheet and the table stays contained', async ({ page }) => {
@@ -598,29 +602,37 @@ test('P25 Activity Filters is a usable mobile sheet and the table stays containe
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 
   await toolbar.getByRole('button', { name: 'Filters', exact: true }).click();
-  const more = page.getByRole('dialog', { name: 'Activity filters' });
+  const more = page.getByRole('dialog', { name: 'Filters' });
   await expect(more).toBeVisible();
   const panelBox = await more.boundingBox();
-  expect(panelBox.x).toBeGreaterThanOrEqual(7);
-  expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(383);
-  expect(panelBox.y).toBeGreaterThanOrEqual(7);
-  expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(837);
+  expect(panelBox.x).toBeGreaterThanOrEqual(0);
+  expect(panelBox.x + panelBox.width).toBeLessThanOrEqual(390);
+  expect(panelBox.y).toBeGreaterThanOrEqual(0);
+  expect(panelBox.y + panelBox.height).toBeLessThanOrEqual(844);
   await expect(more.locator('.activity-filter-group-title')).toHaveText([
     'Scope', 'Event details', 'Technical'
   ]);
   await expect(more.getByText('Timeslot', { exact: true })).toHaveCount(0);
-  await expect(more.getByRole('button', { name: 'Done', exact: true })).toBeVisible();
-  const doneBox = await more.getByRole('button', { name: 'Done', exact: true }).boundingBox();
-  expect(doneBox.y + doneBox.height).toBeLessThanOrEqual(837);
+  const apply = more.getByRole('button', { name: 'Apply filters', exact: true });
+  await expect(apply).toBeVisible();
+  const applyBox = await apply.boundingBox();
+  expect(applyBox.y + applyBox.height).toBeLessThanOrEqual(844);
+  await expect(more).toHaveScreenshot('activity-shared-filters-phone.png');
   const encryption = more.locator(
     'label.activity-filter-field:has(> .ui-field-label:text-is("Encryption")) select');
+  const lcn = more.getByRole('textbox', { name: 'LCN', exact: true });
+  await lcn.fill('invalid');
+  await apply.click();
+  await expect(more).toBeVisible();
+  await expect(lcn).toHaveValue('invalid');
+  await lcn.fill('');
   await encryption.selectOption('encrypted');
-  await more.getByRole('button', { name: 'Done', exact: true }).click();
+  await more.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(new URL(page.url()).searchParams.get('activity_encryption')).toBe(null);
+  await expect(toolbar.getByRole('button', { name: 'Filters', exact: true })).toBeFocused();
   await toolbar.getByRole('button', { name: 'Filters', exact: true }).click();
   await expect(encryption).toHaveValue('encrypted');
-  await more.getByRole('button', { name: 'Done', exact: true }).click();
-  await toolbar.getByRole('button', { name: 'Apply filters', exact: true }).click();
+  await apply.click();
   await expect.poll(() => new URL(page.url()).searchParams.get('activity_encryption')).toBe('encrypted');
 });
 

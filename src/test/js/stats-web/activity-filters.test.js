@@ -397,10 +397,8 @@ assert.match(application, /activityIdentityDirectoryPath\(context, 'talkgroup'\)
 assert.match(application, /bindAnchoredDropdown\(trigger, panel, activeRenderController\?\.signal\)/,
   'Identity pickers must be anchored to their triggers in the real application.');
 assert.match(application,
-  /bindAnchoredDropdown\(moreTrigger, morePanel, activeRenderController\?\.signal, \{ mobileSheet: true \}\)/,
-  'More filters must be anchored on desktop and switch to the mobile sheet treatment.');
-assert.match(application, /activity-filter-more-footer/);
-assert.match(application, /activity-filter-more-content/);
+  /browsingWorkflows\.createFilterDisclosure\(\{ node, openReadOnlyModal, form, panel: morePanel/,
+  'Activity must reuse the shared inline disclosure and phone Filters sheet.');
 assert.match(application, /: initialFilters\.timeslot/,
   'A hidden P25 timeslot deep link must survive applying another filter.');
 assert.match(application, /Event subtype/);
