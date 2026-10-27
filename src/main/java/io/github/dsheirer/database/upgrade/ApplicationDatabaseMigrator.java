@@ -1114,6 +1114,7 @@ public final class ApplicationDatabaseMigrator
         boolean relocate = relocation != null && !relocation.source().equals(relocation.target());
         if(relocate)
         {
+            Path physicalSource = physicalSourceRoot(relocation.source());
             for(Map<String,String> node : values.values())
             {
                 var entries = node.entrySet().iterator();
@@ -1143,12 +1144,9 @@ public final class ApplicationDatabaseMigrator
 
                         if(stored.isAbsolute())
                         {
-                            Path normalized = stored.normalize();
-
-                            if(normalized.startsWith(relocation.source()))
+                            Path updated = relocatedContainedPath(stored, relocation, physicalSource);
+                            if(updated != null)
                             {
-                                Path updated = relocation.target().resolve(
-                                    relocation.source().relativize(normalized)).normalize();
                                 entry.setValue(updated.toString());
                                 String candidateJson;
                                 try
@@ -1234,6 +1232,7 @@ public final class ApplicationDatabaseMigrator
             return 0;
         }
         int rebased = 0;
+        Path physicalSource = physicalSourceRoot(relocation.source());
         for(JsonNode configuration: settings.path("tunerConfigurations"))
         {
             if(!(configuration instanceof ObjectNode tuner) ||
@@ -1245,10 +1244,10 @@ public final class ApplicationDatabaseMigrator
             try
             {
                 Path stored = Path.of(tuner.path("path").textValue());
-                if(stored.isAbsolute() && stored.normalize().startsWith(relocation.source()))
+                Path updated = relocatedContainedPath(stored, relocation, physicalSource);
+                if(updated != null)
                 {
-                    tuner.put("path", relocation.target().resolve(
-                        relocation.source().relativize(stored.normalize())).normalize().toString());
+                    tuner.put("path", updated.toString());
                     rebased++;
                 }
             }
@@ -1268,6 +1267,22 @@ public final class ApplicationDatabaseMigrator
             }
         }
         return rebased;
+    }
+
+    /** The data folder may already have moved; its installation parent remains available to resolve aliases. */
+    private static Path physicalSourceRoot(Path source) throws IOException
+    {
+        return source.getParent() != null ? source.getParent().toRealPath().resolve(source.getFileName()) : source;
+    }
+
+    /** Match either the selected installation spelling or its physical spelling without probing external paths. */
+    private static Path relocatedContainedPath(Path stored, DataRootRelocation relocation, Path physicalSource)
+    {
+        if(!stored.isAbsolute()) return null;
+        Path normalized = stored.normalize();
+        Path matchingSource = normalized.startsWith(relocation.source()) ? relocation.source() :
+            normalized.startsWith(physicalSource) ? physicalSource : null;
+        return matchingSource != null ? relocation.target().resolve(matchingSource.relativize(normalized)).normalize() : null;
     }
 
     /** Preserves independent receiver preferences and defaults only malformed keys in that small component. */
