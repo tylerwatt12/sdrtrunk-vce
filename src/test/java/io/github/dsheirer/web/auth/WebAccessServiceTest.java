@@ -91,6 +91,46 @@ class WebAccessServiceTest
     }
 
     @Test
+    void grantsDirectListenExplicitlyWithoutChangingExistingAudioAccess() throws Exception
+    {
+        Path database = database();
+        WebAccessService service = new WebAccessService(database);
+        WebAccessAccount primary = service.provisionOrResetPrimaryAdmin("primary admin password".toCharArray());
+        WebAccessAccount listener = service.createUser("listener", "ordinary user password".toCharArray());
+
+        assertTrue(service.isAllowed(AccessTier.PUBLIC, WebCapability.WEB_AUDIO_LISTEN));
+        assertTrue(service.isAllowed(listener, WebCapability.WEB_AUDIO_LISTEN));
+        assertFalse(service.isAllowed(AccessTier.PUBLIC, WebCapability.DIRECT_LISTEN));
+        assertFalse(service.isAllowed(listener, WebCapability.DIRECT_LISTEN));
+        assertTrue(service.isAllowed(primary, WebCapability.DIRECT_LISTEN));
+        assertEquals(AccessTier.ADMIN, service.requiredTier(WebCapability.DIRECT_LISTEN));
+        assertEquals(0, directListenPolicyCount(database));
+
+        service.setCapabilityTier("direct-listen", AccessTier.USER);
+        WebAccessService usersAllowed = new WebAccessService(database);
+        assertTrue(usersAllowed.isAllowed(listener, WebCapability.DIRECT_LISTEN));
+        assertFalse(usersAllowed.isAllowed(AccessTier.PUBLIC, WebCapability.DIRECT_LISTEN));
+        assertEquals(1, directListenPolicyCount(database));
+
+        usersAllowed.setCapabilityTier(WebCapability.DIRECT_LISTEN, AccessTier.PUBLIC);
+        WebAccessService guestsAllowed = new WebAccessService(database);
+        assertTrue(guestsAllowed.isAllowed(AccessTier.PUBLIC, WebCapability.DIRECT_LISTEN));
+        assertEquals(AccessTier.PUBLIC, guestsAllowed.requiredTier(WebCapability.WEB_AUDIO_LISTEN));
+
+        guestsAllowed.setCapabilityTier(WebCapability.WEB_AUDIO_LISTEN, AccessTier.USER);
+        assertTrue(guestsAllowed.isAllowed(AccessTier.PUBLIC, WebCapability.DIRECT_LISTEN));
+        assertFalse(guestsAllowed.isAllowed(AccessTier.PUBLIC, WebCapability.WEB_AUDIO_LISTEN));
+
+        guestsAllowed.setCapabilityTier(WebCapability.DIRECT_LISTEN, AccessTier.ADMIN);
+        WebAccessService restrictedAgain = new WebAccessService(database);
+        assertFalse(restrictedAgain.isAllowed(listener, WebCapability.DIRECT_LISTEN));
+        assertTrue(restrictedAgain.isAllowed(primary, WebCapability.DIRECT_LISTEN));
+        assertEquals(AccessTier.USER, restrictedAgain.requiredTier(WebCapability.WEB_AUDIO_LISTEN));
+        assertEquals(0, directListenPolicyCount(database));
+        assertEquals(listener, restrictedAgain.account("listener").orElseThrow());
+    }
+
+    @Test
     void verifiesTheCurrentPrimaryPasswordBeforeChangingPersistedCredentials() throws Exception
     {
         Path database = database();
@@ -272,9 +312,9 @@ class WebAccessServiceTest
     @Test
     void definesEveryCapabilityAndLocksFixedPolicies()
     {
-        assertEquals(19, WebCapability.registry().size());
+        assertEquals(20, WebCapability.registry().size());
         for(String id: new String[]{"web-access", "dashboard", "live", "tuner-spectrum", "radio",
-            "credits", "csv-export", "call-audio", "recordings", "user-settings", "admin-users",
+            "credits", "csv-export", "call-audio", "direct-listen", "recordings", "user-settings", "admin-users",
             "admin-access", "admin-aliases", "admin-streaming", "admin-channels", "admin-tuners", "admin-settings",
             "admin-recordings",
             "receiver-health"})
@@ -285,6 +325,9 @@ class WebAccessServiceTest
         assertEquals(AccessTier.USER, WebCapability.USER_SETTINGS.defaultTier());
         assertFalse(WebCapability.USER_SETTINGS.configurable());
         assertEquals("Scanner and call audio", WebCapability.WEB_AUDIO_LISTEN.displayName());
+        assertEquals("Direct Listen", WebCapability.DIRECT_LISTEN.displayName());
+        assertEquals(AccessTier.ADMIN, WebCapability.DIRECT_LISTEN.defaultTier());
+        assertTrue(WebCapability.DIRECT_LISTEN.configurable());
         assertFalse(WebCapability.TUNER_SPECTRUM_VIEW.configurable());
         assertFalse(WebCapability.ADMIN_USERS.configurable());
         assertFalse(WebCapability.ADMIN_CHANNELS.configurable());
@@ -308,6 +351,18 @@ class WebAccessServiceTest
         return new WebAccessService(new WebUserRepository(database), new WebAccessPolicyRepository(database),
             new Pbkdf2PasswordHasher(WebPasswordVerifier.MINIMUM_ITERATIONS, new SecureRandom(),
                 Clock.fixed(Instant.ofEpochMilli(epochMillis), ZoneOffset.UTC)));
+    }
+
+    private static long directListenPolicyCount(Path database) throws Exception
+    {
+        try(Connection connection = SdrTrunkDatabase.open(database);
+            PreparedStatement statement = connection.prepareStatement(
+                "SELECT COUNT(*) FROM web_access_policy WHERE capability_id='direct-listen'");
+            ResultSet resultSet = statement.executeQuery())
+        {
+            assertTrue(resultSet.next());
+            return resultSet.getLong(1);
+        }
     }
 
     private static String verifierAlgorithm(Path database, String username) throws Exception

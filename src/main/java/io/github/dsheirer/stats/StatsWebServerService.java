@@ -744,10 +744,10 @@ public class StatsWebServerService implements AutoCloseable
                 this::handleLiveMultiplexControl));
         createProtectedContext(server, StatsApiV1.SCAN_LISTS, WebCapability.WEB_AUDIO_LISTEN,
             this::handleScanLists);
-        createProtectedContext(server, StatsApiV1.CALLS_FEED, WebCapability.WEB_AUDIO_LISTEN,
-            this::handleWebCallFeed);
-        createProtectedContext(server, StatsApiV1.CALLS + "/", WebCapability.WEB_AUDIO_LISTEN,
-            this::handleWebCallAudio);
+        server.createContext(StatsApiV1.CALLS_FEED, mWebRequestSecurity.protectAny(
+            Set.of(WebCapability.WEB_AUDIO_LISTEN, WebCapability.DIRECT_LISTEN), this::handleWebCallFeed));
+        server.createContext(StatsApiV1.CALLS + "/", mWebRequestSecurity.protectAny(
+            Set.of(WebCapability.WEB_AUDIO_LISTEN, WebCapability.DIRECT_LISTEN), this::handleWebCallAudio));
         server.createContext(StatsApiV1.ROOT, StatsWebServerService::handleApiNotFound);
         server.createContext("/api", StatsWebServerService::handleApiNotFound);
         server.createContext("/live", StatsWebServerService::handleApiNotFound);
@@ -1872,18 +1872,19 @@ public class StatsWebServerService implements AutoCloseable
 
         String query = uri != null ? uri.getRawQuery() : null;
         Set<Long> selected = new LinkedHashSet<>();
+        Set<DirectListenTarget> direct = new LinkedHashSet<>();
         Long cursor = null;
 
         if(query != null && !query.isBlank())
         {
-            if(query.length() > StatsRequest.MAX_QUERY_LENGTH)
+            if(query.length() > 24_576)
             {
                 throw new StatsApiException(400, "invalid_parameter", "query is too long", "query");
             }
 
             String[] parameters = query.split("&", -1);
 
-            if(parameters.length > StatsRequest.MAX_PARAMETER_COUNT)
+            if(parameters.length > MAXIMUM_CALL_FEED_PARAMETERS)
             {
                 throw new StatsApiException(400, "invalid_parameter", "query contains too many parameters",
                     "query");
@@ -1926,10 +1927,22 @@ public class StatsWebServerService implements AutoCloseable
                     continue;
                 }
 
+                if("direct_target".equals(name))
+                {
+                    try { direct.add(DirectListenTarget.parse(value)); }
+                    catch(IllegalArgumentException exception)
+                    {
+                        throw new StatsApiException(400, "invalid_parameter", "direct_target is invalid", "direct_target");
+                    }
+                    if(direct.size() > DirectListenTarget.MAXIMUM_TARGETS)
+                        throw new StatsApiException(400, "invalid_parameter", "Too many direct listening targets", "direct_target");
+                    continue;
+                }
+
                 if(!"scan_list_id".equals(name) || !value.matches("[1-9][0-9]*"))
                 {
                     throw new StatsApiException(400, "invalid_parameter",
-                        "Only scan_list_id and cursor parameters are allowed",
+                        "Only scan_list_id, direct_target and cursor parameters are allowed",
                         "scan_list_id");
                 }
 
@@ -1951,7 +1964,7 @@ public class StatsWebServerService implements AutoCloseable
             }
         }
 
-        if(selected.isEmpty())
+        if(selected.isEmpty() && direct.isEmpty())
         {
             ScanList defaultScanList = scanListModel.defaultScanList();
 
@@ -1972,15 +1985,19 @@ public class StatsWebServerService implements AutoCloseable
             }
         }
 
-        return new CallFeedRequest(Set.copyOf(selected), cursor);
+        return new CallFeedRequest(Set.copyOf(selected), Set.copyOf(direct), cursor);
     }
 
-    record CallFeedRequest(Set<Long> scanListIds, Long cursor)
+    private static final int MAXIMUM_CALL_FEED_PARAMETERS = StatsWebCallService.MAXIMUM_SELECTED_SCAN_LISTS +
+        DirectListenTarget.MAXIMUM_TARGETS + 1;
+
+    record CallFeedRequest(Set<Long> scanListIds, Set<DirectListenTarget> directTargets, Long cursor)
     {
     }
 
     private void handleWebCallFeed(HttpExchange exchange) throws IOException
     {
+        if(!requireCallAudioAccess(exchange, false)) return;
         if(!requireExactTextPath(exchange, StatsApiV1.CALLS_FEED) || !requireMethod(exchange, "GET"))
         {
             return;
@@ -1997,6 +2014,9 @@ public class StatsWebServerService implements AutoCloseable
             sendApiException(exchange, exception);
             return;
         }
+
+        boolean direct = !request.directTargets().isEmpty();
+        if(direct && !requireCallAudioAccess(exchange, true)) return;
 
         long feedGeneration = mServices.mWebCallService.tryAcquireFeed();
 
@@ -2015,8 +2035,14 @@ public class StatsWebServerService implements AutoCloseable
 
         try
         {
-            StatsWebCallService.FeedResult result = mServices.mWebCallService.feed(request.scanListIds(), request.cursor(),
+            if(direct && !mServices.mWebCallService.refreshDirectInterests(request.directTargets()))
+            {
+                sendApiError(exchange, 429, "too_many_direct_targets", "Direct listening is busy. Try again shortly");
+                return;
+            }
+            StatsWebCallService.FeedResult result = mServices.mWebCallService.feed(request.scanListIds(), request.directTargets(), request.cursor(),
                 StatsWebCallService.FEED_WAIT_MILLISECONDS, TimeUnit.MILLISECONDS, feedGeneration);
+            if(!requireCallAudioAccess(exchange, direct)) return;
             ApiHttpResponse.sendData(exchange, 200, mServices.mDatabase.enrichSystemNames(callFeedResponse(result)));
         }
         catch(InterruptedException exception)
@@ -2041,6 +2067,7 @@ public class StatsWebServerService implements AutoCloseable
 
     private void handleWebCallAudio(HttpExchange exchange) throws IOException
     {
+        if(!requireCallAudioAccess(exchange, false)) return;
         if(!requireMethod(exchange, "GET"))
         {
             return;
@@ -2087,6 +2114,12 @@ public class StatsWebServerService implements AutoCloseable
             return;
         }
 
+        boolean published = call.scanListIds().stream().anyMatch(scanListId -> {
+            ScanList list = mServices.mScanListModel.scanList(scanListId);
+            return list != null && list.isPublished();
+        });
+        if(!requireCallAudioAccess(exchange, !published)) return;
+
         byte[] wave = call.wave();
         Headers headers = exchange.getResponseHeaders();
         headers.set("Content-Type", "audio/wav");
@@ -2098,6 +2131,18 @@ public class StatsWebServerService implements AutoCloseable
         {
             outputStream.write(wave);
         }
+    }
+
+    /** Both permissions are checked explicitly: the admitting wrapper intentionally recognizes either capability. */
+    private boolean requireCallAudioAccess(HttpExchange exchange, boolean direct) throws IOException
+    {
+        if(!mWebRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.WEB_AUDIO_LISTEN) ||
+            direct && !mWebRequestSecurity.isRequestStillAuthorized(exchange, WebCapability.DIRECT_LISTEN))
+        {
+            sendApiError(exchange, 403, "forbidden", direct ? "Direct listening is unavailable" : "Web audio is unavailable");
+            return false;
+        }
+        return true;
     }
 
     static String callAudioId(URI uri)

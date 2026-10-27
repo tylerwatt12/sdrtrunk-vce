@@ -147,6 +147,7 @@ class WebAccessControllersTest
             assertTrue(anonymous.at("/capabilities/web-access").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-users").booleanValue());
             assertFalse(anonymous.at("/capabilities/admin-aliases").booleanValue());
+            assertFalse(anonymous.at("/capabilities/direct-listen").booleanValue());
             assertEquals(200, send(client, request(origin, "/public-protected").GET()).statusCode());
 
             HttpResponse<String> staleSession = send(client, request(origin, "/api/v1/auth/session")
@@ -195,7 +196,25 @@ class WebAccessControllersTest
             assertEquals(guideScope, admin.body().get("guide_dismissal_scope").textValue());
             assertEquals(admin.csrfToken(), authenticatedSession.get("csrf_token").textValue());
             assertTrue(authenticatedSession.at("/capabilities/admin-users").booleanValue());
+            assertTrue(authenticatedSession.at("/capabilities/direct-listen").booleanValue());
             assertFalse(authenticatedSession.has("expires_at_epoch_millis"));
+
+            HttpResponse<String> policiesResponse = send(client, request(origin, "/api/v1/admin/access")
+                .header("Cookie", admin.cookieHeader()).GET());
+            assertEquals(200, policiesResponse.statusCode());
+            boolean directListenListed = false;
+            for(JsonNode policy: data(policiesResponse).get("capabilities"))
+            {
+                if("direct-listen".equals(policy.path("id").asText()))
+                {
+                    assertEquals("Direct Listen", policy.path("display_name").asText());
+                    assertEquals("admin", policy.path("required_tier").asText());
+                    assertEquals("admin", policy.path("default_tier").asText());
+                    assertTrue(policy.path("configurable").booleanValue());
+                    directListenListed = true;
+                }
+            }
+            assertTrue(directListenListed);
 
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", admin.cookieHeader()).GET()).statusCode());
@@ -257,6 +276,17 @@ class WebAccessControllersTest
 
             Login listener = login(client, origin, "listener", USER_PASSWORD);
             assertEquals("user", listener.body().get("tier").textValue());
+            assertFalse(listener.body().at("/capabilities/direct-listen").booleanValue());
+            HttpResponse<String> directListenGranted = send(client, mutation(origin, "/api/v1/admin/access", admin)
+                .PUT(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(
+                    Map.of("capability", "direct-listen", "tier", "user")))));
+            assertEquals(200, directListenGranted.statusCode());
+            assertEquals("user", data(directListenGranted).get("required_tier").textValue());
+            assertTrue(data(send(client, request(origin, "/api/v1/auth/session")
+                .header("Cookie", listener.cookieHeader()).GET()))
+                .at("/capabilities/direct-listen").booleanValue());
+            assertFalse(data(send(client, request(origin, "/api/v1/auth/session").GET()))
+                .at("/capabilities/direct-listen").booleanValue());
             assertEquals(200, send(client, request(origin, "/protected")
                 .header("Cookie", listener.cookieHeader()).GET()).statusCode());
             assertEquals(403, send(client, mutation(origin, ADMIN_ALIASES_PATH, listener)

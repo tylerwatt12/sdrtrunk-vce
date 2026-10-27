@@ -30,6 +30,7 @@ public enum WebCapability
     CREDITS_VIEW("credits", "Credits", AccessTier.PUBLIC),
     CSV_EXPORT("csv-export", "CSV export", AccessTier.PUBLIC),
     WEB_AUDIO_LISTEN("call-audio", "Scanner and call audio", AccessTier.PUBLIC),
+    DIRECT_LISTEN("direct-listen", "Direct Listen"),
     RECORDINGS_VIEW("recordings", "Recordings search and playback", AccessTier.PUBLIC),
     USER_SETTINGS("user-settings", "Personal settings", AccessTier.USER, false),
 

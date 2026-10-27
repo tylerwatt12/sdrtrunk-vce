@@ -115,6 +115,10 @@ final class StatsWebCallService implements AutoCloseable
     private final AtomicLong mRejectedFeeds = new AtomicLong();
     private final AtomicInteger mActiveAudioResponses = new AtomicInteger();
     private final AtomicLong mRejectedAudioResponses = new AtomicLong();
+    static final int MAXIMUM_DIRECT_INTERESTS = MAXIMUM_ACTIVE_FEEDS * DirectListenTarget.MAXIMUM_TARGETS;
+    static final long DIRECT_INTEREST_LEASE_NANOS = TimeUnit.SECONDS.toNanos(15);
+    private final Map<DirectListenTarget,Long> mDirectInterests = new LinkedHashMap<>();
+    private volatile List<DirectInterest> mDirectInterestSnapshot = List.of();
     private long mAudioBytes;
     private long mLatestCursor;
     private long mLatestLossCursor;
@@ -199,6 +203,8 @@ final class StatsWebCallService implements AutoCloseable
         mLossPending.set(false);
         mActiveFeeds.set(0);
         mFeedActiveUntilNanos.set(0L);
+        mDirectInterests.clear();
+        mDirectInterestSnapshot = List.of();
         clearCalls();
         mEncoderWakeup.release();
         notifyAll();
@@ -291,7 +297,32 @@ final class StatsWebCallService implements AutoCloseable
     FeedResult feed(Set<Long> selectedScanListIds, Long requestedCursor, long wait, TimeUnit unit, long generation)
         throws InterruptedException
     {
+        return feed(selectedScanListIds, Set.of(), requestedCursor, wait, unit, generation);
+    }
+
+    /** Shared leases survive poll gaps but expire after a disconnected browser stops refreshing them. */
+    synchronized boolean refreshDirectInterests(Set<DirectListenTarget> targets)
+    {
+        return refreshDirectInterests(targets, System.nanoTime());
+    }
+
+    synchronized boolean refreshDirectInterests(Set<DirectListenTarget> targets, long now)
+    {
+        mDirectInterests.entrySet().removeIf(entry -> entry.getValue() <= now);
+        long additional = targets.stream().filter(target -> !mDirectInterests.containsKey(target)).count();
+        if(targets.size() > DirectListenTarget.MAXIMUM_TARGETS || mDirectInterests.size() + additional > MAXIMUM_DIRECT_INTERESTS)
+            return false;
+        for(DirectListenTarget target: targets) mDirectInterests.put(target, now + DIRECT_INTEREST_LEASE_NANOS);
+        mDirectInterestSnapshot = mDirectInterests.entrySet().stream()
+            .map(entry -> new DirectInterest(entry.getKey(), entry.getValue())).toList();
+        return true;
+    }
+
+    FeedResult feed(Set<Long> selectedScanListIds, Set<DirectListenTarget> directTargets, Long requestedCursor,
+                    long wait, TimeUnit unit, long generation) throws InterruptedException
+    {
         Set<Long> selected = selectedScanListIds != null ? Set.copyOf(selectedScanListIds) : Set.of();
+        Set<DirectListenTarget> direct = directTargets != null ? Set.copyOf(directTargets) : Set.of();
         long waitNanos = Math.max(0L, unit != null ? unit.toNanos(wait) : 0L);
         long deadline = System.nanoTime() + waitNanos;
 
@@ -302,7 +333,7 @@ final class StatsWebCallService implements AutoCloseable
                 return new FeedResult(Long.toString(mLatestCursor), true, List.of());
             }
 
-            FeedResult result = feedNow(selected, requestedCursor);
+            FeedResult result = feedNow(selected, direct, requestedCursor);
 
             while(shouldWait(result, requestedCursor) && isCurrentGeneration(generation) && waitNanos > 0L)
             {
@@ -314,7 +345,7 @@ final class StatsWebCallService implements AutoCloseable
                 }
 
                 TimeUnit.NANOSECONDS.timedWait(this, remaining);
-                result = feedNow(selected, requestedCursor);
+                result = feedNow(selected, direct, requestedCursor);
             }
 
             if(!isCurrentGeneration(generation))
@@ -332,7 +363,7 @@ final class StatsWebCallService implements AutoCloseable
             result.cursor().equals(Long.toString(requestedCursor));
     }
 
-    private FeedResult feedNow(Set<Long> selected, Long requestedCursor)
+    private FeedResult feedNow(Set<Long> selected, Set<DirectListenTarget> direct, Long requestedCursor)
     {
         commitPendingLoss();
         evictExpired(System.currentTimeMillis());
@@ -350,13 +381,19 @@ final class StatsWebCallService implements AutoCloseable
         List<FeedEntry> available = new java.util.ArrayList<>();
         for(CachedCall call: mCalls)
         {
-            if(call.cursor() > requestedCursor && intersects(call.scanListIds(), selected))
-                available.add(new FeedEntry(call.cursor(), call.metadata()));
+            if(call.cursor() > requestedCursor)
+            {
+                Map<String,Object> metadata = selectedMetadata(call.metadata(), call.scanListIds(), call.directEvidence(), selected, direct);
+                if(metadata != null) available.add(new FeedEntry(call.cursor(), metadata));
+            }
         }
         for(ToneMetadataUpdate update: mToneMetadataUpdates)
         {
-            if(update.cursor() > requestedCursor && intersects(update.scanListIds(), selected))
-                available.add(new FeedEntry(update.cursor(), update.metadata()));
+            if(update.cursor() > requestedCursor)
+            {
+                Map<String,Object> metadata = selectedMetadata(update.metadata(), update.scanListIds(), update.directEvidence(), selected, direct);
+                if(metadata != null) available.add(new FeedEntry(update.cursor(), metadata));
+            }
         }
         // Metadata updates have their own cursor without reordering retained audio calls.
         available.sort(Comparator.comparingLong(FeedEntry::cursor));
@@ -376,6 +413,22 @@ final class StatsWebCallService implements AutoCloseable
         // history merely to identify the exact page that crossed it would add state without changing recovery.
         boolean reset = requestedCursor < mLatestLossCursor;
         return new FeedResult(Long.toString(nextCursor), reset, List.copyOf(calls));
+    }
+
+    private Map<String,Object> selectedMetadata(Map<String,Object> metadata, Set<Long> scanListIds,
+        DirectListenTarget.Evidence evidence, Set<Long> selected, Set<DirectListenTarget> direct)
+    {
+        List<String> matches = direct.stream().filter(target -> target.matches(evidence))
+            .map(DirectListenTarget::canonicalKey).sorted().toList();
+        boolean listMatch = (!scanListIds.isEmpty() || mScanListMatcher == null) && intersects(scanListIds, selected);
+        if(matches.isEmpty() && !listMatch) return null;
+        if(!matches.isEmpty())
+        {
+            Map<String,Object> value = new LinkedHashMap<>(metadata);
+            value.put("direct_target_keys", matches);
+            return java.util.Collections.unmodifiableMap(value);
+        }
+        return metadata;
     }
 
     private static boolean intersects(Set<Long> matched, Set<Long> selected)
@@ -558,11 +611,11 @@ final class StatsWebCallService implements AutoCloseable
                         metadata.put("paging_tone_summary", summary);
                         Map<String,Object> immutable = java.util.Collections.unmodifiableMap(metadata);
                         retained.addLast(new CachedCall(call.cursor(), call.id(), call.wave(), immutable,
-                            call.scanListIds(), call.createdAtMs(), call.snapshot()));
+                            call.scanListIds(), call.directEvidence(), call.createdAtMs(), call.snapshot()));
                         Map<String,Object> update = new LinkedHashMap<>(immutable);
                         update.put("audio_metadata_updated", true);
                         mToneMetadataUpdates.addLast(new ToneMetadataUpdate(++mLatestCursor, call.id(),
-                            java.util.Collections.unmodifiableMap(update), call.scanListIds()));
+                            java.util.Collections.unmodifiableMap(update), call.scanListIds(), call.directEvidence()));
                         while(mToneMetadataUpdates.size() > MAXIMUM_TONE_METADATA_UPDATES)
                         {
                             mToneMetadataUpdates.removeFirst();
@@ -610,8 +663,11 @@ final class StatsWebCallService implements AutoCloseable
         }
 
         Set<Long> scanListIds = mScanListMatcher != null ? mScanListMatcher.match(call) : Set.of();
+        DirectListenTarget.Evidence directEvidence = DirectListenTarget.evidence(call);
 
-        if(mScanListMatcher != null && scanListIds.isEmpty())
+        long now = System.nanoTime();
+        if(mScanListMatcher != null && scanListIds.isEmpty() && mDirectInterestSnapshot.stream()
+            .noneMatch(interest -> interest.expiresAtNanos() > now && interest.target().matches(directEvidence)))
         {
             return;
         }
@@ -675,7 +731,7 @@ final class StatsWebCallService implements AutoCloseable
                 metadata.put("paging_tone_summary", ToneSummaryPayload.summary(tones));
             long cursor = ++mLatestCursor;
             CachedCall cachedCall = new CachedCall(cursor, id, wave, java.util.Collections.unmodifiableMap(metadata),
-                Set.copyOf(scanListIds), created, nativeSnapshot);
+                Set.copyOf(scanListIds), directEvidence, created, nativeSnapshot);
             mCalls.addLast(cachedCall);
             mAudioBytes += wave.length;
             evictToLimits();
@@ -708,6 +764,7 @@ final class StatsWebCallService implements AutoCloseable
     /** Runs on the existing receiver-health sampler and releases the shared ring when no browser feed is active. */
     synchronized void maintain()
     {
+        refreshDirectInterests(Set.of());
         if(hasActiveFeed())
         {
             evictExpired(System.currentTimeMillis());
@@ -1317,10 +1374,12 @@ final class StatsWebCallService implements AutoCloseable
     }
 
     record CachedCall(long cursor, String id, byte[] wave, Map<String,Object> metadata, Set<Long> scanListIds,
-                      long createdAtMs, AudioCallSnapshot snapshot)
+                      DirectListenTarget.Evidence directEvidence, long createdAtMs, AudioCallSnapshot snapshot)
     {
     }
 
-    private record ToneMetadataUpdate(long cursor, String callId, Map<String,Object> metadata, Set<Long> scanListIds) {}
+    private record ToneMetadataUpdate(long cursor, String callId, Map<String,Object> metadata, Set<Long> scanListIds,
+                                      DirectListenTarget.Evidence directEvidence) {}
+    private record DirectInterest(DirectListenTarget target, long expiresAtNanos) {}
     private record FeedEntry(long cursor, Map<String,Object> metadata) {}
 }
