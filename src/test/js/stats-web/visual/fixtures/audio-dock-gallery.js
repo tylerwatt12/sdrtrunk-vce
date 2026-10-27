@@ -121,6 +121,10 @@ export async function mountAudioDockGallery(parameters) {
     avoids: [{ key: 'tg:9100', label: 'Training Channel', system: 'Metro Public Safety' }],
     targetGrouping: true, targetBurstLimit: 4, holdTarget: null
   };
+  if (fixture === 'direct') liveState.directListen = { allowed: true, selected: true, maximumTargets: 32,
+    targets: [{ key: 'gallery-fire', target: targetRef, label: 'Fire Dispatch', context: 'Metro Public Safety' },
+      { key: 'gallery-channel', target: { kind: 'channel', key: '11111111-1111-4111-8111-111111111111' },
+        label: 'County Fireground', context: 'Conventional analog · 154.280 MHz' }] };
   const liveObservers = new Set();
   const recordingObservers = new Set();
   const emit = (state, observers) => observers.forEach((listener) => listener({ ...state }));
@@ -149,6 +153,9 @@ export async function mountAudioDockGallery(parameters) {
     toggleHold: () => { liveState.holdTarget = liveState.holdTarget ? null : { label: 'Fire Dispatch' }; notifyLive(); },
     avoidCurrent: () => { liveState.avoids.push({ key: 'tg:1201', label: 'Fire Dispatch', system: 'Metro Public Safety' }); notifyLive(); },
     removeAvoid: (key) => { liveState.avoids = liveState.avoids.filter((item) => item.key !== key); notifyLive(); },
+    setDirectListenSelected: (selected) => { liveState.directListen.selected = selected; notifyLive(); },
+    removeDirectListenTarget: (key) => { liveState.directListen.targets = liveState.directListen.targets.filter(item => item.key !== key);
+      if (!liveState.directListen.targets.length) liveState.directListen.selected = false; notifyLive(); },
     setScanListSelected: (id, selected) => { liveState.scanLists.find((item) => item.id === id).selected = selected; notifyLive(); },
     applyPreferences: (value) => { liveState.targetGrouping = value.target_grouping ?? liveState.targetGrouping;
       liveState.targetBurstLimit = value.target_burst_limit ?? liveState.targetBurstLimit; notifyLive(); },
@@ -185,7 +192,7 @@ export async function mountAudioDockGallery(parameters) {
     loadSharedQueue: async () => {}
   };
   let titlePreference = true;
-  createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer: () => live,
+  const audioDock = createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer: () => live,
     access: () => ({ live: true, recordings: fixture !== 'restricted' }), entityRefHref,
     canViewRadio: () => true, href, getTitlePreference: () => titlePreference,
     setTitlePreference: async (value) => { titlePreference = value; } });
@@ -205,7 +212,8 @@ export async function mountAudioDockGallery(parameters) {
   if (size !== 'minimal') handle.dispatchEvent(new KeyboardEvent('keydown', {
     key: size === 'collapsed' ? 'Home' : 'End', bubbles: true }));
   const panel = parameters.get('audioPanel');
-  if (size === 'full' && panel) {
+  if (size === 'full' && panel === 'direct') audioDock.openDirectListen();
+  else if (size === 'full' && panel) {
     const labels = { details: 'Call details', transcript: 'Transcript', listening: 'Lists',
       avoids: 'Open Avoid List', settings: 'Listening settings', queue: 'Open queue' };
     const selector = panel === 'listening' ? '#audio-dock-source-context, #audio-dock-mobile-lists' : null;

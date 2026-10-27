@@ -57,6 +57,9 @@ const contracts = [
   ["spectrum display preferences", "spectrum-display-preferences.test.js", "stats-web/assets/core/spectrum-display-preferences.js"],
   ["spectrum automatic range", "spectrum-auto-range.test.js", "stats-web/assets/app.js"],
   ["diagnostic strength encoding", "diagnostic-strength.test.js", "stats-web/assets/app.js"],
+  ["Direct Listen entrypoints", "direct-listen-entry.test.js", "stats-web/assets/core/direct-listen-entry.js"],
+  ["Direct Listen session", "direct-listen-session.test.js", "stats-web/assets/core/direct-listen.js"],
+  ["Direct Listen", "direct-listen.test.js", "stats-web/assets/core/direct-listen.js"],
   ["web call player", "web-call-player.test.js", "stats-web/assets/web-call-player.js"],
   ["paging-tone detection settings", "paging-tone-detection.test.js", "stats-web/assets/features/paging-tone-detection.js"]
 ];

@@ -300,6 +300,7 @@ async function checkGroupIdentityRadiosLoading(browsingWorkflows, tableLayouts) 
     rowGroupIdentityKind: () => 'talkgroup', identityNumber: (_row, value) => String(value),
     groupIdentifierText: (_row, value) => String(value),
     aliasLabel: () => 'Dispatch', radioSystemCapability: () => true,
+    directListenAction: () => null,
     pageHeader: (title) => node('header', '', title), radioSystemContextLink: () => node('a'),
     entityTabs: () => node('nav'),
     beginPage: (renderContext, ...children) => {

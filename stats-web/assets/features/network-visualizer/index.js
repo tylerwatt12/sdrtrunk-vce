@@ -359,6 +359,10 @@ function createP25Visualizer(dependencies = {}) {
       context.append('System: ', systemText);
       if (system.identity) context.append(` · ${system.identity}`);
       scopeTitle.replaceChildren(node('strong', '', group.label), context);
+      if (!guideMode) {
+        const listen = dependencies.createDirectListenAction?.(group, system);
+        if (listen) scopeTitle.append(listen);
+      }
     } else {
       scopeTitle.replaceChildren(systemText);
       if (system.identity && system.identity !== label) scopeTitle.append(node('div', 'muted', system.identity));

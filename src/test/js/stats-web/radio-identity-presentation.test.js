@@ -104,6 +104,7 @@ const behavior = vm.runInNewContext(`(() => {
   function radioSystemContextLink() { return 'Receiving system'; }
   function liveIdentityActionLink(_row, _kind, label) { return label; }
   function identitySummaryValue(primary, secondary, target) { return primary ? {primary, secondary, target} : ''; }
+  function withDirectListenAction(value) { return value; }
   function keyValues(values) { return {values, classList: {add() {}}}; }
   function node(tag, className, textContent) {
     return { tag, className, textContent, setAttribute() {} };
@@ -503,6 +504,7 @@ const pageHeaders = [];
 let pageResponse;
 const pageRoute = new URLSearchParams('tab=info');
 const pageContext = {
+  directListenAction: () => null,
   systemLabels, ...radioLabels, route: pageRoute,
   captureRenderContext: () => ({}), renderIsCurrent: () => true,
   requiredRadioSystem: () => ({ radio_system_key: 'p25:bee00:348' }),
@@ -868,6 +870,7 @@ const tableCells = vm.runInNewContext([
 ].map(functionSource).join('\n') + '\n({radioIdentityValue, groupIdentityValue, radioIdentitySortValue, ' +
   'channelGroupIdentityColumns, channelRadioColumns});', {
   ...radioLabels, ...sourceNames, node: detailNode, valueNode: value => value,
+  withDirectListenAction: value => value,
   radioIdentifierText: behavior.radioIdentifierText, groupIdentifierText: behavior.groupIdentifierText,
   aliasLabel: row => row.alias_name || '', rowGroupIdentityKind: () => 'talkgroup',
   specialIdentifierLabel: () => '', sourceNameDisplayMode: () => sourceMode,

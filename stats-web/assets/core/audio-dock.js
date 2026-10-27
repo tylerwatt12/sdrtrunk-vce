@@ -1,4 +1,4 @@
-import { systemLabel, systemName, homeSystemName } from './system-labels.js?v=2';
+import { systemLabel, systemName, systemIdentity, homeSystemName } from './system-labels.js?v=2';
 import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
@@ -21,6 +21,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   let size = 'minimal';
   // Desktop hiding is presentation only: retain the size, source and both engines.
   let superCollapsed = false;
+  let externalManagement = false;
   let guidePresentation = false;
   const mobileLayout = window.matchMedia('(max-width: 900px), (max-height: 500px) and (pointer: coarse)');
   let presentationMotion = null;
@@ -131,6 +132,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const queueCount = () => source === 'live' ? Number(liveState.queuedCount) || 0 : recordingState.queue?.length || 0;
   const isAllowed = () => Boolean(access()[source]);
   const setSize = (value) => {
+    if (externalManagement && value !== 'full') { closePanel(); return; }
     cancelSizeGesture();
     closeVolume(false);
     cancelPresentationMotion();
@@ -147,6 +149,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     else if (getLivePlayer() && !liveState.stopped) void getLivePlayer().togglePlayback();
     closeVolume(false);
     source = value;
+    externalManagement = false;
     panel = null;
     selectedQueueKey = null;
     panelKey = '';
@@ -372,6 +375,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }, () => {});
   };
   const setSuperCollapsed = (value) => {
+    if (externalManagement && value) { closePanel(); return; }
     if (mobileLayout.matches || superCollapsed === value) return;
     cancelSizeGesture();
     closeVolume(false);
@@ -656,12 +660,12 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     item.setAttribute('role', error ? 'alert' : 'status'); return item;
   };
   function openPanel(value, invoker) {
-    if (!isAllowed() || source === 'recordings' && ['listening', 'settings', 'avoids'].includes(value)) return;
+    if (!isAllowed() || source === 'recordings' && ['listening', 'direct', 'settings', 'avoids'].includes(value)) return;
     closeVolume(false); contextInvoker = invoker || contextInvoker; panel = value; panelKey = ''; setSize('full');
     back.focus({ preventScroll: true });
   }
   function closePanel() {
-    closeVolume(false); panel = null; panelKey = ''; render();
+    closeVolume(false); panel = null; externalManagement = false; panelKey = ''; render();
     (contextInvoker?.getClientRects().length ? contextInvoker : handle).focus({ preventScroll: true });
   }
   function clickModeField(id) {
@@ -878,6 +882,22 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     else if (!lists.length) panelHost.append(message('No lists are available.'));
     const choices = node('div', 'ui-surface audio-dock-selection-list');
     choices.dataset.guideTarget = 'scan-lists-player-lists';
+    const direct = liveState.directListen;
+    if (direct?.allowed) {
+      const row = node('div', 'ui-select-list-item ui-audio-selection-row audio-dock-selection-row');
+      const label = node('label', 'ui-action-row ui-action-row-start');
+      const checkbox = node('input', 'ui-selection-check');
+      checkbox.type = 'checkbox'; checkbox.checked = direct.selected;
+      checkbox.setAttribute('aria-label', 'Direct Listen');
+      checkbox.disabled = !direct.targets.length;
+      checkbox.addEventListener('change', () => getLivePlayer()?.setDirectListenSelected(checkbox.checked));
+      const copy = node('span', 'ui-heading-group audio-dock-selection-copy');
+      copy.append(node('strong', '', 'Direct Listen'),
+        node('span', 'ui-muted ui-label', `${direct.targets.length} ${direct.targets.length === 1 ? 'target' : 'targets'} · This session`));
+      label.append(checkbox, copy);
+      const manage = command('Manage Direct Listen', 'direct-listen', () => openPanel('direct', manage));
+      row.append(label, manage); choices.append(row);
+    }
     lists.forEach(item => {
       const label = node('label', 'ui-select-list-item ui-audio-selection-row audio-dock-selection-row');
       const checkbox = node('input', 'ui-selection-check'); checkbox.type = 'checkbox'; checkbox.checked = item.selected;
@@ -888,13 +908,55 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       if (item.description) copy.append(node('span', 'ui-muted ui-label', item.description));
       label.append(checkbox, copy); choices.append(label);
     });
-    if (lists.length) panelHost.append(choices);
-    if (liveState.scanListCatalogReady && lists.length && !selected) panelHost.append(message('Select a List to start adding live calls.'));
+    if (lists.length || direct?.allowed) panelHost.append(choices);
+    if (liveState.scanListCatalogReady && lists.length && !selected && !direct?.selected) panelHost.append(message('Select a List to start adding live calls.'));
     const footer = node('div', 'audio-dock-context-footer');
     footer.append(node('span', 'ui-muted ui-label', `Up to ${maximum} lists`));
     const button = textButton('Avoid List', () => openPanel('avoids', button));
     button.className = 'ui-button ui-button-quiet ui-audio-context-trigger'; button.append(node('span', 'ui-pill ui-pill-compact', String((liveState.avoids || []).length)));
     footer.append(button); panelHost.append(footer);
+  }
+  function renderDirectListen() {
+    const direct = liveState.directListen;
+    if (!direct?.allowed) { panelHost.append(message('Direct Listen is unavailable for this session.')); return; }
+    panelHost.append(node('p', 'ui-muted ui-label', 'Your talkgroups and channels for this session.'));
+    if (!direct.targets.length) {
+      const empty = node('div', 'ui-empty-state ui-empty-state-quiet');
+      empty.append(node('h3', '', 'No Direct Listen targets'),
+        node('p', 'ui-label', 'Use Add to Direct Listen beside a talkgroup or channel.'));
+      panelHost.append(empty);
+    } else {
+      const list = node('div', 'ui-surface audio-dock-selection-list');
+      direct.targets.forEach(item => {
+        const section = node('section', 'ui-record-section');
+        const row = node('div', 'ui-record-card-header audio-dock-avoid-row');
+        const copy = node('div', 'ui-record-card-copy');
+        copy.append(node('strong', '', item.label || 'Unnamed target'));
+        const target = item.target || {};
+        const scope = target.kind === 'channel' ? `Channel ${target.key}` :
+          target.radio_system_key?.includes(':channel:') ? target.radio_system_key.split(':').at(-1) :
+            systemIdentity(target.radio_system_key);
+        const identity = target.identity_key ? `${target.identity_key.startsWith('v1-p-') ? 'Patch' : 'TG'} ${target.identity_key.split('-').at(-1)}` : '';
+        const detail = node('span', 'ui-muted ui-label', [item.context || scope, identity].filter(Boolean).join(' · '));
+        detail.title = [scope, identity].filter(Boolean).join(' · ');
+        copy.append(detail);
+        const remove = command(`Remove ${item.label || 'target'} from Direct Listen`, 'close', () => {
+          const index = direct.targets.findIndex(target => target.key === item.key);
+          getLivePlayer()?.removeDirectListenTarget(item.key);
+          const remaining = panelHost.querySelectorAll('[data-direct-listen-remove]');
+          (remaining[Math.min(index, remaining.length - 1)] || back).focus({ preventScroll: true });
+        });
+        remove.dataset.directListenRemove = item.key;
+        row.append(copy, remove);
+        section.append(row); list.append(section);
+      });
+      panelHost.append(list);
+    }
+    const footer = node('div', 'audio-dock-context-footer');
+    footer.append(node('span', 'ui-muted ui-label', `Up to ${direct.maximumTargets} targets`));
+    const lists = textButton('Lists', () => openPanel('listening', lists));
+    const avoids = textButton('Avoid List', () => openPanel('avoids', avoids));
+    footer.append(lists, avoids); panelHost.append(footer);
   }
   function renderAvoids() {
     const items = liveState.avoids || [];
@@ -914,8 +976,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       }); panelHost.append(list);
     }
     const footer = node('div', 'audio-dock-context-footer'); footer.append(node('span', 'ui-muted ui-label', 'Live listening'));
+    if (liveState.directListen?.allowed) {
+      const direct = textButton('Direct Listen', () => openPanel('direct', direct)); footer.append(direct);
+    }
     const button = textButton('Lists', () => openPanel('listening', button)); button.className = 'ui-button ui-button-quiet ui-audio-context-trigger';
-    button.append(node('span', 'ui-pill ui-pill-compact', String((liveState.scanLists || []).filter(item => item.selected).length)));
+    button.append(node('span', 'ui-pill ui-pill-compact', String((liveState.scanLists || []).filter(item => item.selected).length + (liveState.directListen?.selected ? 1 : 0))));
     footer.append(button); panelHost.append(footer);
   }
   function renderSettings() {
@@ -1002,14 +1067,15 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     context.hidden = !panel; hero.hidden = Boolean(panel);
     if (!panel || size !== 'full' || dock.hidden) return;
     const active = state(), call = current();
-    const selected = (liveState.scanLists || []).filter(item => item.selected).length;
-    const names = { details: 'Call details', transcript: 'Transcript', queue: 'Queue', listening: 'Lists', settings: 'Listening settings', avoids: 'Avoid List' };
+    const selected = (liveState.scanLists || []).filter(item => item.selected).length + (liveState.directListen?.selected ? 1 : 0);
+    const names = { details: 'Call details', transcript: 'Transcript', queue: 'Queue', listening: 'Lists', direct: 'Direct Listen', settings: 'Listening settings', avoids: 'Avoid List' };
     contextTitle.textContent = names[panel];
-    contextSubtitle.textContent = panel === 'listening' ? `${selected} of ${(liveState.scanLists || []).length} selected` :
-      panel === 'queue' ? `${queueCount()} queued` : panel === 'avoids' ? `${(liveState.avoids || []).length} avoided` : panel === 'settings' ? 'Live listening preferences' :
+    contextSubtitle.textContent = panel === 'listening' ? `${selected} of ${(liveState.scanLists || []).length + (liveState.directListen?.allowed ? 1 : 0)} selected` :
+      panel === 'direct' ? `${liveState.directListen?.targets.length || 0} ${liveState.directListen?.targets.length === 1 ? 'target' : 'targets'} · This session` : panel === 'queue' ? `${queueCount()} queued` : panel === 'avoids' ? `${(liveState.avoids || []).length} avoided` : panel === 'settings' ? 'Live listening preferences' :
       source === 'live' && panel === 'details' && !active.current ? 'Waiting for a call' : title(call);
-    const panelState = panel === 'listening' ? [active.scanLists, active.maximumSelectedScanLists, active.scanListCatalogReady, active.scanListCatalogState] :
-      panel === 'avoids' ? [liveState.avoids, liveState.scanLists] : panel === 'settings' ? [liveState.targetGrouping, liveState.targetBurstLimit, getTitlePreference()] :
+    const panelState = panel === 'listening' ? [active.scanLists, active.directListen, active.maximumSelectedScanLists, active.scanListCatalogReady, active.scanListCatalogState] :
+      panel === 'direct' ? [liveState.directListen] :
+      panel === 'avoids' ? [liveState.avoids, liveState.scanLists, liveState.directListen?.allowed] : panel === 'settings' ? [liveState.targetGrouping, liveState.targetBurstLimit, getTitlePreference()] :
       panel === 'queue' ? [active.current, active.queue, active.scanLists, active.continuation, active.stopped, active.paused, selectedQueueKey] :
       panel === 'transcript' ? [call?.id, call?.transcription, active.detailsLoading, active.detailsError] :
       [active.current, call, active.stopped, active.scanLists, active.detailsLoading, active.detailsError];
@@ -1029,6 +1095,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
         } else renderLiveDetails();
       } else if (panel === 'transcript') { const mount = node('div'); panelHost.append(mount); recordings.renderTranscript(mount); }
       else if (panel === 'queue') renderQueue(); else if (panel === 'listening') renderListening();
+      else if (panel === 'direct') renderDirectListen();
       else if (panel === 'avoids') renderAvoids(); else renderSettings();
       panelHost.querySelectorAll('details').forEach(item => {
         const key = `${renderedPanel}:${item.querySelector('summary')?.textContent}`; item.open = disclosureStates.get(key) === true;
@@ -1040,7 +1107,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (destroyed) return;
     const permissions = access();
     if (!permissions[source] && (permissions.live || permissions.recordings)) { closeVolume(false); source = permissions.live ? 'live' : 'recordings'; panelKey = ''; }
-    const unavailable = (!guidePresentation && document.body.dataset.view === 'scanner') ||
+    const unavailable = (!guidePresentation && document.body.dataset.view === 'scanner' && !externalManagement) ||
       document.body.dataset.view === 'access-landing' || !permissions.live && !permissions.recordings;
     if (unavailable && sizeGesture) cancelSizeGesture();
     const hiddenToHeader = superCollapsed && !mobileLayout.matches;
@@ -1074,7 +1141,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (sourcePicker.value !== '') sourcePicker.value = ''; sourcePicker.disabled = !permissions.live && !permissions.recordings;
     const live = source === 'live';
     desktopLists.button.hidden = mobileLists.button.hidden = settingsButton.hidden = !live; library.hidden = live;
-    const selected = (liveState.scanLists || []).filter(item => item.selected && item.enabled).length;
+    const selected = (liveState.scanLists || []).filter(item => item.selected && item.enabled).length + (liveState.directListen?.selected ? 1 : 0);
     [desktopLists, mobileLists].forEach(({button, badge}) => { badge.textContent = String(selected); button.setAttribute('aria-label', `Lists, ${selected} selected`); button.disabled = !permissions.live; });
     shrink.querySelector('use').setAttribute('href', mobileLayout.matches ? '#icon-close' : '#icon-chevron-down');
     setLabel(shrink, presentationSize === 'full' ? 'Make player compact' : 'Collapse player');
@@ -1128,7 +1195,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     [miniVolume, expandedVolume].forEach(button => { setLabel(button, `Volume, ${percent} percent`, level ? 'speaker' : 'speaker-muted'); button.querySelector('[data-volume-value]').textContent = `${percent}%`; button.disabled = !isAllowed(); });
     if (document.activeElement !== volume) volume.value = String(level); volume.disabled = !isAllowed();
     volume.setAttribute('aria-valuetext', level ? `${percent} percent` : 'Muted, 0 percent'); volumeOutput.textContent = `${percent}%`; volumeFill.style.setProperty('--audio-volume-percent', `${percent}%`);
-    if (source === 'live' && panel === 'transcript' || source === 'recordings' && ['listening', 'settings', 'avoids'].includes(panel)) { panel = null; panelKey = ''; }
+    if (source === 'live' && panel === 'transcript' || source === 'recordings' && ['listening', 'direct', 'settings', 'avoids'].includes(panel)) { panel = null; panelKey = ''; }
     renderSidebar(); renderPanel(); dock.querySelectorAll('[data-click-mode]').forEach(select => { if (select.value !== recordingState.clickMode) select.value = recordingState.clickMode; });
     updateProgress(); measure(); synchronizeLoops();
   }
@@ -1270,7 +1337,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       }
     };
   }
-  return { synchronize, prepareGuide, destroy() {
+  return { synchronize, prepareGuide, openDirectListen(invoker) {
+    if (!access().live || !liveState.directListen?.allowed) return;
+    if (source !== 'live') switchSource('live');
+    superCollapsed = false;
+    externalManagement = document.body.dataset.view === 'scanner';
+    openPanel('direct', invoker);
+  }, destroy() {
     [dock, volumePopover, restore].forEach(root => guideCommandEvents.forEach(type =>
       root.removeEventListener(type, protectGuideCommands, true)));
     cancelSizeGesture();

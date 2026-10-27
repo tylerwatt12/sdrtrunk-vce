@@ -9,6 +9,7 @@ import * as tableDefaults from './core/table-defaults.js?v=31';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
+import { directListenEntryTarget } from './core/direct-listen-entry.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
@@ -45,11 +46,11 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=35';
+import { createAudioDock } from './core/audio-dock.js?v=36';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=20';
+import { WebCallPlayer } from './web-call-player.js?v=21';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -145,6 +146,7 @@ const ACCESS_CAPABILITIES = Object.freeze({
   CREDITS: 'credits',
   CSV_EXPORT: 'csv-export',
   CALL_AUDIO: 'call-audio',
+  DIRECT_LISTEN: 'direct-listen',
   RECORDINGS: 'recordings',
   ADMIN_RECORDINGS: 'admin-recordings',
   RECEIVER_HEALTH: 'receiver-health',
@@ -410,6 +412,7 @@ function applyUserPreferenceSnapshot(snapshot) {
   if (snapshot.loaded || snapshot.identity === null) clearUserPreferenceError();
   const preferences = snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
   personalSettingsWorkspace?.onSnapshot(snapshot);
+  webCallPlayer?.setDirectListenIdentity(snapshot.identity);
   applyTheme();
   pageTitleController.update({ prependPlaying: preferences.page_titles.prepend_playing_call });
   const player = webCallPlayer;
@@ -2153,7 +2156,57 @@ function radioIdentityValue(row, options) {
 }
 
 function groupIdentityValue(row, options) {
-  return tableIdentityValue(row, 'group', options);
+  const value = tableIdentityValue(row, 'group', options);
+  if (options && Object.hasOwn(options, 'reference') && !options.reference) return value;
+  return withDirectListenAction(value, row, options?.reference || row.entity_ref,
+    { id: options?.id, label: tableIdentityParts(row, 'group', options).primary });
+}
+
+function directListenAllowed() {
+  return capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO) &&
+    capabilityAllowed(ACCESS_CAPABILITIES.DIRECT_LISTEN);
+}
+
+function directListenAction(row, reference, options = {}) {
+  if (!directListenAllowed()) return null;
+  const target = directListenEntryTarget(row, reference, options);
+  if (!target) return null;
+  const label = options.label || row.target_alias || row.target_alias_name || row.alias_name ||
+    row.channel_name || row.name || `Talkgroup ${options.id ?? row.target_id ?? row.native_id ?? ''}`;
+  const scopeRow = { ...row, radio_system_key: target.radio_system_key || row.radio_system_key };
+  const channel = row.channel_name || (target.kind === 'channel' ? row.name || `Channel ${target.key}` : '');
+  const context = [...new Set([systemLabels.systemLabel(scopeRow), systemLabels.systemIdentity(scopeRow),
+    target.radio_system_key?.includes(':channel:') ? target.radio_system_key.split(':').at(-1) : '',
+    channel].filter(Boolean))].join(' · ');
+  const button = iconButton('icon-direct-listen', `Add ${label} to Direct Listen`,
+    'ui-button ui-button-quiet ui-icon-button');
+  button.dataset.directListenAction = 'add';
+  button.addEventListener('click', event => {
+    event.preventDefault(); event.stopPropagation();
+    if (!directListenAllowed() || document.querySelector('.ui-setup-guide')) return;
+    try {
+      const result = webCallPlayer?.addDirectListenTarget(target, label, context);
+      if (!result) return;
+      button.setAttribute('aria-label', `${label} added to Direct Listen`);
+      button.title = `${label} added to Direct Listen`;
+      button.querySelector('use')?.setAttribute('href', '#icon-check');
+      audioDock.synchronize();
+    } catch (error) {
+      const feedback = node('p', 'ui-feedback ui-feedback-error',
+        error.message || 'Unable to add this target. Try again.');
+      feedback.setAttribute('role', 'alert');
+      openReadOnlyModal('Direct Listen', feedback, { id: 'direct-listen-feedback' });
+    }
+  });
+  return button;
+}
+
+function withDirectListenAction(value, row, reference, options = {}) {
+  const action = directListenAction(row, reference, options);
+  if (!action) return value;
+  const result = node('span', 'ui-action-row ui-action-row-start');
+  result.append(value instanceof Node ? value : document.createTextNode(String(value || '')), action);
+  return result;
 }
 
 function radioIdentitySortValue(row, options) {
@@ -8250,7 +8303,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const [feature, presentation] = await Promise.all(mapTour ? [
       import('./features/listen-map.js?v=14'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=60'), import('./guides/network-visualizer-presentation.js?v=2')
+      import('./features/network-visualizer/index.js?v=61'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
       import('./features/alerts.js?v=23'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
@@ -12111,6 +12164,8 @@ function synchronizePlaybackAccess(accessChanged = false) {
 
   if (!allowed) {
     playbackScanListRequest++;
+    webCallPlayer?.setDirectListenAllowed(false);
+    if (accessSessionAvailable) webCallPlayer?.setDirectListenIdentity(userPreferenceController.snapshot().identity);
     playbackScanListLoading = false;
     const unavailableMessage = !accessSessionAvailable ? 'Access unavailable' :
       (accessSession.authenticated ? 'Web audio unavailable' : 'Sign in for web audio');
@@ -12156,6 +12211,8 @@ function synchronizePlaybackAccess(accessChanged = false) {
   webCallPlayer.setActions({
     openAvoidList: openPlaybackAvoidList
   });
+  webCallPlayer.setDirectListenIdentity(userPreferenceController.snapshot().identity);
+  webCallPlayer.setDirectListenAllowed(directListenAllowed());
   bar.querySelectorAll('button, input').forEach((control) => { control.disabled = false; });
   webCallPlayer.render();
   webCallPlayer.renderScanLists();
@@ -12594,15 +12651,16 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
 
 function openPlaybackAvoidList(player = webCallPlayer, options = {}) {
   if (!player) return;
+  const invoker = document.activeElement;
   const openModal = options.openReadOnlyModal || openReadOnlyModal;
   const body = node('div', 'scanner-modal-list');
+  let modal = null;
   const removeAvoid = key => { player.removeAvoid(key); renderRows(); };
   const renderRows = () => {
     body.replaceChildren();
     const avoids = player.viewState().avoids;
     if (!avoids.length) {
       body.append(node('div', 'empty', 'No browser avoids are active.'));
-      return;
     }
     avoids.forEach((avoid) => {
       const row = node('div', 'scanner-modal-row');
@@ -12616,9 +12674,20 @@ function openPlaybackAvoidList(player = webCallPlayer, options = {}) {
       row.append(copy, remove);
       body.append(row);
     });
+    if (options.guideMode !== true && player.viewState().directListen?.allowed) {
+      const actions = node('div', 'ui-action-row ui-action-row-start');
+      const manage = node('button', 'ui-button ui-button-secondary', 'Manage Direct Listen');
+      manage.type = 'button';
+      manage.addEventListener('click', () => {
+        if (!player.viewState().directListen?.allowed || !modal) return;
+        modal.close(() => audioDock.openDirectListen(invoker));
+      });
+      actions.append(manage);
+      body.append(actions);
+    }
   };
   renderRows();
-  const modal = openModal('Avoid List', body, { id: 'scanner-avoids', className: 'scanner-list-modal' });
+  modal = openModal('Avoid List', body, { id: 'scanner-avoids', className: 'scanner-list-modal' });
   return modal ? Object.assign(modal, { removeAvoid }) : null;
 }
 
@@ -12872,7 +12941,7 @@ function renderScanner(options = {}) {
   } else if (!beginPage(renderContext, heading, host)) return;
   const playbackControls = arrangeScannerPlayback(transport, player, renderContext.signal, {
     openAvoidList: currentPlayer => openPlaybackAvoidList(currentPlayer,
-      guideMode ? { openReadOnlyModal: options.openReadOnlyModal } : {})
+      guideMode ? { openReadOnlyModal: options.openReadOnlyModal, guideMode: true } : {})
   });
 
   let latestState = player.viewState();
@@ -12880,9 +12949,14 @@ function renderScanner(options = {}) {
   let currentChannel = null;
   let displayedCallId = '';
   let upNextKey = '';
+  let directScanRow = null;
+  const directSelection = state => !guideMode && state.directListen?.allowed && state.directListen.selected &&
+    state.directListen.targets.length > 0;
   const renderUpNext = (state) => {
     const calls = state.queue;
-    const scope = state.scanLists.filter(item => item.enabled && item.selected).map(item => item.name).join(' · ');
+    const scopeNames = state.scanLists.filter(item => item.enabled && item.selected).map(item => item.name);
+    if (directSelection(state)) scopeNames.unshift('Direct Listen');
+    const scope = scopeNames.join(' · ');
     upNextCount.textContent = `${state.queuedCount} queued`;
     upNextScope.textContent = scope;
     const next = calls[0];
@@ -12940,6 +13014,9 @@ function renderScanner(options = {}) {
     scanRetry.disabled = !allowed;
     if (!allowed && scanPanel.matches(':popover-open')) scanPanel.hidePopover();
     const selectedCount = state.scanLists.filter((item) => item.selected && item.enabled).length;
+    const direct = !guideMode && state.directListen?.allowed ? state.directListen : null;
+    const totalSelectedCount = selectedCount + (directSelection(state) ? 1 : 0);
+    const totalListCount = state.scanLists.length + (direct ? 1 : 0);
     const selectionFull = selectedCount >= state.maximumSelectedScanLists;
     const unavailable = state.scanListCatalogState === 'unavailable';
     scanStatus.hidden = state.scanListCatalogReady;
@@ -12947,10 +13024,10 @@ function renderScanner(options = {}) {
     scanStatus.classList.toggle('ui-feedback-error', unavailable);
     scanStatus.textContent = unavailable ? 'Unable to load scan lists. Try again.' : 'Loading available scan lists…';
     scanRetry.hidden = !unavailable;
-    scanTrigger.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady ?
-      `Scan Lists · ${selectedCount}` : 'Scan Lists · Loading';
-    scanTrigger.setAttribute('aria-label', state.scanListCatalogReady ?
-      `Scan Lists, ${selectedCount} of ${state.scanLists.length} listening` : 'Scan Lists, loading available lists');
+    scanTrigger.querySelector('.scanner-scan-summary').textContent = state.scanListCatalogReady || direct ?
+      `Scan Lists · ${totalSelectedCount}` : 'Scan Lists · Loading';
+    scanTrigger.setAttribute('aria-label', state.scanListCatalogReady || direct ?
+      `Scan Lists, ${totalSelectedCount} of ${totalListCount} listening` : 'Scan Lists, loading available lists');
     const existing = new Map([...scanButtons.querySelectorAll('.scanner-scan-button[data-scan-list-id]')]
       .map((button) => [button.dataset.scanListId, button]));
     const desired = state.scanLists.map((item) => {
@@ -12983,6 +13060,41 @@ function renderScanner(options = {}) {
         item.description || (item.default ? 'Default list' : 'Available to listeners');
       return button;
     });
+    if (direct) {
+      if (!directScanRow) {
+        directScanRow = node('div', 'ui-select-list-item scanner-scan-button');
+        directScanRow.dataset.directListen = 'list';
+        const label = node('label', 'ui-action-row ui-action-row-start');
+        const copy = node('span', 'scanner-scan-copy');
+        copy.append(node('strong', '', 'Direct Listen'), node('small'));
+        const marker = node('input', 'ui-selection-check scanner-scan-check');
+        marker.type = 'checkbox';
+        marker.setAttribute('aria-label', 'Direct Listen');
+        marker.addEventListener('change', () => {
+          if (guideMode || marker.disabled || !capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO) ||
+              !player.viewState().directListen?.allowed) return;
+          player.setDirectListenSelected(marker.checked);
+        });
+        label.append(copy, marker);
+        const manage = iconButton('icon-direct-listen', 'Manage Direct Listen',
+          'ui-button ui-button-secondary ui-icon-button');
+        manage.addEventListener('click', () => {
+          if (guideMode || !player.viewState().directListen?.allowed) return;
+          if (scanPanel.matches(':popover-open')) scanPanel.hidePopover();
+          audioDock.openDirectListen(scanTrigger);
+        });
+        directScanRow.append(label, manage);
+      }
+      const marker = directScanRow.querySelector('.scanner-scan-check');
+      marker.checked = direct.selected;
+      marker.disabled = !allowed || !direct.targets.length;
+      directScanRow.querySelector('.scanner-scan-copy small').textContent = `${direct.targets.length} targets · This session`;
+      directScanRow.querySelector('button').disabled = !allowed;
+      desired.unshift(directScanRow);
+    } else {
+      directScanRow?.remove();
+      directScanRow = null;
+    }
     existing.forEach((button) => button.remove());
     scanButtons.querySelector('.scanner-scan-empty')?.remove();
     desired.forEach((button, index) => {
@@ -13007,7 +13119,7 @@ function renderScanner(options = {}) {
     playbackStatus.textContent = state.status ||
       (state.stopped ? 'Ready' : state.paused ? 'Paused' : 'Listening');
     playbackStatus.classList.toggle('ui-pill-success', !state.stopped && !state.paused &&
-      state.scanLists.some(item => item.selected && item.enabled));
+      (state.scanLists.some(item => item.selected && item.enabled) || directSelection(state)));
     statusBar.dataset.state = state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening';
     updateAge();
     paintCall(display, state, currentChannel);
@@ -13399,8 +13511,8 @@ function dashboardIdentityOptions(row) {
 }
 
 function dashboardIdentity(row) {
-  return tableIdentityValue(row, identityKind(row.identity_kind) === 'radio' ? 'radio' : 'group',
-    dashboardIdentityOptions(row));
+  return identityKind(row.identity_kind) === 'radio' ? radioIdentityValue(row, dashboardIdentityOptions(row)) :
+    groupIdentityValue(row, dashboardIdentityOptions(row));
 }
 
 function dashboardIdentitySortValue(row) {
@@ -19978,13 +20090,15 @@ function liveIdentityValue(row, kind) {
   const summary = identitySummaryValue(nameText ? name : identifier,
     nameText && idText && nameText !== idText ? identifier : '');
   if (summary instanceof Node) summary.classList.add('identity-summary-inline');
-  return summary;
+  return kind === 'target' ? withDirectListenAction(summary, row, row.target_entity_ref || row.entity_ref,
+    { label: nameText || idText }) : summary;
 }
 
 function liveConventionalChannelValue(row) {
   const label = String(row?.channel_name || '');
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row?.entity_ref) : '';
-  return label && target ? anchor(label, target, 'live-channel-link') : label;
+  return withDirectListenAction(label && target ? anchor(label, target, 'live-channel-link') : label,
+    row, row.entity_ref, { channelOnly: true, label });
 }
 
 function liveRemoteOriginLabel(origin) {
@@ -21008,6 +21122,9 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
       source.onerror = () => callbacks.error?.();
       return source;
     },
+    createDirectListenAction: (group, system) => directListenAction({ radio_system_name: system.name || system.label },
+      { kind: group.identityKey.startsWith('v1-p-') ? 'patch_group' : 'talkgroup',
+        radio_system_key: system.key, identity_key: group.identityKey }, { label: group.label }),
     systemHref: (system) => capabilityAllowed(ACCESS_CAPABILITIES.RADIO) && system?.key ?
       href('radio-system', { radio_system_key: system.key, tab: 'info' }) : '',
     signal: renderContext.signal,
@@ -21017,7 +21134,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=60');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=61');
   // The live scene does not wait for an optional label catalog or historical data.
   void loadActivityMessageTypes();
   const visualizerModule = await p25VisualizerModulePromise;
@@ -22506,8 +22623,12 @@ async function renderGroupIdentity() {
   const formattedId = groupIdentifierText(groupIdentity, groupIdentity.native_id);
   const kindLabel = kind === 'patch_group' ? 'Patch Group' : 'Talkgroup';
   const title = entityPageTitle(kindLabel, aliasLabel(groupIdentity), formattedId);
-  if (!beginPage(renderContext,
-    pageHeader(title, fragment(radioSystemContextLink(groupIdentity), ` · ${kindLabel} ${formattedId}`)),
+  const header = pageHeader(title, fragment(radioSystemContextLink(groupIdentity), ` · ${kindLabel} ${formattedId}`));
+  const direct = directListenAction(groupIdentity, groupIdentity.entity_ref || {
+    kind, radio_system_key: radioSystem.radio_system_key, identity_key: identityKey
+  }, { label: aliasLabel(groupIdentity) || `${kindLabel} ${formattedId}` });
+  if (direct) header.append(direct);
+  if (!beginPage(renderContext, header,
     entityTabs('group-identity', groupIdentity, identityKey, tab, false))) return;
 
   if (tab === 'radios') {
@@ -23496,7 +23617,9 @@ function activityPartyValue(row, kind) {
   const identityKind = kind === 'source' ? 'radio' : activityTargetKind(row);
   const name = activityPartyName(row, kind) ||
     (identifier && value != null && value !== '' ? specialIdentifierLabel(row, value, identityKind, kind) : '');
-  return identitySummaryValue(name || identifier, name && name !== identifier ? identifier : '');
+  const summary = identitySummaryValue(name || identifier, name && name !== identifier ? identifier : '');
+  return kind === 'target' ? withDirectListenAction(summary, row, row.target_entity_ref || row.entity_ref,
+    { label: name || identifier }) : summary;
 }
 
 function activityChannel(row, linked = true) {
@@ -28459,11 +28582,13 @@ async function renderConventionalChannel(data, channel, configurationId, renderC
   const tabItems = channelTabItems(channel);
   const requestedTab = route.get('tab') || 'info';
   const tab = tabItems.some((item) => item.id === requestedTab) ? requestedTab : tabItems[0].id;
-  if (!beginPage(renderContext,
-    pageHeader(entityPageTitle('Channel', channel.name, Number(channel.primary_frequency_hz) > 0 ?
-      `${frequency(channel.primary_frequency_hz)} MHz` : ''),
-      [radioSystemPrimaryName(channel), protocolFamily(channel), 'Conventional'].filter(Boolean).join(' · ')),
-    tabs(tabItems, tab))) return;
+  const header = pageHeader(entityPageTitle('Channel', channel.name, Number(channel.primary_frequency_hz) > 0 ?
+    `${frequency(channel.primary_frequency_hz)} MHz` : ''),
+    [radioSystemPrimaryName(channel), protocolFamily(channel), 'Conventional'].filter(Boolean).join(' · '));
+  const direct = directListenAction(channel, { kind: 'channel', key: configurationId },
+    { channelOnly: true, label: channel.name });
+  if (direct) header.append(direct);
+  if (!beginPage(renderContext, header, tabs(tabItems, tab))) return;
 
   if (tab === 'activity') {
     const analog = isAnalogChannel(channel);
@@ -28852,7 +28977,7 @@ function accessPolicyTierControl(policy, statusHost) {
 
 function accessPolicyIdentity(policy) {
   const icons = { dashboard: 'icon-dashboard', live: 'icon-live', radio: 'icon-radio-tower',
-    'call-audio': 'icon-speaker', 'csv-export': 'icon-download', credits: 'icon-about',
+    'call-audio': 'icon-speaker', 'direct-listen': 'icon-direct-listen', 'csv-export': 'icon-download', credits: 'icon-about',
     'tuner-spectrum': 'icon-spectrum', 'user-settings': 'icon-admin', recordings: 'icon-recording',
     'admin-recordings': 'icon-recording-settings', 'receiver-health': 'icon-health' };
   const wrapper = node('div', 'ui-permission-identity admin-capability-identity');
@@ -28902,7 +29027,7 @@ async function renderAdminAccess(renderContext = captureRenderContext()) {
   const { requestJson } = administrationRequestDependencies(renderContext);
   const response = await requestJson('/api/v1/admin/access', { csrf: false });
   if (!renderIsCurrent(renderContext)) return;
-  const displayOrder = ['dashboard', 'live', 'radio', 'call-audio', 'csv-export', 'credits',
+  const displayOrder = ['dashboard', 'live', 'radio', 'call-audio', 'direct-listen', 'csv-export', 'credits',
     'tuner-spectrum', 'user-settings', 'recordings', 'admin-recordings', 'admin-users', 'admin-access',
     'admin-aliases', 'admin-streaming', 'admin-channels', 'admin-tuners', 'admin-settings', 'receiver-health'];
   const order = (id) => displayOrder.includes(id) ? displayOrder.indexOf(id) : displayOrder.length;

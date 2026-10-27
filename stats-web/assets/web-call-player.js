@@ -1,6 +1,7 @@
 import { systemLabel, systemName, homeSystemName } from './core/system-labels.js?v=2';
 import { p25IdentityFacts, p25IdentifierText } from './core/radio-labels.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
+import { createDirectListenSession, directListenTargetKey } from './core/direct-listen.js?v=1';
 
 export class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
@@ -75,6 +76,8 @@ export class WebCallPlayer {
     this.selectedScanListIds = new Set();
     this.scanListCatalogReady = false;
     this.scanListCatalogState = 'loading';
+    this.directListenSession = createDirectListenSession();
+    this.directListenAllowed = false;
     this.ui.volume.value = String(this.volume);
     this.bindControls();
     this.render();
@@ -206,6 +209,7 @@ export class WebCallPlayer {
       scanLists: this.scanLists.map((item) => ({ ...item, selected: this.selectedScanListIds.has(item.id) })),
       scanListCatalogReady: this.scanListCatalogReady,
       scanListCatalogState: this.scanListCatalogState,
+      directListen: { allowed: Boolean(this.directListenAllowed), ...this.directListenSession?.snapshot() },
       maximumSelectedScanLists: this.maximumSelectedScanLists,
       volume: this.volume,
       targetGrouping: this.targetGrouping,
@@ -230,10 +234,90 @@ export class WebCallPlayer {
       .slice(0, this.maximumSelectedScanLists);
   }
 
+  activeDirectListenTargets() {
+    const direct = this.directListenSession?.snapshot();
+    return this.directListenAllowed && direct?.selected ? direct.targets : [];
+  }
+
+  hasListeningSelection() {
+    return Boolean(this.scanListCatalogReady && this.activeSelectedScanListIds().length ||
+      this.activeDirectListenTargets().length);
+  }
+
+  setDirectListenIdentity(identity) {
+    if (!this.directListenSession?.setIdentity(identity)) return;
+    this.discardDirectListenAudio(true);
+    this.directListenChanged();
+  }
+
+  setDirectListenAllowed(allowed) {
+    if (this.directListenAllowed === Boolean(allowed)) return;
+    this.directListenAllowed = Boolean(allowed);
+    if (!this.directListenAllowed) this.discardDirectListenAudio();
+    this.directListenChanged();
+  }
+
+  discardDirectListenAudio(identityChanged = false) {
+    const selected = new Set(this.activeSelectedScanListIds());
+    const discard = call => Boolean(call?._directTargetKeys?.length || call?.direct_target_keys?.length) &&
+      (identityChanged || !call?._matchedScanListIds?.some(id => selected.has(String(id))));
+    this.filterQueuedCalls(call => !discard(call));
+    if (discard(this.lastHeard)) {
+      this.lastHeard = null;
+      this.lastHeardBuffer = null;
+      this.lastHeardSourceSampleRate = null;
+    }
+    if (discard(this.heldDisplayCall)) {
+      this.holdTarget = null;
+      this.heldDisplayCall = null;
+    }
+    if (discard(this.idleDisplayCall)) this.clearIdleDisplay();
+    if (!discard(this.current)) return;
+    const stopAfterReplay = this.replayingLast && this.stopAfterReplay;
+    this.transportToken++;
+    this.replayingLast = false;
+    this.stopAfterReplay = false;
+    if (stopAfterReplay) {
+      this.stopped = true;
+      this.paused = false;
+      if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
+    }
+    this.stopCurrent();
+    if (!this.stopped && !this.paused) void this.playNext();
+  }
+
+  addDirectListenTarget(target, label = '', context = '') {
+    if (!this.directListenAllowed) throw new Error('Direct Listen is unavailable.');
+    const result = this.directListenSession.add(target, label, context);
+    this.directListenChanged();
+    return result;
+  }
+
+  removeDirectListenTarget(key) {
+    if (!this.directListenSession?.remove(key)) return false;
+    this.directListenChanged();
+    return true;
+  }
+
+  setDirectListenSelected(selected) {
+    if (!this.directListenSession?.select(selected)) return;
+    this.directListenChanged();
+  }
+
+  directListenChanged() {
+    this.filterQueueForSelectedLists();
+    if (this.current && !this.replayingLast && !this.callMatchesSelection(this.current)) {
+      this.stopCurrent();
+      if (!this.stopped && !this.paused) void this.playNext();
+    }
+    this.synchronizeSubscription();
+    this.render();
+  }
+
   ensureConnected() {
     if (this.feedActive) return true;
-    if (typeof this.feedFetch !== 'function' || !this.feedUrl || !this.scanListCatalogReady ||
-        !this.activeSelectedScanListIds().length || this.stopped) return false;
+    if (typeof this.feedFetch !== 'function' || !this.feedUrl ||
+        !this.hasListeningSelection() || this.stopped) return false;
     this.feedActive = true;
     this.feedCursor = null;
     const generation = ++this.feedGeneration;
@@ -244,6 +328,7 @@ export class WebCallPlayer {
   feedRequestUrl() {
     const query = new URLSearchParams();
     this.activeSelectedScanListIds().forEach((id) => query.append('scan_list_id', id));
+    this.activeDirectListenTargets().forEach((item) => query.append('direct_target', item.key));
     if (this.feedCursor !== null) query.set('cursor', this.feedCursor);
     return `${this.feedUrl}?${query}`;
   }
@@ -303,7 +388,7 @@ export class WebCallPlayer {
   }
 
   synchronizeSubscription() {
-    if (!this.scanListCatalogReady || !this.activeSelectedScanListIds().length) {
+    if (!this.hasListeningSelection()) {
       this.stopFeed();
       if (!this.stopped) {
         // An empty selection keeps live listening armed. A one-off replay still
@@ -354,6 +439,7 @@ export class WebCallPlayer {
     this.scanListCatalogReady = false;
     this.scanListCatalogState = 'loading';
     this.stopFeed();
+    if (this.activeDirectListenTargets().length) this.ensureConnected();
     if (this.ui.scanListStatus) this.ui.scanListStatus.textContent = 'Loading available scan lists…';
     this.renderScanLists();
   }
@@ -367,6 +453,7 @@ export class WebCallPlayer {
     if (this.ui.scanListStatus) this.ui.scanListStatus.textContent = message;
     this.setStatus(message);
     this.renderScanLists();
+    if (this.activeDirectListenTargets().length) this.synchronizeSubscription();
   }
 
   setScanLists(rows) {
@@ -541,7 +628,13 @@ export class WebCallPlayer {
     if (!callId || !Number.isFinite(started) || started <= 0 || !Number.isFinite(completed) || completed <= 0 ||
         !Array.isArray(value.scan_list_ids)) return null;
     const scanListIds = value.scan_list_ids;
-    if (!scanListIds.length || scanListIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
+    if (scanListIds.some((id) => !Number.isSafeInteger(id) || id <= 0)) return null;
+    const directTargetKeys = Array.isArray(value.direct_target_keys) ? value.direct_target_keys.slice(0, 32)
+      .filter(key => {
+        if (typeof key !== 'string' || key.length > 512) return false;
+        try { return directListenTargetKey(JSON.parse(key)) === key; } catch { return false; }
+      }) : [];
+    if (!scanListIds.length && !directTargetKeys.length) return null;
     const playbackTarget = value.playback_target;
     const playbackTargetKey = typeof playbackTarget?.key === 'string' ? playbackTarget.key.trim() : '';
     const playbackTargetKind = typeof playbackTarget?.kind === 'string' ? playbackTarget.kind.trim() : '';
@@ -552,7 +645,8 @@ export class WebCallPlayer {
       _callId: callId,
       _startedAtMs: started,
       _arrivalSequence: this.arrivalSequence++,
-      _matchedScanListIds: [...new Set(scanListIds.map(String))]
+      _matchedScanListIds: [...new Set(scanListIds.map(String))],
+      _directTargetKeys: [...new Set(directTargetKeys)]
     };
     call._playbackTargetKey = playbackTargetKey;
     return call;
@@ -652,9 +746,9 @@ export class WebCallPlayer {
 
   callMatchesSelection(call) {
     const selected = new Set(this.activeSelectedScanListIds());
-    if (!selected.size) return false;
-    return Boolean(call?._matchedScanListIds?.length) &&
-      call._matchedScanListIds.some((id) => selected.has(String(id)));
+    if (call?._matchedScanListIds?.some((id) => selected.has(String(id)))) return true;
+    const directKeys = new Set(this.activeDirectListenTargets().map(item => item.key));
+    return Boolean(call?._directTargetKeys?.some(key => directKeys.has(key)));
   }
 
   bindControls() {
@@ -679,7 +773,7 @@ export class WebCallPlayer {
   }
 
   async togglePlayback() {
-    if (this.stopped && this.scanListCatalogReady && !this.activeSelectedScanListIds().length) {
+    if (this.stopped && this.scanListCatalogReady && !this.hasListeningSelection()) {
       const defaultScanList = this.scanLists.find((item) => item.enabled && item.default);
       if (defaultScanList) {
         this.selectedScanListIds = new Set([defaultScanList.id]);
