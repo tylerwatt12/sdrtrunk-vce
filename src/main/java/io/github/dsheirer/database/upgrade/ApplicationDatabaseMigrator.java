@@ -352,14 +352,23 @@ public final class ApplicationDatabaseMigrator
                                                         PrintStream output, MigrationContent content, boolean transferred)
         throws IOException, SQLException, UnsupportedDatabaseFormatException
     {
-        if(Files.isSymbolicLink(database) || !Files.isRegularFile(database, LinkOption.NOFOLLOW_LINKS))
+        if(Files.isSymbolicLink(database))
         {
             throw new IOException("The owned profile stage must be an ordinary database file.");
         }
-        if(!transferred) requireApplicationStage(database);
+        if(!transferred) requireApplicationStage(database, true);
+        // A committed split briefly has no main file: the original is already Activity, and its extracted
+        // configuration is awaiting promotion. Validate the owned directory and all existing artifacts before
+        // allowing the receipt-bound recovery to finish that rename, then require the completed ordinary file.
+        requireOwnedCompleteProfileStage(database, relocation, transferred);
+        requireOwnedTransitionArtifacts(database);
+        recoverSplitTransition(database);
+        if(!Files.isRegularFile(database, LinkOption.NOFOLLOW_LINKS))
+        {
+            throw new IOException("The owned profile stage must be an ordinary database file.");
+        }
         requireOwnedCompleteProfileStage(database, relocation, transferred);
         requireSingleFilesystemLinkWhenSupported(database);
-        recoverSplitTransition(database);
         output.println("Checking the owned complete-profile copy's schema and configuration.");
         output.println("Whole-file physical-integrity, derived-history, and foreign-key sweeps are not run " +
             "for this owned copy; use explicit maintenance for those checks.");
@@ -418,15 +427,35 @@ public final class ApplicationDatabaseMigrator
         {
             throw new IOException("Owned complete-profile relocation requires distinct, non-nested data roots.");
         }
-        if(Files.isSymbolicLink(targetDatabaseDirectory) || !database.getParent().equals(targetDatabaseDirectory) ||
-            !database.toRealPath().getParent().equals(physicalTarget.resolve("database")))
+        if(Files.isSymbolicLink(targetDatabaseDirectory) ||
+            !Files.isDirectory(targetDatabaseDirectory, LinkOption.NOFOLLOW_LINKS) ||
+            !database.getParent().equals(targetDatabaseDirectory) ||
+            !database.getParent().toRealPath().equals(physicalTarget.resolve("database")))
         {
             throw new IOException("The owned profile stage must be inside the target data root's database directory.");
         }
         Path sourceDatabase = SdrTrunkDatabasePath.getDatabasePath(source);
-        if(Files.exists(sourceDatabase, LinkOption.NOFOLLOW_LINKS) && Files.isSameFile(database, sourceDatabase))
+        if(Files.exists(database, LinkOption.NOFOLLOW_LINKS) &&
+            Files.exists(sourceDatabase, LinkOption.NOFOLLOW_LINKS) && Files.isSameFile(database, sourceDatabase))
         {
             throw new IOException("The owned profile stage must be a separate file from the source database.");
+        }
+    }
+
+    private static void requireOwnedTransitionArtifacts(Path database) throws IOException
+    {
+        for(Path artifact: List.of(database, io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database),
+            io.github.dsheirer.database.ActivityDatabasePath.configurationStage(database),
+            io.github.dsheirer.database.ActivityDatabasePath.splitReceipt(database)))
+        {
+            if(Files.exists(artifact, LinkOption.NOFOLLOW_LINKS))
+            {
+                if(Files.isSymbolicLink(artifact) || !Files.isRegularFile(artifact, LinkOption.NOFOLLOW_LINKS))
+                {
+                    throw new IOException("The owned profile transition artifacts must be ordinary files.");
+                }
+                requireSingleFilesystemLinkWhenSupported(artifact);
+            }
         }
     }
 
@@ -517,7 +546,13 @@ public final class ApplicationDatabaseMigrator
 
     private static void requireApplicationStage(Path database) throws IOException
     {
-        Path physicalDatabase = database.toRealPath();
+        requireApplicationStage(database, false);
+    }
+
+    private static void requireApplicationStage(Path database, boolean allowMissingMainFile) throws IOException
+    {
+        Path physicalDatabase = allowMissingMainFile && !Files.exists(database, LinkOption.NOFOLLOW_LINKS) ?
+            database.getParent().toRealPath().resolve(database.getFileName()) : database.toRealPath();
         Path fileName = physicalDatabase.getFileName();
 
         if(fileName != null && STAGED_DATABASE_FILE.matcher(fileName.toString()).matches())
