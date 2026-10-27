@@ -423,6 +423,55 @@ class Format4To5DatabaseMigrationTest
     }
 
     @Test
+    void preservesScalarAutoStartAndOrderWhenMissingFromLegacyJson() throws Exception
+    {
+        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("missing-json-auto-start.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel SET auto_start=1,
+                    auto_start_order=CASE WHEN id=(SELECT min(id) FROM configuration_channel) THEN 17 END,
+                    config_json=json_remove(config_json, '$.autoStart', '$.autoStartOrder')
+                """);
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+
+            migrateToFormat5(connection);
+
+            assertEquals("1:17,1:null", scalar(connection, """
+                SELECT group_concat(auto_start || ':' || coalesce(auto_start_order,'null'), ',')
+                FROM (SELECT * FROM configuration_channel ORDER BY id)
+                """));
+            assertEquals(5, DatabaseFormatCatalog.inspect(connection).version());
+        }
+    }
+
+    @Test
+    void preservesScalarAutoStartAndNullableOrderWhenLegacyJsonDisagrees() throws Exception
+    {
+        Path database = Format4TestDatabase.create(mTemporaryFolder.resolve("stale-json-auto-start.sqlite"));
+        try(Connection connection = open(database); Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE configuration_channel SET
+                    auto_start=CASE WHEN id=(SELECT min(id) FROM configuration_channel) THEN 1 ELSE 0 END,
+                    auto_start_order=CASE WHEN id=(SELECT min(id) FROM configuration_channel) THEN -4 END,
+                    config_json=json_set(config_json,
+                        '$.autoStart', json(CASE WHEN id=(SELECT min(id) FROM configuration_channel)
+                            THEN 'false' ELSE 'true' END), '$.autoStartOrder', 99)
+                """);
+            DatabaseMigrationChain.validateSource(connection, DatabaseFormatCatalog.inspect(connection));
+
+            migrateToFormat5(connection);
+
+            assertEquals("1:-4,0:null", scalar(connection, """
+                SELECT group_concat(auto_start || ':' || coalesce(auto_start_order,'null'), ',')
+                FROM (SELECT * FROM configuration_channel ORDER BY id)
+                """));
+            assertEquals(5, DatabaseFormatCatalog.inspect(connection).version());
+        }
+    }
+
+    @Test
     void rebuildsInvalidAutoStartScalarsFromChannelJson() throws Exception
     {
         String[] assignments = {

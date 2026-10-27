@@ -246,7 +246,14 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
         Map<String,Long> radresOwners = new HashMap<>();
 
         try(PreparedStatement statement = connection.prepareStatement("""
-            SELECT id, auto_start, auto_start_order, decoder_type, source_type, primary_frequency_hz,
+            SELECT id,
+                   CASE WHEN typeof(auto_start)='integer' AND auto_start IN (0,1)
+                        THEN auto_start END AS auto_start,
+                   CASE WHEN typeof(auto_start_order)='integer'
+                              AND auto_start_order BETWEEN -2147483648 AND 2147483647
+                        THEN auto_start_order END AS auto_start_order,
+                   typeof(auto_start_order) AS auto_start_order_type,
+                   decoder_type, source_type, primary_frequency_hz,
                    frequency_count, recording_enabled, event_logging_enabled,
                    CASE WHEN typeof(system_name)='text'
                               AND length(CAST(system_name AS BLOB)) <= 4194304
@@ -324,6 +331,21 @@ final class Format4To5DatabaseMigration implements DatabaseMigrationStep
                             " changes identity during strict decoding");
                     }
 
+                    //Alpha stores these choices in the row; its JSON can omit them or retain stale values.
+                    //Preserve usable scalars, including an explicitly absent order. Invalid scalars still use
+                    //the decoded document as the existing salvage fallback.
+                    if(resultSet.getObject("auto_start") instanceof Number autoStart)
+                    {
+                        channel.setAutoStart(autoStart.intValue() == 1);
+                    }
+                    if(resultSet.getObject("auto_start_order") instanceof Number autoStartOrder)
+                    {
+                        channel.setAutoStartOrder(autoStartOrder.intValue());
+                    }
+                    else if("null".equals(resultSet.getString("auto_start_order_type")))
+                    {
+                        channel.setAutoStartOrder(null);
+                    }
                     Format5ChannelProjection projection = Format5ChannelProjection.from(channel);
                     String channelKind = ChannelConfigurationPolicy.requireChannelKind(channel).name();
                     String systemName = preferredChannelText(resultSet.getString("system_name"), root, "system");
