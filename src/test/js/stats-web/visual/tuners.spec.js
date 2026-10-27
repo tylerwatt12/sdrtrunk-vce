@@ -132,6 +132,16 @@ async function mockTuners(page, mutations, state = {}) {
       await respond({ status: 'scanning' }, 202);
       return;
     }
+    if (path === '/api/v1/admin/tuners/tuner-a/nickname' && request.method() === 'PUT') {
+      mutations.push({ type: 'nickname', nickname: body().nickname });
+      if (state.rejectNickname) {
+        await route.fulfill({ status: 503, json: { error: { message: 'Could not save the nickname. Try again.' } } });
+        return;
+      }
+      currentTuner(state).nickname = body().nickname.trim();
+      await respond({ nickname: currentTuner(state).nickname });
+      return;
+    }
     if (path === '/api/v1/admin/tuners/tuner-a/state' && request.method() === 'PUT') {
       const target = body().state;
       mutations.push({ type: 'state', state: target });
@@ -221,6 +231,38 @@ async function mockTuners(page, mutations, state = {}) {
     await respond({});
   });
 }
+
+test('receiver nickname saves and clears without changing tuner mode or hardware name', async ({ page }) => {
+  const mutations = [];
+  const state = { currentTuner: operatorTuner(), rejectNickname: true };
+  await mockTuners(page, mutations, state);
+  await page.goto('/app.html?view=tuners');
+  await page.getByRole('button', { name: 'Add receiver nickname', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Receiver nickname', exact: true });
+  const input = dialog.getByRole('textbox', { name: 'Nickname', exact: true });
+  await expect(input).toBeFocused();
+  await input.fill('  North antenna  ');
+  await dialog.getByRole('button', { name: 'Save nickname', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Could not save the nickname');
+  await expect(input).toHaveValue('  North antenna  ');
+  state.rejectNickname = false;
+  await dialog.getByRole('button', { name: 'Save nickname', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.locator('.tuners-detail-identity h2')).toHaveText('Airspy R2');
+  await expect(page.locator('.tuners-detail-name')).toContainText('North antenna');
+  await page.getByRole('button', { name: 'Edit receiver nickname', exact: true }).click();
+  await input.fill('');
+  await dialog.getByRole('button', { name: 'Save nickname', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Add receiver nickname', exact: true })).toBeVisible();
+  expect(state.currentTuner.nickname).toBe('');
+  expect(state.currentTuner.operator_state).toBe('live');
+  expect(mutations).toEqual([
+    { type: 'nickname', nickname: 'North antenna' },
+    { type: 'nickname', nickname: 'North antenna' },
+    { type: 'nickname', nickname: '' }
+  ]);
+});
 
 test('two-column tuner workspace keeps settings below signal and recordings in the Add tuner dialog', async ({ page }) => {
   const mutations = [];

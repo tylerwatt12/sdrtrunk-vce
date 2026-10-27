@@ -13,7 +13,7 @@ const channels = [
 export function createTunersGuideData({ signal } = {}) {
   const requests = [], connections = new Set();
   const snapPresets = { countryCode: 'US', countryLabel: 'United States', scopes: [], countries: [] };
-  const selected = { id: 'guide-airspy', name: 'Airspy R2', tuner_class: 'AIRSPY', tuner_type: 'AIRSPY_R820T',
+  const selected = { id: 'guide-airspy', name: 'Airspy R2', nickname: 'North antenna', tuner_class: 'AIRSPY', tuner_type: 'AIRSPY_R820T',
     status: 'ENABLED', available: true, operator_state: 'live', transition: null,
     channel_count: 2, frequency_hz: 851500000, configured_frequency_hz: 851500000,
     sample_rate_hz: 2500000, configured_sample_rate_hz: 2500000,
@@ -41,7 +41,7 @@ export function createTunersGuideData({ signal } = {}) {
       setting('lna_agc', 'LNA AGC', 'gain', 'boolean', false),
       setting('mixer_agc', 'Mixer AGC', 'gain', 'boolean', false)
     ] };
-  const spare = { ...clone(selected), id: 'guide-rtl', name: 'RTL-SDR R820T2', tuner_class: 'RTL2832',
+  const spare = { ...clone(selected), id: 'guide-rtl', name: 'RTL-SDR R820T2', nickname: '', tuner_class: 'RTL2832',
     tuner_type: 'RTL2832_R820T', operator_state: 'disabled', status: 'DISABLED', available: false,
     channel_count: 0, sample_rate_hz: 2400000, configured_sample_rate_hz: 2400000,
     spectrum_target_id: null, spectrum_available: false, settings: [],
@@ -65,6 +65,11 @@ export function createTunersGuideData({ signal } = {}) {
     const body = typeof options.body === 'string' ? JSON.parse(options.body) : options.body || {};
     requests.push({ path: url.pathname, method, body: clone(body) });
     if (method === 'GET' && url.pathname === ROOT) return { tuners: [documentTuner(), clone(spare)] };
+    const nicknameTuner = [selected, spare].find(tuner => url.pathname === `${ROOT}/${tuner.id}/nickname`);
+    if (method === 'PUT' && nicknameTuner) {
+      nicknameTuner.nickname = String(body.nickname || '').trim();
+      return { nickname: nicknameTuner.nickname };
+    }
     if (method === 'GET' && url.pathname === '/api/v1/diagnostics/tuners') return { rows: selected.spectrum_available ? [{
       target_id: selected.spectrum_target_id, label: selected.name, center_frequency_hz: selected.frequency_hz,
       sample_rate_hz: selected.sample_rate_hz }] : [] };

@@ -2282,7 +2282,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(connect.contains("return this.connectionHandle()"));
         assertTrue(toggle.contains("this.ensureConnected()"));
         assertTrue(toggle.contains("this.stopFeed()"));
-        assertTrue(channelActivity.contains("document.hidden || !liveChannelActivitySubscribers.size"));
+        assertTrue(channelActivity.contains(".some(subscriber => subscriber.background)"));
+        assertTrue(channelActivity.contains("document.hidden && !background || !liveChannelActivitySubscribers.size"));
         assertTrue(channelActivity.contains("source.close()"));
         assertTrue(live.contains("pageScoped && document.hidden"));
         assertTrue(live.contains("subscription?.close()"));

@@ -89,6 +89,7 @@ export function createLiveGuideData({ signal } = {}) {
     const fireActive = Math.floor((now - startedAt) / 1250) % 5 < 3;
     const common = { quality_observed_at_ms: now, bandwidth_hz: 12500 };
     const control = (configuration, key, frequency, systemId) => ({ ...common,
+      receiver_id: 'guide-airspy', receiver_nickname: 'North antenna',
       key, configuration_id: configuration, frequency_hz: frequency, channel_name: configuration === COUNTY ? 'County P25' : 'City P25',
       protocol: 'P25', decoder: 'P25_PHASE1', role: 'CURRENT_CONTROL', tags: ['CURRENT_CONTROL'],
       status: 'ACTIVE', activation_order: 1, lcn: configuration === COUNTY ? '00-0132' : '00-0252',
@@ -98,6 +99,7 @@ export function createLiveGuideData({ signal } = {}) {
       serving_system_key: `p25:bee00:${systemId.toString(16).padStart(3, '0')}` });
     const voice = (configuration, key, frequency, systemId, sourceId, sourceName, targetId, targetName, active, order) => ({
       ...common, ...identity(systemId, sourceId, targetId), key, configuration_id: configuration,
+      ...(active ? { receiver_id: 'guide-rtl', receiver_nickname: 'Voice antenna' } : {}),
       channel_name: configuration === COUNTY ? 'County P25' : 'City P25',
       frequency_hz: frequency, lcn: configuration === COUNTY ? frequency === SHERIFF_HZ ? '00-0152' : '00-0172' : '00-0272',
       role: 'VOICE', tags: ['VOICE'], status: active ? 'CALL' : 'IDLE', activation_order: order,
@@ -120,6 +122,7 @@ export function createLiveGuideData({ signal } = {}) {
         ] },
       { table_id: 'conventional', title: 'Conventional', channel_running: true, rows: [{
         ...common, ...identity(0x123, 7012, 1003), configuration_id: CONVENTIONAL,
+        receiver_id: 'guide-conventional', receiver_nickname: 'VHF antenna',
         channel_name: 'County Fire Dispatch', key: 'guide-live-conventional-fire', frequency_hz: 154430000,
         role: 'CONVENTIONAL', tags: ['CONVENTIONAL', 'VOICE'], status: fireActive ? 'CALL' : 'IDLE',
         activation_order: 5, source_alias: 'Engine 12', target_alias: 'County Fire Dispatch',

@@ -31,6 +31,7 @@ const contracts = [
   ["Call matching deltas", "call-matching-deltas.test.js", "stats-web/assets/app.js"],
   ["Call count scopes and dates", "call-count-scope.test.js", "stats-web/assets/app.js"],
   ["Tuner allocation", "tuner-allocation.test.js", "stats-web/assets/app.js"],
+  ["Receiver nicknames", "receiver-nicknames.test.js", "stats-web/assets/app.js"],
   ["source names", "source-names.test.js", "stats-web/assets/core/source-names.js"],
   ["source name preference", "source-name-preference.test.js", "stats-web/assets/app.js"],
   ["public Alias navigation", "public-alias-navigation.test.js", "stats-web/assets/app.js"],

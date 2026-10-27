@@ -322,7 +322,26 @@
     return normalize(columns, upgraded).reset ? saved : upgraded;
   }
 
+  /** Preserve known Live layouts when the optional receiver column is introduced. */
+  function upgradeTableLayout(type, columns, saved) {
+    const previousSchema = PARTY_COLUMN_UPGRADES['live-channels'].current;
+    if (type !== 'live-channels' || !sameSchema(schema(columns), [...previousSchema, 'receiver'])) {
+      return mergePartyColumns(type, columns, saved);
+    }
+    const previousColumns = columns.filter((column) => column.id !== 'receiver');
+    const merged = mergePartyColumns(type, previousColumns, saved);
+    if (!sameSchema(merged?.schema, previousSchema)) return saved;
+    const previous = normalize(previousColumns, merged);
+    if (previous.reset) return saved;
+    const upgraded = persisted(previous);
+    upgraded.schema = schema(columns);
+    upgraded.column_order.push('receiver');
+    upgraded.hidden_columns.push('receiver');
+    return upgraded;
+  }
+
 export {
   MINIMUM_WIDTH, MAXIMUM_WIDTH, columnId, tableId, schema, registerSchema,
-  normalize, move, canMove, resize, setHidden, setGroupCollapsed, persisted, mergePartyColumns
+  normalize, move, canMove, resize, setHidden, setGroupCollapsed, persisted, mergePartyColumns,
+  upgradeTableLayout
 };

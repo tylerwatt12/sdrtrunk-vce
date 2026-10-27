@@ -4,8 +4,8 @@ import { formatSourceName } from './core/source-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
-import * as tableLayouts from './core/table-layout.js?v=5';
-import * as tableDefaults from './core/table-defaults.js?v=30';
+import * as tableLayouts from './core/table-layout.js?v=6';
+import * as tableDefaults from './core/table-defaults.js?v=31';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=2';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -3181,7 +3181,7 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
   const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns);
   const defaultLayout = options.recordList && Array.isArray(options.recordListOrder) ?
     { ...tableDefaultLayout, column_order: options.recordListOrder } : tableDefaultLayout;
-  const storedLayout = tableLayouts.mergePartyColumns(tableType, declaredColumns,
+  const storedLayout = tableLayouts.upgradeTableLayout(tableType, declaredColumns,
     options.layout || (!options.presentation && activeUserPreferences().tables[tableType]) || defaultLayout);
   let layout = tableLayouts.normalize(declaredColumns, storedLayout);
   if (layout.reset) {
@@ -8258,11 +8258,11 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
     ] : live ? [
-      Promise.resolve(null), import('./guides/live-presentation.js?v=1')
+      Promise.resolve(null), import('./guides/live-presentation.js?v=2')
     ] : spectrum ? [
       Promise.resolve(null), import('./guides/spectrum-presentation.js?v=2')
     ] : tuners ? [
-      Promise.resolve(null), import('./guides/tuners-presentation.js?v=1')
+      Promise.resolve(null), import('./guides/tuners-presentation.js?v=2')
     ] : streaming ? [
       import('./features/streaming.js?v=16'), import('./guides/streaming-presentation.js?v=1')
     ] : [
@@ -20022,6 +20022,10 @@ function liveChannelValue(row, showRemoteOrigin = true) {
   return wrapper;
 }
 
+function liveReceiverLabel(row) {
+  return String(row?.receiver_nickname || row?.receiver_id || '—');
+}
+
 function liveChannelViewMeta(value, label = '') {
   if (value?.table_id === 'conventional') {
     const count = Number(value?.rows_total ?? value?.rows?.length ?? 0);
@@ -20361,7 +20365,10 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       sortValue: (row) => liveIdentitySortValue(row, 'target'),
       reconcileKey: (row) => liveIdentityRenderKey(row, 'target') },
     { id: 'decoder', label: 'Decoder', render: (row) => decoderLabel(row.decoder, true),
-      title: (row) => decoderLabel(row.decoder), sortValue: (row) => row.decoder || '' }
+      title: (row) => decoderLabel(row.decoder), sortValue: (row) => row.decoder || '' },
+    { id: 'receiver', label: 'Receiver', render: liveReceiverLabel,
+      title: (row) => row.receiver_id || '',
+      reconcileKey: (row) => JSON.stringify([row.receiver_id, row.receiver_nickname]) }
   ];
   const tabBar = node('div', 'channels-live-tabs');
   tabBar.setAttribute('role', 'tablist');
@@ -31969,6 +31976,13 @@ function tunerInventoryRows(response) {
     typeof tuner.id === 'string' && tuner.id && typeof tuner.name === 'string');
 }
 
+function tunerNicknameValue(value) {
+  const nickname = String(value || '').trim();
+  if ([...nickname].length > 80) throw new Error('Use 80 characters or fewer for the nickname.');
+  if (/\p{Cc}/u.test(nickname)) throw new Error('Remove control characters from the nickname.');
+  return nickname;
+}
+
 function tunerInventoryFrequency(value) {
   const hz = Number(value);
   return Number.isFinite(hz) && hz > 0 ? `${frequency(hz)} MHz` : 'Unavailable';
@@ -32989,6 +33003,48 @@ async function renderTuners(options = {}) {
     modal.focus?.(remove);
   }
 
+  async function editNickname(tuner) {
+    const form = node('form', 'admin-form');
+    const nickname = node('input', 'ui-input');
+    nickname.type = 'text';
+    nickname.autocomplete = 'off';
+    nickname.name = 'nickname';
+    nickname.value = String(tuner.nickname || '');
+    const help = node('p', 'ui-field-detail', 'Shown in Live view. Leave blank to clear.');
+    help.id = 'tuner-nickname-help';
+    nickname.setAttribute('aria-describedby', help.id);
+    let savedNickname = nickname.value;
+    const feedback = node('div', 'admin-form-message');
+    const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
+    cancel.type = 'button';
+    const save = node('button', 'ui-button ui-button-primary', 'Save nickname');
+    save.type = 'submit';
+    form.append(formField('Nickname', nickname), help, feedback, aliasModalFooter(cancel, save));
+    const modal = openTunerModal('Receiver nickname', form, {
+      id: 'tuner-nickname', returnFocusSelector: '#selected-tuner-nickname', className: 'admin-modal'
+    });
+    if (!modal) return;
+    const workflow = createFormWorkflow({ form, submit: save, feedback, modal,
+      changed: () => nickname.value.trim() !== savedNickname });
+    cancel.addEventListener('click', modal.close);
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      void perform(() => workflow.save(async () => {
+        const value = tunerNicknameValue(nickname.value);
+        const result = await requestTunerJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/nickname`, {
+          method: 'PUT', body: { nickname: value }, signal: renderContext.signal
+        });
+        savedNickname = String(result.nickname || '');
+        nickname.value = savedNickname;
+      }, { saving: 'Saving nickname…', onSuccess: () => {
+        if (!isCurrent()) return;
+        modal.close(() => { operationNotice = 'Nickname saved'; void refresh(); });
+      }, onError: (error) => ({ message: error.message || 'Could not save the nickname. Try again.' }) }));
+    });
+    if (modal.ready && !await modal.ready) return;
+    if (isCurrent()) modal.focus(nickname);
+  }
+
   function renderSelection() {
     if (!isCurrent()) return;
     const tuner = selectedTuner();
@@ -33057,7 +33113,15 @@ async function renderTuners(options = {}) {
     const stoppedChannels = tunerStoppedChannels(tuner);
     const title = node('div', 'tuners-detail-heading');
     const identity = node('div', 'tuners-detail-identity');
-    identity.append(node('h2', '', tuner.name));
+    const name = node('div', 'tuners-detail-name');
+    const nickname = iconButton('icon-edit', tuner.nickname ? 'Edit receiver nickname' : 'Add receiver nickname',
+      'ui-button ui-button-secondary ui-icon-button ui-button-compact');
+    nickname.id = 'selected-tuner-nickname';
+    nickname.addEventListener('click', () => void editNickname(tuner));
+    name.append(node('h2', '', tuner.name));
+    if (tuner.nickname) name.append(node('span', 'ui-label', tuner.nickname));
+    name.append(nickname);
+    identity.append(name);
     if (tuner.device_group?.kind && tuner.device_group.kind !== 'single') {
       identity.append(node('small', 'ui-field-detail',
         `${tuner.device_group.kind} · ${tuner.device_group.role || 'member'}`));

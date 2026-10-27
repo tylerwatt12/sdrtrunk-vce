@@ -1194,6 +1194,17 @@ body[data-view="live"] .channel-diagnostic-readouts {
   }
   .channels-live-table td[data-column="decode-health"]::before { content: "Quality"; }
 
+  .channels-live-table td[data-column="receiver"] {
+    grid-column: 1 / -1;
+    order: 50;
+  }
+
+  .channels-live-table td[data-column="receiver"]::before {
+    content: attr(data-label);
+    display: inline;
+    margin-right: var(--space-1);
+  }
+
   .channels-live-table tr.live-row-trunked td[data-column="frequency"] {
     grid-column: 1 / span 4;
     text-align: left;
