@@ -141,6 +141,8 @@ async function createP25Renderer(options = {}) {
   const interactingLabels = new Set();
   const labelGestureReleases = new Map();
   let labelRevision = 0;
+  let labelPointer = null;
+  let hoveredLabelKey = '';
   const affiliationMoves = new Map();
   const movementParticipants = new Set();
   let labelCandidates = [];
@@ -157,14 +159,25 @@ async function createP25Renderer(options = {}) {
     return colors[state] || colors.radio;
   }
 
+  function nodeAttention(node) {
+    const participant = movementIncludes(node.id);
+    return { participant,
+      clear: Boolean(node.signalAction || node.active || participant || focusKeys.has(node.id)),
+      dimmed: focusKeys.size > 0 && !focusKeys.has(node.id) && !participant && !node.active && node.type !== 'system' };
+  }
+
+  function opacityRange(state, clear, dimmed) {
+    const base = state === 'system' ? 0.48 : clear ? 0.98 : 0.76;
+    return { base, dim: dimmed ? state === 'system' ? 0.12 : 0.05 : base };
+  }
+
   function material(state, optionsValue = {}) {
     const side = optionsValue.side === library.BackSide ? 'back' : 'front';
     const clear = optionsValue.clear === true;
     const dimmed = optionsValue.dimmed === true;
     const key = `${state}:${side}:${clear}:${dimmed}`;
     if (materials.has(key)) return materials.get(key);
-    const baseOpacity = state === 'system' ? 0.48 : clear ? 0.98 : 0.76;
-    const dimOpacity = dimmed ? state === 'system' ? 0.12 : 0.05 : baseOpacity;
+    const { base: baseOpacity, dim: dimOpacity } = opacityRange(state, clear, dimmed);
     const value = new library.MeshBasicMaterial({ color: colorFor(state), wireframe: true, transparent: true,
       opacity: baseOpacity + (dimOpacity - baseOpacity) * focusAmount, depthTest: true, depthWrite: false,
       fog: !clear });
@@ -187,9 +200,7 @@ async function createP25Renderer(options = {}) {
   function applyNodeStyle(node, object = nodeObjects.get(node.id)) {
     if (!object) return;
     const state = nodeState(node);
-    const participant = movementIncludes(node.id);
-    const clear = Boolean(node.signalAction || node.active || participant || focusKeys.has(node.id));
-    const dimmed = focusKeys.size > 0 && !focusKeys.has(node.id) && !participant && !node.active && node.type !== 'system';
+    const { clear, dimmed } = nodeAttention(node);
     object.userData.p25Node = node;
     if (node.type === 'system') {
       object.children[0].material = material('system', { dimmed });
@@ -778,10 +789,25 @@ async function createP25Renderer(options = {}) {
     return label;
   }
 
+  function rememberLabelPointer(event) {
+    if (event.pointerType === 'touch') { clearLabelPointer(); return; }
+    labelPointer = { x: event.clientX, y: event.clientY };
+  }
+
+  function clearLabelPointer() {
+    labelPointer = null;
+    hoveredLabelKey = '';
+  }
+
+  function onWindowBlur() {
+    clearLabelPointer();
+    releaseLabelGestures();
+  }
+
   function renderLabels() {
     if (!graph || !controls || disposed || documentValue.hidden) return;
     const camera = graph.camera();
-    const system = systemNode();
+    camera.updateMatrixWorld();
     const width = host.clientWidth, height = host.clientHeight;
     const hostBounds = host.getBoundingClientRect();
     const gap = parseFloat(getComputedStyle(host).getPropertyValue('--space-2')) || 8;
@@ -794,13 +820,16 @@ async function createP25Renderer(options = {}) {
         return { left: bounds.left - hostBounds.left, right: bounds.right - hostBounds.left,
           top: bounds.top - hostBounds.top, bottom: bounds.bottom - hostBounds.top };
       });
-    const visible = new Set();
+    const visible = new Set(), entries = [];
     for (const node of labelCandidates) {
       if (scope.level !== 'overview' && node.type === 'system') continue;
       const retained = labelElements.get(node.id);
+      const point = new library.Vector3(node.x, node.y, node.z);
+      const viewDepth = -point.clone().applyMatrix4(camera.matrixWorldInverse).z;
+      const projected = point.clone().project(camera);
       const screen = graph.graph2ScreenCoords(node.x, node.y, node.z);
-      const projected = new library.Vector3(node.x, node.y, node.z).project(camera);
-      if (!screen || projected.z < -1 || projected.z > 1 || screen.x < -120 || screen.y < -50 ||
+      if (!screen || ![viewDepth, projected.z, screen.x, screen.y].every(Number.isFinite) || viewDepth <= 0 ||
+          projected.z < -1 || projected.z > 1 || screen.x < -120 || screen.y < -50 ||
           screen.x > width + 120 || screen.y > height + 50) {
         labelGestureReleases.get(retained)?.();
         continue;
@@ -808,10 +837,8 @@ async function createP25Renderer(options = {}) {
       const label = labelFor(node);
       if (label.disabled && interactingLabels.has(label)) labelGestureReleases.get(label)?.();
       visible.add(node.id);
-      // Keep names beside the shapes instead of painting over the journey's endpoints.
-      const distance = Math.max(1, camera.position.distanceTo(new library.Vector3(node.x, node.y, node.z)));
       const screenRadius = finite(node.radius, 8) * height /
-        (2 * distance * Math.tan(finite(camera.fov, 50) * Math.PI / 360));
+        (2 * viewDepth * Math.tan(finite(camera.fov, 50) * Math.PI / 360));
       let labelY = node.type === 'talkgroup' ? screen.y + screenRadius * 1.75 + 14 :
         node.type === 'radio' ? screen.y - screenRadius * 1.5 - 14 : screen.y;
       let labelX = screen.x;
@@ -827,17 +854,50 @@ async function createP25Renderer(options = {}) {
         labelY = clamp(labelY, top + halfHeight, Math.max(top + halfHeight, bottom - halfHeight));
       }
       const position = `calc(${Math.round(labelX)}px - 50%) calc(${Math.round(labelY)}px - 50%)`;
-      // Keep scene placement independent of button transform transitions. A press holds only XY.
       if (!interactingLabels.has(label) && label.style.translate !== position) label.style.translate = position;
-      label.style.zIndex = String(Math.round((1 - projected.z) * 5_000));
-      const participant = movementIncludes(node.id);
-      const clear = scope.level === 'overview' || scope.level === 'talkgroup' || Boolean(node.signalAction) ||
-        node.active || participant || focusKeys.has(node.id) || node.type === 'system';
-      const depth = system ? distance / (finite(system.radius, SYSTEM_RADIUS) * 1.55) : 0;
-      const haze = clear ? 0 : clamp((depth - 0.28) * 1.45, 0, 0.82);
-      const dimmed = focusKeys.size > 0 && !focusKeys.has(node.id) && !participant && !node.active && node.type !== 'system';
-      label.style.opacity = String((1 - haze * 0.72) * (dimmed ? 1 - focusAmount * 0.96 : 1));
-      const blur = haze * 2.8 + (dimmed ? focusAmount * 2 : 0);
+      label.hidden = false;
+      const attention = nodeAttention(node);
+      const namedEntity = node.type === 'talkgroup' || node.type === 'radio';
+      entries.push({ node, label, viewDepth, attention,
+        active: namedEntity && Boolean(node.active || node.signalAction || attention.participant) });
+    }
+    // Camera-space ranks avoid distant labels sharing a rounded NDC z-index.
+    entries.sort((left, right) => right.viewDepth - left.viewDepth || String(left.node.id).localeCompare(String(right.node.id)));
+    entries.forEach((entry, index) => { entry.rank = index + 1; });
+    const hoverable = entries.filter(entry => ['talkgroup', 'radio'].includes(entry.node.type) && !entry.label.disabled);
+    const containsPointer = entry => {
+      if (!labelPointer) return false;
+      const bounds = entry.label.getBoundingClientRect();
+      return labelPointer.x >= bounds.left && labelPointer.x <= bounds.right &&
+        labelPointer.y >= bounds.top && labelPointer.y <= bounds.bottom;
+    };
+    let hovered = hoverable.find(entry => entry.label.hasAttribute('data-direct-listen-target-key') &&
+      entry.label.matches(':hover') && containsPointer(entry));
+    hovered ||= hoverable.find(entry => entry.node.id === hoveredLabelKey && containsPointer(entry));
+    if (!hovered) {
+      // Native interactive hit targets win a tie over coincident read-only annotations.
+      hovered = hoverable.filter(containsPointer).sort((left, right) =>
+        Number(right.label.matches(':hover')) - Number(left.label.matches(':hover')) ||
+        Number(right.active) - Number(left.active) || right.rank - left.rank)[0];
+    }
+    hoveredLabelKey = hovered?.node.id || '';
+    for (const { node, label, viewDepth, attention, active, rank } of entries) {
+      const pointed = node.id === hoveredLabelKey;
+      const pressing = !label.disabled && interactingLabels.has(label);
+      const focused = !label.disabled && label.matches(':focus-visible');
+      const tier = pointed || pressing ? 3 : focused ? 2 : active ? 1 : 0;
+      label.style.zIndex = String(tier * entries.length + rank);
+      if (tier) {
+        label.style.opacity = '1';
+        label.style.filter = '';
+        continue;
+      }
+      // Use the mesh's attention alpha and camera-space FogExp2 transmittance for names too.
+      const { base, dim } = opacityRange(node.type === 'system' ? 'system' : nodeState(node), attention.clear, attention.dimmed);
+      const transmission = attention.clear || !scene?.fog ? 1 : Math.exp(-((scene.fog.density * viewDepth) ** 2));
+      const opacity = node.type === 'system' ? 1 : (base + (dim - base) * focusAmount) * transmission;
+      const blur = (1 - transmission) * 2.8 + (attention.dimmed ? focusAmount * 2 : 0);
+      label.style.opacity = String(opacity);
       label.style.filter = blur ? `blur(${blur.toFixed(2)}px)` : '';
     }
     for (const [key, label] of labelElements) {
@@ -903,6 +963,7 @@ async function createP25Renderer(options = {}) {
   const onVisibility = () => {
     if (!graph) return;
     if (renderingPaused()) {
+      clearLabelPointer();
       resetAttention();
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
@@ -984,7 +1045,10 @@ async function createP25Renderer(options = {}) {
   themeObserver = new MutationObserver(updateTheme);
   themeObserver.observe(documentValue.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   documentValue.addEventListener('visibilitychange', onVisibility);
-  documentValue.defaultView?.addEventListener('blur', releaseLabelGestures);
+  documentValue.defaultView?.addEventListener('blur', onWindowBlur);
+  host.addEventListener('pointerenter', rememberLabelPointer, { passive: true });
+  host.addEventListener('pointermove', rememberLabelPointer, { passive: true });
+  host.addEventListener('pointerleave', clearLabelPointer, { passive: true });
   async function enterFullscreen() {
     const target = host.closest('.network-visualizer-layout') || host;
     if (documentValue.fullscreenElement === target) return true;
@@ -1014,7 +1078,11 @@ async function createP25Renderer(options = {}) {
     resizeObserver?.disconnect();
     themeObserver?.disconnect();
     documentValue.removeEventListener('visibilitychange', onVisibility);
-    documentValue.defaultView?.removeEventListener('blur', releaseLabelGestures);
+    documentValue.defaultView?.removeEventListener('blur', onWindowBlur);
+    host.removeEventListener('pointerenter', rememberLabelPointer);
+    host.removeEventListener('pointermove', rememberLabelPointer);
+    host.removeEventListener('pointerleave', clearLabelPointer);
+    clearLabelPointer();
     controls?.removeEventListener('start', onControlsStart);
     controls?.removeEventListener('end', onControlsEnd);
     canvas?.removeEventListener('webglcontextlost', onContextLost, false);
