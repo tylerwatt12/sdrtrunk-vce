@@ -247,6 +247,9 @@ public final class ApplicationDatabaseMigrator
             {
                 SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
                 source = requireSupportedFormat(connection);
+                if(content == MigrationContent.CONFIGURATION_ONLY && source.version() >= DatabaseFormatCatalog.CURRENT_VERSION)
+                    throw new IllegalArgumentException("Configuration-only in-place conversion requires an older database. " +
+                        "Use the VCE upgrade settings-extraction workflow for a current profile.");
                 if(source.version() >= 63)
                     io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(normalized);
                 plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
@@ -313,6 +316,27 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
+    /** In-process transfer entry point: the same live OS lock must cover the entire database activation. */
+    static String migrateTransferred(Path database, Path source, Path target,
+                                     io.github.dsheirer.portable.PortableDataRootLock lock) throws IOException, SQLException
+    {
+        if(lock == null || !lock.getDataRoot().equals(target))
+            throw new IOException("The transferred VCE profile must remain locked during its update.");
+        lock.rebindMovedRoot(target);
+        PortableProfileTransfer.requireActivation(source, target);
+        try(ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            PrintStream output = new PrintStream(bytes, true, StandardCharsets.UTF_8))
+        {
+            migrateOwnedCompleteProfileCopy(database, new DataRootRelocation(source, target, true), output,
+                MigrationContent.FULL, true);
+            return bytes.toString(StandardCharsets.UTF_8);
+        }
+        catch(UnsupportedDatabaseFormatException unsupported)
+        {
+            throw new SQLException(unsupported.getMessage(), unsupported);
+        }
+    }
+
     /**
      * Relocates an inactive, complete copy of an owned profile under the caller's source and target profile locks.
      * The caller retains the complete original installation. External imports retain the strict staged path below.
@@ -321,12 +345,19 @@ public final class ApplicationDatabaseMigrator
                                                         PrintStream output, MigrationContent content)
         throws IOException, SQLException, UnsupportedDatabaseFormatException
     {
+        migrateOwnedCompleteProfileCopy(database, relocation, output, content, false);
+    }
+
+    private static void migrateOwnedCompleteProfileCopy(Path database, DataRootRelocation relocation,
+                                                        PrintStream output, MigrationContent content, boolean transferred)
+        throws IOException, SQLException, UnsupportedDatabaseFormatException
+    {
         if(Files.isSymbolicLink(database) || !Files.isRegularFile(database, LinkOption.NOFOLLOW_LINKS))
         {
             throw new IOException("The owned profile stage must be an ordinary database file.");
         }
-        requireApplicationStage(database);
-        requireOwnedCompleteProfileStage(database, relocation);
+        if(!transferred) requireApplicationStage(database);
+        requireOwnedCompleteProfileStage(database, relocation, transferred);
         requireSingleFilesystemLinkWhenSupported(database);
         recoverSplitTransition(database);
         output.println("Checking the owned complete-profile copy's schema and configuration.");
@@ -368,7 +399,7 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
-    private static void requireOwnedCompleteProfileStage(Path database, DataRootRelocation relocation)
+    private static void requireOwnedCompleteProfileStage(Path database, DataRootRelocation relocation, boolean transferred)
         throws IOException
     {
         if(relocation == null || !relocation.completeProfileCopy())
@@ -376,12 +407,12 @@ public final class ApplicationDatabaseMigrator
             throw new IOException("Owned complete-profile relocation requires both data roots.");
         }
         Path source = relocation.source(), target = relocation.target();
-        if(Files.isSymbolicLink(source) || !Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS) ||
+        if(Files.isSymbolicLink(source) || (!transferred && !Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)) ||
             Files.isSymbolicLink(target) || !Files.isDirectory(target, LinkOption.NOFOLLOW_LINKS))
         {
             throw new IOException("Owned complete-profile relocation requires ordinary source and target directories.");
         }
-        Path physicalSource = source.toRealPath(), physicalTarget = target.toRealPath();
+        Path physicalSource = transferred ? source.toAbsolutePath().normalize() : source.toRealPath(), physicalTarget = target.toRealPath();
         Path targetDatabaseDirectory = target.resolve("database");
         if(physicalSource.startsWith(physicalTarget) || physicalTarget.startsWith(physicalSource))
         {

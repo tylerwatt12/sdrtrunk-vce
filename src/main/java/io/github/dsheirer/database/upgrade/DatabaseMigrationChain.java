@@ -407,8 +407,6 @@ public final class DatabaseMigrationChain
         public PreflightReport withContent(MigrationContent selected)
         {
             Objects.requireNonNull(selected, "Migration contents cannot be null");
-            if(selected == MigrationContent.CONFIGURATION_ONLY && source.version() >= target.version())
-                throw new IllegalArgumentException("Configuration-only import requires an older database that needs an update.");
             List<StepPreflight> declared = new ArrayList<>();
             if(selected == MigrationContent.CONFIGURATION_ONLY)
                 declared.add(MigrationActivityReset.preflight(source.version()));

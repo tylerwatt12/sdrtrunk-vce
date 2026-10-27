@@ -18,6 +18,8 @@ import java.nio.channels.OverlappingFileLockException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import java.nio.file.LinkOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Objects;
 
 /**
@@ -30,18 +32,20 @@ public final class PortableDataRootLock implements AutoCloseable
 {
     public static final String LOCK_FILE_NAME = ".sdrtrunk-vce.lock";
 
-    private final Path mDataRoot;
-    private final Path mLockFile;
+    private Path mDataRoot;
+    private Path mLockFile;
+    private final Object mFileKey;
     private FileChannel mChannel;
     private FileLock mLock;
     private boolean mClosed;
 
-    private PortableDataRootLock(Path dataRoot, Path lockFile, FileChannel channel, FileLock lock)
+    private PortableDataRootLock(Path dataRoot, Path lockFile, FileChannel channel, FileLock lock) throws IOException
     {
         mDataRoot = dataRoot;
         mLockFile = lockFile;
         mChannel = channel;
         mLock = lock;
+        mFileKey = Files.readAttributes(lockFile, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).fileKey();
     }
 
     public static PortableDataRootLock acquire(Path dataRoot) throws IOException
@@ -95,6 +99,19 @@ public final class PortableDataRootLock implements AutoCloseable
     public Path getLockFile()
     {
         return mLockFile;
+    }
+
+    /** Keeps the same OS lock after an atomic whole-profile rename; never releases and reacquires ownership. */
+    public synchronized void rebindMovedRoot(Path dataRoot) throws IOException
+    {
+        Path root = dataRoot.toAbsolutePath().normalize();
+        Path file = root.resolve(LOCK_FILE_NAME);
+        if(mClosed || mLock == null || !mLock.isValid() || Files.isSymbolicLink(file) || mFileKey == null ||
+            !mFileKey.equals(Files.readAttributes(file, BasicFileAttributes.class,
+                LinkOption.NOFOLLOW_LINKS).fileKey()))
+            throw new IOException("The transferred data folder no longer holds the original VCE lock.");
+        mDataRoot = root;
+        mLockFile = file;
     }
 
     @Override

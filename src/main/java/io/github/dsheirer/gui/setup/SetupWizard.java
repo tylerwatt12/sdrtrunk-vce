@@ -123,7 +123,7 @@ public final class SetupWizard extends JDialog
     private DatabaseMigrationChain.PreflightReport startupMigrationPlan;
     private boolean managedRecordingCatalogNeedsUpgrade;
     private String managedRecordingCatalogReport = "";
-    private boolean createUpgradeBackup;
+    private boolean backupConfirmed;
     private boolean reviewingSource;
     private Path selectedSource;
     private MigrationContent migrationContent = MigrationContent.CONFIGURATION_ONLY;
@@ -157,7 +157,8 @@ public final class SetupWizard extends JDialog
 
     static boolean hasPendingDatabaseTransition(Path database)
     {
-        return Files.exists(ActivityDatabasePath.splitReceipt(database));
+        return Files.exists(ActivityDatabasePath.splitReceipt(database)) ||
+            VceUpgradeService.isPending(database.getParent().getParent());
     }
 
     /** The activation gap still owns this profile even when its final configuration filename is absent. */
@@ -403,6 +404,11 @@ public final class SetupWizard extends JDialog
         }
         SetupReadiness.prepareMigratedJmbe(progress, sourceCommitted && !newPreferences,
             JmbeLibraryMetadata.isSupported(preferences.getJmbeLibraryPreference().getPathJmbeLibrary()));
+        try
+        {
+            managedRecordingCatalogNeedsUpgrade = ManagedRecordingCatalogMigrator.inspectForStartup(managedRecordingCatalog).needsMigration();
+        }
+        catch(java.io.IOException | java.sql.SQLException ignored) { managedRecordingCatalogNeedsUpgrade = false; }
         revalidateSettings();
         if(limitedVisit)
         {
@@ -523,8 +529,16 @@ public final class SetupWizard extends JDialog
             notice("Finish updating your settings", "Receiving hasn’t started.", false);
             paragraph("An earlier update didn’t finish. Finish the update before continuing setup.");
             next.setText("Finish update");
-            accept = () -> prepareProfile(() -> ApplicationMigrationSuccessDialog.currentDatabaseReport(
-                new ApplicationMigrationService().migrateCurrent(root, false, this::migrationProgress)), false);
+            accept = () -> prepareProfile(() -> {
+                if(VceUpgradeService.isPending(root))
+                {
+                    var result = VceUpgradeService.resume(root, lock, this::migrationProgress);
+                    lock = result.lock();
+                    return upgradeReport(result.migration());
+                }
+                return ApplicationMigrationSuccessDialog.currentDatabaseReport(
+                    new ApplicationMigrationService().migrateCurrent(root, false, this::migrationProgress));
+            }, false);
             return;
         }
         if(managedRecordingCatalogNeedsUpgrade && preferences != null)
@@ -560,10 +574,12 @@ public final class SetupWizard extends JDialog
             }
             else reviewSettings(database, database, "Your saved settings need an update before VCE can start receiving. Your recording files will stay in place.",
                 startupMigrationPlan, true, "Update settings", () -> {
-                    boolean backup = createUpgradeBackup;
                     MigrationContent content = migrationContent;
-                    prepareProfile(() -> ApplicationMigrationSuccessDialog.currentDatabaseReport(
-                        new ApplicationMigrationService().migrateCurrent(root, backup, content, this::migrationProgress)), false);
+                    prepareProfile(() -> {
+                        var result = VceUpgradeService.upgrade(root, root, content, backupConfirmed, lock, this::migrationProgress);
+                        lock = result.lock();
+                        return upgradeReport(result.migration());
+                    }, false);
                 });
             return;
         }
@@ -572,31 +588,41 @@ public final class SetupWizard extends JDialog
         paragraph("How would you like to begin?");
         ButtonGroup group = new ButtonGroup();
         WizardChoiceCard fresh = choice(group, "Start fresh", "Start with default settings and an empty channel list. You can add the channels you want to hear after setup.", selectedSource == null);
-        WizardChoiceCard bring = choice(group, "Bring my settings", "Choose a previous VCE folder or an sdrtrunk XML playlist. You’ll review what’s included before importing.", selectedSource != null);
+        boolean xmlSelected = selectedSource != null && isXml(selectedSource);
+        WizardChoiceCard upgrade = choice(group, "Upgrade existing VCE", "Move a stopped VCE installation’s data into this installation, including its recordings.", selectedSource != null && !xmlSelected);
+        WizardChoiceCard xml = choice(group, "Import XML playlist", "Bring channels, aliases, and streaming settings from an sdrtrunk playlist.", xmlSelected);
         paragraph("You can change your preferences later in Settings or the web interface.");
         Runnable changed = () -> next.setText(fresh.isSelected() ? "Start setup" :
             selectedSource == null ? "Choose settings" : "Review settings");
         fresh.radio().addItemListener(e -> changed.run());
-        bring.radio().addItemListener(e -> changed.run());
+        upgrade.radio().addItemListener(e -> changed.run());
+        xml.radio().addItemListener(e -> changed.run());
         changed.run();
         accept = () -> {
             if(fresh.isSelected()) prepareProfile(() -> {
                 SdrTrunkDatabaseBootstrap.createFresh(database); return "New settings created.";
             }, true);
-            else if(selectedSource != null) inspectSource(selectedSource);
-            else chooseSource();
+            else if(selectedSource != null && isXml(selectedSource) == xml.isSelected()) inspectSource(selectedSource);
+            else chooseSource(xml.isSelected());
         };
     }
 
-    private void chooseSource()
+    private static boolean isXml(Path path)
+    {
+        return path.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".xml");
+    }
+
+    private void chooseSource() { chooseSource(selectedSource != null && isXml(selectedSource)); }
+
+    private void chooseSource(boolean xmlOnly)
     {
         if(busy || sourceCommitted || preferences != null || hasExistingProfile(database)) return;
         JFileChooser chooser = new JFileChooser(selectedSource == null ? null : selectedSource.toFile());
-        chooser.setDialogTitle("Choose VCE folder or XML playlist");
-        chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
-        chooser.setAcceptAllFileFilterUsed(false);
-        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-            "VCE folders and XML playlists (*.xml)", "xml"));
+        chooser.setDialogTitle(xmlOnly ? "Choose XML playlist" : "Choose previous VCE folder or application");
+        chooser.setFileSelectionMode(xmlOnly ? JFileChooser.FILES_ONLY : JFileChooser.FILES_AND_DIRECTORIES);
+        chooser.setAcceptAllFileFilterUsed(!xmlOnly);
+        if(xmlOnly) chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+            "sdrtrunk XML playlists (*.xml)", "xml"));
         if(chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION)
             inspectSource(chooser.getSelectedFile().toPath());
     }
@@ -606,7 +632,9 @@ public final class SetupWizard extends JDialog
         if(busy || sourceCommitted) return;
         if(preferences != null || hasExistingProfile(database))
             throw new IllegalStateException("Settings can only be imported into a new installation.");
-        selectedSource = input.toAbsolutePath().normalize();
+        Path chosen = input.toAbsolutePath().normalize();
+        if(!chosen.equals(selectedSource)) backupConfirmed = false;
+        selectedSource = chosen;
         Path source = selectedSource;
         migrationContent = MigrationContent.CONFIGURATION_ONLY;
         //A different selection invalidates the old Proceed action before any inspection can fail.
@@ -631,14 +659,28 @@ public final class SetupWizard extends JDialog
         PreviousBuildLocator.Selection selection = PreviousBuildLocator.resolveSelection(source)
             .orElseThrow(() -> new IllegalArgumentException(
                 "No saved VCE settings were found. Choose a previous VCE folder or an XML playlist."));
-        job("Checking settings…", null, () -> ApplicationMigrationService.readMigrationApproval(selection, root.getParent()), approval -> {
-            selectedScope = "Bring your saved settings, keys, and digital voice files into this installation. Your original folder stays unchanged. Recordings and logs stay in their original location.";
-            reviewSettings(selection.path(), selection.database(), selectedScope, approval.plan(), false, "Import settings", () -> {
-                var confirmed = approval.withContent(migrationContent);
-                prepareProfile(() -> ApplicationMigrationSuccessDialog.previousImportReport(
-                    new ApplicationMigrationService().importPrevious(selection, root, confirmed, this::migrationProgress)), false);
-            });
-        });
+        selectedScope = "Your complete data folder, including recordings and the Managed Recordings catalog, will move into this installation. The old installation will no longer contain that data. Keep a separate backup. Both folders must be on the same filesystem.";
+        reviewSettings(selection.path(), selection.database(), selectedScope, null, true, "Review upgrade", () ->
+            job("Checking the stopped installation…", null, () -> VceUpgradeService.inspect(selection.path()), plan ->
+                reviewSettings(selection.path(), selection.database(), selectedScope, plan, true, "Begin upgrade", () -> {
+                    MigrationContent content = migrationContent;
+                    prepareProfile(() -> {
+                        var result = VceUpgradeService.upgrade(selection.path(), root, content, backupConfirmed, lock, this::migrationProgress);
+                        lock = result.lock();
+                        return upgradeReport(result.migration());
+                    }, false);
+                })));
+        page.revalidate(); page.repaint();
+    }
+
+    private static String upgradeReport(ApplicationMigrationService.MigrationResult migration)
+    {
+        String scope = migration.importedPreviousProfile() ?
+            "Your VCE data folder, including recordings, is now in this installation." : "Your VCE settings were updated.";
+        String changes = migration.completedWithRepairsOrSkippedItems() ?
+            " Some items were repaired, reset, or skipped; review the details below." : "";
+        return scope + changes + " Keep your separate backup for manual recovery. No additional automatic backup was created.\n\n" +
+            migration.helperOutput();
     }
 
     private void reviewPlaylist(Path source, io.github.dsheirer.database.importer.LegacyXmlConfigurationMerger.Preview preview,
@@ -659,26 +701,32 @@ public final class SetupWizard extends JDialog
         if(reviewingSource) paragraph("Source: " + source.getFileName());
         paragraph(scope);
         if(plan != null) migrationDetails(historyDatabase, plan);
+        else if(backupChoice && reviewingSource)
+            append(new MigrationContentChoices(historyDatabase, migrationContent, selected -> migrationContent = selected));
         if(backupChoice)
         {
-            JCheckBox backup = new JCheckBox("Back up before updating", createUpgradeBackup);
-            backup.addActionListener(e -> createUpgradeBackup = backup.isSelected());
+            JCheckBox backup = new JCheckBox("I have backed up my existing VCE installation, including its data folder.", backupConfirmed);
+            backup.addActionListener(e -> { backupConfirmed = backup.isSelected(); updateNavigation(); });
             append(backup);
-            paragraph("Save a recovery copy in case you need to go back.");
+            paragraph("Close the old VCE app before making the backup. Include recording folders stored elsewhere. Keep the backup for manual recovery.");
         }
         details("Source location", source.toString());
         if(reviewingSource) WizardStyles.quiet(button("Choose different settings", this::chooseSource));
         next.setText(caption);
-        accept = proceed;
+        canContinue = () -> !backupChoice || backupConfirmed;
+        accept = () -> {
+            if(backupChoice && !backupConfirmed) throw new IllegalArgumentException("Confirm your installation backup before continuing.");
+            proceed.run();
+        };
         updateNavigation();
         page.revalidate(); page.repaint();
     }
 
     private void upgradeManagedRecordingCatalog()
     {
-        boolean backup = createUpgradeBackup;
+        if(!backupConfirmed) throw new IllegalArgumentException("Confirm your installation backup before continuing.");
         job("Updating managed recordings…", null,
-            () -> ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog, backup), result -> {
+            () -> ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog, false), result -> {
                 managedRecordingCatalogNeedsUpgrade = false;
                 managedRecordingCatalogReport = "Managed Recordings is ready.";
                 sourceReady(!result.report().isBlank() ? result.report() :
@@ -715,7 +763,7 @@ public final class SetupWizard extends JDialog
         if(!persist()) { restartRequired = true; updateNavigation(); return; }
         ThemeManager.getInstance().initialize(preferences);
         SwingUtilities.updateComponentTreeUI(this);
-        if(managedRecordingCatalogNeedsUpgrade) createUpgradeBackup = false;
+        // The already-confirmed complete backup also covers the recording catalog.
         showPage(nextStep());
         notice("Settings ready", "Continue reviewing your setup.", true);
         if(!migrationReport.isBlank()) details("Import report", migrationReport);
@@ -1343,6 +1391,7 @@ public final class SetupWizard extends JDialog
                         safeFailure(problem);
                     String detail = stopped ? summary : safeFailureDetail(problem, summary);
                     output.accept("Error: " + detail);
+                    if(step == SetupStep.SOURCE && VceUpgradeService.isPending(root)) showPage(SetupStep.SOURCE);
                     fail(summary, detail);
                 }
                 else
@@ -1586,7 +1635,7 @@ public final class SetupWizard extends JDialog
     }
     private void migrationDetails(Path source, DatabaseMigrationChain.PreflightReport plan)
     {
-        if(MigrationContentChoices.isAvailable(plan))
+        if(MigrationContentChoices.isAvailable(plan) || reviewingSource)
         {
             append(new MigrationContentChoices(source, migrationContent, selected -> migrationContent = selected));
             append(Box.createVerticalStrut(16));

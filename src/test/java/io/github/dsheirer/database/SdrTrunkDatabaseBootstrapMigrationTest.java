@@ -45,6 +45,25 @@ class SdrTrunkDatabaseBootstrapMigrationTest
     Path mTemporaryFolder;
 
     @Test
+    void headlessStartupCannotBypassAnInterruptedGraphicalUpgrade() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("pending-profile/data");
+        Path database = Format30TestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        byte[] before = Files.readAllBytes(database);
+        Path receipt = dataRoot.resolveSibling(".data.vce-upgrade").resolve("intent.properties");
+        Files.createDirectories(receipt.getParent());
+        Files.writeString(receipt, "pending installation upgrade");
+        for(String[] arguments: List.of(new String[0], new String[]{"--upgrade-current"}, new String[]{"--fresh"}))
+        {
+            IOException failure = assertThrows(IOException.class,
+                () -> SdrTrunkDatabaseBootstrap.run(arguments, dataRoot, true));
+            assertTrue(failure.getMessage().contains("Setup Wizard"));
+            assertArrayEquals(before, Files.readAllBytes(database));
+            assertTrue(Files.isRegularFile(receipt));
+        }
+    }
+
+    @Test
     void explicitCurrentUpgradeRepairsConfigurationEvenWhenCatalogAdmissionIsCurrent() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("current-configuration-repair");

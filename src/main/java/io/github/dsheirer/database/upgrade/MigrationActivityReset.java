@@ -74,10 +74,13 @@ final class MigrationActivityReset
             aliasCounters = rows.next() ? rows.getLong(1) : 0;
         }
         long now = System.currentTimeMillis();
+        boolean pairedConfiguration = "configuration".equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(
+            connection, io.github.dsheirer.database.ConfigurationHistorySchema.ROLE_KEY));
+        String history = pairedConfiguration ? "activity." : "";
         try(var statement = connection.prepareStatement("""
-            INSERT INTO database_metadata(key,value,updated_at_ms) VALUES(?,?,?)
+            INSERT INTO %sdatabase_metadata(key,value,updated_at_ms) VALUES(?,?,?)
             ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at_ms=excluded.updated_at_ms
-            """))
+            """.formatted(history)))
         {
             for(String key: List.of(ReceiverActivitySchema.CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
                 ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,
@@ -89,10 +92,10 @@ final class MigrationActivityReset
             statement.executeBatch();
         }
         long analogWindows;
-        boolean independentHistory = "activity".equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(
+        boolean independentHistory = pairedConfiguration || "activity".equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(
             connection,io.github.dsheirer.database.ConfigurationHistorySchema.ROLE_KEY));
         try(var statement = connection.prepareStatement(
-            independentHistory ? "UPDATE receiver_channel_statistics_reset SET reset_at_ms=?" :
+            independentHistory ? "UPDATE " + history + "receiver_channel_statistics_reset SET reset_at_ms=?" :
                 "UPDATE configuration_channel SET analog_activity_reset_ms=? WHERE analog_activity_reset_ms IS NOT NULL"))
         {
             statement.setLong(1, now); analogWindows = statement.executeUpdate();

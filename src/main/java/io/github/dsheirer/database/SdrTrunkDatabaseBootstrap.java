@@ -47,6 +47,9 @@ public final class SdrTrunkDatabaseBootstrap
         Path normalized = dataRoot.toAbsolutePath().normalize();
         Path database = SdrTrunkDatabasePath.getDatabasePath(normalized);
         Options options = Options.parse(args);
+        if(io.github.dsheirer.database.upgrade.VceUpgradeService.isPending(normalized))
+            throw new IOException("Finish the pending installation upgrade in the Setup Wizard before starting VCE " +
+                "without a desktop. The transferred settings and recordings have been preserved.");
         if(Files.exists(ActivityDatabasePath.splitReceipt(database)))
         {
             if(!options.upgradeCurrent())

@@ -9,23 +9,30 @@ channels, aliases, accounts, preferences, and other saved data. See the [documen
 
 ## Choose a starting point
 
-On first launch, VCE opens the Setup Wizard. A new installation offers **Start fresh** or **Bring my settings**.
-Choose a previous installation folder, supported macOS `.app`, or XML playlist; VCE checks the selection and shows
-what will be brought over before making changes. Standalone SQLite files are not accepted.
+On first launch, VCE opens the Setup Wizard. Choose **Start fresh**, **Upgrade existing VCE**, or **Import XML
+playlist**. Select the previous installation folder, supported macOS `.app`, or playlist. Standalone SQLite files
+are not accepted.
 
 | Your starting point | Choose | What to expect |
 | --- | --- | --- |
 | You are new to VCE | **Start fresh** | Create a new profile, then set up your administrator account, web access, audio, and radios. |
-| You already use VCE | **Bring my settings**, then choose its folder | Bring over its database and available voice libraries, optional modules, and encryption vault. |
-| You use mainline sdrtrunk or an older XML playlist | **Bring my settings**, then choose the playlist | Bring over supported channels, aliases, and streaming settings. The XML file stays unchanged. |
+| You already use VCE | **Upgrade existing VCE**, then choose its folder | Transfer its portable data into this installation, including recordings, the Managed Recordings catalog, voice libraries, optional modules, and encryption vault. |
+| You use mainline sdrtrunk or an older XML playlist | **Import XML playlist**, then choose the playlist | Bring over supported channels, aliases, and streaming settings. The XML file stays unchanged. |
 
-Review the selected source and import scope, then continue. For an older database, **Keep activity and statistics**
-starts unchecked: settings are kept while Activity, statistics, learned observations, and alert history start fresh.
-Select it to carry forward usable history through the supported updates. Any declared historical resets still apply.
-Neither choice deletes recording audio or its separate catalog.
+Before a VCE upgrade begins large operations, close the previous VCE application, make a complete manual backup,
+and confirm **I have backed up my existing VCE installation, including its data folder.** in the wizard. Choose
+**Keep activity and statistics** at the same time. It starts unchecked: channels, aliases, accounts, and settings are
+kept while Activity, statistics, learned observations, and alert history start fresh. Select it to carry forward usable
+history through the supported updates. Both choices preserve recording audio and its separate catalog.
 
-The previous installation stays unchanged. Keep it until you have checked the new installation and confirmed that
-your channels receive and your recordings or streams work as expected.
+Choose **Review upgrade** for a bounded format and configuration check. This step does not copy the database or scan
+its saved history. Review the source, destination, and declared resets or retired settings, adjust your choices if
+needed, then choose **Begin upgrade**. Keep your backup for manual recovery; VCE does not restore it automatically.
+
+The VCE upgrade **moves the old portable `data` folder** into the new installation. It does not leave a complete old
+installation behind as a backup. On the same filesystem, moving the folder avoids copying every recording. Source
+and destination must be on the same filesystem; VCE refuses this transfer before starting if they are not, rather
+than silently starting a long copy. The destination must be new and empty. XML import leaves the selected XML unchanged.
 
 ## Work through setup
 
@@ -68,44 +75,50 @@ On **Review & finish**, check the actual output folders, web access, and channel
 Unlock the vault if requested. Reception starts after required setup and decoding preparation finish. Successful
 imports and updates continue to the next needed step; their report remains available without a countdown.
 
-## What an import brings over
+## What a VCE upgrade brings over
 
-| Saved item | Copy an installation / data folder |
+| Saved item | Upgrade a previous VCE installation |
 | --- | --- |
-| Channels, aliases, accounts, preferences, and selected application history | Imported, with any required conversion and declared repairs or resets |
+| Channels, aliases, accounts, and preferences | Preserved, with required conversion and declared repairs or resets |
+| Application Activity, statistics, learned observations, and alert history | Preserved when selected and supported; otherwise start fresh without copying or counting the discarded history |
 | Remote Links pairing and connection settings and paging-tone detection | Imported from the database, including eligible legacy settings kept with an older profile |
-| Encryption vault, JMBE library in `jmbe`, and optional files in `modules` | Copied when present and usable; missing or skipped items appear in the report |
-| Logs, call audio, event logs, screenshots, streaming output, and the separate Managed Recordings catalog | Not copied; stay at their existing locations |
+| Encryption vault, JMBE library in `jmbe`, and optional files in `modules` | Transferred with the portable data folder |
+| Classic and Managed call audio, logs, event logs, screenshots, and streaming output inside `data` | Transferred with the portable data folder |
+| Managed Recordings catalog | Transferred with its audio; a required catalog update preserves the recording entries |
 | Saved output and library paths inside the previous data folder | Changed to the matching location in the new data folder |
-| Deliberately shared paths outside the previous data folder | Kept as stored |
+| Paths and files outside the previous data folder | Kept as stored; their files are not moved or included in a backup of only the installation folder |
 
 XML import creates a new profile from supported channels, aliases, and streaming settings. It does not merge a
 playlist into an existing profile or replace an existing database.
 
 The migration plan names possible activity resets and retired settings that will be removed. The completion report
-gives the actual repair, reset, and skipped-item counts. Usable configuration is carried over; an unusable component
-may need to be set up again without preventing other settings from importing.
+gives actual repairs, resets, and skipped items. Settings-only preparation reads and validates configuration without
+copying, fingerprinting, counting, deleting, or physically checking all the unwanted history first. Some older
+databases still need configuration conversion; settings-only does not mean no work.
 
-Check the folders on **Review & finish** before recording or streaming. If you need old call audio or logs in the
-new installation, keep and copy those files separately after stopping the applications; the settings import does
-not transfer them.
+Check the folders on **Review & finish** before recording or streaming. Paths inside the transferred `data` folder
+follow it into the new installation, including Managed Recordings and saved Recording Tuner inputs. Paths outside
+it retain their original locations. Do not remove an old folder while a saved output or input still uses it.
 
 ## Update an existing profile
 
 When a new build finds an older supported database in its active `data` folder, setup reviews the update before
-receiving starts. Its backup checkbox starts unchecked. Select it if you want a recovery copy of the old database;
-the copy is saved under `data/database/backups`. Without it, returning to the previous build requires another backup.
+receiving starts. Make and confirm a complete manual backup and choose whether to keep Activity and statistics
+before large operations begin. The graphical wizard does not create an additional automatic database backup.
 
-This updates the active database in place. All required changes run in one transaction. If conversion or final
-validation fails before completion, that transaction rolls back. A successful update may make the database
-incompatible with the previous build. If selected, its recovery backup remains for manual restoration; VCE does not automatically
-switch the database back after a completed update. A healthy database already at this build's format needs no update
-or upgrade backup.
+With retained history, the database conversion runs in one transaction and rolls back if conversion or final
+validation fails before commit. Settings-only prepares a checked configuration database and empty Activity database,
+then installs the matching pair. An interrupted activation is finished by the Application Migrator before startup;
+do not replace a missing file with a fresh database yourself. A successful update may make the database
+incompatible with the previous build. Returning to that build requires restoring the compatible data from your
+manual backup; VCE does not automatically switch the database back after a completed update. A healthy database
+already at this build's format needs no update.
 
 Alpha and Nightly share one forward-only database history. Supported VCE sources start with the format used by
 Alpha 12; Alpha 11 has that same format and remains compatible. Update older formats with Alpha 12 first. You do not
 need every intervening build after that. An older build cannot open a database already converted to a newer format.
-Keep separate data folders when comparing builds, and retain the older installation or a backup for going back.
+Keep independent backed-up data when comparing builds. A previous installation whose `data` folder was transferred
+is not a backup for going back.
 For a numbered Alpha, also read its version-matched release notes. See [Moving and updating VCE data](database-migration.md)
 for the support boundary and detailed conversion contract.
 
@@ -139,13 +152,17 @@ settings and is separate from the Classic output folder. Changing Classic's fold
 
 ## Where files are stored and how to back them up
 
-Windows, Linux, and current macOS downloads use `<install>/data`. The application database is
-`data/database/sdrtrunk.sqlite`. Settings, the encryption vault, JMBE libraries, and optional modules belong to this
-profile. Recording and other output folders can be changed, so their effective locations may be elsewhere.
+Windows, Linux, and current macOS downloads use `<install>/data`. The configuration database is
+`data/database/sdrtrunk.sqlite`; its matching Activity database is `data/database/activity.sqlite`. Preserve the
+matching pair together when keeping history. Settings, the encryption vault, JMBE libraries, and optional modules
+belong to this profile. Recording and other output folders can be changed, so their effective locations may be elsewhere.
 
-To make a complete manual backup, stop VCE and copy its entire `data` folder. Also copy any recording or output
-folders you deliberately placed outside it. Keep the backup with the matching VCE build if you may need to restore
-that version. The automatic migration backup covers the database being updated, not every file in the profile.
+To make a complete manual backup, stop VCE and copy the entire installation folder, including `data`, to a separate
+backup location. A legacy macOS `.app` keeps its profile in the sibling `<app-name>-data` folder; back up that folder
+as well as the application bundle. Also copy any recording or output folders placed outside it. Keep the matching VCE
+application files so you can restore the version that understands the saved database. A folder move, an empty old installation,
+or a copy of only `sdrtrunk.sqlite` is not a complete backup. The wizard asks you to confirm your backup; that checkbox
+does not verify the copy and does not create one for you.
 
 Classic recordings are ordinary files in the configured recording directory. Managed Recordings uses its configured
 audio directory plus the separate `data/database/managed-recordings.sqlite` catalog. Preserve both the audio and
@@ -153,12 +170,14 @@ catalog when backing up that library. Managed recording retention is independent
 recordings have no automatic retention.
 
 An older supported Managed Recordings catalog gets its own update before receiving starts. Its recording entries
-are preserved; the graphical backup checkbox also starts unchecked for this update. If the catalog update fails,
+and audio are preserved, and the same manual-backup confirmation covers this graphical update. If the catalog update fails,
 retry or choose **Continue without managed recordings**;
 ordinary receiving can continue while that library is unavailable. The retired `webfirst` catalog is unsupported.
 
 Only one VCE process can use a given `data` folder. If you see **already in use**, close the other instance before
-trying again. Keep the source and copy the error if an import is refused as unsupported, newer, mixed, or damaged.
+trying again. Keep the source and copy the error if its format or retained configuration is refused as unsupported,
+newer, mixed, or unreadable. Settings-only upgrade can preserve readable configuration despite damaged discarded
+history; it does not certify the health of that old history or loosen strict copy-import checks.
 Do not remove the database to get past the error. If the destination already contains data, choose a separate new
 installation or preserve the existing folder before changing its location.
 
@@ -179,9 +198,16 @@ Headless launches need an explicit starting option when the database is absent:
 --upgrade-data <previous-installation-folder>
 ```
 
+A pending graphical VCE upgrade must first be finished in the Setup Wizard with **Finish update**. Headless startup
+refuses that pending operation, including when `--upgrade-current` is supplied; it does not take over the graphical
+folder transfer or settings replacement.
+
 Use only one of these options. Fresh creation and XML import create and validate a temporary current-format database
 before installing it. `--upgrade-data` accepts a supported previous installation folder, portable data folder, or
-macOS application bundle with the same profile scope as graphical setup. A standalone SQLite file is refused.
+macOS application bundle. It retains the strict source-preserving copy-import behavior for existing command-line
+workflows; it does not move the old portable folder like **Upgrade existing VCE** in the graphical wizard. It copies
+the database and available vault, JMBE, and optional module files, but not audio, logs, streaming output, screenshots,
+or the Managed Recordings catalog. The selected old source remains unchanged. A standalone SQLite file is refused.
 These options apply only when the active data folder has no database; they cannot merge into or replace an existing
 profile. The retired `--import-sqlite` flag is refused rather than treated as a normal launch.
 

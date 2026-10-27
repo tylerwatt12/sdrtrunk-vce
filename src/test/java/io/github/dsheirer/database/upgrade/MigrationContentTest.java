@@ -431,6 +431,8 @@ class MigrationContentTest
     {
         assertEquals(currentRoleFingerprint(connection), SqliteSchemaValidator.fingerprint(connection));
         DatabaseFormatCatalog.requireCurrent(connection);
+        assertEquals(1, scalar(connection, "SELECT count(*) FROM application_settings " +
+            "WHERE key='receiver.nicknames' AND settings_json='{}'"));
         for(String table: CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES)
             if(!table.equals("alias_activity_summary")) assertEquals(0, count(connection, table), table);
         assertEquals(0, count(connection, "alias_list_analog_activity_summary"));
@@ -466,7 +468,9 @@ class MigrationContentTest
             {
                 while(rows.next())
                 {
-                    if(convertedFields && table.equals("application_settings") && rows.getString("key").equals("setup_wizard")) continue;
+                    if(convertedFields && table.equals("application_settings") &&
+                        (rows.getString("key").equals("setup_wizard") ||
+                            rows.getString("key").equals("receiver.nicknames") && rows.getString("settings_json").equals("{}"))) continue;
                     List<String> fields = new ArrayList<>();
                     for(int index = 1; index <= rows.getMetaData().getColumnCount(); index++)
                     {

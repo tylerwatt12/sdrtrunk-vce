@@ -8,6 +8,8 @@ import java.nio.file.Path;
 /** Manual graphical smoke harness. Finishing NEVER constructs a receiver or starts channels. */
 public final class SetupWizardSmoke
 {
+    private static final String BACKUP_ACKNOWLEDGMENT = "I have backed up my existing VCE installation";
+
     public static void main(String[] args) throws Exception
     {
         if(args.length!=1) throw new IllegalArgumentException("Supply a disposable data root");
@@ -28,14 +30,18 @@ public final class SetupWizardSmoke
                 complete.set(SetupStep.HARDWARE, SetupProgress.State.DEFERRED);
                 complete.save(database);
                 createOlderCatalog(root);
-                Files.writeString(root.resolve("database/backups"), "unrelated file");
+                Files.setPosixFilePermissions(root.resolve("database/managed-recordings.sqlite"),
+                    java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ));
             }
             else if(mode.equals("upgrade-configuration-only") || mode.equals("upgrade-full"))
                 io.github.dsheirer.database.upgrade.Format60TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
             else io.github.dsheirer.database.upgrade.Format30TestDatabase.create(root.resolve("database/sdrtrunk.sqlite"));
             if(mode.equals("upgrade-with-catalog")) createOlderCatalog(root);
-            if(mode.equals("upgrade-retry")) Files.writeString(root.resolve("database/backups"), "unrelated file");
         }
+        if(mode.startsWith("transfer-")) prepareTransferSource(root,mode);
+        if(mode.equals("xml-only")) Files.writeString(root.resolveSibling(root.getFileName() + "-playlist.xml"),
+            "<playlist version=\"4\"><alias name=\"Disposable XML alias\" list=\"Smoke\"><id type=\"talkgroup\" " +
+                "protocol=\"DMR\" value=\"200\"/></alias></playlist>");
         if(!System.getProperty("wizard.exercise", "").isBlank())
         {
             Thread driver=new Thread(()-> {
@@ -71,6 +77,147 @@ public final class SetupWizardSmoke
         }
     }
 
+    private static Path transferSource(Path root)
+    {
+        return root.resolveSibling(root.getFileName() + "-previous").resolve("data");
+    }
+
+    private static void prepareTransferSource(Path root,String mode) throws Exception
+    {
+        Path source = transferSource(root);
+        if(mode.equals("transfer-current"))
+            io.github.dsheirer.database.upgrade.Format64TestDatabase.create(source.resolve("database/sdrtrunk.sqlite"));
+        else io.github.dsheirer.database.upgrade.Format62TestDatabase.create(source.resolve("database/sdrtrunk.sqlite"));
+        createOlderCatalog(source);
+        Files.createDirectories(source.resolve("recordings-managed"));
+        Files.write(source.resolve("recordings-managed/disposable-call.wav"), new byte[]{1,2,3,4});
+        Files.createDirectories(source.resolve("logs"));
+        Files.writeString(source.resolve("logs/disposable.log"), "Disposable graphical smoke artifact");
+    }
+
+    private static void exerciseTransfer(SetupWizard wizard, Path root) throws Exception
+    {
+        Path source = transferSource(root), database = source.resolve("database/sdrtrunk.sqlite");
+        byte[] before = Files.readAllBytes(database);
+        long aliases = tableCount(database,"alias"), channels = tableCount(database,"configuration_channel");
+        byte[] audio = Files.readAllBytes(source.resolve("recordings-managed/disposable-call.wav"));
+        javax.swing.SwingUtilities.invokeAndWait(() -> select(wizard,"Upgrade existing VCE"));
+        chooseSource(wizard,source); await(wizard,SetupStep.SOURCE);
+        assertNoPreparedDatabase(root);
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            var content = descendants(wizard).stream().filter(MigrationContentChoices.class::isInstance)
+                .map(MigrationContentChoices.class::cast).findFirst().orElseThrow();
+            if(content.selectedContent()!=io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
+                throw new AssertionError("Upgrade must begin with settings-only selected");
+            if(backupChoice(wizard).isSelected() || wizard.getRootPane().getDefaultButton().isEnabled())
+                throw new AssertionError("The manual backup acknowledgment did not gate the first large operation");
+            if(!hasVisibleText(wizard,"The old installation will no longer contain that data"))
+                throw new AssertionError("Upgrade review did not explain that the data folder moves");
+            var history = descendants(content).stream().filter(javax.swing.JCheckBox.class::isInstance)
+                .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
+            history.doClick(); history.doClick();
+        });
+        assertNoPreparedDatabase(root);
+        if(!java.util.Arrays.equals(before,Files.readAllBytes(database)))
+            throw new AssertionError("Reviewing transfer choices changed the source database");
+        capture(wizard,root,"transfer-choices-before-preparation");
+        java.awt.Dimension normalSize = wizard.getSize();
+        javax.swing.SwingUtilities.invokeAndWait(() -> wizard.setSize(800,600));
+        capture(wizard,root,"transfer-choices-small");
+        javax.swing.SwingUtilities.invokeAndWait(() -> wizard.setSize(normalSize));
+        confirmBackup(wizard); capture(wizard,root,"transfer-ready");
+        clickPrimary(wizard); await(wizard,SetupStep.SOURCE);
+        assertNoPreparedDatabase(root);
+        if(!java.util.Arrays.equals(before,Files.readAllBytes(database)))
+            throw new AssertionError("Bounded review changed the selected database");
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            if(!wizard.getRootPane().getDefaultButton().getText().equals("Begin upgrade"))
+                throw new AssertionError("Source review did not show the declared-effects confirmation");
+            var content = descendants(wizard).stream().filter(MigrationContentChoices.class::isInstance)
+                .map(MigrationContentChoices.class::cast).findFirst().orElseThrow();
+            if(content.selectedContent()!=io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
+                throw new AssertionError("Review changed the selected history choice");
+        });
+        capture(wizard,root,"transfer-declared-effects");
+        clickPrimary(wizard); await(wizard,SetupStep.SOURCE);
+        if(!hasVisibleText(wizard,"Update the list of saved recordings"))
+            throw new AssertionError("Transferred older recording catalog was not offered for update");
+        if(!backupChoice(wizard).isSelected())
+            throw new AssertionError("Complete backup acknowledgment was lost after data transfer");
+        capture(wizard,root,"transfer-recording-catalog");
+        clickPrimary(wizard); awaitAfterSource(wizard);
+        Path destination = root.resolve("database/sdrtrunk.sqlite");
+        if(tableCount(destination,"alias")!=aliases || tableCount(destination,"configuration_channel")!=channels)
+            throw new AssertionError("Settings-only transfer lost configured aliases or channels");
+        if(eventCount(destination)!=0) throw new AssertionError("Settings-only transfer retained Activity history");
+        if(Files.exists(source)) throw new AssertionError("Completed data transfer left the old data folder active");
+        if(!java.util.Arrays.equals(audio,Files.readAllBytes(root.resolve("recordings-managed/disposable-call.wav"))))
+            throw new AssertionError("Settings-only transfer changed a recording file");
+        if(!Files.readString(root.resolve("logs/disposable.log")).equals("Disposable graphical smoke artifact"))
+            throw new AssertionError("Settings-only transfer omitted a supporting profile file");
+        try(var connection=java.sql.DriverManager.getConnection("jdbc:sqlite:"+root.resolve("database/managed-recordings.sqlite"));
+            var query=connection.createStatement();var rows=query.executeQuery("PRAGMA user_version"))
+        {
+            if(!rows.next() || rows.getInt(1)!=io.github.dsheirer.record.managed.ManagedRecordingSchema.CURRENT_FORMAT_VERSION)
+                throw new AssertionError("Transferred Managed Recordings catalog was not updated");
+        }
+        if(Files.exists(root.resolve("database/backups")))
+            throw new AssertionError("Manual-backup transfer created an automatic database backup");
+        capture(wizard,root,"transfer-complete");
+        click(wizard,"Exit setup"); awaitClosed(wizard);
+    }
+
+    private static void exerciseXml(SetupWizard wizard, Path root) throws Exception
+    {
+        Path playlist = root.resolveSibling(root.getFileName() + "-playlist.xml");
+        byte[] before = Files.readAllBytes(playlist);
+        javax.swing.SwingUtilities.invokeAndWait(() -> select(wizard,"Import XML playlist"));
+        chooseSource(wizard,playlist); await(wizard,SetupStep.SOURCE);
+        assertNoPreparedDatabase(root);
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            if(descendants(wizard).stream().anyMatch(component -> component instanceof MigrationContentChoices ||
+                component instanceof javax.swing.JCheckBox box && box.isShowing() &&
+                    box.getText().startsWith(BACKUP_ACKNOWLEDGMENT)))
+                throw new AssertionError("XML import shows irrelevant VCE upgrade choices");
+            if(!wizard.getRootPane().getDefaultButton().isEnabled())
+                throw new AssertionError("Checked XML playlist cannot be imported");
+        });
+        capture(wizard,root,"xml-review");
+        clickPrimary(wizard); awaitAfterSource(wizard);
+        if(tableCount(root.resolve("database/sdrtrunk.sqlite"),"alias")!=1)
+            throw new AssertionError("XML import did not retain the playlist alias");
+        if(!java.util.Arrays.equals(before,Files.readAllBytes(playlist)))
+            throw new AssertionError("XML import changed its source playlist");
+        capture(wizard,root,"xml-imported");
+        click(wizard,"Exit setup"); awaitClosed(wizard);
+    }
+
+    private static void assertNoPreparedDatabase(Path root) throws Exception
+    {
+        if(Files.exists(root.resolve("database/sdrtrunk.sqlite")))
+            throw new AssertionError("Source/options review created a destination database");
+        try(var entries=Files.list(root.getParent()))
+        {
+            String prefix="."+root.getFileName();
+            if(entries.anyMatch(path -> path.getFileName().toString().startsWith(prefix)))
+                throw new AssertionError("Source/options review created private migration work before confirmation");
+        }
+    }
+
+    private static void requireDisposableSource(Path selected)
+    {
+        for(Path candidate=selected.toAbsolutePath().normalize();candidate!=null;candidate=candidate.getParent())
+            if(candidate.getFileName()!=null && candidate.getFileName().toString().startsWith("wizard-smoke-")) return;
+        throw new IllegalArgumentException("Upgrade smoke sources must belong to a wizard-smoke- disposable directory");
+    }
+
+    private static long tableCount(Path database, String table) throws Exception
+    {
+        try(var connection=java.sql.DriverManager.getConnection("jdbc:sqlite:"+database);
+            var query=connection.createStatement();var rows=query.executeQuery("SELECT COUNT(*) FROM "+table))
+        { rows.next(); return rows.getLong(1); }
+    }
+
     private static void exercise(Path root) throws Exception
     {
         SetupWizard wizard=null;
@@ -96,10 +243,33 @@ public final class SetupWizardSmoke
             capture(target,root,"01b-dark-source");
         }
         if(!mode.equals("resume")) assertSourceChoices(target);
+        if(mode.equals("source-options"))
+        {
+            assertNoPreparedDatabase(root);
+            click(target,"Exit setup"); awaitClosed(target); return;
+        }
+        if(mode.startsWith("transfer-"))
+        {
+            exerciseTransfer(target,root); return;
+        }
+        if(mode.equals("xml-only"))
+        {
+            exerciseXml(target,root); return;
+        }
+        if(mode.equals("fresh-only"))
+        {
+            assertNoPreparedDatabase(root);
+            clickPrimary(target); await(target,SetupStep.ADMINISTRATOR);
+            io.github.dsheirer.database.SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(root.resolve("database/sdrtrunk.sqlite"));
+            capture(target,root,"fresh-administrator");
+            click(target,"Exit setup"); awaitClosed(target); return;
+        }
         if(mode.startsWith("import"))
         {
             String source=System.getProperty("wizard.source");
-            javax.swing.SwingUtilities.invokeAndWait(() -> select(target,"Bring my settings"));
+            if(Files.isDirectory(Path.of(source))) requireDisposableSource(Path.of(source));
+            javax.swing.SwingUtilities.invokeAndWait(() -> select(target, source.toLowerCase(java.util.Locale.ROOT).endsWith(".xml") ?
+                "Import XML playlist" : "Upgrade existing VCE"));
             chooseSource(target,Path.of(source)); await(target,SetupStep.SOURCE);
             if(mode.equals("import-only") && Files.isDirectory(Path.of(source)))
             {
@@ -116,6 +286,12 @@ public final class SetupWizardSmoke
                         if(!hasVisibleText(target,estimate)) throw new AssertionError("Folder estimate did not use its database file");
                         keep.doClick();
                     }));
+            }
+            if(Files.isDirectory(Path.of(source)))
+            {
+                confirmBackup(target);
+                clickPrimary(target); await(target,SetupStep.SOURCE);
+                assertNoPreparedDatabase(root);
             }
             clickPrimary(target); awaitAfterSource(target);
             if(mode.equals("import-only"))
@@ -247,14 +423,15 @@ public final class SetupWizardSmoke
             if(content[0].selectedContent() != io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
                 throw new AssertionError("History must require an explicit selection");
             backup[0] = backupChoice(wizard);
-            if(backup[0].isSelected()) throw new AssertionError("Upgrade backup must start unchecked");
+            if(backup[0].isSelected()) throw new AssertionError("Manual backup acknowledgment must start unchecked");
+            if(wizard.getRootPane().getDefaultButton().isEnabled())
+                throw new AssertionError("Upgrade can start without a confirmed manual backup");
         });
         capture(wizard,root,"upgrade-configuration-ready");
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             if(mode.equals("upgrade-full"))
                 descendants(content[0]).stream().filter(javax.swing.JCheckBox.class::isInstance)
                     .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow().doClick();
-            if(mode.equals("upgrade-backup") || mode.equals("upgrade-retry")) backup[0].doClick();
         });
         if(!java.util.Arrays.equals(source,Files.readAllBytes(database)))
             throw new AssertionError("Reviewing choices changed the database");
@@ -264,6 +441,7 @@ public final class SetupWizardSmoke
         if(mode.equals("upgrade-full") &&
             content[0].selectedContent()!=io.github.dsheirer.database.upgrade.MigrationContent.FULL)
             throw new AssertionError("Explicit full-history selection did not stick");
+        confirmBackup(wizard);
         capture(wizard,root,"upgrade-ready");
         clickPrimary(wizard);
         if(mode.equals("upgrade-with-catalog"))
@@ -273,25 +451,15 @@ public final class SetupWizardSmoke
             String mainReport=(String)reportField.get(wizard);
             if(mainReport.isBlank()) throw new AssertionError("Application update report was not retained");
             javax.swing.SwingUtilities.invokeAndWait(() -> {
-                if(backupChoice(wizard).isSelected()) throw new AssertionError("Catalog backup did not start unchecked");
+                if(!backupChoice(wizard).isSelected())
+                    throw new AssertionError("The complete manual-backup acknowledgment was lost between database and catalog updates");
             });
             capture(wizard,root,"upgrade-recordings-ready");
             clickPrimary(wizard);
             awaitAfterSource(wizard);
             String combined=(String)reportField.get(wizard);
-            if(!combined.startsWith(mainReport) || !combined.contains("Managed Recordings is ready."))
+            if(!combined.startsWith(mainReport) || !combined.contains("Managed Recordings"))
                 throw new AssertionError("Consecutive updates lost one of their reports");
-        }
-        if(mode.equals("upgrade-retry"))
-        {
-            await(wizard,SetupStep.SOURCE);
-            var danger=SetupWizard.class.getDeclaredField("danger"); danger.setAccessible(true);
-            if(!((javax.swing.JTextArea)danger.get(wizard)).isVisible())
-                throw new AssertionError("Failed backup did not show an inline error");
-            if(!java.util.Arrays.equals(source,Files.readAllBytes(database)))
-                throw new AssertionError("Failed backup changed the database");
-            javax.swing.SwingUtilities.invokeAndWait(() -> backup[0].doClick());
-            clickPrimary(wizard);
         }
         awaitAfterSource(wizard);
         try(var connection=java.sql.DriverManager.getConnection("jdbc:sqlite:"+database))
@@ -303,21 +471,8 @@ public final class SetupWizardSmoke
         if(mode.equals("upgrade-full") && eventCount(database)!=originalEvents ||
             mode.equals("upgrade-configuration-only") && eventCount(database)!=0)
             throw new AssertionError("The selected history choice was not applied");
-        if(mode.equals("upgrade-backup"))
-        {
-            try(var files=Files.list(root.resolve("database/backups")))
-            {
-                if(files.filter(Files::isRegularFile).count()!=1)
-                    throw new AssertionError("Explicit backup did not retain exactly one copy");
-            }
-        }
-        else if(mode.equals("upgrade-retry"))
-        {
-            if(!Files.readString(root.resolve("database/backups")).equals("unrelated file"))
-                throw new AssertionError("Retry replaced unrelated backup-path content");
-        }
-        else if(Files.exists(root.resolve("database/backups")))
-            throw new AssertionError("Backup-off update created backup files");
+        if(Files.exists(root.resolve("database/backups")))
+            throw new AssertionError("Manual-backup update created an automatic backup");
         capture(wizard,root,"upgrade-complete");
         //Use the normal navigation control after commit; the update must not be offered again.
         javax.swing.SwingUtilities.invokeAndWait(() -> {
@@ -330,7 +485,7 @@ public final class SetupWizardSmoke
         });
         await(wizard,SetupStep.SOURCE);
         if(descendants(wizard).stream().anyMatch(c -> c instanceof javax.swing.JCheckBox box && box.isShowing() &&
-            box.getText().equals("Back up before updating")))
+            box.getText().startsWith(BACKUP_ACKNOWLEDGMENT)))
             throw new AssertionError("Back offered to repeat a committed update");
         if(descendants(wizard).stream().anyMatch(c -> c instanceof javax.swing.JButton button && button.isShowing() &&
             button.getText().equals("Choose different settings")))
@@ -341,7 +496,22 @@ public final class SetupWizardSmoke
     private static javax.swing.JCheckBox backupChoice(SetupWizard wizard)
     {
         return descendants(wizard).stream().filter(c -> c instanceof javax.swing.JCheckBox box && box.isShowing() &&
-            box.getText().equals("Back up before updating")).map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
+            box.getText().startsWith(BACKUP_ACKNOWLEDGMENT)).map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
+    }
+
+    private static void confirmBackup(SetupWizard wizard) throws Exception
+    {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            var acknowledgment = backupChoice(wizard);
+            var primary = wizard.getRootPane().getDefaultButton();
+            if(acknowledgment.isSelected()) return;
+            if(primary.isEnabled()) throw new AssertionError("Unconfirmed manual backup did not gate the upgrade");
+            acknowledgment.doClick();
+            if(!primary.isEnabled()) throw new AssertionError("Confirming the manual backup did not enable the upgrade");
+            acknowledgment.doClick();
+            if(primary.isEnabled()) throw new AssertionError("Removing acknowledgment left the upgrade enabled");
+            acknowledgment.doClick();
+        });
     }
 
     private static long eventCount(Path database) throws Exception
@@ -403,8 +573,8 @@ public final class SetupWizardSmoke
         awaitAfterSource(wizard);
         if(!java.util.Arrays.equals(before, Files.readAllBytes(catalog)))
             throw new AssertionError("Failed catalog update changed the source");
-        if(!Files.readString(root.resolve("database/backups")).equals("unrelated file"))
-            throw new AssertionError("Failed catalog update replaced unrelated backup-path content");
+        Files.setPosixFilePermissions(catalog, java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ,
+            java.nio.file.attribute.PosixFilePermission.OWNER_WRITE));
         if(!hasVisibleText(wizard, "Managed Recordings unavailable"))
             throw new AssertionError("Continuation hid the unavailable recordings warning");
         var restart = SetupWizard.class.getDeclaredField("restartRequired"); restart.setAccessible(true);
@@ -518,10 +688,13 @@ public final class SetupWizardSmoke
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             var choices=descendants(target).stream().filter(c -> c instanceof javax.swing.JRadioButton r && r.isShowing())
                 .map(javax.swing.JRadioButton.class::cast).toList();
-            if(choices.size()!=2) throw new AssertionError("New setup must offer exactly two source intents");
-            select(target,"Bring my settings");
+            if(choices.size()!=3) throw new AssertionError("New setup must offer exactly three source intents");
+            select(target,"Upgrade existing VCE");
             if(!target.getRootPane().getDefaultButton().getText().equals("Choose settings"))
-                throw new AssertionError("Import intent must first choose and review its source");
+                throw new AssertionError("VCE upgrade must first choose and review its source");
+            select(target,"Import XML playlist");
+            if(!target.getRootPane().getDefaultButton().getText().equals("Choose settings"))
+                throw new AssertionError("XML import must first choose and review its playlist");
             select(target,"Start fresh");
             if(descendants(target).stream().anyMatch(c -> c instanceof javax.swing.JTextField && c.isShowing()))
                 throw new AssertionError("Start fresh shows irrelevant source fields");
@@ -752,7 +925,10 @@ public final class SetupWizardSmoke
             var graphics=image.createGraphics(); target.paintAll(graphics); graphics.dispose();
             try
             {
-                Path screenshots=root.resolveSibling(root.getFileName()+"-screenshots"); Files.createDirectories(screenshots);
+                String destination=System.getProperty("wizard.screenshots","");
+                Path screenshots=destination.isBlank() ? root.resolveSibling(root.getFileName()+"-screenshots") :
+                    Path.of(destination).resolve(System.getProperty("wizard.exercise","manual"));
+                Files.createDirectories(screenshots);
                 javax.imageio.ImageIO.write(image,"png",screenshots.resolve(name+".png").toFile());
             }
             catch(Exception e) { throw new RuntimeException(e); }

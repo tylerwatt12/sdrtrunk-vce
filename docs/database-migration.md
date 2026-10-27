@@ -1,9 +1,9 @@
 # Moving and updating VCE data
 
-VCE can update supported older settings during startup or copy them into a new installation. The Setup Wizard runs
+VCE can update supported older settings during startup or transfer them into a new installation. The Setup Wizard runs
 the bundled **Application Migrator** for you. You do not need a separate download or each intervening VCE release.
 
-If you are coming from mainline sdrtrunk, choose **Bring my settings** and select your playlist. For first-run choices and
+If you are coming from mainline sdrtrunk, choose **Import XML playlist** and select your playlist. For first-run choices and
 the rest of setup, see [Setup, updates, and your saved data](portable-startup-and-storage.md). Related guides are in
 the [documentation index](README.md).
 
@@ -11,16 +11,16 @@ the [documentation index](README.md).
 
 | What you want to do | Where to start | What changes |
 | --- | --- | --- |
-| Use a newer build with the same active VCE data folder | Review the **Update** offered during startup | The active profile is updated in place. The optional backup checkbox starts unchecked. |
-| Bring a previous VCE installation into a new download | **Bring my settings**, then choose its folder | A checked copy of the configuration and chosen history is installed in the new data folder. Available vault, JMBE, and optional module files are also copied. |
-| Start a new installation from a supported XML playlist | **Bring my settings**, then choose the playlist | Supported channels, aliases, and streaming settings initialize the new profile; the XML source stays unchanged. |
+| Use a newer build with the same active VCE data folder | Review the **Update** offered during startup | Confirm your manual backup and choose history scope before large operations. The active profile is updated in place. |
+| Upgrade a previous VCE installation into a new download | **Upgrade existing VCE**, then choose its folder | Confirm your manual backup and choose history scope first. Its portable data folder is moved into the empty new installation, preserving recordings, the Managed Recordings catalog, vault, JMBE, and optional modules. |
+| Start a new installation from a supported XML playlist | **Import XML playlist**, then choose the playlist | Supported channels, aliases, and streaming settings initialize the new profile; the XML source stays unchanged. |
 
-External imports are offered only before the destination has a database. Choose an installation folder, portable
+VCE folder upgrades and XML imports are offered only before the destination has a database. Choose an installation folder, portable
 data folder, supported macOS `.app`, or XML playlist. Standalone SQLite selection, replacement of an existing profile,
 and XML merge into an existing profile are not public setup operations. Use the existing desktop and web settings
 for ordinary changes; see [Change settings after setup](portable-startup-and-storage.md#change-settings-after-setup).
 
-VCE profile imports support recognized database formats used by **Alpha 12 and later**, up to the format understood by the
+VCE profile upgrades support recognized database formats used by **Alpha 12 and later**, up to the format understood by the
 running build. Alpha 11 uses the same format as Alpha 12 and remains compatible. For an older database format, first
 open it in Alpha 12 and complete its update. Alpha and Nightly share one forward-only format history. An older build
 cannot open a database already updated to a newer format. The retired `webfirst` formats and unknown or unsafe layouts
@@ -28,59 +28,69 @@ are unsupported. The selected database's structure determines compatibility; its
 
 ## Before you begin
 
-Keep the previous installation until the new one receives normally and its recording and streaming settings are
-checked. For a manual backup, stop VCE and copy the complete `data` folder, plus any output folders you placed
-elsewhere. Keep the matching build if you may need to return to it. Close a previous installation before importing
-from it so its settings and supporting files stay consistent during review.
+Stop VCE and copy the complete existing installation, including its `data` folder, to a separate backup location.
+For a legacy macOS `.app`, also copy its sibling `<app-name>-data` folder; copying the application bundle alone does
+not include that profile. Also back up recording or output folders placed outside the installation. Keep the matching
+application files if you may need to return to the older version. The graphical wizard asks you to confirm this manual backup before
+large operations; it does not make or verify a backup for you, and it does not add an automatic database backup.
 
-The automatic recovery backup covers the application database being updated, including both matching files for a
-separated profile. It does not include every recording, log, voice library, or vault file. Backup locations appear in
-the report; application database backups are under
-`data/database/backups`. Graphical update-backup checkboxes start unchecked; select one to keep a recovery copy.
-Headless upgrade commands keep their backup by default.
+A VCE folder upgrade transfers ownership of the portable data: the old `data` folder moves into the new
+installation. The old application folder left behind is not a complete backup and must not be started as though
+its data were still there. Keep your independent manual backup until the new installation receives normally and
+its recording and streaming settings are checked.
+
+The fast folder transfer requires source and destination to be on the same filesystem. That lets VCE move the folder
+without copying every audio file. It refuses a cross-filesystem transfer before moving anything, instead of silently
+falling back to a long copy. The new destination must be empty; existing profiles are not merged. Headless commands
+retain their separately documented backup behavior.
 
 ## Review, update, and check the result
 
 1. For a new profile, choose the previous installation folder or supported XML playlist. A macOS application bundle
    can also identify its portable profile.
-2. Review the selected source or the update shown for the active profile. Check
-   the source, destination, and declared repairs, activity resets, or retired settings that may be removed.
-   When an older database needs updating, **Keep activity and statistics** starts unchecked for configuration-only
-   migration. Select it to carry forward usable history.
-3. Confirm the import or update. Receiving has not started, and the active data folder stays locked while the
-   database work runs.
+2. Before large operations for a VCE upgrade, close the previous application and confirm **I have backed up my
+   existing VCE installation, including its data folder.** Choose **Keep activity and statistics** now. It starts
+   unchecked for settings-only migration; select it to carry forward usable history. XML import and Start fresh
+   do not need these VCE upgrade choices.
+3. For a folder transfer, choose **Review upgrade**. VCE checks the supported format and bounded configuration
+   under the source profile lock without copying the database or scanning saved history. Review the source,
+   destination, chosen scope, and declared resets or retired settings; adjust your choices if needed. Choose
+   **Begin upgrade**, or **Update settings** for an active-profile update. Receiving has not started, and the
+   profile stays locked while the upgrade runs.
 4. Setup continues to the next needed step. The optional report gives actual preserved, repaired, defaulted,
    reset, and skipped-item counts.
 5. Finish setup review. Check channels and aliases, account access, recording and streaming routes, output folders,
    digital voice libraries, and channel auto-start selections before relying on the new installation.
 
-An active-profile update commits its database changes before activation. The configuration/history split first
+An active-profile update commits its database changes before activation. For a full-history update, the configuration/history split first
 commits its extracted configuration, then commits the existing database as retained activity and activates the checked
 pair. Only the Application Migrator completes an interrupted activation. A failure before the source transaction
-commits rolls back the source changes. External profile imports update and validate a private copy, then install it
-only after the checks pass; the selected source stays unchanged. Imported settings are reviewed before reception
-can start.
+commits rolls back those database changes. A folder upgrade moves the portable profile and changes its saved paths
+to the new location. Its database work still uses the selected scope and required final checks. This is an explicit
+move, not the internal source-preserving copy-import operation. Settings are reviewed before reception can start.
 
 ### Choose how much to migrate
 
-For an older database, **Keep activity and statistics** starts unchecked in the graphical wizard. This keeps
+**Keep activity and statistics** starts unchecked in the graphical VCE upgrade. This keeps
 channels, aliases, lists, accounts, credentials, and settings while starting receiver
 Activity, statistics, learned observations, and alert history fresh. Old pending alert deliveries are discarded;
 notification topics, rules, and subscriptions remain. Account preferences, including dismissed guides, are kept.
-Recording audio and the separate Managed Recordings catalog are not deleted by either choice. An import still copies
-only the files described by its profile scope. Selecting the checkbox opts into carrying forward usable history;
+Recording audio and the separate Managed Recordings catalog are not deleted by either choice. Headless and internal
+copy-imports retain their separately described file scope. Selecting the checkbox opts into carrying forward usable history;
 required historical resets still apply and appear in the review. Headless migration retains its full-content default.
 
-Full migration can take a very long time. The review gives a broad planning range from the application database and
-its journal sizes, without scanning history just to estimate the duration. Database size cannot predict the work
-reliably: the source format, history contents, storage speed, backup, and validation can make the actual time much
-longer. The estimate is not a countdown or deadline. Configuration-only avoids converting retained history, but
-copying, the selected recovery backup, and required safety checks can still take time. It does not compact the
-database or promise a smaller file.
+Settings-only preparation extracts the configuration into a small private database and starts receiver history
+fresh. It does not first copy or fingerprint the whole unwanted history, count its rows, delete them one by one,
+or run physical-integrity scans over discarded history. It still identifies the supported source format and checks
+the configuration it will retain. The converted result must pass the current configuration and format checks.
 
-Both choices use the same supported format chain and retain the same backup, source-integrity, transaction, and
-promotion protections. An external source stays unchanged. Configuration-only is an explicit choice for an older
-database; it is not offered as an automatic reset of an already-current profile.
+Full migration can take much longer because retained history may need conversion. The review gives a broad
+planning range from file and journal sizes without scanning history just to estimate the duration. The source
+format, retained contents, and storage speed determine the work; the estimate is not a countdown or deadline.
+
+Both choices use the supported format catalog and adjacent configuration conversions. Keeping history also retains
+the applicable historical conversion steps. Neither choice treats recording audio or the Managed Recordings catalog
+as disposable Activity. No upgrade silently compacts a large database or offers an automatic downgrade.
 
 ### Find the migration report after setup
 
@@ -96,11 +106,9 @@ included for a reviewed external import. Nested phases overlap, so their times m
 Reports hide credentials, endpoints and personal paths. A report-write failure shows a warning without undoing a
 completed update; copy the displayed report before closing setup in that case.
 
-Turning off **Keep activity and statistics** avoids converting retained history. An external import still captures
-and fingerprints the whole source, checks source integrity, and discards the unwanted history on its private copy.
-These operations can remain slow for a large database or slow storage. After confirmation, a canonical copy whose
-content fingerprint matches the reviewed source reuses that review instead of repeating its full quick check;
-the migration process still performs source-integrity and final validation checks.
+The selected history scope is recorded before large operations. Settings-only reports describe omitted history
+without running a whole-history count just to report its size. Full-history reports identify the conversions and
+checks actually performed. Neither mode makes a throwaway converted database just to preview the result.
 
 ## What is kept, copied, or reset
 
@@ -127,13 +135,15 @@ those database choices because a default may also be an intentional selection. E
 recovery can restore selected valid legacy values over reviewed defaults; normal setup does not offer this repair
 as a starting-point choice. Recovery stops if the reviewed database value changes. Newer or non-default choices are retained.
 
-A full installation/data-folder import also attempts to copy the encryption vault, JMBE files, and optional modules.
-Missing or unusable optional files are reported; you can select or set them up again. Logs, recordings, screenshots,
-event logs, streaming output, and the separate Managed Recordings catalog are not copied and stay at their existing
-locations. They are not transferred by the application database import.
+A VCE folder upgrade moves the complete portable `data` folder, including its encryption vault, JMBE files,
+optional modules, logs, recordings, screenshots, event logs, streaming output, and separate Managed Recordings
+catalog. A settings-only choice changes application history scope, not the ownership of those other files.
 
-For a folder import, saved paths inside the previous data folder are changed to the corresponding new locations.
-Shared folders outside it keep their paths. Check the effective output folders on **Review & finish**.
+Supported saved paths inside the previous data folder change to the corresponding new locations. This includes
+Classic and Managed recording output and saved Recording Tuner inputs within the transferred folder. Paths outside
+it keep their locations; their files are not moved. Check the effective folders on **Review & finish**, and keep any
+old folder still referenced by an external output or input. Internal database-only imports do not transfer these
+files or remap paths.
 
 Managed Recordings has a separate audio library and catalog. Its supported older catalog can be updated independently
 before receiving starts, preserving the indexed calls. If that optional update fails, retry or continue receiving with
@@ -145,15 +155,24 @@ for backing up the audio and catalog together.
 Keep the source and use **Copy error** or the expandable details to retain the reason. Close another instance if the
 data folder is already in use, free disk space if requested, or choose the correct installation folder or playlist and
 review again.
-An unknown, newer, mixed, structurally incomplete, or physically damaged database is refused rather than guessed.
-Do not delete the database to bypass the error.
+Unknown, newer, mixed, or structurally incomplete formats and unreadable retained configuration are refused rather
+than guessed. A settings-only upgrade can recover readable configuration even when the discarded history is damaged;
+it does not inspect that history to certify that the whole old database is healthy. This does not relax the integrity
+and validation requirements of strict copy-imports or the applicable retained-history conversion. Do not delete the
+database to bypass an error.
 
-An active-profile failure before commit can be retried after correcting the cause. A failed external import does not
-install a partial copy.
+An active-profile database failure before commit can be retried after correcting the cause. A folder-transfer
+failure must be resolved using its reported data location; do not start another instance against data that may
+already have moved. Keep the manual backup available, including the old application files and matching databases.
+The internal copy-import engine still refuses to install a partial working copy and leaves its selected source unchanged.
 
-After a successful active-profile update, any selected recovery backup remains for manual restoration. There is no automatic
-downgrade. If the report says the update completed with a cleanup warning, do not repeat it as if conversion failed.
-Returning to an older build requires its compatible older data or backup.
+If a graphical upgrade was interrupted, return to the Setup Wizard and use **Finish update** before launching
+headless. Headless startup refuses a pending graphical transfer or settings replacement; `--upgrade-current` does
+not finish that separate operation.
+
+After a successful update there is no automatic downgrade. If the report says the update completed with a cleanup
+warning, do not repeat it as if conversion failed. Returning to an older build requires restoring its compatible
+data from your manual backup, not reopening the old installation folder left without its transferred data.
 
 ## Technical migration reference
 
@@ -166,10 +185,10 @@ implementation and maintenance requirements, not extra setup steps for listeners
 keep version-matched release notes; rolling Nightlies use their bundled current documentation and the migrator's
 preflight and completion reports.
 
-The database-file staging and replacement contracts below describe retained internal engine and safety-test
-boundaries. They are not public SQLite-file import support. User-selected sources are folders/applications or XML
-playlists for a new profile; `--upgrade-data` accepts folders/applications only. No running-application menu reopens
-setup or replaces its database.
+The database-file copy-import and replacement contracts below describe retained internal engine and safety-test
+boundaries. They are distinct from the explicit graphical VCE folder transfer and are not public SQLite-file import
+support. Headless `--upgrade-data` retains its source-preserving folder/application import behavior. No
+running-application menu reopens setup or replaces its database.
 
 ## Support Boundary
 
@@ -188,8 +207,10 @@ omitting it from the catalog does not make it an allowed support exception.
 - Alpha 11 and Alpha 12 share the exact format-2 signature and therefore enter at the same supported baseline.
 - Format 1, used by Alpha 8, Alpha 9 and Alpha 10, is retired. Its conversion is available in Alpha 12; this build
   refuses it without changing the source and directs the operator to update with Alpha 12 first.
-- Older, retired `webfirst`, unknown, mixed, structurally partial, and physically corrupt layouts are refused without
-  changing the source.
+- Older, retired `webfirst`, unknown, mixed, and structurally partial layouts are refused without guessing. Strict
+  copy-imports retain physical-integrity checks and source immutability. Settings-only extraction may preserve
+  readable configuration from an admitted layout despite damage in history that the user explicitly discards;
+  unreadable retained configuration is refused. Retained-history conversion keeps its applicable validation contract.
 - Migration is forward-only. A build must refuse a database whose format is newer than it understands.
 
 Support is based on database structure, not a release label, filename, timestamp, or build number. This matters for
@@ -344,16 +365,23 @@ The global format catalog and adjacent chain runner are the shared migration pat
 classification, current-versus-Alpha state, subsystem-tuple routing, and direct legacy-to-current dispatch are not
 alternate fallbacks. Retained historical transformations belong to their corresponding adjacent steps.
 
-Current-profile graphical and headless upgrades share one in-place transaction with an optional recovery snapshot.
-Explicitly selected external imports retain the launcher, private child process, source approval, staged-copy
-validation, and atomic promotion. Both use the same format catalog and adjacent migration chain.
+Graphical VCE upgrades collect the manual-backup acknowledgement and history choice before large work. A new
+destination uses an explicit same-filesystem portable-folder transfer; the selected old profile is no longer an
+unchanged import source after that transfer. Full-history updates reuse the adjacent chain. Settings-only updates
+prepare a configuration-only working database with empty history, retaining supported configuration semantics and
+the same applicable adjacent conversions without first copying or scanning the discarded history.
 
-The Swing Setup Wizard owns first-run graphical presentation. Current-profile inspection checks the registered
-format and bounded configuration before showing the declared best-effort policy. The graphical recovery-backup
-checkbox starts unchecked. Headless command defaults are unchanged. External-source review uses its private snapshot
-and fuller checks. Neither review runs a throwaway
-migration; the completion report supplies the observed repair, reset, and skip counts.
-Source selection and review share the Your settings step, with explicit review headings. External selection is
+Headless current-profile upgrades retain their existing backup default and in-place transaction. Headless
+`--upgrade-data` and retained internal copy-import/replacement operations retain source approval, private snapshots,
+child-process isolation, staged validation, and atomic promotion. These ownership boundaries share one format
+catalog and adjacent migration chain; they are not separate Alpha and Nightly conversion engines.
+
+The Swing Setup Wizard owns first-run graphical presentation. Only basic selection and bounded format/configuration
+checks precede the backup acknowledgement and history decision. No whole-database copy, fingerprint, physical
+scan, or history count is permitted before those choices. Graphical confirmation explicitly says the previous
+installation must already have been backed up; the application does not verify or create that backup. Neither
+review runs a throwaway migration. The completion report describes actual repairs, resets, omissions, and skipped items.
+Source selection and review share the Your settings step, with explicit review headings. Transfer selection is
 available only for an empty destination. Success continues to the next needed setup step without a countdown.
 Errors remain compact and inline with expandable details and a Copy error action. After promotion, Back can review
 the installed source/results but cannot repeat the import. Completed profiles return to setup only for required
@@ -1009,7 +1037,7 @@ database; the migrator does not resume by trusting a partially changed working c
 
 Migration support does not mean every historical value must survive. Each step classifies its affected data:
 
-Selected older imports that need the bounded receiver-derived repair discard the whole affected Activity/statistics
+Selected older strict copy-imports that need the bounded receiver-derived repair discard the whole affected Activity/statistics
 component in foreign-key-safe order, including its allocator state. They keep each frozen table layout while the
 existing adjacent chain upgrades the empty tables. No historical counter, identity mapping or Activity row is
 reconstructed. Once the current schema is reached, saved Alias configuration seeds one empty counter row per Alias.
@@ -1029,9 +1057,10 @@ persisted meanings.
 | State for intentionally retired features | Drop when it has no supported current representation. |
 | Invalid, over-capacity, or ambiguous row state | Default or skip that bounded component and report it. Refuse only when the database structure, integrity, final consistency, or promotion cannot be made safe. |
 
-Every possible reset or drop is named during preflight. Exact counts are determined by the one real migration
-and repeated in the completion report, so every build reports its exact preservation and loss behavior. Numbered
-release notes additionally summarize the user-visible policy for each format introduced by that release.
+Every possible reset or drop is named during preflight. The one real migration reports actual changes and counts
+where available. A settings-only upgrade declares the entire omitted history component without scanning or counting
+it just to produce a total. Numbered release notes additionally summarize user-visible policy for each format
+introduced by that release.
 
 ## Upgrade Execution
 
@@ -1039,39 +1068,63 @@ The bundled Application Migrator is the only component allowed to change an exis
 Current-profile upgrades run after the portable-data lock is acquired and before the main receiver window, tuners,
 and database services start. The Setup Wizard can already be visible at this point.
 
-1. Inspect the registered format, exact schema, and bounded required configuration. Unknown, mixed, newer, or
-   unsupported formats are refused. SQLite reads committed WAL data and recovers an interrupted rollback journal.
-2. Review the selected scope and declared resets or drops. For an older database, the graphical history checkbox
-   starts unchecked for configuration-only migration; full retained history is opt-in. The graphical recovery-backup
-   checkbox also starts unchecked. Headless upgrade commands retain full content and their default backup, and
-   accept `--no-upgrade-backup` to omit that backup.
-3. Reserve the database writer with `BEGIN IMMEDIATE` and check the source format again. If selected, make one
-   standalone SQLite-aware recovery snapshot before any changes. A backup failure aborts without changing data.
-4. Run the existing `N -> N+1 -> ... -> current` chain in the same transaction. The runner verifies every exact target
-   schema and carries that admitted result into the next adjacent step, without repeating source fingerprint scans. Once the final layout is reached, independently repair unusable portable, account, and configuration
-   components and report their counts. Preserve usable configuration and credentials.
-5. Validate the final global format, exact schema, required settings, and startup configuration once, then commit.
-   Normal startup opens the result with validation only. Freed pages remain reusable; upgrades do not compact them.
+The graphical workflow follows this order:
 
-Selecting or skipping a recovery backup changes only step 3. There are no separate safe/fast upgrade engines,
-approval copies or content digests, staged full-profile copies, or repeated full-history checks. Format 63 adds only the small configuration extraction and checked pair activation described above; detailed history remains in its original file.
-Ordinary startup and current-profile upgrades do not run whole-file integrity or derived-history scans. Damage that
-those scans alone could detect can surface later; explicit inspection and external import retain their fuller checks.
+1. Resolve the selected profile using basic folder checks. Inspect only the registered format, exact schema, and
+   bounded configuration needed to identify the supported operation. Refuse unknown, mixed, newer, or unsupported
+   formats without guessing. No whole-source snapshot, digest, physical scan, or history count runs before the choices.
+2. Collect the explicit manual-backup acknowledgement and **Keep activity and statistics** choice. Full retained
+   history is opt-in. A selected folder first offers **Review upgrade**: inspect only its supported schema and bounded
+   configuration under the source lock, then show source, destination, selected scope, and declared resets or drops
+   before **Begin upgrade**. The review retains the choices and allows them to change. There is no whole-database
+   review-copy phase, history scan, or throwaway conversion. The independent backup remains for manual recovery;
+   VCE does not know its location or restore it automatically.
+3. For a new installation, require an empty destination, independent source and target roots, the source profile
+   lock, and the same filesystem. Transfer the portable `data` folder with an explicit transfer receipt rather than a
+   recursive copy. The acknowledgement authorizes this ownership change; it does not assert that VCE verified a backup.
+   The same operating-system lock follows the moved folder into the destination; an occupied destination is refused.
+   An existing active profile stays at its current location.
+4. For settings-only, extract admitted configuration, required metadata, and exact configuration relationships into
+   a private working database with empty history. Do not copy, hash, count, delete individual rows from, or physically
+   scan the discarded history. Preserve exact supported source definitions and run applicable adjacent conversions
+   on that bounded working data. For full history, retain the existing adjacent chain and its declared preservation
+   and reset policies. Do not add a direct-to-current fallback.
+5. Rebase supported saved paths within transferred data, including Managed Recordings and Recording Tuner files.
+   Preserve external paths. Keep the vault, libraries, recording audio, and recording catalog together with their
+   existing ownership. The application history choice does not clear those artifacts.
+6. Check the final global format, exact role schemas and pair identity, required settings, and startup configuration
+   before activation. A required Managed Recordings catalog update uses its own adjacent chain before receiving.
+   Normal startup then validates only. The independent manual backup is the recovery copy; the graphical upgrade
+   does not create another per-database backup.
 
-A conversion or final-validation failure before commit rolls back the entire transaction. If the format-63 source transaction committed but filename activation was interrupted, its receipt preserves the checked extraction and original history file for completion by the Application Migrator; startup refuses that incomplete pair. The adjacent steps do not
-commit independently and do not create restart checkpoints. After commit, the prior application version cannot open
-the upgraded format. The optional snapshot remains for manual recovery; there is no automatic post-commit restore.
-Without it, recovery requires another available backup. Statement, connection, temporary-file, or progress-observer
-errors after commit are completion warnings and must not present an already completed update as safely retryable.
-A healthy current-format profile is a no-op and does not create a backup.
+Full-history owned-profile updates reserve the writer with `BEGIN IMMEDIATE`, recheck the admitted source, and apply
+the adjacent chain in one transaction. The runner carries each exact target schema into the next step rather than
+repeating source inspections. It preserves valid configuration and credentials, applies bounded component repair,
+and reports actual effects. Ordinary startup and owned-profile upgrades do not perform whole-file physical-integrity
+or derived-history scans. Damage detectable only through such scans can surface later; explicit inspection and the
+strict copy-import engine retain their fuller checks.
+
+Headless `--upgrade-current` retains full content and a SQLite-aware recovery snapshot by default. Its
+`--no-upgrade-backup` flag omits only that snapshot. These headless choices do not change the graphical manual-backup
+contract, and the same backup default applies to headless Managed Recordings updates.
+
+A conversion or final-validation failure before a database transaction commits rolls it back. A committed
+configuration/history split interrupted during filename activation is completed only by the Application Migrator
+using its activation receipt; normal startup refuses an incomplete pair. Folder-transfer receipts likewise preserve
+the operation state rather than treating a moved source as an unchanged import. The adjacent conversion steps do
+not commit independently. After a successful upgrade, the prior build cannot open a newer incompatible format;
+restoring that build requires the independent compatible backup. Statement, connection, temporary-file, or
+progress-observer errors after commit are completion warnings, not permission to repeat an already completed update.
+A healthy current-format profile needs no automatic format change.
 
 Progress shows the current phase and elapsed time, with detailed output available on demand. The engine emits
 `Step X of Y — description` before each adjacent conversion, then validation and commit phases. The commit-phase
 message is not success; success is reported only after `COMMIT` returns. Confirmation cancellation, error retry, and
-completion navigation remain in the wizard. The backup setting applies to both application and optional catalog
-upgrades; each upgraded database gets one snapshot when selected.
+completion navigation remain in the wizard. Reports distinguish settings-only omissions, retained-history work,
+folder transfer, path relocation, and optional catalog updates.
 
-Explicit profile imports and internal replacement use a different ownership boundary, while reusing the same conversion chain. The
+Headless `--upgrade-data` and retained internal copy-import/replacement use a different ownership boundary from the
+graphical folder transfer, while reusing the same conversion chain. The
 selected source and its containing folder need not be writable. After checking free space, copy its database and
 readable journal/WAL into private destination scratch space, recover that copy, fingerprint its registered format,
 and perform physical integrity checks. Verify the selected files unchanged and bind confirmation to the snapshot's
@@ -1091,8 +1144,16 @@ their failure-injection tests remain even though there is no public menu, flag, 
 
 ## Input Scope
 
-Selecting an install or portable data directory allows the migration workflow to copy supported profile artifacts such
-as the vault, JMBE library, optional modules, converted legacy JSON settings, and paths that need remapping.
+The explicit graphical VCE upgrade transfers the whole portable data directory. Its supported saved paths are
+rebased from the old data root to the new one; absolute paths outside that root remain external. Managed Recordings
+audio and catalog, Classic audio, vault, JMBE, modules, logs, and other existing portable artifacts move together.
+The operation never silently substitutes a recursive cross-filesystem copy or leaves the old installation labeled
+as its backup.
+
+Headless `--upgrade-data` and internal portable-profile copy-import may copy supported profile artifacts such
+as the vault, JMBE library, optional modules, converted legacy JSON settings, and paths that need remapping. Their
+legacy copy scope excludes recording audio, logs, streaming output, screenshots, and the Managed Recordings catalog;
+their selected sources remain unchanged.
 Remote Links settings and paging-tone choices already in the application database are preserved for every import scope.
 The adjacent update removes retired voice-enhancement and continuous-gain choices and reports their counts.
 Remote Links network
@@ -1124,7 +1185,14 @@ every retained format from the Alpha 12 format-2 baseline and exercise:
 - migration from internal SQLite-file inputs and public full portable-data inputs, plus refusal of standalone files
   by public source selectors;
 - failure injection before and after each step, final validation failure, and atomic-promotion failure;
-- backup retention, unchanged sources, safe retry, and no partially promoted result; and
+- strict copy-import backup retention, unchanged sources, safe retry, and no partially promoted result;
+- early graphical acknowledgement/history choices before any whole-source copy, digest, scan, or history count;
+- settings-only extraction from every supported source, exact configuration preservation, and empty current history
+  without whole-history copying, hashing, counting, row deletion, or physical-integrity scans;
+- same-filesystem folder transfer with continuous profile-lock ownership, external-path preservation, and refusal of cross-filesystem,
+  overlapping, in-use, symbolic-link, or nonempty destination profiles before transfer;
+- transfer interruption and failure recovery, including preservation of Managed audio/catalog, Classic audio, vault,
+  libraries, optional modules, and existing Recording Tuner files; and
 - registry completeness: no gap, duplicate source, duplicate target, or missing format-2-to-current route.
 
 Tests compare the migrated database to the same exact current format signature used by normal startup validation. A
