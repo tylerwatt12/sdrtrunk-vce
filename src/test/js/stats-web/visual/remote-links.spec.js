@@ -63,6 +63,9 @@ async function openApp(page, theme = 'light', options = {}) {
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = theme;
   let current = snapshot();
+  if (options.senderConnection) current.sender_connection = {
+    ...current.sender_connection, ...options.senderConnection
+  };
   if (options.senderState) current.senders[0].state = options.senderState;
   if (options.multipleFeeds) current.senders[0].feeds.push({ ...current.senders[0].feeds[0],
     feed_id: 'south-control', display_name: 'Metro South', channel_configuration_id: 'local-channel-2' });
@@ -75,6 +78,8 @@ async function openApp(page, theme = 'light', options = {}) {
   let removalBlock = null;
   let readBlock = null;
   const removalRequests = [];
+  const sendingDeletionRequests = [];
+  let sendingDeletionBlock = null;
   await page.route('**/api/v1/**', async (route) => {
     const pathname = new URL(route.request().url()).pathname;
     if (pathname === '/api/v1/auth/session') {
@@ -86,6 +91,20 @@ async function openApp(page, theme = 'light', options = {}) {
     } else if (pathname === '/api/v1/admin/remote-links' && route.request().method() === 'GET') {
       reads += 1;
       if (readBlock) await readBlock;
+      await route.fulfill({ json: { data: current } });
+    } else if (pathname === '/api/v1/admin/remote-links/sender-connection' && route.request().method() === 'DELETE') {
+      sendingDeletionRequests.push(route.request().postDataJSON());
+      if (sendingDeletionBlock) {
+        const error = await sendingDeletionBlock;
+        sendingDeletionBlock = null;
+        if (error) {
+          await route.fulfill({ status: 503, json: { error: { status: 503, message: error } } });
+          return;
+        }
+      }
+      current = { ...current, sender_connection: { enabled: false, state: 'DISABLED',
+        destination_host: '', destination_port: 53800, sender_id: null, credential_configured: false,
+        last_connected_at_ms: 0, exported_channel_configuration_ids: [] } };
       await route.fulfill({ json: { data: current } });
     } else if (pathname === '/api/v1/admin/remote-links/senders' && route.request().method() === 'POST') {
       await route.fulfill({ json: { data: { sender_id: senderId, secret: fixtureSecret } } });
@@ -125,6 +144,12 @@ async function openApp(page, theme = 'light', options = {}) {
     reads: () => reads,
     removals: () => removals,
     removalRequests,
+    sendingDeletionRequests,
+    deferSendingDeletion: (error = null) => {
+      let release;
+      sendingDeletionBlock = new Promise(resolve => { release = () => resolve(error); });
+      return release;
+    },
     deferRemoval: (error = null) => {
       let release;
       removalBlock = new Promise(resolve => { release = () => resolve(error); });
@@ -277,6 +302,125 @@ test('outbound system selection uses the themed checkbox', async ({ page }) => {
   await expect(system).toHaveCSS('appearance', 'none');
   await system.check();
   await expect(system).toBeChecked();
+});
+
+const configuredSending = {
+  destination_host: 'remote.example.test', destination_port: 53800, sender_id: senderId,
+  enabled: true, state: 'CONNECTED', credential_configured: true,
+  exported_channel_configuration_ids: ['local-channel-1']
+};
+
+for (const [theme, viewport] of [
+  ['light', { width: 1280, height: 900 }],
+  ['dark', { width: 390, height: 844 }]
+]) {
+  test(`sending configuration deletion preserves canceled drafts and clears saved settings in ${theme}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const app = await openApp(page, theme, { senderConnection: configuredSending });
+    await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
+    await page.getByRole('button', { name: 'Sending settings', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'Sending settings', exact: true });
+    const destination = editor.getByLabel('Destination host', { exact: true });
+    await destination.fill('unfinished.example.test');
+    const remove = editor.getByRole('button', { name: 'Delete configuration', exact: true });
+    await expect(remove).toHaveClass(/ui-button-danger/);
+    await expectRemoteWorkflowGeometry(editor);
+    await captureFormWorkflowEvidence(editor.locator('form'), `delete-sending-${theme}-${viewport.width}`);
+    await remove.click();
+    const confirmation = page.getByRole('alertdialog', { name: 'Delete sending configuration', exact: true });
+    await expect(confirmation).toContainText('This stops sending and clears the destination, saved credentials, and selected feeds.');
+    await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await expect(confirmation.getByRole('button', { name: 'Delete configuration', exact: true })).toHaveClass(/ui-button-danger/);
+    if (process.env.FORM_WORKFLOW_AUDIT_DIR) await confirmation.screenshot({
+      path: path.join(process.env.FORM_WORKFLOW_AUDIT_DIR, `delete-sending-confirm-${theme}-${viewport.width}.png`),
+      animations: 'disabled', caret: 'hide'
+    });
+    expect(app.sendingDeletionRequests).toHaveLength(0);
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(remove).toBeFocused();
+    await expect(destination).toHaveValue('unfinished.example.test');
+    await expect(editor.locator('form')).toHaveClass(/is-dirty/);
+    expect(app.sendingDeletionRequests).toHaveLength(0);
+
+    const releaseReads = app.deferReads();
+    await remove.click();
+    await confirmation.getByRole('button', { name: 'Delete configuration', exact: true }).click();
+    await expect(editor).toHaveCount(0);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Set up sending', exact: true })).toBeVisible();
+    await expect(page.locator('[data-remote-direction="send"]')).toContainText('Disabled');
+    await expect(page.locator('[data-remote-direction="send"] .ui-fact-list')).toHaveCount(0);
+    await expect(page.locator('.remote-links-sender-card')).toHaveCount(1);
+    expect(app.sendingDeletionRequests).toEqual([{ revision: 'fixture-revision' }]);
+    releaseReads();
+
+    await page.getByRole('button', { name: 'Set up sending', exact: true }).click();
+    await expect(editor.getByLabel('Destination host', { exact: true })).toHaveValue('');
+    await expect(editor.getByRole('textbox', { name: /^Sender ID/ })).toHaveValue('');
+    await expect(editor.getByLabel('Enable sending', { exact: true })).not.toBeChecked();
+    await expect(editor.getByRole('checkbox', { name: /Metro North/ })).not.toBeChecked();
+    await expect(editor.getByLabel(/^Shared secret/)).toHaveAttribute('placeholder', 'Paste host-issued secret');
+    await expect(editor.getByRole('button', { name: 'Delete configuration', exact: true })).toHaveCount(0);
+  });
+}
+
+test('sending configuration deletion locks duplicate actions and dismissal, preserves failed drafts, and retries', async ({ page }) => {
+  const app = await openApp(page, 'light', { senderConnection: { ...configuredSending, enabled: false, state: 'DISABLED' } });
+  const writes = [];
+  page.on('request', request => {
+    if (request.method() === 'PUT' && request.url().includes('/remote-links/sender-connection')) writes.push(request);
+  });
+  await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
+  await page.getByRole('button', { name: 'Sending settings', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Sending settings', exact: true });
+  const destination = editor.getByLabel('Destination host', { exact: true });
+  await destination.fill('');
+  const release = app.deferSendingDeletion('Sending configuration could not be deleted. Try again.');
+  const remove = editor.getByRole('button', { name: 'Delete configuration', exact: true });
+  await remove.click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Delete sending configuration', exact: true });
+  await confirmation.getByRole('button', { name: 'Delete configuration', exact: true }).click();
+  await expect.poll(() => app.sendingDeletionRequests.length).toBe(1);
+  await expect(editor).toHaveAttribute('aria-busy', 'true');
+  await expect(remove).toBeDisabled();
+  await expect(destination).toBeDisabled();
+  await expect(editor.getByRole('button', { name: 'Save sender', exact: true })).toBeDisabled();
+  await expect(editor.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+  await editor.locator('form').evaluate(form => {
+    form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+    form.querySelector('.ui-button-danger').dispatchEvent(new Event('click', { bubbles: true }));
+  });
+  await page.keyboard.press('Escape');
+  await expect(editor).toBeVisible();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  expect(app.sendingDeletionRequests).toHaveLength(1);
+  expect(writes).toHaveLength(0);
+  release();
+  await expect(editor.getByRole('alert')).toContainText('Sending configuration could not be deleted. Try again.');
+  await expect(editor).not.toHaveAttribute('aria-busy', 'true');
+  await expect(remove).toBeEnabled();
+  await expect(destination).toHaveValue('');
+  await expect(editor.locator('form')).toHaveClass(/is-dirty/);
+  await remove.click();
+  await confirmation.getByRole('button', { name: 'Delete configuration', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Set up sending', exact: true })).toBeVisible();
+  expect(app.sendingDeletionRequests).toEqual(Array(2).fill({ revision: 'fixture-revision' }));
+  expect(writes).toHaveLength(0);
+});
+
+test('fresh sending settings omit deletion while retained credentials remain deletable', async ({ page }) => {
+  const app = await openApp(page);
+  await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
+  await page.getByRole('button', { name: 'Set up sending', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: 'Sending settings', exact: true });
+  await expect(editor.getByRole('button', { name: 'Delete configuration', exact: true })).toHaveCount(0);
+  await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
+  app.updateSenderConnection({ credential_configured: true });
+  const previousReads = app.reads();
+  await expect.poll(() => app.reads(), { timeout: 7000 }).toBeGreaterThan(previousReads);
+  await page.getByRole('button', { name: 'Set up sending', exact: true }).click();
+  await expect(editor.getByRole('button', { name: 'Delete configuration', exact: true })).toBeVisible();
 });
 
 test('new credential is announced and guarded until its secret is copied', async ({ page }) => {
