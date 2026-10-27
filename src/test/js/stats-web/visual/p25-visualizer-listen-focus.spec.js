@@ -77,13 +77,14 @@ async function pressThroughUpdate(page, control) {
   const before = await control.boundingBox();
   await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
   await page.mouse.down();
+  const held = await control.boundingBox();
   await burst(page);
   expect(await original.evaluate(element => element.isConnected)).toBe(true);
   expect(await control.evaluate((element, retained) => element === retained, original)).toBe(true);
   await expect(control).toBeFocused();
   const after = await control.boundingBox();
-  expect(Math.abs(after.x - before.x)).toBeLessThanOrEqual(1);
-  expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.x - held.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(after.y - held.y)).toBeLessThanOrEqual(1);
   await page.mouse.up();
   return original;
 }

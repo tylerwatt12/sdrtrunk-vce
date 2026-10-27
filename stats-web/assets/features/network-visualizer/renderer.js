@@ -139,6 +139,7 @@ async function createP25Renderer(options = {}) {
   const linkObjects = new Map();
   const labelElements = new Map();
   const interactingLabels = new Set();
+  const labelGestureReleases = new Map();
   let labelRevision = 0;
   const affiliationMoves = new Map();
   const movementParticipants = new Set();
@@ -309,9 +310,10 @@ async function createP25Renderer(options = {}) {
       if (nodeIds.has(key)) continue;
       object.removeFromParent?.();
       nodeObjects.delete(key);
-      const wasInteracting = interactingLabels.delete(labelElements.get(key));
-      if (wasInteracting && !interactingLabels.size) onControlsEnd();
-      labelElements.get(key)?.remove();
+      const label = labelElements.get(key);
+      labelGestureReleases.get(label)?.();
+      labelGestureReleases.delete(label);
+      label?.remove();
       labelElements.delete(key);
       affiliationMoves.delete(key);
     }
@@ -359,6 +361,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function resetAttention() {
+    releaseLabelGestures();
     stopCamera();
     clearAffiliationMoves();
     cameraPhase = 'roam';
@@ -516,10 +519,18 @@ async function createP25Renderer(options = {}) {
     controls.enabled = false;
     updateAutoRotate();
     const startedAt = performance.now();
+    let previousAt = startedAt, heldMs = 0;
     const step = (at) => {
       cameraFrame = 0;
       if (disposed || documentValue.hidden || guideSuspended) return stopCamera();
-      const progress = clamp((at - startedAt) / milliseconds, 0, 1);
+      const elapsed = Math.max(0, at - previousAt);
+      previousAt = at;
+      if (interactingLabels.size) {
+        heldMs += elapsed;
+        cameraFrame = requestAnimationFrame(step);
+        return;
+      }
+      const progress = clamp((at - startedAt - heldMs) / milliseconds, 0, 1);
       apply(progress);
       if (progress < 1) cameraFrame = requestAnimationFrame(step);
       else {
@@ -683,31 +694,49 @@ async function createP25Renderer(options = {}) {
     return Boolean(move.lengthSq() || yaw || pitch);
   }
 
+  function releaseLabelGestures() {
+    for (const label of [...interactingLabels]) labelGestureReleases.get(label)?.();
+  }
+
   function wireListenLabel(label) {
-    let pressed = false;
+    let pointerId = null;
+    const keys = new Set();
     const sync = () => {
-      const active = pressed || label.matches(':hover') || label.contains(documentValue.activeElement);
-      const wasActive = interactingLabels.has(label);
-      if (active) interactingLabels.add(label);
+      if (pointerId !== null || keys.size) interactingLabels.add(label);
       else interactingLabels.delete(label);
-      if (active && !wasActive) onControlsStart();
-      else if (!active && wasActive && !interactingLabels.size) onControlsEnd();
+      updateAutoRotate();
     };
-    label.addEventListener('pointerenter', sync);
-    label.addEventListener('pointerleave', sync);
-    label.addEventListener('focusin', sync);
-    label.addEventListener('focusout', sync);
+    const release = () => {
+      const captured = pointerId;
+      pointerId = null;
+      keys.clear();
+      interactingLabels.delete(label);
+      if (captured !== null && label.hasPointerCapture?.(captured)) label.releasePointerCapture(captured);
+      updateAutoRotate();
+    };
+    labelGestureReleases.set(label, release);
     label.addEventListener('pointerdown', event => {
-      if (event.button !== 0) return;
-      pressed = true;
-      label.setPointerCapture?.(event.pointerId);
+      if (event.button !== 0 || !event.isPrimary || label.disabled) return;
+      pointerId = event.pointerId;
+      label.setPointerCapture?.(pointerId);
       sync();
       event.stopPropagation();
     });
-    const release = () => { pressed = false; sync(); };
-    label.addEventListener('pointerup', release);
-    label.addEventListener('pointercancel', release);
-    label.addEventListener('lostpointercapture', release);
+    const releasePointer = event => {
+      if (event.pointerId === pointerId) release();
+    };
+    label.addEventListener('pointerup', releasePointer);
+    label.addEventListener('pointercancel', releasePointer);
+    label.addEventListener('lostpointercapture', releasePointer);
+    label.addEventListener('keydown', event => {
+      if (!['Enter', ' '].includes(event.key) || label.disabled) return;
+      keys.add(event.key);
+      sync();
+    });
+    label.addEventListener('keyup', event => {
+      if (keys.delete(event.key)) sync();
+    });
+    label.addEventListener('focusout', release);
   }
 
   function labelFor(node) {
@@ -769,16 +798,15 @@ async function createP25Renderer(options = {}) {
     for (const node of labelCandidates) {
       if (scope.level !== 'overview' && node.type === 'system') continue;
       const retained = labelElements.get(node.id);
-      // Keep an engaged button mounted and under the pointer through live layout updates.
-      if (retained && interactingLabels.has(retained)) {
-        visible.add(node.id);
-        continue;
-      }
       const screen = graph.graph2ScreenCoords(node.x, node.y, node.z);
       const projected = new library.Vector3(node.x, node.y, node.z).project(camera);
       if (!screen || projected.z < -1 || projected.z > 1 || screen.x < -120 || screen.y < -50 ||
-          screen.x > width + 120 || screen.y > height + 50) continue;
+          screen.x > width + 120 || screen.y > height + 50) {
+        labelGestureReleases.get(retained)?.();
+        continue;
+      }
       const label = labelFor(node);
+      if (label.disabled && interactingLabels.has(label)) labelGestureReleases.get(label)?.();
       visible.add(node.id);
       // Keep names beside the shapes instead of painting over the journey's endpoints.
       const distance = Math.max(1, camera.position.distanceTo(new library.Vector3(node.x, node.y, node.z)));
@@ -798,10 +826,10 @@ async function createP25Renderer(options = {}) {
         }
         labelY = clamp(labelY, top + halfHeight, Math.max(top + halfHeight, bottom - halfHeight));
       }
-      const transform = `translate3d(${Math.round(labelX)}px, ${Math.round(labelY)}px, 0)`;
-      if (label.style.transform !== transform) label.style.transform = transform;
+      const position = `calc(${Math.round(labelX)}px - 50%) calc(${Math.round(labelY)}px - 50%)`;
+      // Keep scene placement independent of button transform transitions. A press holds only XY.
+      if (!interactingLabels.has(label) && label.style.translate !== position) label.style.translate = position;
       label.style.zIndex = String(Math.round((1 - projected.z) * 5_000));
-      if (label.hasAttribute('data-direct-listen-target-key')) continue;
       const participant = movementIncludes(node.id);
       const clear = scope.level === 'overview' || scope.level === 'talkgroup' || Boolean(node.signalAction) ||
         node.active || participant || focusKeys.has(node.id) || node.type === 'system';
@@ -812,7 +840,11 @@ async function createP25Renderer(options = {}) {
       const blur = haze * 2.8 + (dimmed ? focusAmount * 2 : 0);
       label.style.filter = blur ? `blur(${blur.toFixed(2)}px)` : '';
     }
-    for (const [key, label] of labelElements) label.hidden = !visible.has(key);
+    for (const [key, label] of labelElements) {
+      const hidden = !visible.has(key);
+      if (hidden && interactingLabels.has(label)) labelGestureReleases.get(label)?.();
+      label.hidden = hidden;
+    }
   }
 
   function animateAffiliations(at) {
@@ -952,6 +984,7 @@ async function createP25Renderer(options = {}) {
   themeObserver = new MutationObserver(updateTheme);
   themeObserver.observe(documentValue.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   documentValue.addEventListener('visibilitychange', onVisibility);
+  documentValue.defaultView?.addEventListener('blur', releaseLabelGestures);
   async function enterFullscreen() {
     const target = host.closest('.network-visualizer-layout') || host;
     if (documentValue.fullscreenElement === target) return true;
@@ -974,12 +1007,14 @@ async function createP25Renderer(options = {}) {
 
   function dispose() {
     if (disposed) return;
+    releaseLabelGestures();
     disposed = true;
     stopCamera();
     if (frame) cancelAnimationFrame(frame);
     resizeObserver?.disconnect();
     themeObserver?.disconnect();
     documentValue.removeEventListener('visibilitychange', onVisibility);
+    documentValue.defaultView?.removeEventListener('blur', releaseLabelGestures);
     controls?.removeEventListener('start', onControlsStart);
     controls?.removeEventListener('end', onControlsEnd);
     canvas?.removeEventListener('webglcontextlost', onContextLost, false);
@@ -998,6 +1033,7 @@ async function createP25Renderer(options = {}) {
     linkObjects.clear();
     labelElements.clear();
     interactingLabels.clear();
+    labelGestureReleases.clear();
     affiliationMoves.clear();
     canonicalPositions.clear();
     canonicalLinks = [];
