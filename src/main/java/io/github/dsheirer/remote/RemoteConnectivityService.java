@@ -455,17 +455,39 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         {
             throw new IllegalArgumentException("Host, sender ID, and key are required to connect");
         }
+        replaceOutbound(new Outbound(request.enabled(), host, request.destinationPort(), senderId, secret,
+            List.copyOf(exported)), false);
+        return snapshot();
+    }
+
+    @Override
+    public synchronized RemoteLinkSnapshot removeSenderConnection(long expectedRevision)
+    {
+        requireRevision(expectedRevision);
+        replaceOutbound(Outbound.disabled(), true);
+        return snapshot();
+    }
+
+    private void replaceOutbound(Outbound outbound, boolean clearLastConnection)
+    {
         Settings old = mSettings;
-        replaceSettings(new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(), old.listenPort(),
-            old.trustedSenders(), new Outbound(request.enabled(), host, request.destinationPort(), senderId, secret,
-                List.copyOf(exported))));
-        mOutboundState = request.enabled() ? SenderConnectionState.CONNECTING : SenderConnectionState.DISABLED;
-        mOutboundStatus = null;
+        Settings next = new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(), old.listenPort(),
+            old.trustedSenders(), outbound);
+        saveSettings(next);
+        RemoteLinkTransport.Connection prior;
+        synchronized(mOutboundLifecycleLock)
+        {
+            // Fence authenticated candidates before detaching the session; persistence never holds this runtime lock.
+            mSettings = next;
+            prior = mOutbound;
+            mOutbound = null;
+            mOutboundState = outbound.enabled() ? SenderConnectionState.CONNECTING : SenderConnectionState.DISABLED;
+            mOutboundStatus = null;
+            if(clearLastConnection) mLastOutboundConnectionMs = 0L;
+        }
         mCatalogDirty.set(true);
-        RemoteLinkTransport.Connection prior = mOutbound;
         if(prior != null) prior.close();
         refreshExports();
-        return snapshot();
     }
 
     @Override
@@ -662,10 +684,15 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
 
     private void replaceSettings(Settings next)
     {
+        saveSettings(next);
+        mSettings = next;
+    }
+
+    private void saveSettings(Settings next)
+    {
         try
         {
             mStore.save(next);
-            mSettings = next;
         }
         catch(IOException exception)
         {
@@ -1033,9 +1060,12 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             @Override
             public void frame(String senderId, RemoteLinkTransport.Connection connection, Frame frame)
             {
-                if(mOutbound == connection && frame.type() == Type.REJECT)
+                if(frame.type() == Type.REJECT)
                 {
-                    mOutboundStatus = "Host rejected this remote feed";
+                    synchronized(mOutboundLifecycleLock)
+                    {
+                        if(mOutbound == connection) mOutboundStatus = "Host rejected this remote feed";
+                    }
                 }
             }
 
@@ -1070,14 +1100,21 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             Outbound outbound = settings.outbound();
             if(!outbound.enabled())
             {
-                mOutboundState = SenderConnectionState.DISABLED;
+                synchronized(mOutboundLifecycleLock)
+                {
+                    if(outbound.equals(mSettings.outbound())) mOutboundState = SenderConnectionState.DISABLED;
+                }
             }
             else if(mOutbound == null)
             {
                 RemoteLinkTransport.Connection connection = null;
                 try
                 {
-                    mOutboundState = SenderConnectionState.CONNECTING;
+                    synchronized(mOutboundLifecycleLock)
+                    {
+                        if(!outbound.equals(mSettings.outbound())) continue;
+                        mOutboundState = SenderConnectionState.CONNECTING;
+                    }
                     connection = RemoteLinkTransport.connect(outbound.host(),
                         outbound.port(), outbound.senderId(), outbound.secret(), outboundListener());
                     if(mClosed.get() || !outbound.equals(mSettings.outbound()) || !connection.isOpen())
@@ -1091,7 +1128,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                         if(!connection.isOpen() || !outbound.equals(mSettings.outbound()))
                         {
                             connection.close();
-                            mOutboundState = SenderConnectionState.DISCONNECTED;
+                            outboundFailed(outbound, null);
                         }
                         else
                         {
@@ -1120,8 +1157,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                 catch(IOException | RuntimeException exception)
                 {
                     if(connection != null) connection.close();
-                    mOutboundState = SenderConnectionState.DISCONNECTED;
-                    mOutboundStatus = "Cannot connect or authenticate with the host";
+                    outboundFailed(outbound, "Cannot connect or authenticate with the host");
                 }
             }
             try
@@ -1131,6 +1167,18 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             catch(InterruptedException exception)
             {
                 if(mClosed.get()) break;
+            }
+        }
+    }
+
+    private void outboundFailed(Outbound attempted, String status)
+    {
+        synchronized(mOutboundLifecycleLock)
+        {
+            if(attempted.equals(mSettings.outbound()) && mOutbound == null)
+            {
+                mOutboundState = SenderConnectionState.DISCONNECTED;
+                mOutboundStatus = status;
             }
         }
     }

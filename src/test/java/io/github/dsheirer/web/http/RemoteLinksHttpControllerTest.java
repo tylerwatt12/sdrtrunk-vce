@@ -133,6 +133,37 @@ class RemoteLinksHttpControllerTest
     }
 
     @Test
+    void deleteSendingConfigurationRequiresCurrentRevisionAndStrictBody() throws Exception
+    {
+        FakeService service = new FakeService();
+        try(TestServer server = new TestServer(service))
+        {
+            assertEquals(400, server.send(server.jsonRequest("/sender-connection")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":7,\"secret\":\"extra\"}")))
+                .statusCode());
+            assertEquals(400, server.send(server.jsonRequest("/sender-connection")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{}"))).statusCode());
+            assertEquals(409, server.send(server.jsonRequest("/sender-connection")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":6}"))).statusCode());
+            assertFalse(service.mSenderConnectionRemoved);
+
+            HttpResponse<String> response = server.send(server.jsonRequest("/sender-connection")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":7}")));
+            assertEquals(200, response.statusCode(), response.body());
+            assertTrue(service.mSenderConnectionRemoved);
+            assertEquals(8L, data(response).path("revision").longValue());
+            assertFalse(data(response).at("/sender_connection/enabled").booleanValue());
+            assertFalse(data(response).at("/sender_connection/credential_configured").booleanValue());
+            assertEquals(1, data(response).path("senders").size());
+            assertFalse(response.body().contains("shared-secret"));
+
+            HttpResponse<String> wrongMethod = server.send(server.request("/sender-connection").GET());
+            assertEquals(405, wrongMethod.statusCode());
+            assertEquals("PUT, DELETE", wrongMethod.headers().firstValue("Allow").orElseThrow());
+        }
+    }
+
+    @Test
     void hostIssuesTheSecretOnceAndMutationsRequireStrictBodies() throws Exception
     {
         FakeService service = new FakeService();
@@ -295,6 +326,7 @@ class RemoteLinksHttpControllerTest
         private UpdateSenderRequest mSenderRequest;
         private UpdateFeedRequest mFeedRequest;
         private String mRemovedSenderId;
+        private boolean mSenderConnectionRemoved;
         private boolean mRestartRequired;
 
         @Override
@@ -304,14 +336,15 @@ class RemoteLinksHttpControllerTest
                 ListenerState.LISTENING, null,
                 List.of(new DependencySnapshot("jmbe", "P25 voice", DependencyState.DEGRADED,
                     "Voice synthesis is unavailable")));
-            SenderConnectionSnapshot connection = new SenderConnectionSnapshot(true, "10.8.0.2", 35_300,
-                "sender-local", true, SenderConnectionState.CONNECTED, 1_000L, null, List.of("channel-a"));
+            SenderConnectionSnapshot connection = mSenderConnectionRemoved ? SenderConnectionSnapshot.DISABLED :
+                new SenderConnectionSnapshot(true, "10.8.0.2", 35_300,
+                    "sender-local", true, SenderConnectionState.CONNECTED, 1_000L, null, List.of("channel-a"));
             FeedSnapshot feed = new FeedSnapshot("feed-1", "North", "North simulcast", "P25_PHASE_1",
                 "Metro", "North Site", 0xbee00, 0x123, 1, 2, 851_012_500L, FeedState.CONNECTED, true,
                 "remote-channel-1", 2L, 1_100L, 24L, 0L, 0L, null);
             SenderSnapshot sender = new SenderSnapshot("sender-1", "Hilltop", SenderState.CONNECTED, true,
                 500L, 1_100L, 2L, null, List.of(feed));
-            return new RemoteLinkSnapshot(mRemovedSenderId == null ? 7L : 8L, listener, connection,
+            return new RemoteLinkSnapshot(mRemovedSenderId == null && !mSenderConnectionRemoved ? 7L : 8L, listener, connection,
                 List.of(new ExportChannelOption("channel-a", "Downtown", "Metro", "Central", "P25_PHASE_1")),
                 List.of(new AliasListOption(2L, "Metro aliases")), mRemovedSenderId == null ? List.of(sender) : List.of(), mRestartRequired);
         }
@@ -326,6 +359,14 @@ class RemoteLinksHttpControllerTest
         public RemoteLinkSnapshot updateSenderConnection(long expectedRevision, SenderConnectionUpdate request)
         {
             mSenderUpdate = request;
+            return snapshot();
+        }
+
+        @Override
+        public RemoteLinkSnapshot removeSenderConnection(long expectedRevision)
+        {
+            if(expectedRevision != 7L) throw new StaleRevisionException();
+            mSenderConnectionRemoved = true;
             return snapshot();
         }
 

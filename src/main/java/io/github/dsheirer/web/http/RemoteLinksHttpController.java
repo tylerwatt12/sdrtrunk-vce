@@ -139,7 +139,18 @@ public final class RemoteLinksHttpController
 
         if((PATH + "/sender-connection").equals(path))
         {
-            requireMethod(exchange, method, "PUT");
+            if("DELETE".equals(method))
+            {
+                JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("revision"));
+                WebHttpSupport.sendData(exchange, 200,
+                    snapshotDocument(mService.removeSenderConnection(revision(body))));
+                return;
+            }
+            if(!"PUT".equals(method))
+            {
+                WebHttpSupport.methodNotAllowed(exchange, "PUT, DELETE");
+                return;
+            }
             JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("revision", "enabled",
                 "destination_host", "destination_port", "sender_id", "secret",
                 "exported_channel_configuration_ids"));

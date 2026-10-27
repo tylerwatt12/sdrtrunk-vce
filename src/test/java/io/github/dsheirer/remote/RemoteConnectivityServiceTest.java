@@ -22,6 +22,7 @@ import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.p25.P25TrafficChannelManager;
+import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
 import io.github.dsheirer.module.log.EventLogManager;
 import io.github.dsheirer.preference.UserPreferences;
@@ -51,6 +52,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Base64;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -125,6 +127,150 @@ class RemoteConnectivityServiceTest
         assertEquals(7L, RemoteConnectivityService.preferredAliasList(noPreference,
             List.of(choices.get(2), choices.getFirst())).aliasListId());
         assertNull(RemoteConnectivityService.preferredAliasList(noPreference, List.of()));
+    }
+
+    @Test
+    void deletesSendingCredentialsAndDisconnectsExportsWhilePreservingChannelsAndTrustedSenders() throws Exception
+    {
+        String senderId = UUID.randomUUID().toString();
+        AtomicReference<RemoteLinkTransport.Connection> destinationConnection = new AtomicReference<>();
+        try(Installation sender = new Installation(mTemp.resolve("delete-outbound"));
+            RemoteLinkTransport.Server destination = RemoteLinkTransport.listen("127.0.0.1", availablePort(),
+                id -> senderId.equals(id) ? "synthetic-outbound-key" : null, new RemoteLinkTransport.Listener()
+                {
+                    @Override
+                    public void connected(String id, RemoteLinkTransport.Connection connection)
+                    {
+                        destinationConnection.set(connection);
+                    }
+
+                    @Override
+                    public void frame(String id, RemoteLinkTransport.Connection connection, Frame frame) {}
+
+                    @Override
+                    public void disconnected(String id, RemoteLinkTransport.Connection connection) {}
+                }))
+        {
+            Channel local = sender.addControl("Keep local channel", 851_012_500L);
+            CreateSenderResult trusted = sender.remote.createSender(sender.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Keep trusted sender"));
+            Channel remote = sender.addRemote("Keep remote channel", trusted.senderId(), UUID.randomUUID().toString());
+            sender.configuration.flushConfiguration();
+            sender.remote.updateSenderConnection(sender.remote.snapshot().revision(),
+                new SenderConnectionUpdate(true, "127.0.0.1", destination.port(), senderId,
+                    "synthetic-outbound-key", List.of(local.getConfigurationId())));
+            sender.remote.start();
+            await(() -> sender.remote.snapshot().senderConnection().state() ==
+                RemoteLinkAdministrationService.SenderConnectionState.CONNECTED);
+            ProcessingChain chain = new ProcessingChain(local, sender.configuration.getAliasModel());
+            chain.setSource(new RemoteP25BitstreamSource(851_012_500L, P25RemotePhase.PHASE_1, "test-local-export"));
+            sender.remote.channelStarted(local, new ChannelStartProcessingRequest(local), chain);
+            assertEquals(1, privateMap(sender.remote, "mExports").size());
+            long revision = sender.remote.snapshot().revision();
+            assertThrows(RemoteLinkAdministrationService.StaleRevisionException.class,
+                () -> sender.remote.removeSenderConnection(revision - 1));
+            assertTrue(destinationConnection.get().isOpen());
+
+            var result = sender.remote.removeSenderConnection(revision);
+            assertEquals(revision + 1, result.revision());
+            assertFalse(result.senderConnection().enabled());
+            assertFalse(result.senderConnection().credentialConfigured());
+            assertEquals("", result.senderConnection().destinationHost());
+            assertNull(result.senderConnection().senderId());
+            assertTrue(result.senderConnection().exportedChannelConfigurationIds().isEmpty());
+            assertEquals(0L, result.senderConnection().lastConnectedAtMs());
+            assertEquals(RemoteLinkAdministrationService.SenderConnectionState.DISABLED,
+                result.senderConnection().state());
+            assertEquals(RemoteLinkSettingsStore.Outbound.disabled(),
+                new RemoteLinkSettingsStore(sender.configuration.getDatabasePath()).load().outbound());
+            assertEquals(List.of(trusted.senderId()), result.senders().stream().map(peer -> peer.senderId()).toList());
+            assertEquals(Set.of(local.getConfigurationId(), remote.getConfigurationId()),
+                sender.configuration.getChannelModel().getChannels().stream().map(Channel::getConfigurationId)
+                    .collect(java.util.stream.Collectors.toSet()));
+            assertTrue(privateMap(sender.remote, "mExports").isEmpty());
+            await(() -> !destinationConnection.get().isOpen());
+            sender.remote.channelStopped(local, chain);
+            chain.dispose();
+        }
+    }
+
+    @Test
+    void failedSendingConfigurationDeletionPreservesSavedCredentialsAndRuntimeRevision() throws Exception
+    {
+        try(Installation sender = new Installation(mTemp.resolve("failed-delete-outbound")))
+        {
+            sender.remote.updateSenderConnection(sender.remote.snapshot().revision(),
+                new SenderConnectionUpdate(false, "synthetic-host", 53_800, UUID.randomUUID().toString(),
+                    "synthetic-outbound-key", List.of()));
+            var original = sender.remote.snapshot();
+            var saved = new RemoteLinkSettingsStore(sender.configuration.getDatabasePath()).load();
+            try(Connection connection = SdrTrunkDatabase.open(sender.configuration.getDatabasePath());
+                Statement statement = connection.createStatement())
+            {
+                statement.execute("""
+                    CREATE TRIGGER refuse_outbound_delete BEFORE INSERT ON application_settings
+                    WHEN NEW.key='remote.links'
+                    BEGIN SELECT RAISE(ABORT, 'synthetic-delete-refusal'); END
+                    """);
+            }
+            assertThrows(RemoteLinkAdministrationService.UnavailableException.class,
+                () -> sender.remote.removeSenderConnection(original.revision()));
+            assertEquals(original, sender.remote.snapshot());
+            assertEquals(saved, new RemoteLinkSettingsStore(sender.configuration.getDatabasePath()).load());
+        }
+    }
+
+    @Test
+    void deletedSendingConfigurationCannotFinishAnInFlightAuthenticationOrPublishItsFailure() throws Exception
+    {
+        for(boolean accept: List.of(true, false))
+        {
+            try(Installation sender = new Installation(mTemp.resolve("delete-pending-outbound-" + accept));
+                ServerSocket destination = new ServerSocket(0, 1, InetAddress.getLoopbackAddress()))
+            {
+                String senderId = UUID.randomUUID().toString();
+                String secret = "synthetic-pending-key";
+                sender.remote.updateSenderConnection(sender.remote.snapshot().revision(),
+                    new SenderConnectionUpdate(true, "127.0.0.1", destination.getLocalPort(), senderId, secret,
+                        List.of()));
+                sender.remote.start();
+                destination.setSoTimeout(3_000);
+                try(Socket socket = destination.accept())
+                {
+                    socket.setSoTimeout(3_000);
+                    DataInputStream input = new DataInputStream(socket.getInputStream());
+                    DataOutputStream output = new DataOutputStream(socket.getOutputStream());
+                    assertEquals(Type.HELLO, RemoteWireProtocol.read(input).type());
+                    byte[] challenge = new byte[32];
+                    RemoteWireProtocol.write(output, new Frame(Type.CHALLENGE, challenge));
+                    output.flush();
+                    assertEquals(Type.AUTH, RemoteWireProtocol.read(input).type());
+                    sender.remote.removeSenderConnection(sender.remote.snapshot().revision());
+                    if(accept)
+                    {
+                        String sessionId = UUID.randomUUID().toString();
+                        Mac mac = Mac.getInstance("HmacSHA256");
+                        mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
+                        mac.update("host-accept-v1".getBytes(StandardCharsets.US_ASCII));
+                        mac.update(senderId.getBytes(StandardCharsets.US_ASCII));
+                        mac.update(challenge);
+                        mac.update(sessionId.getBytes(StandardCharsets.US_ASCII));
+                        RemoteWireProtocol.write(output, new Frame(Type.ACCEPT, RemoteWireMessages.json(
+                            new RemoteWireMessages.Accepted(sessionId,
+                                Base64.getUrlEncoder().withoutPadding().encodeToString(mac.doFinal())))));
+                        output.flush();
+                    }
+                    else socket.shutdownOutput();
+                    assertEquals(-1, input.read(), "Deleted credentials must not install the authenticated session");
+                    Thread connector = (Thread)privateField(sender.remote, "mConnector");
+                    await(() -> connector.getState() == Thread.State.TIMED_WAITING);
+                    assertNull(privateField(sender.remote, "mOutbound"));
+                    assertEquals(RemoteLinkAdministrationService.SenderConnectionState.DISABLED,
+                        sender.remote.snapshot().senderConnection().state());
+                    assertNull(sender.remote.snapshot().senderConnection().statusMessage());
+                }
+            }
+        }
     }
 
     @Test

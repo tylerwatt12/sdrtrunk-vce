@@ -27,6 +27,8 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
 
     RemoteLinkSnapshot updateSenderConnection(long expectedRevision, SenderConnectionUpdate request);
 
+    RemoteLinkSnapshot removeSenderConnection(long expectedRevision);
+
     CreateSenderResult createSender(long expectedRevision, CreateSenderRequest request);
 
     RemoteLinkSnapshot updateSender(long expectedRevision, String senderId, UpdateSenderRequest request);
