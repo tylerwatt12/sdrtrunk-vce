@@ -9,14 +9,17 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="scanner"]');
-const steps = ['lists-button', 'lists-menu', 'lists', 'lists-back', 'lists-menu-close', 'call', 'queue', 'playback', 'hold', 'avoid',
+const steps = ['lists-button', 'menu-overview', 'lists-menu', 'lists', 'lists-back', 'direct-button', 'direct', 'direct-back',
+  'lists-menu-close', 'call', 'queue', 'playback', 'hold', 'avoid',
   'detail-level', 'details', 'settings-button', 'settings-menu', 'playback-order', 'settings-close',
   'avoids-button', 'avoids', 'avoids-close', 'player-close'];
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:5';
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:6';
 const evidence = process.env.SCANNER_GUIDE_EVIDENCE ||
   path.resolve(__dirname, '../../../../../build/playwright-results/scanner-guide-evidence');
-const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
-  .filter(([key]) => !key.startsWith('sdrtrunk-vce-guide:'))));
+const nonGuideStorage = page => page.evaluate(() => ({
+  local: Object.fromEntries(Object.entries(localStorage).filter(([key]) => !key.startsWith('sdrtrunk-vce-guide:'))),
+  session: Object.fromEntries(Object.entries(sessionStorage))
+}));
 
 function observeEffects(page) {
   const effects = { writes: [], samples: [], audio: [], feed: [], sockets: [] };
@@ -42,7 +45,7 @@ async function openScanner(page, { theme = 'light', replay = true, firstVisit = 
   const fixture = await installSiteStyleApplication(page, theme, { revision: 1, tables: [] }, { guides: firstVisit });
   await page.addInitScript(({ firstVisit, key }) => {
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1', '1');
-    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:4', '1');
+    localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:scanner:5', '1');
     if (!firstVisit) localStorage.setItem(key, '1');
     window.scannerGuideAudioEvents = [];
     for (const name of ['AudioContext', 'webkitAudioContext']) {
@@ -53,7 +56,9 @@ async function openScanner(page, { theme = 'light', replay = true, firstVisit = 
       } });
     }
   }, { firstVisit, key: memoryKey });
-  if (denied.length) {
+  {
+    // Direct Listen inherits its access tier and has no explicit AccessTier enum
+    // argument, so supply the complete permission map for this listening fixture.
     const file = path.resolve(__dirname, '../../../../../src/main/java/io/github/dsheirer/web/auth/WebCapability.java');
     const capabilities = Object.fromEntries([...fs.readFileSync(file, 'utf8').matchAll(/^\s+[A-Z_]+\("([^"]+)",/gm)]
       .map(([, id]) => [id, !denied.includes(id)]));
@@ -95,11 +100,12 @@ async function advance(page, id, available = steps) {
 }
 
 async function goTo(page, destination) {
-  const current = await guide(page).getAttribute('data-guide-step');
-  for (const id of steps.slice(Math.max(0, steps.indexOf(current)))) {
-    await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+  for (let remaining = steps.length; remaining > 0; remaining -= 1) {
+    const id = await guide(page).getAttribute('data-guide-step');
     if (id === destination) return;
+    if (!steps.includes(id)) throw new Error(`Unknown Scanner guide step: ${id}`);
     await advance(page, id);
+    await expect(guide(page)).not.toHaveAttribute('data-guide-step', id);
   }
   throw new Error(`Unknown Scanner guide step: ${destination}`);
 }
@@ -138,7 +144,8 @@ async function expectLessonState(page, id) {
   const settings = dock.locator('.audio-dock-settings');
   const avoids = dock.locator('#audio-dock-panel');
   const lists = dock.locator('[data-guide-target="scan-lists-player-lists"], [data-guide-target="sc-lists"]');
-  const panelTitles = { 'lists-menu': 'Player menu', lists: 'Lists', 'lists-back': 'Lists',
+  const panelTitles = { 'menu-overview': 'Player menu', 'lists-menu': 'Player menu', lists: 'Lists', 'lists-back': 'Lists',
+    'direct-button': 'Player menu', direct: 'Direct Listen', 'direct-back': 'Direct Listen',
     'lists-menu-close': 'Player menu', 'settings-menu': 'Player menu', 'playback-order': 'Listening settings',
     'settings-close': 'Listening settings', 'avoids-button': 'Player menu', avoids: 'Avoid List',
     'avoids-close': 'Avoid List', 'player-close': 'Player menu' };
@@ -153,14 +160,25 @@ async function expectLessonState(page, id) {
   const listOpen = ['lists', 'lists-back'].includes(id);
   if (listOpen) {
     if (id === 'lists') {
-      await expect(guide(page)).toContainText('Select one or more Scan Lists to listen to their calls together.');
       await expect(guide(page)).not.toContainText('County Sheriff');
     }
     await expect(lists).toBeVisible();
     await expect(lists.getByRole('checkbox', { name: /^Law Enforcement(?:\s|$)/ })).toBeChecked();
     await expect(lists.getByRole('checkbox', { name: /^Fire\/EMS(?:\s|$)/ })).toBeChecked();
+    await expect(lists.getByRole('checkbox', { name: 'Direct Listen', exact: true })).toBeChecked();
     await expect(page.locator('[data-guide-example="scanner"]')).toBeVisible();
   } else await expect(lists).toBeHidden();
+  if (id === 'menu-overview') {
+    const menu = dock.locator('#audio-dock-panel');
+    for (const name of ['Lists', 'Direct Listen', 'Avoid List', 'Listening settings'])
+      await expect(menu.getByRole('button', { name, exact: true })).toBeVisible();
+  }
+  if (['direct', 'direct-back'].includes(id)) {
+    const direct = dock.locator('#audio-dock-panel');
+    for (const name of ['Regional Fire', 'Police Department', 'City Site']) await expect(direct).toContainText(name);
+    await expect(direct.getByRole('button', { name: /^Remove .* from Direct Listen$/ })).toHaveCount(3);
+    await expect(dock.locator('#audio-dock-context-back')).toHaveAccessibleName('Back to menu');
+  }
   await expect(settings).toHaveCount(['playback-order', 'settings-close'].includes(id) ? 1 : 0);
   if (['playback-order', 'settings-close'].includes(id)) {
     await expect(settings).toBeVisible();
@@ -207,12 +225,16 @@ async function expectLessonState(page, id) {
     for (const selector of ['#scanner-play', '#scanner-stop', '#scanner-replay']) await expect(page.locator(selector)).toBeEnabled();
   }
   if (id === 'hold') {
+    await expect(page.locator('#scanner-hold')).toHaveAttribute('type', 'button');
     await expect(page.locator('#scanner-hold')).toHaveText('Hd');
     await expect(page.locator('#scanner-hold')).toHaveAttribute('aria-pressed', 'false');
-    await expect(guide(page)).toContainText('Select Hold to hear only the current talkgroup or channel. Select Hold again to resume your Scan Lists.');
     await expect(guide(page)).not.toContainText('H stands for');
   }
-  if (id === 'avoid') await expect(page.locator('#scanner-avoid')).toBeEnabled();
+  if (id === 'avoid') {
+    await expect(page.locator('#scanner-avoid')).toHaveAttribute('type', 'button');
+    await expect(page.locator('#scanner-avoid')).toHaveText('Av');
+    await expect(page.locator('#scanner-avoid')).toBeEnabled();
+  }
   if (id === 'detail-level') await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('normal');
   if (steps.indexOf(id) >= steps.indexOf('details'))
     await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('advanced');
@@ -241,7 +263,7 @@ async function expectLessonState(page, id) {
     await expect(avoids).toContainText('No avoided targets');
     await expect(avoids.getByRole('button', { name: /^Remove .* from Avoid List$/ })).toHaveCount(0);
   }
-  if (['lists-back', 'settings-close', 'avoids-close'].includes(id)) {
+  if (['lists-back', 'direct-back', 'settings-close', 'avoids-close'].includes(id)) {
     await expect(dock.locator('#audio-dock-context-back')).toHaveAccessibleName('Back to menu');
   }
   if (['lists-menu-close', 'player-close'].includes(id)) {
@@ -264,6 +286,68 @@ async function screenshot(page, name) {
   fs.mkdirSync(path.join(evidence, 'screens'), { recursive: true });
   await page.screenshot({ path: path.join(evidence, 'screens', `${name}.png`) });
 }
+
+async function expectClearOwner(owner) {
+  await expect.poll(() => owner.evaluate(element => {
+    const dimmer = document.querySelector('.ui-setup-guide-dimmer');
+    const maskId = dimmer?.getAttribute('mask')?.match(/#([^)]*)/)?.[1];
+    if (!maskId) return false;
+    const bounds = element.getBoundingClientRect();
+    return [...document.getElementById(maskId).querySelectorAll('.ui-setup-guide-mask-hole')].some(hole => {
+      const x = Number(hole.getAttribute('x')), y = Number(hole.getAttribute('y'));
+      return x <= bounds.left + 1 && y <= bounds.top + 1 &&
+        x + Number(hole.getAttribute('width')) >= bounds.right - 1 &&
+        y + Number(hole.getAttribute('height')) >= bounds.bottom - 1;
+    });
+  }), { message: 'The whole owning player or transport stays undimmed around its outlined control' }).toBe(true);
+}
+
+for (const { theme, width, height } of [
+  { theme: 'light', width: 1280, height: 720 }, { theme: 'dark', width: 1440, height: 1000 }
+]) {
+  test(`Scanner tour follows the actual menu and temporary Direct Listen playlist in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    const { fixture, effects } = await openScanner(page, { theme });
+    const storage = await nonGuideStorage(page);
+    await start(page);
+    for (const id of steps) {
+      await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+      await expectSpotlight(page, id);
+      await expectLessonState(page, id);
+      if (['menu-overview', 'lists-menu', 'lists', 'lists-back', 'direct-button', 'direct', 'direct-back'].includes(id))
+        await expectClearOwner(page.locator('#audio-dock'));
+      if (['lists-button', 'hold', 'avoid'].includes(id))
+        await expectClearOwner(page.locator('.scanner-playback-transport'));
+      if (['menu-overview', 'direct-button', 'direct', 'hold', 'avoid'].includes(id))
+        await screenshot(page, `scanner-player-${id}-${theme}`);
+      await advance(page, id);
+    }
+    await expect(page.locator('.ui-setup-guide, [data-guide-sample], [data-guide-example]')).toHaveCount(0);
+    expect(await nonGuideStorage(page)).toEqual(storage);
+    await expectIsolated(page, fixture, effects);
+  });
+}
+
+test('Scanner tour and actual sample menu omit Direct Listen when access is absent', async ({ page }) => {
+  const { fixture, effects } = await openScanner(page, { denied: ['direct-listen'] });
+  const storage = await nonGuideStorage(page);
+  const available = steps.filter(id => !['direct-button', 'direct', 'direct-back'].includes(id));
+  await start(page);
+  for (const id of available) {
+    await expect(guide(page)).toHaveAttribute('data-guide-step', id);
+    if (id === 'menu-overview') {
+      const menu = page.locator('#audio-dock-panel');
+      await expect(menu.getByRole('button', { name: 'Direct Listen', exact: true })).toHaveCount(0);
+      for (const name of ['Lists', 'Avoid List', 'Listening settings'])
+        await expect(menu.getByRole('button', { name, exact: true })).toBeVisible();
+    }
+    if (id === 'lists') await expect(page.locator('#audio-dock-panel').getByRole('checkbox', { name: 'Direct Listen', exact: true })).toHaveCount(0);
+    await advance(page, id, available);
+  }
+  await expect(guide(page)).toHaveCount(0);
+  expect(await nonGuideStorage(page)).toEqual(storage);
+  await expectIsolated(page, fixture, effects);
+});
 
 for (const { theme, width, height } of [{ theme: 'light', width: 390, height: 844 }]) {
   test(`normal Scanner listening settings fits and returns through Player menu on a ${width}px phone`, async ({ page }) => {
@@ -321,7 +405,7 @@ test('Scanner restores a paused original call, Engineer view, volume and shared 
   const effects = observeEffects(page), errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.setViewportSize({ width: 1280, height: 720 });
-  await page.addInitScript(() => localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-listener:audio-fixture-account:scanner:5', '1'));
+  await page.addInitScript(() => localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-listener:audio-fixture-account:scanner:6', '1'));
   const fixture = await openAudioApp(page, { view: 'scanner', volume: .35 });
   await page.locator('#scanner-play').click();
   await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');

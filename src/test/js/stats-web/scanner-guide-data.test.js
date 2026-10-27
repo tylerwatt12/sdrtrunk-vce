@@ -50,6 +50,27 @@ async function checkScannerGuideData(assetsRoot) {
       'The actual queue visibly groups a later follow-up ahead of another waiting target.');
     assert.deepEqual(initial.scanLists.map(list => list.name), ['Law Enforcement', 'Fire/EMS']);
     assert.ok(initial.scanLists.every(list => list.selected && list.enabled));
+    assert.equal(initial.directListen.allowed, false);
+    assert.equal(initial.directListen.selected, false);
+    assert.deepEqual(initial.directListen.targets, []);
+    const direct = create({ section: 'direct', directListenAllowed: true });
+    const directState = direct.player.viewState().directListen;
+    assert.equal(directState.allowed, true);
+    assert.equal(directState.selected, true);
+    assert.deepEqual(directState.targets.map(item => item.label), ['Regional Fire', 'Police Department', 'City Site']);
+    for (const item of directState.targets) validReference(item.target);
+    assert.deepEqual(directState.targets.map(item => item.target.kind), ['talkgroup', 'talkgroup', 'channel']);
+    directState.targets[0].label = 'Mutated response';
+    directState.targets.length = 0;
+    assert.deepEqual(direct.player.viewState().directListen.targets.map(item => item.label),
+      ['Regional Fire', 'Police Department', 'City Site'], 'A caller cannot mutate the temporary example playlist.');
+    const nextDirect = create({ directListenAllowed: true });
+    assert.deepEqual(nextDirect.player.viewState().directListen.targets.map(item => item.label),
+      ['Regional Fire', 'Police Department', 'City Site'], 'Each guide owns a fresh isolated playlist.');
+    direct.dispose();
+    assert.throws(() => direct.player.viewState(), { name: 'AbortError' });
+    assert.equal(nextDirect.player.viewState().directListen.targets.length, 3,
+      'Releasing one example never clears another example’s playlist.');
     assert.equal(initial.targetGrouping, true);
     assert.equal(initial.targetBurstLimit, 4);
     for (const call of [initial.current, ...initial.queue]) {

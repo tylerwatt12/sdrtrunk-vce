@@ -90,7 +90,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('tuner-spectrum').version, 5);
   assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('dashboard').version, 3);
-  assert.equal(createGuideDefinition('scanner').version, 5);
+  assert.equal(createGuideDefinition('scanner').version, 6);
   assert.equal(createGuideDefinition('recordings').version, 4);
   assert.equal(createGuideDefinition('topics').version, 3);
   assert.equal(createGuideDefinition('map').version, 3);
@@ -1050,7 +1050,8 @@ async function checkGuides(assetsRoot) {
       return () => released.push(section);
     }
   });
-  const scannerSections = ['overview', 'lists-button', 'lists-menu', 'lists', 'lists-back', 'lists-menu-close', 'call', 'queue',
+  const scannerSections = ['overview', 'lists-button', 'menu-overview', 'lists-menu', 'lists', 'lists-back',
+    'direct-button', 'direct', 'direct-back', 'lists-menu-close', 'call', 'queue',
     'playback', 'hold', 'avoid', 'detail-level', 'details', 'settings-button', 'settings-menu', 'playback-order',
     'settings-close', 'avoids-button', 'avoids', 'avoids-close', 'player-close'];
   assert.deepEqual(scannerTour.steps.map(step => step.id), scannerSections);
@@ -1061,7 +1062,7 @@ async function checkGuides(assetsRoot) {
   assert.deepEqual(scannerStop('queue').paragraphs,
     ['When several calls arrive together, VCE reorders them in queue so you hear them in turn.']);
   assert.equal(scannerStop('hold').title, 'Hold');
-  assert.match(scannerStop('hold').paragraphs[0], /^Select Hold to hear only/);
+  assert.match(scannerStop('hold').paragraphs[0], /current talkgroup or channel/);
   assert.doesNotMatch(scannerStop('hold').paragraphs[0], /\bH\b/);
   assert.equal(scannerStop('lists').title, 'Choose what you hear');
   assert.doesNotMatch(scannerStop('lists').paragraphs.join(' '), /Law Enforcement|County Sheriff|Fire\/EMS/,
@@ -1081,7 +1082,8 @@ async function checkGuides(assetsRoot) {
     release();
     assert.deepEqual(released.splice(0), [step.id, 'scanner-player']);
   }
-  for (const [opener, destination] of [['lists-button', 'lists-menu'], ['lists-menu', 'lists'], ['detail-level', 'details'],
+  for (const [opener, destination] of [['lists-button', 'menu-overview'], ['menu-overview', 'lists-menu'],
+    ['lists-menu', 'lists'], ['direct-button', 'direct'], ['direct', 'direct-back'], ['detail-level', 'details'],
     ['settings-button', 'settings-menu'], ['settings-menu', 'playback-order'], ['avoids-button', 'avoids']]) {
     assert.equal(scannerSections.indexOf(opener) + 1, scannerSections.indexOf(destination),
       'Scanner teaches each actual opening control before the destination it opens.');
@@ -1100,6 +1102,14 @@ async function checkGuides(assetsRoot) {
   const restrictedScanner = createGuideDefinition('scanner', { canAccess: capability => capability !== 'radio' });
   assert.deepEqual(restrictedScanner.steps.map(step => step.id), scannerSections.filter(id => id !== 'details'),
     'The tour preserves listening access without offering restricted radio-detail navigation.');
+  for (const denied of ['direct-listen', 'call-audio']) {
+    const withoutDirect = createGuideDefinition('scanner', { canAccess: capability => capability !== denied });
+    assert.deepEqual(withoutDirect.steps.map(step => step.id),
+      scannerSections.filter(id => !['direct-button', 'direct', 'direct-back'].includes(id)),
+      'Direct Listen lessons require both Direct Listen and call-audio access.');
+    assert.ok(withoutDirect.steps.find(step => step.id === 'menu-overview').items
+      .every(item => item.label !== 'Direct Listen'));
+  }
   const failedScanner = createGuideDefinition('scanner', {
     preparePlayer: () => () => released.push('scanner-player'),
     preparePage: () => { throw new Error('Scanner sample preparation failed'); }
@@ -1581,17 +1591,17 @@ async function checkGuides(assetsRoot) {
   deniedMain.controller.destroy();
 
   const firstScannerVisit = makeHarness({ context: { view: 'scanner' }, storage: {
-    getItem: key => /:welcome:1$|:scanner:[1234]$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scanner:[12345]$/.test(key) ? '1' : null,
     setItem() {}
   } });
   await firstScannerVisit.controller.pageReady();
   assert.equal(firstScannerVisit.shown.at(-1).options.id, 'scanner');
-  assert.equal(firstScannerVisit.shown.at(-1).options.version, 5,
+  assert.equal(firstScannerVisit.shown.at(-1).options.version, 6,
     'Earlier Scanner tour versions do not suppress the revised walkthrough.');
   firstScannerVisit.finish();
   firstScannerVisit.controller.destroy();
   const completedScanner = makeHarness({ context: { view: 'scanner' }, storage: {
-    getItem: key => /:welcome:1$|:scanner:5$/.test(key) ? '1' : null,
+    getItem: key => /:welcome:1$|:scanner:6$/.test(key) ? '1' : null,
     setItem() {}
   } });
   assert.equal(await completedScanner.controller.pageReady(), false);

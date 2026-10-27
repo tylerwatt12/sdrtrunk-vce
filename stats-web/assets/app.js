@@ -19,7 +19,7 @@ import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=40';
+import { createGuideController } from './guides/controller.js?v=41';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -8352,7 +8352,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : topics ? [
       import('./features/alerts.js?v=24'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
-      Promise.resolve(null), import('./guides/scanner-presentation.js?v=3')
+      Promise.resolve(null), import('./guides/scanner-presentation.js?v=4')
     ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
     ] : live ? [
@@ -8369,7 +8369,8 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     if (closed || !context.isCurrent()) { restore(); return restore; }
     const sample = (mapTour ? presentation.createMapGuideData : visualizerTour ? presentation.createNetworkVisualizerGuideData : topics ? presentation.createTopicsGuideData : scanner ? presentation.createScannerGuideData : main ? presentation.createMainGuideData : live ? presentation.createLiveGuideData : spectrum ? presentation.createSpectrumGuideData : tuners ? presentation.createTunersGuideData : streaming ?
       presentation.createStreamingGuideData : presentation.createRadioReferenceGuideData)({ signal: context.signal, section,
-      ...(topics ? { deviceConnected: originalTopics?.getGuideState().deviceConnected === true } : {}) });
+      ...(topics ? { deviceConnected: originalTopics?.getGuideState().deviceConnected === true } : {}),
+      ...(scanner ? { directListenAllowed: directListenAllowed() } : {}) });
     if (spectrum || live || main || scanner || mapTour || visualizerTour) releases.push(() => sample.dispose());
     if (streaming && typeof sample.requestOperationalPreference !== 'function') {
       throw new Error('The Streaming guide settings could not be prepared.');
@@ -13053,66 +13054,88 @@ function renderScanner(options = {}) {
       await new Promise(resolve => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
       if (disposed || context.signal.aborted || !context.isCurrent()) return;
       const releases = [];
-      const panels = {
-        'lists-menu': 'menu', lists: 'listening', 'lists-back': 'listening', 'lists-menu-close': 'menu',
-        'settings-menu': 'menu', 'playback-order': 'settings', 'settings-close': 'settings',
-        'avoids-button': 'menu', avoids: 'avoids', 'avoids-close': 'avoids', 'player-close': 'menu'
+      let restored = false;
+      const restore = () => {
+        if (restored) return;
+        restored = true;
+        context.signal.removeEventListener('abort', restore);
+        releases.splice(0).reverse().forEach(release => release());
       };
-      if (['avoids-close', 'player-close'].includes(section)) {
-        const avoided = player.viewState().avoids[0]; if (avoided) player.removeAvoid(avoided.key);
-      }
-      if (Object.hasOwn(panels, section)) {
-        releases.push(audioDock.prepareGuide({ sampleLiveState: player.viewState(), guidePanel: panels[section] }));
+      context.signal.addEventListener('abort', restore, { once: true });
+      try {
+        const panels = {
+          'menu-overview': 'menu', 'lists-menu': 'menu', lists: 'listening', 'lists-back': 'listening',
+          'direct-button': 'menu', direct: 'direct', 'direct-back': 'direct', 'lists-menu-close': 'menu',
+          'settings-menu': 'menu', 'playback-order': 'settings', 'settings-close': 'settings',
+          'avoids-button': 'menu', avoids: 'avoids', 'avoids-close': 'avoids', 'player-close': 'menu'
+        };
+        if (['avoids-close', 'player-close'].includes(section)) {
+          const avoided = player.viewState().avoids[0]; if (avoided) player.removeAvoid(avoided.key);
+        }
+        if (Object.hasOwn(panels, section)) {
+          releases.push(audioDock.prepareGuide({ sampleLiveState: player.viewState(), guidePanel: panels[section] }));
+          const dock = document.getElementById('audio-dock');
+          if (dock) releases.push(guideSampleData.register('scanner-workspace', () => {}, { root: dock }));
+        }
+        const marked = new Map();
+        releases.push(() => marked.forEach((previous, element) => {
+          if (previous === null) delete element.dataset.guideTarget;
+          else element.dataset.guideTarget = previous;
+        }));
+        const mark = (element, id = section) => {
+          if (!element) return;
+          if (!marked.has(element)) marked.set(element, element.getAttribute('data-guide-target'));
+          element.dataset.guideTarget = `sc-${id}`;
+        };
         const dock = document.getElementById('audio-dock');
-        if (dock) releases.push(guideSampleData.register('scanner-workspace', () => {}, { root: dock }));
-      }
-      const mark = (element, id = section) => { if (element) element.dataset.guideTarget = `sc-${id}`; };
-      const dock = document.getElementById('audio-dock');
-      const targets = {
-        'lists-button': transport.querySelector('#scanner-player-menu'),
-        'settings-button': transport.querySelector('#scanner-player-menu'),
-        'lists-menu': dock?.querySelector('[data-player-menu-panel="listening"]'),
-        lists: dock?.querySelector('[data-guide-target="scan-lists-player-lists"]'),
-        'lists-back': dock?.querySelector('#audio-dock-context-back'),
-        'lists-menu-close': dock?.querySelector('#audio-dock-context-back'),
-        'settings-menu': dock?.querySelector('[data-player-menu-panel="settings"]'),
-        queue: upNext, hold: transport.querySelector('#scanner-hold'), avoid: transport.querySelector('#scanner-avoid'),
-        'detail-level': modeSelect, 'playback-order': dock?.querySelector('.audio-dock-settings'),
-        'settings-close': dock?.querySelector('#audio-dock-context-back'),
-        'avoids-button': dock?.querySelector('[data-player-menu-panel="avoids"]'),
-        avoids: dock?.querySelector('#audio-dock-panel .ui-record-section'),
-        'avoids-close': dock?.querySelector('#audio-dock-context-back'),
-        'player-close': dock?.querySelector('#audio-dock-context-back')
-      };
-      if (section === 'call') {
-        [display.querySelector('.scanner-call-intro .ui-heading-group'), display.querySelector('.scanner-source-fields')]
-          .forEach(element => mark(element));
-      } else if (section === 'playback') {
-        ['#scanner-play', '#scanner-stop', '#scanner-replay'].forEach(selector => mark(transport.querySelector(selector)));
-      } else if (section === 'details') {
-        display.querySelectorAll('.scanner-participant').forEach(element => mark(element));
-      } else mark(targets[section]);
-      const highlighted = [...document.querySelectorAll(`[data-guide-target="sc-${section}"]`)];
-      if (!highlighted.length) throw new Error('The Scanner tour could not be loaded. Try opening it again.');
-      if (!Object.hasOwn(panels, section)) {
-        highlighted[0].scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
-        const bounds = highlighted.map(element => element.getBoundingClientRect());
-        const top = Math.min(...bounds.map(value => value.top));
-        const bottom = Math.max(...bounds.map(value => value.bottom));
-        const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
-        const targetTop = headerBottom + 16;
-        const availableBottom = window.innerHeight - 24;
-        window.scrollBy({ top: bottom - top > availableBottom - targetTop ? bottom - availableBottom : top - targetTop,
-          behavior: 'instant' });
-        const positioned = highlighted.map(element => element.getBoundingClientRect());
-        if (Math.min(...positioned.map(value => value.top)) > targetTop + 2)
-          window.scrollBy({ top: Math.max(...positioned.map(value => value.bottom)) - availableBottom, behavior: 'instant' });
-      }
-      await new Promise(resolve => window.requestAnimationFrame(resolve));
-      return () => {
-        releases.reverse().forEach(release => release());
-
-      };
+        const targets = {
+          'lists-button': transport.querySelector('#scanner-player-menu'),
+          'settings-button': transport.querySelector('#scanner-player-menu'),
+          'menu-overview': dock?.querySelector('#audio-dock-panel .audio-dock-selection-list'),
+          'lists-menu': dock?.querySelector('[data-player-menu-panel="listening"]'),
+          lists: dock?.querySelector('[data-guide-target="scan-lists-player-lists"]'),
+          'lists-back': dock?.querySelector('#audio-dock-context-back'),
+          'direct-button': dock?.querySelector('[data-player-menu-panel="direct"]'),
+          direct: dock?.querySelector('#audio-dock-panel .audio-dock-selection-list'),
+          'direct-back': dock?.querySelector('#audio-dock-context-back'),
+          'lists-menu-close': dock?.querySelector('#audio-dock-context-back'),
+          'settings-menu': dock?.querySelector('[data-player-menu-panel="settings"]'),
+          queue: upNext, hold: transport.querySelector('#scanner-hold'), avoid: transport.querySelector('#scanner-avoid'),
+          'detail-level': modeSelect, 'playback-order': dock?.querySelector('.audio-dock-settings'),
+          'settings-close': dock?.querySelector('#audio-dock-context-back'),
+          'avoids-button': dock?.querySelector('[data-player-menu-panel="avoids"]'),
+          avoids: dock?.querySelector('#audio-dock-panel .ui-record-section'),
+          'avoids-close': dock?.querySelector('#audio-dock-context-back'),
+          'player-close': dock?.querySelector('#audio-dock-context-back')
+        };
+        if (section === 'call') {
+          [display.querySelector('.scanner-call-intro .ui-heading-group'), display.querySelector('.scanner-source-fields')]
+            .forEach(element => mark(element));
+        } else if (section === 'playback') {
+          ['#scanner-play', '#scanner-stop', '#scanner-replay'].forEach(selector => mark(transport.querySelector(selector)));
+        } else if (section === 'details') {
+          display.querySelectorAll('.scanner-participant').forEach(element => mark(element));
+        } else mark(targets[section]);
+        const highlighted = [...document.querySelectorAll(`[data-guide-target="sc-${section}"]`)];
+        if (!highlighted.length) throw new Error('The Scanner tour could not be loaded. Try opening it again.');
+        if (!Object.hasOwn(panels, section)) {
+          highlighted[0].scrollIntoView({ block: 'start', inline: 'nearest', behavior: 'instant' });
+          const bounds = highlighted.map(element => element.getBoundingClientRect());
+          const top = Math.min(...bounds.map(value => value.top));
+          const bottom = Math.max(...bounds.map(value => value.bottom));
+          const headerBottom = document.querySelector('.app-header')?.getBoundingClientRect().bottom || 0;
+          const targetTop = headerBottom + 16;
+          const availableBottom = window.innerHeight - 24;
+          window.scrollBy({ top: bottom - top > availableBottom - targetTop ? bottom - availableBottom : top - targetTop,
+            behavior: 'instant' });
+          const positioned = highlighted.map(element => element.getBoundingClientRect());
+          if (Math.min(...positioned.map(value => value.top)) > targetTop + 2)
+            window.scrollBy({ top: Math.max(...positioned.map(value => value.bottom)) - availableBottom, behavior: 'instant' });
+        }
+        await new Promise(resolve => window.requestAnimationFrame(resolve));
+        if (disposed || context.signal.aborted || !context.isCurrent()) restore();
+        return restore;
+      } catch (error) { restore(); throw error; }
     },
     dispose() {
       if (disposed) return;

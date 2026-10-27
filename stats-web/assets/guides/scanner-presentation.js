@@ -3,6 +3,7 @@
 // Only its receiver feed and audio transport are replaced with inert memory data.
 import { WebCallPlayer } from '../web-call-player.js?v=20';
 import { defaults, validate } from '../core/preference-schema.js?v=8';
+import { createDirectListenSession } from '../core/direct-listen.js?v=1';
 
 const COUNTY = 'p25:bee00:123';
 const CITY = 'p25:bee00:456';
@@ -16,7 +17,7 @@ const channelRef = key => ({ kind: 'channel', key });
 const identityRef = (system, kind, id) => ({ kind, radio_system_key: system,
   identity_key: `v1-${kind === 'radio' ? 'r' : 'g'}-bee00-${system === CITY ? '456' : '123'}-${id}` });
 
-export function createScannerGuideData({ signal, section } = {}) {
+export function createScannerGuideData({ signal, section, directListenAllowed = false } = {}) {
   let disposed = false, preferenceRevision = 1, preferenceUpdates = 0, deliveries = 0;
   const createdAt = Date.now();
   const listeners = new Set();
@@ -28,6 +29,13 @@ export function createScannerGuideData({ signal, section } = {}) {
     { id: String(LAW), name: 'Law Enforcement', description: 'County sheriff and city police', enabled: true, default: true },
     { id: String(FIRE), name: 'Fire/EMS', description: 'Regional and city fire and EMS', enabled: true, default: false }
   ];
+  const directListenSession = createDirectListenSession({ storage: null });
+  directListenSession.setIdentity('guide-scanner');
+  if (directListenAllowed === true) {
+    directListenSession.add(identityRef(COUNTY, 'talkgroup', 1002), 'Regional Fire', 'County P25');
+    directListenSession.add(identityRef(CITY, 'talkgroup', 2001), 'Police Department', 'City P25');
+    directListenSession.add(channelRef(CITY_CHANNEL), 'City Site', 'City P25');
+  }
   let preferences = clone(defaults);
   preferences.playback.selected_scan_list_ids = [LAW, FIRE];
   preferences.playback.volume = 0.75;
@@ -94,6 +102,7 @@ export function createScannerGuideData({ signal, section } = {}) {
     maximumSelectedScanLists: WebCallPlayer.MAXIMUM_SELECTED_SCAN_LISTS,
     targetGrouping: true, targetBurstLimit: 4, arrivalSequence: 0,
     lastPlaybackTargetKey: null, consecutiveTargetCalls: 1,
+    directListenSession, directListenAllowed: directListenAllowed === true,
     seenCallIds: new Set(), seenCallOrder: [], scanLists: clone(scanLists),
     scanListById: new Map(scanLists.map(item => [item.id, clone(item)])),
     selectedScanListIds: new Set(scanLists.map(item => item.id)), scanListCatalogReady: true,
@@ -111,7 +120,7 @@ export function createScannerGuideData({ signal, section } = {}) {
       this.idleDisplayDeadline = Date.now() + WebCallPlayer.IDLE_CALL_DISPLAY_MS;
     },
     ensureConnected() {
-      if (!available() || this.stopped || !this.activeSelectedScanListIds().length) return false;
+      if (!available() || this.stopped || !this.hasListeningSelection()) return false;
       this.feedActive = true;
       return true;
     },
@@ -253,6 +262,7 @@ export function createScannerGuideData({ signal, section } = {}) {
     engine.avoids.clear();
     engine.holdTarget = null;
     engine.heldDisplayCall = null;
+    directListenSession.clear();
     engine.stateObservers.clear();
     listeners.clear();
   };
