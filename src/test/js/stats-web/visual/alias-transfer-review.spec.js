@@ -26,6 +26,82 @@ function transferOptions(request) {
   return JSON.parse(options[1]);
 }
 
+for (const { theme, width, hasError } of [
+  { theme: 'light', width: 1280, hasError: false },
+  { theme: 'dark', width: 390, hasError: true }
+]) {
+  test(`Alias import warnings can be reviewed without bypassing errors ${theme} ${width}`,
+    async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 780 });
+      const fixture = await installSiteStyleApplication(page, theme);
+      const warningPreview = {
+        ...preview,
+        counts: { ...preview.counts, warning: 2, error: hasError ? 1 : 0 },
+        total: preview.total + (hasError ? 1 : 0),
+        rows: [
+          { ...preview.rows[0], warnings: [
+            'Scan list “Away Dispatch” is missing. Its assignment will be left unset.',
+            'Streaming destination “Away Calls” is missing. Its assignment will be left unset.'
+          ] },
+          { ...preview.rows[1], warnings: ['Icon “Away Fire” is unavailable. The default icon will be used.'] },
+          { ...preview.rows[2], warnings: [] },
+          ...(hasError ? [{ row: 5, result: 'error', name: 'Invalid talkgroup', changes: [], warnings: [],
+            error: 'Matcher is invalid or incompatible with this list' }] : [])
+        ]
+      };
+      const requests = [];
+      await page.route('**/api/v1/admin/alias-lists/1/transfer', async route => {
+        const request = transferOptions(route.request());
+        requests.push(request);
+        expect(request.format).toBe('VCE');
+        if (request.action === 'preview') return route.fulfill({ json: { data: warningPreview } });
+        expect(hasError).toBe(false);
+        expect(request.revision).toBe(warningPreview.revision);
+        expect(request.digest).toBe(warningPreview.digest);
+        return route.fulfill({ json: { data: { revision: 2 } } });
+      });
+      await page.goto('/app.html?view=aliases&list=1&aliasTab=configure');
+      await page.locator('.alias-transfer-import-button').click();
+      await page.getByRole('button', { name: 'Import from a file', exact: true }).click();
+      const modal = page.getByRole('dialog', { name: 'Import aliases into County Public Safety', exact: true });
+      await modal.locator('input[type="file"]').setInputFiles({ name: 'aliases.csv', mimeType: 'text/csv',
+        buffer: Buffer.from('format_version,name,description,group,\n4,Fireground 2,County fireground,Fire,\n') });
+      await modal.getByRole('button', { name: 'Continue', exact: true }).click();
+      await expect(modal).toContainText('Unavailable assignments and icons are shown as warnings before import.');
+      await modal.getByRole('button', { name: 'Review import', exact: true }).click();
+      const review = modal.locator('.alias-transfer-review');
+      await expect(review.getByText('Missing or ambiguous scan-list and streaming assignments will be left unset. ' +
+        'Unavailable icons will use the default icon.', { exact: true })).toBeVisible();
+      await expect(review.locator('.alias-transfer-row').first().locator('summary .ui-pill-warning')).toHaveText('2 warnings');
+      await expect(review.locator('.alias-transfer-row')).toHaveCount(warningPreview.total);
+      await expect(review).toContainText('Engine 4');
+      const first = review.locator('.alias-transfer-row').first();
+      await first.locator('summary').click();
+      await expect(first.locator('.ui-notice-warning')).toHaveCount(2);
+      await expect(first.getByText(warningPreview.rows[0].warnings[0], { exact: true })).toBeVisible();
+      await expect(first.getByText(warningPreview.rows[0].warnings[1], { exact: true })).toBeVisible();
+      await expectNoHorizontalOverflow(page);
+      await testInfo.attach('warning-review', { body: await page.screenshot(), contentType: 'image/png' });
+      const apply = review.getByRole('button', { name: 'Import 2 changes', exact: true });
+      if (hasError) {
+        await expect(apply).toBeDisabled();
+        await review.getByRole('button', { name: 'Errors 1', exact: true }).click();
+        await expect(review.locator('.alias-transfer-row')).toHaveCount(1);
+        await review.locator('.alias-transfer-row summary').click();
+        await expect(review.locator('.ui-feedback-error')).toBeVisible();
+        expect(requests.map(request => request.action)).toEqual(['preview']);
+      } else {
+        await expect(apply).toBeEnabled();
+        await apply.click();
+        await expect(page.getByRole('dialog', { name: 'Alias import complete', exact: true })).toContainText(
+          '1 added · 1 updated · 0 deleted · 1 unchanged');
+        expect(requests.map(request => request.action)).toEqual(['preview', 'apply']);
+      }
+      expect(fixture.unexpected).toEqual([]);
+      expect(fixture.pageErrors).toEqual([]);
+    });
+}
+
 for (const width of [320, 390]) {
   for (const theme of ['light']) {
     test(`Alias import review keeps expanded changes and actions bounded ${theme} ${width}`, async ({ page }) => {

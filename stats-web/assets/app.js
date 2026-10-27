@@ -6700,8 +6700,9 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   sourceSection.append(node('h3', '', 'Choose a source file'), fileDrop, formatField);
   const help = node('details');
   help.append(node('summary', '', 'CSV format help'), node('p', '',
-    'VCE alias export: created with Export aliases. It preserves matchers, appearance, recording, scan-list ' +
-    'memberships, and streaming settings.'), node('p', '',
+    'VCE alias export: created with Export aliases. It includes matchers, appearance, recording, scan-list ' +
+    'memberships, and streaming settings. Missing or ambiguous assignments are left unset with warnings. ' +
+    'Unavailable icons use the default icon.'), node('p', '',
     'RadioReference header: Decimal,Hex,Alpha Tag,Mode,Description,Tag,Category. ' +
     'Existing aliases update name, description, and group only. New fully encrypted talkgroups have recording, ' +
     'scan-list playback, and streaming disabled. Download talkgroups for a system compatible with this list.'));
@@ -6737,7 +6738,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   form.append(progress, sourceSection, behaviorSection);
 
   const vceAssignments = node('p', 'muted alias-transfer-source-settings',
-    'New aliases will use the recording, scan-list, streaming, and appearance settings stored in the VCE file.');
+    'Aliases use the settings stored in the VCE file. Unavailable assignments and icons are shown as warnings before import.');
   behaviorSection.append(vceAssignments);
   const listDefaults = aliasTransferListDefaults(selectedList, options);
   const radioDefaults = node('section', 'alias-transfer-radio-defaults');
@@ -6848,6 +6849,9 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   review.append(node('h3', '', 'Review changes'));
   const destination = node('p', 'muted');
   const summary = node('div', 'alias-transfer-counts ui-metric-grid');
+  const warningNotice = node('p', 'ui-notice ui-notice-warning',
+    'Missing or ambiguous scan-list and streaming assignments will be left unset. Unavailable icons will use the default icon.');
+  warningNotice.hidden = true;
   const filters = node('div', 'alias-transfer-review-filters');
   filters.setAttribute('role', 'group');
   filters.setAttribute('aria-label', 'Filter reviewed aliases');
@@ -6858,7 +6862,7 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   const confirmLabel = aliasCheckOption(`Replace aliases in ${selectedList.name}, including the deletions shown above`, confirm);
   const reviewBack = node('button', 'ui-button ui-button-secondary', 'Back'); reviewBack.type = 'button';
   const apply = node('button', 'ui-button ui-button-primary', 'Import changes'); apply.type = 'button'; apply.disabled = true;
-  review.append(progress.cloneNode(true), destination, summary, filters, rowsHost, pagerHost, confirmLabel,
+  review.append(progress.cloneNode(true), destination, summary, warningNotice, filters, rowsHost, pagerHost, confirmLabel,
     aliasModalFooter(reviewBack, node('span', 'alias-modal-footer-spacer'), apply));
   importPanel.append(review);
   const exportButton = anchor('Export CSV', aliasTransferExportHref(listId),
@@ -7184,12 +7188,18 @@ function openAliasTransferModal(selectedList, action = 'Import') {
       const countLabels = { added: 'Added', updated: 'Updated', unchanged: 'Unchanged', deleted: 'Removed', error: 'Errors' };
       summary.replaceChildren(...Object.entries(countLabels).map(([key, label]) =>
         metricCard(label, response.counts[key] || 0)));
+      warningNotice.hidden = !response.counts.warning;
       const drawRows = () => {
         rowsHost.replaceChildren();
         const visibleRows = response.rows.filter((row) => previewFilter === 'all' || row.result === previewFilter);
         visibleRows.forEach((row) => {
           const detail = node('details', `alias-transfer-row alias-transfer-row-${row.result} ui-surface ui-surface-soft`);
-          detail.append(node('summary', '', `${countLabels[row.result] || row.result} · ${row.name || '(unnamed)'}${row.row ? ` · row ${row.row}` : ''}`));
+          const heading = node('summary', '', `${countLabels[row.result] || row.result} · ${row.name || '(unnamed)'}${row.row ? ` · row ${row.row}` : ''}`);
+          const warnings = row.warnings || [];
+          if (warnings.length) heading.append(document.createTextNode(' '),
+            badge(`${number(warnings.length)} warning${warnings.length === 1 ? '' : 's'}`, 'ui-pill-warning'));
+          detail.append(heading);
+          warnings.forEach((warning) => detail.append(node('p', 'ui-notice ui-notice-warning', warning)));
           if (row.error) detail.append(node('p', 'ui-feedback ui-feedback-error', row.error));
           if (row.changes.length) {
             const changeActions = node('div', 'ui-table-actions');

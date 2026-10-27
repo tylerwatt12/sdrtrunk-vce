@@ -8,6 +8,7 @@ package io.github.dsheirer.web.http;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -24,6 +25,9 @@ import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.AliasTransferCsv;
+import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
+import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.BroadcastFormat;
 import io.github.dsheirer.audio.broadcast.BroadcastConfiguration;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallConfiguration;
@@ -36,6 +40,7 @@ import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
+import io.github.dsheirer.protocol.Protocol;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -311,6 +316,98 @@ class AliasAdminHttpControllerTest
         {
             server.stop(0);
             MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
+    @Test
+    void transferWarnsAboutMissingLocalAssignmentsAndIconWithoutBlockingReplacement() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("transfer-warning-data");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        Files.createDirectories(database.getParent());
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null);
+        manager.init();
+        AliasAdministrationService service = AliasAdministrationServiceTestSupport.create(manager);
+        long listId = service.createAliasList("Destination", AliasListFamily.P25).aliasListId();
+        Alias existing = new Alias("Existing");
+        existing.setAliasListId(listId);
+        existing.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 123));
+        long existingId = service.createAlias(existing).aliasIds().getFirst();
+
+        Alias imported = new Alias("Dispatch");
+        imported.setDescription("County fire dispatch");
+        imported.setGroup("Fire");
+        imported.setColor(123456);
+        imported.setIconName("Missing custom icon");
+        imported.setRecordable(true);
+        imported.setMatchIdentifier(new Talkgroup(Protocol.APCO25, 456));
+        imported.setStreamTalkgroupAlias(new StreamAsTalkgroup(789));
+        String csv = AliasTransferCsv.write(List.of(AliasTransferCsv.fields(imported, "Source",
+            List.of("Missing scan list"), List.of("Missing streaming destination"))));
+
+        AliasAdminHttpController controller = new AliasAdminHttpController(service);
+        HttpServer server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+        server.createContext(AliasAdminHttpController.ALIAS_LISTS_PATH, controller::handle);
+        server.start();
+        try(HttpClient client = HttpClient.newHttpClient())
+        {
+            URI origin = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
+            String path = AliasAdminHttpController.ALIAS_LISTS_PATH + "/" + listId + "/transfer";
+            Map<String,Object> body = new java.util.LinkedHashMap<>();
+            body.put("format", "VCE");
+            body.put("mode", "REPLACE");
+            body.put("action", "preview");
+            body.put("csv", csv);
+            JsonNode preview = json(send(client, jsonRequest(origin, path)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))));
+            assertEquals(0, preview.at("/counts/error").intValue());
+            assertEquals(1, preview.at("/counts/warning").intValue(), "Warnings count affected aliases");
+            assertEquals(1, preview.at("/counts/added").intValue());
+            assertEquals(1, preview.at("/counts/deleted").intValue());
+            JsonNode warnings = preview.at("/rows/0/warnings");
+            assertEquals(3, warnings.size());
+            for(String missing: List.of("Missing custom icon", "Missing scan list", "Missing streaming destination"))
+                assertTrue(warnings.toString().contains(missing), warnings.toString());
+            assertEquals(existingId, service.transferSnapshot(listId).aliases().getFirst().alias().getId());
+
+            body.put("action", "apply");
+            body.put("revision", preview.get("revision").longValue());
+            body.put("digest", preview.get("digest").textValue());
+            assertEquals(400, send(client, jsonRequest(origin, path)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))).statusCode());
+            body.put("confirm_replace", true);
+            body.put("digest", "changed");
+            assertEquals(409, send(client, jsonRequest(origin, path)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))).statusCode());
+            assertEquals(existingId, service.transferSnapshot(listId).aliases().getFirst().alias().getId());
+            body.put("digest", preview.get("digest").textValue());
+            assertEquals(200, send(client, jsonRequest(origin, path)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))).statusCode());
+            assertEquals(409, send(client, jsonRequest(origin, path)
+                .POST(HttpRequest.BodyPublishers.ofString(OBJECT_MAPPER.writeValueAsString(body)))).statusCode());
+
+            var stored = new ConfigurationRepository(database).loadAliasConfiguration();
+            List<Alias> aliases = stored.aliases().stream().filter(alias -> alias.getAliasListId() == listId).toList();
+            assertEquals(1, aliases.size());
+            Alias saved = aliases.getFirst();
+            assertEquals("Dispatch", saved.getName());
+            assertEquals("County fire dispatch", saved.getDescription());
+            assertEquals("Fire", saved.getGroup());
+            assertEquals(123456, saved.getColor());
+            assertEquals(456, ((Talkgroup)saved.getMatchIdentifier()).getValue());
+            assertEquals(Protocol.APCO25, ((Talkgroup)saved.getMatchIdentifier()).getProtocol());
+            assertEquals(789, saved.getStreamTalkgroupAlias().getValue());
+            assertTrue(saved.isRecordable());
+            assertNull(saved.getIconName());
+            assertTrue(saved.getBroadcastChannels().isEmpty());
+            assertFalse(stored.scanLists().aliasMemberships().containsKey(saved.getId()));
+        }
+        finally
+        {
+            server.stop(0);
+            closeConfigurationManager(manager);
         }
     }
 

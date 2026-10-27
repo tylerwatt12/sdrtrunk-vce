@@ -415,9 +415,16 @@ class AliasImportServiceTest
             AliasImportService importer = new AliasImportService(fixture.service);
             List<AliasImportService.Input> inputs = AliasTransferCsv.read(importer.export(fixture.list),
                 AliasTransferCsv.Format.VCE, fixture.service.options(destination).aliasList());
+            inputs = inputs.stream().map(input ->
+            {
+                input.alias().setIconName("Missing icon");
+                return new AliasImportService.Input(input.alias(), false, true, false,
+                    List.of("Missing scan"), List.of("Missing stream"), input.sourceAliasList());
+            }).toList();
             AliasImportService.Plan plan = importer.preview(destination, AliasImportService.Mode.UPDATE_ADD,
                 inputs, null);
             assertEquals(2L, plan.preview().counts().get("unchanged"));
+            assertEquals(2L, plan.preview().counts().get("warning"));
             assertEquals(0L, plan.preview().counts().get("updated"));
             importer.apply(plan);
             assertEquals("Second", fixture.service.getAlias(secondId).alias().getName());
@@ -465,7 +472,8 @@ class AliasImportServiceTest
                 new AliasImportService.Input(alias(list, 300, "New"), false, true, false, List.of(scanName),
                     List.of(fixture.stream.getName()), "County"));
             var plan = importer.preview(list, AliasImportService.Mode.REPLACE, inputs, null);
-            assertEquals(Map.of("added", 1L, "updated", 1L, "unchanged", 0L, "deleted", 1L, "error", 0L), plan.preview().counts());
+            assertEquals(Map.of("added", 1L, "updated", 1L, "unchanged", 0L, "deleted", 1L, "error", 0L,
+                "warning", 0L), plan.preview().counts());
             assertEquals("Old name", service.getAlias(firstId).alias().getName());
             assertTrue(plan.preview().rows().stream().filter(row -> row.result().equals("updated")).findFirst().orElseThrow()
                 .changes().stream().anyMatch(change -> change.field().equals("scan_lists")));
@@ -624,15 +632,73 @@ class AliasImportServiceTest
         }
     }
 
-    @Test void blocksUnknownNamesAndStalePreviewsButAllowsRepeatedMatchers() throws Exception
+    @Test void importsAvailableAssignmentsAndWarnsAboutMissingDependenciesInBothModes() throws Exception
+    {
+        for(AliasImportService.Mode mode: AliasImportService.Mode.values())
+        {
+            try(Fixture fixture = new Fixture(root.resolve(mode.name())))
+            {
+                var service = fixture.service;
+                long scan = service.catalog().scanLists().getFirst().getId();
+                String scanName = service.catalog().scanLists().getFirst().getName();
+                Alias original = alias(fixture.list, 100, "Original");
+                original.setBroadcastChannels(List.of(new BroadcastChannel(fixture.stream.getConfigurationId(), fixture.stream.getName())));
+                long originalId = service.createAlias(original, Set.of(scan)).aliasIds().getFirst();
+                long extraId = service.createAlias(alias(fixture.list, 200, "Extra")).aliasIds().getFirst();
+                Alias updated = alias(fixture.list, 100, "Updated");
+                updated.setIconName("Missing icon");
+                updated.setDescription("Keep description");
+                updated.setRecordable(true);
+                List<AliasImportService.Input> inputs = List.of(
+                    new AliasImportService.Input(updated, false, true, false,
+                        List.of("Missing scan"), List.of("Missing stream"), "Source"),
+                    new AliasImportService.Input(alias(fixture.list, 300, "New"), false, true, false,
+                        List.of(scanName, "Missing scan"), List.of(fixture.stream.getName(), "Missing stream"), "Source"));
+                AliasImportService importer = new AliasImportService(service);
+                int commits = fixture.manager.commits;
+                var plan = importer.preview(fixture.list, mode, inputs, null);
+                assertEquals(0L, plan.preview().counts().get("error"));
+                assertEquals(2L, plan.preview().counts().get("warning"));
+                assertEquals(3, plan.preview().rows().getFirst().warnings().size());
+                assertTrue(plan.preview().rows().getFirst().warnings().stream().anyMatch(warning -> warning.contains("Missing scan")));
+                assertTrue(plan.preview().rows().getFirst().warnings().stream().anyMatch(warning -> warning.contains("Missing stream")));
+                assertTrue(plan.preview().rows().getFirst().warnings().stream().anyMatch(warning -> warning.contains("default icon")));
+                assertEquals(commits, fixture.manager.commits, "Preview must not mutate configuration");
+                assertEquals("Missing icon", updated.getIconName(), "Normalization must leave the source untouched");
+                importer.apply(plan);
+                var saved = service.getAlias(originalId);
+                assertEquals("Updated", saved.alias().getName());
+                assertEquals("Keep description", saved.alias().getDescription());
+                assertTrue(saved.alias().isRecordable());
+                assertNull(saved.alias().getIconName());
+                assertTrue(saved.scanListIds().isEmpty());
+                assertTrue(saved.alias().getBroadcastChannels().isEmpty());
+                var created = service.transferSnapshot(fixture.list).aliases().stream()
+                    .filter(entry -> entry.alias().getName().equals("New")).findFirst().orElseThrow();
+                assertEquals(Set.of(scan), created.scanListIds());
+                assertEquals(fixture.stream.getConfigurationId(), created.alias().getBroadcastChannels().iterator().next().getConfigurationId());
+                if(mode == AliasImportService.Mode.REPLACE)
+                    assertThrows(AliasAdministrationService.NotFoundException.class, () -> service.getAlias(extraId));
+                else assertEquals("Extra", service.getAlias(extraId).alias().getName());
+                commits = fixture.manager.commits;
+                var repeated = importer.preview(fixture.list, mode, inputs, null);
+                assertEquals(2L, repeated.preview().counts().get("unchanged"));
+                assertEquals(2L, repeated.preview().counts().get("warning"));
+                importer.apply(repeated);
+                assertEquals(commits, fixture.manager.commits, "Warnings alone do not require a save");
+            }
+        }
+    }
+
+    @Test void blocksInvalidMatchersAndStalePreviewsButAllowsRepeatedMatchers() throws Exception
     {
         try(Fixture fixture = new Fixture(root))
         {
             var service = fixture.service;
             long id = service.createAlias(alias(fixture.list, 100, "Keep")).aliasIds().getFirst();
             var importer = new AliasImportService(service);
-            var input = new AliasImportService.Input(alias(fixture.list, 200, "New"), false, true, false,
-                List.of("Missing"), List.of(), "County");
+            var input = new AliasImportService.Input(alias(fixture.list, -1, "Invalid"), false, true, false,
+                List.of(), List.of(), "County");
             var invalid = importer.preview(fixture.list, AliasImportService.Mode.REPLACE, List.of(input), null);
             assertEquals(1L, invalid.preview().counts().get("error"));
             assertThrows(IllegalArgumentException.class, () -> importer.apply(invalid));

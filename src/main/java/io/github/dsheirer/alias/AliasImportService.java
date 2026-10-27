@@ -17,7 +17,8 @@ public final class AliasImportService
                         List<String> scanLists, List<String> streams, String sourceAliasList) {}
     public record Defaults(Boolean recordable, List<String> scanLists, List<String> streams) {}
     public record Change(String field, String before, String after) {}
-    public record Row(int row, Long aliasId, String result, String name, List<Change> changes, String error) {}
+    public record Row(int row, Long aliasId, String result, String name, List<Change> changes, String error,
+                      List<String> warnings) {}
     public record Preview(long revision, String list, String sourceList, Mode mode, Map<String,Long> counts,
                           List<Row> rows) {}
     public static final class Plan
@@ -63,19 +64,32 @@ public final class AliasImportService
         for(Input input: inputs)
         {
             index++;
+            List<String> warnings = new ArrayList<>();
             try
             {
                 Alias source = input == null ? null : input.alias();
                 if(source == null || !AliasMatchRegistry.isOperational(options.aliasList(), source.getMatchIdentifier()))
                     throw new IllegalArgumentException("Matcher is invalid or incompatible with this list");
+                source = AliasFactory.copyOf(source);
+                if(source.getIconName() != null && !options.iconNames().contains(source.getIconName()))
+                {
+                    warnings.add("Icon \"" + source.getIconName() + "\" is missing. The default icon will be used.");
+                    source.setIconName(null);
+                }
+                List<String> scanNames = resolveImportNames(input.scanLists(), options.scanLists(), ScanList::getName,
+                    "Scan list", warnings);
+                List<String> streamNames = resolveImportNames(input.streams(), options.streams(), BroadcastDestination::name,
+                    "Streaming destination", warnings);
                 List<String> identity = AliasTransferCsv.identity(source);
                 List<AliasEntry> matches = existing.getOrDefault(identity, List.of());
-                AliasEntry old = preferredExistingMatch(matches, matchedExisting, input, options);
+                Input normalized = new Input(source, input.radioReference(), input.groupProvided(), input.fullyEncrypted(),
+                    scanNames, streamNames, input.sourceAliasList());
+                AliasEntry old = preferredExistingMatch(matches, matchedExisting, normalized, options);
                 if(old == null && AliasMatchRegistry.isUnmatchedTalkgroupCatchAll(options.aliasList(), source.getMatchIdentifier()))
                     throw new IllegalArgumentException("Full talkgroup ranges belong in Alias List Defaults");
                 Alias alias = old != null && input.radioReference() ?
                     RadioReferenceAliasFields.replacement(old.alias(), source.getName(), source.getDescription(),
-                        source.getGroup(), input.groupProvided()) : AliasFactory.copyOf(source);
+                        source.getGroup(), input.groupProvided()) : source;
                 alias.setAliasListId(listId);
                 if(old != null && alias.getId() == 0) alias.setId(old.alias().getId());
                 requireText(alias.getName(), "Name");
@@ -85,9 +99,6 @@ public final class AliasImportService
                     (alias.getStreamTalkgroupAlias().getValue() < StreamAsTalkgroup.MINIMUM_VALUE ||
                     alias.getStreamTalkgroupAlias().getValue() > StreamAsTalkgroup.MAXIMUM_VALUE))
                     throw new IllegalArgumentException("Invalid stream-as talkgroup");
-                if(alias.getIconName() != null && !options.iconNames().contains(alias.getIconName()) &&
-                    (old == null || !Objects.equals(old.alias().getIconName(), alias.getIconName())))
-                    throw new IllegalArgumentException("Unknown icon: " + alias.getIconName());
                 Set<Long> scans = old == null ? Set.of() : old.scanListIds();
                 if(old == null && input.radioReference())
                 {
@@ -95,12 +106,12 @@ public final class AliasImportService
                     alias.setBroadcastChannels(options.aliasList().getNewAliasBehavior().getStreamDestinations());
                     scans = options.newAliasScanListIds();
                 }
-                List<String> scanNames = input.scanLists();
-                List<String> streamNames = input.streams();
                 if(old == null && defaults != null)
                 {
-                    if(scanNames == null) scanNames = defaults.scanLists();
-                    if(streamNames == null) streamNames = defaults.streams();
+                    if(scanNames == null) scanNames = resolveImportNames(defaults.scanLists(), options.scanLists(),
+                        ScanList::getName, "Scan list", warnings);
+                    if(streamNames == null) streamNames = resolveImportNames(defaults.streams(), options.streams(),
+                        BroadcastDestination::name, "Streaming destination", warnings);
                     if(input.radioReference() && defaults.recordable() != null) alias.setRecordable(defaults.recordable());
                 }
                 if(scanNames != null) scans = new HashSet<>(resolve(scanNames, options.scanLists(), ScanList::getName, ScanList::getId));
@@ -125,7 +136,7 @@ public final class AliasImportService
                     .map(entry -> new Change(entry.getKey(), before.getOrDefault(entry.getKey(), ""), entry.getValue())).toList();
                 String result = old == null ? "added" : changes.isEmpty() ? "unchanged" : "updated";
                 rows.add(new Row(index, old != null ? old.alias().getId() : null, result, alias.getName(), changes,
-                    null));
+                    null, List.copyOf(warnings)));
                 if(old != null)
                 {
                     matchedExisting.add(old.alias().getId());
@@ -137,7 +148,7 @@ public final class AliasImportService
             {
                 rows.add(new Row(index, null, "error",
                     input == null || input.alias() == null ? "" : input.alias().getName(), List.of(),
-                    exception.getMessage()));
+                    exception.getMessage(), List.copyOf(warnings)));
             }
         }
         if(mode == Mode.REPLACE)
@@ -150,13 +161,14 @@ public final class AliasImportService
                     rows.add(new Row(0, entry.alias().getId(), "deleted", entry.alias().getName(),
                         fields(entry.alias(), entry.scanListIds(), options)
                         .entrySet().stream().filter(value -> !value.getKey().equals("format_version"))
-                        .map(value -> new Change(value.getKey(), value.getValue(), "")).toList(), null));
+                        .map(value -> new Change(value.getKey(), value.getValue(), "")).toList(), null, List.of()));
                 }
             }
         }
         Map<String,Long> counts = new LinkedHashMap<>();
         for(String result: List.of("added", "updated", "unchanged", "deleted", "error"))
             counts.put(result, rows.stream().filter(row -> row.result().equals(result)).count());
+        counts.put("warning", rows.stream().filter(row -> !row.warnings().isEmpty()).count());
         return new Plan(listId, new Preview(options.revision(), options.aliasList().getName(), sourceList, mode,
             Collections.unmodifiableMap(counts), List.copyOf(rows)), saves, deletions);
     }
@@ -223,9 +235,24 @@ public final class AliasImportService
         List<String> streamNames = alias.getBroadcastChannels().stream().map(route -> options.streams().stream()
             .filter(stream -> stream.configurationId().equals(route.getConfigurationId())).findFirst()
             .orElseThrow(() -> new IllegalArgumentException("Missing streaming destination")).name()).toList();
-        resolve(scanNames, options.scanLists(), ScanList::getName, ScanList::getId);
-        resolve(streamNames, options.streams(), BroadcastDestination::name, BroadcastDestination::configurationId);
         return AliasTransferCsv.fields(alias, options.aliasList().getName(), scanNames, streamNames);
+    }
+
+    private static <T> List<String> resolveImportNames(List<String> names, List<T> choices, Function<T,String> name,
+                                                     String label, List<String> warnings)
+    {
+        if(names == null) return null;
+        if(names.size() > 500 || new HashSet<>(names).size() != names.size())
+            throw new IllegalArgumentException("Too many or duplicate assignment names");
+        List<String> resolved = new ArrayList<>();
+        for(String requested: names)
+        {
+            long matches = choices.stream().filter(choice -> Objects.equals(requested, name.apply(choice))).count();
+            if(matches == 1) resolved.add(requested);
+            else warnings.add(label + " \"" + requested + "\" " +
+                (matches == 0 ? "is missing" : "has more than one match") + ". This assignment will be left unset.");
+        }
+        return List.copyOf(resolved);
     }
 
     private static <T,R> List<R> resolve(List<String> names, List<T> choices, Function<T,String> name, Function<T,R> value)
