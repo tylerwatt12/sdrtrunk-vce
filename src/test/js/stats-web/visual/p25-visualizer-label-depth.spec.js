@@ -396,10 +396,9 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await tick(page, 300);
     const focused = await state(page);
     expect(focused.meshes['radio-far'].fog).toBe(false);
-    expectMeshAlpha(focused, 'radio-far');
-    expect(focused.labels['radio-far'].opacity).toBeCloseTo(.98, 6);
+    expect(focused.labels['radio-far'].opacity).toBe(1);
     expect(focused.labels['radio-far'].blur).toBe(0);
-    expect(focused.labels['radio-far'].z).toBeLessThan(focused.labels['radio-near'].z);
+    expect(focused.labels['radio-far'].z).toBeGreaterThan(focused.labels['radio-near'].z);
     expectMeshAlpha(focused, 'radio-near');
     await page.evaluate(() => {
       const f = window.labelDepthFixture;
@@ -448,7 +447,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await tick(page, 300);
     const focused = await state(page);
     for (const key of ['near', 'far']) expectPair(focused.labels, key);
-    expect(focused.labels['button-near'].opacity).toBeCloseTo(focused.meshes['button-near'].effectiveOpacity, 6);
+    expect(focused.labels['button-near'].opacity).toBe(1);
     expect(focused.labels['button-near'].blur).toBe(0);
     expect(focused.labels['button-far'].opacity).toBeLessThan(initial.labels['button-far'].opacity / 2);
     expect(focused.labels['button-far'].blur).toBeGreaterThan(initial.labels['button-far'].blur);
@@ -459,12 +458,13 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await tick(page);
     const active = await state(page);
     expectPair(active.labels, 'far');
-    expect(active.labels['button-far'].opacity).toBe(1);
-    expect(active.labels['button-far'].blur).toBe(0);
+    expectMeshAlpha(active, 'button-far');
+    expect(active.labels['button-far'].opacity).toBeLessThan(0.1);
+    expect(active.labels['button-far'].blur).toBeGreaterThan(0);
     expect(active.labels['button-far'].signal).toBe('call');
     for (const kind of ['button', 'static']) {
-      expect(active.labels[`${kind}-far`].z).toBeGreaterThan(active.labels['button-near'].z);
-      expect(active.labels[`${kind}-far`].z).toBeGreaterThan(active.labels['static-near'].z);
+      expect(active.labels[`${kind}-far`].z).toBeLessThan(active.labels['button-near'].z);
+      expect(active.labels[`${kind}-far`].z).toBeLessThan(active.labels['static-near'].z);
     }
     await page.evaluate(() => {
       const f = window.labelDepthFixture;

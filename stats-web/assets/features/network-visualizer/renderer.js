@@ -1,5 +1,7 @@
 'use strict';
 
+import { resolveP25NodeAttention, resolveP25LabelTier, isP25LinkDimmed } from './emphasis.js?v=1';
+
 const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=4';
 const SYSTEM_RADIUS = 300;
 const LABEL_LIMIT = 90;
@@ -159,17 +161,12 @@ async function createP25Renderer(options = {}) {
 
   const renderingPaused = () => documentValue.hidden || guideSuspended;
 
-  function movementIncludes(key) { return movementParticipants.has(key); }
-
   function colorFor(state) {
     return colors[state] || colors.radio;
   }
 
   function nodeAttention(node) {
-    const participant = movementIncludes(node.id);
-    return { participant,
-      clear: Boolean(node.signalAction || node.active || participant || focusKeys.has(node.id)),
-      dimmed: focusKeys.size > 0 && !focusKeys.has(node.id) && !participant && !node.active && node.type !== 'system' };
+    return resolveP25NodeAttention(node, focusKeys, movementParticipants);
   }
 
   function opacityRange(state, clear, dimmed) {
@@ -258,10 +255,7 @@ async function createP25Renderer(options = {}) {
   }
 
   function linkIsDimmed(link) {
-    const source = typeof link.source === 'object' ? link.source.id : link.source;
-    const target = typeof link.target === 'object' ? link.target.id : link.target;
-    return focusKeys.size > 0 && !(focusKeys.has(String(source)) && focusKeys.has(String(target))) &&
-      !(movementIncludes(String(source)) && movementIncludes(String(target)));
+    return isP25LinkDimmed(link, focusKeys);
   }
 
   function applyLinkStyle(link, object = linkObjects.get(link.id)) {
@@ -905,7 +899,7 @@ async function createP25Renderer(options = {}) {
       const attention = nodeAttention(node);
       const namedEntity = node.type === 'talkgroup' || node.type === 'radio';
       entries.push({ node, label, viewDepth, attention,
-        active: namedEntity && Boolean(node.active || node.signalAction || attention.participant) });
+        active: namedEntity && (attention.eventFocused || attention.activity && !attention.dimmed) });
     }
     // Camera-space ranks avoid distant labels sharing a rounded NDC z-index.
     entries.sort((left, right) => right.viewDepth - left.viewDepth || String(left.node.id).localeCompare(String(right.node.id)));
@@ -929,11 +923,11 @@ async function createP25Renderer(options = {}) {
       hovered = hoverable.find(entry => entry.node.id === hoveredShapeKey);
     }
     hoveredLabelKey = hovered?.node.id || '';
-    for (const { node, label, viewDepth, attention, active, rank } of entries) {
+    for (const { node, label, viewDepth, attention, rank } of entries) {
       const pointed = node.id === hoveredLabelKey;
       const pressing = !label.disabled && interactingLabels.has(label);
       const focused = !label.disabled && label.matches(':focus-visible');
-      const tier = pointed || pressing ? 3 : focused ? 2 : active ? 1 : 0;
+      const tier = resolveP25LabelTier(attention, { pointed, pressing, focused });
       label.style.zIndex = String(tier * entries.length + rank);
       if (tier) {
         label.style.opacity = '1';

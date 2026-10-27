@@ -141,7 +141,16 @@ async function moveToShape(page, id) {
     if (!hit) continue;
     await page.mouse.move(point.x, point.y);
     await frames(page);
-    if ((await inspect(page)).vendorHover === id) return point;
+    if ((await inspect(page)).vendorHover === id) {
+      // Shape picking runs every 50 ms, independently of the vendor's cached hover.
+      // Two RAFs can finish sooner; require the real name to become sharp before proceeding.
+      await expect.poll(async () => {
+        const label = (await inspect(page)).labels[id];
+        return { opacity: label.opacity, blur: label.blur };
+      }, { timeout: 750, intervals: [10, 25, 50], message: `native shape hover emphasizes ${id}` })
+        .toEqual({ opacity: 1, blur: 0 });
+      return point;
+    }
   }
   expect((await inspect(page)).vendorHover, `native vendor raycast reaches ${id}`).toBe(id);
 }

@@ -42,6 +42,7 @@ const contracts = [
   ["P25 Visualizer rolling expiry", "p25-visualizer-expiry.test.js", "stats-web/assets/features/network-visualizer"],
   ["P25 Visualizer live", "p25-visualizer-live.test.js", "stats-web/assets/features/network-visualizer"],
   ["P25 Visualizer camera", "p25-visualizer-camera.test.js", "stats-web/assets/features/network-visualizer"],
+  ["P25 Visualizer emphasis", "p25-visualizer-emphasis.test.js", "stats-web/assets/features/network-visualizer"],
   ["P25 Visualizer affiliation", "p25-visualizer-affiliation.test.js", "stats-web/assets/features/network-visualizer"],
   ["P25 Visualizer settings", "p25-visualizer-settings.test.js", "stats-web/assets/features/network-visualizer"],
   ["channel patches", "channel-patches.test.js", "stats-web/assets/app.js"],
