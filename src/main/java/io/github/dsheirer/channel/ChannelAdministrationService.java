@@ -80,6 +80,7 @@ public final class ChannelAdministrationService
     /** One web mutation or receiver lifecycle batch at a time; saturation fails without blocking request workers. */
     private final Semaphore mCommandAdmission = new Semaphore(1);
     private final Map<String,SquelchPreviewLease> mSquelchPreviews = new HashMap<>();
+    private volatile Supplier<Map<String,String>> mTunerDisplayNames = Map::of;
     private volatile CommittedConfiguration mCommittedConfiguration =
         new CommittedConfiguration(new Catalog(0, List.of()), List.of());
     public ChannelAdministrationService(ConfigurationManager configurationManager)
@@ -224,10 +225,21 @@ public final class ChannelAdministrationService
     {
         requireInitialized();
         CommittedConfiguration committed = committedConfiguration();
+        List<String> tuners = mConfigurationManager.getTunerManager() != null ?
+            mConfigurationManager.getTunerManager().getPreferredTunerNames() : List.of();
+        Map<String,String> labels;
+        try { labels = mTunerDisplayNames.get(); }
+        catch(RuntimeException unavailable) { labels = Map.of(); }
+        Map<String,String> currentLabels = labels;
         // Receiver hotplug state remains current; configuration choices come from one completed publication.
-        return new Options(committed.catalog().revision(), committed.aliasLists(),
-            mConfigurationManager.getTunerManager() != null ?
-                mConfigurationManager.getTunerManager().getPreferredTunerNames() : List.of());
+        return new Options(committed.catalog().revision(), committed.aliasLists(), tuners,
+            tuners.stream().map(value -> new TunerOption(value, currentLabels.getOrDefault(value, value))).toList());
+    }
+
+    /** Request-side labels only; the preferred tuner values retain their allocation identity. */
+    public void setTunerDisplayNames(Supplier<Map<String,String>> names)
+    {
+        mTunerDisplayNames = Objects.requireNonNull(names);
     }
 
     /**
@@ -1603,12 +1615,20 @@ public final class ChannelAdministrationService
     }
     public record P25EnrichmentSnapshot(Entry entry, Long servingFrequencyHz) {}
     public record AliasListOption(long id, String name, String family) {}
-    public record Options(long revision, List<AliasListOption> aliasLists, List<String> tuners)
+    public record TunerOption(String value, String label) {}
+    public record Options(long revision, List<AliasListOption> aliasLists, List<String> tuners,
+                          List<TunerOption> tunerOptions)
     {
+        public Options(long revision, List<AliasListOption> aliasLists, List<String> tuners)
+        {
+            this(revision, aliasLists, tuners, tuners.stream().map(value -> new TunerOption(value, value)).toList());
+        }
+
         public Options
         {
             aliasLists = List.copyOf(aliasLists);
             tuners = List.copyOf(tuners);
+            tunerOptions = List.copyOf(tunerOptions);
         }
     }
     public record MutationResult(long revision, List<String> configurationIds, int affected)

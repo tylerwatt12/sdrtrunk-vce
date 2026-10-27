@@ -29,6 +29,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.LongSupplier;
@@ -47,16 +48,26 @@ public final class TunerAllocationMonitorService
     private final Supplier<List<TunerAllocationRuntimeChannel>> mReceiving;
     private final TunerAllocationDiagnosticService mHistory;
     private final LongSupplier mClock;
+    private final Supplier<Map<String,TunerAdministrationService.ReceiverReference>> mReceiverReferences;
     private final ReentrantLock mProjectionLock = new ReentrantLock();
     private final Map<String,String> mNames = new LinkedHashMap<>();
     private int mNextName;
-    private volatile Snapshot mSnapshot;
+    private volatile CachedSnapshot mSnapshot;
+
+    private record CachedSnapshot(Snapshot snapshot,
+        Map<String,TunerAdministrationService.ReceiverReference> receivers) { }
 
     public TunerAllocationMonitorService(TunerManager manager, ChannelProcessingManager channels)
     {
+        this(manager, channels, Map::of);
+    }
+
+    public TunerAllocationMonitorService(TunerManager manager, ChannelProcessingManager channels,
+        Supplier<Map<String,TunerAdministrationService.ReceiverReference>> receiverReferences)
+    {
         this(manager.getDiscoveredTunerRegistry()::snapshot, manager::getKnownFrequencySites,
             channels != null ? channels::getActiveTunerAllocationChannels : List::of,
-            manager.getTunerAllocationDiagnosticService(), System::currentTimeMillis);
+            manager.getTunerAllocationDiagnosticService(), System::currentTimeMillis, receiverReferences);
     }
 
     TunerAllocationMonitorService(Supplier<List<DiscoveredTuner>> inventory,
@@ -64,32 +75,47 @@ public final class TunerAllocationMonitorService
                                   Supplier<List<TunerAllocationRuntimeChannel>> receiving,
                                   TunerAllocationDiagnosticService history, LongSupplier clock)
     {
+        this(inventory, knownSites, receiving, history, clock, Map::of);
+    }
+
+    TunerAllocationMonitorService(Supplier<List<DiscoveredTuner>> inventory,
+                                  Supplier<List<TunerAllocationKnownSite>> knownSites,
+                                  Supplier<List<TunerAllocationRuntimeChannel>> receiving,
+                                  TunerAllocationDiagnosticService history, LongSupplier clock,
+                                  Supplier<Map<String,TunerAdministrationService.ReceiverReference>> receiverReferences)
+    {
         mInventory = inventory;
         mKnownSites = knownSites;
         mReceiving = receiving;
         mHistory = history;
         mClock = clock;
+        mReceiverReferences = Objects.requireNonNull(receiverReferences);
     }
 
     /** A slow observer can hold its immutable result; it cannot hold any producer lock or block another observer. */
     public Snapshot snapshot()
     {
         long now = mClock.getAsLong();
-        Snapshot previous = mSnapshot;
-        if(previous != null && now - previous.generatedAtMs() < CACHE_MS) return previous;
+        Map<String,TunerAdministrationService.ReceiverReference> receivers = mReceiverReferences.get();
+        CachedSnapshot cached = mSnapshot;
+        Snapshot previous = cached != null ? cached.snapshot() : null;
+        if(previous != null && now - previous.generatedAtMs() < CACHE_MS &&
+            cached.receivers().equals(receivers)) return previous;
         if(!mProjectionLock.tryLock()) return previous;
         try
         {
-            previous = mSnapshot;
-            if(previous != null && now - previous.generatedAtMs() < CACHE_MS) return previous;
-            Snapshot projected = project(now);
-            mSnapshot = projected;
+            cached = mSnapshot;
+            previous = cached != null ? cached.snapshot() : null;
+            if(previous != null && now - previous.generatedAtMs() < CACHE_MS &&
+                cached.receivers().equals(receivers)) return previous;
+            Snapshot projected = project(now, receivers);
+            mSnapshot = new CachedSnapshot(projected, receivers);
             return projected;
         }
         finally { mProjectionLock.unlock(); }
     }
 
-    private Snapshot project(long now)
+    private Snapshot project(long now, Map<String,TunerAdministrationService.ReceiverReference> receivers)
     {
         TunerAllocationDiagnosticService.Snapshot history = mHistory.snapshot();
         List<DiscoveredTuner> inventory = mInventory.get();
@@ -107,7 +133,7 @@ public final class TunerAllocationMonitorService
         List<TunerView> tuners = new ArrayList<>();
         for(DiscoveredTuner discovered: inventory)
         {
-            try { tuners.add(tuner(discovered, receiving, knownSites, history)); }
+            try { tuners.add(tuner(discovered, receiving, knownSites, history, receivers)); }
             catch(RuntimeException ignored) { /* Hot unplug during observer projection; retry on the next poll. */ }
         }
         Map<String,SiteBuilder> sites = new LinkedHashMap<>();
@@ -130,14 +156,15 @@ public final class TunerAllocationMonitorService
         List<SiteView> siteViews = new ArrayList<>();
         for(Map.Entry<String,SiteBuilder> entry: sites.entrySet()) siteViews.add(entry.getValue().view(entry.getKey(), tuners));
         List<DecisionView> decisions = history.decisions().stream().limit(MAXIMUM_VISIBLE_DECISIONS)
-            .map(entry -> decision(entry)).toList();
+            .map(entry -> decision(entry, receivers)).toList();
         return new Snapshot(true, history.sessionId(), history.cursor(), now, List.copyOf(siteViews),
             List.copyOf(tuners), decisions);
     }
 
     private TunerView tuner(DiscoveredTuner discovered, List<TunerAllocationRuntimeChannel> receiving,
                             List<TunerAllocationKnownSite> knownSites,
-                            TunerAllocationDiagnosticService.Snapshot history)
+                            TunerAllocationDiagnosticService.Snapshot history,
+                            Map<String,TunerAdministrationService.ReceiverReference> receivers)
     {
         String identity = discovered.getId();
         Tuner tuner = discovered.hasTuner() ? discovered.getTuner() : null;
@@ -175,7 +202,7 @@ public final class TunerAllocationMonitorService
         String prefix = discovered.getTunerClass() == TunerClass.RTL2832 ? "RTL-SDR" :
             discovered.getTunerClass().toString();
         String name = mNames.computeIfAbsent(identity, ignored -> prefix + " " + ++mNextName);
-        return new TunerView(id(identity), name, center,
+        return new TunerView(id(identity), nickname(identity, receivers, name), center,
             geometry != null ? (long)geometry.usableBandwidthHz() : null,
             geometry != null ? 2L * geometry.middleUnusableHalfBandwidthHz() : null,
             discovered.getTunerStatus().name().toLowerCase(Locale.ROOT), available,
@@ -186,16 +213,17 @@ public final class TunerAllocationMonitorService
             tuner != null && tuner.getChannelSourceManager() instanceof PolyphaseChannelSourceManager);
     }
 
-    private DecisionView decision(TunerAllocationDiagnosticService.Entry entry)
+    private DecisionView decision(TunerAllocationDiagnosticService.Entry entry,
+                                  Map<String,TunerAdministrationService.ReceiverReference> receivers)
     {
         TunerAllocationDecision decision = entry.decision();
         TunerAllocationContext context = decision.context();
         List<CandidateView> candidates = decision.candidates().stream().map(candidate ->
-            new CandidateView(id(candidate.tunerIdentity()), name(candidate.tunerIdentity()),
+            new CandidateView(id(candidate.tunerIdentity()), name(candidate.tunerIdentity(), receivers),
                 reason(candidate.reason()), candidate.minimumFrequencyHz(), candidate.maximumFrequencyHz())).toList();
         return new DecisionView(entry.decisionId(), entry.sequence(), entry.lastTimestamp(),
             context != null ? siteId(context) : null, context != null ? siteName(context) : null,
-            id(decision.tunerIdentity()), name(decision.tunerIdentity()),
+            id(decision.tunerIdentity()), name(decision.tunerIdentity(), receivers),
             decision.outcome() == TunerAllocationDecision.Outcome.MOVED ||
                 decision.outcome() == TunerAllocationDecision.Outcome.MOVED_CALL_FAILED ? "move" : "failure",
             decision.outcome().name().toLowerCase(Locale.ROOT), reason(decision.reason()),
@@ -206,9 +234,18 @@ public final class TunerAllocationMonitorService
             decision.coveredBefore(), decision.coveredAfter(), candidates);
     }
 
-    private String name(String identity)
+    private String name(String identity, Map<String,TunerAdministrationService.ReceiverReference> receivers)
     {
-        return identity == null ? null : mNames.computeIfAbsent(identity, ignored -> "Tuner " + ++mNextName);
+        return identity == null ? null : nickname(identity, receivers,
+            mNames.computeIfAbsent(identity, ignored -> "Tuner " + ++mNextName));
+    }
+
+    private static String nickname(String identity, Map<String,TunerAdministrationService.ReceiverReference> receivers,
+                                   String fallback)
+    {
+        var receiver = receivers.get(identity);
+        return receiver != null && receiver.nickname() != null && !receiver.nickname().isBlank() ?
+            receiver.nickname() : fallback;
     }
 
     private String id(String identity)

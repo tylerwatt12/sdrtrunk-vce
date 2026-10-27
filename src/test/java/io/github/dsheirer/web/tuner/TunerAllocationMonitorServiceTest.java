@@ -8,6 +8,7 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.test.TestTuner;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -20,6 +21,45 @@ class TunerAllocationMonitorServiceTest
 {
     private static final TunerAllocationContext CONTEXT = new TunerAllocationContext("saved-channel", "Named control",
         "Named system", "Named site", null, TunerAllocationContext.Role.CONTROL);
+
+    @Test void currentNicknameLabelsTunersDecisionsAndCandidatesAndClearingInvalidatesTheCache() throws Exception
+    {
+        FakeTuner tuner = new FakeTuner("private-native-receiver", 851_000_000L);
+        AtomicReference<Map<String,TunerAdministrationService.ReceiverReference>> receivers =
+            new AtomicReference<>(Map.of());
+        try(TunerAllocationDiagnosticService history = new TunerAllocationDiagnosticService())
+        {
+            history.offer(new TunerAllocationDecision(900, CONTEXT, tuner.getId(), TunerAllocationDecision.Outcome.MOVED,
+                TunerAllocationDecision.Reason.SPARE_TUNER, 851_100_000L, 12_500L, 850_000_000L,
+                851_000_000L, 851_000_000L, 2_400_000L, 0L, null, null, null,
+                List.of(new TunerAllocationDecision.Candidate(tuner.getId(),
+                    TunerAllocationDecision.Reason.SPARE_TUNER, 100_000L, 2_000_000_000L))));
+            TunerAllocationMonitorService service = new TunerAllocationMonitorService(() -> List.of(tuner),
+                List::of, List::of, history, () -> 1_000, receivers::get);
+            var original = service.snapshot();
+            String fallback = original.tuners().getFirst().name();
+            receivers.set(Map.of(tuner.getId(), new TunerAdministrationService.ReceiverReference(
+                "tuner-" + "a".repeat(32), "Roof antenna")));
+            var named = service.snapshot();
+            assertNotSame(original, named, "nickname changes invalidate the view even within the cache interval");
+            assertEquals("Roof antenna", named.tuners().getFirst().name());
+            assertEquals("Roof antenna", named.decisions().getFirst().tunerName());
+            assertEquals("Roof antenna", named.decisions().getFirst().candidates().getFirst().tunerName());
+            assertEquals(original.tuners().getFirst().id(), named.tuners().getFirst().id());
+            assertEquals(original.decisions().getFirst().tunerId(), named.decisions().getFirst().tunerId());
+            assertEquals(original.tuners().getFirst().frequencyHz(), named.tuners().getFirst().frequencyHz());
+            assertSame(named, service.snapshot(), "unchanged labels still reuse the shared projection");
+            assertEquals(fallback, original.tuners().getFirst().name(), "previous snapshots remain immutable");
+
+            receivers.set(Map.of());
+            var cleared = service.snapshot();
+            assertEquals(fallback, cleared.tuners().getFirst().name());
+            assertEquals(fallback, cleared.decisions().getFirst().tunerName());
+            assertEquals(fallback, cleared.decisions().getFirst().candidates().getFirst().tunerName());
+            assertFalse(ApiHttpResponse.normalizePayload(cleared).toString().contains("private-native-receiver"));
+            assertEquals("Roof antenna", named.tuners().getFirst().name());
+        }
+    }
 
     @Test void unionCoverageUsesRuntimeCentersFullWidthsDcAndLimitsAndKeepsHistoryFrozen() throws Exception
     {

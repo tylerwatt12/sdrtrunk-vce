@@ -30,6 +30,7 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerController;
 import io.github.dsheirer.spectrum.NativeBufferManager;
 import io.github.dsheirer.util.concurrent.BoundedSpscReferenceQueue;
+import io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -45,6 +46,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -75,6 +77,7 @@ public final class TunerDiagnosticService implements AutoCloseable
     private final ProcessorFactory mProcessorFactory;
     private final IdentityHashMap<Object, RuntimeIdentity> mRuntimeIdentities = new IdentityHashMap<>();
     private final AtomicLong mNextGeneration = new AtomicLong();
+    private volatile Supplier<Map<String,ReceiverReference>> mReceiverReferences = Map::of;
     private Session mActiveSession;
     private boolean mClosed;
 
@@ -92,6 +95,12 @@ public final class TunerDiagnosticService implements AutoCloseable
     {
         mTargetSource = Objects.requireNonNull(targetSource, "Tuner target source cannot be null");
         mProcessorFactory = Objects.requireNonNull(processorFactory, "Diagnostic processor factory cannot be null");
+    }
+
+    /** Display metadata is supplied after inventory construction; diagnostics never change allocation names. */
+    public void setReceiverReferences(Supplier<Map<String,ReceiverReference>> receiverReferences)
+    {
+        mReceiverReferences = Objects.requireNonNull(receiverReferences);
     }
 
     /** Lists live tuners serving channels and tuners explicitly held in Setup. */
@@ -333,6 +342,7 @@ public final class TunerDiagnosticService implements AutoCloseable
 
         IdentityHashMap<Object, Boolean> seen = new IdentityHashMap<>();
         List<TargetSnapshot> snapshots = new ArrayList<>(supplied.size());
+        Map<String,ReceiverReference> receivers = mReceiverReferences.get();
 
         for(AvailableTarget available: supplied)
         {
@@ -361,9 +371,13 @@ public final class TunerDiagnosticService implements AutoCloseable
                     createRuntimeIdentity());
                 String tunerClass = available.tunerClass() != null ? available.tunerClass().toString() :
                     TunerClass.UNKNOWN.toString();
-                String name = displayIdentity(available.name(), tunerClass);
+                ReceiverReference receiver = available.receiverIdentity() != null ?
+                    receivers.get(available.receiverIdentity()) : null;
+                String nickname = receiver != null ? displayIdentity(receiver.nickname(), null) : null;
+                String name = nickname != null ? nickname : displayIdentity(available.name(), tunerClass);
                 String serial = displayIdentity(available.serial(), "Unknown");
-                String label = name.toLowerCase().contains(serial.toLowerCase()) ? name : name + " · " + serial;
+                String label = nickname != null || name.toLowerCase().contains(serial.toLowerCase()) ?
+                    name : name + " · " + serial;
                 Target target = new Target(identity.targetId(), label, name, serial, available.tunerType().name(),
                     centerFrequency, sampleRate, usableBandwidth, centerExclusionHalfBandwidth, activeChannelCount);
                 snapshots.add(new TargetSnapshot(available.identity(), controller, available.activeChannelCount(),
@@ -445,7 +459,7 @@ public final class TunerDiagnosticService implements AutoCloseable
                     available.add(new AvailableTarget(tuner, candidate.getTunerClass(), tunerType,
                         tuner.getPreferredName(), tuner.getUniqueID(), controller,
                         channelManager::getTunerChannelCount,
-                        candidate::isAvailableForDiagnostics, queueControl));
+                        candidate::isAvailableForDiagnostics, queueControl, candidate.getId()));
                 }
             }
             catch(RuntimeException exception)
@@ -1551,8 +1565,16 @@ public final class TunerDiagnosticService implements AutoCloseable
     record AvailableTarget(Object identity, TunerClass tunerClass, TunerType tunerType, String name, String serial,
                            TunerController controller,
                            ChannelCount activeChannelCount, DiagnosticAvailability diagnosticAvailable,
-                           ReceiverQueueControl receiverQueueControl)
+                           ReceiverQueueControl receiverQueueControl, String receiverIdentity)
     {
+        AvailableTarget(Object identity, TunerClass tunerClass, TunerType tunerType, String name, String serial,
+                        TunerController controller, ChannelCount activeChannelCount,
+                        DiagnosticAvailability diagnosticAvailable, ReceiverQueueControl receiverQueueControl)
+        {
+            this(identity, tunerClass, tunerType, name, serial, controller, activeChannelCount,
+                diagnosticAvailable, receiverQueueControl, null);
+        }
+
         AvailableTarget(Object identity, TunerClass tunerClass, TunerController controller,
                         ChannelCount activeChannelCount)
         {

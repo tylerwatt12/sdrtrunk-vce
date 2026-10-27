@@ -29,6 +29,7 @@ import io.github.dsheirer.stats.activity.ReceiverActivityService;
 import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import io.github.dsheirer.stats.activity.ReceiverHealthIncidentRecord;
 import io.github.dsheirer.support.WebDiagnosticLogService;
+import io.github.dsheirer.web.tuner.TunerAdministrationService;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.nio.file.FileStore;
@@ -89,6 +90,7 @@ public final class ReceiverHealthService implements AutoCloseable
     private volatile AudioStreamingManager mAudioStreamingManager;
     private volatile LongSupplier mRadioResolveAcceptedCalls = () -> 0L;
     private volatile Supplier<Map<String,Object>> mWebStatusSupplier = Map::of;
+    private volatile Supplier<Map<String,TunerAdministrationService.ReceiverReference>> mReceiverReferences = Map::of;
     private volatile Supplier<List<ControlChannelQualityMonitor>> mControlQualitySupplier;
     private volatile Map<String,Object> mSnapshot;
     private volatile WebDiagnosticLogService mWebDiagnosticLogService;
@@ -176,6 +178,12 @@ public final class ReceiverHealthService implements AutoCloseable
     public void setWebStatusSupplier(Supplier<Map<String,Object>> webStatusSupplier)
     {
         mWebStatusSupplier = webStatusSupplier != null ? webStatusSupplier : Map::of;
+    }
+
+    /** Labels are projected from one cached nickname snapshot on the health observer, never from a receiver callback. */
+    public void setReceiverReferences(Supplier<Map<String,TunerAdministrationService.ReceiverReference>> supplier)
+    {
+        mReceiverReferences = supplier != null ? supplier : Map::of;
     }
 
     void setControlQualitySupplier(Supplier<List<ControlChannelQualityMonitor>> supplier)
@@ -315,6 +323,14 @@ public final class ReceiverHealthService implements AutoCloseable
     private void collectTuners(long now, List<Map<String,Object>> measurements,
                                ReceiverHealthDiagnosticCore.Sample core)
     {
+        collectTuners(now, measurements, core, mTunerManager != null ?
+            mTunerManager.getDiscoveredTunerRegistry().snapshot() : List.of());
+    }
+
+    /** Projects one inventory snapshot without opening settings stores or changing native counter ownership. */
+    void collectTuners(long now, List<Map<String,Object>> measurements,
+                       ReceiverHealthDiagnosticCore.Sample core, List<DiscoveredTuner> tuners)
+    {
         List<Map<String,Object>> tunerRows = new ArrayList<>();
         List<Map<String,Object>> usbRows = new ArrayList<>();
         List<Map<String,Object>> receiverRows = new ArrayList<>();
@@ -322,8 +338,7 @@ public final class ReceiverHealthService implements AutoCloseable
         List<Map<String,Object>> channelRows = new ArrayList<>();
         Set<String> activeUsbScopes = new HashSet<>();
         Set<String> activeTunerScopes = new HashSet<>();
-        List<DiscoveredTuner> tuners = mTunerManager != null ?
-            mTunerManager.getDiscoveredTunerRegistry().snapshot() : List.of();
+        Map<String,TunerAdministrationService.ReceiverReference> references = receiverReferences();
         if(core != null) core.tunersObserved(tuners.size());
 
         for(DiscoveredTuner discovered: tuners)
@@ -337,8 +352,13 @@ public final class ReceiverHealthService implements AutoCloseable
             activeTunerScopes.add(scope);
             TunerStatus tunerStatus = discovered.getTunerStatus();
             Tuner tuner = discovered.getTuner();
-            String preferredName = tuner != null ? tuner.getPreferredName() : null;
-            String display = preferredName != null && !preferredName.isBlank() ? preferredName : scope;
+            var reference = discoveredId != null ? references.get(discoveredId) : null;
+            String display = reference != null ? reference.nickname() : null;
+            if(display == null || display.isBlank())
+            {
+                String preferredName = tuner != null ? tuner.getPreferredName() : null;
+                display = preferredName != null && !preferredName.isBlank() ? preferredName : scope;
+            }
             String uniqueId = tuner != null ? tuner.getUniqueID() : null;
             String serial = uniqueId != null ? uniqueId : "";
             TunerController controller = tuner != null ? tuner.getTunerController() : null;
@@ -490,6 +510,20 @@ public final class ReceiverHealthService implements AutoCloseable
         measurements.add(section("receiver-queues", "Incoming radio data", receiverRows));
         measurements.add(section("channelizer", "Channel separation", channelizerRows));
         measurements.add(section("channels", "Per-channel processing", channelRows));
+    }
+
+    private Map<String,TunerAdministrationService.ReceiverReference> receiverReferences()
+    {
+        try
+        {
+            Map<String,TunerAdministrationService.ReceiverReference> references = mReceiverReferences.get();
+            return references != null ? references : Map.of();
+        }
+        catch(RuntimeException ignored)
+        {
+            // Missing labels must not hide tuner health measurements or disturb their native identities.
+            return Map.of();
+        }
     }
 
     private void collectUsb(long now, String scope, String display, Tuner tuner, boolean receiving,

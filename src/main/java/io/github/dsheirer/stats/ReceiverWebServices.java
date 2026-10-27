@@ -218,7 +218,11 @@ public final class ReceiverWebServices implements AutoCloseable
             constructed.add(mTunerSettingsService);
             mTunerAdministrationService = new TunerAdministrationService(tunerManager, mTunerDiagnosticService,
                 mTunerSettingsService, receiverNicknames);
-            mTunerAllocationMonitorService = new TunerAllocationMonitorService(tunerManager, channelProcessingManager);
+            mTunerDiagnosticService.setReceiverReferences(mTunerAdministrationService::displayReceiverReferences);
+            if(mChannelAdministrationService != null)
+                mChannelAdministrationService.setTunerDisplayNames(mTunerAdministrationService::preferredTunerLabels);
+            mTunerAllocationMonitorService = new TunerAllocationMonitorService(tunerManager, channelProcessingManager,
+                mTunerAdministrationService::displayReceiverReferences);
             mTunerAllocationFrequencySeedService = new TunerAllocationFrequencySeedService(mDatabase, tunerManager,
                 channelProcessingManager);
             constructed.add(mTunerAllocationFrequencySeedService);
@@ -250,6 +254,7 @@ public final class ReceiverWebServices implements AutoCloseable
             mWebReceiverSettingsService = new WebReceiverSettingsService(mUserPreferences.getNowPlayingPreference());
             mReceiverHealthService = new ReceiverHealthService(userPreferences, tunerManager,
                 channelProcessingManager, activityLogService);
+            mReceiverHealthService.setReceiverReferences(mTunerAdministrationService::displayReceiverReferences);
             constructed.add(mReceiverHealthService);
             TopicAlertService topicAlerts = null;
             PushDeliveryService pushDelivery = null;

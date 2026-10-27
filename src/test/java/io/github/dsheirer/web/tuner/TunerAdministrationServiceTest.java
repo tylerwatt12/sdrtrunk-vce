@@ -40,6 +40,38 @@ class TunerAdministrationServiceTest
     Path mTemporaryDirectory;
 
     @Test
+    void preferredTunerLabelsUseNicknamesWithoutChangingCanonicalValuesAndRejectAmbiguousNames() throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve("labels.sqlite");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            ReceiverNicknameSchema.initializeMissing(connection);
+        }
+        ReceiverNicknameStore nicknames = new ReceiverNicknameStore(database);
+        FakeDiscoveredTuner first = new FakeDiscoveredTuner("first-device");
+        FakeDiscoveredTuner duplicate = new FakeDiscoveredTuner("second-device");
+        first.install(new TestTuner(first) { @Override public String getPreferredName() { return "Canonical device"; } });
+        duplicate.install(new TestTuner(duplicate) { @Override public String getPreferredName() { return "Canonical device"; } });
+        AtomicReference<List<DiscoveredTuner>> inventory = new AtomicReference<>(List.of(first));
+        TunerAdministrationService service = new TunerAdministrationService(inventory::get,
+            () -> tuner -> null, null, tuner -> List.of(), nicknames);
+        assertEquals(Map.of("Canonical device", "Canonical device"), service.preferredTunerLabels());
+        service.setNickname(first, "Roof");
+        assertEquals(Map.of("Canonical device", "Roof"), service.preferredTunerLabels());
+        assertEquals("Canonical device", first.getTuner().getPreferredName());
+        service.setNickname(first, "Desk");
+        assertEquals(Map.of("Canonical device", "Desk"), service.preferredTunerLabels());
+        inventory.set(List.of(first, duplicate));
+        assertEquals(Map.of(), service.preferredTunerLabels(), "one canonical choice must not promise one of two different receivers");
+        service.setNickname(duplicate, "Desk");
+        assertEquals(Map.of("Canonical device", "Desk"), service.preferredTunerLabels());
+        inventory.set(List.of(first));
+        service.setNickname(first, "");
+        assertEquals(Map.of("Canonical device", "Canonical device"), service.preferredTunerLabels());
+    }
+
+    @Test
     void nicknamesSurviveReceiverRediscoveryWithoutChangingItsConfiguredName() throws Exception
     {
         Path database = mTemporaryDirectory.resolve("receiver.sqlite");
@@ -103,6 +135,39 @@ class TunerAdministrationServiceTest
         assertFalse(wire.contains("/private/"));
         inventory.set(List.of(recording));
         assertEquals(Map.of(), service.receiverReferences(), "removed receivers must disappear from Live labels");
+    }
+
+    @Test
+    void recordingNicknameUsesDisplayReferencesWhilePhysicalLiveReferencesKeepRecordingPathsExcluded() throws Exception
+    {
+        Path database = mTemporaryDirectory.resolve("recording-nicknames.sqlite");
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            SdrTrunkDatabaseSchema.create(connection);
+            ReceiverNicknameSchema.initializeMissing(connection);
+        }
+        ReceiverNicknameStore nicknames = new ReceiverNicknameStore(database);
+        RecordingTunerConfiguration configuration = new RecordingTunerConfiguration("recording-id");
+        configuration.setPath("/private/receiver/recording.wav");
+        DiscoveredRecordingTuner recording = new DiscoveredRecordingTuner(configuration);
+        TunerAdministrationService service = new TunerAdministrationService(() -> List.of(recording),
+            () -> tuner -> { throw new AssertionError("Display references must not project diagnostics"); },
+            null, tuner -> List.of(), nicknames);
+        service.setNickname(recording, "Training recording");
+        assertEquals(Map.of(), service.receiverReferences(), "physical Live sources must still exclude recordings");
+        var references = service.displayReceiverReferences();
+        assertSame(references, service.displayReceiverReferences());
+        assertEquals(1, references.size());
+        var receiver = references.get(recording.getId());
+        assertEquals(TunerAdministrationService.opaqueId(recording), receiver.id());
+        assertEquals("Training recording", receiver.nickname());
+        String wire = ApiHttpResponse.normalizePayload(references.values()).toString();
+        assertFalse(wire.contains("/private/"));
+        assertFalse(wire.contains("recording.wav"));
+        service.setNickname(recording, " ");
+        assertNull(service.displayReceiverReferences().get(recording.getId()).nickname());
+        assertEquals("Training recording", receiver.nickname(), "cached display snapshots remain immutable");
+        assertEquals(Map.of(), service.receiverReferences());
     }
 
     @Test

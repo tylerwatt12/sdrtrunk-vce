@@ -24,9 +24,11 @@ import io.github.dsheirer.source.tuner.ITunerErrorListener;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.TunerType;
+import io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference;
 import java.time.Duration;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
@@ -43,6 +45,52 @@ import org.junit.jupiter.api.Test;
 
 class TunerDiagnosticServiceTest
 {
+    @Test
+    void nicknameUpdatesTargetAndOpenSpectrumLabelsWithoutChangingRuntimeIdentityOrReceiverWork()
+    {
+        FakeController controller = new FakeController(851_000_000L, 10_000_000.0);
+        FakeProcessorFactory processors = new FakeProcessorFactory();
+        String nativeId = "private-native-receiver";
+        var available = new TunerDiagnosticService.AvailableTarget(new Object(), TunerClass.AIRSPY,
+            TunerType.AIRSPY_R820T, "Airspy R2", "SERIAL123", controller, () -> 1, () -> true,
+            TunerDiagnosticService.ReceiverQueueControl.UNSUPPORTED, nativeId);
+        AtomicReference<Map<String,ReceiverReference>> receivers = new AtomicReference<>(Map.of());
+        AtomicInteger receiverReads = new AtomicInteger();
+        try(TunerDiagnosticService service = service(List.of(available), processors))
+        {
+            service.setReceiverReferences(() -> { receiverReads.incrementAndGet(); return receivers.get(); });
+            var original = service.targets().getFirst();
+            assertEquals("Airspy R2 · SERIAL123", original.label());
+            receivers.set(Map.of(nativeId, new ReceiverReference("tuner-" + "a".repeat(32), "Roof antenna")));
+            var renamed = service.targets().getFirst();
+            assertEquals("Roof antenna", renamed.label());
+            assertEquals("Roof antenna", renamed.name());
+            assertEquals("SERIAL123", renamed.serial(), "hardware identity remains separate display metadata");
+            assertEquals(original.targetId(), renamed.targetId(), "nickname cannot replace the diagnostic routing key");
+            var opened = service.tryOpen(renamed.targetId());
+            assertEquals(TunerDiagnosticService.OpenStatus.OPEN, opened.status());
+            var before = opened.session().state();
+            assertEquals("Roof antenna", before.label());
+            int beforeSample = receiverReads.get();
+            controller.emit(new EmptyNativeBuffer(123));
+            assertEquals(beforeSample, receiverReads.get(), "sample delivery must never resolve display nicknames");
+
+            receivers.set(Map.of(nativeId, new ReceiverReference("tuner-" + "a".repeat(32), "Desk antenna")));
+            var updated = opened.session().state();
+            assertEquals("Desk antenna", updated.label());
+            assertTrue(updated.revision() > before.revision());
+            assertEquals(before.generation(), updated.generation());
+            receivers.set(Map.of());
+            var cleared = opened.session().state();
+            assertEquals(original.label(), cleared.label());
+            assertEquals("Airspy R2", service.targets().getFirst().name());
+            assertEquals(1, processors.createCount.get(), "display changes cannot recreate the diagnostic producer");
+            assertEquals(1, controller.addCount.get());
+            assertFalse(opened.session().isClosed());
+            assertEquals(original.centerFrequencyHz(), cleared.centerFrequencyHz());
+        }
+    }
+
     @Test
     void inventoryTargetProjectionEnumeratesOnceAndNeverKeepsARemovedRuntimeIdentity()
     {

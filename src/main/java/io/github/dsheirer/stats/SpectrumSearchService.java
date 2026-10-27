@@ -825,7 +825,7 @@ public final class SpectrumSearchService implements AutoCloseable
                     "Choose an available receiver";
             Long center = item.frequencyHz() != null ? item.frequencyHz() : item.configuredFrequencyHz();
             if(recording && center != null) { minimum = Math.max(1, center-bandwidth/2); maximum = center+bandwidth/2; }
-            targets.add(new SearchTuner(item.id(), item.name(), eligible, takeoverAllowed, reason, channelCount,
+            targets.add(new SearchTuner(item.id(), item.displayName(), eligible, takeoverAllowed, reason, channelCount,
                 locked, item.operatorState(), bandwidth, minimum, maximum,
                 center, recording ? "recording" : "receiver", recording));
         }

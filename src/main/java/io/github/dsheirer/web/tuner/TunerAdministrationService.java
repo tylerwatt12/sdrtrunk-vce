@@ -34,6 +34,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -46,6 +48,7 @@ public final class TunerAdministrationService
     private final Function<DiscoveredTuner,Object> mSettingsDescription;
     private final ReceiverNicknameStore mNicknames;
     private volatile ReferenceSnapshot mReceiverReferences;
+    private volatile ReferenceSnapshot mDisplayReceiverReferences;
 
     public TunerAdministrationService(TunerManager manager, TunerDiagnosticService diagnostics,
                                       TunerSettingsService settings)
@@ -130,9 +133,20 @@ public final class TunerAdministrationService
      */
     public Map<String,ReceiverReference> receiverReferences()
     {
+        return receiverReferences(false);
+    }
+
+    /** Display-only references include recording receivers. Native recording paths remain internal map keys. */
+    public Map<String,ReceiverReference> displayReceiverReferences()
+    {
+        return receiverReferences(true);
+    }
+
+    private Map<String,ReceiverReference> receiverReferences(boolean includeRecordings)
+    {
         List<DiscoveredTuner> inventory = mInventory.get();
         Map<String,String> nicknames = mNicknames != null ? mNicknames.snapshot() : Map.of();
-        ReferenceSnapshot cached = mReceiverReferences;
+        ReferenceSnapshot cached = includeRecordings ? mDisplayReceiverReferences : mReceiverReferences;
         if(cached != null && cached.inventory().equals(inventory) && cached.nicknames() == nicknames)
         {
             return cached.references();
@@ -142,8 +156,8 @@ public final class TunerAdministrationService
         {
             try
             {
-                if(discovered instanceof DiscoveredRecordingTuner ||
-                    discovered.getTunerClass() == TunerClass.RECORDING_TUNER)
+                if(!includeRecordings && (discovered instanceof DiscoveredRecordingTuner ||
+                    discovered.getTunerClass() == TunerClass.RECORDING_TUNER))
                 {
                     continue;
                 }
@@ -158,7 +172,9 @@ public final class TunerAdministrationService
             }
         }
         Map<String,ReceiverReference> snapshot = Map.copyOf(references);
-        mReceiverReferences = new ReferenceSnapshot(List.copyOf(inventory), nicknames, snapshot);
+        ReferenceSnapshot next = new ReferenceSnapshot(List.copyOf(inventory), nicknames, snapshot);
+        if(includeRecordings) mDisplayReceiverReferences = next;
+        else mReceiverReferences = next;
         return snapshot;
     }
 
@@ -167,6 +183,34 @@ public final class TunerAdministrationService
 
     public record ReceiverReference(String id, String nickname) { }
     public record Nickname(String nickname) { }
+
+    /** Labels for channel-editor choices. Canonical preferred names remain the submitted values. */
+    public Map<String,String> preferredTunerLabels()
+    {
+        Map<String,String> labels = new LinkedHashMap<>();
+        Set<String> ambiguous = new HashSet<>();
+        Map<String,String> nicknames = mNicknames != null ? mNicknames.snapshot() : Map.of();
+        for(DiscoveredTuner discovered: mInventory.get())
+        {
+            try
+            {
+                if(!discovered.isAvailable() || !discovered.hasTuner()) continue;
+                String value = discovered.getTuner().getPreferredName();
+                if(value == null || value.isBlank()) continue;
+                String nickname = nicknames.get(opaqueId(discovered));
+                String label = nickname != null && !nickname.isBlank() ? nickname : value;
+                String previous = labels.putIfAbsent(value, label);
+                if(previous != null && !previous.equals(label)) ambiguous.add(value);
+            }
+            catch(RuntimeException ignored)
+            {
+                // A disappearing receiver cannot prevent loading the remaining configuration choices.
+            }
+        }
+        // One canonical value cannot promise a specific member of an ambiguously named device group.
+        ambiguous.forEach(labels::remove);
+        return Map.copyOf(labels);
+    }
 
     /**
      * Discovered physical SDR profiles for an external RF planner.  Disabled devices use their saved sample rates;
@@ -347,5 +391,12 @@ public final class TunerAdministrationService
                        List<TunerSettingsService.ChannelInfo> stoppedChannels,
                        TunerSettingsService.RestoreResult restoreResult, String errorMessage,
                        RecordingTunerController.PlaybackStatus recordingPlayback,
-                       TunerSettingsService.OperationStatus operation, String nickname) { }
+                       TunerSettingsService.OperationStatus operation, String nickname)
+    {
+        /** Display only; the hardware name remains unchanged for preferred-tuner matching and troubleshooting. */
+        public String displayName()
+        {
+            return nickname != null && !nickname.isBlank() ? nickname : name;
+        }
+    }
 }
