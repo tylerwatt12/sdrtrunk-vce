@@ -117,7 +117,7 @@ public final class ReceiverActivityMaintenance
                     "Database check stopped without a final result" : checkOk() ?
                     "Database check passed" : "Database check failed");
                 case RESET_STATS -> sb.append(deletionOutcome == DeletionOutcome.INTERRUPTED ?
-                    "Reset stopped; completed batches remain removed" : "Lifetime stats reset");
+                    "Reset stopped; completed steps remain cleared" : "Lifetime stats reset");
                 case CLEAR_CHANNEL_STATS -> sb.append(deletionOutcome == DeletionOutcome.INTERRUPTED ?
                     "Channel cleanup stopped; completed batches remain removed" : "Channel statistics cleared");
                 case DELETE_RETAINED_STATS -> sb.append(switch(deletionOutcome)
@@ -347,16 +347,23 @@ public final class ReceiverActivityMaintenance
         {
             ReceiverActivityScopedDeletion.Batch.Position position = batch.position();
             long started = System.nanoTime();
+            long committedBefore = request.progress().batchesCompleted();
             try
             {
                 ReceiverActivityScopedDeletion.Batch active = batch;
-                int changed = inTransaction(connection, () -> active.runPass(connection), historyGeneration,
-                    Integer::longValue);
-                request.committedBatch(changed, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+                if(reset && active.fastResetTablePass() && pragma(connection, "secure_delete") == 0)
+                    runFastResetPass(connection, active, request, started, historyGeneration);
+                else
+                {
+                    inTransaction(connection, () -> active.runPass(connection), historyGeneration,
+                        Integer::longValue, changed -> request.committedBatch(changed,
+                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)));
+                }
             }
             catch(SQLException | RuntimeException failure)
             {
-                batch.restore(position);
+                //A failed FK restoration can follow a durable table clear. Its progress must remain truthful.
+                if(request.progress().batchesCompleted() == committedBefore) batch.restore(position);
                 request.preparationDuration(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
                 request.setResumable(!reset);
                 throw failure;
@@ -373,6 +380,69 @@ public final class ReceiverActivityMaintenance
             return deletionResult(request, databasePath, before, walBefore, batch.outcome());
         }
         return null;
+    }
+
+    /** The approved statistics pause permits one SQLite whole-table clear; normal cleanup stays row-bounded. */
+    private static void runFastResetPass(Connection connection, ReceiverActivityScopedDeletion.Batch batch,
+        StatsDatabaseMaintenanceRequest request, long started, AtomicLong historyGeneration) throws SQLException
+    {
+        if(!connection.getAutoCommit()) throw new SQLException("Full reset requires an idle writer connection");
+        if(pragma(connection, "foreign_keys") != 1)
+            throw new UnsafeResetConnectionException(new SQLException("Foreign-key enforcement was not enabled"));
+        Throwable operationFailure = null;
+        try
+        {
+            setForeignKeys(connection, false);
+            if(pragma(connection, "foreign_keys") != 0)
+                throw new SQLException("SQLite could not prepare a whole-table reset");
+            inTransaction(connection, () -> batch.runPass(connection, true), historyGeneration,
+                Integer::longValue, changed -> request.committedBatch(changed,
+                    TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)));
+        }
+        catch(SQLException | RuntimeException failure)
+        {
+            operationFailure = failure;
+            throw failure;
+        }
+        finally
+        {
+            //A failed rollback/autocommit restoration leaves an unknown transaction. Closing is the only safe exit.
+            if(operationFailure instanceof UnsafeResetConnectionException unsafe) throw unsafe;
+            try
+            {
+                if(!connection.getAutoCommit())
+                {
+                    connection.rollback();
+                    connection.setAutoCommit(true);
+                }
+                setForeignKeys(connection, true);
+                if(pragma(connection, "foreign_keys") != 1)
+                    throw new SQLException("SQLite did not restore foreign-key enforcement");
+            }
+            catch(SQLException restorationFailure)
+            {
+                UnsafeResetConnectionException fatal = new UnsafeResetConnectionException(restorationFailure);
+                if(operationFailure != null) fatal.addSuppressed(operationFailure);
+                throw fatal;
+            }
+        }
+    }
+
+    private static void setForeignKeys(Connection connection, boolean enabled) throws SQLException
+    {
+        try(Statement statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA main.foreign_keys=" + (enabled ? "ON" : "OFF"));
+        }
+    }
+
+    /** The writer must close this connection before releasing the administrator's reset pause. */
+    static final class UnsafeResetConnectionException extends SQLException
+    {
+        UnsafeResetConnectionException(SQLException cause)
+        {
+            super("Statistics stopped because SQLite connection safety could not be verified. Restart VCE before saving new statistics", cause);
+        }
     }
 
     static Result interruptRetainedStats(Path databasePath, StatsDatabaseMaintenanceRequest request)
@@ -436,6 +506,12 @@ public final class ReceiverActivityMaintenance
     private static <T> T inTransaction(Connection connection, SqlOperation<T> operation, AtomicLong historyGeneration,
                                         ToLongFunction<T> deletedRows) throws SQLException
     {
+        return inTransaction(connection, operation, historyGeneration, deletedRows, null);
+    }
+
+    private static <T> T inTransaction(Connection connection, SqlOperation<T> operation, AtomicLong historyGeneration,
+        ToLongFunction<T> deletedRows, java.util.function.Consumer<T> onCommitted) throws SQLException
+    {
         boolean previousAutoCommit = connection.getAutoCommit();
 
         if(!previousAutoCommit)
@@ -444,33 +520,44 @@ public final class ReceiverActivityMaintenance
         }
 
         connection.setAutoCommit(false);
+        boolean safeToEndTransaction = false;
 
         try
         {
             T result = operation.run();
             connection.commit();
+            safeToEndTransaction = true;
             if(historyGeneration != null && deletedRows.applyAsLong(result) > 0)
             {
                 historyGeneration.incrementAndGet();
             }
+            if(onCommitted != null) onCommitted.accept(result);
             return result;
         }
         catch(SQLException | RuntimeException e)
         {
+            safeToEndTransaction = false;
             try
             {
                 connection.rollback();
+                safeToEndTransaction = true;
             }
             catch(SQLException rollbackException)
             {
-                e.addSuppressed(rollbackException);
+                UnsafeResetConnectionException unsafe = new UnsafeResetConnectionException(rollbackException);
+                unsafe.addSuppressed(e);
+                throw unsafe;
             }
 
             throw e;
         }
         finally
         {
-            connection.setAutoCommit(true);
+            if(safeToEndTransaction)
+            {
+                try { connection.setAutoCommit(true); }
+                catch(SQLException restorationFailure) { throw new UnsafeResetConnectionException(restorationFailure); }
+            }
         }
     }
 
@@ -530,8 +617,8 @@ public final class ReceiverActivityMaintenance
         long[] nextSpaceCheck = {0};
         try(Connection connection = SdrTrunkDatabase.openHistoryRead(databasePath))
         {
-            //Full checks revisit B-tree and overflow pages. The default ~2MiB cache amplified reads on a31GiB
-            //history file; cap this diagnostic reader at64MiB without changing the observation writer's cache.
+            //Full checks revisit B-tree and overflow pages. Bound this diagnostic reader's cache at 64 MiB
+            //independently of the observation writer's cache.
             try(Statement statement = connection.createStatement()) { statement.execute("PRAGMA main.cache_size=-65536"); }
             ProgressHandler.setHandler(connection, 20_000, new ProgressHandler()
             {
@@ -628,7 +715,8 @@ public final class ReceiverActivityMaintenance
 
     private static boolean resetResourcesReady(Connection connection, Path configuration) throws SQLException, IOException
     {
-        if(Files.getFileStore(activityPath(configuration)).getUsableSpace() < FREE_SPACE_RESERVE)
+        if(activityPath(configuration) != null &&
+            Files.getFileStore(activityPath(configuration)).getUsableSpace() < FREE_SPACE_RESERVE)
             throw new IOException("Reset stopped to preserve free disk space. Completed batches remain removed. " +
                 "Free disk space and start a new reset");
         //A separate long-lived reader may pin old history even though statistics admission is paused.
@@ -666,6 +754,15 @@ public final class ReceiverActivityMaintenance
 
     private static void completeReset(Connection connection) throws SQLException
     {
+        try(Statement statement = connection.createStatement();
+            ResultSet violations = statement.executeQuery("PRAGMA main.foreign_key_check"))
+        {
+            if(violations.next()) throw new SQLException("Reset could not verify saved history relationships");
+        }
+        catch(SQLException verificationFailure)
+        {
+            throw new UnsafeResetConnectionException(verificationFailure);
+        }
         updateStatus(connection, "last_stats_reset_ms");
         for(String key: List.of(ReceiverActivitySchema.RADIO_SYSTEM_METRICS_STARTED_AT_KEY,
             ReceiverActivitySchema.TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,

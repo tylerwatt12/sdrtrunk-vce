@@ -133,6 +133,24 @@ class RetainedStatisticsAdminHttpControllerTest
     }
 
     @Test
+    void otaAliasActionRejectsIncompatibleScopeBeforeCacheDispatch() throws Exception
+    {
+        Session admin = login();
+        String path = RetainedStatisticsAdminHttpController.PATH + "/deletions";
+        for(List<String> values: List.of(
+            List.of("dmr:tier3:small:1", "v1-r-abcde-123-750003"),
+            List.of("p25:abcde:123", "v1-r-x-x-16777215"),
+            List.of("not-a-system", "v1-r-x-x-750003")))
+        {
+            String body = MAPPER.writeValueAsString(Map.of("request_id", UUID.randomUUID().toString(), "target",
+                Map.of("kind", "talker_alias", "radio_system_key", values.get(0), "identity_key", values.get(1),
+                    "expected_alias", "Observed name")));
+            assertEquals(400, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        }
+        assertEquals(0, mDispatchCount.get());
+    }
+
+    @Test
     void otaAliasActionUsesExactRadioAndRetryAdmission() throws Exception
     {
         Session admin = login();
@@ -146,6 +164,28 @@ class RetainedStatisticsAdminHttpControllerTest
             "v1-r-abcde-123-750003", "Observed name"), mDispatched.get().deletionTarget());
         assertEquals(202, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
         assertEquals(1, mDispatchCount.get());
+    }
+
+    @Test
+    void otaAliasActionAccepts160SupplementaryCodePointsAndRejectsOverlongNames() throws Exception
+    {
+        Session admin = login();
+        String path = RetainedStatisticsAdminHttpController.PATH + "/deletions";
+        String name = "\uD83D\uDE80".repeat(160);
+        String body = MAPPER.writeValueAsString(Map.of("request_id", UUID.randomUUID().toString(), "target", Map.of(
+            "kind", "talker_alias", "radio_system_key", "p25:abcde:123",
+            "identity_key", "v1-r-abcde-123-750003", "expected_alias", name)));
+        assertEquals(202, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        assertEquals(new StatsDatabaseMaintenanceRequest.TalkerAlias("p25:abcde:123",
+            "v1-r-abcde-123-750003", name), mDispatched.get().deletionTarget());
+        for(String invalid: List.of("X".repeat(161), "\uD83D\uDE80".repeat(161),
+            "X".repeat(160) + "\uD83D\uDE80"))
+        {
+            body = MAPPER.writeValueAsString(Map.of("request_id", UUID.randomUUID().toString(), "target", Map.of(
+                "kind", "talker_alias", "radio_system_key", "p25:abcde:123",
+                "identity_key", "v1-r-abcde-123-750003", "expected_alias", invalid)));
+            assertEquals(400, send(mutation(path, admin).POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        }
     }
 
     @Test

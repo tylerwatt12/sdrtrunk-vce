@@ -11,6 +11,7 @@ for (const presentation of presentations) {
     await page.setViewportSize(presentation.viewport);
     const fixture = await installSiteStyleApplication(page, presentation.theme);
     let alias = 'Observed unit name', submitted = null, finished = false, failed = false;
+    let statusCode = 200, postCount = 0;
     await page.route('**/api/v1/radio-systems/**/radios/**', route => route.fulfill({ json: { data: {
       protocol: 'P25', radio_system_key: systemKey, identity_key: radioKey, native_id: 30914,
       alias_name: 'Engine 4', last_talker_alias: alias, system_name: 'Metro Public Safety',
@@ -18,7 +19,12 @@ for (const presentation of presentations) {
       entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: radioKey }
     } } }));
     await page.route('**/api/v1/admin/retained-statistics/deletions**', route => {
-      if (route.request().method() === 'POST') submitted = route.request().postDataJSON();
+      if (route.request().method() === 'POST') {
+        submitted = route.request().postDataJSON();
+        postCount += 1;
+      } else if (statusCode !== 200) {
+        return route.fulfill({ status: statusCode, json: { error: { message: 'Job status unavailable.' } } });
+      }
       const state = failed ? 'failed' : finished ? 'succeeded' : 'running';
       if (finished) alias = null;
       return route.fulfill({ json: { data: { job_id: submitted.request_id, state, error: failed ? 'Alias update failed.' : null, outcome: finished ? 'deleted' : null } } });
@@ -52,6 +58,24 @@ for (const presentation of presentations) {
     await confirmation.getByRole('button', { name: 'Forget alias', exact: true }).click();
     await expect.poll(() => submitted.request_id).not.toBe(firstRequest);
     await expect(retry).toBeDisabled();
+    const secondRequest = submitted.request_id;
+    statusCode = 503;
+    const check = page.getByRole('button', { name: 'Check alias action', exact: true });
+    await expect(check).toBeEnabled();
+    statusCode = 404;
+    await check.click();
+    await expect(retry).toBeEnabled();
+    await expect(page.getByRole('alert')).toContainText('Action status is no longer available.');
+    expect(postCount).toBe(2);
+    statusCode = 200;
+    await retry.click();
+    await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect(postCount).toBe(2);
+    await retry.click();
+    await confirmation.getByRole('button', { name: 'Forget alias', exact: true }).click();
+    await expect.poll(() => submitted.request_id).not.toBe(secondRequest);
+    expect(postCount).toBe(3);
     finished = true;
     await expect(page.getByRole('button', { name: /forgetting alias|Forget OTA alias/ })).toHaveCount(0);
     await expect(page.locator('#content')).toContainText('17');

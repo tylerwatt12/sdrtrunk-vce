@@ -292,39 +292,6 @@ public final class DmrActivitySchema
         }
     }
 
-    public static int resetStats(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            int deleted = statement.executeUpdate("DELETE FROM " + TALKGROUP_TABLE);
-            return Math.addExact(deleted, statement.executeUpdate("DELETE FROM " + RADIO_TABLE));
-        }
-    }
-
-    public static int clearChannelStats(Connection connection, String configurationId) throws SQLException
-    {
-        if(configurationId == null || configurationId.isBlank())
-        {
-            return 0;
-        }
-
-        int deleted = 0;
-
-        for(String table: List.of(TALKGROUP_TABLE, RADIO_TABLE))
-        {
-            try(PreparedStatement statement = connection.prepareStatement("""
-                DELETE FROM %s
-                WHERE channel_id IN (SELECT id FROM receiver_channel WHERE configuration_id = ?)
-                """.formatted(table)))
-            {
-                statement.setString(1, configurationId);
-                deleted = Math.addExact(deleted, statement.executeUpdate());
-            }
-        }
-
-        return deleted;
-    }
-
     private static void upsertTalkgroup(Connection connection, long channelId,
                                         ReceiverActivityRecords.DmrConventionalCall call, long timestamp)
         throws SQLException

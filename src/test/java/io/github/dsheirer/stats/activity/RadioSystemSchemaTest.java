@@ -14,6 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
+import io.github.dsheirer.identifier.alias.TalkerAliasText;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -293,14 +294,27 @@ class RadioSystemSchemaTest
         try(Connection connection = open())
         {
             seedSystem(connection);
-            String overlong = "X".repeat(RadioSystemSchema.MAX_TALKER_ALIAS_CHARACTERS + 40);
+            String overlong = "X".repeat(TalkerAliasText.MAX_CODE_POINTS + 40);
             assertTrue(RadioSystemSchema.updateTalkerAlias(connection,
                 (int)scalar(connection, "SELECT id FROM receiver_channel"), 101,
                 ReceiverActivityRecords.P25Identity.ORDINARY, "  " + overlong + "  ", 1_100,
                 1_000, TrunkedIdentityDomain.STANDARD, null, null,
                 "dmr:channel:" + CONFIGURATION_ID));
-            assertEquals(RadioSystemSchema.MAX_TALKER_ALIAS_CHARACTERS, scalar(connection,
+            assertEquals(TalkerAliasText.MAX_CODE_POINTS, scalar(connection,
                 "SELECT length(last_talker_alias) FROM radio_system_identity_summary WHERE identity_id=101"));
+            String supplementary = "\uD83D\uDE80".repeat(160);
+            assertTrue(RadioSystemSchema.updateTalkerAlias(connection,
+                (int)scalar(connection, "SELECT id FROM receiver_channel"), 101,
+                ReceiverActivityRecords.P25Identity.ORDINARY, "  " + supplementary + "trailing text  ", 1_200,
+                1_000, TrunkedIdentityDomain.STANDARD, null, null,
+                "dmr:channel:" + CONFIGURATION_ID));
+            try(Statement statement = connection.createStatement();
+                ResultSet rows = statement.executeQuery(
+                    "SELECT last_talker_alias FROM radio_system_identity_summary WHERE identity_id=101"))
+            {
+                assertTrue(rows.next());
+                assertEquals(supplementary, rows.getString(1));
+            }
             assertThrows(SQLException.class, () -> execute(connection, """
                 INSERT INTO radio_system_identity_summary(
                     radio_system_id, identity_kind_code, identity_id, first_seen_ms, last_seen_ms,

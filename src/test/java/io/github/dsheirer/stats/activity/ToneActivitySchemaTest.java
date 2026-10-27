@@ -310,7 +310,7 @@ class ToneActivitySchemaTest
             long after = scalar(connection, "SELECT (SELECT count(*) FROM receiver_activity_event)+(SELECT count(*) FROM receiver_activity_tone_sequence)+(SELECT count(*) FROM receiver_activity_tone)");
             assertTrue(before - after <= 1000); assertTrue(reported <= 1000); assertTrue(after > 0, "A pass cannot cascade all tone children");
             integrity(connection);
-            ReceiverActivitySchema.resetStats(connection);
+            ReceiverActivityMaintenance.run(connection, null, 30, ReceiverActivityMaintenance.Operation.RESET_STATS);
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_tone_sequence"));
             assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_tone")); integrity(connection);
         }

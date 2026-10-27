@@ -642,6 +642,7 @@ class ReceiverActivityWriter implements AutoCloseable
             }
             catch(Exception e)
             {
+                closeUnsafeConnection(connection, e);
                 command.request().result().completeExceptionally(e);
                 mLog.warn("Statistics database maintenance request failed [{}]",
                     command.request().operation(), e);
@@ -677,6 +678,7 @@ class ReceiverActivityWriter implements AutoCloseable
         }
         catch(Exception failure)
         {
+            closeUnsafeConnection(connection, failure);
             if(failure instanceof SQLException sql && isDatabaseBusy(sql)) request.databaseBusy();
             request.setResumable(request.operation() != ReceiverActivityMaintenance.Operation.RESET_STATS);
             if(request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS) clearResetCaches();
@@ -687,6 +689,16 @@ class ReceiverActivityWriter implements AutoCloseable
         mNextDeletionPassNanos = request.operation() == ReceiverActivityMaintenance.Operation.RESET_STATS &&
             !request.resetWaitingForReaders() ? 0 :
             System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(CLEANUP_YIELD_MILLISECONDS);
+    }
+
+    private void closeUnsafeConnection(Connection connection, Exception failure)
+    {
+        if(!(failure instanceof ReceiverActivityMaintenance.UnsafeResetConnectionException)) return;
+        //Never release administrator admission while an unsafe connection can accept an ordinary observation.
+        mRunning.set(false);
+        try { connection.close(); }
+        catch(SQLException closeFailure) { failure.addSuppressed(closeFailure); }
+        fail(failure);
     }
 
     private boolean fullResetRunning()

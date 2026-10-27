@@ -52,6 +52,14 @@ class ReceiverActivityDeletionTest
                 "last_talker_alias_seen_ms=3000 WHERE id=1");
             assertFalse(ReceiverActivityDeletion.delete(connection, target).found());
             assertEquals(1, count(connection, "radio_system_identity_summary WHERE last_talker_alias='Fresh name'"));
+            String supplementary = "\uD83D\uDE80".repeat(160);
+            execute(connection, "UPDATE radio_system_identity_summary SET last_talker_alias='" + supplementary +
+                "',last_talker_alias_seen_ms=4000 WHERE id=1");
+            assertTrue(ReceiverActivityDeletion.delete(connection,
+                new StatsDatabaseMaintenanceRequest.TalkerAlias("p25:abcde:123",
+                    "v1-r-abcde-123-750003", supplementary)).found());
+            assertEquals(1, count(connection, "radio_system_identity_summary WHERE id=1 AND " +
+                "logical_call_count=17 AND last_talker_alias IS NULL AND last_talker_alias_seen_ms IS NULL"));
         }
     }
 

@@ -52,10 +52,16 @@ public class TalkerAliasManager
         mGeneration.set(new AliasGeneration());
     }
 
-    /** Administrative removal of one observed name. A later OTA observation may learn it again. */
+    /**
+     * Administrative removal of one observed name. Channel fallback keys require the caller to select only their
+     * saved channel's cache; those entries deliberately carry no invented native system identity.
+     */
     public synchronized void forget(String systemKey, RadioSystemIdentityKey.Identity identity, String expectedAlias)
     {
         boolean p25 = RadioSystemKey.isP25Native(systemKey);
+        boolean channelScoped = RadioSystemKey.isChannelScoped(systemKey);
+        Protocol fallbackProtocol = channelScoped && systemKey.startsWith("dmr:") ? Protocol.DMR : Protocol.NXDN;
+        int fallbackDomain = channelScoped && systemKey.startsWith("nxdn-d:") ? 1 : 0;
         int servingWacn = p25 ? Integer.parseInt(systemKey, 4, 9, 16) : -1;
         int servingSystem = p25 ? Integer.parseInt(systemKey, 10, 13, 16) : -1;
         int homeWacn = identity.hasHome() ? identity.homeWacn() : servingWacn;
@@ -65,8 +71,11 @@ public class TalkerAliasManager
             boolean scopeMatches = p25 ? key.protocol() == Protocol.APCO25 &&
                 key.homeWacn() == homeWacn && key.homeSystem() == homeSystem &&
                 alias.servingWacn() == servingWacn && alias.servingSystem() == servingSystem :
-                systemKey.equals(key.nativeSystemKey());
-            return scopeMatches && key.radio() == identity.identityId() && expectedAlias.equals(alias.getValue());
+                channelScoped ? !identity.hasHome() && key.nativeSystemKey() == null &&
+                    key.protocol() == fallbackProtocol && key.addressDomain() == fallbackDomain :
+                    systemKey.equals(key.nativeSystemKey());
+            return scopeMatches && key.radio() == identity.identityId() &&
+                expectedAlias.equals(TalkerAliasText.normalize(alias.getValue()));
         };
         AliasGeneration generation = mGeneration.get();
         AliasGeneration retained = new AliasGeneration();

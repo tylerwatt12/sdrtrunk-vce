@@ -39,6 +39,7 @@ import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
 import io.github.dsheirer.identifier.alias.TalkerAliasManagerProvider;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.decoder.TrafficChannelIdentifier;
 import io.github.dsheirer.metadata.site.ProtocolSiteMetadataEvent;
@@ -112,18 +113,25 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
     /** Runs on the administrative caller, without scheduling work on a decoder callback. */
     public void forgetTalkerAlias(String systemKey, RadioSystemIdentityKey.Identity identity, String expectedAlias)
     {
+        String owner = RadioSystemKey.isChannelScoped(systemKey) ?
+            systemKey.substring(systemKey.lastIndexOf(':') + 1) : null;
         Set<TalkerAliasManager> caches = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        Set<TalkerAliasManager> otherOwners = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         for(ProcessingChain chain : mProcessingChainsMap.values())
         {
+            boolean selectedOwner = owner == null || owner.equals(ChannelConfigurationKey.configured(chain.getCurrentChannel()));
             for(Module module : chain.getModules())
             {
                 if(module instanceof TalkerAliasManagerProvider provider)
                 {
                     TalkerAliasManager cache = provider.getTalkerAliasManager();
-                    if(cache != null && caches.add(cache)) cache.forget(systemKey, identity, expectedAlias);
+                    if(cache != null) (selectedOwner ? caches : otherOwners).add(cache);
                 }
             }
         }
+        //An unscoped entry in a cache shared by different saved owners cannot be attributed safely.
+        caches.removeAll(otherOwners);
+        for(TalkerAliasManager cache: caches) cache.forget(systemKey, identity, expectedAlias);
     }
     public enum RemoteTrafficOpenResult
     {

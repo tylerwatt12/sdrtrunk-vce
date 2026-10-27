@@ -129,6 +129,41 @@ class ReceiverActivityMaintenanceTest
     }
 
     @Test
+    void fullResetRestoresForeignKeysAfterCommitRollbackAndCancellation(@TempDir Path temporary) throws Exception
+    {
+        Path database = temporary.resolve("reset-safety.sqlite");
+        try(Connection connection = openActivityDatabase(database))
+        {
+            seedRecentActivity(connection);
+            execute(connection, "CREATE TRIGGER prevent_reset BEFORE DELETE ON receiver_activity_event " +
+                "BEGIN SELECT RAISE(ABORT,'controlled reset rollback'); END");
+            var failing = StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.RESET_STATS);
+            org.junit.jupiter.api.Assertions.assertThrows(SQLException.class, () -> {
+                while(ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, database, failing, 0) == null) {}
+            });
+            assertTrue(connection.getAutoCommit());
+            assertEquals(1, scalar(connection, "PRAGMA foreign_keys"));
+            assertEquals(5_000, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            execute(connection, "DROP TRIGGER prevent_reset");
+
+            var stopped = StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.RESET_STATS);
+            while(stopped.progress().rowsDeleted() <= 512)
+            {
+                ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, database, stopped, 0);
+                assertTrue(connection.getAutoCommit());
+                assertEquals(1, scalar(connection, "PRAGMA foreign_keys"));
+            }
+            stopped.cancel();
+            assertEquals(ReceiverActivityMaintenance.DeletionOutcome.INTERRUPTED,
+                ReceiverActivityMaintenance.deleteRetainedStatsPass(connection, database, stopped, 0).deletionOutcome());
+            assertFalse(stopped.progress().resumable());
+            assertEquals(1, scalar(connection, "PRAGMA foreign_keys"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM configuration_channel"));
+        }
+    }
+
+    @Test
     void explicitCheckPreservesExpiredHistoryAndDoesNotOptimize(@TempDir Path temporary) throws Exception
     {
         Path database = temporary.resolve("check.sqlite");

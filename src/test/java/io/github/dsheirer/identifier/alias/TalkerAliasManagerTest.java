@@ -32,6 +32,89 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class TalkerAliasManagerTest
 {
     @Test
+    void forgetMatchesTheStoredFormOfPaddedTruncatedAndSupplementaryNames()
+    {
+        String supplementary = "\uD83D\uDE80";
+        String[][] names = {
+            {" \u2003Padded alias\u2003 ", "Padded alias"},
+            {"X".repeat(160) + "trailing text", "X".repeat(160)},
+            {supplementary.repeat(160) + "trailing text", supplementary.repeat(160)},
+            {"X".repeat(159) + supplementary + "trailing text", "X".repeat(159) + supplementary}
+        };
+        var radio = APCO25RadioIdentifier.createFrom(501);
+        var identity = io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey.parse("v1-r-bee00-123-501");
+        for(String[] name: names)
+        {
+            var cache = new TalkerAliasManager();
+            cache.update(radio, P25TalkerAliasIdentifier.create(name[0]), "p25:bee00:123");
+            cache.forget("p25:bee00:123", identity, name[1]);
+            assertTrue(!cache.hasAlias(radio, "p25:bee00:123"));
+            cache.update(radio, P25TalkerAliasIdentifier.create("Replacement"), "p25:bee00:123");
+            cache.forget("p25:bee00:123", identity, name[1]);
+            assertTrue(cache.hasAlias(radio, "p25:bee00:123"));
+        }
+    }
+
+    @Test
+    void dmrChannelFallbackForgetPreservesOtherProtocolsAndNativeEntries()
+    {
+        var cache = new TalkerAliasManager();
+        var selected = DMRRadio.createFrom(501);
+        var otherRadio = DMRRadio.createFrom(502);
+        var otherProtocol = NXDNRadioIdentifier.createFrom(501);
+        String fallback = "dmr:channel:00000000-0000-0000-0000-000000000001";
+        String nativeKey = "dmr:tier3:small:17";
+        cache.update(selected, DmrTalkerAliasIdentifier.create("OLD"), fallback);
+        cache.update(selected, DmrTalkerAliasIdentifier.create("NATIVE"), nativeKey);
+        cache.update(otherRadio, DmrTalkerAliasIdentifier.create("OTHER"), fallback);
+        cache.update(otherProtocol, new io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier("NXDN"));
+
+        assertFallbackForgetAndFreshLearning(cache, selected, fallback, DmrTalkerAliasIdentifier.create("FRESH"));
+        assertTrue(cache.hasAlias(selected, nativeKey));
+        assertTrue(cache.hasAlias(otherRadio, fallback));
+        assertTrue(cache.hasAlias(otherProtocol));
+    }
+
+    @Test
+    void nxdnChannelFallbackForgetKeepsTypeCAndTypeDAddressDomainsSeparate()
+    {
+        var cache = new TalkerAliasManager();
+        var typeC = NXDNRadioIdentifier.createFrom(501);
+        var typeD = NXDNRadioIdentifier.createFrom(501);
+        typeD.setTypeD(true);
+        String suffix = ":channel:00000000-0000-0000-0000-000000000001";
+        String nativeKey = "nxdn-c:local:17";
+        cache.update(typeC, new io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier("OLD"), "nxdn-c" + suffix);
+        cache.update(typeD, new io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier("OLD"), "nxdn-d" + suffix);
+        cache.update(typeC, new io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier("NATIVE"), nativeKey);
+
+        assertFallbackForgetAndFreshLearning(cache, typeC, "nxdn-c" + suffix,
+            new io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier("FRESH"));
+        assertTrue(cache.hasAlias(typeD, "nxdn-d" + suffix));
+        assertTrue(cache.hasAlias(typeC, nativeKey));
+        assertFallbackForgetAndFreshLearning(cache, typeD, "nxdn-d" + suffix,
+            new io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier("FRESH"));
+        assertTrue(cache.hasAlias(typeC, "nxdn-c" + suffix));
+        assertTrue(cache.hasAlias(typeC, nativeKey));
+    }
+
+    private static void assertFallbackForgetAndFreshLearning(TalkerAliasManager cache, RadioIdentifier radio,
+                                                            String fallback, TalkerAliasIdentifier fresh)
+    {
+        var identity = io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey.parse("v1-r-x-x-501");
+        cache.forget(fallback, identity, "STALE");
+        assertTrue(cache.hasAlias(radio, fallback));
+        cache.forget(fallback, identity, "OLD");
+        assertTrue(!cache.hasAlias(radio, fallback));
+        cache.update(radio, fresh, fallback);
+        cache.forget(fallback, identity, "OLD");
+        MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+        identifiers.update(radio);
+        cache.enrichMutable(identifiers, fallback);
+        assertAlias(fresh, talkerAlias(identifiers));
+    }
+
+    @Test
     void forgetsOnlyTheSelectedObservedNameAndAllowsFreshLearning()
     {
         TalkerAliasManager manager = new TalkerAliasManager();

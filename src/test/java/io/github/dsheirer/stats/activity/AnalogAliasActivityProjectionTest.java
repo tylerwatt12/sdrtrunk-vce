@@ -126,7 +126,7 @@ class AnalogAliasActivityProjectionTest
             var old = attribution(1, Protocol.NBFM, 7,
                 new AnalogCallAttribution.Match(10, "TALKGROUP", 7, 7));
             ReceiverActivitySchema.recordActivity(connection, mappedCall(old), false);
-            ReceiverActivitySchema.clearChannelStats(connection, CHANNEL);
+            ReceiverActivityMaintenance.clearChannelStats(connection, null, CHANNEL);
             ReceiverActivitySchema.recordActivity(connection, mappedCall(old), false);
             AnalogAliasActivityProjection.recordOutput(connection, old, ReceiverActivityRecords.CallOutput.RECORDED);
             assertEquals(0, metric(connection, "alias_list_analog_activity_summary", "call_count", "1=1"));
@@ -152,7 +152,7 @@ class AnalogAliasActivityProjectionTest
         {
             var old = attribution(1, Protocol.NBFM, 7);
             ReceiverActivitySchema.recordActivity(connection, mappedCall(old), false);
-            ReceiverActivitySchema.resetStats(connection);
+            ReceiverActivityMaintenance.run(connection, null, 30, ReceiverActivityMaintenance.Operation.RESET_STATS);
             ReceiverActivitySchema.recordActivity(connection, mappedCall(old), false);
             AnalogAliasActivityProjection.recordOutput(connection, old, ReceiverActivityRecords.CallOutput.RECORDED);
             assertEquals(0, metric(connection, "alias_list_analog_activity_summary", "call_count", "1=1"));
@@ -170,7 +170,7 @@ class AnalogAliasActivityProjectionTest
             ReceiverActivitySchema.recordActivity(connection, mappedCall(old), false);
             statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES(3,'P25','P25')");
             statement.executeUpdate("UPDATE configuration_channel SET decoder_type='P25_CONVENTIONAL',alias_list_id=3");
-            ReceiverActivitySchema.clearChannelStats(connection, CHANNEL);
+            ReceiverActivityMaintenance.clearChannelStats(connection, null, CHANNEL);
             var output = new ReceiverActivityRecords.ConventionalCallOutput(old.startedAt(), CHANNEL,
                 ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG, "NBFM", 461125000L, null, 7,
                 "TALKGROUP", List.of(), null, ReceiverActivityRecords.CallOutput.RECORDED,

@@ -162,22 +162,20 @@ class DmrActivitySchemaTest
     }
 
     @Test
-    void retentionChannelClearAndResetHaveBoundedOwnership() throws Exception
+    void retentionKeepsUnexpiredChannelFacts() throws Exception
     {
         try(Connection connection = open("maintenance.sqlite"))
         {
             insertChannel(connection, "old");
             insertChannel(connection, "keep");
-            insertChannel(connection, "reset");
             record(connection, groupCall(1_000, 2_000, "old", 461_125_000L, 1, 91, 101, false));
             record(connection, groupCall(9_000, 10_000, "keep", 462_125_000L, 2, 92, 102, false));
 
             assertEquals(2, ReceiverActivitySchema.runRetentionPass(connection, 5_000));
-            assertEquals(2, DmrActivitySchema.clearChannelStats(connection, configurationId("keep")));
-            assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
-
-            record(connection, privateCall(11_000, 12_000, "reset", 463_125_000L, 1, 103, 203, false));
-            assertEquals(2, DmrActivitySchema.resetStats(connection));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_talkgroup_summary"));
+            assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM dmr_conventional_radio_summary"));
+            assertEquals(92, scalar(connection, "SELECT talkgroup_id FROM dmr_conventional_talkgroup_summary"));
+            assertEquals(102, scalar(connection, "SELECT radio_id FROM dmr_conventional_radio_summary"));
         }
     }
 

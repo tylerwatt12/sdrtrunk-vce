@@ -243,7 +243,7 @@ class TrunkedSiteSchemaTest
     }
 
     @Test
-    void retentionClearResetAndIndependentHistoricalOwnershipBoundAllFacts() throws Exception
+    void retentionClearAndIndependentHistoricalOwnershipBoundAllFacts() throws Exception
     {
         try(Connection connection = open("lifecycle.sqlite"))
         {
@@ -261,10 +261,6 @@ class TrunkedSiteSchemaTest
 
             assertEquals(1, TrunkedSiteSchema.clearChannelStats(connection, NXDN_CHANNEL));
             assertEquals(0, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));
-            TrunkedSiteSchema.upsert(connection, nxdn(NXDN_CHANNEL, 11_000, HASH_B, 4,
-                List.of(), List.of()));
-            assertEquals(1, TrunkedSiteSchema.resetStats(connection));
-
             TrunkedSiteSchema.upsert(connection, dmr(12_000, HASH_A, List.of(), List.of()));
             execute(connection, "DELETE FROM configuration_channel WHERE configuration_id='" + DMR_CHANNEL + "'");
             assertEquals(1, scalar(connection, "SELECT COUNT(*) FROM trunked_site_snapshot"));

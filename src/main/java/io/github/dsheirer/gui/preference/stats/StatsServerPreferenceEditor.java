@@ -12,6 +12,7 @@
 package io.github.dsheirer.gui.preference.stats;
 
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.stats.activity.ReceiverActivityMaintenance;
 import io.github.dsheirer.stats.activity.ReceiverActivityPath;
@@ -76,7 +77,8 @@ public class StatsServerPreferenceEditor extends HBox
             settingsNote.setMinWidth(0);
             mEditorPane.add(settingsNote, 0, row++);
             mEditorPane.add(new Label("Database file"), 0, row++);
-            Label path = new Label(ReceiverActivityPath.getDatabasePath(mUserPreferences).toString());
+            Label path = new Label(SdrTrunkDatabase.historyPath(
+                ReceiverActivityPath.getDatabasePath(mUserPreferences)).toString());
             path.setWrapText(true);
             path.setMinWidth(0);
             path.setTooltip(new Tooltip(path.getText()));
@@ -151,7 +153,8 @@ public class StatsServerPreferenceEditor extends HBox
                 Alert alert = new Alert(Alert.AlertType.CONFIRMATION,
                     "Reset deletes saved statistics and history. Statistics pause until it finishes; activity during " +
                         "this pause is not saved. Receiving, audio, and uploads continue. " +
-                        "VCE configuration is unchanged. Stopping leaves completed batches removed. Continue?",
+                        "VCE configuration is unchanged. Stopping waits for the current table or step; " +
+                        "completed steps remain cleared. Continue?",
                     ButtonType.YES, ButtonType.NO);
                 alert.setHeaderText("Reset Lifetime Stats");
                 Optional<ButtonType> result = alert.showAndWait();
@@ -175,6 +178,7 @@ public class StatsServerPreferenceEditor extends HBox
             mStopButton.setOnAction(event -> {
                 if(mActiveRequest != null) mActiveRequest.cancel();
                 mStopButton.setDisable(true);
+                getMaintenanceStatusLabel().setText("Stopping after the current database step finishes...");
             });
         }
         return mStopButton;
@@ -199,10 +203,11 @@ public class StatsServerPreferenceEditor extends HBox
         setMaintenanceRunning(true, operation);
         Timeline progress = new Timeline(new KeyFrame(Duration.seconds(1), event -> {
             if(operation == ReceiverActivityMaintenance.Operation.RESET_STATS)
-                getMaintenanceStatusLabel().setText((request.resetWaitingForReaders() ?
+                getMaintenanceStatusLabel().setText((request.cancelled() ?
+                    "Stopping after the current table or step. " : request.resetWaitingForReaders() ?
                     "Waiting for saved activity readers to finish. " : "") + "Statistics paused for reset. Cleared " +
                     request.progress().rowsDeleted() + " rows in " + request.progress().batchesCompleted() +
-                    " batches. Skipped " + request.observationsSkipped() + " observations. " +
+                    " steps. Skipped " + request.observationsSkipped() + " observations. " +
                     "Receiving, audio, and uploads continue.");
         }));
         progress.setCycleCount(Timeline.INDEFINITE);
@@ -213,14 +218,15 @@ public class StatsServerPreferenceEditor extends HBox
             progress.stop();
             mActiveRequest = null;
             setMaintenanceRunning(false, operation);
-            String resetStatus = operation == ReceiverActivityMaintenance.Operation.RESET_STATS ?
-                " Statistics pause ended. Skipped " + request.observationsSkipped() + " observations during the pause." : "";
+            String resetStatus = operation == ReceiverActivityMaintenance.Operation.RESET_STATS &&
+                request.observationsSkipped() > 0 ? " Skipped " + request.observationsSkipped() +
+                " observations during the statistics pause." : "";
 
             if(throwable != null)
             {
                 Throwable cause = throwable.getCause() != null ? throwable.getCause() : throwable;
                 getMaintenanceStatusLabel().setText(operation + " failed: " + cause.getMessage() +
-                    (request.progress().batchesCompleted() > 0 ? " Completed batches remain removed (" +
+                    (request.progress().batchesCompleted() > 0 ? " Completed steps remain cleared (" +
                         request.progress().rowsDeleted() + " rows)." : "") + resetStatus);
             }
             else

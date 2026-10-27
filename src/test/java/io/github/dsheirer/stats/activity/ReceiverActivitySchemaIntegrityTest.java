@@ -208,7 +208,7 @@ class ReceiverActivitySchemaIntegrityTest
                 VALUES (1, 0, 1), (2, 0, 1)
                 """);
 
-            assertEquals(2, ReceiverActivitySchema.clearChannelStats(connection, CONFIGURATION_ID));
+            ReceiverActivityMaintenance.clearChannelStats(connection, null, CONFIGURATION_ID);
             assertEquals(0, count(connection, "receiver_channel",
                 "configuration_id='" + CONFIGURATION_ID + "'"));
             assertEquals(0, count(connection, "radio_system",

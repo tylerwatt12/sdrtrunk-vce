@@ -11,6 +11,9 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.identifier.alias.TalkerAliasText;
+import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import java.util.Objects;
 import java.util.List;
 import java.util.Set;
@@ -113,7 +116,7 @@ public final class StatsDatabaseMaintenanceRequest
         mResetWaitingForReaders = waiting;
     }
 
-    boolean cancelled()
+    public boolean cancelled()
     {
         return mCancelled.get();
     }
@@ -259,10 +262,14 @@ public final class StatsDatabaseMaintenanceRequest
         public TalkerAlias
         {
             requireText(radioSystemKey, "Radio system key");
-            var identity = io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey.parse(identityKey);
+            RadioSystemKey.parse(radioSystemKey);
+            var identity = RadioSystemIdentityKey.parse(identityKey);
             if(identity.kindCode() != 2) throw new IllegalArgumentException("A radio identity is required");
+            boolean p25 = RadioSystemKey.isP25Native(radioSystemKey);
+            if(!p25 && identity.hasHome() || p25 && identity.identityId() > RadioSystemIdentityKey.MAX_P25_RADIO_ID)
+                throw new IllegalArgumentException("Radio identity does not belong to this protocol");
             requireText(expectedAlias, "Observed name");
-            if(expectedAlias.length() > RadioSystemSchema.MAX_TALKER_ALIAS_CHARACTERS)
+            if(expectedAlias.codePointCount(0, expectedAlias.length()) > TalkerAliasText.MAX_CODE_POINTS)
                 throw new IllegalArgumentException("Observed name is too long");
         }
     }

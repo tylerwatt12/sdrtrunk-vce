@@ -22789,12 +22789,15 @@ async function renderRadio() {
         }, { saving: 'Forgetting OTA alias…', onSuccess: async () => {
           if (renderIsCurrent(renderContext)) await renderRadio();
         }, onError: (error) => {
-          if (error.job && ['failed', 'cancelled'].includes(error.job.state)) {
+          const statusExpired = Boolean(acceptedJob) && error.status === 404;
+          if (statusExpired || error.job && ['failed', 'cancelled'].includes(error.job.state)) {
             acceptedJob = null;
             body.request_id = crypto.randomUUID();
           }
           forget.textContent = acceptedJob ? 'Check alias action' : 'Retry forgetting alias';
-          return { message: error?.name === 'AbortError' ? '' : error.message };
+          return { message: statusExpired ?
+            'Action status is no longer available. Refresh this radio to check its current OTA alias, or confirm a new attempt.' :
+            error?.name === 'AbortError' ? '' : error.message };
         } });
       }, { signal: renderContext.signal });
     }

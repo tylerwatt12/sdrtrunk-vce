@@ -46,6 +46,108 @@ import org.junit.jupiter.api.io.TempDir;
 /** End-to-end coverage for the writer boundary using the current saved-channel identity model. */
 class ReceiverActivityWriterTest
 {
+    @Test
+    void failedForeignKeyRestorationClosesWriterBeforeCompletingResetAndPreservesCommittedProgress() throws Exception
+    {
+        assertUnsafeResetClosesWriter("restore");
+    }
+
+    @Test
+    void failedResetRollbackCannotCommitUnknownStateOrResumeTheWriter() throws Exception
+    {
+        assertUnsafeResetClosesWriter("rollback");
+    }
+
+    @Test
+    void failedFinalForeignKeyVerificationClosesWriterBeforeReleasingReset() throws Exception
+    {
+        assertUnsafeResetClosesWriter("verify");
+    }
+
+    private void assertUnsafeResetClosesWriter(String failureMode) throws Exception
+    {
+        Path database = createDatabase(mTemporaryFolder.resolve("reset-unsafe-" + failureMode + ".sqlite"));
+        insertConfiguredChannel(database);
+        try(Connection real = ActivityTestDatabase.openPair(database))
+        {
+            try(Statement seed = real.createStatement()) { seedExpiredActivity(seed, 2_000, 1); seed.execute("PRAGMA foreign_keys=ON"); }
+            AtomicBoolean injected = new AtomicBoolean(), closedBeforeCompletion = new AtomicBoolean();
+            AtomicBoolean rollbackFailed = new AtomicBoolean(), committedAfterFailedRollback = new AtomicBoolean();
+            var rowsAtFailedDelete = new java.util.concurrent.atomic.AtomicLong();
+            Connection guarded = (Connection)java.lang.reflect.Proxy.newProxyInstance(Connection.class.getClassLoader(),
+                new Class<?>[]{Connection.class}, (proxy, method, arguments) -> {
+                    try
+                    {
+                        if(failureMode.equals("rollback") && method.getName().equals("rollback") && injected.get())
+                        {
+                            rollbackFailed.set(true);
+                            throw new java.sql.SQLException("controlled reset rollback failure");
+                        }
+                        if(method.getName().equals("setAutoCommit") && Boolean.TRUE.equals(arguments[0]) && rollbackFailed.get())
+                            committedAfterFailedRollback.set(true);
+                        Object result = method.invoke(real, arguments);
+                        if(result instanceof Statement statement && method.getName().equals("createStatement"))
+                            return java.lang.reflect.Proxy.newProxyInstance(Statement.class.getClassLoader(),
+                                new Class<?>[]{Statement.class}, (ignored, call, values) -> {
+                                    if(failureMode.equals("restore") && call.getName().equals("execute") && values != null &&
+                                        "PRAGMA main.foreign_keys=ON".equals(values[0]) &&
+                                        scalar(real, "SELECT changes()") > 512 && injected.compareAndSet(false, true))
+                                        throw new java.sql.SQLException("controlled foreign-key restoration failure");
+                                    if(failureMode.equals("rollback") && call.getName().equals("executeUpdate") &&
+                                        values != null && "DELETE FROM receiver_activity_event".equals(values[0]))
+                                    {
+                                        rowsAtFailedDelete.set(scalar(real, "SELECT count(*) FROM receiver_activity_event"));
+                                        injected.set(true);
+                                        throw new java.sql.SQLException("controlled reset deletion failure");
+                                    }
+                                    if(failureMode.equals("verify") && call.getName().equals("executeQuery") &&
+                                        values != null && "PRAGMA main.foreign_key_check".equals(values[0]))
+                                    {
+                                        injected.set(true);
+                                        return statement.executeQuery("SELECT 'reported_violation',1,'parent',0");
+                                    }
+                                    try { return call.invoke(statement, values); }
+                                    catch(java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                                });
+                        return result;
+                    }
+                    catch(java.lang.reflect.InvocationTargetException failure) { throw failure.getCause(); }
+                });
+            ReceiverActivityWriter writer = new ReceiverActivityWriter(database, 30, true);
+            //Exercise the actual failure handler deterministically without starting a competing writer thread.
+            var running = ReceiverActivityWriter.class.getDeclaredField("mRunning"); running.setAccessible(true);
+            ((AtomicBoolean)running.get(writer)).set(true);
+            var pending = ReceiverActivityWriter.class.getDeclaredField("mDeletionJobs"); pending.setAccessible(true);
+            var nextPass = ReceiverActivityWriter.class.getDeclaredField("mNextDeletionPassNanos"); nextPass.setAccessible(true);
+            var process = ReceiverActivityWriter.class.getDeclaredMethod("processDeletionPass", Connection.class);
+            process.setAccessible(true);
+            var request = StatsDatabaseMaintenanceRequest.forOperation(ReceiverActivityMaintenance.Operation.RESET_STATS);
+            request.result().whenComplete((result, failure) -> {
+                try { closedBeforeCompletion.set(real.isClosed()); }
+                catch(java.sql.SQLException error) { throw new RuntimeException(error); }
+            });
+            ((java.util.Deque<StatsDatabaseMaintenanceRequest>)pending.get(writer)).add(request);
+            for(int pass = 0; pass < 1_000 && !request.result().isDone(); pass++)
+            {
+                nextPass.setLong(writer, 0);
+                process.invoke(writer, guarded);
+            }
+            assertTrue(injected.get(), "The fixture must reach its intended SQLite failure");
+            assertThrows(ExecutionException.class, () -> request.result().get(2, TimeUnit.SECONDS));
+            assertTrue(closedBeforeCompletion.get(), "The unsafe connection must close before reset admission is released");
+            assertEquals(ReceiverActivityStatus.State.FAILED, writer.getStatus().state());
+            assertFalse(writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis())));
+            assertFalse(committedAfterFailedRollback.get(), "A failed rollback must never be followed by an implicit COMMIT");
+            if(!failureMode.equals("rollback"))
+                assertTrue(request.progress().rowsDeleted() >= 2_000, "Committed table changes must still be reported");
+            try(Connection verified = ActivityTestDatabase.openPair(database))
+            {
+                assertEquals(failureMode.equals("rollback") ? rowsAtFailedDelete.get() : 0,
+                    scalar(verified, "SELECT count(*) FROM receiver_activity_event"));
+                assertEquals(1, scalar(verified, "SELECT count(*) FROM configuration_channel"));
+            }
+        }
+    }
     private static final String CONFIGURATION_ID = "123e4567-e89b-42d3-a456-426614174000";
 
     @TempDir

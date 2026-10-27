@@ -13,6 +13,7 @@ package io.github.dsheirer.stats.activity;
 
 import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.identifier.alias.TalkerAliasText;
 import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
@@ -58,7 +59,6 @@ final class RadioSystemSchema
     static final int MAX_RELATIONSHIPS_PER_SYSTEM = 500_000;
     static final int MAX_WUID_ASSIGNMENT_OBSERVATIONS_PER_SYSTEM = 500_000;
     static final int MAX_P25_WORKING_RADIO_ID = RadioSystemIdentityKey.MAX_P25_WORKING_UNIT_ID;
-    static final int MAX_TALKER_ALIAS_CHARACTERS = 160;
 
     private static final List<ReceiverActivityRecords.Action> ACTIONS = ReceiverActivityCodes.actionCodes().stream()
         .filter(action -> action != ReceiverActivityRecords.Action.CALL && action != ReceiverActivityRecords.Action.TONE)
@@ -520,7 +520,7 @@ final class RadioSystemSchema
                     (last_talker_alias IS NOT NULL AND length(trim(last_talker_alias)) > 0
                         AND last_talker_alias_seen_ms IS NOT NULL))
             )
-            """.formatted(ACTION_COUNT_DEFINITIONS, MAX_TALKER_ALIAS_CHARACTERS);
+            """.formatted(ACTION_COUNT_DEFINITIONS, TalkerAliasText.MAX_CODE_POINTS);
     }
 
     private static String format31IdentitySummarySql()
@@ -575,7 +575,7 @@ final class RadioSystemSchema
                     (last_talker_alias IS NOT NULL AND length(trim(last_talker_alias)) > 0
                         AND last_talker_alias_seen_ms IS NOT NULL))
             )
-            """.formatted(ACTION_COUNT_DEFINITIONS, MAX_TALKER_ALIAS_CHARACTERS);
+            """.formatted(ACTION_COUNT_DEFINITIONS, TalkerAliasText.MAX_CODE_POINTS);
     }
 
     private static String p25SubscriberIdentitySql()
@@ -2286,42 +2286,6 @@ final class RadioSystemSchema
         }
     }
 
-    static int reset(Connection connection) throws SQLException
-    {
-        int deleted = 0;
-        deleted += deleteAll(connection, "p25_wuid_assignment_observation_summary");
-        deleted += deleteAll(connection, "trunked_radio_affiliation");
-        deleted += deleteAll(connection, "trunked_radio_channel_presence");
-        deleted += deleteAll(connection, "trunked_radio_channel_presence_clear");
-        deleted += deleteAll(connection, "trunked_radio_group_summary");
-        deleted += deleteAll(connection, "radio_system_identity_summary");
-        io.github.dsheirer.stats.StatsHistoryContext.installSubscriberContext(connection);
-        try(Statement statement = connection.createStatement())
-        {
-            deleted += statement.executeUpdate("""
-                DELETE FROM p25_subscriber_identity
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM configured_p25_subscriber_identity configured
-                    JOIN alias_p25_subscriber_identity alias_identity
-                      ON alias_identity.p25_subscriber_identity_id=configured.id
-                    WHERE configured.home_wacn=p25_subscriber_identity.home_wacn
-                      AND configured.home_system_id=p25_subscriber_identity.home_system_id
-                      AND configured.subscriber_id=p25_subscriber_identity.subscriber_id
-                )
-                """);
-        }
-        try(Statement statement = connection.createStatement())
-        {
-            statement.executeUpdate("""
-                UPDATE receiver_channel
-                SET radio_system_id = NULL, radio_system_assigned_at_ms = NULL
-                WHERE radio_system_id IS NOT NULL OR radio_system_assigned_at_ms IS NOT NULL
-                """);
-        }
-        deleted += deleteAll(connection, "radio_system");
-        return deleted;
-    }
-
     static int detachReceiverChannel(Connection connection, long channelId) throws SQLException
     {
         clearReceiverChannelPresence(connection, channelId);
@@ -2457,7 +2421,7 @@ final class RadioSystemSchema
             statement.setInt(index++, counts.streamedOutputs());
             setInteger(statement, index++, encryptionAlgorithm);
             setInteger(statement, index++, encryptionKey);
-            String normalizedTalkerAlias = normalizedAlias(talkerAlias);
+            String normalizedTalkerAlias = TalkerAliasText.normalize(talkerAlias);
             statement.setString(index++, normalizedTalkerAlias);
             setLong(statement, index++, normalizedTalkerAlias != null ? talkerAliasSeen : null);
             setLong(statement, index, p25SubscriberIdentityId);
@@ -3449,14 +3413,6 @@ final class RadioSystemSchema
         }
     }
 
-    private static int deleteAll(Connection connection, String table) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            return statement.executeUpdate("DELETE FROM " + table);
-        }
-    }
-
     private static Integer nullableInteger(ResultSet resultSet, String column) throws SQLException
     {
         int value = resultSet.getInt(column);
@@ -3506,24 +3462,6 @@ final class RadioSystemSchema
     private static Integer positive(Integer value)
     {
         return value != null && value > 0 ? value : null;
-    }
-
-    private static String normalizedAlias(String alias)
-    {
-        if(alias == null || alias.isBlank())
-        {
-            return null;
-        }
-
-        String normalized = alias.strip();
-        int codePointCount = normalized.codePointCount(0, normalized.length());
-        if(codePointCount <= MAX_TALKER_ALIAS_CHARACTERS)
-        {
-            return normalized;
-        }
-
-        int end = normalized.offsetByCodePoints(0, MAX_TALKER_ALIAS_CHARACTERS);
-        return normalized.substring(0, end);
     }
 
     private static void setInteger(PreparedStatement statement, int index, Integer value) throws SQLException

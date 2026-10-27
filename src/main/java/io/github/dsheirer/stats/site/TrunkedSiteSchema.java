@@ -521,14 +521,6 @@ public final class TrunkedSiteSchema
         }
     }
 
-    public static int resetStats(Connection connection) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            return statement.executeUpdate("DELETE FROM trunked_site_snapshot");
-        }
-    }
-
     public static int clearChannelStats(Connection connection, String configurationId) throws SQLException
     {
         if(configurationId == null || configurationId.isBlank())

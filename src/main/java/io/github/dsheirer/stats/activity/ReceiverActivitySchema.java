@@ -24,7 +24,6 @@ import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSna
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
-import io.github.dsheirer.stats.AliasActivitySummaryMaintenance;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -2655,98 +2654,6 @@ public class ReceiverActivitySchema
     public static int runRetentionPass(Connection connection, long cutoffEpochMilliseconds) throws SQLException
     {
         return ReceiverActivityRetention.runPass(connection, cutoffEpochMilliseconds).deletedRows();
-    }
-
-    static int resetStats(Connection connection) throws SQLException
-    {
-        int deleted = 0;
-        deleted += deleteAll(connection, "receiver_activity_tone");
-        deleted += deleteAll(connection, "receiver_activity_tone_sequence");
-        deleted += deleteAll(connection, "receiver_activity_event");
-        deleted += deleteAll(connection, "p25_site_call_identity_bucket");
-        deleted += deleteAll(connection, "p25_site_call_bucket");
-        deleted += deleteAll(connection, "trunked_logical_call_identity_bucket");
-        deleted += deleteAll(connection, "trunked_logical_call_bucket");
-        deleted += deleteAll(connection, "trunked_signaling_activity_bucket");
-        deleted += deleteAll(connection, "conventional_call_identity_bucket");
-        deleted += RadioSystemSchema.reset(connection);
-        deleted += deleteAll(connection, "p25_learned_site");
-        deleted += deleteAll(connection, "conventional_activity_bucket");
-        deleted += deleteAll(connection, "conventional_activity_summary");
-        deleted += deleteAll(connection, "alias_list_analog_activity_summary");
-        deleted += deleteAll(connection, "p25_site_patch_group_radio_summary");
-        deleted += deleteAll(connection, "p25_site_patch_group_talkgroup_summary");
-        deleted += deleteAll(connection, "p25_site_patch_group_summary");
-        deleted += deleteAll(connection, "p25_site_neighbor_summary");
-        deleted += deleteAll(connection, "p25_site_frequency_band_summary");
-        deleted += deleteAll(connection, "p25_foreign_system_band_summary");
-        deleted += deleteAll(connection, "p25_site_channel_tag_summary");
-        deleted += deleteAll(connection, "p25_site_channel_summary");
-        deleted += deleteAll(connection, "p25_site_patch_group_radio");
-        deleted += deleteAll(connection, "p25_site_patch_group_talkgroup");
-        deleted += deleteAll(connection, "p25_site_patch_group");
-        deleted += deleteAll(connection, "p25_site_neighbor");
-        deleted += deleteAll(connection, "p25_site_frequency_band");
-        deleted += deleteAll(connection, "p25_foreign_system_band");
-        deleted += deleteAll(connection, "p25_site_channel_tag");
-        deleted += deleteAll(connection, "p25_site_channel");
-        deleted += deleteAll(connection, "p25_site_snapshot");
-        deleted += deleteAll(connection, "trunked_control_channel_quality");
-        deleted += deleteAll(connection, "receiver_channel");
-        deleted += deleteAll(connection, "receiver_channel_statistics_reset");
-        deleted += deleteAll(connection, "statistics_status");
-        deleted += AliasActivitySummaryMaintenance.resetAll(connection);
-        SdrTrunkDatabaseStartup.setMetadata(connection, RADIO_SYSTEM_METRICS_STARTED_AT_KEY,
-            Long.toString(System.currentTimeMillis()));
-        SdrTrunkDatabaseStartup.setMetadata(connection, TRUNKED_LOGICAL_CALL_METRICS_STARTED_AT_KEY,
-            Long.toString(System.currentTimeMillis()));
-        SdrTrunkDatabaseStartup.setMetadata(connection, CONVENTIONAL_CALL_OUTPUT_METRICS_STARTED_AT_KEY,
-            Long.toString(System.currentTimeMillis()));
-        return deleted;
-    }
-
-    /**
-     * Clears activity owned by one saved channel. A channel-scoped DMR/NXDN fallback system belongs exclusively to
-     * that saved channel and is removed with it; learned native systems can be shared and are preserved.
-     */
-    static int clearChannelStats(Connection connection, String configurationId) throws SQLException
-    {
-        if(configurationId == null || configurationId.isBlank())
-        {
-            throw new IllegalArgumentException("Channel configuration ID is required");
-        }
-
-        int deleted = 0;
-        try(PreparedStatement statement = connection.prepareStatement("""
-            INSERT INTO receiver_channel_statistics_reset(configuration_id,reset_at_ms) VALUES(?,?)
-            ON CONFLICT(configuration_id) DO UPDATE SET reset_at_ms=max(reset_at_ms,excluded.reset_at_ms)
-            """))
-        {
-            statement.setString(1, configurationId);
-            statement.setLong(2, Math.max(1, System.currentTimeMillis()+1));
-            statement.executeUpdate();
-        }
-        try(PreparedStatement statement = connection.prepareStatement(
-            "DELETE FROM alias_list_analog_activity_summary WHERE channel_configuration_id = ?"))
-        {
-            statement.setString(1, configurationId);
-            deleted += statement.executeUpdate();
-        }
-        try(PreparedStatement statement = connection.prepareStatement(
-            "DELETE FROM receiver_channel WHERE configuration_id = ?"))
-        {
-            statement.setString(1, configurationId);
-            deleted += statement.executeUpdate();
-        }
-
-        try(PreparedStatement statement = connection.prepareStatement(
-            "DELETE FROM radio_system WHERE configuration_id = ?"))
-        {
-            statement.setString(1, configurationId);
-            deleted += statement.executeUpdate();
-        }
-
-        return deleted;
     }
 
     static void updateStatus(Connection connection, String key, String value) throws SQLException
@@ -5517,14 +5424,6 @@ public class ReceiverActivitySchema
         {
             return new ObservedForeignKey(mParentTable, mOnDelete, List.copyOf(mColumns),
                 List.copyOf(mParentColumns));
-        }
-    }
-
-    private static int deleteAll(Connection connection, String table) throws SQLException
-    {
-        try(Statement statement = connection.createStatement())
-        {
-            return statement.executeUpdate("DELETE FROM " + table);
         }
     }
 

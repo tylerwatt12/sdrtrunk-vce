@@ -743,6 +743,8 @@ final class ReceiverActivityScopedDeletion
 
     private static int priority(Step step)
     {
+        if(step.table.equals("p25_wuid_assignment_observation_summary") &&
+            "last_channel_id=NULL".equals(step.updateSet)) return -4;
         return switch(step.table)
         {
             case "receiver_activity_tone" -> -3;
@@ -910,7 +912,8 @@ final class ReceiverActivityScopedDeletion
                 else expand(step, metadata, expanded, new LinkedHashSet<>(), systemIdentityEventsCovered);
             }
             List<Step> ordered = new ArrayList<>(expanded.values());
-            ordered.sort(Comparator.comparingInt((Step step) -> metadata.rank(step.table))
+            boolean completeOwnerReset = allStatistics || channelConfigurationId != null;
+            ordered.sort(Comparator.comparingInt((Step step) -> metadata.rank(step.table, completeOwnerReset))
                 .thenComparingInt(ReceiverActivityScopedDeletion::priority));
             int boundaryRows = channelConfigurationId != null || allStatistics ? boundaryRows(connection) :
                 analogBoundaryRows(connection, plan, cutoffMs);
@@ -935,9 +938,12 @@ final class ReceiverActivityScopedDeletion
             long maximumEventId = scalar(connection, "SELECT coalesce(max(id),0) FROM receiver_activity_event", List.of());
             Map<String,List<BatchStep>> counted = new LinkedHashMap<>();
             Map<String,Boolean> populated = new LinkedHashMap<>();
+            Set<String> unrelatedChildren = channelConfigurationId == null ? Set.of() :
+                smallUnrelatedChannelChildren(connection, metadata, plan.scope.channelId);
             for(Step step: ordered)
             {
                 Table table = metadata.tables.get(step.table);
+                if(unrelatedChildren.contains(step.table)) continue;
                 Boolean hasRows = populated.get(step.table);
                 if(hasRows == null)
                 {
@@ -949,7 +955,7 @@ final class ReceiverActivityScopedDeletion
                     countsByPart.putIfAbsent(step.part, 0);
                     continue;
                 }
-                String guards = step.updateSet == null ? metadata.childGuards(table) : "";
+                String guards = step.updateSet == null ? metadata.childGuards(table, completeOwnerReset) : "";
                 BatchStep selected = new BatchStep(connection, step, table, guards, metadata,
                     allStatistics ? Long.MAX_VALUE : cutoffMs, maximumEventId);
                 steps.add(selected);
@@ -1033,10 +1039,37 @@ final class ReceiverActivityScopedDeletion
             }
             plan.add("summary", "alias_list_analog_activity_summary", "channel_configuration_id=?",
                 List.of(configurationId), null, List.of());
+            //Keep system-wide assignment history, but detach old channel references explicitly so the
+            //owner DELETE cannot perform thousands of implicit ON DELETE SET NULL writes in one pass.
+            plan.add("summary", "p25_wuid_assignment_observation_summary", "last_channel_id=?",
+                List.of(channelId), null, List.of(), "last_channel_id=NULL");
             plan.add("current", "receiver_channel", "id=?", List.of(channelId), null, List.of());
             // A channel-scoped fallback system belongs to this configuration; native shared systems have no such owner.
             plan.add("summary", "radio_system", "configuration_id=?", List.of(configurationId), null, List.of());
             return new Batch(connection, null, plan, cutoffMs, configurationId, false);
+        }
+
+        /** A tiny unrelated child set can be disproved without walking a large channel's event history. */
+        private static Set<String> smallUnrelatedChannelChildren(Connection connection, Metadata metadata, long channelId)
+            throws SQLException
+        {
+            Set<String> unrelated = new LinkedHashSet<>();
+            for(String table: List.of("activity_event_identity_member", "receiver_activity_tone_sequence"))
+            {
+                if(!metadata.tables.containsKey(table)) continue;
+                long size = scalar(connection, "SELECT count(*) FROM (SELECT 1 FROM " + table +
+                    " LIMIT " + (MAXIMUM_ROWS_PER_PASS + 1) + ")", List.of());
+                if(size > MAXIMUM_ROWS_PER_PASS) continue;
+                long matched = scalar(connection, "SELECT EXISTS(SELECT 1 FROM (SELECT event_id FROM " + table +
+                    " LIMIT " + (MAXIMUM_ROWS_PER_PASS + 1) + ") AS small CROSS JOIN receiver_activity_event AS owner " +
+                    "NOT INDEXED WHERE owner.id=small.event_id AND owner.channel_id=?)", List.of(channelId));
+                if(matched == 0)
+                {
+                    unrelated.add(table);
+                    if(table.equals("receiver_activity_tone_sequence")) unrelated.add("receiver_activity_tone");
+                }
+            }
+            return unrelated;
         }
 
         /** The caller pauses statistics admission and drains old observations before capturing this cutoff. */
@@ -1076,6 +1109,13 @@ final class ReceiverActivityScopedDeletion
         boolean done() { return outcome != ReceiverActivityMaintenance.DeletionOutcome.DELETED ||
             !boundariesPending && !aliasSeedsPending && cursor >= steps.size(); }
 
+        /** Only the paused, full reset may clear one complete table in its own transaction. */
+        boolean fastResetTablePass()
+        {
+            return allStatistics && !done() && !boundariesPending && !aliasSeedsPending && cursor < steps.size() &&
+                steps.get(cursor).step.updateSet == null && steps.get(cursor).step.predicate.equals("1=1");
+        }
+
         Preview preview()
         {
             List<String> effects = new ArrayList<>(plan.effects);
@@ -1091,6 +1131,27 @@ final class ReceiverActivityScopedDeletion
         /** Called inside one writer transaction. Cursor changes only after successful statements. */
         int runPass(Connection connection) throws SQLException
         {
+            return runPass(connection, false);
+        }
+
+        int runPass(Connection connection, boolean clearWholeTable) throws SQLException
+        {
+            if(clearWholeTable)
+            {
+                if(!fastResetTablePass()) throw new SQLException("A complete table was not selected for full reset");
+                if(connection.getAutoCommit()) throw new SQLException("Full table reset requires an owned transaction");
+                if(scalar(connection, "PRAGMA foreign_keys", List.of()) != 0)
+                    throw new SQLException("Full table reset requires foreign keys disabled before its transaction");
+                if(scalar(connection, "PRAGMA secure_delete", List.of()) != 0)
+                    throw new SQLException("Full table reset requires the existing secure-delete setting to be off");
+                int changed;
+                try(var statement = connection.createStatement())
+                {
+                    changed = statement.executeUpdate("DELETE FROM " + steps.get(cursor).table.name);
+                }
+                cursor++;
+                return changed;
+            }
             if(done()) return 0;
             ReceiverActivityMaintenance.DeletionOutcome valid = revalidate(connection);
             if(valid != ReceiverActivityMaintenance.DeletionOutcome.DELETED)
@@ -1540,6 +1601,7 @@ final class ReceiverActivityScopedDeletion
     {
         private final Map<String,Table> tables = new LinkedHashMap<>();
         private final Map<String,List<ForeignKey>> children = new LinkedHashMap<>();
+        private final Map<String,List<ForeignKey>> references = new LinkedHashMap<>();
         private final Map<String,List<Access>> indexes = new LinkedHashMap<>();
 
         private Metadata(Connection connection) throws SQLException
@@ -1608,20 +1670,28 @@ final class ReceiverActivityScopedDeletion
                 Map<Integer,List<String>> from = new LinkedHashMap<>();
                 Map<Integer,List<String>> to = new LinkedHashMap<>();
                 Map<Integer,String> parents = new LinkedHashMap<>();
+                Set<Integer> cascades = new LinkedHashSet<>();
                 try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA foreign_key_list(" + name + ")"))
                 {
                     while(rows.next())
                     {
                         String parent = rows.getString("table");
-                        if(!tables.containsKey(parent) || !"CASCADE".equalsIgnoreCase(rows.getString("on_delete"))) continue;
+                        if(!tables.containsKey(parent)) continue;
                         int id = rows.getInt("id");
                         parents.put(id, parent);
+                        if("CASCADE".equalsIgnoreCase(rows.getString("on_delete"))) cascades.add(id);
                         from.computeIfAbsent(id, ignored -> new ArrayList<>()).add(rows.getString("from"));
                         to.computeIfAbsent(id, ignored -> new ArrayList<>()).add(rows.getString("to"));
                     }
                 }
-                for(var parent: parents.entrySet()) children.computeIfAbsent(parent.getValue(), ignored -> new ArrayList<>())
-                    .add(new ForeignKey(name, parent.getValue(), List.copyOf(from.get(parent.getKey())), List.copyOf(to.get(parent.getKey()))));
+                for(var parent: parents.entrySet())
+                {
+                    ForeignKey link = new ForeignKey(name, parent.getValue(), List.copyOf(from.get(parent.getKey())),
+                        List.copyOf(to.get(parent.getKey())));
+                    references.computeIfAbsent(parent.getValue(), ignored -> new ArrayList<>()).add(link);
+                    if(cascades.contains(parent.getKey()))
+                        children.computeIfAbsent(parent.getValue(), ignored -> new ArrayList<>()).add(link);
+                }
             }
             for(var parent: children.entrySet())
             {
@@ -1748,17 +1818,21 @@ final class ReceiverActivityScopedDeletion
             return new Access(null, table.primaryKey.stream().map(key -> new OrderColumn(key, false)).toList(), false, "");
         }
 
-        private int rank(String table)
+        private int rank(String table, boolean allReferences)
         {
             int rank = 0;
-            for(ForeignKey child: children.getOrDefault(table, List.of())) rank = Math.max(rank, rank(child.child) + 1);
+            //Owner resets also delete dictionary parents protected by RESTRICT and owners linked by SET NULL.
+            //Those are dependencies, while only CASCADE grants ownership during selected-data cleanup.
+            for(ForeignKey child: (allReferences ? references : children).getOrDefault(table, List.of()))
+                rank = Math.max(rank, rank(child.child, allReferences) + 1);
             return rank;
         }
 
-        private String childGuards(Table table)
+        private String childGuards(Table table, boolean allReferences)
         {
             StringBuilder guards = new StringBuilder();
-            for(ForeignKey child: children.getOrDefault(table.name, List.of())) guards.append(" AND NOT EXISTS (SELECT 1 FROM ")
+            for(ForeignKey child: (allReferences ? references : children).getOrDefault(table.name, List.of()))
+                guards.append(" AND NOT EXISTS (SELECT 1 FROM ")
                 .append(child.child).append(" WHERE ").append(child.match(table.name)).append(')');
             return guards.toString();
         }

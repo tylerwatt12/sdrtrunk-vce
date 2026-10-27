@@ -15,6 +15,7 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpExchange;
+import io.github.dsheirer.identifier.alias.TalkerAliasText;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.DeletionTarget;
 import io.github.dsheirer.stats.activity.StatsDatabaseMaintenanceRequest.ScopedData;
@@ -219,7 +220,7 @@ final class RetainedStatisticsAdminHttpController
                 requireFields(target, Set.of("kind", "radio_system_key", "identity_key", "expected_alias"));
                 yield new StatsDatabaseMaintenanceRequest.TalkerAlias(
                     requiredText(target, "radio_system_key", 512), requiredText(target, "identity_key", 256),
-                    requiredText(target, "expected_alias", 255));
+                    requiredText(target, "expected_alias", TalkerAliasText.MAX_UTF16_UNITS));
             }
             case "scoped_data" -> {
                 requireAllowedFields(target, Set.of("kind", "source_kind", "source_key",
