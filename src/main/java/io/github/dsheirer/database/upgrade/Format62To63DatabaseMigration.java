@@ -5,11 +5,13 @@ import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.ConfigurationHistorySchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
+import io.github.dsheirer.portable.PortableFileIdentity;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
@@ -218,6 +220,7 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
         boolean moveHistory = false;
         if(Files.isRegularFile(configuration))
         {
+            recoverOriginalJournal(configuration, properties);
             try(Connection source = ConfigurationHistoryDatabase.openReadOnly(configuration))
             {
                 String role = ConfigurationHistorySchema.metadata(source, ConfigurationHistorySchema.ROLE_KEY);
@@ -306,6 +309,33 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
         ConfigurationHistoryDatabase.validatePairIdentity(configuration);
     }
 
+    /** A crash before the source COMMIT can leave a hot journal beside a durable extraction receipt. */
+    private static void recoverOriginalJournal(Path source, Properties receipt) throws IOException, SQLException
+    {
+        Path journal = Path.of(source + "-journal");
+        if(!Files.exists(journal, LinkOption.NOFOLLOW_LINKS)) return;
+        for(Path file: List.of(source, journal))
+        {
+            if(Files.isSymbolicLink(file) || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS))
+                throw new IOException("The interrupted database and its journal must be ordinary files; files were preserved");
+            ApplicationDatabaseMigrator.requireSingleFilesystemLinkWhenSupported(file);
+        }
+        if(Files.size(journal) == 0) return;
+        // Only the receipt's original source can have an uncommitted split transaction. Prove that identity
+        // before permitting SQLite to recover it. mode=rw never creates a replacement database, and SQLite
+        // alone decides whether this journal needs replay; no sidecar is manually discarded.
+        if(receipt.getProperty("source_file_key") == null)
+            throw new IOException("The interrupted upgrade lacks a source file identity. Preserve both installations " +
+                "and restore the complete backup before retrying.");
+        requireOriginalFile(source, receipt);
+        try(Connection recovery = DriverManager.getConnection("jdbc:sqlite:" + source.toUri() + "?mode=rw");
+            Statement query = recovery.createStatement();
+            ResultSet rows = query.executeQuery("SELECT 1 FROM sqlite_schema LIMIT 1"))
+        {
+            rows.next();
+        }
+    }
+
     private static void requireStage(Path stage, String pairId) throws IOException, SQLException
     {
         if(Files.isSymbolicLink(stage) || !Files.isRegularFile(stage))
@@ -352,10 +382,10 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
         Properties properties = new Properties();
         properties.setProperty("pair_id", pairId);
         properties.setProperty("configuration", source.getFileName().toString());
-        Object sourceKey = Files.readAttributes(source, java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+        String sourceKey = PortableFileIdentity.read(source);
         if(sourceKey != null)
         {
-            properties.setProperty("source_file_key", sourceKey.toString());
+            properties.setProperty("source_file_key", sourceKey);
         }
         Path receipt = ActivityDatabasePath.splitReceipt(source);
         try(OutputStream output = Files.newOutputStream(receipt, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE))
@@ -368,8 +398,8 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
     private static void requireOriginalFile(Path file, Properties receipt) throws IOException
     {
         String expected = receipt.getProperty("source_file_key");
-        Object actual = Files.readAttributes(file, java.nio.file.attribute.BasicFileAttributes.class).fileKey();
-        if(expected != null && (actual == null || !expected.equals(actual.toString())))
+        String actual = expected == null ? null : PortableFileIdentity.read(file);
+        if(expected != null && !expected.equals(actual))
         {
             throw new IOException("The transition source file was replaced; files were preserved");
         }
