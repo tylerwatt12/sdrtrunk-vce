@@ -1,4 +1,5 @@
 import { systemIdentity } from '../core/system-labels.js?v=2';
+import { receiverDisplayName } from '../core/receiver-names.js?v=1';
 import { spectrumSearchProtocolLabel, spectrumSearchSystemName, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchGroupKey } from './spectrum-search-data.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=2';
@@ -373,7 +374,9 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (candidate.id !== id) return candidate;
       if (Object.entries(measurements).some(([key, value]) => !Object.is(candidate[key], value)))
         receiverMeasurementRevision += 1;
-      return { ...candidate, ...measurements };
+      return { ...candidate, ...measurements,
+        ...(Object.hasOwn(tuner, 'name') ? { name: tuner.name } : {}),
+        ...(Object.hasOwn(tuner, 'nickname') ? { nickname: tuner.nickname } : {}) };
     });
   };
   const updateContext = () => {
@@ -384,9 +387,9 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       tuner = { ...tuner, center_frequency_hz: currentCenter };
     receiverChooser?.querySelectorAll('option').forEach((option) => {
       const listed = catalog.tuners.find((candidate) => candidate.id === option.value);
-      if (listed) option.textContent = `${listed.name} · ${receiverSummary(listed)}`;
+      if (listed) option.textContent = `${receiverDisplayName(listed)} · ${receiverSummary(listed)}`;
     });
-    summary.replaceChildren(node('strong', '', tuner?.name || 'Choose an idle receiver'),
+    summary.replaceChildren(node('strong', '', receiverDisplayName(tuner, 'Choose an idle receiver')),
       node('p', 'muted', tuner ? `${tuner.source_type === 'recording' ? 'WAV recording · ' : ''}${receiverSummary(tuner)}` :
         'Find P25, DMR, and NXDN trunked systems.'));
   };
@@ -462,7 +465,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const heading = node('div', 'spectrum-search-receiver-heading');
     const statusPill = uiPill(status, 'warning');
     statusPill.classList.add('spectrum-search-receiver-status');
-    heading.append(node('strong', '', tuner.name || 'Receiver'), statusPill);
+    heading.append(node('strong', '', receiverDisplayName(tuner)), statusPill);
     const details = node('p', 'muted spectrum-search-receiver-detail', receiverSummary(tuner));
     const copy = node('div', 'spectrum-search-receiver-copy');
     copy.append(heading, details);
@@ -472,7 +475,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const prepareLabel = needsStop ? 'Stop channels and use' : 'Unlock and use';
       const prepare = uiActionButton(prepareLabel, '', () => void prepareReceiver(state),
         'ui-button ui-button-primary spectrum-search-prepare-receiver');
-      prepare.setAttribute('aria-label', `${prepareLabel}: ${tuner.name || 'Receiver'}`);
+      prepare.setAttribute('aria-label', `${prepareLabel}: ${receiverDisplayName(tuner)}`);
       row.append(prepare);
     }
     return row;
@@ -573,7 +576,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (!available.some((tuner) => tuner.id === receiverId)) receiverId = available[0].id;
     const form = node('form', 'spectrum-search-form');
     const chooser = uiSelect(available.map((tuner) => ({ value: tuner.id,
-      label: `${tuner.name} · ${receiverSummary(tuner)}` })), receiverId);
+      label: `${receiverDisplayName(tuner)} · ${receiverSummary(tuner)}` })), receiverId);
     receiverChooser = chooser;
     chooser.setAttribute('aria-label', 'Receiver');
     chooser.addEventListener('change', () => { receiverId = chooser.value; updateContext(); });
@@ -1635,7 +1638,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     });
     stage.append(createDiscoveryCompletion(ui, { channels, grouped: results.length > 1,
       imports: wantsAliasImport ? aliasImportResult : null,
-      receiver: receiver()?.name || receiver()?.label }));
+      receiver: receiverDisplayName(receiver(), receiver()?.label || '') }));
     if (wantsAliasImport && !job.restart_required && aliasImportResult?.targets?.some((target) =>
       target.state === 'failed' || target.state === 'pending'))
       button('Retry talkgroup imports', () => void runAliasImports());

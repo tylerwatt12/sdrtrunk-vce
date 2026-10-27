@@ -1,6 +1,7 @@
 import * as routeFoundation from './core/routes.js?v=11';
 import * as preferenceSchema from './core/preference-schema.js?v=8';
 import { formatSourceName } from './core/source-names.js?v=1';
+import { receiverDisplayName } from './core/receiver-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
@@ -8313,9 +8314,9 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : live ? [
       Promise.resolve(null), import('./guides/live-presentation.js?v=2')
     ] : spectrum ? [
-      Promise.resolve(null), import('./guides/spectrum-presentation.js?v=2')
+      Promise.resolve(null), import('./guides/spectrum-presentation.js?v=3')
     ] : tuners ? [
-      Promise.resolve(null), import('./guides/tuners-presentation.js?v=2')
+      Promise.resolve(null), import('./guides/tuners-presentation.js?v=3')
     ] : streaming ? [
       import('./features/streaming.js?v=16'), import('./guides/streaming-presentation.js?v=1')
     ] : [
@@ -21240,7 +21241,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     const channelCount = purpose === 'search' ? Math.max(0, Number(tuner?.channel_count) || 0) :
       allocationGroupChannelCount(tuner);
     const needsStop = channelCount > 0 || /channel|serving/i.test(String(tuner?.reason || ''));
-    const name = String(tuner?.name || 'This receiver');
+    const name = receiverDisplayName(tuner, 'This receiver');
     const finish = purpose === 'search' ? 'when you finish or close the search' :
       'when you resume, switch receivers, or leave Spectrum';
     const message = needsStop ?
@@ -21325,7 +21326,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     const activity = ownChannels ? `${ownChannels} active` : groupChannels ? `${groupChannels} active in pair` :
       playback === 'playing' ? 'Playing' : playback === 'waiting' ? 'Waiting' :
         playback === 'stopped' ? 'Stopped' : 'Idle';
-    return `${tuner.name} · ${activity}${rate === 'Unavailable' ? '' : ` · ${rate}`}`;
+    return `${receiverDisplayName(tuner)} · ${activity}${rate === 'Unavailable' ? '' : ` · ${rate}`}`;
   };
   const refreshTunerOptionLabels = () => {
     [...select.options].forEach((option) => {
@@ -21641,7 +21642,7 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       const capturedLease = lease;
       const capturedTunerId = selectedTuner?.id || '';
       return {
-        tunerId: capturedTunerId, tunerName: selectedTuner?.name || '', browseLeaseId: capturedLease?.lease_id || '',
+        tunerId: capturedTunerId, tunerName: receiverDisplayName(selectedTuner, ''), browseLeaseId: capturedLease?.lease_id || '',
         setProbeActive: async (active) => {
           if (active) liveTune.reset();
           probeActive = active;
@@ -26243,7 +26244,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     creationActions.append(newChannelButton);
     const findSystemsButton = capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_TUNERS) ? uiActionButton('Find Trunked Systems',
       'icon-scan-search', async () => {
-        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=43');
+        const { openSpectrumSearchWizard } = await import('./features/spectrum-search.js?v=44');
         if (!renderIsCurrent(renderContext)) return;
         return openSpectrumSearchWizard({ node, openReadOnlyModal, requestJson, uiActionButton, iconButton,
           uiSelect, uiSelectFrame, uiPill, formField, anchor, href, entityRefHref, channelMHz, hex,
@@ -26252,7 +26253,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
           prepareReceiver: async (tuner) => {
             const count = Math.max(0, Number(tuner.channel_count) || 0);
             const stop = count > 0 || /channel|serving/i.test(String(tuner.reason || ''));
-            const name = tuner.name || 'This receiver';
+            const name = receiverDisplayName(tuner, 'This receiver');
             const message = stop ? `${name} is running ${count ? `${count} active channel${count === 1 ? '' : 's'}` :
               'active channels'}. Stopping them will end any calls in progress; those calls will not resume. ` +
               'VCE will restart the same configured channels when you finish or close the search.' :
@@ -26629,8 +26630,9 @@ function channelFieldOptions(field, profile, options) {
   if (field.path === 'alias_list_id') return (options.alias_lists || [])
     .filter((entry) => entry.family === profile.alias_family)
     .map((entry) => ({ value: entry.id, label: entry.name }));
-  if (field.path === 'source.preferred_tuner') return (options.tuners || [])
-    .map((value) => ({ value, label: value }));
+  if (field.path === 'source.preferred_tuner') return Array.isArray(options.tuner_options) ?
+    options.tuner_options.map((entry) => ({ value: entry.value, label: entry.label || entry.value })) :
+    (options.tuners || []).map((value) => ({ value, label: value }));
   const outputLabels = {
     CALL_EVENT: 'Call events', DECODED_MESSAGE: 'Decoded messages',
     TRAFFIC_CALL_EVENT: 'Traffic-channel call events', TRAFFIC_DECODED_MESSAGE: 'Traffic decoded messages',
@@ -33091,7 +33093,7 @@ async function renderTuners(options = {}) {
 
   function confirmRemoveRecording(tuner) {
     const body = node('div', 'admin-confirmation');
-    body.append(node('p', '', `Remove the recording tuner for ${tuner.name}? The WAV file will stay on disk.`));
+    body.append(node('p', '', `Remove the recording tuner for ${receiverDisplayName(tuner)}? The WAV file will stay on disk.`));
     const message = node('div', 'admin-form-message');
     message.setAttribute('role', 'alert');
     const actions = aliasModalFooter();
@@ -33135,7 +33137,7 @@ async function renderTuners(options = {}) {
     nickname.autocomplete = 'off';
     nickname.name = 'nickname';
     nickname.value = String(tuner.nickname || '');
-    const help = node('p', 'ui-field-detail', 'Shown in Live view. Leave blank to clear.');
+    const help = node('p', 'ui-field-detail', 'Leave blank to use the hardware name.');
     help.id = 'tuner-nickname-help';
     nickname.setAttribute('aria-describedby', help.id);
     let savedNickname = nickname.value;
@@ -33180,13 +33182,14 @@ async function renderTuners(options = {}) {
     for (const row of rows) {
       const button = node('button', 'tuners-list-item ui-button ui-button-secondary');
       button.type = 'button';
+      if (row.name !== receiverDisplayName(row)) button.title = row.name;
       button.setAttribute('aria-pressed', String(row.id === selectedId));
       const main = node('span', 'tuners-list-item-main');
       const copy = node('span', 'tuners-list-item-copy');
       const channelCount = Math.max(0, Number(row.channel_count) || 0);
       const center = row.frequency_hz ?? row.configured_frequency_hz;
       const rate = row.sample_rate_hz ?? row.configured_sample_rate_hz;
-      copy.append(node('span', 'tuners-list-item-name', row.name),
+      copy.append(node('span', 'tuners-list-item-name', receiverDisplayName(row)),
         node('span', 'tuners-list-item-meta',
           `${channelCount} active · ${tunerInventoryFrequency(center)} · ${tunerInventoryRate(rate)}`));
       main.append(iconGlyph(String(row.tuner_type).toLowerCase() === 'recording' ?
@@ -33243,8 +33246,9 @@ async function renderTuners(options = {}) {
       'ui-button ui-button-secondary ui-icon-button ui-button-compact');
     nickname.id = 'selected-tuner-nickname';
     nickname.addEventListener('click', () => void editNickname(tuner));
-    name.append(node('h2', '', tuner.name));
-    if (tuner.nickname) name.append(node('span', 'ui-label', tuner.nickname));
+    const displayName = receiverDisplayName(tuner);
+    name.append(node('h2', '', displayName));
+    if (tuner.name && tuner.name !== displayName) name.append(node('span', 'ui-label', tuner.name));
     name.append(nickname);
     identity.append(name);
     if (tuner.device_group?.kind && tuner.device_group.kind !== 'single') {

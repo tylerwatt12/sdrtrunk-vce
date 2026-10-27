@@ -1,5 +1,6 @@
 // Fictional transport data for the production Browser Spectrum interface.
 // No request, stream, or listening action in this provider contacts a receiver.
+import { receiverDisplayName } from '../core/receiver-names.js?v=1';
 const ROOT = '/api/v1/admin/tuners';
 const DIAGNOSTICS = '/api/v1/diagnostics/tuners';
 const CONTROL_HZ = 856662500;
@@ -72,7 +73,7 @@ export function createSpectrumGuideData({ signal, section } = {}) {
     requests.push({ path: url.pathname, method, body: clone(body) });
     if (method === 'GET' && url.pathname === ROOT) return { tuners: clone(tuners) };
     if (method === 'GET' && url.pathname === DIAGNOSTICS) return { rows: tuners.map(tuner => ({
-      target_id: tuner.spectrum_target_id, label: tuner.name,
+      target_id: tuner.spectrum_target_id, label: receiverDisplayName(tuner),
       center_frequency_hz: tuner.frequency_hz, sample_rate_hz: tuner.sample_rate_hz
     })) };
     if (method === 'GET' && url.pathname === '/api/v1/admin/spectrum-discovery/eligibility') {

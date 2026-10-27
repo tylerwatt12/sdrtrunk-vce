@@ -1,5 +1,6 @@
 // Fictional receiver responses and diagnostic frames for the actual Tuners UI.
 // Each instance owns its state; no request opens hardware or leaves this module.
+import { receiverDisplayName } from '../core/receiver-names.js?v=1';
 const ROOT = '/api/v1/admin/tuners';
 const clone = value => structuredClone(value);
 const setting = (id, label, group, kind, value, extra = {}) => ({ id, label, group, kind, value,
@@ -71,7 +72,7 @@ export function createTunersGuideData({ signal } = {}) {
       return { nickname: nicknameTuner.nickname };
     }
     if (method === 'GET' && url.pathname === '/api/v1/diagnostics/tuners') return { rows: selected.spectrum_available ? [{
-      target_id: selected.spectrum_target_id, label: selected.name, center_frequency_hz: selected.frequency_hz,
+      target_id: selected.spectrum_target_id, label: receiverDisplayName(selected), center_frequency_hz: selected.frequency_hz,
       sample_rate_hz: selected.sample_rate_hz }] : [] };
     if (method === 'PUT' && url.pathname === `${ROOT}/${selected.id}/state` &&
         ['live', 'setup', 'disabled'].includes(body.state)) {

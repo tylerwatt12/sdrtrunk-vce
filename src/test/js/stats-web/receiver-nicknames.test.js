@@ -25,6 +25,41 @@ assert.equal(receiverLabel({ receiver_id: 'receiver-a', receiver_nickname: '<img
 
 async function check() {
   const core = path.join(path.dirname(app), 'core');
+  const { receiverDisplayName } = await import(pathToFileURL(path.join(core, 'receiver-names.js')).href);
+  assert.equal(receiverDisplayName({ nickname: ' North antenna ', name: 'Airspy R2' }), 'North antenna');
+  assert.equal(receiverDisplayName({ nickname: ' ', name: 'Airspy R2' }), 'Airspy R2');
+  assert.equal(receiverDisplayName({ name: 'Airspy R2' }), 'Airspy R2');
+  assert.equal(receiverDisplayName(null), 'Receiver');
+  assert.equal(receiverDisplayName(null, 'Choose a receiver'), 'Choose a receiver');
+  assert.equal(receiverDisplayName({ nickname: '<North>', name: 'Airspy R2' }), '<North>');
+  const searchSource = fs.readFileSync(path.join(path.dirname(app), 'features/spectrum-search.js'), 'utf8');
+  const refreshStart = searchSource.indexOf('  const updateReceiverMeasurements = ');
+  const refreshEnd = searchSource.indexOf('  const updateContext = ', refreshStart);
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart);
+  const refreshed = { catalog: { tuners: [{ id: 'receiver-a', name: 'North antenna', eligible: true }] },
+    receiverMeasurementRevision: 0 };
+  vm.createContext(refreshed);
+  vm.runInContext(searchSource.slice(refreshStart, refreshEnd), refreshed);
+  refreshed.inventoryUpdate = { id: 'receiver-a', name: 'Airspy R2', nickname: '' };
+  vm.runInContext("updateReceiverMeasurements(inventoryUpdate, 'receiver-a')", refreshed);
+  assert.equal(receiverDisplayName(refreshed.catalog.tuners[0]), 'Airspy R2',
+    'A fresh inventory clear replaces the old display-only catalog nickname with its hardware fallback.');
+  assert.equal(refreshed.catalog.tuners[0].id, 'receiver-a');
+  assert.equal(refreshed.catalog.tuners[0].eligible, true);
+  assert.equal(refreshed.receiverMeasurementRevision, 0, 'A name refresh does not invalidate RF measurements.');
+  refreshed.inventoryUpdate.nickname = 'South antenna';
+  vm.runInContext("updateReceiverMeasurements(inventoryUpdate, 'receiver-a')", refreshed);
+  assert.equal(receiverDisplayName(refreshed.catalog.tuners[0]), 'South antenna');
+  const fieldOptions = binding('channelFieldOptions');
+  const tunerChoices = fieldOptions({ path: 'source.preferred_tuner' }, {}, {
+    tuners: ['AIRSPY R2 native-id'],
+    tuner_options: [{ value: 'AIRSPY R2 native-id', label: 'North antenna' }]
+  });
+  assert.equal(tunerChoices[0].value, 'AIRSPY R2 native-id', 'Nicknames never replace the preferred-tuner value.');
+  assert.equal(tunerChoices[0].label, 'North antenna');
+  const legacyChoices = fieldOptions({ path: 'source.preferred_tuner' }, {}, { tuners: ['AIRSPY R2 native-id'] });
+  assert.equal(legacyChoices[0].value, 'AIRSPY R2 native-id');
+  assert.equal(legacyChoices[0].label, 'AIRSPY R2 native-id');
   const layouts = await import(pathToFileURL(path.join(core, 'table-layout.js')).href);
   const defaults = await import(pathToFileURL(path.join(core, 'table-defaults.js')).href);
   const old = ['status', 'tags', 'channel', 'frequency', 'signal', 'decode-health', 'source', 'target', 'decoder'];

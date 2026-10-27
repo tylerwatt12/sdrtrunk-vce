@@ -123,6 +123,7 @@ async function install(page, state = {}) {
     configured_frequency_hz: 773081250,
     minimum_frequency_hz: 450000000, maximum_frequency_hz: 452000000 }] :
     [tuner('idle-a', 2200000), tuner('idle-b', 9000000)];
+  if (state.nicknames) state.tuners.forEach(receiver => { receiver.nickname = state.nicknames[receiver.id] || ''; });
   if (state.centerFrequencies) state.tuners.forEach((receiver, index) => {
     receiver.center_frequency_hz = state.centerFrequencies[index];
   });
@@ -1415,6 +1416,17 @@ test('a late dismissed acquisition cannot release a newer search receiver lease'
   expect(created.body.tuner_id).toBe('idle-a');
   expect(created.body.browse_lease_id).toBe('lease-2');
   await expect(dialog(page).getByRole('heading', { name: /channels? found$/ })).toBeVisible();
+});
+
+test('search shows receiver nickname while the selected and submitted tuner IDs stay stable', async ({ page }) => {
+  const state = await install(page, { nicknames: { 'idle-b': 'Wide antenna' } });
+  const choice = dialog(page).getByLabel('Receiver', { exact: true });
+  await expect(choice).toHaveValue('idle-b');
+  await expect(choice.locator('option:checked')).toContainText('Wide antenna');
+  await expect(dialog(page).locator('.spectrum-discovery-context')).toContainText('Wide antenna');
+  await complete(page);
+  const created = state.requests.find(request => request.path === searchPath && request.method === 'POST');
+  expect(created.body.tuner_id).toBe('idle-b');
 });
 
 test('uses one widest idle receiver and acquires its own browse session when searching', async ({ page }) => {

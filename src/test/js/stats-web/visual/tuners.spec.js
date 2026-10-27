@@ -248,13 +248,17 @@ test('receiver nickname saves and clears without changing tuner mode or hardware
   state.rejectNickname = false;
   await dialog.getByRole('button', { name: 'Save nickname', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.locator('.tuners-detail-identity h2')).toHaveText('Airspy R2');
+  await expect(page.locator('.tuners-detail-identity h2')).toHaveText('North antenna');
+  await expect(page.locator('.tuners-list-item-name')).toHaveText('North antenna');
+  await expect(page.locator('.tuners-detail-name > span')).toHaveText('Airspy R2');
   await expect(page.locator('.tuners-detail-name')).toContainText('North antenna');
   await page.getByRole('button', { name: 'Edit receiver nickname', exact: true }).click();
   await input.fill('');
   await dialog.getByRole('button', { name: 'Save nickname', exact: true }).click();
   await expect(dialog).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add receiver nickname', exact: true })).toBeVisible();
+  await expect(page.locator('.tuners-detail-identity h2')).toHaveText('Airspy R2');
+  await expect(page.locator('.tuners-list-item-name')).toHaveText('Airspy R2');
   expect(state.currentTuner.nickname).toBe('');
   expect(state.currentTuner.operator_state).toBe('live');
   expect(mutations).toEqual([
@@ -332,6 +336,17 @@ test('two-column tuner workspace keeps settings below signal and recordings in t
   await page.getByRole('button', { name: 'Add recording tuner', exact: true }).click();
   await expect.poll(() => mutations.at(-1)).toEqual({ type: 'recording', file_id: 'file-a',
     center_frequency_hz: 851_012_500 });
+});
+
+test('receiver nickname is the primary name on a phone while hardware remains identifiable', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockTuners(page, [], { currentTuner: operatorTuner({ nickname: 'North antenna' }) });
+  await page.goto('/app.html?view=tuners');
+  await expect(page.locator('.tuners-detail-identity h2')).toHaveText('North antenna');
+  await expect(page.locator('.tuners-detail-name > span')).toHaveText('Airspy R2');
+  await expect(page.locator('.tuners-list-item-name')).toHaveText('North antenna');
+  await expect(page.locator('.tuners-list-item')).toHaveAttribute('title', 'Airspy R2');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
 });
 
 test('embedded signal view reuses cursor and zoom with HiRes and LoRes controls', async ({ page }) => {

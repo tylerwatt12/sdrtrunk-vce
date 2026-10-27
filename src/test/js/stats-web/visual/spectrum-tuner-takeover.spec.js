@@ -85,6 +85,7 @@ async function install(page, options = {}) {
     settings: activeTuner().settings.map((setting) => setting.id === 'center_frequency_locked' ?
       { ...setting, value: false } : setting)
   } : activeTuner()];
+  if (options.nickname !== undefined) inventory[0].nickname = options.nickname;
   const preferenceModule = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
 
@@ -139,7 +140,7 @@ async function install(page, options = {}) {
         return fail('Channels are using this tuner\'s paired hardware', 'tuner_browse_unavailable', 409);
       return respond({ lease_id: `monitor-${++state.monitorSequence}`,
         expires_at_epoch_ms: Date.now() + 30000, takeover: false, can_tune: options.idle === true,
-        tuner: options.idle ? { ...inventory[0], operator_state: 'setup' } : activeTuner() });
+        tuner: options.idle ? { ...inventory[0], operator_state: 'setup' } : inventory[0] });
     }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [] });
     if (path === '/api/v1/dashboard/main') return respond({ quality: { current: [] },
@@ -172,6 +173,18 @@ async function confirmStopChannels(page, purpose = 'tune') {
     name: search ? 'Stop channels and search' : 'Stop channels and tune', exact: true
   }).click();
 }
+
+test('Spectrum uses receiver nickname in its chooser and takeover confirmation while keeping the tuner ID', async ({ page }) => {
+  const state = await install(page, { nickname: 'North antenna' });
+  const select = page.locator('.spectrum-browse-tuner select');
+  await expect(select).toHaveValue('active-a');
+  await expect(select.locator('option:checked')).toContainText('North antenna');
+  await page.getByRole('button', { name: 'Setup', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Stop channels to tune?', exact: true });
+  await expect(confirmation).toContainText('North antenna is running 2 active channels');
+  await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
+  expect(state.requests.filter(request => request.path === browsePath && request.body.takeover)).toEqual([]);
+});
 
 test('Spectrum can temporarily stop an active locked tuner and resume its channels', async ({ page }) => {
   const state = await install(page);
