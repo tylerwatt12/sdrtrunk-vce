@@ -20,6 +20,10 @@
   white-space: nowrap;
 }
 
+.ui-identity-action-leading > .ui-identity-action-label {
+  align-self: baseline;
+}
+
 :where(.data-workspace, [data-ui-density="compact"]) {
   --ui-control-height: var(--control-height-compact);
   --ui-control-radius: var(--radius-control);

@@ -247,7 +247,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
 }
 
 for (const [width, density] of [[1280, 'normal'], [1280, 'dense'], [390, 'normal']]) {
-  test(`the Direct Listen action stays beside its target without increasing Live row height at ${width}px ${density}`, async ({ page }) => {
+  test(`the Direct Listen action stays before its target without increasing Live row height at ${width}px ${density}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await openDirectListen(page, { density });
     const measurements = await state.row.evaluate(row => {
@@ -255,17 +255,39 @@ for (const [width, density] of [[1280, 'normal'], [1280, 'dense'], [390, 'normal
       const button = target.querySelector('[data-direct-listen-action="add"]');
       const summary = target.querySelector('.identity-summary');
       const identity = summary.getBoundingClientRect(), action = button.getBoundingClientRect();
-      const height = row.getBoundingClientRect().height, owner = button.parentElement;
+      const height = row.getBoundingClientRect().height, owner = button.parentElement, next = button.nextSibling;
       button.remove();
       const baseline = row.getBoundingClientRect().height;
-      owner.append(button);
-      return { height, baseline, identity: { top: identity.top, bottom: identity.bottom, right: identity.right },
-        action: { top: action.top, bottom: action.bottom, left: action.left, width: action.width, height: action.height } };
+      owner.insertBefore(button, next);
+      return { height, baseline, identity: { top: identity.top, bottom: identity.bottom, left: identity.left },
+        action: { top: action.top, bottom: action.bottom, right: action.right, width: action.width, height: action.height } };
     });
+    if (process.env.WEB_REVIEW_DIR) {
+      fs.mkdirSync(process.env.WEB_REVIEW_DIR, { recursive: true });
+      const name = `live-target-left-${width}-${density}`;
+      const details = await state.row.evaluate(row => {
+        const target = row.querySelector('[data-column="target"]');
+        const inspect = element => {
+          const style = getComputedStyle(element);
+          return { tag: element.tagName, classes: element.className, bounds: element.getBoundingClientRect().toJSON(),
+            display: style.display, alignItems: style.alignItems, alignSelf: style.alignSelf, lineHeight: style.lineHeight,
+            font: style.font, verticalAlign: style.verticalAlign, padding: style.padding, border: style.borderWidth };
+        };
+        const before = getComputedStyle(target, '::before');
+        return { row: inspect(row), target: inspect(target), wrapper: inspect(target.querySelector('.ui-identity-action')),
+          label: inspect(target.querySelector('.ui-identity-action-label')), summary: inspect(target.querySelector('.identity-summary')),
+          action: inspect(target.querySelector('button')), glyph: inspect(target.querySelector('svg')),
+          before: { content: before.content, display: before.display, font: before.font, lineHeight: before.lineHeight } };
+      });
+      fs.writeFileSync(path.join(process.env.WEB_REVIEW_DIR, `${name}.json`), JSON.stringify({ ...measurements, details }, null, 2));
+      await state.row.locator('[data-column="target"]').screenshot({
+        path: path.join(process.env.WEB_REVIEW_DIR, `${name}-cell.png`) });
+      await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR, `${name}.png`) });
+    }
     expect(measurements.height).toBeLessThanOrEqual(measurements.baseline + 1);
     expect(measurements.action.width).toBeLessThanOrEqual(24);
     expect(measurements.action.height).toBeLessThanOrEqual(24);
-    expect(measurements.action.left).toBeGreaterThanOrEqual(measurements.identity.right - 1);
+    expect(measurements.action.right).toBeLessThanOrEqual(measurements.identity.left + 1);
     expect(measurements.action.top).toBeLessThan(measurements.identity.bottom);
     expect(measurements.action.bottom).toBeGreaterThan(measurements.identity.top);
     expect(state.fixture.pageErrors).toEqual([]);

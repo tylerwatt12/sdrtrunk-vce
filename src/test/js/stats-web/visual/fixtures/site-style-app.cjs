@@ -328,7 +328,7 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
   // account so onboarding does not cover the controls those fixtures exercise.
   if (!options.guides) await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases', 'scan-lists', 'radioreference', 'streaming', 'tuners', 'tuner-spectrum', 'live', 'dashboard', 'scanner', 'recordings', 'topics', 'map', 'network-visualizer', 'admin']) {
-      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${['channel-setup', 'scanner'].includes(id) ? 5 : ['recordings', 'network-visualizer'].includes(id) ? 4 : ['tuners', 'streaming', 'radioreference', 'live', 'dashboard', 'topics', 'map', 'admin'].includes(id) ? 3 : id === 'scan-lists' ? 8 : ['aliases', 'tuner-spectrum'].includes(id) ? 5 : 1}`, '1');
+      localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:${id}:${id === 'scanner' ? 6 : id === 'channel-setup' ? 5 : ['recordings', 'network-visualizer'].includes(id) ? 4 : ['tuners', 'streaming', 'radioreference', 'live', 'dashboard', 'topics', 'map', 'admin'].includes(id) ? 3 : id === 'scan-lists' ? 8 : ['aliases', 'tuner-spectrum'].includes(id) ? 5 : 1}`, '1');
     }
   });
   await page.addInitScript((snapshotValue) => {

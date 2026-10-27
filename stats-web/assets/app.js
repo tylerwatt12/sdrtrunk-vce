@@ -2251,9 +2251,10 @@ function withDirectListenAction(value, row, reference, options = {}) {
   const action = directListenAction(row, reference, options);
   if (!action) return value;
   const result = node('span', 'ui-identity-action');
+  if (options.actionFirst) result.classList.add('ui-identity-action-leading');
   const label = node('span', 'ui-identity-action-label');
   label.append(value instanceof Node ? value : document.createTextNode(String(value || '')));
-  result.append(label, action);
+  result.append(...(options.actionFirst ? [action, label] : [label, action]));
   return result;
 }
 
@@ -19978,7 +19979,7 @@ function liveIdentitySortValue(row, kind) {
 }
 
 function liveIdentityValue(row, kind) {
-  if (kind === 'target' && isAnalogChannel(row)) return liveConventionalChannelValue(row);
+  if (kind === 'target' && isAnalogChannel(row)) return liveConventionalChannelValue(row, { actionFirst: true });
   const name = liveAliasValue(row, kind);
   const identifier = liveIdentifierAliasValue(row, kind);
   const text = (value) => value instanceof Node ? value.textContent.trim() : String(value || '').trim();
@@ -19988,14 +19989,14 @@ function liveIdentityValue(row, kind) {
     nameText && idText && nameText !== idText ? identifier : '');
   if (summary instanceof Node) summary.classList.add('identity-summary-inline');
   return kind === 'target' ? withDirectListenAction(summary, row, row.target_entity_ref || row.entity_ref,
-    { label: nameText || idText }) : summary;
+    { label: nameText || idText, actionFirst: true }) : summary;
 }
 
-function liveConventionalChannelValue(row) {
+function liveConventionalChannelValue(row, { actionFirst = false } = {}) {
   const label = String(row?.channel_name || '');
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row?.entity_ref) : '';
   return withDirectListenAction(label && target ? anchor(label, target, 'live-channel-link') : label,
-    row, row.entity_ref, { channelOnly: true, label });
+    row, row.entity_ref, { channelOnly: true, label, actionFirst });
 }
 
 function liveRemoteOriginLabel(origin) {

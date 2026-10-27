@@ -21,7 +21,7 @@ for (const theme of ['light', 'dark']) {
         const glyph = element.querySelector('svg').getBoundingClientRect();
         return { row: { left: row.left, right: row.right, height: row.height },
           lineHeight: parseFloat(getComputedStyle(element.querySelector('.ui-identity-action-label')).lineHeight),
-          label: { right: label.right, height: label.height },
+          label: { left: label.left, height: label.height },
           button: { left: button.left, right: button.right, width: button.width, height: button.height },
           glyph: { width: glyph.width, height: glyph.height } };
       });
@@ -30,7 +30,7 @@ for (const theme of ['light', 'dark']) {
       expect(bounds.glyph.width).toBe(16);
       expect(bounds.glyph.height).toBe(16);
       expect(bounds.row.height).toBeLessThanOrEqual(24);
-      expect(bounds.label.right).toBeLessThanOrEqual(bounds.button.left);
+      expect(bounds.button.right).toBeLessThanOrEqual(bounds.label.left);
       expect(bounds.button.right).toBeLessThanOrEqual(bounds.row.right + 1);
       await action.focus();
       await expect(action).toBeFocused();
