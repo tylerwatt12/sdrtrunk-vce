@@ -266,6 +266,14 @@ public final class DatabaseMigrationChain
                                    boolean repairSelectedSource, Consumer<StepDescriptor> progress,
                                    BeforeStep beforeStep, int targetVersion) throws SQLException
     {
+        return migrate(connection, source, repairSelectedSource, progress, beforeStep, targetVersion,
+            MigrationTimings.NONE);
+    }
+
+    static MigrationReport migrate(Connection connection, DatabaseFormatCatalog.DetectedFormat source,
+                                   boolean repairSelectedSource, Consumer<StepDescriptor> progress,
+                                   BeforeStep beforeStep, int targetVersion, MigrationTimings timings) throws SQLException
+    {
         DatabaseFormatCatalog.requireVersion(targetVersion);
         if(targetVersion < source.version() || targetVersion > DatabaseFormatCatalog.CURRENT_VERSION)
         {
@@ -278,52 +286,61 @@ public final class DatabaseMigrationChain
         {
             DatabaseMigrationStep step = requireStep(detected.version());
             requireAdjacent(step);
-            progress.accept(new StepDescriptor(step.id(), step.description(), step.sourceVersion(),
-                step.targetVersion(), List.copyOf(step.declaredEffects(false))));
-            beforeStep.accept(new StepDescriptor(step.id(), step.description(), step.sourceVersion(),
-                step.targetVersion(), List.copyOf(step.declaredEffects(false))));
-            List<DatabaseMigrationEffect> effects = List.copyOf(
-                step.migrateSourceAndReport(connection,
-                    repairSelectedSource && step.sourceVersion() == source.version()));
-            requireObservedCounts(step, effects);
-            DatabaseFormatCatalog.DetectedFormat target =
-                DatabaseFormatCatalog.stampForMigration(connection, step.targetVersion());
-
-            if(target.version() != step.targetVersion() || !target.markerPresent())
+            try(var phase = timings.phase("Database format " + step.sourceVersion() + " -> " +
+                step.targetVersion() + ": " + step.description()))
             {
-                throw new SQLException("Migration step [" + step.id() + "] did not produce exact target format " +
-                    step.targetVersion());
+                progress.accept(new StepDescriptor(step.id(), step.description(), step.sourceVersion(),
+                    step.targetVersion(), List.copyOf(step.declaredEffects(false))));
+                beforeStep.accept(new StepDescriptor(step.id(), step.description(), step.sourceVersion(),
+                    step.targetVersion(), List.copyOf(step.declaredEffects(false))));
+                List<DatabaseMigrationEffect> effects = List.copyOf(
+                    step.migrateSourceAndReport(connection,
+                        repairSelectedSource && step.sourceVersion() == source.version()));
+                requireObservedCounts(step, effects);
+                DatabaseFormatCatalog.DetectedFormat target =
+                    DatabaseFormatCatalog.stampForMigration(connection, step.targetVersion());
+
+                if(target.version() != step.targetVersion() || !target.markerPresent())
+                {
+                    throw new SQLException("Migration step [" + step.id() + "] did not produce exact target format " +
+                        step.targetVersion());
+                }
+
+                reports.add(new StepReport(step.id(), step.description(), step.sourceVersion(), step.targetVersion(),
+                    effects));
+                detected = target;
+                phase.complete();
+            }
+        }
+
+        try(var phase = timings.phase("Complete migration chain metadata and final admission"))
+        {
+            if(!detected.markerPresent())
+            {
+                detected = DatabaseFormatCatalog.stampForMigration(connection, detected.version());
+                StepPreflight adoption = markerAdoptionPreflight(detected.version());
+                reports.add(new StepReport(adoption.id(), adoption.description(), adoption.sourceVersion(),
+                    adoption.targetVersion(), adoption.effects()));
             }
 
-            reports.add(new StepReport(step.id(), step.description(), step.sourceVersion(), step.targetVersion(),
-                effects));
-            detected = target;
-        }
-
-        if(!detected.markerPresent())
-        {
-            detected = DatabaseFormatCatalog.stampForMigration(connection, detected.version());
-            StepPreflight adoption = markerAdoptionPreflight(detected.version());
-            reports.add(new StepReport(adoption.id(), adoption.description(), adoption.sourceVersion(),
-                adoption.targetVersion(), adoption.effects()));
-        }
-
-        if(source.version() < DatabaseFormatCatalog.CURRENT_VERSION &&
-            reports.stream().flatMap(report -> report.effects().stream()).anyMatch(effect ->
-                effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT &&
-                    effect.subject().equals(CurrentDatabaseDerivedStateRepair.EMPTY_ALIAS_COUNTERS) && effect.affectedRows() > 0))
-        {
-            //Discarded observations are never reconstructed. Only configuration seeds empty current counters.
-            io.github.dsheirer.stats.AliasActivitySummaryMaintenance.resetAll(connection);
-        }
-        if(repairSelectedSource)
-        {
-            DatabaseFormatCatalog.DetectedFormat strictTarget = targetVersion == DatabaseFormatCatalog.CURRENT_VERSION ?
-                DatabaseFormatCatalog.requireCurrent(connection) : DatabaseFormatCatalog.inspect(connection);
-            if(strictTarget.version() != targetVersion || !strictTarget.markerPresent())
+            if(source.version() < DatabaseFormatCatalog.CURRENT_VERSION &&
+                reports.stream().flatMap(report -> report.effects().stream()).anyMatch(effect ->
+                    effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT &&
+                        effect.subject().equals(CurrentDatabaseDerivedStateRepair.EMPTY_ALIAS_COUNTERS) && effect.affectedRows() > 0))
             {
-                throw new SQLException("Migration did not produce exact marked target format " + targetVersion);
+                //Discarded observations are never reconstructed. Only configuration seeds empty current counters.
+                io.github.dsheirer.stats.AliasActivitySummaryMaintenance.resetAll(connection);
             }
+            if(repairSelectedSource)
+            {
+                DatabaseFormatCatalog.DetectedFormat strictTarget = targetVersion == DatabaseFormatCatalog.CURRENT_VERSION ?
+                    DatabaseFormatCatalog.requireCurrent(connection) : DatabaseFormatCatalog.inspect(connection);
+                if(strictTarget.version() != targetVersion || !strictTarget.markerPresent())
+                {
+                    throw new SQLException("Migration did not produce exact marked target format " + targetVersion);
+                }
+            }
+            phase.complete();
         }
         return new MigrationReport(source, detected, List.copyOf(reports));
     }

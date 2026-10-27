@@ -83,7 +83,7 @@ public final class ApplicationMigrationService
 
     public ApplicationMigrationService()
     {
-        this(SqliteDatabaseSnapshot::createExternal, SqliteDatabaseSnapshot::create,
+        this(externalSnapshotter(), SqliteDatabaseSnapshot::create,
             ApplicationMigratorLauncher::run,
             ApplicationMigrationService::moveAtomically, ApplicationMigrationService::validatePromotedDatabase,
             true, true);
@@ -91,7 +91,7 @@ public final class ApplicationMigrationService
 
     ApplicationMigrationService(MigrationRunner migrationRunner)
     {
-        this(SqliteDatabaseSnapshot::createExternal, SqliteDatabaseSnapshot::create, migrationRunner,
+        this(externalSnapshotter(), SqliteDatabaseSnapshot::create, migrationRunner,
             ApplicationMigrationService::moveAtomically, ApplicationMigrationService::validatePromotedDatabase,
             true, true);
     }
@@ -161,6 +161,25 @@ public final class ApplicationMigrationService
                                           ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
+        Objects.requireNonNull(source, "Previous-build input cannot be null");
+        MigrationReportSession report = new MigrationReportSession(targetDataRoot, source.database(),
+            "Import previous profile", approvedPlan == null ? MigrationContent.FULL : approvedPlan.content(),
+            approvedPlan == null ? "" : approvedPlan.mReviewTimings);
+        try
+        {
+            return report.completed(importPreviousInternal(source, targetDataRoot, approvedPlan, report.progress(progress)));
+        }
+        catch(IOException | SQLException | InterruptedException | RuntimeException | Error failure)
+        {
+            report.failed(failure, false);
+            throw failure;
+        }
+    }
+
+    private MigrationResult importPreviousInternal(PreviousBuildLocator.Selection source, Path targetDataRoot,
+                                          ApprovedMigrationPlan approvedPlan, ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Objects.requireNonNull(source, "Previous-build input cannot be null");
         Path sourcePath = source.path().toAbsolutePath().normalize();
@@ -193,7 +212,7 @@ public final class ApplicationMigrationService
         Files.createDirectories(targetParent);
         listener.update("Checking previous data");
         ApprovedMigrationPlan expectedPlan = approvedPlan != null ? approvedPlan :
-            readMigrationApproval(source, targetParent);
+            readMigrationApproval(source, targetParent, listener);
         listener.update("Migration plan: " + describePlan(expectedPlan.plan()));
         listener.update("Migration scope: " + describeScope(inputScope));
         FileAccessAttributeSnapshot targetRootAttributes =
@@ -210,11 +229,11 @@ public final class ApplicationMigrationService
             FileAccessAttributeSnapshot.restrictPrivateDirectory(stageRoot);
             listener.update("Copying selected database");
             Path stagedDatabase = SdrTrunkDatabasePath.getDatabasePath(stageRoot);
-            mExternalSnapshotter.create(sourceDatabase, stagedDatabase);
+            mExternalSnapshotter.create(sourceDatabase, stagedDatabase, listener);
             FileAccessAttributeSnapshot.restrictSensitiveFile(stagedDatabase);
-            ApprovedMigrationPlan stagedPlan = readPrivateApprovedMigrationPlan(stagedDatabase,
-                mExternalSnapshotsAreCanonical).withContent(expectedPlan.content());
-            requireApprovedPlan(expectedPlan, stagedPlan, "source database selected after confirmation");
+            listener.update("Verifying the copied database matches source review");
+            ApprovedMigrationPlan stagedPlan = verifyStagedApproval(expectedPlan, stagedDatabase,
+                mExternalSnapshotsAreCanonical);
             DatabaseMigrationChain.PreflightReport sourcePlan = stagedPlan.plan();
 
             LegacyReceiverSettingsMigration.Snapshot legacySnapshot = null;
@@ -250,7 +269,7 @@ public final class ApplicationMigrationService
             if(inputScope == PreviousBuildLocator.InputScope.PORTABLE_PROFILE)
             {
                 listener.update("Copying profile files");
-                List<String> statuses = copyProfileData(sourceRoot, stageRoot);
+                List<String> statuses = copyProfileData(sourceRoot, stageRoot, listener);
                 for(String status: statuses)
                 {
                     listener.update(status.substring(2));
@@ -348,6 +367,25 @@ public final class ApplicationMigrationService
                                                   ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
+        MigrationReportSession report = new MigrationReportSession(targetDataRoot, sourceDatabase,
+            "Replace application database", approvedPlan == null ? MigrationContent.FULL : approvedPlan.content(),
+            approvedPlan == null ? "" : approvedPlan.mReviewTimings);
+        try
+        {
+            return report.completed(replaceCurrentDatabaseInternal(sourceDatabase, targetDataRoot, approvedPlan,
+                report.progress(progress)));
+        }
+        catch(IOException | SQLException | InterruptedException | RuntimeException | Error failure)
+        {
+            report.failed(failure, false);
+            throw failure;
+        }
+    }
+
+    private MigrationResult replaceCurrentDatabaseInternal(Path sourceDatabase, Path targetDataRoot,
+                                                  ApprovedMigrationPlan approvedPlan, ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
         ProgressListener listener = progress == null ? ignored -> { } : progress;
         Objects.requireNonNull(sourceDatabase, "Selected SQLite database cannot be null");
         Objects.requireNonNull(targetDataRoot, "Current portable data root cannot be null");
@@ -361,7 +399,7 @@ public final class ApplicationMigrationService
 
         listener.update("Checking selected SQLite database");
         ApprovedMigrationPlan expectedPlan = approvedPlan != null ? approvedPlan :
-            readMigrationApproval(source, target.getParent());
+            readMigrationApproval(source, target.getParent(), listener);
         listener.update("Migration plan: " + describePlan(expectedPlan.plan()));
         listener.update("Migration scope: configuration and saved activity are imported together. Other source " +
             "files are not copied, and the current portable files outside the databases remain in place.");
@@ -384,11 +422,10 @@ public final class ApplicationMigrationService
         try
         {
             listener.update("Copying selected SQLite database");
-            mExternalSnapshotter.create(source, staged);
+            mExternalSnapshotter.create(source, staged, listener);
             FileAccessAttributeSnapshot.restrictSensitiveFile(staged);
-            ApprovedMigrationPlan stagedPlan = readPrivateApprovedMigrationPlan(staged,
-                mExternalSnapshotsAreCanonical).withContent(expectedPlan.content());
-            requireApprovedPlan(expectedPlan, stagedPlan, "SQLite database selected after confirmation");
+            listener.update("Verifying the copied database matches source review");
+            ApprovedMigrationPlan stagedPlan = verifyStagedApproval(expectedPlan, staged, mExternalSnapshotsAreCanonical);
             DatabaseMigrationChain.PreflightReport sourcePlan = stagedPlan.plan();
 
             listener.update("Creating current database safety backup");
@@ -517,6 +554,25 @@ public final class ApplicationMigrationService
     }
 
     public MigrationResult migrateCurrent(Path dataRoot, boolean createBackup,
+        Map<String,String> expectedLegacyDefaults, MigrationContent content, ProgressListener progress)
+        throws IOException, SQLException, InterruptedException
+    {
+        MigrationReportSession report = new MigrationReportSession(dataRoot,
+            SdrTrunkDatabasePath.getDatabasePath(dataRoot.toAbsolutePath().normalize()),
+            "Update current profile; recovery backup " + (createBackup ? "selected" : "skipped"), content, "");
+        try
+        {
+            return report.completed(migrateCurrentInternal(dataRoot, createBackup, expectedLegacyDefaults,
+                content, report.progress(progress)));
+        }
+        catch(IOException | SQLException | InterruptedException | RuntimeException | Error failure)
+        {
+            report.failed(failure);
+            throw failure;
+        }
+    }
+
+    private MigrationResult migrateCurrentInternal(Path dataRoot, boolean createBackup,
         Map<String,String> expectedLegacyDefaults, MigrationContent content, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
@@ -747,12 +803,19 @@ public final class ApplicationMigrationService
     public static ApprovedMigrationPlan readMigrationApproval(PreviousBuildLocator.Selection source, Path scratchDirectory)
         throws IOException, SQLException
     {
+        return readMigrationApproval(source, scratchDirectory, null);
+    }
+
+    private static ApprovedMigrationPlan readMigrationApproval(PreviousBuildLocator.Selection source, Path scratchDirectory,
+                                                               ProgressListener progress)
+        throws IOException, SQLException
+    {
         Objects.requireNonNull(source);
-        ApprovedMigrationPlan database = readMigrationApproval(source.database(), scratchDirectory);
+        ApprovedMigrationPlan database = readMigrationApproval(source.database(), scratchDirectory, progress);
         if(!source.portableProfile()) return database;
         LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.captureMissing(
             source.path(), source.database(), database.plan().source().version());
-        return new ApprovedMigrationPlan(database.plan(), database.sourceContentSha256(), legacy);
+        return new ApprovedMigrationPlan(database.plan(), database.sourceContentSha256(), legacy, database.mReviewTimings);
     }
 
     /** Creates approval scratch data beside the caller's selected destination rather than in the JVM temp volume. */
@@ -793,20 +856,38 @@ public final class ApplicationMigrationService
         Path previewDirectory = Files.createTempDirectory(scratch, ".sdrtrunk-migration-approval-");
         Path previewDatabase = previewDirectory.resolve(SdrTrunkDatabasePath.DATABASE_FILENAME);
         ApprovedMigrationPlan approval = null;
+        StringBuilder reviewTimings = new StringBuilder();
+        java.util.function.Consumer<String> timingOutput = line -> {
+            reviewTimings.append(line).append('\n');
+            listener.update(line);
+        };
+        MigrationTimings timings = new MigrationTimings(timingOutput);
         Throwable primaryFailure = null;
         try
         {
             FileAccessAttributeSnapshot.restrictPrivateDirectory(previewDirectory);
             listener.update("Creating a temporary safety copy");
             requireNotCancelled(cancellation);
-            SqliteDatabaseSnapshot.createExternal(normalized, previewDatabase, cancellation);
+            try(var phase = timings.phase("Source review: capture and verify external snapshot"))
+            {
+                SqliteDatabaseSnapshot.createExternal(normalized, previewDatabase, cancellation, timingOutput);
+                phase.complete();
+            }
             listener.update("Checking the copied database");
             requireNotCancelled(cancellation);
-            DatabaseMigrationChain.PreflightReport plan = readPrivateMigrationPlan(previewDatabase, cancellation);
+            DatabaseMigrationChain.PreflightReport plan;
+            try(var phase = timings.phase("Source review: schema, configuration and physical quick check"))
+            {
+                plan = readPrivateMigrationPlan(previewDatabase, cancellation);
+                phase.complete();
+            }
             listener.update("Fingerprinting the copied database");
             requireNotCancelled(cancellation);
-            approval = new ApprovedMigrationPlan(plan,
-                SqliteDatabaseSnapshot.sha256(previewDatabase, cancellation));
+            try(var phase = timings.phase("Source review: snapshot content fingerprint"))
+            {
+                approval = new ApprovedMigrationPlan(plan, SqliteDatabaseSnapshot.sha256(previewDatabase, cancellation));
+                phase.complete();
+            }
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
@@ -818,7 +899,11 @@ public final class ApplicationMigrationService
             try
             {
                 listener.update("Cleaning temporary review files");
-                deleteTreeIfExists(previewDirectory);
+                try(var phase = timings.phase("Source review: remove temporary snapshot"))
+                {
+                    deleteTreeIfExists(previewDirectory);
+                    phase.complete();
+                }
             }
             catch(IOException cleanupFailure)
             {
@@ -838,7 +923,9 @@ public final class ApplicationMigrationService
             }
         }
         requireNotCancelled(cancellation);
-        return Objects.requireNonNull(approval, "Migration approval was not produced");
+        Objects.requireNonNull(approval, "Migration approval was not produced");
+        return new ApprovedMigrationPlan(approval.plan(), approval.sourceContentSha256(),
+            approval.mLegacyReceiverSettings, reviewTimings.toString());
     }
 
     /** Reads an application-owned standalone snapshot without making another full-size copy. */
@@ -1149,6 +1236,24 @@ public final class ApplicationMigrationService
         }
     }
 
+    /** A byte-identical canonical snapshot already received review admission; the child still validates it fully. */
+    static ApprovedMigrationPlan verifyStagedApproval(ApprovedMigrationPlan expected, Path staged, boolean canonical)
+        throws IOException, SQLException
+    {
+        if(canonical)
+        {
+            // Canonical backup header counters are normalized by sha256, exactly as during approval. This covers
+            // both matching profile files. No schema/configuration/history inspection runs before equality.
+            String digest = SqliteDatabaseSnapshot.sha256(staged);
+            ApprovedMigrationPlan actual = new ApprovedMigrationPlan(expected.plan(), digest);
+            requireApprovedPlan(expected, actual, "source database selected after confirmation");
+            return expected;
+        }
+        ApprovedMigrationPlan actual = readPrivateApprovedMigrationPlan(staged, false).withContent(expected.content());
+        requireApprovedPlan(expected, actual, "source database selected after confirmation");
+        return actual;
+    }
+
     private static void validateVault(Path vault) throws IOException, SQLException
     {
         if(Files.isSymbolicLink(vault) || !Files.isRegularFile(vault, LinkOption.NOFOLLOW_LINKS))
@@ -1165,15 +1270,28 @@ public final class ApplicationMigrationService
         requireNoSidecars(vault, "The optional encryption-key vault snapshot remained active.");
     }
 
-    private List<String> copyProfileData(Path sourceRoot, Path stageRoot) throws IOException
+    private List<String> copyProfileData(Path sourceRoot, Path stageRoot, ProgressListener listener) throws IOException
     {
+        MigrationTimings timings = new MigrationTimings(listener::update);
         List<String> statuses = new ArrayList<>(3);
-        statuses.add(copyOptionalDirectory(sourceRoot.resolve(JMBE_DIRECTORY), stageRoot.resolve(JMBE_DIRECTORY),
-            "JMBE library files", "Select the JMBE library again after setup."));
-        statuses.add(copyOptionalDirectory(sourceRoot.resolve(MODULES_DIRECTORY),
-            stageRoot.resolve(MODULES_DIRECTORY), "optional decoder module files",
-            "Select or reinstall the optional decoder modules again after setup."));
-        statuses.add(copyOptionalVault(sourceRoot, stageRoot));
+        try(var phase = timings.phase("Copy optional JMBE library files"))
+        {
+            statuses.add(copyOptionalDirectory(sourceRoot.resolve(JMBE_DIRECTORY), stageRoot.resolve(JMBE_DIRECTORY),
+                "JMBE library files", "Select the JMBE library again after setup."));
+            phase.complete();
+        }
+        try(var phase = timings.phase("Copy optional decoder module files"))
+        {
+            statuses.add(copyOptionalDirectory(sourceRoot.resolve(MODULES_DIRECTORY),
+                stageRoot.resolve(MODULES_DIRECTORY), "optional decoder module files",
+                "Select or reinstall the optional decoder modules again after setup."));
+            phase.complete();
+        }
+        try(var phase = timings.phase("Copy and validate optional encryption-key vault"))
+        {
+            statuses.add(copyOptionalVault(sourceRoot, stageRoot));
+            phase.complete();
+        }
         return List.copyOf(statuses);
     }
 
@@ -1878,6 +1996,29 @@ public final class ApplicationMigrationService
     interface Snapshotter
     {
         void create(Path source, Path destination) throws IOException, SQLException;
+
+        default void create(Path source, Path destination, ProgressListener diagnostics) throws IOException, SQLException
+        {
+            create(source, destination);
+        }
+    }
+
+    private static Snapshotter externalSnapshotter()
+    {
+        return new Snapshotter()
+        {
+            @Override
+            public void create(Path source, Path destination) throws IOException, SQLException
+            {
+                SqliteDatabaseSnapshot.createExternal(source, destination);
+            }
+
+            @Override
+            public void create(Path source, Path destination, ProgressListener diagnostics) throws IOException, SQLException
+            {
+                SqliteDatabaseSnapshot.createExternal(source, destination, NEVER_CANCELLED, diagnostics::update);
+            }
+        };
     }
 
     @FunctionalInterface
@@ -1936,6 +2077,7 @@ public final class ApplicationMigrationService
         private final DatabaseMigrationChain.PreflightReport mPlan;
         private final String mSourceContentSha256;
         private final LegacyReceiverSettingsMigration.Snapshot mLegacyReceiverSettings;
+        private final String mReviewTimings;
 
         private ApprovedMigrationPlan(DatabaseMigrationChain.PreflightReport plan, String sourceContentSha256)
         {
@@ -1945,9 +2087,16 @@ public final class ApplicationMigrationService
         private ApprovedMigrationPlan(DatabaseMigrationChain.PreflightReport plan, String sourceContentSha256,
                                      LegacyReceiverSettingsMigration.Snapshot legacyReceiverSettings)
         {
+            this(plan, sourceContentSha256, legacyReceiverSettings, "");
+        }
+
+        private ApprovedMigrationPlan(DatabaseMigrationChain.PreflightReport plan, String sourceContentSha256,
+                                     LegacyReceiverSettingsMigration.Snapshot legacyReceiverSettings, String reviewTimings)
+        {
             mPlan = Objects.requireNonNull(plan);
             mSourceContentSha256 = Objects.requireNonNull(sourceContentSha256);
             mLegacyReceiverSettings = legacyReceiverSettings;
+            mReviewTimings = reviewTimings;
         }
 
         public DatabaseMigrationChain.PreflightReport plan()
@@ -1963,7 +2112,8 @@ public final class ApplicationMigrationService
         /** Rebinds only the declared contents; the reviewed source hash and legacy-settings snapshot stay intact. */
         public ApprovedMigrationPlan withContent(MigrationContent content)
         {
-            return new ApprovedMigrationPlan(mPlan.withContent(content), mSourceContentSha256, mLegacyReceiverSettings);
+            return new ApprovedMigrationPlan(mPlan.withContent(content), mSourceContentSha256, mLegacyReceiverSettings,
+                mReviewTimings);
         }
 
         private String sourceContentSha256()

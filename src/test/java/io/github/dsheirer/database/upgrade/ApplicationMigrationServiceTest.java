@@ -530,7 +530,7 @@ class ApplicationMigrationServiceTest
             () -> inProcessMigrationService().replaceCurrentDatabase(sourceDatabase, activeRoot, approved,
                 null));
 
-        assertTrue(exception.getMessage().contains("SQLite database selected after confirmation"));
+        assertTrue(exception.getMessage().contains("source database selected after confirmation"));
         assertArrayEquals(activeHash, sha256(activeDatabase));
         assertEquals("Keep Active", scalar(activeDatabase, "SELECT name FROM alias WHERE id=1"));
         assertFalse(Files.exists(activeDatabase.getParent().resolve("backups")));
@@ -1048,7 +1048,8 @@ class ApplicationMigrationServiceTest
             "Creating a temporary safety copy",
             "Checking the copied database",
             "Fingerprinting the copied database",
-            "Cleaning temporary review files"), progress);
+            "Cleaning temporary review files"), progress.stream().filter(line -> !line.startsWith("TIMING:")).toList());
+        assertTrue(progress.stream().anyMatch(line -> line.startsWith("TIMING: Source review:")));
         assertTrue(Files.isDirectory(scratch));
         try(var children = Files.list(scratch))
         {
@@ -1297,7 +1298,8 @@ class ApplicationMigrationServiceTest
         assertTrue(progress.contains("Step 7 of " + stepCount +
             " — Add a personal theme hue with the original palette as default"));
         assertTrue(progress.contains("Opening the inactive database"));
-        assertEquals("Database update committed", progress.getLast());
+        assertEquals("Database update committed", progress.stream().filter(line -> !line.startsWith("TIMING:"))
+            .toList().getLast());
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
 
@@ -1338,7 +1340,8 @@ class ApplicationMigrationServiceTest
         assertTrue(progress.contains("Step 4 of " + stepCount + " — Index encrypted Activity by owner and time"));
         assertTrue(progress.contains("Step 5 of " + stepCount +
             " — Add a personal theme hue with the original palette as default"));
-        assertEquals("Database update committed", progress.getLast());
+        assertEquals("Database update committed", progress.stream().filter(line -> !line.startsWith("TIMING:"))
+            .toList().getLast());
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
 

@@ -424,7 +424,8 @@ public final class ApplicationLogService implements AutoCloseable
         return new Entry(generation + ":" + Long.toHexString(offset), time, level, source, message, details, text, truncated);
     }
 
-    static String redact(String text)
+    /** Removes sensitive diagnostic values before logs or local migration reports are displayed or saved. */
+    public static String redact(String text)
     {
         String safe = AUTHORIZATION.matcher(text).replaceAll("$1[removed]");
         safe = SECRET.matcher(safe).replaceAll("$1[removed]");

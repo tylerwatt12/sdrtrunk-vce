@@ -40,7 +40,8 @@ class Format51To52DatabaseMigrationTest
             List<String> progress = new ArrayList<>();
             var result = new ApplicationMigrationService().migrateCurrent(dataRoot, backup, progress::add);
             assertEquals(51, result.sourceFormat().version());
-            assertEquals("Database update committed", progress.getLast());
+            assertEquals("Database update committed", progress.stream().filter(line -> !line.startsWith("TIMING:"))
+                .toList().getLast());
             try(Connection connection = open(database))
             {
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());

@@ -82,6 +82,26 @@ Both choices use the same supported format chain and retain the same backup, sou
 promotion protections. An external source stays unchanged. Configuration-only is an explicit choice for an older
 database; it is not offered as an automatic reset of an already-current profile.
 
+### Find the migration report after setup
+
+Completed updates and imports automatically save a text report in the new installation's
+`data/logs/migration-reports` folder. Optional Managed Recordings catalog updates save their own report there.
+The latest ten reports are kept, and the setup report shows the saved filename. These reports remain available
+after setup closes; they are separate from the ordinary application log.
+
+Each report includes the application build, source database and journal sizes, selected history and backup scope,
+completion results, and elapsed milliseconds for copying, hashing, integrity checks, individual database-format
+steps, history discard, validation, commit, and finalization when those phases run. Source-review timings are
+included for a reviewed external import. Nested phases overlap, so their times must not be added together.
+Reports hide credentials, endpoints and personal paths. A report-write failure shows a warning without undoing a
+completed update; copy the displayed report before closing setup in that case.
+
+Turning off **Keep activity and statistics** avoids converting retained history. An external import still captures
+and fingerprints the whole source, checks source integrity, and discards the unwanted history on its private copy.
+These operations can remain slow for a large database or slow storage. After confirmation, a canonical copy whose
+content fingerprint matches the reviewed source reuses that review instead of repeating its full quick check;
+the migration process still performs source-integrity and final validation checks.
+
 ## What is kept, copied, or reset
 
 Usable channels, aliases, accounts, credentials, and settings are preserved or converted to the current format.

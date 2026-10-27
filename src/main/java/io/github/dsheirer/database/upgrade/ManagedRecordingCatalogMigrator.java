@@ -48,7 +48,13 @@ public final class ManagedRecordingCatalogMigrator
         public boolean needsMigration() { return state == State.UPGRADE_REQUIRED; }
     }
 
-    public record MigrationResult(boolean migrated, Path backup) {}
+    public record MigrationResult(boolean migrated, Path backup, String report)
+    {
+        public MigrationResult(boolean migrated, Path backup)
+        {
+            this(migrated, backup, "");
+        }
+    }
 
     /** Bounded exact-format admission; retained history is not scanned or copied during startup. */
     public static Inspection inspectForStartup(Path database) throws IOException, SQLException
@@ -96,6 +102,42 @@ public final class ManagedRecordingCatalogMigrator
                                    ConnectionFactory connectionFactory) throws IOException, SQLException
     {
         Path source = normalized(database);
+        Path parent = source.getParent();
+        Path dataRoot = parent != null && parent.getFileName() != null &&
+            "database".equals(parent.getFileName().toString()) ? parent.getParent() : parent;
+        if(dataRoot == null) throw new IOException("The managed recordings catalog has no containing folder.");
+        MigrationReportSession report = new MigrationReportSession(dataRoot, source,
+            "Update Managed Recordings catalog; recovery backup " + (createBackup ? "selected" : "skipped"),
+            "Recording catalog entries and metadata", "");
+        StringBuilder details = new StringBuilder();
+        ApplicationMigrationService.ProgressListener reportProgress = report.progress(null);
+        MigrationTimings timings = new MigrationTimings(line -> {
+            details.append(line).append('\n');
+            reportProgress.update(line);
+        });
+        try
+        {
+            reportProgress.update("Updating Managed Recordings catalog");
+            MigrationResult result = migrateInternal(source, createBackup, beforeCommit, connectionFactory,
+                timings, details);
+            if(!result.migrated()) return result;
+            String completion = "Managed Recordings catalog update completed. Recording entries and audio are kept.\n" +
+                "Recovery backup: " + (result.backup() == null ? "skipped by operator choice" : "retained") +
+                (result.backup() == null ? "" : "\nBackup: " + result.backup()) +
+                "\n" + details;
+            return new MigrationResult(true, result.backup(), report.completedText(completion));
+        }
+        catch(IOException | SQLException | RuntimeException | Error failure)
+        {
+            report.failed(failure);
+            throw failure;
+        }
+    }
+
+    private static MigrationResult migrateInternal(Path source, boolean createBackup, BeforeCommit beforeCommit,
+                                   ConnectionFactory connectionFactory, MigrationTimings timings,
+                                   StringBuilder details) throws IOException, SQLException
+    {
         if(!Files.exists(source, LinkOption.NOFOLLOW_LINKS))
         {
             requireNoOrphanSidecars(source);
@@ -111,19 +153,34 @@ public final class ManagedRecordingCatalogMigrator
         try
         {
             // Writable admission lets SQLite recover a hot journal before the read-only backup connection opens.
-            connection = connectionFactory.open(source);
-            int version = requireSupportedVersion(connection);
+            int version;
+            try(var phase = timings.phase("Managed Recordings: open and inspect source catalog"))
+            {
+                connection = connectionFactory.open(source);
+                version = requireSupportedVersion(connection);
+                phase.complete();
+            }
             if(version == CURRENT_FORMAT)
             {
                 completed = true;
                 return new MigrationResult(false, null);
             }
-            requireSpace(source, createBackup);
+            details.append("Migration plan: catalog format ").append(version).append(" -> ")
+                .append(CURRENT_FORMAT).append('\n');
+            try(var phase = timings.phase("Managed Recordings: check migration workspace"))
+            {
+                requireSpace(source, createBackup);
+                phase.complete();
+            }
             try(Statement statement = connection.createStatement())
             {
-                statement.execute("BEGIN IMMEDIATE");
-                transactionStarted = true;
-                version = requireSupportedVersion(connection);
+                try(var phase = timings.phase("Managed Recordings: reserve writer and verify source format"))
+                {
+                    statement.execute("BEGIN IMMEDIATE");
+                    transactionStarted = true;
+                    version = requireSupportedVersion(connection);
+                    phase.complete();
+                }
                 if(version == CURRENT_FORMAT)
                 {
                     statement.execute("ROLLBACK");
@@ -133,20 +190,32 @@ public final class ManagedRecordingCatalogMigrator
                 }
                 if(createBackup)
                 {
-                    Path backupDirectory = source.getParent().resolve("backups");
-                    Files.createDirectories(backupDirectory);
-                    Path candidate = backupDirectory.resolve("managed-recordings-before-upgrade-" +
-                        UUID.randomUUID() + ".sqlite");
-                    SqliteDatabaseSnapshot.create(source, candidate);
-                    backup = candidate;
+                    try(var phase = timings.phase("Managed Recordings: create recovery backup"))
+                    {
+                        Path backupDirectory = source.getParent().resolve("backups");
+                        Files.createDirectories(backupDirectory);
+                        Path candidate = backupDirectory.resolve("managed-recordings-before-upgrade-" +
+                            UUID.randomUUID() + ".sqlite");
+                        SqliteDatabaseSnapshot.create(source, candidate);
+                        backup = candidate;
+                        phase.complete();
+                    }
                 }
-                applyAdjacentSteps(connection, statement, version);
-                beforeCommit.validate(connection);
-                ManagedRecordingSchema.validate(connection, CURRENT_FORMAT);
-                statement.execute("COMMIT");
-                transactionStarted = false;
-                completed = true;
-                migrated = true;
+                applyAdjacentSteps(connection, statement, version, timings);
+                try(var phase = timings.phase("Managed Recordings: validate completed catalog"))
+                {
+                    beforeCommit.validate(connection);
+                    ManagedRecordingSchema.validate(connection, CURRENT_FORMAT);
+                    phase.complete();
+                }
+                try(var phase = timings.phase("Managed Recordings: commit catalog update"))
+                {
+                    statement.execute("COMMIT");
+                    transactionStarted = false;
+                    completed = true;
+                    migrated = true;
+                    phase.complete();
+                }
             }
             return new MigrationResult(true, backup);
         }
@@ -156,6 +225,7 @@ public final class ManagedRecordingCatalogMigrator
             if(completed)
             {
                 LOG.warn("Managed recordings catalog update completed, but statement cleanup failed");
+                details.append("WARNING: Catalog update completed, but statement cleanup failed. Do not repeat the update.\n");
                 return new MigrationResult(migrated, backup);
             }
             primaryFailure = failure;
@@ -163,7 +233,11 @@ public final class ManagedRecordingCatalogMigrator
             {
                 try(Statement rollback = connection.createStatement())
                 {
-                    rollback.execute("ROLLBACK");
+                    try(var phase = timings.phase("Managed Recordings: roll back failed update"))
+                    {
+                        rollback.execute("ROLLBACK");
+                        phase.complete();
+                    }
                 }
                 catch(SQLException rollbackFailure)
                 {
@@ -186,120 +260,133 @@ public final class ManagedRecordingCatalogMigrator
         {
             if(connection != null)
             {
-                try { connection.close(); }
+                try(var phase = timings.phase("Managed Recordings: close and finalize catalog"))
+                {
+                    connection.close();
+                    phase.complete();
+                }
                 catch(SQLException | RuntimeException cleanupFailure)
                 {
                     if(primaryFailure != null) primaryFailure.addSuppressed(cleanupFailure);
-                    else if(completed) LOG.warn("Managed recordings catalog update completed, but connection cleanup failed");
+                    else if(completed)
+                    {
+                        LOG.warn("Managed recordings catalog update completed, but connection cleanup failed");
+                        details.append("WARNING: Catalog update completed, but connection cleanup failed. Do not repeat the update.\n");
+                    }
                     else throw cleanupFailure;
                 }
             }
         }
     }
 
-    private static void applyAdjacentSteps(Connection connection, Statement statement, int version) throws SQLException
+    private static void applyAdjacentSteps(Connection connection, Statement statement, int version,
+                                           MigrationTimings timings) throws SQLException
     {
         while(version < CURRENT_FORMAT)
         {
-            switch(version)
+            try(var phase = timings.phase("Managed Recordings format " + version + " -> " + (version + 1)))
             {
-                case 1 -> statement.execute(ManagedRecordingSchema.ddlForFormat(2).get("recording_transcript"));
-                case 2 ->
+                switch(version)
                 {
-                    statement.execute("ALTER TABLE recording_call ADD COLUMN " + ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
-                    statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' " +
-                        "WHERE id IN (SELECT call_id FROM recording_transcript)");
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(3).get("idx_recording_call_transcription_pending"));
-                }
-                case 3 ->
-                {
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone_sequence"));
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone"));
-                }
-                case 4 ->
-                {
-                    // Rebuild the constrained parent with foreign keys still enabled. Retain child values in a
-                    // transaction-local table before dropping the old parent, whose cascade would delete them.
-                    statement.execute("CREATE TEMP TABLE recording_tone_before_format5 AS SELECT * FROM recording_tone");
-                    statement.execute("DROP TABLE recording_tone");
-                    statement.execute("ALTER TABLE recording_tone_sequence RENAME TO recording_tone_sequence_format4");
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(5).get("recording_tone_sequence"));
-                    statement.executeUpdate("INSERT INTO recording_tone_sequence SELECT * FROM recording_tone_sequence_format4");
-                    statement.execute("DROP TABLE recording_tone_sequence_format4");
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(5).get("recording_tone"));
-                    statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format5");
-                    statement.execute("DROP TABLE temp.recording_tone_before_format5");
-                }
-                case 5 ->
-                {
-                    // Only new lookup indexes are added; all recording values and relationships remain intact.
-                    for(var definition: ManagedRecordingSchema.ddlForFormat(6).entrySet())
+                    case 1 -> statement.execute(ManagedRecordingSchema.ddlForFormat(2).get("recording_transcript"));
+                    case 2 ->
                     {
-                        if(!ManagedRecordingSchema.ddlForFormat(5).containsKey(definition.getKey()))
+                        statement.execute("ALTER TABLE recording_call ADD COLUMN " + ManagedRecordingSchema.TRANSCRIPTION_STATUS_COLUMN);
+                        statement.executeUpdate("UPDATE recording_call SET transcription_status='complete' " +
+                            "WHERE id IN (SELECT call_id FROM recording_transcript)");
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(3).get("idx_recording_call_transcription_pending"));
+                    }
+                    case 3 ->
+                    {
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone_sequence"));
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(4).get("recording_tone"));
+                    }
+                    case 4 ->
+                    {
+                        // Rebuild the constrained parent with foreign keys still enabled. Retain child values in a
+                        // transaction-local table before dropping the old parent, whose cascade would delete them.
+                        statement.execute("CREATE TEMP TABLE recording_tone_before_format5 AS SELECT * FROM recording_tone");
+                        statement.execute("DROP TABLE recording_tone");
+                        statement.execute("ALTER TABLE recording_tone_sequence RENAME TO recording_tone_sequence_format4");
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(5).get("recording_tone_sequence"));
+                        statement.executeUpdate("INSERT INTO recording_tone_sequence SELECT * FROM recording_tone_sequence_format4");
+                        statement.execute("DROP TABLE recording_tone_sequence_format4");
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(5).get("recording_tone"));
+                        statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format5");
+                        statement.execute("DROP TABLE temp.recording_tone_before_format5");
+                    }
+                    case 5 ->
+                    {
+                        // Only new lookup indexes are added; all recording values and relationships remain intact.
+                        for(var definition: ManagedRecordingSchema.ddlForFormat(6).entrySet())
                         {
-                            statement.execute(definition.getValue());
+                            if(!ManagedRecordingSchema.ddlForFormat(5).containsKey(definition.getKey()))
+                            {
+                                statement.execute(definition.getValue());
+                            }
                         }
                     }
-                }
-                case 6 ->
-                {
-                    // Only future captured facts establish auxiliary identities; never infer them from old IDs.
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(7).get("recording_identifier"));
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(7).get("idx_recording_identifier_lookup"));
-                }
-                case 7 ->
-                {
-                    //The plain transcript table remains authoritative. Its disk search index is backfilled once.
-                    var definitions = ManagedRecordingSchema.ddlForFormat(8);
-                    statement.execute(definitions.get("recording_transcript_fts"));
-                    for(String trigger: List.of("insert", "delete", "update"))
-                        statement.execute(definitions.get("recording_transcript_fts_" + trigger));
-                    statement.execute("INSERT INTO recording_transcript_fts(recording_transcript_fts) VALUES('rebuild')");
-                }
-                case 8 ->
-                {
-                    var statistics = new java.util.ArrayList<String>();
-                    for(String table: List.of("sqlite_stat1", "sqlite_stat4"))
+                    case 6 ->
                     {
-                        try(var exists = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE name='" + table + "'"))
-                        { if(exists.next()) statistics.add(table); }
-                        if(statistics.contains(table)) statement.execute("CREATE TEMP TABLE recording_tone_" + table +
-                            "_before_format9 AS SELECT * FROM " + table +
-                            " WHERE tbl IN('recording_tone_sequence','recording_tone')");
+                        // Only future captured facts establish auxiliary identities; never infer them from old IDs.
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(7).get("recording_identifier"));
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(7).get("idx_recording_identifier_lookup"));
                     }
-                    statement.execute("CREATE TEMP TABLE recording_tone_before_format9 AS SELECT * FROM recording_tone");
-                    statement.execute("DROP TABLE recording_tone");
-                    statement.execute("ALTER TABLE recording_tone_sequence RENAME TO recording_tone_sequence_format8");
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(9).get("recording_tone_sequence"));
-                    statement.executeUpdate("INSERT INTO recording_tone_sequence SELECT * FROM recording_tone_sequence_format8");
-                    statement.execute("DROP TABLE recording_tone_sequence_format8");
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(9).get("recording_tone"));
-                    statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format9");
-                    statement.execute("DROP TABLE temp.recording_tone_before_format9");
-                    for(String table: statistics)
+                    case 7 ->
                     {
-                        statement.executeUpdate("DELETE FROM " + table +
-                            " WHERE tbl IN('recording_tone_sequence','recording_tone','recording_tone_sequence_format8')");
-                        statement.executeUpdate("INSERT INTO " + table + " SELECT * FROM temp.recording_tone_" + table + "_before_format9");
-                        statement.execute("DROP TABLE temp.recording_tone_" + table + "_before_format9");
+                        //The plain transcript table remains authoritative. Its disk search index is backfilled once.
+                        var definitions = ManagedRecordingSchema.ddlForFormat(8);
+                        statement.execute(definitions.get("recording_transcript_fts"));
+                        for(String trigger: List.of("insert", "delete", "update"))
+                            statement.execute(definitions.get("recording_transcript_fts_" + trigger));
+                        statement.execute("INSERT INTO recording_transcript_fts(recording_transcript_fts) VALUES('rebuild')");
                     }
-                    if(!statistics.isEmpty()) statement.execute("ANALYZE sqlite_schema");
+                    case 8 ->
+                    {
+                        var statistics = new java.util.ArrayList<String>();
+                        for(String table: List.of("sqlite_stat1", "sqlite_stat4"))
+                        {
+                            try(var exists = statement.executeQuery("SELECT 1 FROM sqlite_schema WHERE name='" + table + "'"))
+                            { if(exists.next()) statistics.add(table); }
+                            if(statistics.contains(table)) statement.execute("CREATE TEMP TABLE recording_tone_" + table +
+                                "_before_format9 AS SELECT * FROM " + table +
+                                " WHERE tbl IN('recording_tone_sequence','recording_tone')");
+                        }
+                        statement.execute("CREATE TEMP TABLE recording_tone_before_format9 AS SELECT * FROM recording_tone");
+                        statement.execute("DROP TABLE recording_tone");
+                        statement.execute("ALTER TABLE recording_tone_sequence RENAME TO recording_tone_sequence_format8");
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(9).get("recording_tone_sequence"));
+                        statement.executeUpdate("INSERT INTO recording_tone_sequence SELECT * FROM recording_tone_sequence_format8");
+                        statement.execute("DROP TABLE recording_tone_sequence_format8");
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(9).get("recording_tone"));
+                        statement.executeUpdate("INSERT INTO recording_tone SELECT * FROM recording_tone_before_format9");
+                        statement.execute("DROP TABLE temp.recording_tone_before_format9");
+                        for(String table: statistics)
+                        {
+                            statement.executeUpdate("DELETE FROM " + table +
+                                " WHERE tbl IN('recording_tone_sequence','recording_tone','recording_tone_sequence_format8')");
+                            statement.executeUpdate("INSERT INTO " + table + " SELECT * FROM temp.recording_tone_" + table + "_before_format9");
+                            statement.execute("DROP TABLE temp.recording_tone_" + table + "_before_format9");
+                        }
+                        if(!statistics.isEmpty()) statement.execute("ANALYZE sqlite_schema");
+                    }
+                    case 9 ->
+                    {
+                        // Prospective analog nominal frequency identities expand; preserve all stored facts verbatim.
+                        // The shared adjacent runner stamps format 10 so older method-4 readers refuse this catalog.
+                    }
+                    case 10 ->
+                    {
+                        // Preserve all existing catalog facts; exact source references begin with newly saved calls.
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("recording_source"));
+                        statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("idx_recording_source_uuid"));
+                    }
+                    default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
                 }
-                case 9 ->
-                {
-                    // Prospective analog nominal frequency identities expand; preserve all stored facts verbatim.
-                    // The shared adjacent runner stamps format 10 so older method-4 readers refuse this catalog.
-                }
-                case 10 ->
-                {
-                    // Preserve all existing catalog facts; exact source references begin with newly saved calls.
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("recording_source"));
-                    statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("idx_recording_source_uuid"));
-                }
-                default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
+                stamp(statement, ++version);
+                ManagedRecordingSchema.validate(connection, version);
+                phase.complete();
             }
-            stamp(statement, ++version);
-            ManagedRecordingSchema.validate(connection, version);
         }
     }
 

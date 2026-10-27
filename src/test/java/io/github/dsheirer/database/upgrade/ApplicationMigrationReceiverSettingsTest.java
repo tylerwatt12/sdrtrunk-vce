@@ -42,7 +42,7 @@ class ApplicationMigrationReceiverSettingsTest
             assertFalse(result.helperOutput().contains("synthetic-pairing-key"));
             try(var files = Files.list(target))
             {
-                assertEquals(List.of("database"), files.map(path -> path.getFileName().toString()).sorted().toList());
+                assertEquals(List.of("database", "logs"), files.map(path -> path.getFileName().toString()).sorted().toList());
             }
         }
     }

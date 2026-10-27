@@ -27,6 +27,11 @@ final class MigrationActivityReset
 
     static long discard(Connection connection) throws SQLException
     {
+        return discard(connection, MigrationTimings.NONE);
+    }
+
+    static long discard(Connection connection, MigrationTimings timings) throws SQLException
+    {
         //Use only known historical/current receiver-owned names. Never classify by a broad table-name prefix:
         //canonical P25 subscriber tuples also support configured Aliases and must survive.
         Set<String> present = new LinkedHashSet<>();
@@ -43,8 +48,17 @@ final class MigrationActivityReset
         classified.add("topic_alert_message");
         classified.retainAll(present);
         List<String> tables = List.copyOf(classified);
-        long rows = LegacyActivityReset.count(connection, tables);
-        LegacyActivityReset.clear(connection, tables);
+        long rows;
+        try(var phase = timings.phase("Count discarded receiver history rows"))
+        {
+            rows = LegacyActivityReset.count(connection, tables);
+            phase.complete();
+        }
+        try(var phase = timings.phase("Clear discarded receiver history tables"))
+        {
+            LegacyActivityReset.clear(connection, tables);
+            phase.complete();
+        }
         return rows;
     }
 

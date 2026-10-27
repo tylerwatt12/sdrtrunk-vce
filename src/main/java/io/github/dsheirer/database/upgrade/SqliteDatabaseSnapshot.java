@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CancellationException;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import org.sqlite.SQLiteConfig;
 import org.sqlite.SQLiteConnection;
 import io.github.dsheirer.database.ActivityDatabasePath;
@@ -245,7 +246,15 @@ public final class SqliteDatabaseSnapshot
     public static void createExternal(Path source, Path destination, BooleanSupplier cancellation)
         throws IOException, SQLException
     {
+        createExternal(source, destination, cancellation, ignored -> { });
+    }
+
+    /** Reports separate durations for each source-preservation pass without changing snapshot protections. */
+    static void createExternal(Path source, Path destination, BooleanSupplier cancellation, Consumer<String> timingSink)
+        throws IOException, SQLException
+    {
         Objects.requireNonNull(cancellation, "SQLite snapshot cancellation cannot be null");
+        MigrationTimings timings = new MigrationTimings(timingSink);
         requireNotCancelled(cancellation);
         Path normalizedSource = source.toAbsolutePath().normalize();
         Path normalizedDestination = destination.toAbsolutePath().normalize();
@@ -258,7 +267,12 @@ public final class SqliteDatabaseSnapshot
         }
         Files.createDirectories(destinationParent);
 
-        ExternalSourceState sourceState = captureExternalSourceState(normalizedSource, cancellation);
+        ExternalSourceState sourceState;
+        try(var phase = timings.phase("Capture external source state and initial content hashes"))
+        {
+            sourceState = captureExternalSourceState(normalizedSource, cancellation);
+            phase.complete();
+        }
         requireNotCancelled(cancellation);
         Path privateDirectory = Files.createTempDirectory(destinationParent, ".sqlite-source-");
         Path privateSource = privateDirectory.resolve("source.sqlite");
@@ -267,32 +281,52 @@ public final class SqliteDatabaseSnapshot
         {
             FileAccessAttributeSnapshot.restrictPrivateDirectory(privateDirectory);
             requireNotCancelled(cancellation);
-            copyCapturedFile(normalizedSource, privateSource, sourceState.database(), cancellation);
-            copyCapturedFile(Path.of(normalizedSource + "-journal"), Path.of(privateSource + "-journal"),
-                sourceState.journal(), cancellation);
-            copyCapturedFile(Path.of(normalizedSource + "-wal"), Path.of(privateSource + "-wal"),
-                sourceState.wal(), cancellation);
-            if(sourceState.companion() != null)
+            try(var phase = timings.phase("Copy external database and journal files"))
             {
-                Path originalCompanion = ActivityDatabasePath.forConfiguration(normalizedSource);
-                Path privateCompanion = ActivityDatabasePath.forConfiguration(privateSource);
-                copyCapturedFile(originalCompanion, privateCompanion, sourceState.companion().database(), cancellation);
-                copyCapturedFile(Path.of(originalCompanion + "-journal"), Path.of(privateCompanion + "-journal"),
-                    sourceState.companion().journal(), cancellation);
-                copyCapturedFile(Path.of(originalCompanion + "-wal"), Path.of(privateCompanion + "-wal"),
-                    sourceState.companion().wal(), cancellation);
+                copyCapturedFile(normalizedSource, privateSource, sourceState.database(), cancellation);
+                copyCapturedFile(Path.of(normalizedSource + "-journal"), Path.of(privateSource + "-journal"),
+                    sourceState.journal(), cancellation);
+                copyCapturedFile(Path.of(normalizedSource + "-wal"), Path.of(privateSource + "-wal"),
+                    sourceState.wal(), cancellation);
+                if(sourceState.companion() != null)
+                {
+                    Path originalCompanion = ActivityDatabasePath.forConfiguration(normalizedSource);
+                    Path privateCompanion = ActivityDatabasePath.forConfiguration(privateSource);
+                    copyCapturedFile(originalCompanion, privateCompanion, sourceState.companion().database(), cancellation);
+                    copyCapturedFile(Path.of(originalCompanion + "-journal"), Path.of(privateCompanion + "-journal"),
+                        sourceState.companion().journal(), cancellation);
+                    copyCapturedFile(Path.of(originalCompanion + "-wal"), Path.of(privateCompanion + "-wal"),
+                        sourceState.companion().wal(), cancellation);
+                }
+                phase.complete();
             }
-            requireExternalCopyMatches(privateSource, sourceState, cancellation);
-            requireExternalSourceUnchanged(normalizedSource, sourceState, cancellation);
-            recoverPrivateSource(privateSource, cancellation);
-            if(sourceState.companion() != null)
+            try(var phase = timings.phase("Verify copied source content hashes"))
             {
-                recoverPrivateSource(ActivityDatabasePath.forConfiguration(privateSource), cancellation);
-                if(!pairedConfiguration(privateSource))
-                    throw new IOException("The selected source has an unexpected activity companion");
+                requireExternalCopyMatches(privateSource, sourceState, cancellation);
+                phase.complete();
+            }
+            try(var phase = timings.phase("Recheck external source unchanged"))
+            {
+                requireExternalSourceUnchanged(normalizedSource, sourceState, cancellation);
+                phase.complete();
+            }
+            try(var phase = timings.phase("Recover private SQLite source"))
+            {
+                recoverPrivateSource(privateSource, cancellation);
+                if(sourceState.companion() != null)
+                {
+                    recoverPrivateSource(ActivityDatabasePath.forConfiguration(privateSource), cancellation);
+                    if(!pairedConfiguration(privateSource))
+                        throw new IOException("The selected source has an unexpected activity companion");
+                }
+                phase.complete();
             }
             requireNotCancelled(cancellation);
-            create(privateSource, normalizedDestination, cancellation);
+            try(var phase = timings.phase("Create standalone SQLite snapshot"))
+            {
+                create(privateSource, normalizedDestination, cancellation);
+                phase.complete();
+            }
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
@@ -303,7 +337,11 @@ public final class SqliteDatabaseSnapshot
         {
             try
             {
-                deleteTree(privateDirectory);
+                try(var phase = timings.phase("Remove private source workspace"))
+                {
+                    deleteTree(privateDirectory);
+                    phase.complete();
+                }
             }
             catch(IOException cleanupFailure)
             {

@@ -681,8 +681,9 @@ public final class SetupWizard extends JDialog
             () -> ManagedRecordingCatalogMigrator.migrate(managedRecordingCatalog, backup), result -> {
                 managedRecordingCatalogNeedsUpgrade = false;
                 managedRecordingCatalogReport = "Managed Recordings is ready.";
-                sourceReady(result.backup() == null ? managedRecordingCatalogReport :
-                    managedRecordingCatalogReport + "\nBackup: " + result.backup());
+                sourceReady(!result.report().isBlank() ? result.report() :
+                    result.backup() == null ? managedRecordingCatalogReport :
+                        managedRecordingCatalogReport + "\nBackup: " + result.backup());
             }, failure -> {
                 showPage(SetupStep.SOURCE);
                 fail("Managed Recordings could not be updated. Retry, or continue without it.",
@@ -1361,7 +1362,8 @@ public final class SetupWizard extends JDialog
             return;
         }
         output.accept(value);
-        if(!value.startsWith("Migration plan:") && !value.startsWith("Migration scope:"))
+        if(!value.startsWith("Migration plan:") && !value.startsWith("Migration scope:") &&
+            !value.startsWith("TIMING:"))
         {
             operation = value.lines().findFirst().orElse(value);
         }

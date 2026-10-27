@@ -236,25 +236,35 @@ public final class ApplicationDatabaseMigrator
         try(ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             PrintStream output = new PrintStream(bytes, true, StandardCharsets.UTF_8))
         {
-            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+            MigrationTimings timings = new MigrationTimings(message -> {
+                output.println(message);
+                reportCleanupWarning(listener, message);
+            });
             DatabaseFormatCatalog.DetectedFormat source;
-            try
+            DatabaseMigrationChain.PreflightReport plan;
+            LegacyReceiverSettingsMigration.Snapshot legacy;
+            try(var phase = timings.phase("Inspect source schema and bounded configuration"))
             {
+                SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
                 source = requireSupportedFormat(connection);
+                plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
+                Set<String> legacyKeys = source.version() <= 52 ? LegacyReceiverSettingsMigration.missingKeys(connection) :
+                    recoveryDefaults.keySet();
+                legacy = LegacyReceiverSettingsMigration.capture(normalized.getParent().getParent(), legacyKeys);
+                phase.complete();
             }
             catch(UnsupportedDatabaseFormatException exception)
             {
                 throw new SQLException(exception.getMessage(), exception);
             }
-            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
-            Set<String> legacyKeys = source.version() <= 52 ? LegacyReceiverSettingsMigration.missingKeys(connection) :
-                recoveryDefaults.keySet();
-            LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.capture(
-                normalized.getParent().getParent(), legacyKeys);
             if(!plan.requiresMigration() && recoveryDefaults.isEmpty())
             {
-                DatabaseFormatCatalog.requireCurrent(connection);
-                validateConfiguration(connection, normalized);
+                try(var phase = timings.phase("Validate already-current configuration"))
+                {
+                    DatabaseFormatCatalog.requireCurrent(connection);
+                    validateConfiguration(connection, normalized);
+                    phase.complete();
+                }
                 output.println("RESULT: Application database is already current and valid; no changes made.");
                 return new InPlaceMigrationResult(plan, bytes.toString(StandardCharsets.UTF_8));
             }
@@ -262,10 +272,14 @@ public final class ApplicationDatabaseMigrator
             if(!recoveryDefaults.isEmpty())
                 output.println("Explicitly selected legacy receiver settings recovery: " + recoveryDefaults.size() + " setting(s).");
             MigrationSummary migration = migrateInTransaction(connection, source, null, normalized, true, listener, backup,
-                legacy, recoveryDefaults, content);
-            connection.close();
-            recoverSplitTransition(normalized);
-            SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(normalized);
+                legacy, recoveryDefaults, content, timings);
+            try(var phase = timings.phase("Finalize database pair activation and startup validation"))
+            {
+                connection.close();
+                recoverSplitTransition(normalized);
+                SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(normalized);
+                phase.complete();
+            }
             printCompletion(output, migration);
             output.println("RESULT: In-place application database update complete.");
             return new InPlaceMigrationResult(plan, bytes.toString(StandardCharsets.UTF_8));
@@ -316,24 +330,35 @@ public final class ApplicationDatabaseMigrator
         output.println("Checking the owned complete-profile copy's schema and configuration.");
         output.println("Whole-file physical-integrity, derived-history, and foreign-key sweeps are not run " +
             "for this owned copy; use explicit maintenance for those checks.");
+        MigrationTimings timings = new MigrationTimings(output::println);
 
         try(Connection connection = open(database))
         {
-            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-            DatabaseFormatCatalog.DetectedFormat source = requireSupportedFormat(connection);
-            DatabaseMigrationChain.PreflightReport plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
+            DatabaseFormatCatalog.DetectedFormat source;
+            DatabaseMigrationChain.PreflightReport plan;
+            try(var phase = timings.phase("Inspect owned-copy source schema and configuration"))
+            {
+                SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+                source = requireSupportedFormat(connection);
+                plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
+                phase.complete();
+            }
             printPreflight(output, plan, relocation);
             Set<String> legacyKeys = source.version() <= 52 ? LegacyReceiverSettingsMigration.missingKeys(connection) :
                 Set.of();
             LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.capture(
                 database.getParent().getParent(), legacyKeys);
             MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, true,
-                ignored -> { }, null, legacy, Map.of(), content);
+                output::println, null, legacy, Map.of(), content, timings);
             //The transaction has checked the exact final schema, required settings and configuration before COMMIT.
             //Finalize this private stage for atomic promotion without scanning retained history again.
-            finalizeStagedDatabase(connection);
-            connection.close();
-            recoverSplitTransition(database);
+            try(var phase = timings.phase("Finalize owned-copy journals and database pair activation"))
+            {
+                finalizeStagedDatabase(connection);
+                connection.close();
+                recoverSplitTransition(database);
+                phase.complete();
+            }
             printCompletion(output, migration);
             output.println("RESULT: Owned complete-profile relocation and bounded validation complete.");
         }
@@ -389,6 +414,7 @@ public final class ApplicationDatabaseMigrator
         recoverSplitTransition(database);
         //The helper output is shown and copyable in migration-completion dialogs. Keep private staging paths out of it.
         output.println("Checking staged database.");
+        MigrationTimings timings = new MigrationTimings(output::println);
 
         try(Connection connection = open(database))
         {
@@ -407,7 +433,7 @@ public final class ApplicationDatabaseMigrator
             }
             output.println("Detected database format " + source.version() + " [" + source.id() + "]: " +
                 source.description() + (source.markerPresent() ? "." : " (legacy layout without global marker)."));
-            DatabaseMigrationChain.PreflightReport preflight = requireSupportedPreflight(connection, source).withContent(content);
+            DatabaseMigrationChain.PreflightReport preflight = requireSupportedPreflight(connection, source, timings).withContent(content);
             printPreflight(output, preflight, relocation);
 
             boolean relocationRequired = relocation != null && !relocation.source().equals(relocation.target());
@@ -416,11 +442,15 @@ public final class ApplicationDatabaseMigrator
                 LegacyReceiverSettingsMigration.staged(database.getParent().getParent());
             if(!preflight.requiresMigration() && !relocationRequired)
             {
-                validateCurrentDatabase(connection);
-                requireForeignKeysValid(connection);
-                requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
-                finalizeStagedDatabase(connection);
-                validateConfiguration(database);
+                try(var phase = timings.phase("Validate and finalize already-current staged database"))
+                {
+                    validateCurrentDatabase(connection);
+                    requireForeignKeysValid(connection);
+                    requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
+                    finalizeStagedDatabase(connection);
+                    validateConfiguration(database);
+                    phase.complete();
+                }
                 output.println("Portable directory preferences updated: 0.");
                 output.println("Portable preference components repaired or reset: 0.");
                 output.println("Database is already at current format " + DatabaseFormatCatalog.CURRENT_VERSION +
@@ -432,14 +462,18 @@ public final class ApplicationDatabaseMigrator
             output.println("Pre-migration checks passed. Updating the staged database.");
             if(hasAttachedActivity(connection)) finalizeStagedDatabase(connection);
             MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, false,
-                ignored -> { }, null, legacy, Map.of(), content);
+                output::println, null, legacy, Map.of(), content, timings);
             //The transaction already completed the full schema, row, foreign-key and quick checks before COMMIT.
             //Finalizing the private stage changes only journal state; do not rescan the same retained history here.
-            finalizeStagedDatabase(connection);
-            DatabaseFormatCatalog.requireCurrent(connection);
-            connection.close();
-            recoverSplitTransition(database);
-            validateConfiguration(database);
+            try(var phase = timings.phase("Finalize staged journals, pair activation and configuration validation"))
+            {
+                finalizeStagedDatabase(connection);
+                DatabaseFormatCatalog.requireCurrent(connection);
+                connection.close();
+                recoverSplitTransition(database);
+                validateConfiguration(database);
+                phase.complete();
+            }
 
             printCompletion(output, migration);
             output.println("RESULT: Application database migration and validation complete.");
@@ -504,14 +538,28 @@ public final class ApplicationDatabaseMigrator
     }
 
     private static DatabaseMigrationChain.PreflightReport requireSupportedPreflight(Connection connection,
-            DatabaseFormatCatalog.DetectedFormat source) throws SQLException
+            DatabaseFormatCatalog.DetectedFormat source, MigrationTimings timings) throws SQLException
     {
-        SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
-        DatabaseMigrationChain.PreflightReport report =
-            DatabaseMigrationChain.planForApplicationMigration(connection, source);
-        requireSourceIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
+        DatabaseMigrationChain.PreflightReport report;
+        try(var phase = timings.phase("Inspect staged source and plan component repairs"))
+        {
+            SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
+            report = DatabaseMigrationChain.planForApplicationMigration(connection, source);
+            phase.complete();
+        }
+        try(var phase = timings.phase("Source physical integrity check"))
+        {
+            requireSourceIntegrity(connection, "PRAGMA integrity_check", "Integrity check");
+            phase.complete();
+        }
         if(hasAttachedActivity(connection))
-            requireSourceIntegrity(connection, "PRAGMA activity.integrity_check", "Activity integrity check");
+        {
+            try(var phase = timings.phase("Source activity physical integrity check"))
+            {
+                requireSourceIntegrity(connection, "PRAGMA activity.integrity_check", "Activity integrity check");
+                phase.complete();
+            }
+        }
         return report;
     }
 
@@ -524,7 +572,8 @@ public final class ApplicationDatabaseMigrator
     private static MigrationSummary migrateInTransaction(Connection connection,
             DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation, Path database,
             boolean inPlace, Consumer<String> progress, BackupAction backup,
-            LegacyReceiverSettingsMigration.Snapshot legacy, Map<String,String> recoveryDefaults, MigrationContent content)
+            LegacyReceiverSettingsMigration.Snapshot legacy, Map<String,String> recoveryDefaults, MigrationContent content,
+            MigrationTimings timings)
         throws IOException, SQLException
     {
         MigrationSummary committed = null;
@@ -548,28 +597,41 @@ public final class ApplicationDatabaseMigrator
                 statement.execute("PRAGMA ignore_check_constraints=ON");
             }
 
-            try(ApplicationMigrationTransaction transaction = ApplicationMigrationTransaction.begin(connection, statement))
+            try(ApplicationMigrationTransaction transaction = beginTimedTransaction(connection, statement, timings))
             {
                 transactionOpen = true;
-                DatabaseFormatCatalog.DetectedFormat lockedSource = DatabaseFormatCatalog.inspectForMigration(connection);
-                if(lockedSource.version() != expectedSource.version() ||
-                    !lockedSource.id().equals(expectedSource.id()) ||
-                    lockedSource.markerPresent() != expectedSource.markerPresent())
+                DatabaseFormatCatalog.DetectedFormat lockedSource;
+                try(var phase = timings.phase("Recheck source format under writer lock"))
                 {
-                    throw new SQLException("SQLite database format changed before the update transaction");
+                    lockedSource = DatabaseFormatCatalog.inspectForMigration(connection);
+                    if(lockedSource.version() != expectedSource.version() ||
+                        !lockedSource.id().equals(expectedSource.id()) ||
+                        lockedSource.markerPresent() != expectedSource.markerPresent())
+                    {
+                        throw new SQLException("SQLite database format changed before the update transaction");
+                    }
+                    phase.complete();
                 }
                 if(backup != null)
                 {
-                    progress.accept("Creating the database backup");
-                    backup.run();
+                    try(var phase = timings.phase("Create SQLite recovery backup"))
+                    {
+                        progress.accept("Creating the database backup");
+                        backup.run();
+                        phase.complete();
+                    }
                 }
                 Long discardedHistoryRows = null;
                 if(content == MigrationContent.CONFIGURATION_ONLY)
                 {
-                    progress.accept("Discarding saved receiver Activity, statistics and alert history");
-                    discardedHistoryRows = MigrationActivityReset.discard(connection);
+                    try(var phase = timings.phase("Count and discard saved receiver Activity, statistics and alert history"))
+                    {
+                        progress.accept("Discarding saved receiver Activity, statistics and alert history");
+                        discardedHistoryRows = MigrationActivityReset.discard(connection, timings);
+                        phase.complete();
+                    }
                 }
-                int recoveredLegacySettings = legacy.recoverSelected(connection, recoveryDefaults);
+                int recoveredLegacySettings;
                 int[] importedLegacySettings = {0};
 
                 PortablePreferenceResult portablePreferences = new PortablePreferenceResult(0, 0);
@@ -580,27 +642,32 @@ public final class ApplicationDatabaseMigrator
                 CurrentDatabaseDerivedStateRepair.Inspection derivedStateRepair =
                     CurrentDatabaseDerivedStateRepair.Inspection.none();
                 SqliteIdentityRepair.Inspection identityRepair = SqliteIdentityRepair.Inspection.none();
-                if(inPlace)
+                try(var phase = timings.phase("Prepare legacy settings, configuration and identity repairs"))
                 {
-                    //Factory inserts need usable sequence state before their adjacent step. This checks only
-                    //configuration allocator rows and indexed maxima; it never walks retained receiver history.
-                    identityRepair = SqliteIdentityRepair.repairAllocators(connection);
-                }
-                else if(expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
-                {
-                    //Historical steps can seed factory configuration. Normalize exhausted allocator state and
-                    //isolate JSON-unsafe configuration identities before any such insert occurs.
-                    identityRepair = SqliteIdentityRepair.repair(connection);
-                }
-                if(!inPlace && expectedSource.version() == DatabaseFormatCatalog.CURRENT_VERSION)
-                {
-                    //A current-format source has the final schema already. Repair its bounded components before the
-                    //chain performs strict current-format validation or adopts a missing global marker.
-                    portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
-                    administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection);
-                    derivedStateRepair = CurrentDatabaseDerivedStateRepair.repair(connection);
-                    currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
-                    identityRepair = SqliteIdentityRepair.repair(connection);
+                    recoveredLegacySettings = legacy.recoverSelected(connection, recoveryDefaults);
+                    if(inPlace)
+                    {
+                        //Factory inserts need usable sequence state before their adjacent step. This checks only
+                        //configuration allocator rows and indexed maxima; it never walks retained receiver history.
+                        identityRepair = SqliteIdentityRepair.repairAllocators(connection);
+                    }
+                    else if(expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                    {
+                        //Historical steps can seed factory configuration. Normalize exhausted allocator state and
+                        //isolate JSON-unsafe configuration identities before any such insert occurs.
+                        identityRepair = SqliteIdentityRepair.repair(connection);
+                    }
+                    if(!inPlace && expectedSource.version() == DatabaseFormatCatalog.CURRENT_VERSION)
+                    {
+                        //A current-format source has the final schema already. Repair its bounded components before the
+                        //chain performs strict current-format validation or adopts a missing global marker.
+                        portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
+                        administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection);
+                        derivedStateRepair = CurrentDatabaseDerivedStateRepair.repair(connection);
+                        currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
+                        identityRepair = SqliteIdentityRepair.repair(connection);
+                    }
+                    phase.complete();
                 }
 
                 PortablePreferenceResult[] splitPreferences = {null};
@@ -626,65 +693,85 @@ public final class ApplicationDatabaseMigrator
                             }
                             catch(IOException failure) { throw new SQLException("Unable to prepare configuration extraction",failure); }
                         }
-                    });
-                if(discardedHistoryRows != null)
+                    }, DatabaseFormatCatalog.CURRENT_VERSION, timings);
+                int rebasedRecordingTunerPaths;
+                try(var phase = timings.phase("Finish history reset, component repairs and path relocation"))
                 {
-                    DatabaseMigrationChain.StepReport reset = MigrationActivityReset.finish(connection,
-                        expectedSource.version(), discardedHistoryRows);
-                    List<DatabaseMigrationChain.StepReport> reports = new ArrayList<>();
-                    reports.add(reset); reports.addAll(chainReport.steps());
-                    chainReport = new DatabaseMigrationChain.MigrationReport(chainReport.source(), chainReport.target(),
-                        List.copyOf(reports));
+                    if(discardedHistoryRows != null)
+                    {
+                        DatabaseMigrationChain.StepReport reset = MigrationActivityReset.finish(connection,
+                            expectedSource.version(), discardedHistoryRows);
+                        List<DatabaseMigrationChain.StepReport> reports = new ArrayList<>();
+                        reports.add(reset); reports.addAll(chainReport.steps());
+                        chainReport = new DatabaseMigrationChain.MigrationReport(chainReport.source(), chainReport.target(),
+                            List.copyOf(reports));
+                    }
+                    if(splitPreferences[0] != null)
+                    {
+                        portablePreferences = splitPreferences[0];
+                        administrativeRepair = splitAdministrative[0];
+                        currentRepair = splitConfiguration[0];
+                    }
+                    else if(inPlace)
+                    {
+                        //All historical layouts have now reached current configuration semantics. Repair this bounded
+                        //component once; omit full derived-history, physical-integrity and foreign-key sweeps.
+                        portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
+                        administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection, false);
+                        currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
+                    }
+                    if(checkConstraintsRelaxed)
+                    {
+                        statement.execute("PRAGMA ignore_check_constraints=OFF");
+                        checkConstraintsRelaxed = false;
+                    }
+                    if(chainReport.source().version() != expectedSource.version() ||
+                        !chainReport.source().id().equals(expectedSource.id()) ||
+                        chainReport.source().markerPresent() != expectedSource.markerPresent())
+                    {
+                        throw new SQLException("Staged SQLite database changed after preflight; expected format [" +
+                            expectedSource.id() + ", marker=" + expectedSource.markerPresent() + "] but migration saw [" +
+                            chainReport.source().id() + ", marker=" + chainReport.source().markerPresent() + "]");
+                    }
+                    if(splitPreferences[0] == null && !inPlace && expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                    {
+                        portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
+                    }
+                    rebasedRecordingTunerPaths = splitTunerPaths[0] >= 0 ? splitTunerPaths[0] : rebaseRecordingTunerPaths(connection, relocation);
+                    phase.complete();
                 }
-                if(splitPreferences[0] != null)
-                {
-                    portablePreferences = splitPreferences[0];
-                    administrativeRepair = splitAdministrative[0];
-                    currentRepair = splitConfiguration[0];
-                }
-                else if(inPlace)
-                {
-                    //All historical layouts have now reached current configuration semantics. Repair this bounded
-                    //component once; omit full derived-history, physical-integrity and foreign-key sweeps.
-                    portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
-                    administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection, false);
-                    currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
-                }
-                if(checkConstraintsRelaxed)
-                {
-                    statement.execute("PRAGMA ignore_check_constraints=OFF");
-                    checkConstraintsRelaxed = false;
-                }
-                if(chainReport.source().version() != expectedSource.version() ||
-                    !chainReport.source().id().equals(expectedSource.id()) ||
-                    chainReport.source().markerPresent() != expectedSource.markerPresent())
-                {
-                    throw new SQLException("Staged SQLite database changed after preflight; expected format [" +
-                        expectedSource.id() + ", marker=" + expectedSource.markerPresent() + "] but migration saw [" +
-                        chainReport.source().id() + ", marker=" + chainReport.source().markerPresent() + "]");
-                }
-                if(splitPreferences[0] == null && !inPlace && expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
-                {
-                    portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
-                }
-                int rebasedRecordingTunerPaths = splitTunerPaths[0] >= 0 ? splitTunerPaths[0] : rebaseRecordingTunerPaths(connection, relocation);
 
                 progress.accept("Validating the updated schema and configuration");
-                if(inPlace)
+                try(var phase = timings.phase("Validate updated schema and retained rows"))
                 {
-                    //The exact catalog fingerprint covers every schema object. Required bounded settings and the
-                    //configuration snapshot remain strict. Owned-profile upgrades omit full scans of retained
-                    //radio identities, affiliations and presence; explicit maintenance checks that derived history.
-                    DatabaseFormatCatalog.requireCurrent(connection);
+                    if(inPlace)
+                    {
+                        //The exact catalog fingerprint covers every schema object. Required bounded settings and the
+                        //configuration snapshot remain strict. Owned-profile upgrades omit full scans of retained
+                        //radio identities, affiliations and presence; explicit maintenance checks that derived history.
+                        DatabaseFormatCatalog.requireCurrent(connection);
+                    }
+                    else validateCurrentDatabase(connection);
+                    phase.complete();
                 }
-                else
+                if(!inPlace)
                 {
-                    validateCurrentDatabase(connection);
-                    requireForeignKeysValid(connection);
-                    requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
+                    try(var phase = timings.phase("Check updated foreign-key relationships"))
+                    {
+                        requireForeignKeysValid(connection);
+                        phase.complete();
+                    }
+                    try(var phase = timings.phase("Check updated SQLite integrity"))
+                    {
+                        requireIntegrity(connection, "PRAGMA quick_check", "Quick check");
+                        phase.complete();
+                    }
                 }
-                validateConfiguration(connection, database);
-                progress.accept("Committing the database update");
+                try(var phase = timings.phase("Validate saved configuration"))
+                {
+                    validateConfiguration(connection, database);
+                    phase.complete();
+                }
                 MigrationSummary summary = new MigrationSummary(
                     (expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION ||
                         portablePreferences.rebasedDirectories() > 0 || portablePreferences.resetEntries() > 0),
@@ -692,9 +779,14 @@ public final class ApplicationDatabaseMigrator
                     portablePreferences.resetEntries(), rebasedRecordingTunerPaths,
                     administrativeRepair, currentRepair, derivedStateRepair,
                     identityRepair, chainReport, importedLegacySettings[0], recoveredLegacySettings, content);
-                statement.execute("COMMIT");
-                transactionOpen = false;
-                committed = summary;
+                try(var phase = timings.phase("Commit database update"))
+                {
+                    progress.accept("Committing the database update");
+                    statement.execute("COMMIT");
+                    transactionOpen = false;
+                    committed = summary;
+                    phase.complete();
+                }
                 try { progress.accept("Database update committed"); }
                 catch(RuntimeException | Error ignored)
                 {
@@ -712,7 +804,11 @@ public final class ApplicationDatabaseMigrator
                 {
                     try
                     {
-                        statement.execute("ROLLBACK");
+                        try(var phase = timings.phase("Roll back failed database update"))
+                        {
+                            statement.execute("ROLLBACK");
+                            phase.complete();
+                        }
                     }
                     catch(SQLException rollbackFailure)
                     {
@@ -755,6 +851,17 @@ public final class ApplicationDatabaseMigrator
                 return committed;
             }
             throw failure;
+        }
+    }
+
+    private static ApplicationMigrationTransaction beginTimedTransaction(Connection connection, Statement statement,
+        MigrationTimings timings) throws SQLException
+    {
+        try(var phase = timings.phase("Acquire database writer lock"))
+        {
+            ApplicationMigrationTransaction transaction = ApplicationMigrationTransaction.begin(connection, statement);
+            phase.complete();
+            return transaction;
         }
     }
 
