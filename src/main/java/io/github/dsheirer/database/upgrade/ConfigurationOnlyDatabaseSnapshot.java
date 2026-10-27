@@ -1,11 +1,20 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.database.upgrade;
 
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.github.dsheirer.configuration.ChannelConfigurationPolicy;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.ConfigurationHistorySchema;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.database.configuration.ConfigurationChannelProjection;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
+import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -34,12 +43,31 @@ import org.sqlite.SQLiteConfig;
  *
  * <p>The extracted monolith retains its exact admitted historical schema, with receiver-history tables empty, so
  * the ordinary adjacent migration chain remains authoritative. A separated profile gets a fresh empty activity
- * companion; only the old companion's schema and profile identity are inspected.</p>
+ * companion. An indexed lookup may retain a verified P25 channel binding whose delayed settings save was
+ * interrupted; no receiver observations or counters are copied into the empty history.</p>
  */
 public final class ConfigurationOnlyDatabaseSnapshot
 {
     private static final int BATCH_SIZE = 256;
     private static final Set<String> DISCARDED_TABLES = discardedTables();
+    private static final ObjectMapper JSON = new ObjectMapper()
+        .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+        .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    static final String P25_BINDING_LOOKUP_SQL = """
+        SELECT system.system_key,system.p25_wacn,system.p25_system_id,site.rfss,site.site
+        FROM receiver_channel receiver
+        JOIN radio_system system ON system.id=receiver.radio_system_id
+        JOIN p25_site_snapshot site ON site.channel_id=receiver.id
+        WHERE receiver.configuration_id=?
+          AND typeof(system.protocol_code)='integer' AND system.protocol_code=1
+          AND typeof(system.address_domain_code)='integer' AND system.address_domain_code=0
+          AND system.configuration_id IS NULL AND site.protocol='APCO25'
+          AND typeof(system.p25_wacn)='integer' AND typeof(system.p25_system_id)='integer'
+          AND typeof(site.rfss)='integer' AND typeof(site.site)='integer'
+          AND system.p25_wacn BETWEEN 0 AND 1048575 AND system.p25_system_id BETWEEN 0 AND 4095
+          AND site.rfss BETWEEN 0 AND 255 AND site.site BETWEEN 0 AND 255
+        """;
 
     private ConfigurationOnlyDatabaseSnapshot() { }
 
@@ -110,6 +138,7 @@ public final class ConfigurationOnlyDatabaseSnapshot
                         copyTable(original, target, table, sourceTables);
                         copiedTables.add(table);
                     }
+                    preservePendingP25Bindings(original, target, normalizedSource, sourceFormat.version());
                     copySequences(original, target, copiedTables);
                     //Triggers are installed only after copying, so extraction never executes configuration writes
                     //against other tables as a side effect. Indexes are built only over the selected small content.
@@ -171,6 +200,109 @@ public final class ConfigurationOnlyDatabaseSnapshot
         result.addAll(CurrentDatabaseDerivedStateRepair.REPRODUCIBLE_TABLES);
         result.addAll(List.of("alias_list_analog_activity_summary", "topic_alert_message", "topic_alert_delivery"));
         return Set.copyOf(result);
+    }
+
+    /** Preserve the same bounded native-site recovery used at startup, before its observation owners are discarded. */
+    private static void preservePendingP25Bindings(Connection original, Connection target, Path source, int version)
+        throws SQLException
+    {
+        //Earlier layouts cross an explicit receiver-state reset before the current owner identity model exists.
+        if(version < 15) return;
+        List<String> candidates = new ArrayList<>();
+        try(Statement query = target.createStatement(); ResultSet rows = query.executeQuery("""
+            SELECT configuration_id,config_json,channel_kind,decoder_type,address_domain_code,primary_frequency_hz
+            FROM configuration_channel
+            WHERE channel_kind='TRUNKED' AND decoder_type IN ('P25_PHASE1','P25_PHASE2')
+              AND length(CAST(config_json AS BLOB))<=4194304
+              AND CASE WHEN json_valid(config_json)=1 THEN json_type(config_json)='object'
+                    AND coalesce(json_type(config_json,'$.p25SiteIdentity'),'null')='null' ELSE 0 END
+            """))
+        {
+            while(rows.next())
+            {
+                String id = rows.getString(1);
+                if(id == null || !id.matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+                    continue;
+                try
+                {
+                    //Leave malformed/ambiguous JSON untouched for the ordinary configuration repair policy.
+                    if(!(JSON.readTree(rows.getString(2)) instanceof ObjectNode document)) continue;
+                    Channel channel = JSON.treeToValue(document, Channel.class);
+                    if(!ChannelConfigurationPolicy.requireChannelKind(channel).name().equals(rows.getString("channel_kind")))
+                        continue;
+                    ConfigurationChannelProjection.from(channel).requireMatches(
+                        ConfigurationChannelProjection.read(rows), "Pending P25 channel binding");
+                    candidates.add(id);
+                }
+                catch(IOException | IllegalArgumentException | ArithmeticException ignored) { }
+            }
+        }
+        if(candidates.isEmpty()) return;
+        if(version < 63)
+        {
+            restorePendingP25Bindings(original, target, candidates, false);
+            return;
+        }
+        Connection activity;
+        try
+        {
+            activity = openSource(ActivityDatabasePath.forConfiguration(source));
+        }
+        catch(IOException | SQLException discardedHistoryUnavailable)
+        {
+            //Readable saved settings remain recoverable even when the discarded observation pages are damaged.
+            return;
+        }
+        try(activity)
+        {
+            activity.setAutoCommit(false);
+            restorePendingP25Bindings(activity, target, candidates, true);
+        }
+    }
+
+    private static void restorePendingP25Bindings(Connection history, Connection target, List<String> candidates,
+                                                   boolean paired) throws SQLException
+    {
+        PreparedStatement lookup;
+        try
+        {
+            lookup = history.prepareStatement(P25_BINDING_LOOKUP_SQL + (paired ? """
+                AND receiver.channel_kind='TRUNKED' AND receiver.decoder_type IN ('P25_PHASE1','P25_PHASE2')
+                """ : ""));
+        }
+        catch(SQLException discardedHistoryUnavailable) { return; }
+        try(lookup; PreparedStatement update = target.prepareStatement("""
+            UPDATE configuration_channel SET config_json=json_set(config_json,'$.p25SiteIdentity',json(?))
+            WHERE configuration_id=?
+            """))
+        {
+            for(String id: candidates)
+            {
+                P25SiteIdentity binding = null;
+                try
+                {
+                    lookup.setString(1, id);
+                    try(ResultSet row = lookup.executeQuery())
+                    {
+                        if(row.next())
+                        {
+                            P25SiteIdentity candidate = new P25SiteIdentity(row.getInt(2),row.getInt(3),
+                                row.getInt(4),row.getInt(5));
+                            if(RadioSystemKey.p25(candidate).equals(row.getString(1))) binding = candidate;
+                        }
+                    }
+                }
+                catch(SQLException | IllegalArgumentException discardedHistoryUnusable) { continue; }
+                if(binding == null) continue;
+                try
+                {
+                    update.setString(1, JSON.writeValueAsString(binding));
+                }
+                catch(IOException impossible) { throw new SQLException("Unable to retain a verified P25 channel binding", impossible); }
+                update.setString(2, id);
+                update.executeUpdate();
+            }
+        }
     }
 
     private static void requireSource(Path source) throws IOException

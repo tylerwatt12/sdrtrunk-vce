@@ -7,6 +7,8 @@ import io.github.dsheirer.database.ActivityDatabasePath;
 import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.ConfigurationHistorySchema;
 import io.github.dsheirer.database.SqliteSchemaValidator;
+import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
+import io.github.dsheirer.module.decode.p25.P25SiteIdentity;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.file.Files;
@@ -189,12 +191,17 @@ class ConfigurationOnlyDatabaseSnapshotTest
 
     private static void damageHistoryPage(Path source) throws Exception
     {
+        damageHistoryPage(source, "receiver_activity_event");
+    }
+
+    private static void damageHistoryPage(Path source, String table) throws Exception
+    {
         long page;
         int pageSize;
         try(Connection connection = open(source); var statement = connection.createStatement())
         {
             try(var rows = statement.executeQuery("PRAGMA page_size")) { rows.next(); pageSize = rows.getInt(1); }
-            try(var rows = statement.executeQuery("SELECT pageno FROM dbstat WHERE name='receiver_activity_event' " +
+            try(var rows = statement.executeQuery("SELECT pageno FROM dbstat WHERE name='" + table + "' " +
                 "AND pagetype='leaf' LIMIT 1"))
             {
                 assertTrue(rows.next()); page = rows.getLong(1);
@@ -207,7 +214,7 @@ class ConfigurationOnlyDatabaseSnapshotTest
         }
         try(Connection connection = open(source))
         {
-            assertThrows(SQLException.class, () -> count(connection, "receiver_activity_event", " NOT INDEXED"));
+            assertThrows(SQLException.class, () -> count(connection, table, " NOT INDEXED"));
         }
     }
 
@@ -263,6 +270,235 @@ class ConfigurationOnlyDatabaseSnapshotTest
             }
             assertEquals(0, count(connection, "sqlite_sequence", " WHERE name='receiver_activity_event'"));
         }
+    }
+
+    @Test void preservesTheVerifiedP25BindingRecoveredByTheSourceLoaderBeforeDiscardingHistory() throws Exception
+    {
+        P25SiteIdentity expected = new P25SiteIdentity(0xABCDE, 0x456, 7, 8);
+        for(int version: List.of(62, DatabaseFormatCatalog.CURRENT_VERSION))
+        {
+            PendingBinding pending = pendingBindingSource("pending-binding-" + version, version);
+            Path source = pending.source(), history = pending.history();
+            String configurationId = pending.configurationId();
+            assertEquals(expected, loadBinding(source, configurationId, version), "source runtime recovery");
+            byte[] original = Files.readAllBytes(source), originalHistory = Files.readAllBytes(history);
+            Path target = directory.resolve("pending-binding-target-" + version + "/sdrtrunk.sqlite");
+
+            ConfigurationOnlyDatabaseSnapshot.create(source, target);
+
+            assertEquals(expected, loadBinding(target, configurationId, version), "settings-only format " + version);
+            assertArrayEquals(original, Files.readAllBytes(source));
+            assertArrayEquals(originalHistory, Files.readAllBytes(history));
+            try(Connection connection = open(version >= 63 ? ActivityDatabasePath.forConfiguration(target) : target))
+            {
+                assertEquals(0, count(connection, "receiver_channel"));
+                assertEquals(0, count(connection, "p25_site_snapshot"));
+            }
+        }
+    }
+
+    @Test void bindingRecoveryUsesOnlyIndexedOwnerAndSiteLookups() throws Exception
+    {
+        for(int version: List.of(62, DatabaseFormatCatalog.CURRENT_VERSION))
+        {
+            PendingBinding pending = pendingBindingSource("indexed-binding-" + version, version);
+            List<String> plan = new ArrayList<>();
+            try(Connection connection = open(pending.history()); var query = connection.prepareStatement(
+                "EXPLAIN QUERY PLAN " + ConfigurationOnlyDatabaseSnapshot.P25_BINDING_LOOKUP_SQL))
+            {
+                query.setString(1, pending.configurationId());
+                try(var rows = query.executeQuery()) { while(rows.next()) plan.add(rows.getString(4)); }
+            }
+            assertEquals(3, plan.size(), plan::toString);
+            assertTrue(plan.stream().allMatch(detail -> detail.startsWith("SEARCH ")), plan::toString);
+        }
+    }
+
+    @Test void keepsExplicitBindingsWithoutNeedingDiscardedOwnerPages() throws Exception
+    {
+        PendingBinding pending = pendingBindingSource("explicit-binding", DatabaseFormatCatalog.CURRENT_VERSION);
+        String saved = "{\"wacn\":703711,\"system\":1111,\"rfss\":9,\"site\":10}";
+        try(Connection connection = open(pending.source()); var update = connection.prepareStatement("""
+            UPDATE configuration_channel SET config_json=json_set(config_json,'$.p25SiteIdentity',json(?))
+            WHERE channel_kind='TRUNKED' AND decoder_type IN ('P25_PHASE1','P25_PHASE2')
+            """))
+        {
+            update.setString(1, saved); assertTrue(update.executeUpdate() > 0);
+        }
+        damageHistoryPage(pending.history(), "receiver_channel");
+        Path target = directory.resolve("explicit-binding-target/sdrtrunk.sqlite");
+        byte[] original = Files.readAllBytes(pending.source()), damaged = Files.readAllBytes(pending.history());
+
+        ConfigurationOnlyDatabaseSnapshot.create(pending.source(), target);
+
+        assertEquals(new P25SiteIdentity(703711,1111,9,10),
+            loadBinding(target, pending.configurationId(), DatabaseFormatCatalog.CURRENT_VERSION));
+        assertArrayEquals(original, Files.readAllBytes(pending.source()));
+        assertArrayEquals(damaged, Files.readAllBytes(pending.history()));
+    }
+
+    @Test void damagedPendingBindingOwnersDoNotPreventRecoveringReadableSettings() throws Exception
+    {
+        for(int version: List.of(62, DatabaseFormatCatalog.CURRENT_VERSION))
+        {
+            PendingBinding pending = pendingBindingSource("damaged-pending-binding-" + version, version);
+            damageHistoryPage(pending.history(), "receiver_channel");
+            byte[] original = Files.readAllBytes(pending.source()), damaged = Files.readAllBytes(pending.history());
+            Path target = directory.resolve("damaged-pending-binding-target-" + version + "/sdrtrunk.sqlite");
+
+            ConfigurationOnlyDatabaseSnapshot.create(pending.source(), target);
+
+            assertNull(loadBinding(target, pending.configurationId(), version));
+            assertArrayEquals(original, Files.readAllBytes(pending.source()));
+            assertArrayEquals(damaged, Files.readAllBytes(pending.history()));
+            try(Connection connection = open(target)) { assertTrue(count(connection, "configuration_channel") > 0); }
+        }
+    }
+
+    @Test void neverInfersABindingFromInconsistentOrMalformedDiscardedOwners() throws Exception
+    {
+        for(String damage: List.of("mismatched-key", "channel-owned", "oversized-wacn", "fractional-site"))
+        {
+            PendingBinding pending = pendingBindingSource(damage, DatabaseFormatCatalog.CURRENT_VERSION);
+            try(Connection connection = open(pending.history()); var update = connection.createStatement())
+            {
+                update.execute("PRAGMA ignore_check_constraints=ON");
+                switch(damage)
+                {
+                    case "mismatched-key" -> update.executeUpdate("UPDATE radio_system SET system_key='p25:abcde:457' WHERE system_key='p25:abcde:456'");
+                    case "channel-owned" -> {
+                        try(var owned = connection.prepareStatement("UPDATE radio_system SET configuration_id=? WHERE system_key='p25:abcde:456'"))
+                        { owned.setString(1, pending.configurationId()); assertEquals(1, owned.executeUpdate()); }
+                    }
+                    case "oversized-wacn" -> update.executeUpdate("UPDATE radio_system SET p25_wacn=4295671006 WHERE system_key='p25:abcde:456'");
+                    case "fractional-site" -> update.executeUpdate("UPDATE p25_site_snapshot SET rfss=7.5 WHERE rfss=7 AND site=8");
+                    default -> throw new AssertionError(damage);
+                }
+            }
+            assertNull(loadBinding(pending.source(), pending.configurationId(), DatabaseFormatCatalog.CURRENT_VERSION), damage);
+            Path target = directory.resolve(damage + "-target/sdrtrunk.sqlite");
+
+            ConfigurationOnlyDatabaseSnapshot.create(pending.source(), target);
+
+            assertNull(loadBinding(target, pending.configurationId(), DatabaseFormatCatalog.CURRENT_VERSION), damage);
+        }
+    }
+
+    @Test void neverInfersABindingWhenTheSavedDecoderPayloadDisagreesWithItsP25Projection() throws Exception
+    {
+        for(int version: List.of(62, DatabaseFormatCatalog.CURRENT_VERSION))
+        {
+            for(String damage: List.of("decoder-payload", "overflowing-address-domain"))
+            {
+                PendingBinding pending = pendingBindingSource(damage + "-" + version, version);
+                try(Connection connection = open(pending.source()); var statement = connection.createStatement())
+                {
+                    statement.execute("PRAGMA ignore_check_constraints=ON");
+                    String sql = damage.equals("decoder-payload") ? """
+                        UPDATE configuration_channel SET config_json=json_set(config_json,
+                            '$.decodeConfiguration.type','decodeConfigDMR','$.decodeConfiguration.channelMode','TRUNKED')
+                        WHERE configuration_id=?
+                        """ : "UPDATE configuration_channel SET address_domain_code=4294967296 WHERE configuration_id=?";
+                    try(var update = connection.prepareStatement(sql))
+                    {
+                        update.setString(1, pending.configurationId()); assertEquals(1, update.executeUpdate());
+                    }
+                }
+                Path target = directory.resolve(damage + "-target-" + version + "/sdrtrunk.sqlite");
+                Map<String,List<String>> expected;
+                try(Connection connection = open(pending.source()); var query = connection.prepareStatement(
+                    "SELECT config_json FROM configuration_channel WHERE configuration_id=?"))
+                {
+                    expected = configurationRows(connection);
+                    query.setString(1, pending.configurationId());
+                    try(var rows = query.executeQuery())
+                    {
+                        assertTrue(rows.next());
+                        var decoded = new com.fasterxml.jackson.databind.ObjectMapper()
+                            .disable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                            .readValue(rows.getString(1), io.github.dsheirer.controller.channel.Channel.class);
+                        if(damage.equals("decoder-payload"))
+                            assertEquals(io.github.dsheirer.module.decode.DecoderType.DMR,
+                                decoded.getDecodeConfiguration().getDecoderType());
+                        else assertTrue(decoded.getDecodeConfiguration().getDecoderType() ==
+                            io.github.dsheirer.module.decode.DecoderType.P25_PHASE1 ||
+                            decoded.getDecodeConfiguration().getDecoderType() ==
+                            io.github.dsheirer.module.decode.DecoderType.P25_PHASE2);
+                        assertEquals(io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED,
+                            io.github.dsheirer.configuration.ChannelConfigurationPolicy.requireChannelKind(decoded));
+                    }
+                }
+
+                ConfigurationOnlyDatabaseSnapshot.create(pending.source(), target);
+
+                try(Connection connection = open(target))
+                {
+                    assertEquals(expected, configurationRows(connection),
+                        "leave ambiguous settings untouched for ordinary migration repair");
+                    assertEquals(1, count(connection,"configuration_channel", damage.equals("decoder-payload") ?
+                        " WHERE decoder_type IN ('P25_PHASE1','P25_PHASE2') AND json_extract(config_json,'$.decodeConfiguration.type')='decodeConfigDMR'" :
+                        " WHERE address_domain_code=4294967296"));
+                }
+            }
+        }
+    }
+
+    private PendingBinding pendingBindingSource(String name, int version) throws Exception
+    {
+        Path source = fixture(version, directory.resolve(name + "-source/sdrtrunk.sqlite"));
+        String configurationId;
+        try(Connection connection = open(source); var statement = connection.createStatement())
+        {
+            try(var rows = statement.executeQuery("""
+                SELECT c.configuration_id FROM configuration_channel c
+                WHERE c.channel_kind='TRUNKED' AND c.decoder_type IN ('P25_PHASE1','P25_PHASE2')
+                ORDER BY c.id LIMIT 1
+                """))
+            {
+                assertTrue(rows.next()); configurationId = rows.getString(1);
+            }
+            try(var update = connection.prepareStatement("UPDATE configuration_channel SET config_json=" +
+                "json_remove(config_json,'$.p25SiteIdentity') WHERE configuration_id=?"))
+            {
+                update.setString(1, configurationId); assertEquals(1, update.executeUpdate());
+            }
+        }
+        Path history = version >= 63 ? ActivityDatabasePath.forConfiguration(source) : source;
+        try(Connection connection = open(history))
+        {
+            try(var update = connection.prepareStatement("""
+                UPDATE radio_system SET system_key='p25:abcde:456', configuration_id=NULL,
+                    protocol_code=1,address_domain_code=0,p25_wacn=0xABCDE,p25_system_id=0x456,
+                    dmr_model_code=NULL,dmr_network_id=NULL,nxdn_location_category_code=NULL,nxdn_system_id=NULL
+                WHERE id=(SELECT radio_system_id FROM receiver_channel WHERE configuration_id=?)
+                """))
+            {
+                update.setString(1, configurationId); assertEquals(1, update.executeUpdate());
+            }
+            try(var update = connection.prepareStatement("""
+                INSERT INTO p25_site_snapshot(channel_id,snapshot_hash,first_seen_ms,last_seen_ms,
+                    observation_count,protocol,rfss,site)
+                SELECT id,printf('%064x',1),1000,1000,1,'APCO25',7,8
+                FROM receiver_channel WHERE configuration_id=?
+                ON CONFLICT(channel_id) DO UPDATE SET protocol='APCO25',rfss=7,site=8
+                """))
+            {
+                update.setString(1, configurationId); assertEquals(1, update.executeUpdate());
+            }
+        }
+        return new PendingBinding(source, history, configurationId);
+    }
+
+    private record PendingBinding(Path source, Path history, String configurationId) { }
+
+    private static P25SiteIdentity loadBinding(Path database, String configurationId, int version) throws Exception
+    {
+        ConfigurationDatabaseStore store = new ConfigurationDatabaseStore(database);
+        java.util.List<io.github.dsheirer.controller.channel.Channel> channels;
+        try(Connection connection = open(database)) { channels = store.loadChannels(connection); }
+        if(version >= 63) store.restoreInterruptedP25Bindings(channels);
+        return channels.stream().filter(channel -> configurationId.equals(channel.getConfigurationId()))
+            .findFirst().orElseThrow().getP25SiteIdentity();
     }
 
     @Test void refusesUnrecognizedSourcesAndExistingDestinations() throws Exception
