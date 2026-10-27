@@ -67,7 +67,7 @@ async function check() {
     'source-alias', 'source', 'target-alias', 'target', 'decoder'];
   const columns = [...old, 'receiver'].map(id => ({ id }));
   const initial = defaults.layout('live-channels', columns);
-  assert.deepEqual(initial.hidden_columns, ['receiver']);
+  assert.deepEqual(initial.hidden_columns, ['tags', 'receiver']);
   assert.equal(layouts.normalize(columns, initial).reset, false);
   for (const previous of [old, legacy]) {
     const saved = { schema: previous, column_order: [...previous].reverse(),

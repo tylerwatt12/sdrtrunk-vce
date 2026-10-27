@@ -253,7 +253,7 @@ const TABLE_DEFAULTS = Object.freeze({
     status: 105, tags: 100, channel: 150, frequency: 96, signal: 95,
     'decode-health': { normal: 105, detailed: 260 },
     source: 240, target: 240, decoder: 78, receiver: 180
-  }, hidden: ['receiver'], grow: ['channel', 'source', 'target'] },
+  }, hidden: ['tags', 'receiver'], grow: ['channel', 'source', 'target'] },
   'alias-editor-configure': {
     widths: ALIAS_WIDTHS, grow: ALIAS_GROW
   },
