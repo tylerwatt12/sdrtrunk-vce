@@ -277,9 +277,9 @@
 }
 @media (max-width: 359px) {
   .audio-dock-header { gap: 0; padding-inline: var(--space-1); }
-  .audio-dock[data-source="live"] .audio-dock-primary-controls { flex-direction: column; gap: var(--space-2); }
-  .audio-dock[data-source="live"] .audio-dock-transport-main,
-  .audio-dock[data-source="live"] .audio-dock-transport-options { width: 100%; display: flex; justify-content: center; align-items: center; gap: var(--space-2); }
+  .audio-dock .audio-dock-primary-controls { flex-direction: column; gap: var(--space-2); }
+  .audio-dock .audio-dock-transport-main,
+  .audio-dock .audio-dock-transport-options { width: 100%; display: flex; justify-content: center; align-items: center; gap: var(--space-2); }
   .audio-dock[data-source="recordings"] .audio-dock-primary-controls .audio-dock-play { --icon-action-size: var(--control-height-comfortable); }
   .audio-dock-avoid-action { font-size: var(--font-size-label); }
   .audio-dock-source-native { width: var(--audio-dock-source-narrow-width); }

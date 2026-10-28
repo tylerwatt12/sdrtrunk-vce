@@ -209,6 +209,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   handle.type = 'button';
   handle.id = 'audio-dock-size-handle';
   handle.dataset.guideTarget = 'player-handle';
+  handle.dataset.uiHintPlacement = 'above';
   handle.setAttribute('aria-label', 'Change audio player size');
   handle.setAttribute('aria-controls', 'audio-dock-content');
   handle.setAttribute('aria-describedby', 'audio-dock-size-hint');

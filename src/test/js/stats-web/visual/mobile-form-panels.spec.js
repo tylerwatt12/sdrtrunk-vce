@@ -186,11 +186,23 @@ for (const [theme, width, height] of [['light', 320, 568], ['dark', 844, 390]]) 
     await savedHistoryReady(page);
     for (const state of ['collapsed', 'minimal']) {
       await dockSize(page, state);
-      const toggle = page.getByRole('button', { name: 'Events', exact: true });
+      const toggle = page.getByRole('button', { name: 'Actions', exact: true });
       await toggle.click();
       const events = page.locator('.network-visualizer-events');
       const list = events.locator('.network-visualizer-event-list');
-      await expect(list.locator('li')).toHaveCount(16);
+      await expect(list.locator('li')).toHaveCount(10);
+      await expect(list.getByRole('checkbox')).toHaveCount(20);
+      expect(await list.locator('.ui-field-row').evaluateAll(fields => fields.flatMap(field => {
+        const range = document.createRange();
+        range.selectNodeContents(field.querySelector('.admin-toggle-copy strong'));
+        const bounds = field.getBoundingClientRect(), toggle = field.querySelector('.ui-toggle').getBoundingClientRect();
+        const fits = [...range.getClientRects()].every(text => text.left >= bounds.left - 1 &&
+          text.right <= bounds.right + 1 && (text.right <= toggle.left + 1 ||
+            text.bottom <= toggle.top + 1 || text.top >= toggle.bottom - 1));
+        return fits && toggle.left >= bounds.left - 1 && toggle.right <= bounds.right + 1 ? [] :
+          [field.textContent];
+      }))).toEqual([]);
+      await assertHit(list.locator('.ui-toggle').first());
       expect(await list.evaluate(element => element.clientHeight)).toBeGreaterThanOrEqual(
         await list.locator('li').first().evaluate(element => element.getBoundingClientRect().height));
       await list.evaluate(element => { element.scrollTop = element.scrollHeight; });
@@ -199,9 +211,12 @@ for (const [theme, width, height] of [['light', 320, 568], ['dark', 844, 390]]) 
         const r = element.getBoundingClientRect(), p = element.parentElement.getBoundingClientRect();
         return r.top >= p.top - 1 && r.bottom <= p.bottom + 1;
       })).toBe(true);
+      expect(await list.evaluate(element => element.getBoundingClientRect().bottom <=
+        element.closest('form').querySelector('.ui-modal-footer').getBoundingClientRect().top + 1)).toBe(true);
+      await assertHit(list.locator('.ui-toggle').last());
       const close = height <= 640 ? page.getByRole('dialog').getByRole('button',
-        { name: 'Close Noteworthy P25 activity', exact: true }) :
-        page.getByRole('button', { name: 'Close noteworthy activity', exact: true });
+        { name: 'Close P25 actions', exact: true }) :
+        page.getByRole('button', { name: 'Close actions', exact: true });
       await assertHit(close);
       if (state === 'minimal') await test.info().attach('p25-events', {
         body: await page.screenshot(), contentType: 'image/png' });
@@ -222,18 +237,18 @@ test('P25 Events retains its single list through a short-screen orientation chan
   await page.goto('/app.html?view=network-visualizer');
   await savedHistoryReady(page);
   await dockSize(page, 'collapsed');
-  const toggle = page.getByRole('button', { name: 'Events', exact: true });
+  const toggle = page.getByRole('button', { name: 'Actions', exact: true });
   await toggle.click();
-  await page.locator('.network-visualizer-event-list').focus();
+  await page.locator('.network-visualizer-event-list').getByRole('checkbox').first().focus();
   await page.evaluate(() => { window.originalP25EventsList = document.querySelector('.network-visualizer-event-list'); });
   await page.setViewportSize({ width: 844, height: 390 });
-  await expect(page.getByRole('dialog', { name: 'Noteworthy P25 activity', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'P25 actions', exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.originalP25EventsList === document.querySelector('.network-visualizer-event-list'))).toBe(true);
   await page.keyboard.press('Escape');
   await expect(toggle).toBeFocused();
   await expect(page.locator('.network-visualizer-stage > .network-visualizer-events')).toHaveCount(1);
   const startingHeight = 1400;
-  await page.setViewportSize({ width: 320, height: startingHeight });
+  await page.setViewportSize({ width: 1280, height: startingHeight });
   await dockSize(page, 'full');
   await toggle.click();
   // The full player consumes enough room to exercise the geometry fallback
@@ -250,12 +265,12 @@ test('P25 Events retains its single list through a short-screen orientation chan
     window.addEventListener('resize', () => {
       const list = document.querySelector('.network-visualizer-event-list');
       window.p25EventsResizeGeometry = { inline: Boolean(list.closest('.network-visualizer-stage')),
-        compact: matchMedia('(max-height: 640px)').matches, height: list.clientHeight,
+        compact: matchMedia('(max-width: 600px), (max-height: 640px)').matches, height: list.clientHeight,
         entryHeight: list.firstElementChild.getBoundingClientRect().height };
     }, { once: true });
   });
-  await page.setViewportSize({ width: 320, height: targetHeight });
-  await expect(page.getByRole('dialog', { name: 'Noteworthy P25 activity', exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 1280, height: targetHeight });
+  await expect(page.getByRole('dialog', { name: 'P25 actions', exact: true })).toBeVisible();
   const resized = await page.evaluate(() => window.p25EventsResizeGeometry);
   await test.info().attach('events-resize-geometry', {
     body: JSON.stringify({ initial: available, targetHeight, resized }), contentType: 'application/json' });
@@ -275,36 +290,45 @@ test('P25 Events retains its single list through a short-screen orientation chan
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
-test('resizing open P25 Events never replaces a different modal with unsaved choices', async ({ page }) => {
+test('resizing P25 Actions preserves unsaved choices and the shared modal guard', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await mockApplication(page, 'light');
+  const writes = await mockApplication(page, 'light');
   await page.goto('/app.html?view=network-visualizer');
   await savedHistoryReady(page);
   await dockSize(page, 'collapsed');
-  await page.getByRole('button', { name: 'Events', exact: true }).click();
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  const settings = page.getByRole('dialog', { name: 'P25 Visualizer settings', exact: true });
-  const save = settings.locator('.ui-form-submit');
-  await expect(save).toBeHidden();
-  const choice = settings.getByRole('checkbox').first();
+  await page.getByRole('button', { name: 'Actions', exact: true }).click();
+  const actions = page.locator('.network-visualizer-events');
+  const form = actions.locator('form');
+  const save = actions.getByRole('button', { name: 'Save choices', exact: true });
+  await expect(save).toBeDisabled();
+  const choice = actions.getByRole('checkbox').first();
   const initial = await choice.isChecked();
   await choice.focus();
   await choice.press('Space');
-  await expect(save).toBeVisible();
-  await expect(settings.locator('form')).toHaveClass(/is-dirty/);
-  await expect(settings.locator('.ui-form-state')).toHaveText('Unsaved changes');
+  await expect(save).toBeEnabled();
+  await expect(form).toHaveClass(/is-dirty/);
+  await expect(actions.getByRole('status')).toHaveText('Unsaved changes');
+  await form.evaluate(element => { window.originalP25ActionsForm = element; });
   const confirmations = [];
   page.on('dialog', dialog => { confirmations.push(dialog.message()); void dialog.dismiss(); });
   await page.setViewportSize({ width: 844, height: 390 });
-  await expect(settings).toBeVisible();
+  const modal = page.getByRole('dialog', { name: 'P25 actions', exact: true });
+  await expect(modal).toBeVisible();
+  expect(await form.evaluate(element => element === window.originalP25ActionsForm)).toBe(true);
   expect(await choice.isChecked()).toBe(!initial);
   expect(confirmations).toEqual([]);
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
-  await expect(page.getByRole('dialog', { name: 'Noteworthy P25 activity', exact: true })).toHaveCount(0);
+  await modal.getByRole('button', { name: 'Close P25 actions', exact: true }).click();
+  const discard = page.getByRole('alertdialog', { name: 'Discard unsaved changes', exact: true });
+  await expect(discard).toBeVisible();
+  await discard.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(modal).toBeVisible();
+  expect(await choice.isChecked()).toBe(!initial);
   await choice.press('Space');
   expect(await choice.isChecked()).toBe(initial);
-  await expect(save).toBeHidden();
-  await expect(settings.locator('.ui-form-state')).toBeHidden();
+  await expect(save).toBeDisabled();
+  await expect(actions.getByRole('status')).toBeHidden();
+  expect(writes).toEqual([]);
 });
 
 test('short-screen P25 Events uses the shared modal inside the browser fullscreen layout', async ({ page }) => {
@@ -314,15 +338,15 @@ test('short-screen P25 Events uses the shared modal inside the browser fullscree
   await savedHistoryReady(page);
   await page.getByRole('button', { name: 'Enter fullscreen', exact: true }).click();
   await expect.poll(() => page.evaluate(() => document.fullscreenElement?.className)).toBe('network-visualizer-layout');
-  const toggle = page.getByRole('button', { name: 'Events', exact: true });
+  const toggle = page.getByRole('button', { name: 'Actions', exact: true });
   await toggle.click();
-  const modal = page.getByRole('dialog', { name: 'Noteworthy P25 activity', exact: true });
+  const modal = page.getByRole('dialog', { name: 'P25 actions', exact: true });
   await expect(modal).toBeVisible();
   expect(await modal.evaluate(element => document.fullscreenElement.contains(element))).toBe(true);
   const list = modal.locator('.network-visualizer-event-list');
-  await expect(list.locator('li')).toHaveCount(16);
+  await expect(list.locator('li')).toHaveCount(10);
   expect(await list.evaluate(element => element.clientHeight)).toBeGreaterThan(70);
-  const close = modal.getByRole('button', { name: 'Close Noteworthy P25 activity', exact: true });
+  const close = modal.getByRole('button', { name: 'Close P25 actions', exact: true });
   await assertHit(close);
   await close.click();
   await expect(modal).toHaveCount(0);

@@ -86,7 +86,9 @@ export function installIconHints(root = document) {
     const left = Math.max(gap, Math.min(rect.left + rect.width / 2 - width / 2,
       window.innerWidth - width - gap));
     const below = rect.bottom + gap + height <= window.innerHeight - gap;
-    const top = below ? rect.bottom + gap : Math.max(gap, rect.top - height - gap);
+    const above = rect.top - height - gap;
+    const preferAbove = control.dataset.uiHintPlacement === 'above' && above >= gap;
+    const top = preferAbove || !below ? Math.max(gap, above) : rect.bottom + gap;
     hint.style.left = `${Math.round(left)}px`;
     hint.style.top = `${Math.round(top)}px`;
   };

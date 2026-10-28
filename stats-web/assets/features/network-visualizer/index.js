@@ -249,7 +249,7 @@ function createP25Visualizer(dependencies = {}) {
     count.setAttribute('aria-label', `${label}: 0 since this page opened`);
     actionCounts.set(entry.id, { count, label });
     heading.append(node('strong', '', label), count);
-    const choices = node('div', 'network-visualizer-action-choices');
+    const choices = node('div', 'ui-action-row network-visualizer-action-choices');
     for (const [property, title] of [['autoZoom', 'Zoom to'], ['highlight', 'Highlight']]) {
       const choice = preferenceCheckbox(`p25-visualizer-${property}-${entry.id}`, title,
         eventSettings[entry.id][property]);
@@ -317,6 +317,7 @@ function createP25Visualizer(dependencies = {}) {
     if (!eventsModal) { events.classList.add('ui-surface'); stage.append(events); }
     else {
       choicesWorkflow.setModalLayout(true);
+      actionsForm.querySelector('.ui-form-workflow-body')?.classList.add('network-visualizer-actions-body');
       choicesWorkflow.refresh();
       if (document.fullscreenElement === layout) layout.append(eventsModal.state.backdrop);
       if (eventsModal.ready && !await eventsModal.ready) return;

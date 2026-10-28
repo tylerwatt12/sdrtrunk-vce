@@ -132,14 +132,18 @@ test('recording facts and transcript remain available and applying a dock filter
   for (const [field, filters] of [
     ['Radio system', { system_key: recording.system_key }],
     ['Saved channel', { channel_id: recording.channel_id }],
-    ['Source Radio ID', { system_key: recording.system_key, radio_identity_key: recording.source_entity_ref.identity_key }],
-    ['Talkgroup ID', { system_key: recording.system_key, talkgroup_identity_key: recording.target_entity_ref.identity_key }]
+    ['Source Radio ID', { system_key: recording.system_key, radio_identity_key: recording.source_entity_ref.identity_key }]
   ]) {
     const link = factLink(field);
     await expect(link).toHaveCount(1);
     const query = new URL(await link.getAttribute('href'), page.url()).searchParams;
     expect(Object.fromEntries(query)).toMatchObject({ view: 'recordings', ...filters });
   }
+  const talkgroup = factLink('Talkgroup ID');
+  await expect(talkgroup).toHaveCount(1);
+  expect(Object.fromEntries(new URL(await talkgroup.getAttribute('href'), page.url()).searchParams))
+    .toMatchObject({ view: 'group-identity', radio_system_key: recording.system_key,
+      identity_key: recording.target_entity_ref.identity_key });
   await factLink('Radio system').click();
   await expect.poll(() => state.requests.filter((request) => request.path === '/api/v1/recordings/calls')
     .at(-1)?.query).toMatchObject({ system_key: recording.system_key });

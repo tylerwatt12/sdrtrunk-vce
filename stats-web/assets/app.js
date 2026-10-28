@@ -14,7 +14,7 @@ import { directListenEntryTarget } from './core/direct-listen-entry.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
-import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=7';
+import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=8';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
@@ -47,7 +47,7 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=40';
+import { createAudioDock } from './core/audio-dock.js?v=41';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
@@ -8362,7 +8362,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const [feature, presentation] = await Promise.all(mapTour ? [
       import('./features/listen-map.js?v=16'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=71'), import('./guides/network-visualizer-presentation.js?v=2')
+      import('./features/network-visualizer/index.js?v=72'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
       import('./features/alerts.js?v=25'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
@@ -12084,6 +12084,7 @@ function arrangeScannerPlayback(bar, player, signal, options = {}) {
     if (player.viewState().stopped) void player.togglePlayback();
     else void player.togglePause();
   });
+  primary.dataset.uiHintPlacement = 'above';
   const skip = action(iconButton('icon-skip', 'Skip current call'), 'scanner-skip', () => player.skip());
   const replay = action(iconButton('icon-replay', 'Replay last call'), 'scanner-replay',
     () => void player.replayLastCall());
@@ -21044,7 +21045,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=71');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=72');
   // The live scene does not wait for an optional label catalog or historical data.
   void loadActivityMessageTypes();
   const visualizerModule = await p25VisualizerModulePromise;

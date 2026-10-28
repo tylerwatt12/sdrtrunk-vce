@@ -39,6 +39,15 @@ async function panel(page, name) {
   await selectAudioPanel(player(page), name);
 }
 
+async function expectResizeHintAbove(page) {
+  const hint = page.getByRole('tooltip');
+  await expect(hint).toContainText('Expanded player');
+  await expect(hint).toBeVisible();
+  await expect(hint).toHaveCSS('pointer-events', 'auto');
+  const bounds = await hint.boundingBox(), grip = await handle(page).boundingBox();
+  expect(bounds.y + bounds.height).toBeLessThan(grip.y);
+}
+
 async function openApp(page, options = {}) {
   const state = await openAudioApp(page, { ...options, feedCallsEnabled: false });
   // Complete the fixture Audio element through its normal ended event, without
@@ -290,6 +299,7 @@ test('Recordings navigates from another page even when that source is already se
 test('live Details keeps every label and disclosure state through active, paused and idle calls', async ({ page }) => {
   const state = await openApp(page);
   await size(page, 'full');
+  await expectResizeHintAbove(page);
   await panel(page, 'Details');
   const idleLabels = await labels(page);
   expect(idleLabels).toEqual(expect.arrayContaining(liveFields));
@@ -397,8 +407,10 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     await page.setViewportSize(viewport);
     const state = await openApp(page);
     await size(page, 'full');
-    await panel(page, 'Scan Lists');
+    if (viewport.width === 320) await expectResizeHintAbove(page);
+    await panel(page, 'Player menu');
     await expect(player(page).getByRole('button', { name: /^Avoid List/ })).toHaveCount(1);
+    await panel(page, 'Scan Lists');
     await expect(player(page).getByRole('checkbox', { name: 'Group calls by target', exact: true })).toHaveCount(0);
     await expect(player(page).getByRole('spinbutton', { name: 'Calls per target', exact: true })).toHaveCount(0);
     await expect(player(page).getByRole('checkbox', { name: 'Playing call in page title', exact: true })).toHaveCount(0);
@@ -449,8 +461,7 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     await expect(burst).toBeFocused();
     await expect(burst).toHaveValue('7');
     await player(page).getByRole('button', { name: 'Avoid', exact: true }).click();
-    await panel(page, 'Scan Lists');
-    await player(page).getByRole('button', { name: /^Avoid List/ }).click();
+    await panel(page, 'Avoid List');
     const remove = player(page).getByRole('button', { name: 'Remove Fire Dispatch from Avoid List', exact: true });
     await expect(remove).toBeVisible();
     await expectReachable(remove);

@@ -461,8 +461,23 @@ body[data-view="network-visualizer"] .content {
 
 .network-visualizer-events-modal .network-visualizer-panel {
   position: static;
+  flex: 1 1 auto;
   width: 100%;
-  overflow: visible;
+  overflow: hidden;
+}
+
+.network-visualizer-events-modal .modal-content,
+.network-visualizer-events-sheet,
+.network-visualizer-actions-body {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.network-visualizer-events-sheet,
+.network-visualizer-actions-body {
+  flex: 1 1 auto;
 }
 
 .network-visualizer-events-modal .network-visualizer-panel-header {
@@ -476,8 +491,7 @@ body[data-view="network-visualizer"] .content {
   border-bottom: 1px solid var(--line);
 }
 
-.network-visualizer-action-heading,
-.network-visualizer-action-choices {
+.network-visualizer-action-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -485,7 +499,7 @@ body[data-view="network-visualizer"] .content {
 }
 
 .network-visualizer-action-choices > div {
-  flex: 1 1 0;
+  flex: 1 1 max-content;
 }
 
 .network-visualizer-layout:fullscreen {
