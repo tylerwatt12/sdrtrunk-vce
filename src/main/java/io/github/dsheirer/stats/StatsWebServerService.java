@@ -59,6 +59,7 @@ import io.github.dsheirer.web.http.ChannelAdminHttpController;
 import io.github.dsheirer.web.http.SpectrumDiscoveryHttpController;
 import io.github.dsheirer.web.http.SpectrumSearchHttpController;
 import io.github.dsheirer.web.http.CallMatchingHttpController;
+import io.github.dsheirer.web.http.CallFilteringSettingsHttpController;
 import io.github.dsheirer.web.http.TunerAllocationHttpController;
 import io.github.dsheirer.web.http.MapSnapshotHttpController;
 import io.github.dsheirer.web.http.OperationalPreferencesHttpController;
@@ -90,6 +91,7 @@ import io.github.dsheirer.web.http.StaticWebAssetResponse;
 import io.github.dsheirer.web.auth.WebUserPreferencesService;
 import io.github.dsheirer.web.auth.WebTourDismissalService;
 import io.github.dsheirer.web.settings.OperationalPreferencesService;
+import io.github.dsheirer.web.settings.CallFilteringSettingsService;
 import io.github.dsheirer.web.network.WebCertificateIdentity;
 import java.io.IOException;
 import java.io.InputStream;
@@ -656,6 +658,11 @@ public class StatsWebServerService implements AutoCloseable
             new WebReceiverSettingsHttpController(mServices.mWebReceiverSettingsService);
         server.createContext(WebReceiverSettingsHttpController.PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_SETTINGS, receiverSettingsController::handle));
+
+        CallFilteringSettingsHttpController callFilteringController = new CallFilteringSettingsHttpController(
+            new CallFilteringSettingsService(mUserPreferences.getCallManagementPreference()));
+        server.createContext(CallFilteringSettingsHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_SETTINGS, callFilteringController::handle));
 
         OperationalPreferencesHttpController operationalPreferencesController =
             new OperationalPreferencesHttpController(new OperationalPreferencesService(mUserPreferences));

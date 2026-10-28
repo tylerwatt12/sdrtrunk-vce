@@ -269,10 +269,10 @@ public final class ReceiverRuntime implements AutoCloseable
         mWebServices.setManagedRecordingTranscriptionService(mTranscription);
         mWebServer = new StatsWebServerService(mPreferences, mWebServices);
 
-        mCalls = new AudioCallCoordinator(mRecording, mStreaming, mWebServices::receive, call -> {
-            try { mWebServices.receiveCompletedCallForAlerts(call); }
-            finally { mActivity.receiveResolvedCall(call); }
-        }, mCallDiagnostics);
+        mCalls = new AudioCallCoordinator(mRecording, mStreaming, mWebServices::receive,
+            mActivity::receiveResolvedCall, mCallDiagnostics,
+            mPreferences.getCallManagementPreference()::getCallFilteringSettings,
+            mWebServices::receiveCompletedCallForAlerts);
         mWebServices.setLogicalCallDiagnostics(mCallDiagnostics, mCalls);
         mWebServices.setReceiverHealthOutputSources(mCalls, mRecording, mStreaming, mConfiguration.getBroadcastModel());
         processing.addAudioCallListener(mCalls);

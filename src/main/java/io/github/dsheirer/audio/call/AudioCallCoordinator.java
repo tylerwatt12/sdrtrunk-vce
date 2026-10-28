@@ -51,6 +51,7 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityEligibility;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.preference.call.CallFilteringSettings;
 import io.github.dsheirer.record.AudioRecordingManager;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.util.concurrent.ObserverThreadFactory;
@@ -76,6 +77,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -119,6 +121,8 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
     private final ScheduledThreadPoolExecutor mDeadlineScheduler;
     private final Thread mWorker;
     private final Consumer<CompletedAudioCall> mResolvedCallConsumer;
+    private final Consumer<CompletedAudioCall> mAdmittedCallConsumer;
+    private final Supplier<CallFilteringSettings> mCallFilteringSettings;
     private final Consumer<CompletedAudioCall> mRecordingConsumer;
     private final Consumer<CompletedAudioCall> mStreamingConsumer;
     private final Consumer<CompletedAudioCall> mWebConsumer;
@@ -190,10 +194,24 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                                 Consumer<CompletedAudioCall> resolvedCallConsumer,
                                 LogicalCallDiagnosticSink diagnosticSink)
     {
+        this(audioRecordingManager, audioStreamingManager, webConsumer, resolvedCallConsumer, diagnosticSink,
+            () -> CallFilteringSettings.DISABLED, null);
+    }
+
+    /** Completed-call filtering and admitted-call observers run only on the resolver worker. */
+    public AudioCallCoordinator(AudioRecordingManager audioRecordingManager,
+                                AudioStreamingManager audioStreamingManager,
+                                Consumer<CompletedAudioCall> webConsumer,
+                                Consumer<CompletedAudioCall> resolvedCallConsumer,
+                                LogicalCallDiagnosticSink diagnosticSink,
+                                Supplier<CallFilteringSettings> callFilteringSettings,
+                                Consumer<CompletedAudioCall> admittedCallConsumer)
+    {
         this(resolvedCallConsumer,
             audioRecordingManager != null ? audioRecordingManager::receive : null,
             audioStreamingManager != null ? audioStreamingManager::receive : null,
-            webConsumer, ResolverConfiguration.DEFAULT, diagnosticSink);
+            webConsumer, ResolverConfiguration.DEFAULT, diagnosticSink, callFilteringSettings,
+            admittedCallConsumer);
     }
 
     AudioCallCoordinator(Consumer<CompletedAudioCall> resolvedCallConsumer,
@@ -212,7 +230,22 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
                          ResolverConfiguration configuration,
                          LogicalCallDiagnosticSink diagnosticSink)
     {
+        this(resolvedCallConsumer, recordingConsumer, streamingConsumer, webConsumer, configuration,
+            diagnosticSink, () -> CallFilteringSettings.DISABLED, null);
+    }
+
+    AudioCallCoordinator(Consumer<CompletedAudioCall> resolvedCallConsumer,
+                         Consumer<CompletedAudioCall> recordingConsumer,
+                         Consumer<CompletedAudioCall> streamingConsumer,
+                         Consumer<CompletedAudioCall> webConsumer,
+                         ResolverConfiguration configuration,
+                         LogicalCallDiagnosticSink diagnosticSink,
+                         Supplier<CallFilteringSettings> callFilteringSettings,
+                         Consumer<CompletedAudioCall> admittedCallConsumer)
+    {
         mResolvedCallConsumer = resolvedCallConsumer;
+        mAdmittedCallConsumer = admittedCallConsumer;
+        mCallFilteringSettings = Objects.requireNonNull(callFilteringSettings);
         mRecordingConsumer = recordingConsumer;
         mStreamingConsumer = streamingConsumer;
         mWebConsumer = webConsumer;
@@ -1913,6 +1946,15 @@ public class AudioCallCoordinator implements Listener<AudioCallEvent>
             }
 
             deliver("resolved-call statistics", mResolvedCallConsumer, completedAudioCall);
+
+            //Select one final logical call before applying its output policy; physical copies can contribute
+            //complementary identity evidence even when their audio would fall below the configured minimum.
+            if(!CallQualityFilter.accepts(completedAudioCall.snapshot(), mCallFilteringSettings.get()))
+            {
+                continue;
+            }
+
+            deliver("admitted-call observers", mAdmittedCallConsumer, completedAudioCall);
 
             if(completedAudioCall.hasAudio() && !mForcedDiscard.get())
             {

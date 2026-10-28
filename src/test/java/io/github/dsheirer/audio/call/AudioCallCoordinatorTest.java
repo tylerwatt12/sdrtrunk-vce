@@ -42,6 +42,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.preference.call.CallFilteringSettings;
 import io.github.dsheirer.record.BasicRecordingContract;
 import io.github.dsheirer.record.wave.AudioMetadata;
 import io.github.dsheirer.record.wave.AudioMetadataUtils;
@@ -57,6 +58,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -71,6 +73,312 @@ class AudioCallCoordinatorTest
 {
     private static final VoiceCallQuality GOOD_QUALITY = new VoiceCallQuality(50, 0, 0, 0, 2, 1_000);
     private static final VoiceCallQuality DAMAGED_QUALITY = new VoiceCallQuality(15, 5, 25, 5, 250, 1_000);
+
+    @Test
+    void disabledQualityFilterKeepsDamagedAudioForEveryOutput() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> web = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> admitted = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = filteringCoordinator(resolved, recorded, streamed, web,
+            () -> CallFilteringSettings.DISABLED, admitted);
+
+        try
+        {
+            emitLeg(coordinator, leg(8_001, aliasList(8_001), null, 0, 0, 0, 9_001,
+                1_000, 2_000, DAMAGED_QUALITY, true, Set.of()), fingerprints(8_001));
+            await(() -> admitted.size() == 1 && recorded.size() == 1 && streamed.size() == 1 && web.size() == 1);
+            assertEquals(1, resolved.size());
+            assertSame(resolved.getFirst(), admitted.getFirst());
+            assertSame(resolved.getFirst(), recorded.getFirst());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void qualityFilterSuppressesDamagedOutputsAndAlertsButKeepsStatistics() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> web = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> admitted = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = filteringCoordinator(resolved, recorded, streamed, web,
+            () -> new CallFilteringSettings(true, 50), admitted);
+
+        try
+        {
+            long producer = 8_100L;
+            for(DecoderType decoder : DecoderType.MBE_AUDIO_CODEC_DECODERS)
+            {
+                Leg damaged = withDecoder(leg(producer++, aliasList(8_002), null, 0, 0, 0, 9_002,
+                    1_000, 2_000, DAMAGED_QUALITY, true, Set.of()), decoder);
+                emitLeg(coordinator, damaged, fingerprints(producer));
+            }
+            await(() -> resolved.size() == DecoderType.MBE_AUDIO_CODEC_DECODERS.size());
+            coordinator.dispose();
+            assertTrue(resolved.stream().allMatch(call -> call.snapshot().voiceCallQuality().qualityPercent() == 30.0d));
+            assertTrue(recorded.isEmpty());
+            assertTrue(streamed.isEmpty());
+            assertTrue(web.isEmpty());
+            assertTrue(admitted.isEmpty());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void metadataOnlyCallsRetainAdmittedObserversWithoutProducingAudio() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> admitted = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = filteringCoordinator(resolved, recorded, null, null,
+            () -> new CallFilteringSettings(true, 100), admitted);
+
+        try
+        {
+            Leg metadataOnly = leg(8_003, aliasList(8_003), null, 0, 0, 0, 9_003,
+                1_000, 2_000, VoiceCallQuality.EMPTY, true, Set.of());
+            emitLegWithEncryptionState(coordinator, metadataOnly, CallEncryptionState.CLEAR);
+            await(() -> admitted.size() == 1);
+            assertEquals(1, resolved.size());
+            assertFalse(resolved.getFirst().hasAudio());
+            assertTrue(recorded.isEmpty());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void everyJmbeProtocolAdmitsSourceLessAudioAtTheExactQualityThreshold() throws Exception
+    {
+        long producer = 8_010L;
+        for(DecoderType decoder : DecoderType.MBE_AUDIO_CODEC_DECODERS)
+        {
+            List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+            List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+            List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+            List<CompletedAudioCall> web = new CopyOnWriteArrayList<>();
+            List<CompletedAudioCall> admitted = new CopyOnWriteArrayList<>();
+            AudioCallCoordinator coordinator = filteringCoordinator(resolved, recorded, streamed, web,
+                () -> new CallFilteringSettings(true, 50), admitted);
+
+            try
+            {
+                VoiceCallQuality boundary = new VoiceCallQuality(25, 25, 0, 0, 0, 1_000);
+                Leg sourceLess = withDecoder(leg(producer++, aliasList(8_010), null, 0, 0, 0,
+                    9_010, null, 1_000, 2_000, boundary, true, Set.of()), decoder);
+                emitLeg(coordinator, sourceLess, fingerprints(producer));
+                await(() -> recorded.size() == 1 && streamed.size() == 1 && web.size() == 1 && admitted.size() == 1);
+                assertEquals(1, resolved.size(), decoder.toString());
+                assertEquals(50.0d, resolved.getFirst().snapshot().voiceCallQuality().qualityPercent());
+                assertNull(resolved.getFirst().snapshot().identifierCollection().getFromIdentifier());
+            }
+            finally
+            {
+                coordinator.dispose();
+            }
+        }
+    }
+
+    @Test
+    void analogAndUnmeasuredCallsPassTheQualityFilter() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> web = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> admitted = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = filteringCoordinator(resolved, recorded, streamed, web,
+            () -> new CallFilteringSettings(true, 100), admitted);
+
+        try
+        {
+            AliasList aliases = aliasList(8_020);
+            emitLeg(coordinator, withDecoder(leg(8_020, aliases, null, 0, 0, 0, 9_020,
+                1_000, 2_000, DAMAGED_QUALITY, true, Set.of()), DecoderType.AM), fingerprints(8_020));
+            emitLeg(coordinator, withDecoder(leg(8_021, aliases, null, 0, 0, 0, 9_021,
+                3_000, 4_000, DAMAGED_QUALITY, true, Set.of()), DecoderType.NBFM), fingerprints(8_021));
+            emitLeg(coordinator, leg(8_022, aliases, null, 0, 0, 0, 9_022,
+                5_000, 6_000, VoiceCallQuality.EMPTY, true, Set.of()), fingerprints(8_022));
+            await(() -> recorded.size() == 3 && streamed.size() == 3 && web.size() == 3 && admitted.size() == 3);
+            assertEquals(3, resolved.size());
+            assertFalse(resolved.getLast().snapshot().voiceCallQuality().hasMeasurements());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void filteringUsesTheSelectedDuplicateAudioAfterCallerEnrichment() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> streamed = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> web = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> admitted = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = filteringCoordinator(resolved, recorded, streamed, web,
+            () -> new CallFilteringSettings(true, 90), admitted);
+
+        try
+        {
+            AliasList aliases = aliasList(8_030);
+            Leg clean = leg(8_030, aliases, 0xBEE00, 0x123, 1, 1, 9_030, null,
+                1_000, 2_000, GOOD_QUALITY, true, Set.of());
+            Leg damaged = leg(8_031, aliases, 0xBEE00, 0x123, 1, 2, 9_030, 7_777,
+                1_080, 2_080, DAMAGED_QUALITY, true, Set.of());
+            emitLeg(coordinator, damaged, fingerprints(8_030));
+            emitLeg(coordinator, clean, fingerprints(8_030));
+            await(() -> recorded.size() == 1 && streamed.size() == 1 && web.size() == 1 && admitted.size() == 1);
+            CompletedAudioCall result = resolved.getFirst();
+            assertEquals(2, result.receiverLegCount());
+            assertEquals(clean.callId(), result.snapshot().callId());
+            assertEquals(100.0d, result.snapshot().voiceCallQuality().qualityPercent());
+            assertEquals(7_777, result.snapshot().identifierCollection().getFromIdentifier().getValue());
+            assertNull(result.nativeAudioSnapshot().identifierCollection().getFromIdentifier());
+            assertSame(result, admitted.getFirst());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void filteringIncludesMissingCoverageFromTheLongerConfirmedDuplicate() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> admitted = new CopyOnWriteArrayList<>();
+        AudioCallCoordinator coordinator = filteringCoordinator(resolved, recorded, null, null,
+            () -> new CallFilteringSettings(true, 90), admitted);
+
+        try
+        {
+            AliasList aliases = aliasList(8_040);
+            VoiceCallQuality shortClean = new VoiceCallQuality(40, 0, 0, 0, 0, 1_000);
+            VoiceCallQuality longDamaged = new VoiceCallQuality(5, 0, 0, 45, 0, 1_000);
+            Leg shorter = leg(8_040, aliases, 0xBEE00, 0x123, 1, 1, 9_040,
+                1_000, 1_800, shortClean, true, Set.of());
+            Leg longer = leg(8_041, aliases, 0xBEE00, 0x123, 1, 2, 9_040,
+                1_000, 2_000, longDamaged, true, Set.of());
+            emitLeg(coordinator, shorter, fingerprints(8_040));
+            emitLeg(coordinator, longer, fingerprints(8_040));
+            await(() -> resolved.size() == 1);
+            coordinator.dispose();
+            CompletedAudioCall result = resolved.getFirst();
+            assertEquals(2, result.receiverLegCount());
+            assertEquals(shorter.callId(), result.snapshot().callId());
+            assertEquals(100.0d, result.nativeAudioSnapshot().voiceCallQuality().qualityPercent());
+            assertEquals(80.0d, result.snapshot().voiceCallQuality().qualityPercent());
+            assertTrue(recorded.isEmpty());
+            assertTrue(admitted.isEmpty());
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void changedQualitySettingsApplyToTheNextCompletedCall() throws Exception
+    {
+        List<CompletedAudioCall> resolved = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> recorded = new CopyOnWriteArrayList<>();
+        List<CompletedAudioCall> admitted = new CopyOnWriteArrayList<>();
+        AtomicReference<CallFilteringSettings> settings = new AtomicReference<>(CallFilteringSettings.DISABLED);
+        AtomicInteger settingsReads = new AtomicInteger();
+        AudioCallCoordinator coordinator = filteringCoordinator(resolved, recorded, null, null, () -> {
+            CallFilteringSettings current = settings.get();
+            settingsReads.incrementAndGet();
+            return current;
+        }, admitted);
+
+        try
+        {
+            AliasList aliases = aliasList(8_050);
+            emitLeg(coordinator, leg(8_050, aliases, null, 0, 0, 0, 9_050,
+                1_000, 2_000, DAMAGED_QUALITY, true, Set.of()), fingerprints(8_050));
+            await(() -> recorded.size() == 1);
+            settings.set(new CallFilteringSettings(true, 50));
+            emitLeg(coordinator, leg(8_051, aliases, null, 0, 0, 0, 9_051,
+                3_000, 4_000, DAMAGED_QUALITY, true, Set.of()), fingerprints(8_051));
+            await(() -> settingsReads.get() == 2);
+            settings.set(new CallFilteringSettings(false, 50));
+            emitLeg(coordinator, leg(8_052, aliases, null, 0, 0, 0, 9_052,
+                5_000, 6_000, DAMAGED_QUALITY, true, Set.of()), fingerprints(8_052));
+            await(() -> recorded.size() == 2 && admitted.size() == 2 && resolved.size() == 3);
+            assertEquals(List.of(8_050L, 8_052L), recorded.stream()
+                .map(call -> call.snapshot().callId().producerId()).toList());
+            assertEquals(3, settingsReads.get(), "Each final call must sample one settings snapshot");
+        }
+        finally
+        {
+            coordinator.dispose();
+        }
+    }
+
+    @Test
+    void blockedQualitySettingsLookupNeverRunsOnOrBlocksTheReceiverThread() throws Exception
+    {
+        CountDownLatch settingsEntered = new CountDownLatch(1);
+        CountDownLatch releaseSettings = new CountDownLatch(1);
+        AtomicReference<Thread> settingsThread = new AtomicReference<>();
+        AudioCallCoordinator.ResolverConfiguration configuration = new AudioCallCoordinator.ResolverConfiguration(
+            8, 2, 0, 0, 8, 8, 100_000, 200_000);
+        AudioCallCoordinator coordinator = new AudioCallCoordinator(null, null, null, null, configuration, null,
+            () -> {
+                settingsThread.set(Thread.currentThread());
+                settingsEntered.countDown();
+                try
+                {
+                    releaseSettings.await(2, TimeUnit.SECONDS);
+                }
+                catch(InterruptedException _)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                return new CallFilteringSettings(true, 50);
+            }, null);
+
+        try
+        {
+            AliasList aliases = aliasList(8_060);
+            emitLeg(coordinator, leg(8_060, aliases, null, 0, 0, 0, 9_060,
+                1_000, 2_000, GOOD_QUALITY, true, Set.of()), fingerprints(8_060));
+            assertTrue(settingsEntered.await(1, TimeUnit.SECONDS));
+            AudioCallSnapshot active = snapshot(leg(8_061, aliases, null, 0, 0, 0, 9_061,
+                3_000, 4_000, GOOD_QUALITY, true, Set.of()), false);
+            Thread receiverThread = Thread.currentThread();
+            long started = System.nanoTime();
+            for(int index = 0; index < 2_000; index++)
+            {
+                coordinator.receive(new AudioCallEvent(AudioCallEventType.AUDIO_FRAME, active,
+                    new float[160], false, index + 1L, active.lastActivityTimestamp() + index, index + 30_001L));
+            }
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 1_000L,
+                "Receiver offers must remain bounded while the filter settings supplier is blocked");
+            assertNotEquals(receiverThread, settingsThread.get());
+            assertTrue(coordinator.getQueueStatus().droppedIngress() > 0L);
+        }
+        finally
+        {
+            releaseSettings.countDown();
+            coordinator.dispose();
+        }
+    }
 
     @Test
     void productionConfigurationUsesShortQuietSettleAndBoundedActiveWait()
@@ -2647,6 +2955,21 @@ class AudioCallCoordinatorTest
         {
             coordinator.dispose();
         }
+    }
+
+    private static AudioCallCoordinator filteringCoordinator(List<CompletedAudioCall> resolved,
+                                                             List<CompletedAudioCall> recorded,
+                                                             List<CompletedAudioCall> streamed,
+                                                             List<CompletedAudioCall> web,
+                                                             Supplier<CallFilteringSettings> settings,
+                                                             List<CompletedAudioCall> admitted)
+    {
+        AudioCallCoordinator.ResolverConfiguration configuration = new AudioCallCoordinator.ResolverConfiguration(
+            256, 32, 25, 150, 32, 16, 1_000_000, 4_000_000);
+        return new AudioCallCoordinator(resolved != null ? resolved::add : null,
+            recorded != null ? recorded::add : null, streamed != null ? streamed::add : null,
+            web != null ? web::add : null, configuration, null, settings,
+            admitted != null ? admitted::add : null);
     }
 
     private static AudioCallCoordinator coordinator(List<CompletedAudioCall> resolved,
