@@ -31,6 +31,8 @@ class SetupStartupBoundaryTest
         int listenerRecovery = startup.indexOf("SetupWizard.ensureListener(");
         int activation = startup.indexOf("mRuntime.activate();");
         assertTrue(listenerRecovery >= 0 && activation > listenerRecovery);
+        assertTrue(startup.indexOf("ThemeManager.getInstance().initialize(") > listenerRecovery,
+            "Listener recovery keeps setup's appearance before desktop theme preferences are applied");
         String composition = runtime.substring(runtime.indexOf("private void startServices()"),
             runtime.indexOf("private void activateServices()"));
         assertTrue(composition.contains("mWebServer.start();"));

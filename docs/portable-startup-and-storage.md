@@ -20,7 +20,8 @@ are not accepted.
 | You use mainline sdrtrunk or an older XML playlist | **Import XML playlist**, then choose the playlist | Bring over supported channels, aliases, and streaming settings. The XML file stays unchanged. |
 
 Before a VCE upgrade begins large operations, close the previous VCE application, make a complete manual backup,
-and confirm **I have backed up my existing VCE installation, including its data folder.** in the wizard. Choose
+and confirm **I have backed up my existing VCE installation, and it is currently not running.** in the wizard.
+The backup must include its data folder. Choose
 **Keep activity and statistics** at the same time. It starts unchecked: channels, aliases, accounts, and settings are
 kept while Activity, statistics, learned observations, and alert history start fresh. Select it to carry forward usable
 history through the supported updates. Both choices preserve recording audio and its separate catalog.

@@ -10,13 +10,17 @@ import java.awt.Insets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JFormattedTextField;
 import javax.swing.JSpinner;
 import javax.swing.JTextArea;
+import javax.swing.JTextPane;
 import javax.swing.SpinnerNumberModel;
 import javax.swing.SwingConstants;
 import javax.swing.UIManager;
 import javax.swing.plaf.FontUIResource;
+import javax.swing.text.SimpleAttributeSet;
+import javax.swing.text.StyleConstants;
 
 /** Local, theme-aware presentation choices for setup; never changes application-wide defaults. */
 final class WizardStyles
@@ -78,6 +82,36 @@ final class WizardStyles
         Runnable font = () -> component.setFont(new FontUIResource(bodyFont().deriveFont(style)));
         component.addPropertyChangeListener("UI", event -> font.run());
         font.run();
+    }
+
+    static JCheckBox checkBox(String caption, boolean selected)
+    {
+        JCheckBox checkBox = new JCheckBox(caption, selected);
+        checkBox.setOpaque(false);
+        checkBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+        bodyFont(checkBox, Font.PLAIN);
+        return checkBox;
+    }
+
+    static JTextPane emphasizedProse(String value, String emphasis)
+    {
+        JTextPane text = new SetupRichText();
+        text.setText(value);
+        text.setEditable(false);
+        text.setOpaque(false);
+        text.setBorder(null);
+        text.setMargin(new Insets(0, 0, 0, 0));
+        text.setAlignmentX(Component.LEFT_ALIGNMENT);
+        text.setForeground(foreground());
+        bodyFont(text, Font.PLAIN);
+        int start = value.indexOf(emphasis);
+        if(start >= 0)
+        {
+            SimpleAttributeSet bold = new SimpleAttributeSet();
+            StyleConstants.setBold(bold, true);
+            text.getStyledDocument().setCharacterAttributes(start, emphasis.length(), bold, false);
+        }
+        return text;
     }
 
     static JButton primary(JButton button)

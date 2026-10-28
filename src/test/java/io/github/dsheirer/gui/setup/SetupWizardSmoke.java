@@ -39,6 +39,14 @@ public final class SetupWizardSmoke
             if(mode.equals("upgrade-with-catalog")) createOlderCatalog(root);
         }
         if(mode.startsWith("transfer-")) prepareTransferSource(root,mode);
+        if(mode.equals("import-theme"))
+        {
+            Path source = transferSource(root);
+            Path sourceDatabase = source.resolve("database/sdrtrunk.sqlite");
+            io.github.dsheirer.database.upgrade.Format64TestDatabase.create(sourceDatabase);
+            seedDarkDesktopPreference(sourceDatabase);
+            System.setProperty("wizard.source", source.toString());
+        }
         if(mode.equals("xml-only")) Files.writeString(root.resolveSibling(root.getFileName() + "-playlist.xml"),
             "<playlist version=\"4\"><alias name=\"Disposable XML alias\" list=\"Smoke\"><id type=\"talkgroup\" " +
                 "protocol=\"DMR\" value=\"200\"/></alias></playlist>");
@@ -95,6 +103,24 @@ public final class SetupWizardSmoke
         Files.writeString(source.resolve("logs/disposable.log"), "Disposable graphical smoke artifact");
     }
 
+    /** A stopped, disposable import fixture retains its desktop preference independently of setup presentation. */
+    private static void seedDarkDesktopPreference(Path database) throws Exception
+    {
+        requireDisposableSource(database);
+        try(var connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                INSERT INTO application_settings(key,settings_json,updated_at_ms)
+                VALUES('portable_java_preferences_v1',
+                    '{"user/io/github/dsheirer/preference/application":{"ui.theme":"DARK","dark.mode":"true"}}',1)
+                ON CONFLICT(key) DO UPDATE SET settings_json=json_set(application_settings.settings_json,
+                    '$."user/io/github/dsheirer/preference/application"."ui.theme"','DARK',
+                    '$."user/io/github/dsheirer/preference/application"."dark.mode"','true')
+                """);
+        }
+    }
+
     private static void exerciseTransfer(SetupWizard wizard, Path root) throws Exception
     {
         Path source = transferSource(root), database = source.resolve("database/sdrtrunk.sqlite");
@@ -126,6 +152,15 @@ public final class SetupWizardSmoke
         capture(wizard,root,"transfer-choices-small");
         javax.swing.SwingUtilities.invokeAndWait(() -> wizard.setSize(normalSize));
         confirmBackup(wizard); capture(wizard,root,"transfer-ready");
+        if(System.getProperty("wizard.exercise").equals("transfer-review"))
+        {
+            assertLightWizard(wizard);
+            assertNoPreparedDatabase(root);
+            if(!java.util.Arrays.equals(before,Files.readAllBytes(database)))
+                throw new AssertionError("Preview changed the selected database");
+            click(wizard,"Exit setup"); awaitClosed(wizard);
+            return;
+        }
         clickPrimary(wizard); await(wizard,SetupStep.SOURCE);
         assertNoPreparedDatabase(root);
         if(!java.util.Arrays.equals(before,Files.readAllBytes(database)))
@@ -177,7 +212,7 @@ public final class SetupWizardSmoke
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             if(descendants(wizard).stream().anyMatch(component -> component instanceof MigrationContentChoices ||
                 component instanceof javax.swing.JCheckBox box && box.isShowing() &&
-                    box.getText().startsWith(BACKUP_ACKNOWLEDGMENT)))
+                    isBackupChoice(box)))
                 throw new AssertionError("XML import shows irrelevant VCE upgrade choices");
             if(!wizard.getRootPane().getDefaultButton().isEnabled())
                 throw new AssertionError("Checked XML playlist cannot be imported");
@@ -229,6 +264,7 @@ public final class SetupWizardSmoke
         if(wizard==null) throw new AssertionError("Wizard not shown");
         SetupWizard target=wizard;
         String mode=System.getProperty("wizard.exercise");
+        assertLightWizard(target);
         if(mode.startsWith("upgrade-"))
         {
             if(mode.equals("upgrade-catalog-failure")) exerciseCatalogFailure(target, root);
@@ -236,12 +272,6 @@ public final class SetupWizardSmoke
             return;
         }
         capture(target,root,"01-source");
-        if(mode.equals("theme") || mode.equals("import-theme"))
-        {
-            click(target,"Dark mode");
-            if(Files.exists(root.resolve("database/sdrtrunk.sqlite"))) throw new AssertionError("Theme preview created a database before source selection");
-            capture(target,root,"01b-dark-source");
-        }
         if(!mode.equals("resume")) assertSourceChoices(target);
         if(mode.equals("source-options"))
         {
@@ -294,14 +324,18 @@ public final class SetupWizardSmoke
                 assertNoPreparedDatabase(root);
             }
             clickPrimary(target); awaitAfterSource(target);
-            if(mode.equals("import-only"))
+            if(mode.equals("import-only") || mode.equals("import-theme"))
             {
+                if(mode.equals("import-theme"))
+                {
+                    if(preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.DARK)
+                        throw new AssertionError("Import changed the stored desktop theme preference");
+                    assertLightWizard(target);
+                }
                 capture(target,root,"import-complete");
                 click(target,"Exit setup"); awaitClosed(target);
                 return;
             }
-            if(mode.equals("import-theme") && preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.DARK)
-                throw new AssertionError("Explicit theme choice was not retained after importing");
             var imported=SetupProgress.read(root.resolve("database/sdrtrunk.sqlite"));
             if(!imported.isImported() || imported.get(SetupStep.ADMINISTRATOR)!=SetupProgress.State.CARRIED_OVER || imported.get(SetupStep.WEB)!=SetupProgress.State.CARRIED_OVER || imported.get(SetupStep.ACTIVITY)!=SetupProgress.State.CARRIED_OVER)
                 throw new AssertionError("Imported valid settings were not carried over");
@@ -316,14 +350,6 @@ public final class SetupWizardSmoke
             });
             if(mode.equals("interrupt")) { click(target,"Exit setup"); return; }
             click(target,"Continue"); await(target,SetupStep.WEB);
-            if(mode.equals("theme"))
-            {
-                if(preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.DARK)
-                    throw new AssertionError("Pre-database theme choice was not saved");
-                click(target,"Light mode");
-                if(preferences(target).getApplicationPreference().getTheme()!=io.github.dsheirer.gui.theme.Theme.LIGHT)
-                    throw new AssertionError("Theme choice was not updated");
-            }
             capture(target,root,"03-web");
             assertAndTypePort(target);
             capture(target,root,"03a-web-more-options");
@@ -375,17 +401,9 @@ public final class SetupWizardSmoke
         click(target,"Continue"); await(target,SetupStep.CALIBRATION);
         capture(target,root,"08-benchmark"); click(target,"Use defaults for now"); await(target,SetupStep.REVIEW);
         capture(target,root,"09-review");
-        javax.swing.SwingUtilities.invokeAndWait(()-> {
-            try
-            {
-                var field=SetupWizard.class.getDeclaredField("preferences"); field.setAccessible(true);
-                var preferences=(io.github.dsheirer.preference.UserPreferences)field.get(target);
-                preferences.getApplicationPreference().setTheme(io.github.dsheirer.gui.theme.Theme.DARK);
-                target.setSize(800,600);
-            }
-            catch(Exception e) { throw new RuntimeException(e); }
-        });
-        capture(target,root,"10-review-dark-small");
+        javax.swing.SwingUtilities.invokeAndWait(() -> target.setSize(800,600));
+        assertLightWizard(target);
+        capture(target,root,"10-review-small");
         if(mode.equals("bind-failure"))
         {
             try(var occupied=new java.net.ServerSocket(18091,1,java.net.InetAddress.getLoopbackAddress()))
@@ -485,7 +503,7 @@ public final class SetupWizardSmoke
         });
         await(wizard,SetupStep.SOURCE);
         if(descendants(wizard).stream().anyMatch(c -> c instanceof javax.swing.JCheckBox box && box.isShowing() &&
-            box.getText().startsWith(BACKUP_ACKNOWLEDGMENT)))
+            isBackupChoice(box)))
             throw new AssertionError("Back offered to repeat a committed update");
         if(descendants(wizard).stream().anyMatch(c -> c instanceof javax.swing.JButton button && button.isShowing() &&
             button.getText().equals("Choose different settings")))
@@ -496,7 +514,40 @@ public final class SetupWizardSmoke
     private static javax.swing.JCheckBox backupChoice(SetupWizard wizard)
     {
         return descendants(wizard).stream().filter(c -> c instanceof javax.swing.JCheckBox box && box.isShowing() &&
-            box.getText().startsWith(BACKUP_ACKNOWLEDGMENT)).map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
+            isBackupChoice(box)).map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
+    }
+
+    private static boolean isBackupChoice(javax.swing.JCheckBox box)
+    {
+        String name = box.getAccessibleContext().getAccessibleName();
+        return name != null && name.startsWith(BACKUP_ACKNOWLEDGMENT);
+    }
+
+    private static void assertLightWizard(SetupWizard wizard) throws Exception
+    {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            if(!(javax.swing.UIManager.getLookAndFeel() instanceof com.formdev.flatlaf.FlatLightLaf))
+                throw new AssertionError("The wizard must keep its single light appearance");
+            java.awt.Color background = javax.swing.UIManager.getColor("Panel.background");
+            if(background == null || background.getRed() + background.getGreen() + background.getBlue() < 384)
+                throw new AssertionError("The wizard retained a dark panel palette");
+            if(descendants(wizard).stream().anyMatch(component -> component instanceof javax.swing.JButton button &&
+                ("Light mode".equals(button.getText()) || "Dark mode".equals(button.getText()))))
+                throw new AssertionError("Setup still offers a theme switch");
+            for(java.awt.Component component: descendants(wizard))
+            {
+                if(!(component instanceof javax.swing.JCheckBox backup) || !backup.isShowing() ||
+                    !isBackupChoice(backup)) continue;
+                java.awt.Font body = WizardStyles.bodyFont(), font = backup.getFont();
+                if(!font.getFamily().equals(body.getFamily()) || font.getSize2D() != body.getSize2D() || !font.isBold())
+                    throw new AssertionError("Backup acknowledgment must use the common body font in bold");
+                if(!backup.getForeground().equals(WizardNotice.accent(WizardNotice.Tone.ERROR)))
+                    throw new AssertionError("Backup acknowledgment must use the red attention color");
+                if(!"I have backed up my existing VCE installation, and it is currently not running.".equals(
+                    backup.getAccessibleContext().getAccessibleName()))
+                    throw new AssertionError("Backup acknowledgment must include both backup and stopped-installation confirmation");
+            }
+        });
     }
 
     private static void confirmBackup(SetupWizard wizard) throws Exception
@@ -611,24 +662,11 @@ public final class SetupWizardSmoke
         var savedProgress=SetupProgress.read(root.resolve("database/sdrtrunk.sqlite"));
         if(savedProgress.get(SetupStep.REVIEW)==SetupProgress.State.COMPLETE || savedProgress.isComplete())
             throw new AssertionError("Review was saved as complete before the final launch action");
-        javax.swing.SwingUtilities.invokeAndWait(()-> {
-            try
-            {
-                preferences(target).getApplicationPreference().setTheme(io.github.dsheirer.gui.theme.Theme.LIGHT);
-                target.setSize(1080,800);
-            }
-            catch(Exception e) { throw new RuntimeException(e); }
-        });
+        javax.swing.SwingUtilities.invokeAndWait(() -> target.setSize(1080,800));
+        assertLightWizard(target);
         capture(target,root,"11-certificate-guide");
-        javax.swing.SwingUtilities.invokeAndWait(()-> {
-            try
-            {
-                preferences(target).getApplicationPreference().setTheme(io.github.dsheirer.gui.theme.Theme.DARK);
-                target.setSize(800,600);
-            }
-            catch(Exception e) { throw new RuntimeException(e); }
-        });
-        capture(target,root,"12-certificate-guide-dark-small");
+        javax.swing.SwingUtilities.invokeAndWait(() -> target.setSize(800,600));
+        capture(target,root,"12-certificate-guide-small");
         javax.swing.SwingUtilities.invokeAndWait(()-> {
             for(java.awt.Component component:descendants(target))
                 if(component instanceof javax.swing.JScrollPane scroll &&
@@ -639,7 +677,7 @@ public final class SetupWizardSmoke
                 }
             throw new AssertionError("Certificate guide scroll pane unavailable");
         });
-        capture(target,root,"13-certificate-guide-dark-small-scrolled");
+        capture(target,root,"13-certificate-guide-small-scrolled");
     }
 
     /** Render result callbacks without making a RadioReference request or using real credentials. */
@@ -921,8 +959,9 @@ public final class SetupWizardSmoke
         javax.swing.SwingUtilities.invokeAndWait(target::validate);
         javax.swing.SwingUtilities.invokeAndWait(()-> {
             target.validate();
-            var image=new java.awt.image.BufferedImage(target.getWidth(),target.getHeight(),java.awt.image.BufferedImage.TYPE_INT_RGB);
-            var graphics=image.createGraphics(); target.paintAll(graphics); graphics.dispose();
+            java.awt.Container content=target.getContentPane();
+            var image=new java.awt.image.BufferedImage(content.getWidth(),content.getHeight(),java.awt.image.BufferedImage.TYPE_INT_RGB);
+            var graphics=image.createGraphics(); content.paintAll(graphics); graphics.dispose();
             try
             {
                 String destination=System.getProperty("wizard.screenshots","");

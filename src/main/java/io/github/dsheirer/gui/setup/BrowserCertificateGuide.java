@@ -45,8 +45,8 @@ final class BrowserCertificateGuide extends JPanel
 
         setOpaque(false);
         setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel title = label("Browser warning example  ·  the two highlighted places to click", 13, Font.BOLD,
-            WizardStyles.foreground());
+        JTextArea title = WizardStyles.prose("Browser warning example  ·  the two highlighted places to click",
+            Font.BOLD, 14f);
         add(title, BorderLayout.NORTH);
 
         JPanel pair = new ResponsivePair(step(1, "Click “Advanced”", webAddress, host, false),
@@ -54,8 +54,8 @@ final class BrowserCertificateGuide extends JPanel
         pair.setOpaque(false);
         add(pair, BorderLayout.CENTER);
 
-        JLabel note = label("Illustration based on a browser warning. Button wording can vary by browser.",
-            12, Font.PLAIN, WizardStyles.muted());
+        JTextArea note = WizardStyles.prose("Illustration based on a browser warning. Button wording can vary by browser.");
+        note.setForeground(WizardStyles.muted());
         add(note, BorderLayout.SOUTH);
         getAccessibleContext().setAccessibleName("Browser certificate warning example");
         getAccessibleContext().setAccessibleDescription("Step 1: choose Advanced. Step 2: choose Continue to " +
@@ -75,7 +75,7 @@ final class BrowserCertificateGuide extends JPanel
     {
         JPanel step = new JPanel(new BorderLayout(0, UIScale.scale(7)));
         step.setOpaque(false);
-        JLabel heading = label(number + "  " + instruction, 13, Font.BOLD, WizardStyles.foreground());
+        JTextArea heading = WizardStyles.prose(number + "  " + instruction, Font.BOLD, 14f);
         step.add(heading, BorderLayout.NORTH);
         step.add(browser(address, host, expanded), BorderLayout.CENTER);
         step.getAccessibleContext().setAccessibleName("Step " + number + ": " + instruction);

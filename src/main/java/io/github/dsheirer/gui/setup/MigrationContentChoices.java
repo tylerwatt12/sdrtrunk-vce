@@ -4,7 +4,6 @@ import io.github.dsheirer.database.upgrade.ApplicationMigrationEstimate;
 import io.github.dsheirer.database.upgrade.DatabaseMigrationChain;
 import io.github.dsheirer.database.upgrade.MigrationContent;
 import java.awt.Component;
-import java.awt.Font;
 import java.nio.file.Path;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -17,7 +16,7 @@ import javax.swing.JTextArea;
 /** The same explicit history choice for startup updates and selected-database imports. */
 public final class MigrationContentChoices extends JPanel
 {
-    private final JCheckBox keepHistory = new JCheckBox("Keep activity and statistics");
+    private final JCheckBox keepHistory = WizardStyles.checkBox("Keep activity and statistics", false);
 
     public MigrationContentChoices(Path database, MigrationContent selected,
                                    Consumer<MigrationContent> selectionChanged)
@@ -28,9 +27,6 @@ public final class MigrationContentChoices extends JPanel
         setOpaque(false);
         setAlignmentX(Component.LEFT_ALIGNMENT);
         keepHistory.setSelected(selected == MigrationContent.FULL);
-        keepHistory.setOpaque(false);
-        keepHistory.setAlignmentX(Component.LEFT_ALIGNMENT);
-        WizardStyles.bodyFont(keepHistory, Font.PLAIN);
         String estimate = ApplicationMigrationEstimate.fullMigrationWarning(database);
         String loss = "Past activity, statistics, and alert history will start fresh. " +
             "Your channels, aliases, accounts, and settings are kept.";

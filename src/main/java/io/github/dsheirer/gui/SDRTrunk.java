@@ -141,6 +141,13 @@ public class SDRTrunk
         mUpdateCheckService = new UpdateCheckService();
         try
         {
+            //Keep setup's fixed appearance until listener recovery is complete.
+            if(!mStatsWebServerService.getRuntimeState().running())
+            {
+                if(!io.github.dsheirer.gui.setup.SetupWizard.ensureListener(mUserPreferences, mStatsWebServerService))
+                    throw new io.github.dsheirer.gui.setup.SetupWizard.Cancelled();
+                mOpenWebAfterSetup = true;
+            }
             ThemeManager.getInstance().initialize(mUserPreferences);
             mMainGui = new JFrame();
             MyEventBus.getGlobalEventBus().register(this);
@@ -148,12 +155,6 @@ public class SDRTrunk
             IconFontSwing.register(FontAwesome.getIconFont());
             mJavaFxWindowManager = new JavaFxWindowManager(mUserPreferences);
             mJavaFxWindowManager.setStatsWebServerService(mStatsWebServerService);
-            if(!mStatsWebServerService.getRuntimeState().running())
-            {
-                if(!io.github.dsheirer.gui.setup.SetupWizard.ensureListener(mUserPreferences, mStatsWebServerService))
-                    throw new io.github.dsheirer.gui.setup.SetupWizard.Cancelled();
-                mOpenWebAfterSetup = true;
-            }
             mRuntime.activate();
             initGUI();
             mRuntime.setBeforeShutdown(this::closeDesktop);

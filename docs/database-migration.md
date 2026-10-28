@@ -49,7 +49,8 @@ retain their separately documented backup behavior.
 1. For a new profile, choose the previous installation folder or supported XML playlist. A macOS application bundle
    can also identify its portable profile.
 2. Before large operations for a VCE upgrade, close the previous application and confirm **I have backed up my
-   existing VCE installation, including its data folder.** Choose **Keep activity and statistics** now. It starts
+   existing VCE installation, and it is currently not running.** The backup must include its data folder.
+   Choose **Keep activity and statistics** now. It starts
    unchecked for settings-only migration; select it to carry forward usable history. XML import and Start fresh
    do not need these VCE upgrade choices.
 3. For a folder transfer, choose **Review upgrade**. VCE checks the supported format and bounded configuration
