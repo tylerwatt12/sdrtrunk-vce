@@ -124,14 +124,16 @@ async function openOverview(page, theme, width) {
 }
 
 async function waitForOverviewProjection(page) {
+  // Overview commands are immediate; inspect settled paints without replaying every animation frame.
   await expect.poll(async () => {
-    await page.clock.runFor(32);
+    await page.clock.fastForward(32);
     return page.evaluate(() => {
-      const scene = window.overviewFixture.inspect();
-      return Math.abs(scene.cameraAspect - scene.width / scene.height);
+      const camera = window.overviewFixture.graph.camera();
+      const host = document.querySelector('.network-visualizer-canvas');
+      return Math.abs(camera.aspect - host.clientWidth / host.clientHeight);
     });
   }, { message: 'The rendered camera uses the current viewport aspect' }).toBeLessThan(0.000001);
-  await page.clock.runFor(50);
+  await page.clock.fastForward(50);
 }
 
 function expectSpheresFit(scene) {
@@ -182,11 +184,11 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     expectOriginalAnchors(scene);
     expectThreeDimensionalAnchors(scene);
     await page.evaluate(() => window.overviewFixture.repaint());
-    await page.clock.runFor(100);
+    await page.clock.fastForward(100);
     expectOriginalAnchors(await page.evaluate(() => window.overviewFixture.inspect()));
     const alternateWidth = width === 1280 ? 390 : 1280;
     await page.setViewportSize({ width: alternateWidth, height: 844 });
-    await page.clock.runFor(150);
+    await page.clock.fastForward(150);
     await waitForOverviewProjection(page);
     const resized = await page.evaluate(() => window.overviewFixture.inspect());
     expect(resized.width < 600).toBe(alternateWidth === 390);
@@ -194,11 +196,11 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     expectThreeDimensionalAnchors(resized);
     expectSpheresFit(resized);
     await page.setViewportSize({ width, height: 844 });
-    await page.clock.runFor(150);
+    await page.clock.fastForward(150);
     await waitForOverviewProjection(page);
     expectSpheresFit(await page.evaluate(() => window.overviewFixture.inspect()));
     await page.evaluate(() => window.overviewFixture.overview());
-    await page.clock.runFor(100);
+    await page.clock.fastForward(100);
     scene = await page.evaluate(() => window.overviewFixture.inspect());
     expectOriginalAnchors(scene);
     for (const system of scene.systems) {
@@ -239,26 +241,26 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       return page.locator('.network-visualizer-canvas canvas').evaluate(canvas => canvas.classList.contains('clickable'));
     }, { message: 'The actual sphere is picked before clicking' }).toBe(true);
     await page.mouse.click(target.screen.x, target.screen.y);
-    await page.clock.runFor(100);
+    await page.clock.fastForward(100);
     await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().clicks)).toEqual([target.id]);
     expect(await page.evaluate(() => window.overviewFixture.inspect().nodeTypes)).toEqual(['radio', 'system', 'talkgroup']);
     await page.evaluate(() => window.overviewFixture.overview());
-    await page.clock.runFor(100);
+    await page.clock.fastForward(100);
     await page.locator(`.network-visualizer-label[data-type="system"][data-node-key="${target.id}"]`).click();
-    await page.clock.runFor(100);
+    await page.clock.fastForward(100);
     await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().clicks)).toEqual([target.id, target.id]);
     expect(await page.evaluate(() => window.overviewFixture.inspect().nodeTypes)).toEqual(['radio', 'system', 'talkgroup']);
     await page.evaluate(() => window.overviewFixture.overview());
-    await page.clock.runFor(100);
+    await page.clock.fastForward(100);
     const keyboardLabel = page.locator(`.network-visualizer-label[data-type="system"][data-node-key="${target.id}"]`);
     await keyboardLabel.focus();
     await keyboardLabel.press('Enter');
-    await page.clock.runFor(100);
+    await page.clock.fastForward(100);
     await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().clicks))
       .toEqual([target.id, target.id, target.id]);
     expect(await page.evaluate(() => window.overviewFixture.inspect().nodeTypes)).toEqual(['radio', 'system', 'talkgroup']);
     await page.evaluate(() => window.overviewFixture.singleOverview());
-    await page.clock.runFor(100);
+    await page.clock.fastForward(100);
     const single = await page.evaluate(() => window.overviewFixture.inspect());
     if (directory) fs.writeFileSync(path.join(directory, `overview-single-${theme}-${width}.json`),
       `${JSON.stringify(single, null, 2)}\n`);

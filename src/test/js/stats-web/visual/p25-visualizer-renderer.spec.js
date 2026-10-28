@@ -139,13 +139,14 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       const f = window.visualizerFixture;
       f.renderer.setData(f.dataAt('B'), { animate: false });
     });
-    await page.clock.runFor(800);
+    // Intermediate movement was checked above; this phase checks only its final resting state.
+    await page.clock.fastForward(800);
     expect((await page.evaluate(() => window.visualizerFixture.inspect())).radio.x).toBe(118);
     await page.evaluate(() => {
       const f = window.visualizerFixture;
       f.renderer.setCameraPhase('return'); f.renderer.home(0); f.renderer.setCameraPhase('roam');
     });
-    await page.clock.runFor(300);
+    await page.clock.fastForward(300);
     const idle = await page.evaluate(() => window.visualizerFixture.inspect());
     expect(idle.rotating).toBe(true);
     expect(idle.cubes.A.opacity).toBeGreaterThan(0.7);
