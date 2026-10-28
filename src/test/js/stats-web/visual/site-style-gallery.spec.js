@@ -15,6 +15,28 @@ test('style matrix includes every registered gallery composition', () => {
     .toEqual([...galleryViews].sort());
 });
 
+for (const { theme, name, viewport } of presentations) {
+  test(`alias Call Handling sections remain distinct ${name}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?view=alias-modal&theme=${theme}`);
+    const host = page.locator(gallerySelector('alias-modal'));
+    await expect(host).toBeVisible();
+    await expect(host.getByRole('group')).toHaveCount(3);
+    for (const label of ['Scan list membership', 'Recording', 'Streaming destinations']) {
+      await expect(host.getByRole('group', { name: label, exact: true })).toBeVisible();
+    }
+    await expect(host.getByRole('group', { name: 'Streaming destinations', exact: true })
+      .getByRole('spinbutton', { name: /^Stream as talkgroup/ })).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+    const audit = await expectContrast(page, { rootSelector: gallerySelector('alias-modal') });
+    expect(audit.surfaces.filter(surface =>
+      surface.selector.split(' > ').at(-1).startsWith('fieldset'))).toHaveLength(3);
+    if (process.env.STYLE_AUDIT_ASSERTIONS_ONLY !== '1') {
+      await expect(host).toHaveScreenshot(`alias-modal-${name}.png`);
+    }
+  });
+}
+
 for (const { theme, name, viewport } of [{"name":"light-desktop","theme":"light","viewport":{"width":1280,"height":900}}]) {
   test(`shared controls preserve typography and interaction states ${name}`, async ({ page }) => {
     await page.setViewportSize(viewport);

@@ -606,7 +606,8 @@
   gap: var(--ui-field-gap, var(--space-3));
 }
 
-.alias-record-toggle {
+.alias-record-toggle,
+.alias-stream-talkgroup {
   grid-column: 1 / -1;
 }
 
