@@ -64,7 +64,7 @@ async function openOverview(page, theme, width) {
       });
       return result;
     };
-    const inspect = () => {
+    const inspect = ({ hitTargets = false } = {}) => {
       const camera = graph.camera(), bounds = host.getBoundingClientRect();
       camera.updateMatrixWorld(); graph.scene().updateMatrixWorld(true);
       const meshObjects = objects();
@@ -92,20 +92,23 @@ async function openOverview(page, theme, width) {
           bottom: Math.max(...points.map(value => value.y)) });
         const labelBounds = label.getBoundingClientRect(), style = getComputedStyle(label);
         const screen = project(center.clone());
-        const ndc = center.clone().project(camera), raycaster = new vendor.Raycaster();
-        raycaster.setFromCamera({ x: ndc.x, y: ndc.y }, camera);
-        const hit = raycaster.intersectObjects([...meshObjects.values()], true)[0];
-        let picked = hit?.object;
-        while (picked && !picked.userData?.p25Node) picked = picked.parent;
-        const labelHit = document.elementFromPoint((labelBounds.left + labelBounds.right) / 2,
-          (labelBounds.top + labelBounds.bottom) / 2);
+        let picked, labelHit;
+        // Raycast every real sphere only when choosing the interaction target, not for geometry/status reads.
+        if (hitTargets) {
+          const ndc = center.clone().project(camera), raycaster = new vendor.Raycaster();
+          raycaster.setFromCamera({ x: ndc.x, y: ndc.y }, camera);
+          picked = raycaster.intersectObjects([...meshObjects.values()], true)[0]?.object;
+          while (picked && !picked.userData?.p25Node) picked = picked.parent;
+          labelHit = document.elementFromPoint((labelBounds.left + labelBounds.right) / 2,
+            (labelBounds.top + labelBounds.bottom) / 2);
+        }
         return { id: node.id, ready: true, radius: node.radius, scale: { x: scale.x, y: scale.y, z: scale.z },
           sphere: box(current), previousSphere: box(previous), screen,
           position: { x: node.x, y: node.y, z: node.z },
           world: { x: center.x, y: center.y, z: center.z },
-          clearClick: document.elementFromPoint(screen.x, screen.y)?.tagName === 'CANVAS' &&
+          clearClick: hitTargets && document.elementFromPoint(screen.x, screen.y)?.tagName === 'CANVAS' &&
             picked?.userData?.p25Node?.id === node.id,
-          labelClickable: labelHit?.closest('[data-node-key]')?.dataset.nodeKey === node.id,
+          labelClickable: hitTargets && labelHit?.closest('[data-node-key]')?.dataset.nodeKey === node.id,
           label: { left: labelBounds.left, right: labelBounds.right, top: labelBounds.top, bottom: labelBounds.bottom,
             opacity: style.opacity, filter: style.filter, fontSize: parseFloat(style.fontSize), hidden: label.hidden,
             text: label.textContent } };
@@ -115,12 +118,14 @@ async function openOverview(page, theme, width) {
         systems, originalAnchors, painted: meshObjects.size === 7 && graph.renderer().info.render.calls > 0,
         clicks: [...clicks], nodeTypes: graph.graphData().nodes.map(node => node.type).sort() };
     };
-    window.overviewFixture = { renderer, graph, overview, repaint, singleOverview, inspect };
+    window.overviewFixture = { renderer, graph, overview, repaint, singleOverview, inspect,
+      painted: () => objects().size === 7 && graph.renderer().info.render.calls > 0,
+      clicks: () => [...clicks], nodeTypes: () => graph.graphData().nodes.map(node => node.type).sort() };
     overview();
   });
   await page.clock.runFor(150);
   await expect(page.locator('.network-visualizer-canvas')).toHaveAttribute('data-renderer-state', 'ready');
-  await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().painted)).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.overviewFixture.painted())).toBe(true);
 }
 
 async function waitForOverviewProjection(page) {
@@ -232,7 +237,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       path: directory ? path.join(directory, `overview-${theme}-${width}.png`) :
         testInfo.outputPath(`overview-${theme}-${width}.png`)
     });
-    const interactionScene = await page.evaluate(() => window.overviewFixture.inspect());
+    const interactionScene = await page.evaluate(() => window.overviewFixture.inspect({ hitTargets: true }));
     const target = interactionScene.systems.find(system => system.clearClick && system.labelClickable);
     expect(target, 'At least one system has an unobstructed sphere and caption').toBeTruthy();
     await page.mouse.move(target.screen.x, target.screen.y);
@@ -242,23 +247,23 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     }, { message: 'The actual sphere is picked before clicking' }).toBe(true);
     await page.mouse.click(target.screen.x, target.screen.y);
     await page.clock.fastForward(100);
-    await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().clicks)).toEqual([target.id]);
-    expect(await page.evaluate(() => window.overviewFixture.inspect().nodeTypes)).toEqual(['radio', 'system', 'talkgroup']);
+    await expect.poll(() => page.evaluate(() => window.overviewFixture.clicks())).toEqual([target.id]);
+    expect(await page.evaluate(() => window.overviewFixture.nodeTypes())).toEqual(['radio', 'system', 'talkgroup']);
     await page.evaluate(() => window.overviewFixture.overview());
     await page.clock.fastForward(100);
     await page.locator(`.network-visualizer-label[data-type="system"][data-node-key="${target.id}"]`).click();
     await page.clock.fastForward(100);
-    await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().clicks)).toEqual([target.id, target.id]);
-    expect(await page.evaluate(() => window.overviewFixture.inspect().nodeTypes)).toEqual(['radio', 'system', 'talkgroup']);
+    await expect.poll(() => page.evaluate(() => window.overviewFixture.clicks())).toEqual([target.id, target.id]);
+    expect(await page.evaluate(() => window.overviewFixture.nodeTypes())).toEqual(['radio', 'system', 'talkgroup']);
     await page.evaluate(() => window.overviewFixture.overview());
     await page.clock.fastForward(100);
     const keyboardLabel = page.locator(`.network-visualizer-label[data-type="system"][data-node-key="${target.id}"]`);
     await keyboardLabel.focus();
     await keyboardLabel.press('Enter');
     await page.clock.fastForward(100);
-    await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().clicks))
+    await expect.poll(() => page.evaluate(() => window.overviewFixture.clicks()))
       .toEqual([target.id, target.id, target.id]);
-    expect(await page.evaluate(() => window.overviewFixture.inspect().nodeTypes)).toEqual(['radio', 'system', 'talkgroup']);
+    expect(await page.evaluate(() => window.overviewFixture.nodeTypes())).toEqual(['radio', 'system', 'talkgroup']);
     await page.evaluate(() => window.overviewFixture.singleOverview());
     await page.clock.fastForward(100);
     const single = await page.evaluate(() => window.overviewFixture.inspect());
