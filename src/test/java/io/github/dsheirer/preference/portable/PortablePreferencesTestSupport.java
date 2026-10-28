@@ -4,15 +4,30 @@ package io.github.dsheirer.preference.portable;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import java.nio.file.Files;
 import java.util.prefs.Preferences;
+import org.junit.platform.launcher.LauncherSession;
+import org.junit.platform.launcher.LauncherSessionListener;
 
-/** Installs the receiver's real preference backend on a disposable profile before any test preference access. */
-public final class PortablePreferencesTestSupport
+/** Installs the real disposable preference backend before test discovery can initialize preference users. */
+public final class PortablePreferencesTestSupport implements LauncherSessionListener
 {
     private static boolean installed;
 
-    private PortablePreferencesTestSupport() {}
+    public PortablePreferencesTestSupport() {}
 
-    public static synchronized void install() throws Exception
+    @Override
+    public void launcherSessionOpened(LauncherSession session)
+    {
+        try
+        {
+            install();
+        }
+        catch(Exception failure)
+        {
+            throw new IllegalStateException("Unable to install disposable portable test preferences", failure);
+        }
+    }
+
+    private static synchronized void install() throws Exception
     {
         if(!installed)
         {

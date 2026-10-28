@@ -49,11 +49,6 @@ import org.junit.jupiter.api.io.TempDir;
 /** Exercises the real HTTP/command boundary with deterministic stand-ins for hardware and maintenance. */
 class ChannelBulkCommandResponsivenessTest
 {
-    @org.junit.jupiter.api.BeforeAll
-    static void isolatePreferences() throws Exception
-    {
-        io.github.dsheirer.preference.portable.PortablePreferencesTestSupport.install();
-    }
     private static final ObjectMapper JSON = new ObjectMapper();
 
     @Test

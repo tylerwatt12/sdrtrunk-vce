@@ -19,12 +19,10 @@ import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.portable.PortablePreferencesTestSupport;
 import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 class ChannelProcessingManagerTalkerAliasTest
@@ -32,12 +30,6 @@ class ChannelProcessingManagerTalkerAliasTest
     private static final String FIRST = "00000000-0000-0000-0000-000000000001";
     private static final String SECOND = "00000000-0000-0000-0000-000000000002";
     private static final RadioSystemIdentityKey.Identity IDENTITY = RadioSystemIdentityKey.parse("v1-r-x-x-501");
-
-    @BeforeAll
-    static void isolatePreferences() throws Exception
-    {
-        PortablePreferencesTestSupport.install();
-    }
 
     @Test
     void fallbackForgetVisitsOnlyItsSavedOwnerAndAllowsFreshLearning() throws Exception

@@ -114,11 +114,6 @@ import org.junit.jupiter.api.io.TempDir;
 
 class ReceiverActivityServiceLifecycleTest
 {
-    @org.junit.jupiter.api.BeforeAll
-    static void isolatePreferences() throws Exception
-    {
-        io.github.dsheirer.preference.portable.PortablePreferencesTestSupport.install();
-    }
     private static final String ACTIVITY_CONFIGURATION_ID = "123e4567-e89b-12d3-a456-426614174000";
     private static final String LEARNED_P25_CONFIGURATION_ID = "00000000-0000-0000-0000-000000000902";
     private static final ReceiverActivityService.WriterFactory FAST_WRITER_FACTORY =

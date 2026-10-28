@@ -23,7 +23,6 @@ import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.preference.UserPreferences;
-import io.github.dsheirer.preference.portable.PortablePreferencesTestSupport;
 import io.github.dsheirer.stats.activity.DmrActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import io.github.dsheirer.stats.activity.ReceiverActivityFilterCatalog;
@@ -84,7 +83,6 @@ class StatsWebDatabaseTest
     @BeforeEach
     void setUp() throws Exception
     {
-        PortablePreferencesTestSupport.install();
         mDatabasePath = mTemporaryFolder.resolve("sdrtrunk.sqlite");
         createCurrentWebTestDatabase();
         seedCurrentRadioModel();
