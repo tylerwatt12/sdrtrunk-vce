@@ -1185,6 +1185,17 @@
   width: 100%;
 }
 
+/* Independent settings groups need a stronger fill than a read-only inset. */
+.ui-form-section-filled {
+  background: var(--ui-content-fill);
+}
+
+.ui-form-section-filled > legend {
+  float: left;
+  grid-column: 1 / -1;
+  padding: 0;
+}
+
 .ui-section-disclosure {
   overflow: clip;
 }

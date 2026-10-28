@@ -5064,7 +5064,7 @@ function aliasAssignmentToggle(labelText, checked, inputName, value, detail = ''
 }
 
 function aliasScanListChoices(options, selectedValues = []) {
-  const fieldset = node('fieldset', 'alias-stream-options alias-scan-list-options ui-form-section');
+  const fieldset = node('fieldset', 'alias-stream-options alias-scan-list-options ui-form-section ui-form-section-filled');
   fieldset.append(node('legend', '', 'Scan list membership'));
   const selected = new Set((selectedValues || []).map((value) => Number(value))
     .filter((value) => Number.isInteger(value) && value > 0));
@@ -5908,7 +5908,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
     const form = node('form', 'alias-editor-form editor-workspace');
     const basics = node('section', 'alias-editor-panel ui-form-section');
     const identifier = node('section', 'alias-editor-panel ui-form-section');
-    const audio = node('section', 'alias-editor-panel ui-form-section');
+    const audio = node('section', 'alias-editor-panel ui-editor-sections');
     const usage = node('section', 'alias-editor-panel alias-editor-usage ui-form-section');
 
     const listSelect = aliasSelect('aliasListId', compatibleLists.map((row) => ({
@@ -6003,9 +6003,9 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
     recordField.classList.add('alias-record-toggle');
     const record = recordField.querySelector('input');
     record.name = 'recordable';
-    const audioGrid = node('div', 'alias-editor-grid');
-    audioGrid.append(recordField);
-    const streams = node('fieldset', 'alias-stream-options ui-form-section');
+    const recording = node('fieldset', 'alias-stream-options ui-form-section ui-form-section-filled');
+    recording.append(node('legend', '', 'Recording'), recordField);
+    const streams = node('fieldset', 'alias-stream-options ui-form-section ui-form-section-filled');
     streams.append(node('legend', '', 'Streaming destinations'));
     const selectedStreams = new Set(source.broadcast_configuration_ids || []);
     const configuredStreams = new Map((options.streams || []).map((entry) =>
@@ -6039,12 +6039,14 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
     streamAs.min = '1';
     streamAs.max = '16777215';
     streamAs.step = '1';
-    audio.append(scanLists, audioGrid, streams);
+    audio.append(scanLists, recording, streams);
     const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
       'Destinations already saved on this alias remain visible.');
-    if (streamLimitNotice) audio.append(streamLimitNotice);
-    audio.append(aliasFormField('Stream as talkgroup', streamAs,
-      'Optional talkgroup ID sent to configured streaming destinations'));
+    if (streamLimitNotice) streams.append(streamLimitNotice);
+    const streamAsField = aliasFormField('Stream as talkgroup', streamAs,
+      'Optional talkgroup ID sent to configured streaming destinations');
+    streamAsField.classList.add('alias-stream-talkgroup');
+    streams.append(streamAsField);
 
     usage.append(analytics ? aliasActivityContent(analytics, { presentation: guide }) :
       node('div', 'empty', 'Activity becomes available after the alias is saved and observed.'));
@@ -7390,14 +7392,14 @@ function openAliasTransferModal(selectedList, action = 'Import') {
 }
 
 function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null) {
-  const panel = node('section', 'alias-defaults-tab-panel ui-form-section');
+  const panel = node('section', 'alias-defaults-tab-panel ui-editor-sections');
   panel.dataset.behavior = kind;
   panel.append(node('p', 'muted', description));
   const recordField = uiToggleField('Record calls', Boolean(policy?.recordable), 'Record calls', recordCopy);
   recordField.classList.add('alias-record-toggle');
   const record = recordField.querySelector('input');
   record.name = `${kind}Recordable`;
-  const recording = node('fieldset', 'alias-stream-options alias-defaults-section ui-form-section');
+  const recording = node('fieldset', 'alias-stream-options alias-defaults-section ui-form-section ui-form-section-filled');
   recording.dataset.guideTarget = 'aliases-defaults-recording';
   recording.append(node('legend', '', 'Recording'), recordField);
 
@@ -7407,7 +7409,7 @@ function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCop
   if (scanListLegend) scanListLegend.textContent = 'Scan List';
   scanListLegend?.after(node('p', 'muted', scanCopy));
 
-  const streams = node('fieldset', 'alias-stream-options ui-form-section');
+  const streams = node('fieldset', 'alias-stream-options ui-form-section ui-form-section-filled');
   streams.dataset.guideTarget = 'aliases-defaults-streaming';
   streams.append(node('legend', '', 'Streaming'), node('p', 'muted', streamCopy));
   const selectedStreams = new Set(policy?.broadcast_configuration_ids || []);
