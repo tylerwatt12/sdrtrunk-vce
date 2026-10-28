@@ -60,10 +60,18 @@ for (const presentation of [
       await page.getByRole('button', { name: 'Close Call details', exact: true }).click();
       const group = card(203).getByRole('link', { name: 'Dispatch', exact: true });
       const target = new URL(await group.getAttribute('href'), page.url());
-      expect(target.searchParams.get('talkgroup_identity_key')).toBe(groupKey);
-      expect(target.searchParams.get('system_key')).toBe(systemKey);
+      expect(target.searchParams.get('view')).toBe('group-identity');
+      expect(target.searchParams.get('identity_key')).toBe(groupKey);
+      expect(target.searchParams.get('radio_system_key')).toBe(systemKey);
       expect(target.searchParams.has('talkgroup_id')).toBe(false);
-      await group.click();
+      await card(203).getByRole('button', { name: /^More actions for/ }).click();
+      const search = page.getByRole('dialog', { name: 'Call actions', exact: true })
+        .getByRole('link', { name: 'Search this talkgroup', exact: true });
+      const filter = new URL(await search.getAttribute('href'), page.url());
+      expect(filter.searchParams.get('talkgroup_identity_key')).toBe(groupKey);
+      expect(filter.searchParams.get('system_key')).toBe(systemKey);
+      expect(filter.searchParams.has('talkgroup_id')).toBe(false);
+      await search.click();
       await expect(page.locator('.recordings-selected-filters')
         .getByRole('button', { name: 'Remove Talkgroup: Dispatch filter', exact: true })).toContainText('Dispatch');
       await expectNoHorizontalOverflow(page);

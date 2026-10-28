@@ -98,10 +98,11 @@ test('call outcome bars compare overlapping counts and retain exact hourly value
     { time_ms: first + hour, calls: 8, recorded: 5 }
   ], [{ field: 'calls', label: 'Calls', color: 'var(--chart-call)' },
     { field: 'recorded', label: 'Recorded', color: 'var(--chart-recorded)' }]);
-  await expect(chart.locator('.count-time-chart-bar')).toHaveCount(4);
-  await expect(chart.locator('.count-time-chart-bar title')).toHaveText([
-    /Calls: 10$/, /Recorded: 6$/, /Calls: 8$/, /Recorded: 5$/
-  ]);
+  const bars = chart.locator('.count-time-chart-bar');
+  await expect(bars).toHaveCount(4);
+  for (const [index, label] of [/Calls: 10$/, /Recorded: 6$/, /Calls: 8$/, /Recorded: 5$/].entries()) {
+    await expect(bars.nth(index)).toHaveAttribute('aria-label', label);
+  }
   await chart.locator('svg').focus();
   await expect(chart.getByRole('tooltip')).toContainText('Calls: 10');
   await expect(chart.getByRole('tooltip')).toContainText('Recorded: 6');

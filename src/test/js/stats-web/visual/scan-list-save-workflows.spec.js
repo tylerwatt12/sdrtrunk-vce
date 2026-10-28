@@ -12,7 +12,7 @@ test.beforeAll(async () => {
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   test(`Scan List saves use the selected list version and preserve conflicting drafts in ${theme} at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 800 });
-    const history = { version: 1, dismissed: { welcome: 1, 'scan-lists': 7 } };
+    const history = { version: 1, dismissed: { welcome: 1, 'scan-lists': 8 } };
     let preferences = structuredClone(defaults), preferenceRevision = 1;
     preferences.appearance.theme = theme;
     let revision = 1;

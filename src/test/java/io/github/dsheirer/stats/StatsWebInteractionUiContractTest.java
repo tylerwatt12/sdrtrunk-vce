@@ -22,6 +22,7 @@ class StatsWebInteractionUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
     private static final Path WEB_CALL_PLAYER = Path.of("stats-web", "assets", "web-call-player.js");
+    private static final Path AUDIO_DOCK = Path.of("stats-web", "assets", "core", "audio-dock.js");
     private static final Path BROWSING_WORKFLOWS = Path.of("stats-web", "assets", "core", "browsing-workflows.js");
     private static final Path INDEX_HTML = Path.of("stats-web", "index.html");
     private static final Path WEB_SERVER = Path.of("src", "main", "java", "io", "github", "dsheirer", "stats",
@@ -76,7 +77,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(activity.contains("row.classList.remove('activity-row-new')"));
         assertTrue(activity.contains("pageTimeout(() => highlighted.forEach"));
         assertTrue(activity.contains("8_000"));
-        assertTrue(activity.contains("activityTable.tableController.replaceRows(rows)"));
+        assertTrue(activity.contains("activityTable.tableController.reconcileRows(rows)"));
+        assertFalse(activity.contains("activityTable.tableController.replaceRows(rows)"));
         assertTrue(activity.contains("updatePager(refreshed)"));
         assertTrue(activity.contains("page?.next_before_id"));
         assertTrue(activity.contains("browsingWorkflows.createBrowsingPager({ node, ariaLabel: 'Activity pages' })"));
@@ -826,7 +828,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(player.contains("consumeSnapshot("));
         assertFalse(player.contains("live_gap"));
         assertTrue(activity.contains("api('/api/v1/activity'"));
-        assertTrue(activity.contains("tableController.replaceRows"));
+        assertTrue(activity.contains("tableController.reconcileRows"));
+        assertFalse(activity.contains("tableController.replaceRows"));
         assertTrue(activity.contains("refreshFailed = true"));
         assertTrue(activity.contains("The current entries are still shown; retrying automatically."));
         assertFalse(activity.contains("activity_reset"));
@@ -844,7 +847,9 @@ class StatsWebInteractionUiContractTest
         String toggleHold = function(source, "  toggleHold()");
         String avoidCurrent = function(source, "  avoidCurrent()");
         String render = function(source, "  render()");
-        String avoidList = function(source(), "function openPlaybackAvoidList(player = webCallPlayer, options = {})");
+        String application = source();
+        String dock = readText(AUDIO_DOCK);
+        String avoidList = namedFunction(dock, "renderAvoids");
 
         int play = html.indexOf("id=\"playback-play\"");
         int skip = html.indexOf("id=\"playback-skip\"");
@@ -905,11 +910,13 @@ class StatsWebInteractionUiContractTest
         assertTrue(avoidCurrent.contains("label: this.targetLabel(this.current)"));
         assertTrue(avoidCurrent.contains("const systemScope = this.avoidSystemScope(this.current)"));
         assertTrue(avoidCurrent.contains("system_scope: systemScope"));
-        assertTrue(avoidList.contains("avoid.system_scope"));
+        assertTrue(application.contains("openAvoidList: () => audioDock.openPlayerMenu(document.activeElement)"));
+        assertTrue(function(dock, "function renderMenu()").contains("['Avoid List', 'skip', 'avoids'"));
+        assertTrue(avoidList.contains("item.system_scope"));
         assertFalse(avoidCurrent.contains("details:"));
         assertFalse(avoidCurrent.contains("addedAtMs:"));
-        assertFalse(avoidList.contains("avoid.details"));
-        assertFalse(avoidList.contains("avoid.addedAtMs"));
+        assertFalse(avoidList.contains("item.details"));
+        assertFalse(avoidList.contains("item.addedAtMs"));
         assertTrue(render.contains("this.replayingLast || (!this.holdTarget && !currentReady)"));
         assertTrue(render.contains("this.ui.avoid.disabled = !currentReady || this.replayingLast"));
         assertTrue(render.contains("this.ui.replay.disabled = !lastCallReady"));
@@ -1047,6 +1054,7 @@ class StatsWebInteractionUiContractTest
         String callQuality = function(source, "function scannerCallQuality(call)");
         String voiceMeter = function(source, "function scannerVoiceMeter(call)");
         String coverageTree = function(source, "function scanListCoverageTree(coverage)");
+        String listening = function(readText(AUDIO_DOCK), "function renderListening()");
         String scanLists = function(source, "async function renderAdminScanLists(presentation = null)");
 
         assertTrue(html.contains("id=\"navigation-toggle\""));
@@ -1086,14 +1094,16 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Normal"));
         assertTrue(scanner.contains("Advanced"));
         assertTrue(scanner.contains("Engineer"));
-        String avoidList = function(source,
-            "function openPlaybackAvoidList(player = webCallPlayer, options = {})");
-        assertTrue(avoidList.contains("const openModal = options.openReadOnlyModal || openReadOnlyModal"));
-        assertTrue(avoidList.contains("openModal('Avoid List'"));
+        String transport = function(source, "function arrangeScannerPlayback(bar, player, signal, options = {})");
+        assertTrue(transport.contains("const allowed = () => capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)"));
+        assertTrue(transport.contains("const openMenu = options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker))"));
+        assertTrue(transport.contains("'scanner-player-menu', () => openMenu(menu)"));
+        assertFalse(source.contains("function openPlaybackAvoidList("));
         assertFalse(scanner.contains("Recent Calls"));
         assertTrue(html.contains("aria-label=\"Replay last call\""));
         assertTrue(html.contains("aria-label=\"Clear queued calls\""));
-        assertTrue(scanner.contains("View scan-list coverage"));
+        assertTrue(listening.contains("if (openScanListCoverage) footer.append(textButton('View coverage', openScanListCoverage))"));
+        assertTrue(source.contains("openScanListCoverage: () => openPlaybackScanListCoverage()"));
         assertTrue(coverageTree.contains("const listId = aliasListId(alias)"));
         assertTrue(coverageTree.contains("if (listId === null) return"));
         assertFalse(coverageTree.contains("alias.alias_list_id ?? alias.alias_list"));
@@ -1163,7 +1173,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(function(source, "function scannerField(label, value, level, action, wide = false, mode = scannerDetailMode)")
             .contains("ui-fact-row"));
         assertFalse(source.contains("ui-button ${styleClass} scanner-key"));
-        assertTrue(scanner.contains("ui-select-list-item scanner-scan-button"));
+        assertTrue(listening.contains("ui-select-list-item ui-audio-selection-row audio-dock-selection-row"));
+        assertTrue(listening.contains("checkbox.disabled = !isAllowed() || !item.enabled || selected >= maximum && !item.selected"));
         assertFalse(css.contains(":root[data-theme=\"dark\"] #content .scanner-key {"));
         assertTrue(css.contains("body[data-view=\"scanner\"] .page-header {"));
         assertTrue(css.contains("flex: 1 0 100%;"));
@@ -1350,7 +1361,7 @@ class StatsWebInteractionUiContractTest
         String routedPrefill = function(source, "function routedAliasPrefill(selectedList, options)");
         String aliasEditor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
         String scannerNavigate = function(source, "function scannerNavigate(call, channel, destination)");
-        String conventional = function(source, "function liveConventionalChannelValue(row)");
+        String conventional = namedFunction(source, "liveConventionalChannelValue");
         String systems = function(source, "function liveChannelsSection(onSelectionChange, options = {})");
         String selectedViewAction = function(source, "function liveSelectedViewAction(target, label, iconId)");
         String settingsActivation = function(source, "async function activateLivePresentationSettings(button)");
@@ -1451,7 +1462,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(subscriber.contains("radioIdentityValue(row, { identifier, fallback: 'Unknown radio' })"));
         assertTrue(subscriber.contains("const identifier = subscriber ? String(subscriber.subscriber_id) : ''"));
         assertFalse(subscriber.contains("aliasLabel(row) || row.last_talker_alias"));
-        assertTrue(subscriber.contains("if (subscriber) summary.title = canonicalSubscriberText(subscriber)"));
+        assertTrue(subscriber.contains("if (subscriber) summary.dataset.uiHint = canonicalSubscriberText(subscriber)"));
+        assertFalse(subscriber.contains("summary.title ="));
         assertTrue(function(source, "function issiCurrentAssignmentColumns()")
             .contains("label: 'Home System', render: issiHomeSystemCell"));
         assertTrue(identifier.contains("liveIdentityActionLink(row, kind, text)"));
@@ -2365,6 +2377,16 @@ class StatsWebInteractionUiContractTest
     private static String normalizeLineEndings(String text)
     {
         return text.replace("\r\n", "\n").replace('\r', '\n');
+    }
+
+    private static String namedFunction(String source, String name)
+    {
+        var declaration = Pattern.compile("(?m)^\\h*(?:async\\h+)?function\\h+" + Pattern.quote(name) +
+            "\\h*\\([^\\r\\n]*\\)\\h*(?=\\{)").matcher(source);
+        assertTrue(declaration.find(), () -> "Missing function " + name);
+        String signature = declaration.group();
+        assertFalse(declaration.find(), () -> "Ambiguous function " + name);
+        return function(source, signature);
     }
 
     private static String function(String source, String signature)

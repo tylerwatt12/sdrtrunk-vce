@@ -20,6 +20,10 @@ class StatsWebSettingsOwnershipUiContractTest
     void separatesSharedTrafficTimingFromPersonalLivePresentation() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
+        String audioDock = Files.readString(Path.of("stats-web", "assets", "core", "audio-dock.js"));
+        String scannerControls = function(source,
+            "function arrangeScannerPlayback(bar, player, signal, options = {})");
+        String playerSettings = function(audioDock, "function renderSettings()");
         String receiver = function(source, "async function renderAdminReceiverBehaviorSettings(target = content, renderContext = captureRenderContext())");
         String request = function(source, "async function requestReceiverSettings(method = 'GET', settings = null, revision = null,\n" +
             "    fetchDocument = jsonDocumentFetch)");
@@ -135,8 +139,13 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(scannerPlayback.contains("groupIdentity"));
         assertFalse(scannerPlayback.contains("same channel or talkgroup"));
         assertFalse(scannerPlayback.contains("preferences.presentation"));
-        assertTrue(source.contains("id = 'scanner-settings'"));
-        assertTrue(source.contains("scannerSettings.addEventListener('click', () => void openSettings())"));
+        assertTrue(scannerControls.contains("const openMenu = options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker))"));
+        assertTrue(scannerControls.contains("'scanner-player-menu', () => openMenu(menu)"));
+        assertTrue(audioDock.contains("['Listening settings', 'playback-controls', 'settings']"));
+        assertTrue(playerSettings.contains("player.applyPreferences({ target_grouping: grouping.checked }); player.writePreferences()"));
+        assertTrue(playerSettings.contains("player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences()"));
+        assertTrue(playerSettings.contains("setTitlePreference(prepend.checked)"));
+        assertFalse(playerSettings.contains("preferences.presentation"));
         assertTrue(source.contains("if (snapshot.loaded) openScannerSettings(returnFocusSelector)"));
 
         assertFalse(source.contains("/api/v1/admin/web-display"));

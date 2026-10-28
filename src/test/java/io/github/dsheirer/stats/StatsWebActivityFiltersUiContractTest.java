@@ -57,6 +57,7 @@ class StatsWebActivityFiltersUiContractTest
         String capabilities = function(source, "function activityContextCapabilities(context)");
         String columns = function(source, "function activityColumns(context, filters)");
         String activity = function(source, "async function renderActivity(scopeParameters, title = 'Activity')");
+        String disclosure = readText(Path.of("stats-web", "assets", "core", "browsing-workflows.js"));
 
         assertTrue(activity.contains("activityFilterToolbar(activityContext, filters)"));
         assertTrue(toolbar.contains("aria-label', 'Filter activity history'"));
@@ -67,11 +68,16 @@ class StatsWebActivityFiltersUiContractTest
         assertTrue(toolbar.contains("ACTIVITY_ACTION_INCLUDE_GRANTS"));
         assertTrue(toolbar.contains("'All actions (including grants)'"));
         assertTrue(toolbar.contains("action === 'GRANT'"));
-        assertTrue(toolbar.contains("activity-filter-more-content"));
-        assertTrue(toolbar.contains("activity-filter-more-footer"));
+        assertTrue(toolbar.contains("activity-filter-more-panel"));
         assertTrue(toolbar.contains("activity-filter-chips"));
-        assertTrue(toolbar.contains("bindAnchoredDropdown(moreTrigger, morePanel"));
-        assertTrue(toolbar.contains("{ mobileSheet: true }"));
+        assertTrue(toolbar.contains("browsingWorkflows.createFilterDisclosure({ node, openReadOnlyModal, form, panel: morePanel,"));
+        assertTrue(toolbar.contains("button: moreTrigger, clearAction: clear"));
+        assertTrue(toolbar.contains("returnFocusSelector: `#${moreTrigger.id}`"));
+        assertTrue(disclosure.contains("button.setAttribute('aria-controls', panel.id)"));
+        assertTrue(disclosure.contains("button.setAttribute('aria-expanded', String(!isPhone() && !panel.hidden))"));
+        assertTrue(disclosure.contains("apply.addEventListener('click', () => form.requestSubmit())"));
+        assertTrue(disclosure.contains("marker.replaceWith(field)"));
+        assertTrue(disclosure.contains("returnFocusSelector, onClose: restore"));
         assertFalse(toolbar.contains("'Advanced filters'"));
         assertFalse(toolbar.contains("'Include grants'"));
         assertFalse(toolbar.contains("activity-filter-advanced"));
@@ -181,18 +187,26 @@ class StatsWebActivityFiltersUiContractTest
     void givesTheToolbarResponsiveFeatureOwnedGeometry() throws Exception
     {
         String css = StatsWebStylesheetTestSupport.readAll();
+        String browsing = readText(Path.of("stats-web", "assets", "styles", "compositions", "browsing.css"));
         assertTrue(css.contains(".activity-filter-toolbar {"));
         assertTrue(css.contains(".activity-filter-primary {"));
         assertTrue(css.contains(".activity-filter-picker {"));
         assertTrue(css.contains(".activity-filter-chips {"));
         assertTrue(css.contains(".activity-identity-picker-popover:popover-open"));
-        assertTrue(css.contains(".activity-filter-more-panel:popover-open"));
-        assertTrue(css.contains(".activity-filter-more-content {"));
-        assertTrue(css.contains("grid-template-rows: minmax(0, 1fr) auto"));
+        assertTrue(css.contains(".activity-filter-more-panel {"));
+        assertTrue(browsing.contains(".ui-filter-panel[hidden] {"));
+        assertTrue(browsing.contains(".ui-filter-sheet-fields {"));
+        assertTrue(browsing.contains(".ui-filter-modal .modal-content {"));
+        assertTrue(browsing.contains("@media (max-width: 700px)"));
+        assertTrue(browsing.contains(".read-only-modal.ui-filter-modal {"));
+        assertTrue(browsing.contains("width: 100vw"));
+        assertTrue(browsing.contains("height: 100dvh"));
+        assertTrue(browsing.contains("max-height: none"));
         assertTrue(css.contains(".activity-cell-action-link {"));
         assertTrue(css.contains(".activity-filter-error[hidden]"));
         assertTrue(css.contains("@media (max-width: 720px)"));
-        assertTrue(css.contains("inset: var(--space-2)"));
+        assertTrue(css.contains("grid-template-columns: repeat(2, minmax(0, 1fr))"));
+        assertTrue(css.contains("@media (max-width: 440px)"));
         assertTrue(css.contains("[data-table-type=\"activity\"]"));
         assertFalse(css.contains(".activity-filter-advanced"));
     }

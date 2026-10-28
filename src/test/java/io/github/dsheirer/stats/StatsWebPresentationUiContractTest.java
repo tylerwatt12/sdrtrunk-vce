@@ -60,7 +60,7 @@ class StatsWebPresentationUiContractTest
         assertTrue(source.contains("const trigger = iconButton('icon-columns', menuLabels.trigger || 'Choose table columns'"));
         assertTrue(source.contains("function setIconButton(button, iconId, label)"));
         assertTrue(source.contains("button.setAttribute('aria-label', label)"));
-        assertTrue(source.contains("button.title = label"));
+        assertTrue(source.contains("button.dataset.uiHint = label"));
         assertFalse(source.contains("inline ? '' : 'Columns'"));
         assertTrue(activity.contains("layoutMenuHost: titleActions"));
         assertTrue(activity.contains("const titleActions = activitySection.titleActions"));
@@ -112,6 +112,7 @@ class StatsWebPresentationUiContractTest
     {
         String source = readText(APP_JAVASCRIPT);
         String defaults = readText(TABLE_DEFAULTS);
+        String layouts = readText(Path.of("stats-web", "assets", "core", "table-layout.js"));
 
         assertTrue(source.matches("(?s).*import \\* as tableDefaults from '\\./core/table-defaults\\.js\\?v=\\d+';.*"));
         assertTrue(defaults.contains("'dashboard-receivers': { widths: {"));
@@ -123,7 +124,11 @@ class StatsWebPresentationUiContractTest
         assertTrue(defaults.contains("message: 1200"));
         assertTrue(source.contains("const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns)"));
         assertTrue(source.contains("column_order: options.recordListOrder } : tableDefaultLayout"));
-        assertTrue(source.contains("const storedLayout = tableLayouts.mergePartyColumns(tableType, declaredColumns,"));
+        assertTrue(source.contains("const storedLayout = tableLayouts.upgradeTableLayout(tableType, declaredColumns,"));
+        assertTrue(layouts.contains("return mergePartyColumns(type, columns, saved)"));
+        assertTrue(layouts.contains("const merged = mergePartyColumns(type, previousColumns, saved)"));
+        assertTrue(layouts.contains("const upgraded = persisted(previous)"));
+        assertTrue(layouts.contains("upgraded.hidden_columns.push('receiver')"));
         assertTrue(source.contains("options.layout || (!options.presentation && activeUserPreferences().tables[tableType]) || defaultLayout"));
         assertTrue(source.contains("if (!options.presentation) tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns)"));
     }

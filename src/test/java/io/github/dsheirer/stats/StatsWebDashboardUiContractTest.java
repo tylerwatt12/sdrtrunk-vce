@@ -141,8 +141,14 @@ class StatsWebDashboardUiContractTest
         assertTrue(identities.contains("label: 'Calls', fullLabel: 'Calls'"));
         assertFalse(identities.contains("...dashboardCallSourceColumns"));
         String identity = function(source, "function dashboardIdentity(row)");
-        assertTrue(identity.contains("tableIdentityValue(row, identityKind(row.identity_kind) === 'radio' ? 'radio' : 'group'"));
+        assertTrue(identity.contains("identityKind(row.identity_kind) === 'radio' ? radioIdentityValue(row, dashboardIdentityOptions(row))"));
+        assertTrue(identity.contains("groupIdentityValue(row, dashboardIdentityOptions(row))"));
         assertTrue(identity.contains("dashboardIdentityOptions(row)"));
+        String radio = function(source, "function radioIdentityValue(row, options)");
+        String group = function(source, "function groupIdentityValue(row, options)");
+        assertTrue(radio.contains("tableIdentityValue(row, 'radio', options)"));
+        assertTrue(group.contains("tableIdentityValue(row, 'group', options)"));
+        assertTrue(group.contains("withDirectListenAction(value, row, options?.reference || row.entity_ref"));
         assertTrue(identities.contains("sortValue: dashboardIdentitySortValue"));
         assertFalse(source.contains("function callSourceActivityChart(activity)"));
     }

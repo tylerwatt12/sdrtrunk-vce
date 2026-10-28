@@ -13,7 +13,7 @@ test.beforeAll(async () => {
 async function openForms(page, view, theme = 'light', scanList = {}) {
   let preferences = structuredClone(defaults);
   let preferenceRevision = 1;
-  const history = { version: 1, dismissed: { welcome: 1, 'scan-lists': 8, scanner: 5, live: 3, admin: 3 } };
+  const history = { version: 1, dismissed: { welcome: 1, 'scan-lists': 8, scanner: 6, live: 3, admin: 3 } };
   preferences.appearance.theme = theme;
   const state = { writes: [], pending: [], scanLists: [{ id: 1, name: 'Public Safety',
     description: 'Dispatch and mutual aid', edit_revision: 'scan-list-1-1',

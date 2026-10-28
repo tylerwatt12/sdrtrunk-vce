@@ -104,7 +104,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     await page.goto('/app.html?view=recordings');
     await page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true }).check();
     await page.getByRole('button', { name: 'Review delete', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: 'Delete recordings', exact: true });
+    const dialog = page.getByRole('alertdialog', { name: 'Delete recordings', exact: true });
     await dialog.getByRole('button', { name: 'Delete recordings', exact: true }).click();
     await expectPending(dialog, 'Deleting 1 recording…');
     held.release('disconnect');

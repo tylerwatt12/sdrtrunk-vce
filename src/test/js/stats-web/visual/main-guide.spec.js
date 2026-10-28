@@ -157,7 +157,7 @@ async function expectLessonState(page, id) {
     const bars = history.locator('svg .count-time-chart-bar');
     await expect(bars).toHaveCount(24);
     expect(await bars.evaluateAll(elements => elements.reduce((total, bar) =>
-      total + Number(bar.querySelector('title').textContent.match(/:\s*([\d,]+)$/)[1].replaceAll(',', '')), 0))).toBe(1000);
+      total + Number(bar.getAttribute('aria-label').match(/:\s*([\d,]+)$/)[1].replaceAll(',', '')), 0))).toBe(1000);
     await expect(history).toContainText('P25');
   }
   if (id === 'identities') {
@@ -257,7 +257,7 @@ test('Main restores the original Recorded and Conventional chart choices after i
   await expect(metric.getByRole('button', { name: 'Recorded', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(channelType.getByRole('button', { name: 'Conventional', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(history.locator('.count-time-chart-bar')).toHaveCount(1);
-  await expect(history.locator('.count-time-chart-bar title')).toContainText('Total: 18');
+  await expect(history.locator('.count-time-chart-bar')).toHaveAttribute('aria-label', /Total: 18$/);
   await page.evaluate(() => {
     const content = document.getElementById('content');
     window.originalMainChart = { nodes: [...content.childNodes], history: content.querySelector('.dashboard-call-activity') };
@@ -281,7 +281,7 @@ test('Main restores the original Recorded and Conventional chart choices after i
   await expect(metric.getByRole('button', { name: 'Recorded', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(channelType.getByRole('button', { name: 'Conventional', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(history.locator('.count-time-chart-bar')).toHaveCount(1);
-  await expect(history.locator('.count-time-chart-bar title')).toContainText('Total: 18');
+  await expect(history.locator('.count-time-chart-bar')).toHaveAttribute('aria-label', /Total: 18$/);
   await expect(page).toHaveURL(url);
   expect(await nonGuideStorage(page)).toEqual(storage);
   expectIsolated(fixture, effects);

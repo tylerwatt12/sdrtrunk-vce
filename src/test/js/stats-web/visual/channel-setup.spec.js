@@ -10,7 +10,7 @@ async function openFixturePage(page, url) {
     const { defaults } = await import(pathToFileURL(path.resolve(__dirname,
       '../../../../../stats-web/assets/core/preference-schema.js')).href);
     let preferences = structuredClone(defaults), revision = 1;
-    const history = { version: 1, dismissed: { welcome: 1, 'channel-setup': 4 } };
+    const history = { version: 1, dismissed: { welcome: 1, 'channel-setup': 5 } };
     // Register after the case's broad API fixture so account state stays healthy.
     await page.route('**/api/v1/me/preferences', async route => {
       if (route.request().method() === 'PUT') {

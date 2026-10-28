@@ -72,7 +72,7 @@ function searchSnapshot() {
 }
 
 async function install(page, options = {}) {
-  const tourHistory = tourHistoryFixture({ welcome: 1, tuners: 3, 'tuner-spectrum': 5, 'channel-setup': 4 });
+  const tourHistory = tourHistoryFixture({ welcome: 1, tuners: 3, 'tuner-spectrum': 5, 'channel-setup': 5 });
   await page.addInitScript(() => {
     for (const [id, version] of [['welcome', 1], ['tuners', 3], ['tuner-spectrum', 5]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:spectrum-takeover-tests:${id}:${version}`, '1');
