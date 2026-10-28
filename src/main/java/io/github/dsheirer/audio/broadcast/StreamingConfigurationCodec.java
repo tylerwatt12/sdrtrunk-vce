@@ -19,6 +19,7 @@ import java.util.*;
 /** Code-owned provider fields. Never serialize a provider model into a web response: it contains credentials. */
 public final class StreamingConfigurationCodec
 {
+    private static final String RDIO_CALL_UPLOAD_PATH = "/api/call-upload";
     private static final ObjectMapper COPIER = new ObjectMapper()
         .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 
@@ -48,6 +49,8 @@ public final class StreamingConfigurationCodec
             default -> throw invalid("Choose a supported streaming provider");
         };
         configuration.setPassword(null);
+        if(configuration instanceof RdioScannerConfiguration)
+            configuration.setHost(completeRdioUploadUrl(configuration.getHost()));
         return configuration;
     }
 
@@ -102,7 +105,12 @@ public final class StreamingConfigurationCodec
             catch(ReflectiveOperationException exception) { throw invalid("Unable to apply " + binding.field().label()); }
         }
         if(candidate.getName() == null || candidate.getName().isBlank()) throw invalid("Name is required");
-        if(candidate.getHost() != null && !candidate.getHost().isBlank()) validateHost(candidate);
+        if(candidate.getHost() != null && !candidate.getHost().isBlank())
+        {
+            validateHost(candidate);
+            if(candidate instanceof RdioScannerConfiguration && changes.containsKey("host"))
+                candidate.setHost((String)checked(allowed.get("host"), completeRdioUploadUrl(candidate.getHost())));
+        }
         if(candidate.isEnabled())
         {
             if(!candidate.isValid() || candidate.getHost() == null || candidate.getHost().isBlank())
@@ -115,6 +123,14 @@ public final class StreamingConfigurationCodec
             }
         }
         return candidate;
+    }
+
+    /** Completes a validated base address while retaining explicit upload and reverse-proxy paths. */
+    private static String completeRdioUploadUrl(String host)
+    {
+        String path = URI.create(host).getRawPath();
+        if(path != null && !path.isEmpty() && !path.equals("/")) return host;
+        return host + (host.endsWith("/") ? RDIO_CALL_UPLOAD_PATH.substring(1) : RDIO_CALL_UPLOAD_PATH);
     }
 
     private static void validateHost(BroadcastConfiguration candidate)

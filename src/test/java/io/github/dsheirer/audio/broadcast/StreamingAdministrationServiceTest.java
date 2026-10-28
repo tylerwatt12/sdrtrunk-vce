@@ -8,6 +8,7 @@ package io.github.dsheirer.audio.broadcast;
 import static org.junit.jupiter.api.Assertions.*;
 import io.github.dsheirer.alias.*;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
@@ -29,6 +30,74 @@ import org.junit.jupiter.api.io.TempDir;
 class StreamingAdministrationServiceTest
 {
     @TempDir Path temporary;
+
+    @Test void rdioAddressesAcceptBaseUrlsAndPreserveExplicitUploadRoutes()
+    {
+        var template=StreamingConfigurationCodec.template("RDIOSCANNER_CALL");
+        assertEquals("http://localhost/api/call-upload",StreamingConfigurationCodec.view(template).settings().get("host"));
+        assertEquals("http://localhost/api/call-upload",
+            StreamingConfigurationCodec.apply(template,Map.of("name","Default Rdio")).getHost());
+        Map<String,String> addresses=Map.of(
+            "http://example.invalid:8080","http://example.invalid:8080/api/call-upload",
+            "http://example.invalid:8080/","http://example.invalid:8080/api/call-upload",
+            "https://example.invalid","https://example.invalid/api/call-upload",
+            "https://Example.invalid:9443/","https://Example.invalid:9443/api/call-upload",
+            "http://[2001:db8::1]:8080/","http://[2001:db8::1]:8080/api/call-upload",
+            "https://example.invalid/api/call-upload","https://example.invalid/api/call-upload",
+            "https://example.invalid/receiver/api/call-upload","https://example.invalid/receiver/api/call-upload",
+            "https://example.invalid/custom-ingest/","https://example.invalid/custom-ingest/",
+            "https://example.invalid/receiver%2Fone/ingest","https://example.invalid/receiver%2Fone/ingest");
+        addresses.forEach((address,expected) -> {
+            var saved=StreamingConfigurationCodec.apply(template,Map.of("name","Rdio","host",address));
+            assertEquals(expected,saved.getHost(),address);
+            assertEquals(expected,StreamingConfigurationCodec.apply(saved,Map.of("host",expected)).getHost(),
+                "Saving an explicit upload route must be idempotent");
+        });
+        var existing=new RdioScannerConfiguration();
+        existing.setName("Existing Rdio");
+        existing.setHost("https://example.invalid/");
+        assertEquals("https://example.invalid/",StreamingConfigurationCodec.apply(existing,Map.of("name","Renamed")).getHost(),
+            "An unrelated edit must not silently change an existing destination address");
+        assertEquals("https://example.invalid/",StreamingConfigurationCodec.apply(
+            StreamingConfigurationCodec.template("OPENMHZ"),Map.of("name","OpenMHz","host","https://example.invalid/")).getHost());
+        for(String address: List.of("https://user:password@example.invalid/", "https://example.invalid/?key=fixture",
+            "https://example.invalid/#fragment"))
+        {
+            assertThrows(IllegalArgumentException.class,() -> StreamingConfigurationCodec.apply(template,
+                Map.of("name","Invalid Rdio","host",address)),address);
+        }
+        String longBase="https://" + "a".repeat(1016);
+        assertThrows(IllegalArgumentException.class,() -> StreamingConfigurationCodec.apply(template,
+            Map.of("name","Long Rdio","host",longBase)), "Completing a base address must respect the URL length limit");
+    }
+
+    @Test void rdioUploadUrlPersistsAndUnrelatedEditsRetainCredentials() throws Exception
+    {
+        Path root=temporary.resolve("rdio-upload-url");
+        Path database=SdrTrunkDatabasePath.getDatabasePath(root);
+        SdrTrunkTestDatabase.create(database);
+        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null);
+        try
+        {
+            manager.init();
+            var service=new StreamingAdministrationService(manager);
+            var created=service.save(null,"RDIOSCANNER_CALL",Map.of("name","Rdio","host","https://example.invalid:9443/",
+                "api_key","fixture-rdio-secret","system_id",42),null);
+            var stored=(RdioScannerConfiguration)new ConfigurationDatabaseStore(database).load().broadcastConfigurations().getFirst();
+            assertEquals("https://example.invalid:9443/api/call-upload",stored.getHost());
+            assertEquals(stored.getHost(),service.get(created.configurationId()).destination().settings().get("host"));
+            service.save(created.configurationId(),"RDIOSCANNER_CALL",Map.of("name","Renamed Rdio"),created.editRevision());
+            var renamed=(RdioScannerConfiguration)new ConfigurationDatabaseStore(database).load().broadcastConfigurations().getFirst();
+            assertEquals("Renamed Rdio",renamed.getName());
+            assertEquals(stored.getHost(),renamed.getHost());
+            assertEquals("fixture-rdio-secret",renamed.getApiKey());
+            assertEquals(42,renamed.getSystemID());
+            assertFalse(service.get(created.configurationId()).toString().contains("fixture-rdio-secret"));
+            var defaults=service.save(null,"RDIOSCANNER_CALL",Map.of("name","Default Rdio"),null);
+            assertEquals("http://localhost/api/call-upload",service.get(defaults.configurationId()).destination().settings().get("host"));
+        }
+        finally { manager.flushConfiguration();MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
+    }
 
     @Test void everyProviderRetainsIdentityAndSecretsWithoutReturningThem() throws Exception
     {
