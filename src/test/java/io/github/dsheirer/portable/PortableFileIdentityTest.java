@@ -4,10 +4,12 @@ package io.github.dsheirer.portable;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("platform-filesystem")
 class PortableFileIdentityTest
 {
     @TempDir Path temporary;

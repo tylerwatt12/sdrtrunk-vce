@@ -18,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -28,6 +29,7 @@ class VceUpgradeSplitRecoveryTest
 {
     @TempDir Path temporary;
 
+    @Tag("platform-filesystem")
     @Test
     void resumesEveryCommittedSplitRenameWithoutLosingActivityOrRepeatingItsTransaction() throws Exception
     {
@@ -58,6 +60,7 @@ class VceUpgradeSplitRecoveryTest
         }
     }
 
+    @Tag("platform-filesystem")
     @Test
     void resumesAnOwnedCompleteCopyWithoutRequiringItsTemporarilyAbsentMainFile() throws Exception
     {
@@ -106,6 +109,7 @@ class VceUpgradeSplitRecoveryTest
         assertArrayEquals(activity, Files.readAllBytes(history(interrupted.target())));
     }
 
+    @Tag("platform-filesystem")
     @Test
     void resumesAfterUpgradeCommitWithoutRepeatingMigrationOrDroppingPostCommitActivity() throws Exception
     {
@@ -134,6 +138,7 @@ class VceUpgradeSplitRecoveryTest
         }
     }
 
+    @Tag("platform-filesystem")
     @Test
     void refusesMalformedSplitReceiptWithoutTouchingRetainedFiles() throws Exception
     {
@@ -198,6 +203,7 @@ class VceUpgradeSplitRecoveryTest
         assertFalse(Files.exists(database(interrupted.target())));
     }
 
+    @Tag("platform-filesystem")
     @Test
     void refusesUnownedLockAndWrongSourceBeforeRecoveringTheSplit() throws Exception
     {

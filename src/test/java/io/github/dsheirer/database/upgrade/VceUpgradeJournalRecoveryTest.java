@@ -9,11 +9,13 @@ import io.github.dsheirer.portable.PortableDataRootLock;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import static org.junit.jupiter.api.Assertions.*;
 
+@Tag("platform-filesystem")
 @Timeout(60)
 class VceUpgradeJournalRecoveryTest
 {
