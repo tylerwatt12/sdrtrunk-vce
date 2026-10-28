@@ -8,6 +8,7 @@ package io.github.dsheirer.configuration;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
@@ -18,16 +19,22 @@ import io.github.dsheirer.alias.AliasModel;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.channel.ChannelAdministrationServiceTestSupport;
 import io.github.dsheirer.channel.ChannelDefinition;
+import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.configuration.ConfigurationDatabaseStore;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.ProcessingChain;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore;
 import java.nio.file.Path;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.sql.Connection;
 import java.sql.Statement;
@@ -123,6 +130,103 @@ class ChannelAdministrationPersistenceTest
             {
                 MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
             }
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void disablingAllThenStoppingDoesNotRestoreThePreviousStartupQueue() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("channel-startup-queue-reset");
+        Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
+        SdrTrunkTestDatabase.create(database);
+        ConfigurationManager manager = new ConfigurationManager(new TestUserPreferences(dataRoot), null,
+            new AliasModel(), null);
+
+        try
+        {
+            manager.init();
+            AliasAdministrationService aliases = AliasAdministrationServiceTestSupport.create(manager);
+            long aliasListId = aliases.createAliasList("County P25", AliasListFamily.P25).aliasListId();
+            ChannelAdministrationService channels = ChannelAdministrationServiceTestSupport.create(manager);
+            ChannelDefinition template = channels.template("p25-conventional");
+            List<String> ids = new ArrayList<>();
+            for(int index = 0; index < 5; index++)
+            {
+                ids.add(channels.create(withNameAndFrequency(template, aliasListId, "Channel " + index,
+                    155_010_000L + index * 10_000L)).configurationIds().getFirst());
+            }
+            String newlyEnabled = ids.getLast();
+            var ordered = channels.setAutoStart(ids.subList(0, 4), true, channels.currentRevision());
+            for(int index = 0; index < 4; index++)
+                assertEquals(index + 1, channels.get(ids.get(index)).autoStartOrder());
+            assertNull(channels.get(newlyEnabled).autoStartOrder());
+
+            Field field = ChannelProcessingManager.class.getDeclaredField("mProcessingChainsMap");
+            field.setAccessible(true);
+            Map<Channel,ProcessingChain> chains =
+                (Map<Channel,ProcessingChain>)field.get(manager.getChannelProcessingManager());
+            List<Channel> running = manager.getChannelModel().getChannels().stream()
+                .filter(Channel::isAutoStart).toList();
+            for(Channel channel: running)
+            {
+                ProcessingChain chain = new ProcessingChain(channel, manager.getAliasModel());
+                chain.getEventBus().register(manager.getChannelProcessingManager());
+                chains.put(channel, chain);
+            }
+            assertEquals(4, channels.currentCatalog().channels().stream()
+                .filter(channel -> channel.processingState() == ChannelAdministrationService.ProcessingState.RUNNING)
+                .count());
+
+            var disabled = channels.setAutoStart(ids, false, ordered.revision());
+            assertTrue(channels.currentCatalog().channels().stream()
+                .allMatch(channel -> channel.autoStartOrder() == null));
+            for(Channel channel: running)
+            {
+                assertSame(channel, manager.getChannelModel().getChannels().stream()
+                    .filter(value -> channel.getConfigurationId().equals(value.getConfigurationId()))
+                    .findFirst().orElseThrow(), "Running channel objects must retain their processing-map identity");
+                assertSame(channel, chains.get(channel).getCurrentChannel());
+                assertFalse(channel.isAutoStart());
+                assertNull(channel.getAutoStartOrder());
+            }
+            var stopped = channels.setProcessing(ids, false);
+            assertEquals(disabled.revision(), stopped.revision(), "Stopping cannot change saved startup settings");
+            assertEquals(ids.size(), stopped.results().size());
+            assertTrue(stopped.results().stream().allMatch(result -> result.success() &&
+                result.state() == ChannelAdministrationService.ProcessingState.STOPPED));
+            assertTrue(chains.isEmpty(), "Stop must remove the original running channel map keys");
+
+            var enabled = channels.moveAutoStart(newlyEnabled, ChannelAdministrationService.Direction.EARLIER,
+                stopped.revision());
+            var catalog = channels.currentCatalog();
+            assertEquals(enabled.revision(), catalog.revision());
+            assertEquals(List.of(newlyEnabled), catalog.channels().stream()
+                .filter(channel -> channel.autoStartOrder() != null)
+                .map(ChannelAdministrationService.ChannelSummary::configurationId).toList());
+            assertEquals(1, channels.get(newlyEnabled).autoStartOrder(),
+                "Enabling after clearing the queue must start at one rather than append to the old queue");
+            List<Channel> persisted = new ConfigurationDatabaseStore(database).load().channels();
+            for(String id: ids)
+            {
+                Integer expectedOrder = id.equals(newlyEnabled) ? 1 : null;
+                assertEquals(expectedOrder, channels.get(id).autoStartOrder());
+                assertEquals(expectedOrder, catalog.channels().stream()
+                    .filter(channel -> id.equals(channel.configurationId())).findFirst().orElseThrow()
+                    .autoStartOrder());
+                for(List<Channel> view: List.of(manager.getChannelModel().getChannels(), persisted))
+                {
+                    Channel channel = view.stream().filter(value -> id.equals(value.getConfigurationId()))
+                        .findFirst().orElseThrow();
+                    assertEquals(expectedOrder != null, channel.isAutoStart());
+                    assertEquals(expectedOrder, channel.getAutoStartOrder());
+                }
+            }
+        }
+        finally
+        {
+            manager.getChannelProcessingManager().shutdown();
+            manager.close();
         }
     }
 

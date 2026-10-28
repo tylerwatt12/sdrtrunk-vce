@@ -533,6 +533,106 @@ test('bulk Clone is unavailable whenever the selection includes a remote channel
   await expect(clone).toBeEnabled();
 });
 
+test('bulk disable and stop keep old channels off when enabling a new startup channel', async ({ page }) => {
+  await page.clock.install();
+  let revision = 40;
+  const channels = Array.from({ length: 5 }, (_, index) => ({
+    ...channelFixture(index + 1),
+    protocol_id: 'p25-phase1', protocol_label: 'P25 Phase 1', channel_kind: 'TRUNKED',
+    auto_start_order: index < 4 ? index + 1 : null,
+    processing_state: 'RUNNING'
+  }));
+  const ids = channels.map((channel) => channel.configuration_id);
+  const mutations = [];
+  let catalogRequests = 0;
+  let delayedPollStarted = false;
+  let releasePoll;
+  const delayedPoll = new Promise((resolve) => { releasePoll = resolve; });
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    const respond = (data) => route.fulfill({ json: apiData(data) });
+    if (pathname === '/api/v1/auth/session') {
+      await respond({ configured: true, authenticated: true, username: 'channel-admin',
+        guide_dismissal_scope: guideDismissalScope, tier: 'admin', primary: true,
+        csrf_token: 'test-token', capabilities: { 'admin-channels': true } });
+    } else if (pathname === '/api/v1/admin/channels' && request.method() === 'GET') {
+      const snapshot = structuredClone({ revision, channels });
+      catalogRequests += 1;
+      if (catalogRequests === 2) {
+        delayedPollStarted = true;
+        await delayedPoll;
+      }
+      await respond(snapshot);
+    } else if (pathname === '/api/v1/admin/channels/options') {
+      await respond({ revision, alias_lists: [], tuners: [] });
+    } else if (pathname === '/api/v1/admin/channels/protocols') {
+      await respond({ profiles: [] });
+    } else if (pathname === '/api/v1/admin/channels/actions') {
+      const body = request.postDataJSON();
+      mutations.push(body);
+      expect(body.revision).toBe(revision);
+      expect([...body.configuration_ids].sort()).toEqual([...ids].sort());
+      if (body.action === 'DISABLE_AUTO_START') {
+        channels.forEach((channel) => { channel.auto_start_order = null; });
+        revision += 1;
+        await respond({ revision, configuration_ids: ids, affected: 4 });
+      } else {
+        expect(body.action).toBe('STOP');
+        channels.forEach((channel) => { channel.processing_state = 'STOPPED'; });
+        await respond({ revision, results: ids.map((id) => ({
+          configuration_id: id, success: true, processing_state: 'STOPPED'
+        })) });
+      }
+    } else if (pathname === `/api/v1/admin/channels/${ids[4]}/auto-start/move`) {
+      const body = request.postDataJSON();
+      mutations.push(body);
+      expect(body).toEqual({ revision, direction: 'EARLIER' });
+      expect(channels.every((channel) => channel.auto_start_order == null)).toBe(true);
+      channels[4].auto_start_order = 1;
+      revision += 1;
+      await respond({ revision, configuration_ids: [ids[4]], affected: 1 });
+    } else {
+      await route.fulfill({ status: 404, json: { error: { message: 'Not available in this browser contract' } } });
+    }
+  });
+
+  await openFixturePage(page, '/app.html?view=channel-setup');
+  const catalog = page.locator('.channel-admin-catalog');
+  await expect(catalog).toBeVisible();
+  await page.clock.fastForward(5_000);
+  await expect.poll(() => delayedPollStarted).toBe(true);
+
+  await page.getByRole('checkbox', { name: 'Select all matching channels' }).check();
+  await page.getByRole('button', { name: 'Disable auto-start', exact: true }).click();
+  await expect(catalog.locator('.channel-setup-summary')).toContainText('0 auto start');
+  await page.getByRole('checkbox', { name: 'Select all matching channels' }).check();
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(catalog.locator('.channel-setup-summary')).toContainText('0 running');
+
+  // The response captured before bulk disable arrives after both actions have finished.
+  const staleResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/v1/admin/channels' &&
+    response.request().method() === 'GET');
+  releasePoll();
+  await (await staleResponse).finished();
+  await page.getByRole('button', { name: 'Startup order', exact: true }).click();
+  await expect(catalog.locator('.channel-order-number')).toHaveText(['Off', 'Off', 'Off', 'Off', 'Off']);
+  await catalog.locator(`tr[data-id="${ids[4]}"]`)
+    .getByRole('button', { name: 'Enable auto start at the end', exact: true }).click();
+  await expect(catalog.locator('.channel-setup-summary')).toContainText('1 auto start');
+  await expect(catalog.locator(`tr[data-id="${ids[4]}"] .channel-order-number`)).toHaveText('1');
+  for (const id of ids.slice(0, 4)) {
+    await expect(catalog.locator(`tr[data-id="${id}"] .channel-order-number`)).toHaveText('Off');
+  }
+  expect(mutations).toEqual([
+    { revision: 40, action: 'DISABLE_AUTO_START', configuration_ids: ids },
+    { revision: 41, action: 'STOP', configuration_ids: ids },
+    { revision: 41, direction: 'EARLIER' }
+  ]);
+});
+
 test('startup-order view moves keyed rows without replacing the page or losing position', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
   let revision = 40;
