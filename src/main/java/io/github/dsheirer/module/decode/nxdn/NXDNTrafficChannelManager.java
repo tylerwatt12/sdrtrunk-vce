@@ -34,6 +34,8 @@ import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.IdentifierUpdateListener;
+import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.TalkerAliasManager;
@@ -83,6 +85,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.concurrent.LinkedTransferQueue;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.BooleanSupplier;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -93,12 +96,18 @@ import org.slf4j.LoggerFactory;
  * Manages trunked system traffic channel activations
  */
 public class NXDNTrafficChannelManager extends TrafficChannelManager implements IDecodeEventProvider,
-        IChannelEventListener, IChannelEventProvider, TalkerAliasManagerProvider
+        IChannelEventListener, IChannelEventProvider, TalkerAliasManagerProvider, IdentifierUpdateListener
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(NXDNTrafficChannelManager.class);
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
     public static final String CHANNEL_START_REJECTED = "CHANNEL START REJECTED";
     static final long MAX_ACTIVITY_PROGRESS_INTERVAL_MILLISECONDS = 500L;
+    private static final List<Form> CHANNEL_CONFIGURATION_FORMS = List.of(Form.ALIAS_LIST, Form.DECODER_TYPE,
+        Form.UNIQUE_ID, Form.SYSTEM, Form.SITE, Form.CHANNEL, Form.RADIORESOLVE_ID);
+    private final AtomicReferenceArray<Identifier<?>> mChannelIdentifiers =
+        new AtomicReferenceArray<>(CHANNEL_CONFIGURATION_FORMS.size());
+    private final Listener<IdentifierUpdateNotification> mConfigurationIdentifierListener =
+        this::receiveConfigurationIdentifier;
     private final Channel mParentChannel;
     private final DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private final List<ChannelFrequency> mChannelFrequencies = new ArrayList<>();
@@ -158,6 +167,64 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             mChannelFrequencies.addAll(configNXDN.getChannelMap());
             createTrafficChannels(configNXDN);
         }
+    }
+
+    /**
+     * Uses the parent chain's validated configuration, including stable alias-list identity.  ProcessingChain wires
+     * this listener before SingleChannelState publishes its initial configuration and subsequent rebinds.
+     */
+    @Override
+    public Listener<IdentifierUpdateNotification> getIdentifierUpdateListener()
+    {
+        return mConfigurationIdentifierListener;
+    }
+
+    private void receiveConfigurationIdentifier(IdentifierUpdateNotification notification)
+    {
+        Identifier<?> identifier = notification.getIdentifier();
+        if(notification.getTimeslot() != 0 || identifier == null ||
+            identifier.getIdentifierClass() != IdentifierClass.CONFIGURATION || identifier.getRole() != Role.ANY)
+        {
+            return;
+        }
+
+        int index = CHANNEL_CONFIGURATION_FORMS.indexOf(identifier.getForm());
+        if(index < 0)
+        {
+            return;
+        }
+
+        if((notification.isAdd() || notification.isSilentAdd()) && identifier.isValid())
+        {
+            mChannelIdentifiers.set(index, identifier);
+        }
+        else if(notification.isRemove() || notification.isSilentRemove())
+        {
+            Identifier<?> current = mChannelIdentifiers.get(index);
+            if(identifier.equals(current))
+            {
+                mChannelIdentifiers.compareAndSet(index, current, null);
+            }
+        }
+    }
+
+    /**
+     * Fresh call identifiers cannot inherit USER identities from an earlier event.  A continuation retains its
+     * captured configuration; only a new call uses the parent's current binding.  The event's channel descriptor
+     * supplies its traffic frequency, rather than the parent control frequency.
+     */
+    private MutableIdentifierCollection getCallIdentifierCollection(List<Identifier> identifiers,
+                                                                    NXDNChannelEventTracker tracker, long timestamp)
+    {
+        MutableIdentifierCollection collection = new MutableIdentifierCollection(identifiers);
+        IdentifierCollection captured = tracker != null && tracker.isSameCallCheckingToAndFrom(collection, timestamp) ?
+            tracker.getEvent().getIdentifierCollection() : null;
+        for(int index = 0; index < mChannelIdentifiers.length(); index++)
+        {
+            collection.update(captured != null ? captured.getIdentifier(IdentifierClass.CONFIGURATION,
+                CHANNEL_CONFIGURATION_FORMS.get(index), Role.ANY) : mChannelIdentifiers.get(index));
+        }
+        return collection;
     }
 
     /**
@@ -439,7 +506,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
             try
             {
                 NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(channel.getDownlinkFrequency(), timestamp);
-                MutableIdentifierCollection ic = new MutableIdentifierCollection(identifiers);
+                MutableIdentifierCollection ic = getCallIdentifierCollection(identifiers, tracker, timestamp);
                 mTalkerAliasManager.enrichMutable(ic, mNativeRadioSystemKey);
                 if(tracker != null)
                 {
@@ -742,7 +809,7 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         try
         {
             NXDNChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, timestamp);
-            MutableIdentifierCollection ic = new MutableIdentifierCollection(identifiers);
+            MutableIdentifierCollection ic = getCallIdentifierCollection(identifiers, tracker, timestamp);
             String servingKey = mNativeRadioSystemKey;
             mTalkerAliasManager.enrichMutable(ic, servingKey);
             DecodeEventType eventType = getType(callType, encryption);
@@ -1008,7 +1075,13 @@ public class NXDNTrafficChannelManager extends TrafficChannelManager implements 
         try
         {
             mAvailableTrafficChannelQueue.clear();
+            for(int index = 0; index < mChannelIdentifiers.length(); index++)
+            {
+                mChannelIdentifiers.set(index, null);
+            }
             mCallStartTracker.clear();
+            mEventTrackerMap.clear();
+            mLastActivityProgressMap.clear();
             mTalkerAliasManager.clear();
             updateNativeRadioSystemKey(null);
 
