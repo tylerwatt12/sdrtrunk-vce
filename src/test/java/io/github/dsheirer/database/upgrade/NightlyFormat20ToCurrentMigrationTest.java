@@ -215,7 +215,11 @@ class NightlyFormat20ToCurrentMigrationTest
         {
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(before.contents(), tableContents(connection, before.columns()),
+            assertEquals("1", scalar(connection, "SELECT count(*) FROM application_settings WHERE key='receiver.nicknames'"));
+            assertEquals("{}", scalar(connection, "SELECT settings_json FROM application_settings WHERE key='receiver.nicknames'"));
+            assertTrue(Long.parseLong(scalar(connection,
+                "SELECT updated_at_ms FROM application_settings WHERE key='receiver.nicknames'")) > 0);
+            assertEquals(before.contents(), tableContents(connection, before.columns(), true),
                 "Valid configuration, aliases, credentials, activity, relationships or allocators changed");
             assertEquals("3", scalar(connection, "SELECT count(*) FROM application_settings " +
                 "WHERE key IN ('remote.links','audio.paging_tones','alert.configuration')"));
@@ -289,6 +293,12 @@ class NightlyFormat20ToCurrentMigrationTest
     private static Map<String,TableContents> tableContents(Connection connection, Map<String,List<String>> tables)
         throws Exception
     {
+        return tableContents(connection, tables, false);
+    }
+
+    private static Map<String,TableContents> tableContents(Connection connection, Map<String,List<String>> tables,
+                                                         boolean excludeNicknameDefault) throws Exception
+    {
         Map<String,TableContents> contents = new LinkedHashMap<>();
         for(var table: tables.entrySet())
         {
@@ -298,7 +308,8 @@ class NightlyFormat20ToCurrentMigrationTest
                 case "database_metadata" -> " WHERE key NOT IN ('database_format_version'," +
                     "'database_role','configuration_history_pair_id')";
                 case "application_settings" -> " WHERE key NOT IN " +
-                    "('setup_wizard','remote.links','audio.paging_tones','alert.configuration')";
+                    "('setup_wizard','remote.links','audio.paging_tones','alert.configuration')" +
+                    (excludeNicknameDefault ? " AND key<>'receiver.nicknames'" : "");
                 // New tables may acquire their own allocator. Every original table's high-water mark must survive.
                 case "sqlite_sequence" -> " WHERE name IN (" + tables.keySet().stream()
                     .map(name -> "'" + name + "'").collect(java.util.stream.Collectors.joining(",")) + ")";

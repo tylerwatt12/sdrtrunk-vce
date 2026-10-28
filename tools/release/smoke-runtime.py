@@ -99,7 +99,7 @@ def open_owned_database(database, *, timeout=5):
         raise
 
 
-def check_single_database(database, expected_format, *, timeout):
+def check_single_database(database, expected_formats, *, timeout):
     with closing(open_owned_database(database, timeout=timeout)) as connection:
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise RuntimeError("Profile failed SQLite integrity check")
@@ -107,20 +107,24 @@ def check_single_database(database, expected_format, *, timeout):
             raise RuntimeError("Profile failed SQLite foreign-key check")
         version = connection.execute(
             "SELECT value FROM database_metadata WHERE key='database_format_version'").fetchone()
-        if version != (str(expected_format),):
-            raise RuntimeError(f"Expected database format {expected_format}, found {version!r}")
+        if version not in {(str(value),) for value in expected_formats}:
+            expected = " or ".join(str(value) for value in expected_formats)
+            raise RuntimeError(f"Expected database format {expected}, found {version!r}")
         return dict(connection.execute("SELECT key,value FROM database_metadata WHERE key IN "
             "('database_role','configuration_history_pair_id')"))
 
 
 def check_database(database, expected_format, *, timeout=5):
-    metadata = check_single_database(database, expected_format, timeout=timeout)
+    metadata = check_single_database(database, (expected_format,), timeout=timeout)
     if expected_format >= 63:
         pair = metadata.get("configuration_history_pair_id", "")
         if metadata.get("database_role") != "configuration" or not re.fullmatch(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", pair):
             raise RuntimeError("Profile configuration identity is invalid")
-        history = check_single_database(activity_database(database), expected_format, timeout=timeout)
+        # ConfigurationHistoryDatabase admits format-64 configuration with unchanged format-63 Activity,
+        # or format-64 Activity stamped while an older monolith passes through the migration chain.
+        history_formats = (63, 64) if expected_format == 64 else (expected_format,)
+        history = check_single_database(activity_database(database), history_formats, timeout=timeout)
         if history.get("database_role") != "activity" or history.get("configuration_history_pair_id") != pair:
             raise RuntimeError("Profile configuration/activity identities do not match")
 

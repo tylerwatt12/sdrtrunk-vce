@@ -186,7 +186,7 @@ class ApplicationMigrationSuccessDialogTest
     }
 
     @Test
-    void firstRunMigrationReportsAreInlineAndReplacementRetainsItsAutoAcceptDialog() throws Exception
+    void graphicalUpgradeReportsAreInlineWithoutSourcePreservingImportClaims() throws Exception
     {
         String bootstrap = Files.readString(Path.of(
             "src/main/java/io/github/dsheirer/database/SdrTrunkDatabaseBootstrap.java"));
@@ -194,7 +194,9 @@ class ApplicationMigrationSuccessDialogTest
         assertTrue(bootstrap.contains("System.out.println(\"Safety backup: \""));
         String wizard = Files.readString(Path.of("src/main/java/io/github/dsheirer/gui/setup/SetupWizard.java"));
         assertTrue(wizard.contains("ApplicationMigrationSuccessDialog.currentDatabaseReport"));
-        assertTrue(wizard.contains("ApplicationMigrationSuccessDialog.previousImportReport"));
+        assertFalse(wizard.contains("ApplicationMigrationSuccessDialog.previousImportReport"));
+        assertTrue(wizard.contains("return upgradeReport(result.migration())"));
+        assertTrue(wizard.contains("details(\"Import report\", migrationReport)"));
         assertTrue(wizard.contains("Copy error"));
         assertFalse(wizard.contains("countdown.start()"));
         assertFalse(wizard.contains("ApplicationMigrationSuccessDialog.show("));

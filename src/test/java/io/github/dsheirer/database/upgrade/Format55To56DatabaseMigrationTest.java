@@ -190,7 +190,7 @@ class Format55To56DatabaseMigrationTest
         try(Connection connection = open(database))
         {
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
-            assertEquals(expected, contents(connection, false, true));
+            assertEquals(expected, currentContents(connection));
             assertRetiredStateAbsent(connection);
             integrity(connection);
         }
@@ -241,7 +241,7 @@ class Format55To56DatabaseMigrationTest
                 assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(kept.get(index), readPortable(connection).path("unrelated/node").path("keep").asText());
                 assertRetiredStateAbsent(connection);
-                assertEquals(expected, contents(connection, false, true));
+                assertEquals(expected, currentContents(connection));
                 integrity(connection);
             }
         }
@@ -315,6 +315,26 @@ class Format55To56DatabaseMigrationTest
     private static Map<String,List<String>> contents(Connection connection, boolean applyRetirement,
                                                     boolean splitProjection) throws Exception
     {
+        return contents(connection, applyRetirement, splitProjection, false);
+    }
+
+    private static Map<String,List<String>> currentContents(Connection connection) throws Exception
+    {
+        // The new nickname default is separate from the existing settings whose values must survive.
+        try(var sql = connection.createStatement(); var row = sql.executeQuery(
+            "SELECT settings_json,updated_at_ms FROM application_settings WHERE key='receiver.nicknames'"))
+        {
+            assertTrue(row.next());
+            assertEquals("{}", row.getString(1));
+            assertTrue(row.getLong(2) > 0);
+            assertFalse(row.next());
+        }
+        return contents(connection, false, true, true);
+    }
+
+    private static Map<String,List<String>> contents(Connection connection, boolean applyRetirement,
+                                                    boolean splitProjection, boolean excludeNicknameDefault) throws Exception
+    {
         Map<String,List<String>> result = new LinkedHashMap<>();
         List<String> tables = CurrentFormatTestDatabase.retainedMonolithTables(connection);
         for(String table: tables)
@@ -329,6 +349,7 @@ class Format55To56DatabaseMigrationTest
                     String key = rows.getString(1);
                     if(table.equals("database_metadata") && DatabaseFormatCatalog.FORMAT_VERSION_KEY.equals(key)) continue;
                     if(applyRetirement && table.equals("application_settings") && VOICE_KEY.equals(key)) continue;
+                    if(excludeNicknameDefault && table.equals("application_settings") && "receiver.nicknames".equals(key)) continue;
                     List<String> row = new ArrayList<>();
                     for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++)
                     {

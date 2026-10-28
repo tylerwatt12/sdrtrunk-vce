@@ -84,6 +84,7 @@ class SdrTrunkDatabaseDdlBoundaryTest
         "java/io/github/dsheirer/database/ConfigurationHistorySchema.java",
         "java/io/github/dsheirer/stats/activity/ReceiverActivitySchema.java",
         "java/io/github/dsheirer/stats/activity/ToneActivitySchema.java",
+        "java/io/github/dsheirer/database/upgrade/ConfigurationOnlyDatabaseSnapshot.java",
         "java/io/github/dsheirer/database/upgrade/Format3To4DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format4To5DatabaseMigration.java",
         "java/io/github/dsheirer/database/upgrade/Format14To15DatabaseMigration.java",
