@@ -86,9 +86,9 @@ async function checkAdministrationGuideData(assetsRoot) {
   const assets = path.resolve(assetsRoot || process.argv[2] || 'stats-web/assets');
   checkAdministrationGuideResources(assets);
   const load = name => import(pathToFileURL(path.join(assets, name)).href);
-  const [{ createAdministrationGuideData, ADMINISTRATION_GUIDE_IDS: ids }, { decodePagingToneDetection },
+  const [{ createAdministrationGuideData, ADMINISTRATION_GUIDE_IDS: ids }, { decodePagingToneDetection }, { decodeCallFiltering },
     { decodeWebDiagnosticLog }, { decodeRemoteSupport }, { decodeOffsetPage }] = await Promise.all([
-    load('guides/administration-data.js'), load('features/paging-tone-detection.js'),
+    load('guides/administration-data.js'), load('features/paging-tone-detection.js'), load('features/call-filtering.js'),
     load('features/web-diagnostic-log.js'), load('features/remote-support.js'), load('core/page-lifecycle.js')
   ]);
   const now = Date.UTC(2026, 9, 24, 15, 0), owned = [];
@@ -123,7 +123,7 @@ async function checkAdministrationGuideData(assetsRoot) {
       support: ['/api/v1/remote-support'], 'remote-support': ['/api/v1/remote-support'],
       'call-matching': ['/api/v1/admin/call-matching'], 'tuner-allocation': ['/api/v1/admin/tuner-allocation', '/api/v1/channel-catalog'],
       recordings: ['/api/v1/admin/recordings/settings', '/api/v1/admin/recordings/status'],
-      'audio-quality': ['/api/v1/admin/paging-tone-detection', '/api/v1/admin/operational-preferences'],
+      'audio-quality': ['/api/v1/admin/call-filtering', '/api/v1/admin/paging-tone-detection', '/api/v1/admin/operational-preferences'],
       transcription: ['/api/v1/admin/recordings/settings', '/api/v1/admin/recordings/status'],
       'push-setup': ['/api/v1/admin/alerts/config'], activity: ['/api/v1/admin/operational-preferences'],
       'retained-statistics': ['/api/v1/admin/retained-statistics/sources'],
@@ -143,6 +143,8 @@ async function checkAdministrationGuideData(assetsRoot) {
     }
     const tone = decodePagingToneDetection(await raw(data, '/api/v1/admin/paging-tone-detection'));
     assert.equal(tone.enabled, true);
+    assert.deepEqual(decodeCallFiltering(await raw(data, '/api/v1/admin/call-filtering')),
+      { revision: tone.revision, enabled: false, minimum_usable_voice_percent: null });
     assert.equal(decodeWebDiagnosticLog(await data.requestJson('/api/v1/admin/web-diagnostic-log')).active, true);
     assert.equal(decodeRemoteSupport(await raw(data, '/api/v1/remote-support')).canStart, true);
     assert.equal(decodeRemoteSupport(await raw(data, '/api/v1/remote-support')).enabled, false);

@@ -496,6 +496,8 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     if (p === '/api/v1/admin/operational-preferences') return route.fulfill({ json: operational });
     if (p === '/api/v1/admin/paging-tone-detection') return route.fulfill({ json: {
       revision: '1'.repeat(64), enabled: true, status: 'ready' } });
+    if (p === '/api/v1/admin/call-filtering') return route.fulfill({ json: {
+      revision: '1'.repeat(64), enabled: false, minimum_usable_voice_percent: null } });
     if (p === '/api/v1/admin/streaming') return respond({ destinations: [stream] });
     if (p === '/api/v1/admin/receiver-settings') return route.fulfill({ json: {
       revision: 1, settings: { traffic_grant_age_out_milliseconds: 2000 } } });

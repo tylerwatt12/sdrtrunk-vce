@@ -8140,7 +8140,7 @@ async function prepareAdministrationGuideSample(section, context) {
   if (!allowed) throw new Error('The Administration section is unavailable.');
   const parent = captureRenderContext();
   const { createAdministrationGuideData, ADMINISTRATION_GUIDE_IDS } =
-    await import('./guides/administration-data.js?v=1');
+    await import('./guides/administration-data.js?v=2');
   if (context.signal.aborted || !context.isCurrent() || !renderIsCurrent(parent)) return () => {};
   const controller = new AbortController();
   const resources = createAdministrationGuideResources(controller.signal);
@@ -35767,7 +35767,7 @@ function adminSettingsGroups() {
       { id: 'recordings', label: 'Recording settings', icon: 'recording-settings', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Choose how calls are recorded and how long managed calls are kept.' },
       { id: 'audio-quality', label: 'Audio quality', icon: 'audio-quality', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Choose paging-tone detection and MP3 encoding.' },
+        description: 'Choose call filtering, tone detection and MP3 encoding.' },
       { id: 'transcription', label: 'Transcription', icon: 'transcription', capability: ACCESS_CAPABILITIES.ADMIN_RECORDINGS,
         description: 'Create transcripts for managed recordings and monitor progress.' }
     ] },
@@ -35890,15 +35890,20 @@ async function renderAdmin(options = {}) {
   }
   else if (active === 'operations') await renderAdminOperationalPreferences(renderContext);
   else if (active === 'audio-quality') {
-    const { createPagingToneDetectionSettings } = await import('./features/paging-tone-detection.js?v=5');
+    const [{ createCallFilteringSettings }, { createPagingToneDetectionSettings }] = await Promise.all([
+      import('./features/call-filtering.js?v=1'), import('./features/paging-tone-detection.js?v=5')
+    ]);
     if (!renderIsCurrent(renderContext)) return;
+    const callFiltering = createCallFilteringSettings({ node, section, sectionActionHost, formField, uiToggleField,
+      setUiToggle, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
+      isCurrent: () => renderIsCurrent(renderContext) });
     const pagingTones = createPagingToneDetectionSettings({ node, section, sectionActionHost, uiToggleField,
       setUiToggle, fetchDocument: jsonDocumentFetch, signal: renderContext.signal,
       isCurrent: () => renderIsCurrent(renderContext) });
-    body.append(pagingTones.element);
+    body.append(callFiltering.element, pagingTones.element);
     body.append(node('div', 'ui-notice',
       'MP3 settings apply to recordings and outgoing streams. Managed recordings use MP3.'));
-    await Promise.all([pagingTones.load(), renderAdminOperationalPreferences(renderContext, {
+    await Promise.all([callFiltering.load(), pagingTones.load(), renderAdminOperationalPreferences(renderContext, {
       target: body, fields: ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']
     })]);
     if (renderIsCurrent(renderContext)) {

@@ -71,6 +71,8 @@ async function openApp(page, tier = 'admin', summaryEnabled = true) {
       await route.fulfill({ json: current });
     } else if (pathname === '/api/v1/admin/paging-tone-detection') {
       await route.fulfill({ json: { revision: '1'.repeat(64), enabled: true, status: 'ready' } });
+    } else if (pathname === '/api/v1/admin/call-filtering') {
+      await route.fulfill({ json: { revision: '1'.repeat(64), enabled: false, minimum_usable_voice_percent: null } });
     } else if (pathname.startsWith('/api/v1/admin/operational-preferences/')) {
       const field = pathname.split('/').at(-1);
       const value = JSON.parse(route.request().postData() || '{}').value;

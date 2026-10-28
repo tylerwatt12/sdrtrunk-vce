@@ -114,6 +114,8 @@ async function openAdmin(page, tab = 'audio-quality', denied = [], options = {})
         bytes: 2048, progress: 100, message: 'Report ready', output: [] });
     } else if (pathname === '/api/v1/admin/paging-tone-detection') {
       await route.fulfill({ json: { revision: '1'.repeat(64), enabled: true, status: 'ready' } });
+    } else if (pathname === '/api/v1/admin/call-filtering') {
+      await route.fulfill({ json: { revision: '1'.repeat(64), enabled: false, minimum_usable_voice_percent: null } });
     } else if (pathname === '/api/v1/admin/operational-preferences') {
       if (options.operationalErrorOnce && !failedOperationalRequest) {
         failedOperationalRequest = true;

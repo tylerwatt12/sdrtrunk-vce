@@ -207,6 +207,7 @@ export function createAdministrationGuideData({ signal, now = Date.now() } = {})
     ['/api/v1/admin/call-matching', wrap(matching)], ['/api/v1/admin/tuner-allocation', wrap(allocation)],
     ['/api/v1/admin/operational-preferences', operational],
     ['/api/v1/admin/paging-tone-detection', { revision: REVISION, enabled: true, status: 'ready' }],
+    ['/api/v1/admin/call-filtering', { revision: REVISION, enabled: false, minimum_usable_voice_percent: null }],
     ['/api/v1/admin/recordings/settings', wrap(recordingSettings)], ['/api/v1/admin/recordings/status', wrap(recordingStatus)],
     ['/api/v1/admin/receiver-settings', { revision: 1, settings: { traffic_grant_age_out_milliseconds: 2000 } }],
     ['/api/v1/admin/spectrum-snap-presets', { revision: 1, country_code: 'US', country_label: 'United States',

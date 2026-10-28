@@ -15,6 +15,14 @@ async function openPagingToneApp(page, options = {}) {
     let release; paging.held = new Promise(resolve => { release = resolve; });
     return () => { release(); paging.held = null; };
   };
+  const filtering = state.callFiltering = { current: { revision: 'a'.repeat(64), enabled: false,
+    minimum_usable_voice_percent: null, ...options.callFilteringSnapshot }, writes: [], nextFailure: null,
+    held: null, loadFailure: false };
+  const filteringRead = options.holdCallFilteringStatus ? new Promise(resolve => { filtering.releaseStatus = resolve; }) : null;
+  filtering.holdWrite = () => {
+    let release; filtering.held = new Promise(resolve => { release = resolve; });
+    return () => { release(); filtering.held = null; };
+  };
   await page.route('**/api/v1/**', async route => {
     const request = route.request(), pathname = new URL(request.url()).pathname;
     if (pathname === '/api/v1/auth/session') return route.fulfill({ json: { data: {
@@ -24,6 +32,23 @@ async function openPagingToneApp(page, options = {}) {
     } } });
     if (pathname === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
     if (pathname === '/api/v1/status') return route.fulfill({ json: { data: {} } });
+    if (pathname === '/api/v1/admin/call-filtering') {
+      if (request.method() === 'GET') {
+        if (filteringRead) await filteringRead;
+        if (filtering.loadFailure) return route.abort('failed');
+        return route.fulfill({ json: filtering.current });
+      }
+      filtering.writes.push({ method: request.method(), headers: request.headers(), body: request.postDataJSON() });
+      if (filtering.held) await filtering.held;
+      if (filtering.nextFailure) {
+        const failure = filtering.nextFailure; filtering.nextFailure = null;
+        return failure === 'network' ? route.abort('failed') : route.fulfill({ status: failure,
+          json: { error: { message: 'Call filtering settings could not be saved. Try again.' } } });
+      }
+      if (request.headers()['if-match'] !== `"${filtering.current.revision}"`) return route.fulfill({ status: 409, json: filtering.current });
+      filtering.current = { revision: (filtering.writes.length % 2 ? 'c' : 'd').repeat(64), ...request.postDataJSON() };
+      return route.fulfill({ json: filtering.current });
+    }
     if (pathname === '/api/v1/admin/paging-tone-detection') {
       if (pagingRead) await pagingRead;
       if (paging.loadFailure) return route.abort('failed');

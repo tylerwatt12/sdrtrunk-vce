@@ -63,7 +63,8 @@ const contracts = [
   ["Direct Listen session", "direct-listen-session.test.js", "stats-web/assets/core/direct-listen.js"],
   ["Direct Listen", "direct-listen.test.js", "stats-web/assets/core/direct-listen.js"],
   ["web call player", "web-call-player.test.js", "stats-web/assets/web-call-player.js"],
-  ["paging-tone detection settings", "paging-tone-detection.test.js", "stats-web/assets/features/paging-tone-detection.js"]
+  ["paging-tone detection settings", "paging-tone-detection.test.js", "stats-web/assets/features/paging-tone-detection.js"],
+  ["call filtering settings", "call-filtering.test.js", "stats-web/assets/features/call-filtering.js"]
 ];
 
 let failures = 0;
