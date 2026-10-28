@@ -53,7 +53,6 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<Icecast
     private static final Logger mLog = LoggerFactory.getLogger(IcecastHTTPAudioBroadcaster.class);
     private static final long CONNECTION_ATTEMPT_TIMEOUT_MILLISECONDS = 5000; // 5 seconds
     private static final long RECONNECT_INTERVAL_MILLISECONDS = 30000; //30 seconds
-    private static final String HTTP_1_0_OK_HEX_DUMP = "48 54 54 50 2F 31 2E 30 20 32 30 30 20 4F 4B";
     private static final String STRING_LABEL = "String [";
 
     private NioSocketConnector mSocketConnector;
@@ -279,6 +278,7 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<Icecast
             {
                 mHTTPHeaders = new HashMap<>();
                 mHTTPHeaders.put(IcecastHeader.ACCEPT.getValue(), "*/*");
+                mHTTPHeaders.put(IcecastHeader.EXPECT.getValue(), "100-continue");
                 mHTTPHeaders.put(IcecastHeader.CONTENT_TYPE.getValue(), getConfiguration().getBroadcastFormat().getValue());
                 mHTTPHeaders.put(IcecastHeader.USER_AGENT.getValue(), ApplicationInfo.getDisplayName());
                 mHTTPHeaders.put(IcecastHeader.AUTHORIZATION.getValue(), getConfiguration().getBase64EncodedCredentials());
@@ -358,24 +358,25 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<Icecast
                 Throwable cause = throwable.getCause();
 
                 /**
-                 * Warning: Hack.  Icecast 2.4.2+ doesn't like to send HTTP headers along with their HTTP/1.0 OK
+                 * Warning: Hack.  Icecast 2.4.2+ doesn't like to send HTTP headers along with their response
                  * message which causes Apache Mina to think that it hasn't received the full HTTP response.  So, we
                  * intercept the out of bounds exception and then inspect the message hex dump to see if it's an
-                 * OK response and then play like everything is well and good.
+                 * OK or Continue response. Icecast 2.5 waits for audio after Continue before sending the final OK.
                  */
                 if(cause instanceof ArrayIndexOutOfBoundsException)
                 {
                     String hexDump = ((ProtocolDecoderException)throwable).getHexdump();
 
-                    if(hexDump.startsWith(HTTP_1_0_OK_HEX_DUMP))
+                    HttpDumpMessage message = new HttpDumpMessage(hexDump);
+
+                    if(message.getHttpResponseCode() == 100 || message.getHttpResponseCode() == 200)
                     {
                         setBroadcastState(BroadcastState.CONNECTED);
+                        mConnecting.set(false);
 						mConnectionFailureLogged.set(false);
                     }
                     else
                     {
-                        HttpDumpMessage message = new HttpDumpMessage(hexDump);
-
                         if(message.hasHttpResponseCode())
                         {
                             switch(message.getHttpResponseCode())
@@ -449,8 +450,8 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<Icecast
                 switch(response.getStatus())
                 {
                     case INFORMATIONAL_CONTINUE:
-                        break;
                     case SUCCESS_OK:
+                        //Icecast 2.5 sends its final PUT response only after receiving audio.
                         setBroadcastState(BroadcastState.CONNECTED);
                         mConnecting.set(false);
 						mConnectionFailureLogged.set(false);
@@ -517,7 +518,7 @@ public class IcecastHTTPAudioBroadcaster extends IcecastAudioBroadcaster<Icecast
 
             mMessage = new String(bytes);
 
-            Pattern pattern = Pattern.compile("HTTP/1.0 (\\d{3})");
+            Pattern pattern = Pattern.compile("HTTP/1\\.[01] (\\d{3})");
             Matcher m = pattern.matcher(mMessage);
 
             if(m.find())
