@@ -40,8 +40,10 @@ import io.github.dsheirer.source.ISourceEventListener;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.ChannelSpecification;
 import java.nio.ByteBuffer;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * NXDN Decoder for 4800, 9600 and Type-C/D systems.
@@ -49,7 +51,8 @@ import java.util.Map;
 public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider, IComplexSamplesListener,
         ISourceEventListener, Listener<ComplexSamples>
 {
-    private static final Map<String,float[]> BASEBAND_FILTERS = new HashMap<>();
+    private static final Logger LOGGER = LoggerFactory.getLogger(NXDNDecoder.class);
+    private static final Map<String,float[]> BASEBAND_FILTERS = new ConcurrentHashMap<>();
     private final DecodeConfigNXDN mConfig;
     private final NXDNSymbolProcessor mSymbolProcessor;
     private final NXDNMessageFramer mMessageFramer;
@@ -179,13 +182,9 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
 
         String mapKey = config.getTransmissionMode().name() + sampleRate;
 
-        float[] coefficients = null;
+        float[] coefficients = BASEBAND_FILTERS.get(mapKey);
 
-        if(BASEBAND_FILTERS.containsKey(mapKey))
-        {
-            coefficients = BASEBAND_FILTERS.get(mapKey);
-        }
-        else
+        if(coefficients == null)
         {
             ChannelSpecification channel = config.getChannelSpecification();
 
@@ -203,12 +202,15 @@ public class NXDNDecoder extends FeedbackDecoder implements IByteBufferProvider,
 
                 if(coefficients != null)
                 {
-                    BASEBAND_FILTERS.put(mapKey, coefficients);
+                    //Design outside the shared cache so unrelated decoder starts never wait for this work.
+                    float[] existing = BASEBAND_FILTERS.putIfAbsent(mapKey, coefficients);
+                    coefficients = existing != null ? existing : coefficients;
                 }
             }
             catch(Exception fde) //FilterDesignException
             {
-                System.out.println("Error");
+                LOGGER.error("Error creating {} baseband filter for sample rate {}", config.getTransmissionMode(),
+                    sampleRate, fde);
             }
         }
 

@@ -39,8 +39,8 @@ import io.github.dsheirer.sample.complex.IComplexSamplesListener;
 import io.github.dsheirer.source.ISourceEventListener;
 import io.github.dsheirer.source.SourceEvent;
 import java.nio.ByteBuffer;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,7 +59,7 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
 {
     private static final Logger LOGGER = LoggerFactory.getLogger(P25P1DecoderC4FM.class);
     private static final int SYMBOL_RATE = 4800;
-    private static final Map<Double,float[]> BASEBAND_FILTERS = new HashMap<>();
+    private static final Map<Double,float[]> BASEBAND_FILTERS = new ConcurrentHashMap<>();
 
     private final P25P1DemodulatorC4FM mSymbolProcessor;
     private final P25P1MessageFramer mMessageFramer = new P25P1MessageFramer();
@@ -190,9 +190,11 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
      */
     private float[] getBasebandFilter(double sampleRate)
     {
-        if(BASEBAND_FILTERS.containsKey(sampleRate))
+        float[] cached = BASEBAND_FILTERS.get(sampleRate);
+
+        if(cached != null)
         {
-            return BASEBAND_FILTERS.get(sampleRate);
+            return cached;
         }
 
         FIRFilterSpecification specification = FIRFilterSpecification
@@ -208,7 +210,13 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
         try
         {
             coefficients = FilterFactory.getTaps(specification);
-            BASEBAND_FILTERS.put(sampleRate, coefficients);
+
+            if(coefficients != null)
+            {
+                //Design outside the shared cache so unrelated decoder starts never wait for this work.
+                float[] existing = BASEBAND_FILTERS.putIfAbsent(sampleRate, coefficients);
+                coefficients = existing != null ? existing : coefficients;
+            }
         }
         catch(Exception fde) //FilterDesignException
         {
