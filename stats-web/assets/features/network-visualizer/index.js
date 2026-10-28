@@ -71,9 +71,12 @@ function createP25Visualizer(dependencies = {}) {
   const eventsToggle = textButton(node, 'Actions');
   eventsToggle.setAttribute('aria-pressed', 'false');
   eventsToggle.dataset.guideTarget = 'p25-actions-button';
+  const talkgroupsToggle = textButton(node, 'Top Talkgroups');
+  talkgroupsToggle.setAttribute('aria-pressed', 'false');
+  talkgroupsToggle.hidden = typeof dependencies.loadTalkgroups !== 'function';
   const fullscreen = iconButton('icon-fullscreen', 'Enter fullscreen');
   fullscreen.classList.add('network-visualizer-fullscreen');
-  actions.append(cameraControls, eventsToggle, fullscreen);
+  actions.append(cameraControls, eventsToggle, talkgroupsToggle, fullscreen);
   toolbar.append(brand, status, actions);
 
   const stage = node('div', 'network-visualizer-stage');
@@ -137,7 +140,7 @@ function createP25Visualizer(dependencies = {}) {
     entry.append(icon, node('span', '', label));
     legend.append(entry);
   }
-  const events = node('aside', 'network-visualizer-events ui-surface');
+  const events = node('aside', 'network-visualizer-panel network-visualizer-events ui-surface');
   events.hidden = true;
   const eventsHeader = node('header', 'network-visualizer-panel-header');
   const eventsHeading = node('div', 'network-visualizer-panel-heading');
@@ -148,7 +151,7 @@ function createP25Visualizer(dependencies = {}) {
   events.dataset.guideTarget = 'p25-actions';
   eventsHeader.append(eventsHeading, closeEvents);
   const actionsForm = node('form', 'admin-form network-visualizer-actions-form');
-  const eventList = node('ul', 'network-visualizer-event-list');
+  const eventList = node('ul', 'network-visualizer-panel-list network-visualizer-event-list');
   eventList.setAttribute('aria-label', 'P25 actions');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
@@ -189,6 +192,8 @@ function createP25Visualizer(dependencies = {}) {
   const guideSceneReady = new Promise(resolve => { resolveGuideScene = resolve; });
   let lastCameraPhase = 'roam';
   let eventsModal = null;
+  let talkgroupsPanel = null;
+  let talkgroupsOpening = false;
   const shortViewport = window.matchMedia('(max-width: 600px), (max-height: 640px)');
   const pressedKeys = new Set();
   const liveTables = new Map();
@@ -364,6 +369,7 @@ function createP25Visualizer(dependencies = {}) {
   }
 
   function renderScopeTitle(system, group = null) {
+    talkgroupsPanel?.setSystem(system);
     const setText = (element, value) => {
       if (element.textContent !== value) element.textContent = value;
     };
@@ -631,9 +637,31 @@ function createP25Visualizer(dependencies = {}) {
   auto.addEventListener('click', () => mode !== 'auto' && setMode('auto'));
   manual.addEventListener('click', () => mode !== 'manual' && setMode('manual'));
   eventsToggle.addEventListener('click', () => {
+    if (talkgroupsPanel?.isOpen()) {
+      talkgroupsPanel.hide();
+      eventsToggle.focus({ preventScroll: true });
+    }
     events.hidden = !events.hidden;
     eventsToggle.setAttribute('aria-pressed', String(!events.hidden));
     if (!events.hidden) renderActions();
+  });
+  talkgroupsToggle.addEventListener('click', async () => {
+    if (choicesWorkflow.isBusy()) return;
+    if (talkgroupsPanel?.isOpen()) { talkgroupsPanel.hide(); return; }
+    if (talkgroupsOpening) return;
+    talkgroupsOpening = true;
+    try {
+      const { createP25TalkgroupsPanel } = await import('./talkgroups.js?v=1');
+      if (closed) return;
+      talkgroupsPanel ||= createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
+        loadTalkgroups: dependencies.loadTalkgroups, renderTalkgroup: dependencies.renderTalkgroup,
+        formatCount: dependencies.formatCount, host: stage, layout, toggle: talkgroupsToggle, shortViewport });
+      if (!events.hidden) {
+        hideActions();
+        if (!events.hidden) return;
+      }
+      talkgroupsPanel.show(state.systems.get(selectedSystemKey));
+    } finally { talkgroupsOpening = false; }
   });
   closeEvents.addEventListener('click', hideActions);
   back.addEventListener('click', () => selectedGroupKey ? enterSystem(selectedSystemKey) : showOverview());
@@ -690,6 +718,7 @@ function createP25Visualizer(dependencies = {}) {
     shortViewport.removeEventListener('change', ensureEventsSpace);
     eventsResizeObserver.disconnect();
     eventsModal?.close();
+    talkgroupsPanel?.close();
     renderer?.dispose();
   };
   dependencies.signal?.addEventListener?.('abort', close, { once: true });
@@ -712,6 +741,7 @@ function createP25Visualizer(dependencies = {}) {
         liveTables.clear();
         pendingAffiliations.clear(); pendingFocusCandidates = [];
         selectedSystemKey = selectedGroupKey = '';
+        talkgroupsPanel?.setSystem(null);
         overviewSelected = scenePresented = false;
         resetAttention();
         renderGraph(false);
@@ -746,6 +776,7 @@ function createP25Visualizer(dependencies = {}) {
   function setGuideSuspended(value) {
     if (closed || guideSuspended === Boolean(value)) return;
     guideSuspended = Boolean(value);
+    if (guideSuspended) talkgroupsPanel?.hide();
     pressedKeys.clear();
     renderer?.setGuideSuspended(guideSuspended);
     if (presentationPaused()) pausePresentation();
@@ -758,6 +789,7 @@ function createP25Visualizer(dependencies = {}) {
   });
   async function prepareGuide(section) {
     if (!guideMode || !await ready || closed) return false;
+    talkgroupsPanel?.hide();
     const showActions = ['actions', 'actions-close'].includes(section);
     if (showActions && events.hidden) eventsToggle.click();
     else if (!showActions && !events.hidden) hideActions();

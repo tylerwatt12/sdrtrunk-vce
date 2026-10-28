@@ -8362,7 +8362,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     const [feature, presentation] = await Promise.all(mapTour ? [
       import('./features/listen-map.js?v=16'), import('./guides/map-presentation.js?v=1')
     ] : visualizerTour ? [
-      import('./features/network-visualizer/index.js?v=67'), import('./guides/network-visualizer-presentation.js?v=2')
+      import('./features/network-visualizer/index.js?v=68'), import('./guides/network-visualizer-presentation.js?v=2')
     ] : topics ? [
       import('./features/alerts.js?v=25'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
@@ -8431,6 +8431,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
           subscribeActivity: sample.subscribeActivity,
           loadEventSettings: sample.loadEventSettings, saveEventSettings: sample.saveEventSettings,
           openReadOnlyModal: openSampleModal, systemHref: () => '',
+          loadTalkgroups: async () => ({ rows: [] }),
           messageTypeLabel: sample.messageTypeLabel, messageTypeDefinition: sample.messageTypeDefinition
         }));
       workspace.element.dataset.guideExample = 'network-visualizer';
@@ -21007,6 +21008,10 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
     modalFooter: aliasModalFooter,
     loadEventSettings: loadP25VisualizerEventSettings,
     saveEventSettings: saveP25VisualizerEventSettings,
+    loadTalkgroups: (systemKey, { signal }) => apiPage(radioSystemApiPath(systemKey, 'group-identities'),
+      { sort: 'logical_call_count', direction: 'desc', limit: 20, offset: 0 }, { signal }),
+    renderTalkgroup: row => tableIdentityValue(row, 'group'),
+    formatCount: number,
     messageTypeLabel: (name) => activityOptionLabel(name),
     messageTypeDefinition: (name) => activityMessageTypes.get('ACTION', name),
     subscribeActivity: callbacks => subscribeLiveChannelActivity(callbacks, { background: true }),
@@ -21036,7 +21041,7 @@ function p25VisualizerDependencies(renderContext, overrides = {}) {
 
 async function renderP25Visualizer() {
   const renderContext = captureRenderContext();
-  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=67');
+  p25VisualizerModulePromise ||= import('./features/network-visualizer/index.js?v=68');
   // The live scene does not wait for an optional label catalog or historical data.
   void loadActivityMessageTypes();
   const visualizerModule = await p25VisualizerModulePromise;

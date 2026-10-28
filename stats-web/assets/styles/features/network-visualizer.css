@@ -401,7 +401,7 @@ body[data-view="network-visualizer"] .content {
   flex: none;
 }
 
-.network-visualizer-events {
+.network-visualizer-panel {
   position: absolute;
   z-index: 8;
   top: var(--space-3);
@@ -444,7 +444,7 @@ body[data-view="network-visualizer"] .content {
   color: var(--muted);
 }
 
-.network-visualizer-event-list {
+.network-visualizer-panel-list {
   min-height: 0;
   flex: 1 1 auto;
   margin: 0;
@@ -453,7 +453,7 @@ body[data-view="network-visualizer"] .content {
   list-style: none;
 }
 
-.network-visualizer-events-modal .network-visualizer-events {
+.network-visualizer-events-modal .network-visualizer-panel {
   position: static;
   width: 100%;
   overflow: visible;

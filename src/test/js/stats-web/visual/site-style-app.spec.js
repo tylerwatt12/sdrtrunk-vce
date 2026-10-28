@@ -63,6 +63,11 @@ const openAliasChannelScope = async (page) => {
   await expect(page.locator('.alias-coverage-channel-grid')).toBeVisible();
 };
 const additionalCases = [
+  ['network-visualizer-talkgroups', 'view=network-visualizer', '.network-visualizer-scope-title', systemName,
+    async page => {
+      await page.getByRole('button', { name: 'Top Talkgroups', exact: true }).click();
+      await expect(page.locator('.network-visualizer-talkgroups')).toContainText('Fire Dispatch');
+    }],
   ['network-visualizer-actions', 'view=network-visualizer', '.network-visualizer-scope-title', systemName,
     async page => {
       await page.getByRole('button', { name: 'Actions', exact: true }).click();

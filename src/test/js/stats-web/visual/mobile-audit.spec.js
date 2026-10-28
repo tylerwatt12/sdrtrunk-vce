@@ -237,11 +237,11 @@ test('P25 Events shows the entire final entry after its wrapped heading', async 
     document.body.dataset.view = 'network-visualizer';
     document.body.innerHTML = `<div class="app-shell"><main class="content">
       <div class="network-visualizer-layout"><div class="network-visualizer-toolbar">P25 Visualizer</div>
-      <div class="network-visualizer-stage"><aside class="network-visualizer-events">
+      <div class="network-visualizer-stage"><aside class="network-visualizer-panel network-visualizer-events">
       <header class="network-visualizer-panel-header"><div class="network-visualizer-panel-heading">
       <h2>Noteworthy P25 activity</h2><p>Grouped from saved Activity history</p></div>
       <button class="ui-button ui-button-secondary ui-icon-button" aria-label="Close noteworthy activity">×</button></header>
-      <ol class="network-visualizer-event-list">${Array.from({ length: 20 }, (_, index) =>
+      <ol class="network-visualizer-panel-list network-visualizer-event-list">${Array.from({ length: 20 }, (_, index) =>
         `<li class="network-visualizer-event"><strong>Event ${index + 1}</strong>
         <span class="network-visualizer-event-detail">Radio 105 → Fire Dispatch</span><time>12:30</time></li>`).join('')}
       </ol></aside></div></div></main></div>`;

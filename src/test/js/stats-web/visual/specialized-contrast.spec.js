@@ -114,7 +114,7 @@ async function openSpecializedPaint(page, theme) {
           <span class="network-visualizer-label" data-signal="denial" data-specialized-backing data-specialized-text="denial">Denied</span>
           <span class="network-visualizer-label" data-signal="movement" data-specialized-backing data-specialized-text="movement">Moved</span>
           <span class="network-visualizer-label" data-signal="call" data-specialized-backing data-specialized-text="call">Call</span>
-          <div class="network-visualizer-events" data-specialized-backing>
+          <div class="network-visualizer-panel network-visualizer-events" data-specialized-backing>
             <div class="network-visualizer-event" data-category="check"><strong class="network-visualizer-event-kind" data-specialized-text="check">Check</strong></div>
             <div class="network-visualizer-event" data-category="page"><strong class="network-visualizer-event-kind" data-specialized-text="page">Page</strong></div>
           </div>
