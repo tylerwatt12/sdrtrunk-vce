@@ -17,6 +17,7 @@ import io.github.dsheirer.web.http.*;
 import java.net.*;
 import java.net.http.*;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -104,6 +105,78 @@ class StreamingAdminHttpTest
             MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
         }
     }
+    @Test void catalogAndDetailSerializeApplicableDuplicateCountersAndExplicitUnavailableValues() throws Exception
+    {
+        Path rootDirectory=temporary.resolve("duplicate-rejection-http");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(rootDirectory));
+        ConfigurationManager manager=new ConfigurationManager(
+            new StreamingAdministrationServiceTest.TestPreferences(rootDirectory),null,new AliasModel(),null);
+        HttpServer server=HttpServer.create(new InetSocketAddress("127.0.0.1",0),0);
+        var executor=java.util.concurrent.Executors.newCachedThreadPool();
+        server.setExecutor(executor);
+        try
+        {
+            manager.init();
+            var service=new StreamingAdministrationService(manager);
+            String calls=service.save(null,"BROADCASTIFY_CALL",Map.of("name","Calls"),null).configurationId();
+            String site=service.save(null,"BROADCASTIFY_CALL_SITE",Map.of("name","Site calls"),null).configurationId();
+            String icecast=service.save(null,"ICECAST_HTTP",Map.of("name","Icecast"),null).configurationId();
+            String inactive=service.save(null,"BROADCASTIFY_CALL",Map.of("name","Inactive calls"),null).configurationId();
+            StreamingAdministrationServiceTest.attachCounterFixture(manager,calls,7);
+            StreamingAdministrationServiceTest.attachCounterFixture(manager,site,11);
+            StreamingAdministrationServiceTest.attachCounterFixture(manager,icecast,19);
+            var controller=new StreamingAdminHttpController(service);
+            server.createContext(StreamingAdminHttpController.PATH,controller::handle);
+            server.start();
+            URI root=URI.create("http://127.0.0.1:"+server.getAddress().getPort());
+            HttpClient client=HttpClient.newHttpClient();
+
+            var catalogResponse=send(client,root,"GET","",null,null,null);
+            assertEquals(200,catalogResponse.statusCode(),catalogResponse.body());
+            JsonNode catalog=JSON.readTree(catalogResponse.body()).at("/data/destinations");
+            assertEquals(4,catalog.size());
+            for(String id: List.of(calls,site,icecast,inactive))
+            {
+                JsonNode catalogStatus=null;
+                for(JsonNode status: catalog)
+                    if(id.equals(status.path("configuration_id").asText())) catalogStatus=status;
+                assertNotNull(catalogStatus);
+                var detailResponse=send(client,root,"GET","/"+id,null,null,null);
+                assertEquals(200,detailResponse.statusCode(),detailResponse.body());
+                JsonNode detailStatus=JSON.readTree(detailResponse.body()).at("/data/status");
+                for(JsonNode status: List.of(catalogStatus,detailStatus))
+                {
+                    assertTrue(status.has("duplicate_rejected"),status.toString());
+                    assertFalse(status.has("duplicateRejected"));
+                    if(id.equals(calls) || id.equals(site))
+                    {
+                        assertTrue(status.get("duplicate_rejected").isIntegralNumber());
+                        assertEquals(id.equals(calls)?7:11,status.get("duplicate_rejected").intValue());
+                    }
+                    else assertTrue(status.get("duplicate_rejected").isNull());
+
+                    if(id.equals(inactive))
+                    {
+                        for(String counter: List.of("queued","sent","aged_off","errors"))
+                            assertTrue(status.get(counter).isNull());
+                    }
+                    else
+                    {
+                        assertEquals(4,status.path("queued").intValue());
+                        assertEquals(5,status.path("sent").intValue());
+                        assertEquals(2,status.path("aged_off").intValue());
+                        assertEquals(3,status.path("errors").intValue());
+                    }
+                }
+            }
+        }
+        finally
+        {
+            server.stop(0);executor.shutdownNow();manager.flushConfiguration();
+            MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager());
+        }
+    }
+
     private record Login(String cookie,String csrf) {}
     private static Login login(HttpClient client,URI root,String name) throws Exception
     {

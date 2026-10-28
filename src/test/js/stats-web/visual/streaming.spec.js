@@ -9,9 +9,10 @@ const helpersSource = app.slice(app.indexOf('function closeReadOnlyModal('), app
   app.slice(app.indexOf('function uiSegmentedControl('), app.indexOf('function channelSummaryCards(')) +
   app.slice(app.indexOf('const METRIC_ICONS ='), app.indexOf('function searchBar('));
 
-async function install(page, theme = 'light', empty = false, radioReferenceAllowed = true, aliasCount = 60) {
+async function install(page, theme = 'light', empty = false, radioReferenceAllowed = true, aliasCount = 60,
+  provider = 'BROADCASTIFY_CALL') {
   await page.goto(`/design-system.html?theme=${theme}`);
-  await page.evaluate(async ({helpersSource, theme, empty, radioReferenceAllowed, aliasCount}) => {
+  await page.evaluate(async ({helpersSource, theme, empty, radioReferenceAllowed, aliasCount, provider}) => {
     const { createStreamingWorkspace } = await import('/assets/features/streaming.js');
     const { openRadioReferenceConnect } = await import('/assets/features/radioreference-connect.js');
     const browsingWorkflows = await import('/assets/core/browsing-workflows.js');
@@ -134,10 +135,11 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
     ];
     let otherName='Regional Archive';
     let editRevision='destination-edit-1', assignmentRevision='assignments-1';
-    let definition={configuration_id:'destination',provider:'BROADCASTIFY_CALL',settings:{name:'County Calls',enabled:true,
+    const providerLabel=provider==='RADIORESOLVE'?'RadioResolve':provider==='BROADCASTIFY_CALL_SITE'?'Broadcastify Call Site':'Broadcastify Calls';
+    let definition={configuration_id:'destination',provider,settings:{name:'County Calls',enabled:true,
       host:'https://example.com/calls',system_id:42,maximum_recording_age:600000},configured_credentials:['api_key']};
-    const status={configuration_id:'destination',name:'County Calls',provider:'BROADCASTIFY_CALL',provider_label:'Broadcastify Calls',
-      enabled:true,state:'CONNECTED',state_label:'Connected',queued:3,sent:128,aged_off:0,errors:0,last_error:null,attention:false};
+    const status={configuration_id:'destination',name:'County Calls',provider,provider_label:providerLabel,
+      enabled:true,state:'CONNECTED',state_label:'Connected',queued:3,sent:128,aged_off:0,duplicate_rejected:4,errors:0,last_error:null,attention:false};
     let assignments=new Set([1,51]);
     const aliases=Array.from({length:aliasCount},(_,i)=>({id:i+1,name:`Dispatch ${i+1}`,identifier:String(100+i),alias_list_id:7,alias_list_name:'County Public Safety'}));
     const calls=[];
@@ -167,7 +169,7 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
         return {items:window.streamingTest.feedMode==='empty'?[]:structuredClone(window.streamingTest.feeds)};
       }
       if(suffix==='/feeds'&&options.method==='POST') return {configuration_id:'destination'};
-      if(suffix==='/options') return {providers:[{id:'BROADCASTIFY_CALL',label:'Broadcastify Calls',connection_test:true,fields}],sites:[]};
+      if(suffix==='/options') return {providers:[{id:provider,label:providerLabel,connection_test:true,fields}],sites:[]};
       if(suffix.startsWith('/templates/')) return {...structuredClone(definition),settings:{...definition.settings,name:'',enabled:false},configured_credentials:[]};
       if(suffix==='/test') return {success:true,message:'Connection accepted'};
       if(suffix==='/destination'&&options.method==='DELETE') {
@@ -200,7 +202,7 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
         return {edit_revision:editRevision,configuration_id:'destination'};
       }
       if(suffix==='/destination') return {edit_revision:editRevision,destination:structuredClone(definition),status,references:structuredClone(window.streamingTest.references)};
-      return {destinations:empty?[]:[status,{...status,configuration_id:'other',name:otherName,provider_label:'RadioResolve',state:'ERROR',state_label:'Network unavailable',queued:12,sent:842,errors:1,last_error:'Network unavailable',attention:true}]};
+      return {destinations:empty?[]:[status,{...status,configuration_id:'other',name:otherName,provider:'RADIORESOLVE',provider_label:'RadioResolve',state:'ERROR',state_label:'Network unavailable',queued:12,sent:842,duplicate_rejected:null,errors:1,last_error:'Network unavailable',attention:true}]};
     };
     const shell=node('main','content');
     const header=node('header','page-header ui-page-header');
@@ -214,9 +216,10 @@ async function install(page, theme = 'light', empty = false, radioReferenceAllow
     const workspace=createStreamingWorkspace({node,formField,uiSelectFrame,uiStatus,table,...shared,requestJson,browsingWorkflows,
       connectRadioReference,radioReferenceAllowed,
       modalFooter:(...controls)=>{const footer=node('footer','alias-modal-footer ui-modal-footer ui-action-row');footer.append(...controls);return footer;},
-      formatNumber:String,href:(view,params)=>`/?${new URLSearchParams({view,...params})}`,signal:abort.signal});
+      formatNumber:value=>new Intl.NumberFormat('en-US').format(value),href:(view,params)=>`/?${new URLSearchParams({view,...params})}`,signal:abort.signal});
+    window.streamingTest.refresh=workspace.refresh;
     shell.append(header,workspace.element);document.body.append(shell);
-  }, {helpersSource,theme,empty,radioReferenceAllowed,aliasCount});
+  }, {helpersSource,theme,empty,radioReferenceAllowed,aliasCount,provider});
   await expect(page.getByRole('button',{name:'Add destination',exact:true})).toBeVisible();
 }
 
@@ -379,7 +382,7 @@ test('delivery counters retain their live values and update error severity after
   await install(page);
   const counters = page.locator('.streaming-destination-card').first().locator('.streaming-destination-metrics');
   const errors = counters.locator('.ui-metric').filter({hasText:'Errors'});
-  await expect(counters.locator('.ui-metric')).toHaveCount(4);
+  await expect(counters.locator('.ui-metric')).toHaveCount(5);
   await expect(errors).toHaveClass(/\bui-metric-blue\b/);
   await page.evaluate(() => {
     window.streamingTest.errorCounter = document.querySelector('.streaming-destination-metrics .ui-metric:last-child strong span');
@@ -387,7 +390,7 @@ test('delivery counters retain their live values and update error severity after
   });
   await expect(errors).toHaveClass(/\bui-metric-danger\b/);
   await expect(errors.locator('strong')).toHaveText('2');
-  await expect(counters.locator('.ui-metric strong')).toHaveText(['7','141','0','2']);
+  await expect(counters.locator('.ui-metric strong')).toHaveText(['7','141','0','4','2']);
   await page.evaluate(() => Object.assign(window.streamingTest.status, {attention:false, last_error:null}));
   await expect(errors).toHaveClass(/\bui-metric-warning\b/);
   await expect(page.locator('.streaming-destination-card').first().locator('.streaming-destination-error')).toBeHidden();
@@ -405,13 +408,13 @@ test('destination status keeps shared delivery cards and metadata through severi
   await modal.getByRole('button',{name:'Status',exact:true}).click();
   const panel = modal.locator('.streaming-panel:not([hidden])');
   const errors = panel.locator('.ui-metric').filter({hasText:'Errors'});
-  await expect(panel.locator('.ui-metric-label')).toHaveText(['Queued','Sent / uploaded','Aged off','Errors']);
+  await expect(panel.locator('.ui-metric-label')).toHaveText(['Queued','Sent / uploaded','Aged off','Duplicates skipped','Errors']);
   await expect(panel.locator('.ui-fact dt')).toHaveText(['Last error','Provider']);
   await expect(errors).toHaveClass(/\bui-metric-blue\b/);
   await page.evaluate(() => Object.assign(window.streamingTest.status,
     {queued:7, sent:141, errors:2, attention:true, last_error:'Delivery unavailable'}));
   await panel.getByRole('button',{name:'Refresh status',exact:true}).click();
-  await expect(panel.locator('.ui-metric strong')).toHaveText(['7','141','0','2']);
+  await expect(panel.locator('.ui-metric strong')).toHaveText(['7','141','0','4','2']);
   await expect(errors).toHaveClass(/\bui-metric-danger\b/);
   await expect(panel.locator('.ui-fact dd')).toHaveText(['Delivery unavailable','Broadcastify Calls']);
   await page.evaluate(() => Object.assign(window.streamingTest.status, {attention:false, last_error:null}));
@@ -423,6 +426,71 @@ test('destination status keeps shared delivery cards and metadata through severi
   await expect(errors.locator('strong')).toHaveText('—');
   await expect(panel.locator('.ui-fact dd')).toHaveText(['None','Broadcastify Calls']);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+});
+
+for (const [provider, theme, viewport] of [
+  ['BROADCASTIFY_CALL', 'light', {width:1440, height:1000}],
+  ['BROADCASTIFY_CALL_SITE', 'dark', {width:320, height:700}]
+]) {
+  test(`${provider} shows neutral duplicate counts in destination cards and Status through refresh in ${theme}`, async ({page}) => {
+    await page.setViewportSize(viewport);
+    await install(page, theme, false, true, 60, provider);
+    const counters = page.locator('.streaming-destination-card').first().locator('.streaming-destination-metrics');
+    const duplicates = counters.locator('.ui-metric').filter({hasText:'Duplicates skipped'});
+    const errors = counters.locator('.ui-metric').filter({hasText:'Errors'});
+    await expect(duplicates.locator('strong')).toHaveText('4');
+    await expect(duplicates).toHaveClass(/\bui-metric-blue\b/);
+    await page.evaluate(async () => {
+      Object.assign(window.streamingTest.status, {duplicate_rejected:1234, errors:2, attention:true});
+      await window.streamingTest.refresh();
+    });
+    await expect(duplicates.locator('strong')).toHaveText('1,234');
+    await expect(duplicates).toHaveClass(/\bui-metric-blue\b/);
+    await expect(errors.locator('strong')).toHaveText('2');
+    await expect(errors).toHaveClass(/\bui-metric-danger\b/);
+    expect(await duplicates.evaluate(element => [...element.querySelectorAll('.ui-metric-label, strong')]
+      .every(part => part.scrollWidth <= part.clientWidth + 1))).toBe(true);
+    await test.info().attach(`duplicate-count-card-${theme}`, {body:await page.screenshot(), contentType:'image/png'});
+    await page.evaluate(async () => {
+      window.streamingTest.status.duplicate_rejected=null;
+      await window.streamingTest.refresh();
+    });
+    await expect(duplicates.locator('strong')).toHaveText('—');
+    await page.getByRole('button',{name:'County Calls',exact:true}).click();
+    const modal = page.getByRole('dialog');
+    await modal.getByRole('button',{name:'Status',exact:true}).click();
+    const panel = modal.locator('.streaming-panel:not([hidden])');
+    const statusDuplicates = panel.locator('.ui-metric').filter({hasText:'Duplicates skipped'});
+    await expect(statusDuplicates.locator('strong')).toHaveText('—');
+    await page.evaluate(() => { window.streamingTest.status.duplicate_rejected=12345; });
+    await panel.getByRole('button',{name:'Refresh status',exact:true}).click();
+    await expect(statusDuplicates.locator('strong')).toHaveText('12,345');
+    await expect(statusDuplicates).toHaveClass(/\bui-metric-blue\b/);
+    await expect(panel.locator('.ui-metric').filter({hasText:'Errors'})).toHaveClass(/\bui-metric-danger\b/);
+    await statusDuplicates.scrollIntoViewIfNeeded();
+    await expect(statusDuplicates).toBeVisible();
+    expect(await statusDuplicates.evaluate(element => [...element.querySelectorAll('.ui-metric-label, strong')]
+      .every(part => part.scrollWidth <= part.clientWidth + 1))).toBe(true);
+    await test.info().attach(`duplicate-count-status-${theme}`, {body:await page.screenshot(), contentType:'image/png'});
+    await page.evaluate(() => { window.streamingTest.status.duplicate_rejected=0; });
+    await panel.getByRole('button',{name:'Refresh status',exact:true}).click();
+    await expect(statusDuplicates.locator('strong')).toHaveText('0');
+    await page.evaluate(() => { window.streamingTest.status.duplicate_rejected=null; });
+    await panel.getByRole('button',{name:'Refresh status',exact:true}).click();
+    await expect(statusDuplicates.locator('strong')).toHaveText('—');
+  });
+}
+
+test('unsupported destinations retain four delivery metrics in both views', async ({page}) => {
+  await install(page, 'dark', false, true, 60, 'RADIORESOLVE');
+  const counters = page.locator('.streaming-destination-card').first().locator('.streaming-destination-metrics');
+  await expect(counters.locator('.ui-metric-label')).toHaveText(['Queued','Sent / uploaded','Aged off','Errors']);
+  await page.getByRole('button',{name:'County Calls',exact:true}).click();
+  const modal = page.getByRole('dialog');
+  await modal.getByRole('button',{name:'Status',exact:true}).click();
+  await expect(modal.locator('.streaming-panel:not([hidden]) .ui-metric-label'))
+    .toHaveText(['Queued','Sent / uploaded','Aged off','Errors']);
+  await expect(modal.getByText('Duplicates skipped',{exact:true})).toHaveCount(0);
 });
 
 test('alias changes survive paging and save only explicit selections',async({page})=>{

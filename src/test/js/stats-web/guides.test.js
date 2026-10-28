@@ -487,6 +487,15 @@ async function checkGuides(assetsRoot) {
   const streamingData = createStreamingGuideData();
   const streamingApi = '/api/v1/admin/streaming';
   const sampleDestinations = await streamingData.requestJson(streamingApi);
+  const { streamingDeliveryMetrics } = await load('features/streaming.js');
+  assert.equal(sampleDestinations.destinations[0].duplicate_rejected, 6);
+  assert.deepEqual(streamingDeliveryMetrics(sampleDestinations.destinations[0]).map(([, label]) => label),
+    ['Queued', 'Sent / uploaded', 'Aged off', 'Duplicates skipped', 'Errors'],
+    'The populated Calls example uses the same applicable delivery metrics as the production workspace.');
+  for (const row of sampleDestinations.destinations.slice(1)) {
+    assert.equal(row.duplicate_rejected, null);
+    assert.equal(streamingDeliveryMetrics(row).length, 4);
+  }
   const countyCalls = sampleDestinations.destinations.find(row => row.configuration_id === 'county-calls');
   assert.deepEqual([countyCalls.state, countyCalls.queued, countyCalls.sent, countyCalls.aged_off, countyCalls.errors],
     ['CONNECTED', 3, 128, 2, 1], 'The recovery example pairs successful current delivery with an earlier timeout.');

@@ -30,13 +30,13 @@ const providers = [
 const rows = [
   { configuration_id: 'county-calls', name: 'County Calls', provider: 'BROADCASTIFY_CALL',
     provider_label: 'Broadcastify Call', enabled: true, state: 'CONNECTED', state_label: 'Connected',
-    queued: 3, sent: 128, aged_off: 2, errors: 1, last_error: 'Connection timed out', attention: false },
+    queued: 3, sent: 128, aged_off: 2, duplicate_rejected: 6, errors: 1, last_error: 'Connection timed out', attention: false },
   { configuration_id: 'regional-archive', name: 'Regional Archive', provider: 'RADIORESOLVE',
     provider_label: 'RadioResolve', enabled: true, state: 'CONNECTED', state_label: 'Connected',
-    queued: 1, sent: 84, aged_off: 0, errors: 0, last_error: null, attention: false },
+    queued: 1, sent: 84, aged_off: 0, duplicate_rejected: null, errors: 0, last_error: null, attention: false },
   { configuration_id: 'county-feed', name: 'County Feed', provider: 'BROADCASTIFY',
     provider_label: 'Broadcastify Feed', enabled: false, state: 'DISABLED', state_label: 'Disabled',
-    queued: 0, sent: 0, aged_off: 0, errors: 0, last_error: null, attention: false }
+    queued: 0, sent: 0, aged_off: 0, duplicate_rejected: null, errors: 0, last_error: null, attention: false }
 ];
 const aliases = [
   { id: 910001, name: 'Sheriff Dispatch', identifier: '1001', alias_list_id: 900001,

@@ -8376,7 +8376,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : tuners ? [
       Promise.resolve(null), import('./guides/tuners-presentation.js?v=3')
     ] : streaming ? [
-      import('./features/streaming.js?v=17'), import('./guides/streaming-presentation.js?v=1')
+      import('./features/streaming.js?v=18'), import('./guides/streaming-presentation.js?v=2')
     ] : [
       import('./features/radioreference-import.js?v=41'), import('./guides/radioreference-presentation.js?v=1')
     ]);
@@ -31919,7 +31919,7 @@ function streamingPageSurface(workspace) {
 
 async function renderStreaming() {
   const renderContext = captureRenderContext();
-  const { createStreamingWorkspace } = await import('./features/streaming.js?v=17');
+  const { createStreamingWorkspace } = await import('./features/streaming.js?v=18');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createStreamingWorkspace(streamingWorkspaceDependencies({ signal: renderContext.signal }));
   const surface = streamingPageSurface(workspace);

@@ -3,6 +3,16 @@ import { createActionWorkflow } from '../core/action-workflows.js?v=1';
 const ROOT = '/api/v1/admin/streaming';
 const POLL_MS = 3000;
 
+export function streamingDeliveryMetrics(row) {
+  const supportsDuplicateCount = row.provider === 'BROADCASTIFY_CALL' || row.provider === 'BROADCASTIFY_CALL_SITE';
+  return [
+    ['queued', 'Queued', 'icon-replay'], ['sent', 'Sent / uploaded', 'icon-share'],
+    ['aged_off', 'Aged off', 'icon-skip'],
+    ...(supportsDuplicateCount ? [['duplicate_rejected', 'Duplicates skipped', 'icon-skip']] : []),
+    ['errors', 'Errors', 'icon-warning']
+  ];
+}
+
 // Reuse map: data-workspace, ui-catalog-toolbar, ui-surface, ui-metric and ui-status
 // compose the destination cards; shared table, feedback, fields, toggles, select frames,
 // segmented tabs, selection bar and modal lifecycle compose the editor. Only feature
@@ -95,10 +105,7 @@ export function createStreamingWorkspace(deps) {
           statuses.append(cell(row, 'state'), cell(row, 'enabled'));
           header.append(identity, statuses);
 
-          const counters = metrics([
-            ['queued', 'Queued', 'icon-replay'], ['sent', 'Sent / uploaded', 'icon-share'],
-            ['aged_off', 'Aged off', 'icon-skip'], ['errors', 'Errors', 'icon-warning']
-          ].map(([key, label, icon]) => [label, row[key], cell(row, key),
+          const counters = metrics(streamingDeliveryMetrics(row).map(([key, label, icon]) => [label, row[key], cell(row, key),
             { icon, tone: key === 'errors' ? errorTone(row) : 'blue' }]), true);
           counters.classList.add('streaming-destination-metrics');
           const error = node('div', 'streaming-destination-error ui-notice ui-notice-danger');
@@ -117,7 +124,7 @@ export function createStreamingWorkspace(deps) {
       if (!target) return;
       target.state.replaceChildren(uiStatus(row.state_label, statusTone(row)));
       target.enabled.replaceChildren(uiStatus(row.enabled ? 'Enabled' : 'Disabled', row.enabled ? 'success' : 'neutral'));
-      ['queued', 'sent', 'aged_off', 'errors'].forEach(key => { target[key].textContent = count(row[key]); });
+      streamingDeliveryMetrics(row).forEach(([key]) => { target[key].textContent = count(row[key]); });
       const errorsMetric = target.errors.closest('.ui-metric');
       ['blue', 'warning', 'danger'].forEach(tone => {
         errorsMetric.classList.toggle(`ui-metric-${tone}`, tone === errorTone(row));
@@ -453,10 +460,7 @@ export function createStreamingWorkspace(deps) {
     }
     function drawStatus(row) {
       if (!row) { statusPanel.replaceChildren(feedback('Destination no longer exists.', 'error')); return; }
-      const counters = metrics([
-        ['queued', 'Queued', 'icon-replay'], ['sent', 'Sent / uploaded', 'icon-share'],
-        ['aged_off', 'Aged off', 'icon-skip'], ['errors', 'Errors', 'icon-warning']
-      ].map(([key, label, icon]) => [label, row[key], count(row[key]),
+      const counters = metrics(streamingDeliveryMetrics(row).map(([key, label, icon]) => [label, row[key], count(row[key]),
         { icon, tone: key === 'errors' ? errorTone(row) : 'blue' }]));
       const facts = node('dl', 'ui-facts');
       for (const [label, value] of [['Last error', row.last_error || 'None'], ['Provider', row.provider_label]]) {

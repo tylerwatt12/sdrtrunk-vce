@@ -53,6 +53,7 @@ const contracts = [
   ["receiver-health alert catalog", "receiver-health-alerts.test.js", "stats-web/assets/core"],
   ["receiver-health pagination", "receiver-health-pagination.test.js", "stats-web/assets/app.js"],
   ["status availability", "status-availability.test.js", "stats-web/assets/app.js"],
+  ["Streaming delivery metrics", "streaming.test.js", "stats-web/assets/features/streaming.js"],
   ["support report", "support-report.test.js", "stats-web/assets/app.js"],
   ["tuner idle markers", "tuner-idle-markers.test.js", "stats-web/assets/app.js"],
   ["spectrum display preferences", "spectrum-display-preferences.test.js", "stats-web/assets/core/spectrum-display-preferences.js"],

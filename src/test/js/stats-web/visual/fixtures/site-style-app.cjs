@@ -98,7 +98,7 @@ const operational = { revision: 'a'.repeat(64), settings: {
   minimum_stats_logging_retention_days: 1, maximum_stats_logging_retention_days: 365 } };
 const stream = { configuration_id: 'county-calls', name: 'County Calls', provider: 'BROADCASTIFY_CALL',
   provider_label: 'Broadcastify Calls', enabled: true, state: 'CONNECTED', state_label: 'Connected',
-  queued: 3, sent: 128, aged_off: 0, errors: 0, last_error: null, attention: false };
+  queued: 3, sent: 128, aged_off: 0, duplicate_rejected: 4, errors: 0, last_error: null, attention: false };
 const health = { started_at_ms: now - 3600000, generated_at_ms: now,
   computer: { application: 'SDRTrunk VCE', version: '0.6.2', update_track: 'Nightly', update_build: 'fixture-build',
     build_timestamp: '2026-10-01T11:00:00Z', operating_system: 'Synthetic OS', operating_system_version: '1.0',

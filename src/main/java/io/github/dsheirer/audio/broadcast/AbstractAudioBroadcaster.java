@@ -20,6 +20,7 @@
 package io.github.dsheirer.audio.broadcast;
 
 import io.github.dsheirer.sample.Listener;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Base Audio Broadcaster class
@@ -32,6 +33,7 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
     private volatile StateSnapshot mState = new StateSnapshot(BroadcastState.READY, null);
     private final java.util.List<Runnable> mStateListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     protected volatile int mStreamedAudioCount = 0;
+    private final AtomicInteger mDuplicateRejectedAudioCount = new AtomicInteger();
     protected volatile int mErrorAudioCount = 0;
     protected volatile int mAgedOffAudioCount = 0;
 
@@ -155,6 +157,18 @@ public abstract class AbstractAudioBroadcaster<T extends BroadcastConfiguration>
     public void incrementStreamedAudioCount()
     {
         mStreamedAudioCount++;
+    }
+
+    /** Number of recordings the remote service rejected as duplicates during this sender's lifetime. */
+    public int getDuplicateRejectedAudioCount()
+    {
+        return mDuplicateRejectedAudioCount.get();
+    }
+
+    /** Records one duplicate rejection, including concurrent asynchronous responses. */
+    public void incrementDuplicateRejectedAudioCount()
+    {
+        mDuplicateRejectedAudioCount.incrementAndGet();
     }
 
     /**

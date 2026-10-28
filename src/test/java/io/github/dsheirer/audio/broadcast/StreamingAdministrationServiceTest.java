@@ -269,6 +269,64 @@ class StreamingAdministrationServiceTest
         finally { manager.flushConfiguration();MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
     }
 
+    @Test void duplicateRejectionsAreSessionCountersOnlyForBroadcastifyCallsSenders() throws Exception
+    {
+        Path root=temporary.resolve("duplicate-rejection-status");
+        SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(root));
+        ConfigurationManager manager=new ConfigurationManager(new TestPreferences(root),null,new AliasModel(),null);
+        try
+        {
+            manager.init();
+            var service=new StreamingAdministrationService(manager);
+            String calls=service.save(null,"BROADCASTIFY_CALL",Map.of("name","Calls"),null).configurationId();
+            String site=service.save(null,"BROADCASTIFY_CALL_SITE",Map.of("name","Site calls"),null).configurationId();
+            String icecast=service.save(null,"ICECAST_HTTP",Map.of("name","Icecast"),null).configurationId();
+            String inactive=service.save(null,"BROADCASTIFY_CALL",Map.of("name","Inactive calls"),null).configurationId();
+            attachCounterFixture(manager,calls,7);
+            attachCounterFixture(manager,site,11);
+            attachCounterFixture(manager,icecast,19);
+
+            assertEquals(7,service.get(calls).status().duplicateRejected());
+            assertEquals(11,service.get(site).status().duplicateRejected());
+            assertNull(service.get(icecast).status().duplicateRejected(), "Other providers do not implement this outcome");
+            assertNull(service.get(inactive).status().duplicateRejected(), "A missing sender has no session counter");
+            for(String id: List.of(calls,site,icecast))
+            {
+                var status=service.get(id).status();
+                assertEquals(4,status.queued());
+                assertEquals(5,status.sent());
+                assertEquals(2,status.agedOff());
+                assertEquals(3,status.errors());
+            }
+            var catalog=service.catalog().destinations().stream()
+                .collect(java.util.stream.Collectors.toMap(StreamingAdministrationService.Status::configurationId,item->item));
+            assertEquals(7,catalog.get(calls).duplicateRejected());
+            assertEquals(11,catalog.get(site).duplicateRejected());
+            assertNull(catalog.get(icecast).duplicateRejected());
+            assertNull(catalog.get(inactive).duplicateRejected());
+
+            attachCounterFixture(manager,calls,0);
+            assertEquals(0,service.get(calls).status().duplicateRejected(), "A replacement sender starts a new session");
+        }
+        finally { manager.flushConfiguration();MyEventBus.getGlobalEventBus().unregister(manager.getChannelProcessingManager()); }
+    }
+
+    static void attachCounterFixture(ConfigurationManager manager, String id, int duplicates)
+    {
+        ConfiguredBroadcast configured=manager.getBroadcastModel().getConfiguredBroadcasts().stream()
+            .filter(item->item.getBroadcastConfiguration().getConfigurationId().equals(id)).findFirst().orElseThrow();
+        configured.setAudioBroadcaster(new AbstractAudioBroadcaster<BroadcastConfiguration>(configured.getBroadcastConfiguration())
+        {
+            { mStreamedAudioCount=5; mAgedOffAudioCount=2; mErrorAudioCount=3; }
+            @Override public void start() {}
+            @Override public void stop() {}
+            @Override public void dispose() {}
+            @Override public void receive(AudioRecording recording) {}
+            @Override public int getAudioQueueSize() { return 4; }
+            @Override public int getDuplicateRejectedAudioCount() { return duplicates; }
+        });
+    }
+
     static final class TestPreferences extends UserPreferences
     {
         private final DirectoryPreference directories;
