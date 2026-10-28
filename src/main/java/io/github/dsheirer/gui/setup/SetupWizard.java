@@ -102,7 +102,6 @@ public final class SetupWizard extends JDialog
     private long generation;
     private String migrationReport = "";
     private String errorReport = "";
-    private String selectedScope = "";
     private volatile String operation = "";
     private volatile long operationStartedNanos;
     private volatile int completed;
@@ -644,10 +643,9 @@ public final class SetupWizard extends JDialog
         PreviousBuildLocator.Selection selection = PreviousBuildLocator.resolveSelection(source)
             .orElseThrow(() -> new IllegalArgumentException(
                 "No saved VCE settings were found. Choose a previous VCE folder or an XML playlist."));
-        selectedScope = "Your complete data folder, including recordings and the Managed Recordings catalog, will move into this installation. The old installation will no longer contain that data. Keep a separate backup. Both folders must be on the same filesystem.";
-        reviewSettings(selection.path(), selection.database(), selectedScope, null, true, "Review upgrade", () ->
+        reviewSettings(selection.path(), selection.database(), "", null, true, "Review upgrade", () ->
             job("Checking the stopped installation…", null, () -> VceUpgradeService.inspect(selection.path()), plan ->
-                reviewSettings(selection.path(), selection.database(), selectedScope, plan, true, "Begin upgrade", () -> {
+                reviewSettings(selection.path(), selection.database(), "", plan, true, "Begin upgrade", () -> {
                     MigrationContent content = migrationContent;
                     prepareProfile(() -> {
                         var result = VceUpgradeService.upgrade(selection.path(), root, content, backupConfirmed, lock, this::migrationProgress);
@@ -689,20 +687,16 @@ public final class SetupWizard extends JDialog
             append(WizardStyles.emphasizedProse(reviewingSource ?
                 "2. Make sure you have backed up your old VCE folder, including its data folder. Your data will be moved from the old installation into this one." :
                 "2. Make sure you have backed up your existing VCE folder, including its data folder, before updating it.", "moved"));
-            append(Box.createVerticalStrut(12));
-            paragraph("Include recording folders stored elsewhere. Keep this separate backup for manual recovery.");
-            append(Box.createVerticalStrut(12));
-            JCheckBox backup = WizardStyles.checkBox(
-                "<html>I have backed up my existing VCE installation,<br>and it is currently not running.</html>", backupConfirmed);
-            backup.getAccessibleContext().setAccessibleName(
-                "I have backed up my existing VCE installation, and it is currently not running.");
+            append(Box.createVerticalStrut(32));
+            JCheckBox backup = WizardStyles.wrappingCheckBox(
+                "I have backed up my existing VCE installation, and it is currently not running.", backupConfirmed);
             WizardStyles.bodyFont(backup, Font.BOLD);
             backup.setForeground(WizardNotice.accent(WizardNotice.Tone.ERROR));
             backup.addActionListener(e -> { backupConfirmed = backup.isSelected(); updateNavigation(); });
             append(backup);
             append(Box.createVerticalStrut(28));
         }
-        paragraph(scope);
+        if(!scope.isBlank()) paragraph(scope);
         if(plan != null) migrationDetails(historyDatabase, plan);
         else if(backupChoice && reviewingSource)
             append(new MigrationContentChoices(historyDatabase, migrationContent, selected -> migrationContent = selected));
@@ -1222,7 +1216,6 @@ public final class SetupWizard extends JDialog
         }
         summary.setMaximumSize(new Dimension(Integer.MAX_VALUE,summary.getPreferredSize().height));
         append(summary); append(Box.createVerticalStrut(24));
-        if(!selectedScope.isBlank()) paragraph(selectedScope);
         var dirs = preferences.getDirectoryPreference();
         details("Recording and other output folders", "Recordings: " + dirs.getDirectoryRecording() +
             "\nManaged recordings: " + dirs.getDirectoryManagedRecording() +

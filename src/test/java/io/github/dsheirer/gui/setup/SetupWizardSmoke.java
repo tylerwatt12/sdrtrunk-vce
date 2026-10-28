@@ -137,8 +137,12 @@ public final class SetupWizardSmoke
                 throw new AssertionError("Upgrade must begin with settings-only selected");
             if(backupChoice(wizard).isSelected() || wizard.getRootPane().getDefaultButton().isEnabled())
                 throw new AssertionError("The manual backup acknowledgment did not gate the first large operation");
-            if(!hasVisibleText(wizard,"The old installation will no longer contain that data"))
+            if(!hasVisibleText(wizard,"Your data will be moved from the old installation into this one."))
                 throw new AssertionError("Upgrade review did not explain that the data folder moves");
+            for(String removed: new String[]{"Include recording folders stored elsewhere.",
+                "Your complete data folder, including recordings", "Both folders must be on the same filesystem."})
+                if(hasVisibleText(wizard,removed))
+                    throw new AssertionError("Upgrade review still shows a removed paragraph: " + removed);
             var history = descendants(content).stream().filter(javax.swing.JCheckBox.class::isInstance)
                 .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
             history.doClick(); history.doClick();

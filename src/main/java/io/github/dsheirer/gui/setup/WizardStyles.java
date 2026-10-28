@@ -86,7 +86,16 @@ final class WizardStyles
 
     static JCheckBox checkBox(String caption, boolean selected)
     {
-        JCheckBox checkBox = new JCheckBox(caption, selected);
+        return styleCheckBox(new JCheckBox(caption, selected));
+    }
+
+    static JCheckBox wrappingCheckBox(String caption, boolean selected)
+    {
+        return styleCheckBox(new SetupCheckBox(caption, selected));
+    }
+
+    private static JCheckBox styleCheckBox(JCheckBox checkBox)
+    {
         checkBox.setOpaque(false);
         checkBox.setAlignmentX(Component.LEFT_ALIGNMENT);
         bodyFont(checkBox, Font.PLAIN);
