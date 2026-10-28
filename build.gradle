@@ -357,6 +357,10 @@ def activityTestClassPatterns = ['io/github/dsheirer/stats/activity/**']
 def statsHttpTestClassPatterns = ['io/github/dsheirer/stats/**/*Http*Test*']
 
 test {
+    if(testGroup != 'all') {
+        timeout = java.time.Duration.ofMinutes(8)
+        testLogging.events('started', 'failed', 'skipped')
+    }
     useJUnitPlatform {
         if(testGroup == 'platform-filesystem') includeTags('platform-filesystem')
     }

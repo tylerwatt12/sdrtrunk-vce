@@ -18,6 +18,7 @@ permissions:
 jobs:
   check:
     name: Application checks (${{ matrix.os }}, ${{ matrix.test_group }})
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
