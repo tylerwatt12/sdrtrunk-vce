@@ -25526,7 +25526,7 @@ async function channelAdminMutation(path, options, statusHost, onSuccess = rende
   const catalog = surface.closest('.channel-admin-catalog');
   const workflow = createActionWorkflow({ surface, feedback: statusHost,
     controls: () => catalog?.querySelectorAll('.channel-selection-bar button, .channel-order-controls button, ' +
-      '.channel-edit-name, .channel-creation-actions button') || [] });
+      '.channel-edit-name, .channel-creation-actions button, [data-channel-catalog-refresh]') || [] });
   return workflow.run(() => requestChannelAdminMutation(requestJson, path, { page: false, ...options }),
     { pending: channelMutationPending(options), success: null, onSuccess: async (result) => {
       workflow.showFeedback('status', '');
@@ -26218,6 +26218,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
       'ui-button ui-button-quiet ui-icon-button ui-icon-button-compact');
     refresh.setAttribute('aria-label', 'Refresh channels');
     refresh.dataset.uiHint = 'Refresh channels';
+    refresh.dataset.channelCatalogRefresh = '';
     toolbar.append(searchWrap, uiSelectFrame(statusFilter, 'channel-status-filter-frame'),
       uiSelectFrame(protocolFilter, 'channel-status-filter-frame'), viewToggle);
     tools.append(exportLink, refresh);
@@ -26474,7 +26475,7 @@ async function renderModernChannelCatalog(renderContext, revealId = null) {
     wrapper.addEventListener('click', (event) => {
       if (statusHost.getAttribute('aria-busy') === 'true' && event.target.closest(
           '.channel-selection-bar button, .channel-order-controls button, .channel-edit-name, ' +
-          '.channel-creation-actions button')) {
+          '.channel-creation-actions button, [data-channel-catalog-refresh]')) {
         event.preventDefault(); event.stopImmediatePropagation();
       }
     }, true);

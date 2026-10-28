@@ -633,6 +633,81 @@ test('bulk disable and stop keep old channels off when enabling a new startup ch
   ]);
 });
 
+test('channel refresh stays unavailable until bulk startup changes are verified', async ({ page }) => {
+  let revision = 40;
+  const channel = channelFixture(1);
+  let mutationStarted = false;
+  let verificationStarted = false;
+  let catalogRequests = 0;
+  let releaseMutation;
+  let releaseVerification;
+  const pendingMutation = new Promise((resolve) => { releaseMutation = resolve; });
+  const pendingVerification = new Promise((resolve) => { releaseVerification = resolve; });
+
+  await page.route('**/api/v1/**', async (route) => {
+    const request = route.request();
+    const pathname = new URL(request.url()).pathname;
+    const respond = (data) => route.fulfill({ json: apiData(data) });
+    if (pathname === '/api/v1/auth/session') {
+      await respond({ configured: true, authenticated: true, username: 'channel-admin',
+        guide_dismissal_scope: guideDismissalScope, tier: 'admin', primary: true,
+        csrf_token: 'test-token', capabilities: { 'admin-channels': true } });
+    } else if (pathname === '/api/v1/admin/channels' && request.method() === 'GET') {
+      catalogRequests += 1;
+      if (revision > 40) {
+        verificationStarted = true;
+        await pendingVerification;
+      }
+      await respond({ revision, channels: [channel] });
+    } else if (pathname === '/api/v1/admin/channels/options') {
+      await respond({ revision, alias_lists: [], tuners: [] });
+    } else if (pathname === '/api/v1/admin/channels/protocols') {
+      await respond({ profiles: [] });
+    } else if (pathname === '/api/v1/admin/channels/actions') {
+      expect(request.postDataJSON()).toEqual({ revision: 40, action: 'DISABLE_AUTO_START',
+        configuration_ids: [channel.configuration_id] });
+      mutationStarted = true;
+      await pendingMutation;
+      channel.auto_start_order = null;
+      revision += 1;
+      await respond({ revision, configuration_ids: [channel.configuration_id], affected: 1 });
+    } else {
+      await route.fulfill({ status: 404, json: { error: { message: 'Not available in this browser contract' } } });
+    }
+  });
+
+  try {
+    await openFixturePage(page, '/app.html?view=channel-setup');
+    const catalog = page.locator('.channel-admin-catalog');
+    await expect(catalog).toBeVisible();
+    const originalCatalog = await catalog.elementHandle();
+    const refresh = page.getByRole('button', { name: 'Refresh channels', exact: true });
+    await expect(refresh).toBeEnabled();
+    await page.getByRole('checkbox', { name: 'Select all matching channels' }).check();
+    await page.getByRole('button', { name: 'Disable auto-start', exact: true }).click();
+    await expect.poll(() => mutationStarted).toBe(true);
+    await expect(refresh).toBeVisible();
+    await expect(refresh).toBeDisabled();
+
+    // The catalog's capture guard also rejects clicks dispatched while the button is locked.
+    await refresh.dispatchEvent('click');
+    expect(await originalCatalog.evaluate((element) => element.isConnected)).toBe(true);
+    expect(catalogRequests).toBe(1);
+
+    releaseMutation();
+    await expect.poll(() => verificationStarted).toBe(true);
+    // A full reload may replace the locked button with a loading view during verification.
+    await expect(page.locator('button[aria-label="Refresh channels"]:enabled')).toHaveCount(0);
+    releaseVerification();
+    await expect(catalog.locator('.channel-setup-summary')).toContainText('0 auto start');
+    await expect(refresh).toBeEnabled();
+    expect(catalogRequests).toBe(2);
+  } finally {
+    releaseMutation();
+    releaseVerification();
+  }
+});
+
 test('startup-order view moves keyed rows without replacing the page or losing position', async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 720 });
   let revision = 40;
