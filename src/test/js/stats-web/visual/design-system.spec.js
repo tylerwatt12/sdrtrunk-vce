@@ -258,10 +258,21 @@ for (const theme of ['light', 'dark']) {
         element.parentElement.dataset.uiHint = Array(80).fill('Additional volume details').join('\n');
       });
       await expect.poll(() => hint.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+      await hint.evaluate((element) => { element.scrollTop = element.clientHeight; });
+      await expect.poll(() => hint.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+      await expect(hint).toBeVisible();
       await volume.press('ArrowRight');
       await expect(volume).toHaveValue('51');
       await page.keyboard.press('Escape');
       await expect(hint).toBeHidden();
+      await expect(volume).not.toHaveAttribute('aria-describedby');
+
+      await action.focus();
+      await page.keyboard.press('Tab');
+      await expect(hint).toBeVisible();
+      await page.evaluate(() => window.scrollBy(0, scrollY > 0 ? -1 : 1));
+      await expect(hint).toBeHidden();
+      await expect(volume).toBeFocused();
       await expect(volume).not.toHaveAttribute('aria-describedby');
     });
   }

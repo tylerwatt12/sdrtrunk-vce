@@ -14,7 +14,7 @@ import { directListenEntryTarget } from './core/direct-listen-entry.js?v=1';
 import * as systemLabels from './core/system-labels.js?v=2';
 import { formatP25RadioIdentifier, formatP25GroupIdentifier, p25IdentityFacts, p25IdentifierText, formatP25QualifiedIdentifierText, p25ServingSystemKey } from './core/radio-labels.js?v=7';
 import * as pageLifecycle from './core/page-lifecycle.js';
-import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=8';
+import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=9';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=1';

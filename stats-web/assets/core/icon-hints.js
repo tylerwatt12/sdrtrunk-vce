@@ -161,8 +161,7 @@ export function installIconHints(root = document) {
   root.addEventListener('pointerdown', (event) => { if (!withinHint(event.target)) hide(); });
   root.addEventListener('scroll', (event) => {
     if (withinHint(event.target)) return;
-    if (active?.contains(root.activeElement) && hint.matches(':popover-open')) position(active);
-    else hide();
+    hide();
   }, true);
   root.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
