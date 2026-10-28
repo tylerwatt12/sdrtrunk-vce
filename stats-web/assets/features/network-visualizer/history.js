@@ -208,6 +208,7 @@ function createP25HistoryState(options = {}) {
     radios: new Map(),
     currentAffiliations: new Map(),
     actionCounts: new Map(),
+    talkgroupCallCounts: new Map(),
     activeKeys: new Set(),
     activeRadioGroups: new Map(),
     liveTablesAvailable: false,
@@ -389,6 +390,12 @@ function applyRoutineActivity(state, system, row, result, initial, action, inges
   const radio = radioIdentity ? ensureRadio(state, system, row, radioIdentity, role) : null;
   if (!radio && !group) return;
   const atMs = finite(row.observed_at_ms);
+  if (!initial && group) {
+    const previous = state.talkgroupCallCounts.get(group.key);
+    state.talkgroupCallCounts.set(group.key, { key: group.key, systemKey: group.systemKey,
+      identityKey: group.identityKey, nativeId: group.nativeId, label: group.label,
+      callCount: (previous?.callCount || 0) + 1 });
+  }
   if (radio && group && (atMs > (radio.activityAtMs || 0) ||
       atMs === radio.activityAtMs && row.id > (radio.activityId || 0))) {
     if (!radio.activityGroupKey && !radio.visualGroupKey) radio.activityGroupKey = group.key;
@@ -548,6 +555,13 @@ function countAction(state, category) {
 
 function p25ActionCount(state, category) { return state.actionCounts.get(category) || 0; }
 
+function p25TopTalkgroups(state, systemKey = '', limit = 20) {
+  const scopedSystem = text(systemKey), size = Math.max(0, Math.floor(finite(limit, 20)));
+  return [...state.talkgroupCallCounts.values()].filter(group => !scopedSystem || group.systemKey === scopedSystem)
+    .sort((left, right) => right.callCount - left.callCount || left.key.localeCompare(right.key))
+    .slice(0, size).map(group => ({ ...group, label: state.groups.get(group.key)?.label || group.label }));
+}
+
 // Live supplies complete current tables. Activity observations count actions; these
 // tables alone determine which entities remain lit for an ongoing call.
 function applyP25LiveTables(state, tables = [], options = {}) {
@@ -653,6 +667,8 @@ function expireP25History(state, cutoffMs, options = {}) {
     group.current = currentGroups.has(key);
     if (!group.current && group.lastAtMs < cutoffMs && !state.activeKeys.has(key)) {
       const system = state.systems.get(group.systemKey);
+      const calls = state.talkgroupCallCounts.get(key);
+      if (calls) calls.label = group.label;
       state.groups.delete(key); system.groupKeys.delete(key); releaseOrdinal(system.groupOrdinals, group.ordinal);
       layouts.add(system); changed = true;
     }
@@ -783,6 +799,7 @@ export {
   applyP25Affiliations,
   applyP25LiveTables,
   p25ActionCount,
+  p25TopTalkgroups,
   expireP25History,
   buildP25Graph,
   nextP25HighlightExpiry,

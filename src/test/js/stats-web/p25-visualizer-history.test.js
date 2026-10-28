@@ -429,6 +429,55 @@ async function main() {
     assert.equal([...groupState.groups.values()][0].label, expected);
     assert.equal([...groupState.groups.values()][0].identityKey, 'v1-g-bee00-348-7001');
   }
+  const sessionCalls = history.createP25HistoryState();
+  const quietChoices = { highlightCategories: new Set() };
+  applyRows(sessionCalls, [row(1, 'CALL', { target_identity_key: 'v1-g-99', target_id: 99 })], { initial: true });
+  assert.deepEqual(history.p25TopTalkgroups(sessionCalls, SYSTEM_A), [], 'baseline observations never add session call totals');
+  applyRows(sessionCalls, [row(2, 'CALL'), row(3, 'GRANT'), row(3, 'GRANT')], quietChoices);
+  applyRows(sessionCalls, [row(4, 'CALL', { radio_system_key: SYSTEM_B, target_alias_name: 'County Dispatch' }),
+    row(5, 'CALL', { target_identity_key: 'v1-g-202', target_id: 202, target_alias_name: 'Tactical' }),
+    row(6, 'GRANT', { target_identity_key: 'v1-g-202', target_id: 202, target_alias_name: 'Tactical' })], quietChoices);
+  assert.deepEqual(history.p25TopTalkgroups(sessionCalls).map(group => [group.key, group.callCount]), [
+    [`${SYSTEM_A}:v1-g-101`, 2], [`${SYSTEM_A}:v1-g-202`, 2], [`${SYSTEM_B}:v1-g-101`, 1]
+  ], 'each accepted call or grant counts once, with stable identity ties and separate systems');
+  assert.equal(history.p25ActionCount(sessionCalls, 'call'), 5, 'talkgroup totals use the same observations as Actions');
+  const sourceLessGrant = history.createP25HistoryState();
+  applyRows(sourceLessGrant, [row(1, 'GRANT', { source_identity_key: null, source_radio_id: null })], quietChoices);
+  assert.equal(history.p25TopTalkgroups(sourceLessGrant, SYSTEM_A)[0].callCount, 1,
+    'a valid talkgroup grant counts even when its transmitting radio is unknown');
+  assert.equal(sourceLessGrant.radios.size, 0);
+  assert.deepEqual(history.p25TopTalkgroups(sessionCalls, SYSTEM_A, 1)[0], {
+    key: `${SYSTEM_A}:v1-g-101`, systemKey: SYSTEM_A, identityKey: 'v1-g-101', nativeId: 101,
+    label: 'Dispatch', callCount: 2
+  });
+  assert.equal(history.p25TopTalkgroups(sessionCalls, SYSTEM_B)[0].label, 'County Dispatch');
+  assert.deepEqual(history.p25TopTalkgroups(sessionCalls, 'unknown'), []);
+  assert.deepEqual(history.p25TopTalkgroups(sessionCalls, SYSTEM_A, 0), []);
+  const totalsBeforeExclusions = history.p25TopTalkgroups(sessionCalls);
+  applyRows(sessionCalls, [row(7, 'JOIN'), row(8, 'EMERGENCY'),
+    row(9, 'CALL', { target_identity_key: 'v1-r-7002', target_kind: 'radio', target_id: 7002 }),
+    row(10, 'GRANT', { target_identity_key: null, target_kind: null }),
+    row(11, 'CALL', { protocol: 'dmr' }), row(12, 'GRANT', { channel_kind: 'conventional' }),
+    row(13, 'GRANT', { radio_system_key: '' })], quietChoices);
+  applyRows(sessionCalls, [row(2, 'CALL'), row(3, 'GRANT')], quietChoices);
+  assert.deepEqual(history.p25TopTalkgroups(sessionCalls), totalsBeforeExclusions,
+    'non-call actions, private calls, unsupported scope and duplicate delivery never alter talkgroup totals');
+  history.applyP25LiveTables(sessionCalls, [{ table_id: 'site', channel_running: true, rows: [{
+    protocol: 'p25', serving_system_key: SYSTEM_A, status: 'CALL', activation_order: 1,
+    source_identity_key: 'v1-r-7001', target_identity_key: 'v1-g-101', source_id: 7001, target_id: 101,
+    target_alias: 'Renamed Dispatch'
+  }] }]);
+  const renamedTop = history.p25TopTalkgroups(sessionCalls, SYSTEM_A);
+  assert.equal(renamedTop[0].label, 'Renamed Dispatch', 'current scene aliases take precedence over earlier observed labels');
+  assert.equal(renamedTop[0].callCount, 2, 'Live snapshots and repaints do not add calls');
+  renamedTop[0].callCount = 999;
+  assert.equal(history.p25TopTalkgroups(sessionCalls, SYSTEM_A)[0].callCount, 2, 'display results cannot mutate the session totals');
+  history.applyP25LiveTables(sessionCalls, []);
+  history.expireP25History(sessionCalls, Date.now() + 1);
+  assert.equal(sessionCalls.groups.size, 0, 'idle graph entities can expire independently of the ranking');
+  assert.equal(history.p25TopTalkgroups(sessionCalls, SYSTEM_A)[0].label, 'Renamed Dispatch');
+  assert.deepEqual(history.p25TopTalkgroups(sessionCalls).map(group => [group.key, group.callCount]),
+    totalsBeforeExclusions.map(group => [group.key, group.callCount]), 'idle cleanup preserves all page session totals');
   console.log('P25 Visualizer history checks passed.');
 }
 

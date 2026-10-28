@@ -65,6 +65,14 @@ const openAliasChannelScope = async (page) => {
 const additionalCases = [
   ['network-visualizer-talkgroups', 'view=network-visualizer', '.network-visualizer-scope-title', systemName,
     async page => {
+      await page.evaluate(({ systemKey, channelId, groupKey, radioKey, systemName }) => {
+        window.fixtureSendLiveFrame(7, 'activity_append', { source_epoch: 'fixture-p25',
+          after_id: 1, next_after_id: 2, watermark_id: 2, rows: [{ id: 2, observed_at_ms: Date.now(),
+            action: 'CALL', protocol: 'P25', channel_kind: 'TRUNKED_SITE', radio_system_key: systemKey,
+            configuration_id: channelId, system_name: systemName, source_identity_key: radioKey,
+            source_radio_id: 30914, source_alias_name: 'Engine 4', target_identity_key: groupKey,
+            target_kind: 'talkgroup', target_id: 1201, target_alias_name: 'Fire Dispatch' }] });
+      }, { systemKey, channelId, groupKey, radioKey, systemName });
       await page.getByRole('button', { name: 'Top Talkgroups', exact: true }).click();
       await expect(page.locator('.network-visualizer-talkgroups')).toContainText('Fire Dispatch');
     }],

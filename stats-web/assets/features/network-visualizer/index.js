@@ -9,8 +9,9 @@ import {
   expireP25History,
   nextP25HighlightExpiry,
   p25ActionCount,
+  p25TopTalkgroups,
   mostActiveP25System
-} from './history.js?v=20';
+} from './history.js?v=21';
 import { createP25ActivityFeed } from './live.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=5';
 import { createP25Renderer } from './renderer.js?v=17';
@@ -73,7 +74,7 @@ function createP25Visualizer(dependencies = {}) {
   eventsToggle.dataset.guideTarget = 'p25-actions-button';
   const talkgroupsToggle = textButton(node, 'Top Talkgroups');
   talkgroupsToggle.setAttribute('aria-pressed', 'false');
-  talkgroupsToggle.hidden = typeof dependencies.loadTalkgroups !== 'function';
+  talkgroupsToggle.hidden = typeof dependencies.renderTalkgroup !== 'function';
   const fullscreen = iconButton('icon-fullscreen', 'Enter fullscreen');
   fullscreen.classList.add('network-visualizer-fullscreen');
   actions.append(cameraControls, eventsToggle, talkgroupsToggle, fullscreen);
@@ -484,6 +485,7 @@ function createP25Visualizer(dependencies = {}) {
 
   function updateScene(result = { focusCandidates: [], affiliationChanges: [] }) {
     renderActions();
+    talkgroupsPanel?.refresh();
     if (closed) return;
     if (presentationPaused()) { sceneDirty = true; return; }
     if (!renderer) {
@@ -651,10 +653,10 @@ function createP25Visualizer(dependencies = {}) {
     if (talkgroupsOpening) return;
     talkgroupsOpening = true;
     try {
-      const { createP25TalkgroupsPanel } = await import('./talkgroups.js?v=1');
+      const { createP25TalkgroupsPanel } = await import('./talkgroups.js?v=2');
       if (closed) return;
       talkgroupsPanel ||= createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
-        loadTalkgroups: dependencies.loadTalkgroups, renderTalkgroup: dependencies.renderTalkgroup,
+        getTalkgroups: key => p25TopTalkgroups(state, key), renderTalkgroup: dependencies.renderTalkgroup,
         formatCount: dependencies.formatCount, host: stage, layout, toggle: talkgroupsToggle, shortViewport });
       if (!events.hidden) {
         hideActions();
@@ -736,8 +738,10 @@ function createP25Visualizer(dependencies = {}) {
     onBoundary: boundary => {
       if (sourceEpoch && sourceEpoch !== boundary.source_epoch) {
         const counts = state.actionCounts;
+        const talkgroupCounts = state.talkgroupCallCounts;
         state = createP25HistoryState({ actionLabel: dependencies.messageTypeLabel });
         state.actionCounts = counts;
+        state.talkgroupCallCounts = talkgroupCounts;
         liveTables.clear();
         pendingAffiliations.clear(); pendingFocusCandidates = [];
         selectedSystemKey = selectedGroupKey = '';

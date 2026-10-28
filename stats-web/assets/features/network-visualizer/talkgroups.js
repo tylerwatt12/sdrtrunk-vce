@@ -1,9 +1,6 @@
-import { createActionWorkflow } from '../../core/action-workflows.js?v=1';
-
-// This panel is imported on first use. It shares the Actions panel's layout,
-// while its bounded reads stay independent of the live scene and its counters.
+// This panel is imported on first use and reads the visualizer's session activity.
 export function createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
-  loadTalkgroups, renderTalkgroup, formatCount, host, layout, toggle, shortViewport }) {
+  getTalkgroups, renderTalkgroup, formatCount, host, layout, toggle, shortViewport }) {
   const panel = node('aside', 'network-visualizer-panel network-visualizer-talkgroups ui-surface');
   panel.hidden = true;
   const header = node('header', 'network-visualizer-panel-header');
@@ -13,95 +10,49 @@ export function createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
   const closeButton = iconButton('icon-close', 'Close top talkgroups');
   header.append(heading, closeButton);
   const list = node('ol', 'network-visualizer-panel-list');
-  list.setAttribute('aria-label', 'Talkgroups by total calls');
+  list.setAttribute('aria-label', 'Talkgroups by calls and grants since this page opened');
   const status = node('div', 'network-visualizer-action');
-  const feedback = node('div');
-  const retry = node('button', 'ui-button ui-button-secondary', 'Retry');
-  retry.type = 'button';
-  retry.hidden = true;
-  status.append(feedback, retry);
   panel.append(header, status, list);
   host.append(panel);
-  const workflow = createActionWorkflow({ surface: list, feedback, controls: [retry] });
   let system = null, opened = false, disposed = false, modal = null, introduction = null;
-  let timer = 0, generation = 0, request = null, reloadPending = false;
+  let signature = '';
 
-  const canLoad = () => opened && !disposed && !document.hidden && Boolean(system?.key);
-  function cancel() {
-    generation++;
-    window.clearTimeout(timer);
-    timer = 0;
-    request?.abort();
-    request = null;
-    reloadPending = false;
-  }
-
-  async function refresh() {
-    if (!canLoad()) return;
-    if (workflow.isBusy()) { reloadPending = true; return; }
-    window.clearTimeout(timer);
-    const version = ++generation, key = system.key;
-    request = new AbortController();
-    retry.hidden = true;
-    try {
-      await workflow.run(async () => {
-        const page = await loadTalkgroups(key, { signal: request.signal });
-        if (version !== generation || !canLoad()) return;
-        const items = (page.rows || []).slice(0, 20).filter(row => Number(row.logical_call_count) > 0)
-          .map(row => {
-            const item = node('li', 'network-visualizer-action');
-            const rowHeading = node('div', 'network-visualizer-action-heading');
-            const count = node('span', 'ui-pill', formatCount(row.logical_call_count));
-            count.setAttribute('aria-label', `${formatCount(row.logical_call_count)} total calls`);
-            rowHeading.append(renderTalkgroup(row), count);
-            item.append(rowHeading);
-            return item;
-          });
-        list.replaceChildren(...items);
-        status.hidden = items.length > 0;
-        workflow.showFeedback('status', items.length ? '' : 'No call totals are available for this system yet.');
-      }, { pending: list.childElementCount ? '' : 'Loading talkgroups…', success: null,
-        onError: () => {
-          if (version !== generation || !canLoad()) return;
-          status.hidden = false;
-          retry.hidden = false;
-          workflow.showFeedback('error', 'Talkgroups could not be loaded. Select Retry to try again.');
-        } });
-    } catch (_) {
-      // The shared workflow presents failures. Cancellation never changes scope.
-    } finally {
-      if (version === generation) {
-        request = null;
-        if (canLoad() && retry.hidden) timer = window.setTimeout(refresh, 10_000);
-      }
-      if (reloadPending) { reloadPending = false; void refresh(); }
-    }
-  }
-
-  function renderScope() {
-    scope.textContent = system ? `${system.name || system.identity || system.label} · Top 20 by total calls` :
-      'Select a system to see its call totals.';
+  function refresh() {
+    if (!opened || disposed || document.hidden) return;
+    const groups = system?.key ? getTalkgroups(system.key).slice(0, 20) : [];
+    const nextSignature = JSON.stringify([system?.key, system?.name, system?.identity, system?.label,
+      groups.map(group => [group.key, group.systemKey, group.identityKey, group.nativeId, group.label, group.callCount])]);
+    if (signature === nextSignature) return;
+    const focusedKey = list.contains(document.activeElement) ?
+      document.activeElement.closest('[data-talkgroup-key]')?.dataset.talkgroupKey : null;
+    signature = nextSignature;
+    scope.textContent = system ?
+      `${system.name || system.identity || system.label} · Calls and grants since this page opened · Top 20` :
+      'Select a system to see its call activity.';
     if (introduction) introduction.textContent = scope.textContent;
-    if (!system) {
-      list.replaceChildren();
-      status.hidden = true;
-    }
+    list.replaceChildren(...groups.map(group => {
+      const item = node('li', 'network-visualizer-action');
+      item.dataset.talkgroupKey = group.key;
+      const rowHeading = node('div', 'network-visualizer-action-heading');
+      const count = node('span', 'ui-pill', formatCount(group.callCount));
+      count.setAttribute('aria-label', `${formatCount(group.callCount)} calls and grants since this page opened`);
+      rowHeading.append(renderTalkgroup(group, system), count);
+      item.append(rowHeading);
+      return item;
+    }));
+    if (focusedKey) [...list.children].find(item => item.dataset.talkgroupKey === focusedKey)
+      ?.querySelector('a')?.focus({ preventScroll: true });
+    status.hidden = !system || groups.length > 0;
+    status.textContent = system && !groups.length ? 'Waiting for call activity in this system.' : '';
   }
 
   function setSystem(value) {
-    const changed = system?.key !== value?.key;
     system = value || null;
-    renderScope();
-    if (!changed) return;
-    cancel();
-    list.replaceChildren();
-    status.hidden = !system;
-    workflow.showFeedback('status', '');
-    if (canLoad()) void refresh();
+    refresh();
   }
 
   async function ensureSheet() {
-    if (!opened || modal || disposed || !shortViewport.matches ||
+    if (!opened || modal || disposed || document.hidden || !shortViewport.matches ||
         document.body.classList.contains('modal-open')) return;
     const body = node('div', 'network-visualizer-events-sheet');
     introduction = node('p', 'modal-introduction', scope.textContent);
@@ -129,33 +80,29 @@ export function createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
     if (modal) { modal.close(); return; }
     if (!opened) return;
     opened = false;
-    cancel();
     panel.hidden = true;
     toggle.setAttribute('aria-pressed', 'false');
     if (!disposed) toggle.focus({ preventScroll: true });
   }
 
   function show(value) {
+    if (disposed) return;
     opened = true;
     panel.hidden = false;
     toggle.setAttribute('aria-pressed', 'true');
     toggle.focus({ preventScroll: true });
     setSystem(value);
-    renderScope();
-    status.hidden = !system || list.childElementCount > 0;
-    if (canLoad() && !request) void refresh();
     void ensureSheet();
   }
 
   function onVisibility() {
-    cancel();
-    if (canLoad()) void refresh();
+    refresh();
+    if (!document.hidden) void ensureSheet();
   }
   closeButton.addEventListener('click', hide);
-  retry.addEventListener('click', refresh);
   shortViewport.addEventListener('change', ensureSheet);
   document.addEventListener('visibilitychange', onVisibility);
-  return { show, hide, setSystem, isOpen: () => opened,
+  return { show, hide, setSystem, refresh, isOpen: () => opened,
     close() {
       disposed = true;
       hide();
