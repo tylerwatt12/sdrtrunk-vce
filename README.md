@@ -151,7 +151,7 @@ You need a supported SDR and any drivers it requires, plus an antenna suitable f
 
 1. **Download and extract VCE** into a new writable folder.
 2. **Run the Start VCE launcher:** `Start VCE.bat` on Windows, `Start VCE.command` on macOS, or `Start VCE.sh` on Linux.
-3. **Follow setup.** Start fresh, import a mainline sdrtrunk XML playlist, or copy a previous VCE installation.
+3. **Follow setup.** Start fresh, import a mainline sdrtrunk XML playlist, or choose **Upgrade existing VCE**.
    Set up your administrator account, web access, and JMBE digital audio library when prompted.
 4. **Review channels and tuners.** Check your imported settings or add channels in the website.
 5. **Start receiving and listening.** Open the website from the receiver window, choose a Scan List, and press Play.
@@ -188,13 +188,16 @@ A few differences are useful to know:
 
 ## Updating and backing up
 
-Back up your complete `data` folder before an upgrade. Extract the new version into a new folder, run **Start VCE**,
-and choose **Copy a previous VCE installation / data folder** in setup. Review the import plan and output folders
-before receiving resumes.
+Stop the old VCE instance and make a separate backup of its application and complete `data` folder before upgrading.
+Back up any recording or output folders stored elsewhere too. Extract the new version onto the same disk volume,
+run **Start VCE**, and choose **Upgrade existing VCE**. Select the previous installation and confirm your manual backup.
+The backup confirmation starts unchecked and must be selected to continue. **Keep activity and statistics** also starts
+unchecked; select it to carry forward usable history.
 
-The built-in import upgrades a copy of supported settings and leaves the previous installation unchanged.
-Existing recordings and logs are not copied. Check their saved folder locations and keep the old installation until
-you have checked what you need.
+The upgrade moves the complete portable data folder into the new installation, including settings, recordings,
+the Managed Recordings catalog, logs, keys, and voice libraries. Its saved paths inside that folder are updated.
+After the move, the old application folder no longer contains that data. Keep your separate backup until you have
+reviewed the completion report, file locations, reception, and streaming in the new version.
 
 Update checks follow your installed release channel and let you choose when to download and install.
 **Do not use a newer version's data with an older build**, including when switching from Nightly to Alpha.

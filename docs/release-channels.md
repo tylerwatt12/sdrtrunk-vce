@@ -46,14 +46,20 @@ Update checks follow the channel of your installed package:
 The updater can open the matching download page. It does not download or install software, change your database,
 restart VCE, or switch channels for you.
 
-Before updating, back up the complete `data` folder. Extract the new package into a new folder, start VCE, and choose
-**Bring my settings**, then select the previous installation folder. Review the import plan, completion report, and output
-locations before receiving resumes. The built-in import upgrades supported settings without a separate program.
-Existing recordings and logs are not copied; check their configured locations before removing the old installation.
+For the current Nightly, stop the old VCE instance and make a separate backup of its application and complete `data`
+folder, plus any recording or output folders stored elsewhere. Extract the new package onto the same disk volume, start VCE, and choose
+**Upgrade existing VCE**, then select the previous installation folder. Confirm your manual backup and review the upgrade
+plan. The upgrade moves the complete portable data folder, including recordings, their catalog, logs, keys, and voice
+libraries, into the new installation and updates its contained paths. Keep the separate backup until you have checked
+the completion report, file locations, reception, and streaming. The old application folder no longer contains the
+transferred data.
+
 Standalone SQLite files are not import sources. XML playlists can initialize a new profile; they are not merged into
 an existing one. For older databases, the graphical history checkbox starts unchecked; select it to carry forward
-usable Activity and statistics. The graphical update-backup checkbox also starts unchecked, while headless upgrade
-commands keep their backup by default.
+usable Activity and statistics. The manual-backup confirmation also starts unchecked and must be selected for a graphical
+VCE upgrade. Headless upgrade commands retain their separately documented copy and backup behavior.
+
+For a numbered Alpha, follow its version-matched release notes for setup and upgrade instructions.
 
 See [portable setup and storage](portable-startup-and-storage.md) for the full workflow.
 
