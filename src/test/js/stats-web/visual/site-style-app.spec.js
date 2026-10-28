@@ -63,6 +63,11 @@ const openAliasChannelScope = async (page) => {
   await expect(page.locator('.alias-coverage-channel-grid')).toBeVisible();
 };
 const additionalCases = [
+  ['network-visualizer-overview', 'view=network-visualizer', '.network-visualizer-scope-title', systemName,
+    async page => {
+      await page.getByRole('button', { name: 'All systems', exact: false }).click();
+      await expect(page.locator('.network-visualizer-label[data-type="system"]')).toBeVisible();
+    }],
   ['network-visualizer-talkgroups', 'view=network-visualizer', '.network-visualizer-scope-title', systemName,
     async page => {
       await page.evaluate(({ systemKey, channelId, groupKey, radioKey, systemName }) => {

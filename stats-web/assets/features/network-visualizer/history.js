@@ -706,7 +706,7 @@ function buildP25Graph(state, systemKey = '', atMs = Date.now(), focusGroupKey =
   if (!systemKey) {
     const scores = currentActivityScores(state);
     const nodes = [...state.systems.values()].map((system) => ({ id: system.key, type: 'system',
-      label: system.label, x: system.x, y: system.y, z: system.z, radius: 58, systemKey: system.key,
+      label: system.label, x: system.x, y: system.y, z: system.z, radius: 180, systemKey: system.key,
       activityScore: scores.get(system.key) || 0 }));
     return { nodes, links: [], labels: nodes.map((node) => node.id), truncated: false };
   }

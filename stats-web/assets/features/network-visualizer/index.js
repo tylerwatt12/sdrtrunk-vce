@@ -11,10 +11,10 @@ import {
   p25ActionCount,
   p25TopTalkgroups,
   mostActiveP25System
-} from './history.js?v=21';
+} from './history.js?v=22';
 import { createP25ActivityFeed } from './live.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=5';
-import { createP25Renderer } from './renderer.js?v=17';
+import { createP25Renderer } from './renderer.js?v=18';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=6';
 import {
   P25_EVENT_SETTINGS,

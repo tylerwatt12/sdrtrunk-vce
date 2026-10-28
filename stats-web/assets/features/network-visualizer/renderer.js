@@ -4,6 +4,7 @@ import { resolveP25NodeAttention, resolveP25LabelTier, isP25LinkDimmed } from '.
 
 const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=4';
 const SYSTEM_RADIUS = 300;
+const OVERVIEW_CELL_SIZE = 1000;
 const LABEL_LIMIT = 90;
 const AUTO_ROTATE_SPEED = 0.34;
 const FOCUS_FADE_MS = 220;
@@ -128,6 +129,7 @@ async function createP25Renderer(options = {}) {
   let mode = options.mode === 'manual' ? 'manual' : 'auto';
   let cameraPhase = 'roam';
   let scope = { level: 'overview', systemKey: '' };
+  let overviewLayoutKey = '';
   let interactionUntil = 0;
   let programmatic = false;
   let focusKeys = new Set();
@@ -340,6 +342,7 @@ async function createP25Renderer(options = {}) {
     graphDirty = true;
     if (!graph || disposed || renderingPaused()) return;
     graphDirty = false;
+    const overview = layoutOverview();
     const nextNodes = [...nodes.values()];
     const presented = canonicalLinks.filter(link => link.kind !== 'history' ||
       affiliationMoves.get(link.source)?.change.fromGroupKey !== link.target);
@@ -358,6 +361,10 @@ async function createP25Renderer(options = {}) {
     updateSystemFog();
     applyFocusStyles();
     updateFocusOpacity();
+    if (overview && overview.key !== overviewLayoutKey) {
+      overviewLayoutKey = overview.key;
+      if (mode === 'auto') frameOverview(true);
+    }
   }
 
   function clearAffiliationMoves() {
@@ -441,6 +448,7 @@ async function createP25Renderer(options = {}) {
     const height = Math.max(1, Math.floor(host.clientHeight));
     graph.width(width).height(height);
     materials.forEach((value, key) => key.startsWith('line:') && value.resolution?.set(width, height));
+    if (scope.level === 'overview') frameOverview(true);
   }
 
   function systemNode() {
@@ -619,20 +627,34 @@ async function createP25Renderer(options = {}) {
     return true;
   }
 
+  function layoutOverview() {
+    if (scope.level !== 'overview' || !nodes.size || [...nodes.values()].some(node => node.type !== 'system')) return null;
+    const systems = [...nodes.values()];
+    const aspect = Math.max(0.1, host.clientWidth / Math.max(1, host.clientHeight));
+    const columns = Math.min(systems.length, Math.max(1, Math.round(Math.sqrt(systems.length * aspect))));
+    const rows = Math.ceil(systems.length / columns);
+    systems.forEach((node, index) => {
+      const row = Math.floor(index / columns), count = Math.min(columns, systems.length - row * columns);
+      const x = (index % columns - (count - 1) / 2) * OVERVIEW_CELL_SIZE;
+      const y = ((rows - 1) / 2 - row) * OVERVIEW_CELL_SIZE;
+      Object.assign(node, { x, y, z: 0, fx: x, fy: y, fz: 0 });
+    });
+    return { width: columns * OVERVIEW_CELL_SIZE, height: rows * OVERVIEW_CELL_SIZE,
+      key: `${systems.length}:${columns}:${host.clientWidth}:${host.clientHeight}` };
+  }
+
   function frameOverview(immediate = false) {
     if (!nodes.size || !graph || !controls) return false;
-    const systems = [...nodes.values()].filter((node) => node.type === 'system');
-    if (!systems.length) return false;
-    const center = systems.reduce((sum, node) => ({ x: sum.x + node.x, y: sum.y + node.y, z: sum.z + node.z }),
-      { x: 0, y: 0, z: 0 });
-    center.x /= systems.length;
-    center.y /= systems.length;
-    center.z /= systems.length;
-    const radius = Math.max(80, ...systems.map((node) => Math.hypot(node.x - center.x, node.y - center.y,
-      node.z - center.z) + finite(node.radius, 58)));
-    const distance = Math.max(260, radius * 1.75);
-    return tweenCamera({ x: center.x + distance * 0.72, y: center.y + distance * 0.42,
-      z: center.z + distance }, center, immediate ? 0 : 900);
+    const overview = layoutOverview();
+    if (!overview) return false;
+    overviewLayoutKey = overview.key;
+    const camera = graph.camera();
+    const vertical = finite(camera.fov, 50) * Math.PI / 360;
+    const horizontal = Math.atan(Math.tan(vertical) * Math.max(0.1, finite(camera.aspect, 1)));
+    // Fit complete cells so the captions below the spheres have their own space.
+    const distance = Math.max(overview.width / 2 / Math.tan(horizontal),
+      overview.height / 2 / Math.tan(vertical)) * 1.08 + 180;
+    return tweenCamera({ x: 0, y: 0, z: distance }, { x: 0, y: 0, z: 0 }, immediate ? 0 : 900);
   }
 
   function enterSystem(systemKey, optionsValue = {}) {
@@ -769,8 +791,14 @@ async function createP25Renderer(options = {}) {
         labelElements.set(node.id, action);
         label = action;
       } else if (!label) {
-        label = element(documentValue, 'span', 'network-visualizer-label network-visualizer-label-text');
-        label.setAttribute('aria-hidden', 'true');
+        label = element(documentValue, node.type === 'system' ? 'button' : 'span',
+          'network-visualizer-label network-visualizer-label-text');
+        if (node.type === 'system') {
+          label.type = 'button';
+          label.addEventListener('click', () => {
+            if (scope.level === 'overview' && !renderingPaused()) options.onNodeClick?.(nodes.get(node.id) || node);
+          });
+        } else label.setAttribute('aria-hidden', 'true');
         labels.append(label);
         labelElements.set(node.id, label);
       }
@@ -788,6 +816,7 @@ async function createP25Renderer(options = {}) {
         label.dataset.uiHint = description;
       }
     }
+    if (node.type === 'system' && label.dataset.uiHint !== text) label.dataset.uiHint = text;
     if (label.dataset.type !== node.type) label.dataset.type = node.type;
     const signal = node.signalAction || (node.active ? 'call' : '');
     if (label.dataset.signal !== signal) label.dataset.signal = signal;
@@ -850,7 +879,10 @@ async function createP25Renderer(options = {}) {
     camera.updateMatrixWorld();
     const width = host.clientWidth, height = host.clientHeight;
     const hostBounds = host.getBoundingClientRect();
-    const gap = parseFloat(getComputedStyle(host).getPropertyValue('--space-2')) || 8;
+    const hostStyle = getComputedStyle(host);
+    const gap = parseFloat(hostStyle.getPropertyValue('--space-2')) || 8;
+    const maximumLabelWidth = parseFloat(hostStyle.getPropertyValue('--network-label-max-width')) || 340;
+    const projectionScale = height / (2 * Math.tan(finite(camera.fov, 50) * Math.PI / 360));
     const overlays = [...(host.parentElement?.querySelectorAll(
       '.network-visualizer-back, .network-visualizer-scope-title, .network-visualizer-auto-focus, ' +
       '.network-visualizer-manual-guide, .network-visualizer-legend') || [])]
@@ -875,13 +907,22 @@ async function createP25Renderer(options = {}) {
         continue;
       }
       const label = labelFor(node);
+      label.hidden = false;
       if (label.disabled && interactingLabels.has(label)) labelGestureReleases.get(label)?.();
       visible.add(node.id);
-      const screenRadius = finite(node.radius, 8) * height /
-        (2 * viewDepth * Math.tan(finite(camera.fov, 50) * Math.PI / 360));
+      const screenRadius = finite(node.radius, 8) * projectionScale / viewDepth;
+      if (node.type === 'system') {
+        const cellWidth = OVERVIEW_CELL_SIZE * projectionScale / viewDepth;
+        label.style.maxWidth = `${Math.max(1, Math.min(width - gap * 2, cellWidth - gap * 2, maximumLabelWidth))}px`;
+      }
       let labelY = node.type === 'talkgroup' ? screen.y + screenRadius * 1.75 + 14 :
-        node.type === 'radio' ? screen.y - screenRadius * 1.5 - 14 : screen.y;
+        node.type === 'radio' ? screen.y - screenRadius * 1.5 - 14 :
+          screen.y + screenRadius * 1.25 + label.offsetHeight / 2 + gap;
       let labelX = screen.x;
+      if (node.type === 'system') {
+        const halfWidth = label.offsetWidth / 2;
+        labelX = clamp(labelX, halfWidth + gap, Math.max(halfWidth + gap, width - halfWidth - gap));
+      }
       if (label.hasAttribute('data-direct-listen-target-key')) {
         const halfWidth = label.offsetWidth / 2, halfHeight = label.offsetHeight / 2;
         labelX = clamp(labelX, halfWidth + gap, width - halfWidth - gap);
@@ -895,7 +936,6 @@ async function createP25Renderer(options = {}) {
       }
       const position = `calc(${Math.round(labelX)}px - 50%) calc(${Math.round(labelY)}px - 50%)`;
       if (!interactingLabels.has(label) && label.style.translate !== position) label.style.translate = position;
-      label.hidden = false;
       const attention = nodeAttention(node);
       const namedEntity = node.type === 'talkgroup' || node.type === 'radio';
       entries.push({ node, label, viewDepth, attention,

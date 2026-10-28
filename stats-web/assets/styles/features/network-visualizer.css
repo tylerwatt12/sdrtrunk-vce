@@ -155,7 +155,8 @@ body[data-view="network-visualizer"] .content {
   will-change: transform, opacity, filter;
 }
 
-.network-visualizer-label-action {
+.network-visualizer-label-action,
+.network-visualizer-label-text[data-type="system"] {
   max-width: min(var(--network-label-max-width), calc(100% - 2 * var(--space-2)));
   pointer-events: auto;
 }
@@ -180,8 +181,13 @@ body[data-view="network-visualizer"] .content {
 }
 
 .network-visualizer-label-text[data-type="system"] {
+  display: -webkit-box;
   font-size: var(--network-label-system-size);
   border-color: color-mix(in srgb, var(--network-system) 72%, transparent);
+  cursor: pointer;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .network-visualizer-label-text[data-type="talkgroup"] {
@@ -488,6 +494,10 @@ body[data-view="network-visualizer"] .content {
 }
 
 @media (max-width: 860px) {
+  .network-visualizer-label-text[data-type="system"] {
+    font-size: var(--network-label-group-size);
+  }
+
   body[data-view="network-visualizer"] .content {
     padding: var(--space-2);
   }

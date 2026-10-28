@@ -109,15 +109,17 @@ async function openSpecializedPaint(page, theme) {
               <a class="ui-link-text" href="#system" data-specialized-text="talkgroup context link">Regional P25</a> · 00001-001
             </div>
           </div>
-          <span class="network-visualizer-label" data-specialized-backing data-specialized-text="normal">System</span>
-          <span class="network-visualizer-label" data-signal="emergency" data-specialized-backing data-specialized-text="emergency">Emergency</span>
-          <span class="network-visualizer-label" data-signal="denial" data-specialized-backing data-specialized-text="denial">Denied</span>
-          <span class="network-visualizer-label" data-signal="movement" data-specialized-backing data-specialized-text="movement">Moved</span>
-          <span class="network-visualizer-label" data-signal="call" data-specialized-backing data-specialized-text="call">Call</span>
-          <div class="network-visualizer-panel network-visualizer-events" data-specialized-backing>
-            <div class="network-visualizer-event" data-category="check"><strong class="network-visualizer-event-kind" data-specialized-text="check">Check</strong></div>
-            <div class="network-visualizer-event" data-category="page"><strong class="network-visualizer-event-kind" data-specialized-text="page">Page</strong></div>
-          </div>
+          <button type="button" class="network-visualizer-label network-visualizer-label-text" data-type="system" data-specialized-backing data-specialized-text="normal">System</button>
+          <span class="network-visualizer-label network-visualizer-label-text" data-type="radio" data-signal="emergency" data-specialized-backing data-specialized-text="emergency">Emergency</span>
+          <span class="network-visualizer-label network-visualizer-label-text" data-type="radio" data-signal="denial" data-specialized-backing data-specialized-text="denial">Denied</span>
+          <span class="network-visualizer-label network-visualizer-label-text" data-type="radio" data-signal="movement" data-specialized-backing data-specialized-text="movement">Moved</span>
+          <span class="network-visualizer-label network-visualizer-label-text" data-type="radio" data-signal="call" data-specialized-backing data-specialized-text="call">Call</span>
+          <aside class="network-visualizer-panel network-visualizer-events ui-surface" data-specialized-backing>
+            <ul class="network-visualizer-event-list">
+              <li class="network-visualizer-action" data-category="check"><div class="network-visualizer-action-heading"><strong data-specialized-text="check">Radio check</strong></div></li>
+              <li class="network-visualizer-action" data-category="page"><div class="network-visualizer-action-heading"><strong data-specialized-text="page">Page</strong></div></li>
+            </ul>
+          </aside>
           <div class="network-visualizer-legend" data-specialized-backing><span data-specialized-text="legend">Activity</span></div>
           <div class="network-visualizer-manual-guide" data-specialized-backing data-specialized-text="manual guide">Move the camera</div>
           <div class="network-visualizer-auto-focus" data-specialized-backing><span class="network-visualizer-auto-focus-kicker" data-specialized-text="focus">Activity</span></div>
