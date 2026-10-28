@@ -63,6 +63,7 @@ async function installLiveSpectrumStream(page) {
   await page.addInitScript(({ centerFrequencyHz, sampleRateHz }) => {
     const nativeFetch = window.fetch.bind(window);
     const encoder = new TextEncoder();
+    let sequence = 0;
     window.spectrumStreamLifecycle = { opened: 0, cancelled: 0 };
 
     const multiplexFrame = (topic, kind, payload) => {
@@ -89,7 +90,7 @@ async function installLiveSpectrumStream(page) {
       header.setUint16(6, 64, true);
       header.setUint32(8, payload.byteLength, true);
       header.setBigInt64(16, BigInt(window.spectrumStreamLifecycle.opened), true);
-      header.setBigInt64(24, 1n, true);
+      header.setBigInt64(24, BigInt(++sequence), true);
       header.setBigInt64(32, BigInt(Date.now()), true);
       header.setBigInt64(40, BigInt(Date.now()), true);
       header.setBigInt64(48, BigInt(centerFrequencyHz), true);
@@ -107,14 +108,16 @@ async function installLiveSpectrumStream(page) {
         const ready = multiplexFrame(0, 1, encoder.encode(JSON.stringify({
           event: 'ready', data: { client_id: url.searchParams.get('client_id') }
         })));
+        let sampleTimer;
         return Promise.resolve(new Response(new ReadableStream({
           start(controller) {
             controller.enqueue(ready);
-            window.setTimeout(() => {
+            // Inventory refresh can clear the plot after its first STATE; real receivers keep sending.
+            sampleTimer = window.setInterval(() => {
               if (controller.desiredSize !== null) controller.enqueue(multiplexFrame(5, 2, tunerStateFrame()));
             }, 50);
           },
-          cancel() { window.spectrumStreamLifecycle.cancelled += 1; }
+          cancel() { window.clearInterval(sampleTimer); window.spectrumStreamLifecycle.cancelled += 1; }
         }), { status: 200, headers: { 'Content-Type': 'application/vnd.sdrtrunk.live+binary' } }));
       }
       return nativeFetch(input, options);
@@ -271,6 +274,7 @@ async function openDiscoveryFromSpectrum(page) {
   const panel = page.locator('.spectrum-browse-panel');
   const rail = page.locator('.spectrum-browse-control-rail');
   await expect(page.locator('.spectrum-browse-state .badge')).toHaveText('Live');
+  await expect(panel.locator('.channel-diagnostic-overlay').first()).toBeHidden();
   await panel.getByRole('img', { name: 'Tuner frequency spectrum', exact: true })
     .click({ position: { x: 240, y: 80 } });
   const add = rail.getByRole('button', { name: 'Add channel or system', exact: true });
