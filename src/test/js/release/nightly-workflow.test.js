@@ -360,11 +360,11 @@ function verifyParallelPreparationWiring() {
   const visual = job('visual', reusable);
   const shards = visual.match(/shard: \[([^\]]+)\]/);
   assert(shards, 'Browser shards must be explicit.');
-  assert.deepEqual(shards[1].split(',').map(value => Number(value.trim())), [1, 2, 3],
+  assert.deepEqual(shards[1].split(',').map(value => Number(value.trim())), [1, 2, 3, 4],
     'Every browser shard must run exactly once.');
   assert.match(visual, /runs-on: macos-15/);
   assert.match(visual, /fail-fast: false/);
-  assert.match(visual, /npm run test:web-visual -- --workers=2 --shard=\$\{\{ matrix\.shard \}\}\/3/);
+  assert.match(visual, /npm run test:web-visual -- --workers=2 --shard=\$\{\{ matrix\.shard \}\}\/4/);
   assert.doesNotMatch(visual, /--grep|--test-ignore|--update-snapshots|continue-on-error/,
     'Sharding must retain the complete browser suite and fail on errors.');
   assert.match(visual, /name: web-design-system-visual-differences-\$\{\{ matrix\.shard \}\}/);

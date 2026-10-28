@@ -134,12 +134,12 @@ jobs:
         run: python -m unittest discover -s tools/build -p 'test_*.py'
 
   visual:
-    name: Web design-system visual contract (${{ matrix.shard }}/3)
+    name: Web design-system visual contract (${{ matrix.shard }}/4)
     runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v7
       - name: Set up Node.js
@@ -152,7 +152,7 @@ jobs:
       - name: Install the pinned Chromium browser
         run: npx playwright install chromium
       - name: Compare design-system screenshots
-        run: npm run test:web-visual -- --workers=2 --shard=${{ matrix.shard }}/3
+        run: npm run test:web-visual -- --workers=2 --shard=${{ matrix.shard }}/4
       - name: Save browser timings and results
         if: always()
         uses: actions/upload-artifact@v7
