@@ -4,7 +4,6 @@ import { resolveP25NodeAttention, resolveP25LabelTier, isP25LinkDimmed } from '.
 
 const VENDOR_ASSET = '../../vendor/network-visualizer-vendor.js?v=4';
 const SYSTEM_RADIUS = 300;
-const OVERVIEW_CELL_SIZE = 1000;
 const LABEL_LIMIT = 90;
 const AUTO_ROTATE_SPEED = 0.34;
 const FOCUS_FADE_MS = 220;
@@ -129,7 +128,6 @@ async function createP25Renderer(options = {}) {
   let mode = options.mode === 'manual' ? 'manual' : 'auto';
   let cameraPhase = 'roam';
   let scope = { level: 'overview', systemKey: '' };
-  let overviewLayoutKey = '';
   let interactionUntil = 0;
   let programmatic = false;
   let focusKeys = new Set();
@@ -342,7 +340,6 @@ async function createP25Renderer(options = {}) {
     graphDirty = true;
     if (!graph || disposed || renderingPaused()) return;
     graphDirty = false;
-    const overview = layoutOverview();
     const nextNodes = [...nodes.values()];
     const presented = canonicalLinks.filter(link => link.kind !== 'history' ||
       affiliationMoves.get(link.source)?.change.fromGroupKey !== link.target);
@@ -361,10 +358,6 @@ async function createP25Renderer(options = {}) {
     updateSystemFog();
     applyFocusStyles();
     updateFocusOpacity();
-    if (overview && overview.key !== overviewLayoutKey) {
-      overviewLayoutKey = overview.key;
-      if (mode === 'auto') frameOverview(true);
-    }
   }
 
   function clearAffiliationMoves() {
@@ -393,6 +386,8 @@ async function createP25Renderer(options = {}) {
     const now = performance.now();
     labelRevision++;
     const incomingNodes = new Map((value.nodes || []).map((node) => [String(node.id), node]));
+    const overviewChanged = scope.level === 'overview' && [...incomingNodes.values()].every(node => node.type === 'system') &&
+      (incomingNodes.size !== nodes.size || [...incomingNodes.keys()].some(id => !nodes.has(id)));
     const incomingChanges = new Map((optionsValue.affiliationChanges || []).map((change) => [change.radioKey, change]));
     let cancelled = false;
     for (const [key, trip] of affiliationMoves) {
@@ -440,6 +435,7 @@ async function createP25Renderer(options = {}) {
       .filter((link) => nodes.has(link.source) && nodes.has(link.target));
     if (focusKeys.size && ![...focusKeys].some((key) => nodes.has(key))) resetAttention();
     publishGraph();
+    if (overviewChanged && mode === 'auto') frameOverview(true);
   }
 
   function resize() {
@@ -627,34 +623,26 @@ async function createP25Renderer(options = {}) {
     return true;
   }
 
-  function layoutOverview() {
-    if (scope.level !== 'overview' || !nodes.size || [...nodes.values()].some(node => node.type !== 'system')) return null;
-    const systems = [...nodes.values()];
-    const aspect = Math.max(0.1, host.clientWidth / Math.max(1, host.clientHeight));
-    const columns = Math.min(systems.length, Math.max(1, Math.round(Math.sqrt(systems.length * aspect))));
-    const rows = Math.ceil(systems.length / columns);
-    systems.forEach((node, index) => {
-      const row = Math.floor(index / columns), count = Math.min(columns, systems.length - row * columns);
-      const x = (index % columns - (count - 1) / 2) * OVERVIEW_CELL_SIZE;
-      const y = ((rows - 1) / 2 - row) * OVERVIEW_CELL_SIZE;
-      Object.assign(node, { x, y, z: 0, fx: x, fy: y, fz: 0 });
-    });
-    return { width: columns * OVERVIEW_CELL_SIZE, height: rows * OVERVIEW_CELL_SIZE,
-      key: `${systems.length}:${columns}:${host.clientWidth}:${host.clientHeight}` };
-  }
-
   function frameOverview(immediate = false) {
     if (!nodes.size || !graph || !controls) return false;
-    const overview = layoutOverview();
-    if (!overview) return false;
-    overviewLayoutKey = overview.key;
+    const systems = [...nodes.values()].filter(node => node.type === 'system');
+    if (!systems.length) return false;
+    const center = systems.reduce((sum, node) => ({ x: sum.x + node.x, y: sum.y + node.y, z: sum.z + node.z }),
+      { x: 0, y: 0, z: 0 });
+    center.x /= systems.length;
+    center.y /= systems.length;
+    center.z /= systems.length;
+    // Keep the original floating positions and leave room for captions below the spheres.
+    const radius = Math.max(80, ...systems.map(node => Math.hypot(node.x - center.x, node.y - center.y,
+      node.z - center.z) + finite(node.radius, 180) * 1.5));
     const camera = graph.camera();
     const vertical = finite(camera.fov, 50) * Math.PI / 360;
-    const horizontal = Math.atan(Math.tan(vertical) * Math.max(0.1, finite(camera.aspect, 1)));
-    // Fit complete cells so the captions below the spheres have their own space.
-    const distance = Math.max(overview.width / 2 / Math.tan(horizontal),
-      overview.height / 2 / Math.tan(vertical)) * 1.08 + 180;
-    return tweenCamera({ x: 0, y: 0, z: distance }, { x: 0, y: 0, z: 0 }, immediate ? 0 : 900);
+    const aspect = Math.max(0.1, host.clientWidth / Math.max(1, host.clientHeight));
+    const horizontal = Math.atan(Math.tan(vertical) * aspect);
+    const distance = Math.max(260, radius / Math.sin(Math.min(vertical, horizontal)) * 1.18);
+    const direction = new library.Vector3(0.72, 0.42, 1).normalize().multiplyScalar(distance);
+    return tweenCamera({ x: center.x + direction.x, y: center.y + direction.y,
+      z: center.z + direction.z }, center, immediate ? 0 : 900);
   }
 
   function enterSystem(systemKey, optionsValue = {}) {
@@ -881,7 +869,6 @@ async function createP25Renderer(options = {}) {
     const hostBounds = host.getBoundingClientRect();
     const hostStyle = getComputedStyle(host);
     const gap = parseFloat(hostStyle.getPropertyValue('--space-2')) || 8;
-    const maximumLabelWidth = parseFloat(hostStyle.getPropertyValue('--network-label-max-width')) || 340;
     const projectionScale = height / (2 * Math.tan(finite(camera.fov, 50) * Math.PI / 360));
     const overlays = [...(host.parentElement?.querySelectorAll(
       '.network-visualizer-back, .network-visualizer-scope-title, .network-visualizer-auto-focus, ' +
@@ -911,10 +898,6 @@ async function createP25Renderer(options = {}) {
       if (label.disabled && interactingLabels.has(label)) labelGestureReleases.get(label)?.();
       visible.add(node.id);
       const screenRadius = finite(node.radius, 8) * projectionScale / viewDepth;
-      if (node.type === 'system') {
-        const cellWidth = OVERVIEW_CELL_SIZE * projectionScale / viewDepth;
-        label.style.maxWidth = `${Math.max(1, Math.min(width - gap * 2, cellWidth - gap * 2, maximumLabelWidth))}px`;
-      }
       let labelY = node.type === 'talkgroup' ? screen.y + screenRadius * 1.75 + 14 :
         node.type === 'radio' ? screen.y - screenRadius * 1.5 - 14 :
           screen.y + screenRadius * 1.25 + label.offsetHeight / 2 + gap;

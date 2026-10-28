@@ -14,7 +14,7 @@ import {
 } from './history.js?v=22';
 import { createP25ActivityFeed } from './live.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=5';
-import { createP25Renderer } from './renderer.js?v=18';
+import { createP25Renderer } from './renderer.js?v=19';
 import { createFormWorkflow } from '../../core/form-workflows.js?v=6';
 import {
   P25_EVENT_SETTINGS,

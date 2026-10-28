@@ -33,6 +33,7 @@ async function openOverview(page, theme, width) {
       target_identity_key: `v1-g-overview-${index + 1}`, target_kind: 'talkgroup',
       target_id: 1001 + index, target_alias_name: 'Dispatch'
     })), { initial: true, atMs: Date.now() });
+    const originalAnchors = buildP25Graph(state).nodes.map(({ id, x, y, z }) => ({ id, x, y, z }));
     let graph, renderer;
     const library = { ...vendor, ForceGraph3D: options => {
       const factory = vendor.ForceGraph3D(options);
@@ -50,6 +51,7 @@ async function openOverview(page, theme, width) {
       renderer.setData(buildP25Graph(state), { animate: false });
       renderer.showOverview({ immediate: true });
     };
+    const repaint = () => renderer.setData(buildP25Graph(state), { animate: false });
     const singleOverview = () => {
       const node = buildP25Graph(state).nodes[0];
       renderer.setData({ nodes: [node], links: [] }, { animate: false });
@@ -90,19 +92,30 @@ async function openOverview(page, theme, width) {
           bottom: Math.max(...points.map(value => value.y)) });
         const labelBounds = label.getBoundingClientRect(), style = getComputedStyle(label);
         const screen = project(center.clone());
+        const ndc = center.clone().project(camera), raycaster = new vendor.Raycaster();
+        raycaster.setFromCamera({ x: ndc.x, y: ndc.y }, camera);
+        const hit = raycaster.intersectObjects([...meshObjects.values()], true)[0];
+        let picked = hit?.object;
+        while (picked && !picked.userData?.p25Node) picked = picked.parent;
+        const labelHit = document.elementFromPoint((labelBounds.left + labelBounds.right) / 2,
+          (labelBounds.top + labelBounds.bottom) / 2);
         return { id: node.id, ready: true, radius: node.radius, scale: { x: scale.x, y: scale.y, z: scale.z },
           sphere: box(current), previousSphere: box(previous), screen,
-          clearClick: document.elementFromPoint(screen.x, screen.y)?.tagName === 'CANVAS',
+          position: { x: node.x, y: node.y, z: node.z },
+          world: { x: center.x, y: center.y, z: center.z },
+          clearClick: document.elementFromPoint(screen.x, screen.y)?.tagName === 'CANVAS' &&
+            picked?.userData?.p25Node?.id === node.id,
+          labelClickable: labelHit?.closest('[data-node-key]')?.dataset.nodeKey === node.id,
           label: { left: labelBounds.left, right: labelBounds.right, top: labelBounds.top, bottom: labelBounds.bottom,
             opacity: style.opacity, filter: style.filter, fontSize: parseFloat(style.fontSize), hidden: label.hidden,
             text: label.textContent } };
       });
-      return { width: host.clientWidth, height: host.clientHeight,
+      return { width: host.clientWidth, height: host.clientHeight, cameraAspect: camera.aspect,
         host: { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom },
-        systems, painted: meshObjects.size === 7 && graph.renderer().info.render.calls > 0,
+        systems, originalAnchors, painted: meshObjects.size === 7 && graph.renderer().info.render.calls > 0,
         clicks: [...clicks], nodeTypes: graph.graphData().nodes.map(node => node.type).sort() };
     };
-    window.overviewFixture = { renderer, graph, overview, singleOverview, inspect };
+    window.overviewFixture = { renderer, graph, overview, repaint, singleOverview, inspect };
     overview();
   });
   await page.clock.runFor(150);
@@ -110,11 +123,84 @@ async function openOverview(page, theme, width) {
   await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().painted)).toBe(true);
 }
 
+async function waitForOverviewProjection(page) {
+  await expect.poll(async () => {
+    await page.clock.runFor(32);
+    return page.evaluate(() => {
+      const scene = window.overviewFixture.inspect();
+      return Math.abs(scene.cameraAspect - scene.width / scene.height);
+    });
+  }, { message: 'The rendered camera uses the current viewport aspect' }).toBeLessThan(0.000001);
+  await page.clock.runFor(50);
+}
+
+function expectSpheresFit(scene) {
+  for (const system of scene.systems) {
+    expect(system.sphere.left, `${system.id} sphere fits left`).toBeGreaterThanOrEqual(scene.host.left + 1);
+    expect(system.sphere.right, `${system.id} sphere fits right`).toBeLessThanOrEqual(scene.host.right - 1);
+    expect(system.sphere.top, `${system.id} sphere fits top`).toBeGreaterThanOrEqual(scene.host.top + 1);
+    expect(system.sphere.bottom, `${system.id} sphere fits bottom`).toBeLessThanOrEqual(scene.host.bottom - 1);
+  }
+}
+
+function expectOriginalAnchors(scene) {
+  expect(scene.systems).toHaveLength(scene.originalAnchors.length);
+  for (const expected of scene.originalAnchors) {
+    const actual = scene.systems.find(system => system.id === expected.id);
+    expect(actual?.ready, expected.id).toBe(true);
+    for (const axis of ['x', 'y', 'z']) {
+      expect(actual.position[axis], `${expected.id} data ${axis}`).toBeCloseTo(expected[axis], 7);
+      expect(actual.world[axis], `${expected.id} rendered ${axis}`).toBeCloseTo(expected[axis], 7);
+    }
+  }
+}
+
+function expectThreeDimensionalAnchors(scene) {
+  const points = scene.systems.map(system => system.world);
+  for (const axis of ['x', 'y', 'z']) expect(new Set(points.map(point => point[axis])).size,
+    `Floating systems vary in ${axis}`).toBeGreaterThanOrEqual(3);
+  const origin = points[0], vectors = points.slice(1).map(point => ({
+    x: point.x - origin.x, y: point.y - origin.y, z: point.z - origin.z
+  }));
+  const volumes = [];
+  for (let first = 0; first < vectors.length; first++) for (let second = first + 1; second < vectors.length; second++) {
+    for (let third = second + 1; third < vectors.length; third++) {
+      const a = vectors[first], b = vectors[second], c = vectors[third];
+      volumes.push(Math.abs(a.x * (b.y * c.z - b.z * c.y) -
+        a.y * (b.x * c.z - b.z * c.x) + a.z * (b.x * c.y - b.y * c.x)));
+    }
+  }
+  expect(Math.max(...volumes), 'Floating systems do not collapse onto a plane').toBeGreaterThan(1_000);
+}
+
 for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
-  test(`seven overview systems have clear enlarged spheres and labels in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+  test(`seven overview systems keep their floating anchors, enlarged spheres and labels in ${theme} at ${width}px`, async ({ page }, testInfo) => {
     await openOverview(page, theme, width);
-    const scene = await page.evaluate(() => window.overviewFixture.inspect());
+    await waitForOverviewProjection(page);
+    let scene = await page.evaluate(() => window.overviewFixture.inspect());
     expect(scene.systems).toHaveLength(7);
+    expectOriginalAnchors(scene);
+    expectThreeDimensionalAnchors(scene);
+    await page.evaluate(() => window.overviewFixture.repaint());
+    await page.clock.runFor(100);
+    expectOriginalAnchors(await page.evaluate(() => window.overviewFixture.inspect()));
+    const alternateWidth = width === 1280 ? 390 : 1280;
+    await page.setViewportSize({ width: alternateWidth, height: 844 });
+    await page.clock.runFor(150);
+    await waitForOverviewProjection(page);
+    const resized = await page.evaluate(() => window.overviewFixture.inspect());
+    expect(resized.width < 600).toBe(alternateWidth === 390);
+    expectOriginalAnchors(resized);
+    expectThreeDimensionalAnchors(resized);
+    expectSpheresFit(resized);
+    await page.setViewportSize({ width, height: 844 });
+    await page.clock.runFor(150);
+    await waitForOverviewProjection(page);
+    expectSpheresFit(await page.evaluate(() => window.overviewFixture.inspect()));
+    await page.evaluate(() => window.overviewFixture.overview());
+    await page.clock.runFor(100);
+    scene = await page.evaluate(() => window.overviewFixture.inspect());
+    expectOriginalAnchors(scene);
     for (const system of scene.systems) {
       expect(system.ready, system.id).toBe(true);
       expect(system.radius).toBe(180);
@@ -144,22 +230,14 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       path: directory ? path.join(directory, `overview-${theme}-${width}.png`) :
         testInfo.outputPath(`overview-${theme}-${width}.png`)
     });
-    const overlappingNames = [];
-    for (let first = 0; first < scene.systems.length; first++) {
-      for (let second = first + 1; second < scene.systems.length; second++) {
-        const a = scene.systems[first], b = scene.systems[second];
-        if (Math.min(a.label.right, b.label.right) - Math.max(a.label.left, b.label.left) > 2 &&
-            Math.min(a.label.bottom, b.label.bottom) - Math.max(a.label.top, b.label.top) > 2)
-          overlappingNames.push([a.label.text, b.label.text]);
-      }
-    }
-    expect(overlappingNames, 'Overview names remain individually readable').toEqual([]);
-    const target = scene.systems.find(system => system.clearClick && scene.systems.every(other =>
-      other.id === system.id || system.screen.x < other.sphere.left || system.screen.x > other.sphere.right ||
-      system.screen.y < other.sphere.top || system.screen.y > other.sphere.bottom));
-    expect(target, 'At least one sphere has an unobstructed clickable center').toBeTruthy();
+    const interactionScene = await page.evaluate(() => window.overviewFixture.inspect());
+    const target = interactionScene.systems.find(system => system.clearClick && system.labelClickable);
+    expect(target, 'At least one system has an unobstructed sphere and caption').toBeTruthy();
     await page.mouse.move(target.screen.x, target.screen.y);
-    await page.clock.runFor(32);
+    await expect.poll(async () => {
+      await page.clock.runFor(64);
+      return page.locator('.network-visualizer-canvas canvas').evaluate(canvas => canvas.classList.contains('clickable'));
+    }, { message: 'The actual sphere is picked before clicking' }).toBe(true);
     await page.mouse.click(target.screen.x, target.screen.y);
     await page.clock.runFor(100);
     await expect.poll(() => page.evaluate(() => window.overviewFixture.inspect().clicks)).toEqual([target.id]);
@@ -191,6 +269,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     expect(single.systems).toHaveLength(1);
     const system = single.systems[0];
     expect(system.radius).toBe(180);
+    const anchor = single.originalAnchors.find(value => value.id === system.id);
+    for (const axis of ['x', 'y', 'z']) expect(system.world[axis]).toBeCloseTo(anchor[axis], 7);
     expect(system.sphere.left).toBeGreaterThanOrEqual(single.host.left + 1);
     expect(system.sphere.right).toBeLessThanOrEqual(single.host.right - 1);
     expect(system.sphere.top).toBeGreaterThanOrEqual(single.host.top + 1);
