@@ -193,6 +193,9 @@ class ChannelProcessingManagerDMRRestHandoffTest
             assertEquals(List.of(activeUpdate, activeUpdate), firstChainEvents);
             assertEquals(List.of(managerOwned), firstReplacementEvents);
 
+            //The start notification precedes completion of the first lifecycle attempt and its deferred metadata.
+            assertEquals(0, manager.getPendingDmrRestChannelAttemptCount(), "first rest-channel handoff did not finish");
+            awaitDeferredMetadata(manager, parent);
             trafficManager.requestRestChannelHandoff(parent, FIRST_REST_FREQUENCY,
                 restChannel(5, SECOND_REST_FREQUENCY));
             assertTrue(tunerManager.secondRestSource.await(5, TimeUnit.SECONDS),
