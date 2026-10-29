@@ -8,6 +8,16 @@ the call or fail to put it under the right talkgroup.
 
 There are two separate issues: how VCE writes the ID, and whether the receiving application accepts that ID.
 
+## Conventional and trunked channels
+
+**Stream as talkgroup works with conventional and trunked calls on supported streaming destinations.** The setting
+belongs to the matched alias; it is not limited to a conventional channel. Conventional repeaters are a common use
+case because several channels may use the same talkgroup number.
+
+The TG 0 example in this article is an NXDN conventional call. Other problems, including the old Type-D ID
+formatting and the receiving application's file-import handling, can also affect trunked calls. A nonzero talkgroup
+does not automatically rule out an import problem.
+
 ## Check your VCE build first
 
 VCE builds containing the numeric ID export fix write TG 0 as plain `0` in recording filenames and audio tags.
@@ -58,21 +68,34 @@ sharing the same Alias List. It is not a separate override for just one destinat
 To remove the workaround, clear **Stream as talkgroup** and save after the receiving application supports TG 0.
 Update its configuration and permissions to accept `0`. Calls already saved there keep the number they arrived with.
 
+### What we verified
+
+We tested actual VCE uploads using generated audio for a conventional NXDN TG 0 call and a trunked NXDN Type-D
+TG `2049` call. With **Stream as talkgroup** set to `900001`, both uploads carried `900001`. The decoded IDs and
+local recordings stayed at `0` and `2049`, respectively. Source radio ID `19` was preserved.
+
+| Receiving application | Verified result |
+| --- | --- |
+| [Rdio Scanner 6.6.3](https://github.com/chuot/rdio-scanner/releases/tag/v6.6.3) | Both mapped uploads passed permissions and were saved under TG `900001`, with unchanged audio files. |
+| [ThinLine Radio 26.10.29](https://github.com/Thinline-Dynamic-Solutions/ThinLineRadio/releases/tag/v26.10.29) | Both mapped uploads passed permissions and entered its call queue. Database storage and display were not verified. |
+
+These isolated tests used permissions limited to the selected talkgroup. Without the override, both applications
+rejected the TG 0 upload. The unmapped Type-D call was accepted with its original ID; working trunked calls can keep
+their existing numbers.
+
 ## Why the receiving applications still need fixes
 
-Full TG 0 support requires changes from the maintainers of the receiving applications. Their software needs to
+Full TG 0 support in the affected receiving applications requires changes from their maintainers. Their software needs to
 recognize the difference between “talkgroup 0 was supplied” and “no talkgroup was supplied” throughout setup,
 importing, permissions, and call storage. Changing VCE filenames or adding extra audio tags cannot provide that support.
 
-In the versions we checked:
+In those published versions:
 
-- **Rdio Scanner:** The normal talkgroup editor required a number of at least 1, and unnamed TG 0 file imports were
-  rejected. A configured name match worked in a controlled test, but that does not provide a normal setup workflow
-  for TG 0. Both the editor and import handling need changes.
-- **ThinLine Radio:** The folder importer rejected calls before resolving their talkgroup, even when the number
-  was above zero. Direct upload accepted a nonzero ID in our tests, but TG 0 was still rejected, and the full
-  save-and-display path was not verified. Its import validation and zero handling need changes. Source-name
-  handling also differs, so check displayed radio names separately.
+- **Rdio Scanner 6.6.3:** The normal talkgroup editor requires a number of at least 1. Its call validation also
+  rejects zero, even when a name is supplied. Both setup and import handling need changes for native TG 0 support.
+- **ThinLine Radio 26.10.29:** Its direct-upload validation rejects TG 0. Separately, the folder importer rejected
+  calls before resolving their talkgroup, including the trunked TG `2049` test call. Its import handling needs fixes
+  beyond accepting zero. Source-name handling also differs, so check displayed radio names separately.
 
 Behavior can change between releases. Check the receiving application's release notes for fixes before deciding
 whether to use or remove the override. This workaround changes the streamed talkgroup number; it does not add
