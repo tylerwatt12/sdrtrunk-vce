@@ -50,7 +50,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-@Tag("platform-filesystem")
 class ApplicationDatabaseMigratorTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -59,6 +58,7 @@ class ApplicationDatabaseMigratorTest
     Path mTemporaryFolder;
 
     @Test
+    @Tag("platform-filesystem")
     void validatesExactCurrentStagedDatabaseWithoutChangingSchema() throws Exception
     {
         Path database = newStagedDatabase();
@@ -490,6 +490,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void strictWalCurrentPairRollsBackBothStoresWhenFinalHistoryAdmissionFails() throws Exception
     {
         Path database = newStagedDatabase();
@@ -523,6 +524,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void strictCurrentValidationUsesTheIndependentHistorySubscriberDictionary() throws Exception
     {
         Path database = newStagedDatabase();
@@ -559,6 +561,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void rejectsHardLinkedCurrentActivityBeforeRepairingEitherStagedFileWhenLinkCountsAreAvailable() throws Exception
     {
         Path source = mTemporaryFolder.resolve("linked-source/sdrtrunk.sqlite");
@@ -589,6 +592,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void strictCurrentCopyRepairsHistoryWithoutChangingItsExternalSourcePair() throws Exception
     {
         Path source = mTemporaryFolder.resolve("external/sdrtrunk.sqlite");
@@ -994,6 +998,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void migratesExactPublishedFormat2NightlyToCurrent() throws Exception
     {
         Path database = Format2TestDatabase.create(newStagedDatabase());
@@ -1079,6 +1084,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void leavesReusableFreePagesInsteadOfRunningRiskyMigrationTimeCompaction() throws Exception
     {
         Path database = newStagedDatabase();
@@ -1269,6 +1275,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void migratesMarkedLatestAlphaFormat2AndThenLeavesCurrentUnchanged() throws Exception
     {
         Path database = Format2TestDatabase.create(newStagedDatabase());
@@ -1399,6 +1406,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void rebasesPortableDirectoriesWithoutChangingSchema() throws Exception
     {
         Path database = newStagedDatabase();
@@ -1465,6 +1473,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void rebasesOnlyRecordingTunerFilesInsideCopiedProfile() throws Exception
     {
         Path database = newStagedDatabase();
@@ -1529,6 +1538,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void dropsOnlyAPathWhoseLongerRelocationWouldOverflowPortablePreferences() throws Exception
     {
         Path database = newStagedDatabase();
@@ -1617,6 +1627,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void malformedCurrentPortablePreferencesAreResetWithoutBlockingMigration() throws Exception
     {
         Path database = newStagedDatabase();
@@ -1653,6 +1664,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void format2MalformedPortablePreferencesDoNotBlockTheReleaseMigration() throws Exception
     {
         Path database = Format2TestDatabase.create(newStagedDatabase());
@@ -1695,6 +1707,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesAValidLiveDatabasePathWithoutOpeningItForMigration() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("live-data");
@@ -1710,6 +1723,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesAStagedLookingSymbolicLinkToALiveDatabase() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("live-symlink-data");
@@ -1735,6 +1749,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesAStagedLookingAncestorSymlinkToALiveDataRoot() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("live-ancestor-data");
@@ -1762,6 +1777,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesAStagedLookingHardLinkToALiveDatabaseWhenLinkCountsAreAvailable() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("live-hard-link-data");
@@ -1790,6 +1806,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void reportsUsageAndMissingInputWithStableExitCodes()
     {
         CommandResult help = runArguments("--help");
@@ -1802,6 +1819,7 @@ class ApplicationDatabaseMigratorTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void reportsCorruptSqliteAsMigrationFailureInsteadOfUnsupportedFormat() throws Exception
     {
         Path database = newStagedDatabase();

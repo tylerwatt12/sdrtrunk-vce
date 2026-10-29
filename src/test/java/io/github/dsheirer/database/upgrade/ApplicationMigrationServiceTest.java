@@ -54,7 +54,6 @@ import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-@Tag("platform-filesystem")
 class ApplicationMigrationServiceTest
 {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -135,6 +134,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void migratesExactFormat2ProfileWithSafetyBackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("format-2-data");
@@ -163,6 +163,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void importsExactFormat2ProfileThroughMigrateExistingWithoutChangingSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("format-2-import-source");
@@ -212,6 +213,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void invalidOptionalVaultIsSkippedWithoutLosingTheMigratedDatabaseOrReportingDetails() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("invalid-optional-vault-source");
@@ -244,6 +246,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void unsupportedOptionalVaultVersionIsSkippedWithoutBlockingTheDatabase() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("unsupported-vault-source");
@@ -271,6 +274,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void symbolicLinkInOptionalJmbeIsSkippedWhileModulesStillCopy() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("optional-symlink-source");
@@ -312,6 +316,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void unreadableOptionalModuleIsSkippedWhileJmbeStillCopies() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("optional-unreadable-source");
@@ -353,6 +358,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void mandatoryDatabaseSnapshotFailureStillAbortsPortableImport() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("mandatory-snapshot-source");
@@ -387,6 +393,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void directDatabaseImportDoesNotCopyOrRebaseNeighboringProfileData() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("database-only-source");
@@ -439,6 +446,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void selectedDatabaseReplacesActiveProfileAfterBackupAndStagedMigration() throws Exception
     {
         Path activeRoot = mTemporaryFolder.resolve("active-replacement-data");
@@ -484,6 +492,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void replacingFromACompletedCurrentProfileStillRequiresDestinationReview() throws Exception
     {
         Path activeRoot = mTemporaryFolder.resolve("review-target");
@@ -509,6 +518,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void selectedDatabaseReplacementBindsTheApprovedPlanBeforeBackup() throws Exception
     {
         Path activeRoot = mTemporaryFolder.resolve("active-plan-binding-data");
@@ -537,6 +547,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void selectedMarkerlessDatabaseWithAdministratorPreservesCredentialsAndCompletesSetup() throws Exception
     {
         Path activeRoot = mTemporaryFolder.resolve("active-admin-replacement-data");
@@ -558,6 +569,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void selectedDatabaseHelperFailureLeavesActiveAndSourceUntouchedAndCleansStage() throws Exception
     {
         Path activeRoot = mTemporaryFolder.resolve("active-helper-failure-data");
@@ -607,6 +619,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void activeDatabaseCannotBeSelectedAsItsOwnReplacement() throws Exception
     {
         Path activeRoot = mTemporaryFolder.resolve("same-replacement-data");
@@ -621,6 +634,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void activeDatabaseHardLinkCannotBeSelectedAsItsReplacement() throws Exception
     {
         Path activeRoot = mTemporaryFolder.resolve("hard-link-replacement-data");
@@ -644,6 +658,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesOverlappingImportRootsBeforeCreatingMigrationFiles() throws Exception
     {
         Path outerSource = mTemporaryFolder.resolve("outer-source");
@@ -674,6 +689,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesAStagedSnapshotWhoseMigrationPlanDiffersFromTheApprovedSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("plan-change-source");
@@ -711,6 +727,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesAChangedSourcePlanAfterOperatorApproval() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("approved-plan-source");
@@ -735,6 +752,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesChangedSourceContentEvenWhenTheReviewedPlanIsUnchanged() throws Exception
     {
         Path sourceDatabase = mTemporaryFolder.resolve("same-plan-changed-source.sqlite");
@@ -763,6 +781,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void approvalPreflightIncludesCommittedWalContent() throws Exception
     {
         Path sourceDatabase = mTemporaryFolder.resolve("approval-wal-source.sqlite");
@@ -793,6 +812,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void repairsCurrentAliasForeignKeyViolationsWithoutChangingTheSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("foreign-key-source");
@@ -850,6 +870,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void repairsLegacySourceForeignKeyViolationsInsteadOfRejectingTheMigration() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("legacy-foreign-key-source");
@@ -883,6 +904,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void repairsLegacyRowCheckViolationsAfterPhysicalIntegrityPreflight() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("legacy-check-source");
@@ -917,6 +939,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void importsFormat14WithAnExhaustedPreferenceRevisionWithoutChangingTheSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("format14-exhausted-preference-source");
@@ -1033,6 +1056,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void approvalUsesAndCleansTheCallerSelectedScratchVolume() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryFolder.resolve("approval-source"));
@@ -1058,6 +1082,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void approvalCancellationDuringPrivatePlanInterruptsSqlAndCleansScratch() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(
@@ -1090,6 +1115,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void approvalCancellationSurvivesNestedFormatValidationWrapping() throws Exception
     {
         Path database = Format15TestDatabase.create(
@@ -1135,6 +1161,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void approvalCancellationRequestedDuringCleanupReturnsOnlyAfterScratchIsEmpty() throws Exception
     {
         Path database = SdrTrunkDatabasePath.getDatabasePath(
@@ -1161,6 +1188,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void preflightsAndImportsRepairableCurrentPreferencesWithoutChangingSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("repairable-current-source");
@@ -1212,6 +1240,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void importsExactCurrentProfileWithoutLosingConfigurationOrHistory() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("source-data");
@@ -1246,6 +1275,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void healthyCurrentProfileNeedsNoBackupOrMigration() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("current-data");
@@ -1262,6 +1292,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void currentMigrationPreservesDataAndFormatWithoutCreatingABackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("fast-current-data");
@@ -1304,6 +1335,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void format26MigrationDemotesSecondaryAdministratorWithoutCreatingABackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("fast-format-26-data");
@@ -1346,6 +1378,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void noBackupUpdateAcceptsAnAlreadyCurrentDatabase() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("already-current");
@@ -1362,6 +1395,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void currentProfileMigrationPreservesPosixDatabaseAccess() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("posix-current-data");
@@ -1386,6 +1420,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void profileImportPreservesAnExistingEmptyTargetRootsPosixAccess() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("posix-import-source");
@@ -1448,6 +1483,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void transactionFailureRetainsBackupAndAllowsRetry() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("failure-data");
@@ -1479,6 +1515,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void completionObserverFailureCannotMakeCommittedUpgradeRetryable() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("completed-update-observer-failure");
@@ -1499,6 +1536,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void scratchCleanupFailureAfterReplacementIsACompletedUpdateWarning() throws Exception
     {
         Path source = Format30TestDatabase.create(mTemporaryFolder.resolve("replacement-source.sqlite"));
@@ -1537,6 +1575,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void failedPostPromotionValidationAndRestoreReportsUncertainLiveDatabase() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("uncertain-live-database");
@@ -1574,6 +1613,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void failedReplacementValidationRestoresCurrentProfileBackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("replacement-validation-failure");
@@ -1596,6 +1636,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void snapshotFailureRemovesEveryIncompleteBackupArtifact() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("snapshot-failure-data");
@@ -1625,6 +1666,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void helperCannotPromoteAWebfirstRecordingCatalog() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("source-main-data");
@@ -1660,6 +1702,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void invalidFinalConfigurationIsNotPromoted() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("invalid-config-source");
@@ -1696,6 +1739,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void targetPopulationAtPromotionTimePreventsImportWithoutLosingEitherSide() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("promotion-race-source");
@@ -1732,6 +1776,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void atomicImportPromotionFailureRestoresThePreexistingEmptyTarget() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("atomic-promotion-source");
@@ -1765,6 +1810,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesImportThroughSymlinkThatPhysicallyTargetsTheSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("physical-source");
@@ -1791,6 +1837,7 @@ class ApplicationMigrationServiceTest
     }
 
     @Test
+    @Tag("platform-filesystem")
     void refusesExistingTargetSymlinkWhoseInstallParentIsInsideSource() throws Exception
     {
         Path sourceRoot = mTemporaryFolder.resolve("source-with-target-link");
