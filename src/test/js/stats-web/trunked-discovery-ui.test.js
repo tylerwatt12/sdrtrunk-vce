@@ -114,6 +114,13 @@ async function main() {
   assert.equal(Boolean(completionDetails.open), false);
   assert.match(JSON.stringify(completionDetails), /County dispatch aliases|Test receiver/);
   assert.match(JSON.stringify(completionDetails), /6650 added, 0 updated, 0 unchanged\./);
+  const compactCompletion = createDiscoveryCompletion(ui, { showDetails: false,
+    channels: [{ name: 'County · North', system: 'County', site: 'North', status: 'added',
+      frequency_hz: 851012500, protocol: 'P25', details: [['System ID', '0x348']] }],
+    receiver: 'Test receiver' });
+  assert.equal(withClass(compactCompletion, 'discovery-completion-details').length, 0,
+    'The Finder omits its redundant completion Details panel without changing other discovery workflows.');
+  assert.match(JSON.stringify(compactCompletion), /County|851\.0125|P25/);
   const partial = createDiscoveryCompletion(ui, { channels: [{ name: 'Failed site', status: 'failed',
     error: 'Receiver changes could not load.' }], imports: { targets: [{ alias_list_id: 22, state: 'failed',
       message: 'Talkgroups could not be imported. Try again.' }] } });

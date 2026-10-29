@@ -469,7 +469,7 @@ export function discoveryAliasImportResults(ui, result) {
 }
 
 /** The result display is shared; channel creation, starting and retries stay with each workflow. */
-export function createDiscoveryCompletion(ui, { channels = [], imports = null, grouped = false, receiver = '' } = {}) {
+export function createDiscoveryCompletion(ui, { channels = [], imports = null, grouped = false, receiver = '', showDetails = true } = {}) {
   const { node, uiPill } = ui;
   const element = node('div', 'discovery-completion');
   element.classList.toggle('discovery-completion-grouped', grouped);
@@ -598,7 +598,7 @@ export function createDiscoveryCompletion(ui, { channels = [], imports = null, g
   }
   const receivers = [...new Set([receiver, ...channels.map((channel) => channel.receiver)].filter(Boolean))];
   receivers.forEach((name) => detailEntries.push(['Receiver', name]));
-  if (detailEntries.some(([, value]) => value !== undefined && value !== null && value !== '')) {
+  if (showDetails && detailEntries.some(([, value]) => value !== undefined && value !== null && value !== '')) {
     const details = node('details', 'ui-section-disclosure ui-section-disclosure-flat discovery-completion-details');
     details.append(node('summary', 'ui-section-summary', 'Details'), facts(detailEntries));
     element.append(details);

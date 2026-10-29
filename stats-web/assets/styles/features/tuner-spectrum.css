@@ -1820,21 +1820,6 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   min-width: 0;
 }
 
-.spectrum-search-review-system-header {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--line);
-}
-
-.spectrum-search-customize-action {
-  align-self: center;
-}
-
 .spectrum-search-review-channel-list {
   min-width: 0;
 }
@@ -1866,17 +1851,11 @@ body[data-view="tuner-spectrum"] .content > .tuner-spectrum-layout {
   font-size: var(--font-size-micro);
 }
 
-.spectrum-search-review-customize {
+.spectrum-search-review-settings {
   min-width: 0;
   display: grid;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  background: var(--surface-2);
-  border-top: 1px solid var(--line);
-}
-
-.spectrum-search-review-customize[hidden] {
-  display: none;
 }
 
 .spectrum-search-channel-fields {

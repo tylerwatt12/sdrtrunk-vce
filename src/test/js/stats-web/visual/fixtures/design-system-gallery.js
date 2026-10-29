@@ -826,7 +826,7 @@ if (view === 'spectrum-discovery') {
     return element;
   };
   if (parameters.get('state') === 'review') {
-    const { createDiscoveryAliasListChoice } = await import('/assets/features/discovery-radioreference.js?v=17');
+    const { createDiscoveryAliasListChoice } = await import('/assets/features/discovery-radioreference.js?v=18');
     const source = await fetch('/assets/app.js').then(response => response.text());
     const names = ['formField', 'uiSelect', 'uiSelectFrame'];
     const controls = names.map(name => {
@@ -1045,7 +1045,7 @@ if (view === 'spectrum-search') {
 }
 
 if (['spectrum-discovery', 'spectrum-search'].includes(view) && parameters.get('state') === 'complete') {
-  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=17');
+  const { createDiscoveryCompletion } = await import('/assets/features/discovery-radioreference.js?v=18');
   const node = (tag, className = '', text = null) => {
     const element = document.createElement(tag);
     element.className = className;
@@ -1080,7 +1080,7 @@ if (['spectrum-discovery', 'spectrum-search'].includes(view) && parameters.get('
     state: 'imported', added: id === 1 ? 454 : id === 2 ? 6650 : 18, updated: 0, unchanged: 0
   })) };
   example.querySelector('.spectrum-discovery-stage').replaceChildren(
-    createDiscoveryCompletion({ node }, { channels, imports, grouped: !single, receiver: 'Receiver 1' }));
+    createDiscoveryCompletion({ node }, { channels, imports, grouped: !single, receiver: 'Receiver 1', showDetails: single }));
   const open = node('a', `ui-button ui-button-${single ? 'secondary' : 'primary'}`, single ? 'Open channel' : 'Open Channels');
   open.href = '#';
   const done = node('button', `ui-button ui-button-${single ? 'primary' : 'secondary'}`, 'Done');

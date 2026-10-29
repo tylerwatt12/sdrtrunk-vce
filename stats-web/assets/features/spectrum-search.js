@@ -3,7 +3,7 @@ import { receiverDisplayName } from '../core/receiver-names.js?v=1';
 import { spectrumSearchProtocolLabel, spectrumSearchSystemName, spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchGroupKey } from './spectrum-search-data.js?v=1';
 import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { createTableOverflow } from '../core/table-overflow.js?v=2';
-import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, createDiscoveryCompletion, createDiscoveryRadioReferenceWait, createDiscoveryAliasListChoice, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases, discoveryAliasImportTargets } from './discovery-radioreference.js?v=17';
+import { createDiscoveryRadioReferenceContext, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, discoveryRadioReferencePending, discoveryRadioReferenceSelection, discoverySnapshotIsCurrent, createDiscoveryCompletion, createDiscoveryRadioReferenceWait, createDiscoveryAliasListChoice, discoveryAliasListName, discoveryAliasImportChoice, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases, discoveryAliasImportTargets } from './discovery-radioreference.js?v=18';
 
 export function openSpectrumSearchWizard(ui, context = {}) {
   const { node, openReadOnlyModal, requestJson, uiActionButton, iconButton, uiSelect, uiSelectFrame, uiPill,
@@ -320,7 +320,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       binding.site.textContent = siteLabel(candidate);
       if (!binding.draft.name_edited) {
         binding.draft.name = candidateName(candidate);
-        binding.name.textContent = binding.draft.name;
+        if (binding.name) binding.name.textContent = binding.draft.name;
         if (binding.input) binding.input.value = binding.draft.name;
       }
       const values = candidate.trunked_evidence?.frequency_map || [];
@@ -1292,7 +1292,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     const systemList = node('div', 'spectrum-search-review-systems');
     const mapEditors = [];
 
-    groupedCandidates(chosen).forEach((entry) => {
+    groupedCandidates(chosen).forEach((entry, index) => {
       const representative = groupRepresentative(candidates().filter((candidate) =>
         spectrumSearchGroupKey(candidate) === entry.key));
       const group = entry.aliasGroup;
@@ -1302,8 +1302,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         new_alias_list_name: discoveryAliasListName(systemLabel(representative), group.default_new_alias_list_name)
       } : null;
       if (draft) groups.set(group.group_id, draft);
-      const section = node('section', 'ui-surface spectrum-search-review-system');
-      const sectionHeader = node('header', 'spectrum-search-review-system-header');
+      const section = node('details', 'ui-section-disclosure spectrum-search-review-system');
+      section.name = `${modal.dialog.id}-review-systems`;
+      section.open = index === 0;
+      const sectionHeader = node('summary', 'ui-section-summary spectrum-search-review-system-header');
+      const sectionBody = node('div', 'spectrum-search-review-system-body');
       const title = node('div', 'spectrum-search-review-system-title');
       const aliasSummary = node('span', 'muted');
       const syncAliasSummary = () => {
@@ -1313,20 +1316,13 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       };
       const groupTitle = node('h4', 'ui-record-title', systemLabel(representative));
       title.append(groupTitle, aliasSummary);
-      const customizePanel = node('div', 'spectrum-search-review-customize');
-      customizePanel.hidden = true;
-      const customize = uiActionButton(customizePanel.hidden ? 'Customize' : 'Done', '', () => {
-        customizePanel.hidden = !customizePanel.hidden;
-        customize.setAttribute('aria-expanded', String(!customizePanel.hidden));
-        customize.textContent = customizePanel.hidden ? 'Customize' : 'Done';
-      }, 'ui-button ui-button-secondary spectrum-search-customize-action');
-      customize.setAttribute('aria-expanded', String(!customizePanel.hidden));
-      sectionHeader.append(title, customize);
+      const settings = node('div', 'spectrum-search-review-settings');
+      const count = entry.candidates.length;
+      sectionHeader.append(title, node('span', 'muted', `${count} ${count === 1 ? 'channel' : 'channels'}`));
       const rows = node('div', 'spectrum-search-review-channel-list');
       const channelFields = node('div', 'channel-editor-grid spectrum-search-channel-fields');
       const directoryHost = node('div');
-      customizePanel.append(directoryHost);
-      const groupBinding = { title: groupTitle, directoryHost, draft, syncAliasSummary,
+      const groupBinding = { section, title: groupTitle, directoryHost, draft, syncAliasSummary,
         candidateIds: entry.candidates.map((candidate) => candidate.candidate_id) };
       reviewGroupBindings.push(groupBinding);
       refreshGroupDirectory(groupBinding);
@@ -1351,11 +1347,11 @@ export function openSpectrumSearchWizard(ui, context = {}) {
           input.addEventListener('input', () => {
             channelDraft.name = input.value;
             channelDraft.name_edited = true;
-            name.textContent = input.value;
             modal.setDirty(true);
           });
           binding.input = input;
-          channelFields.append(formField(`Channel name · ${channelMHz(candidate.frequency_hz)} MHz`, input));
+          binding.name = null;
+          name.replaceWith(formField('Channel name', input));
           const profile = protocols?.profiles?.find((profile) => profile.id === candidate.protocol_id);
           const mapField = profile?.sections?.flatMap((section) => section.fields || [])
             .find((field) => field.type === 'frequency_map');
@@ -1380,7 +1376,6 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         }
         rows.append(row);
       });
-      if (group) customizePanel.append(disclosure('System identity', factList(identityFacts(entry.candidates[0]))));
       if (draft) {
         const aliasChoice = createDiscoveryAliasListChoice(ui, {
           lists, aliasListId: draft.alias_list_id, newAliasListName: draft.new_alias_list_name,
@@ -1401,17 +1396,15 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         groupBinding.aliasChoice = aliasChoice;
         draft.alias_list_id = aliasChoice.value();
         draft.new_alias_list_name = aliasChoice.newName();
-        if (draft.alias_list_id === 0) {
-          customizePanel.hidden = false;
-          customize.setAttribute('aria-expanded', 'true');
-          customize.textContent = 'Done';
-        }
-        section.append(aliasChoice.element);
+        sectionBody.append(aliasChoice.element);
       }
-      if (channelFields.childElementCount) customizePanel.append(channelFields);
+      if (channelFields.childElementCount) settings.append(channelFields);
+      settings.append(directoryHost);
+      if (group) settings.append(disclosure('System identity', factList(identityFacts(entry.candidates[0]))));
       syncAliasSummary();
-      section.prepend(sectionHeader, rows);
-      section.append(customizePanel);
+      sectionBody.prepend(rows);
+      sectionBody.append(settings);
+      section.append(sectionHeader, sectionBody);
       systemList.append(section);
     });
 
@@ -1432,18 +1425,17 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     }), { available: directory.available() });
     const add = button(importTargets().length ? 'Continue' : addLabel, async () => {
       if (busy || pendingSelectedDirectory()) { refreshReviewImportAction?.(); return; }
-      const invalidChoice = reviewGroupBindings.find((binding) => binding.aliasChoice && !binding.aliasChoice.validate());
-      if (invalidChoice) return;
-      if (!form.checkValidity()) {
-        form.querySelectorAll('input:invalid, select:invalid, textarea:invalid').forEach((control) => {
-          const panel = control.closest('.spectrum-search-review-customize');
-          if (!panel) return;
-          panel.hidden = false;
-          const customize = panel.parentElement.querySelector('.spectrum-search-customize-action');
-          customize?.setAttribute('aria-expanded', 'true');
-          if (customize) customize.textContent = 'Done';
-        });
-        form.reportValidity();
+      const invalidChoice = reviewGroupBindings.find((binding) =>
+        binding.aliasChoice?.element.querySelector('input:invalid, select:invalid'));
+      if (invalidChoice) {
+        invalidChoice.section.open = true;
+        invalidChoice.aliasChoice.validate();
+        return;
+      }
+      const invalidControl = form.querySelector('input:invalid, select:invalid, textarea:invalid');
+      if (invalidControl) {
+        invalidControl.closest('.spectrum-search-review-system').open = true;
+        invalidControl.reportValidity();
         return;
       }
       try {
@@ -1636,7 +1628,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
           ...(draft?.alias_list_id != null ? { alias_list_existing: Number(draft.alias_list_id) > 0 } : {}) } : {}),
         details: identityFacts(candidate), actions: rowActions };
     });
-    stage.append(createDiscoveryCompletion(ui, { channels, grouped: results.length > 1,
+    stage.append(createDiscoveryCompletion(ui, { channels, grouped: results.length > 1, showDetails: false,
       imports: wantsAliasImport ? aliasImportResult : null,
       receiver: receiverDisplayName(receiver(), receiver()?.label || '') }));
     if (wantsAliasImport && !job.restart_required && aliasImportResult?.targets?.some((target) =>

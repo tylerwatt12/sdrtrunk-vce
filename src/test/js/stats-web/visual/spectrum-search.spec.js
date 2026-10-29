@@ -1,7 +1,7 @@
 const { expect, test } = require('@playwright/test');
 const { tourHistoryFixture } = require('./fixtures/tour-history.cjs');
 const { resolve } = require('node:path');
-const { readFileSync } = require('node:fs');
+const { readFileSync, mkdirSync } = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const root = resolve(__dirname, '../../../../..');
 const searchPath = '/api/v1/admin/spectrum-search';
@@ -54,6 +54,42 @@ function ohioResultsFixture({ pendingMarcs = false } = {}) {
       }[group]
     }))
   };
+}
+
+function sixChannelReviewFixture() {
+  const fixture = ohioResultsFixture();
+  const source = fixture.customCandidates;
+  const rows = [
+    [source[0], 'Cuyahoga Co Simulcast', 773831250],
+    [source[1], 'Grafton C.I.', 773081250],
+    [source[0], 'Lorain County Simulcast', 853750000],
+    [source[2], 'Cleveland Simul', 855962500],
+    [source[3], 'Parma Simulcast', 853875000],
+    [source[3], 'Medina County', 771831250]
+  ];
+  const names = { marcs: ohioSystems.marcs,
+    cleveland: 'GCRCN (Greater Cleveland Radio Communications Network)',
+    parma: 'Parma / Medina County / Ottawa County' };
+  fixture.customCandidates = rows.map(([candidate, site, frequency], index) => ({
+    ...candidate, candidate_id: `sample-${index}`, frequency_hz: frequency,
+    system_name: names[candidate.alias_group_id], site_name: site,
+    name: `${names[candidate.alias_group_id]} · ${site}`,
+    identity: { ...candidate.identity, site: index + 1 },
+    radio_reference: { state: 'matched', match: { ...candidate.radio_reference.match,
+      system_name: names[candidate.alias_group_id], site_name: site,
+      channels: [{ frequency_hz: frequency, primary_control: true }] } }
+  }));
+  fixture.customAliasGroups = fixture.customAliasGroups.map(group => ({ ...group, alias_lists: [],
+    default_new_alias_list_name: names[group.group_id] }));
+  return fixture;
+}
+
+const reviewSystem = (page, name) => dialog(page).locator('.spectrum-search-review-system').filter({
+  has: page.getByRole('heading', { name, exact: true })
+});
+async function openReviewSystem(system) {
+  if (!await system.evaluate(element => element.open)) await system.locator(':scope > summary').click();
+  await expect(system).toHaveJSProperty('open', true);
 }
 
 async function openBands(page) {
@@ -497,11 +533,7 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
       expect(importBounds.y + importBounds.height).toBeLessThanOrEqual(footerBounds.y + 1);
       await modal.screenshot({ path: testInfo.outputPath(`five-channel-completion-bottom-${theme}-${width}.png`) });
     }
-    const details = completion.locator('.discovery-completion-details');
-    await details.locator('summary').click();
-    await expect(details).toContainText(`${ohioSystems.marcs} · Cuyahoga County`);
-    await expect(details).toContainText(`${ohioSystems.cleveland} · Brooklyn Simulcast`);
-    await expect(details).toContainText(customName);
+    await expect(completion.locator('.discovery-completion-details')).toHaveCount(0);
     await expectCompletionWidth(modal, width);
     expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
     expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(3);
@@ -553,7 +585,7 @@ for (const theme of ['light']) for (const width of [1280, 390]) {
     await expect(completion.locator('.ui-pill').filter({ hasText: /^Running$/ })).toHaveCount(0);
     await expect(modal.locator('.spectrum-discovery-context')).toBeHidden();
     await expect(modal.locator('.spectrum-discovery-progress')).toBeHidden();
-    await expect(completion.locator('.discovery-completion-details')).not.toHaveAttribute('open', '');
+    await expect(completion.locator('.discovery-completion-details')).toHaveCount(0);
     await expect(modal.getByRole('button', { name: /start listening|Try starting/i })).toHaveCount(0);
     await expect(modal.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
     const bounds = await modal.boundingBox();
@@ -2101,9 +2133,10 @@ test('failed-row review edits only unsaved channels', async ({ page }) => {
   await dialog(page).getByRole('button', { name: 'Review choices', exact: true }).click();
   await expect(dialog(page).getByRole('radio')).toHaveCount(0);
   await expect(dialog(page).getByText('Added', { exact: true })).toHaveCount(2);
-  await expect(dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'Regional Services' })
-    .getByRole('button', { name: 'Done' })).toBeVisible();
-  await expect(dialog(page).getByRole('textbox', { name: /Channel name for/ })).toHaveCount(1);
+  const regional = reviewSystem(page, 'Regional Services');
+  await openReviewSystem(regional);
+  await expect(dialog(page).getByRole('button', { name: /^(?:Done|Customize)$/ })).toHaveCount(0);
+  await expect(regional.getByRole('textbox', { name: /Channel name for/ })).toHaveCount(1);
   await dialog(page).getByLabel('Channel name for 860.0125 MHz').fill('My South Control');
   await dialog(page).getByLabel('New Alias List name for WACN 0xABC00 (703488) · SysID 0x234 (564)').fill('Regional listening');
   await addChannels(page);
@@ -2138,6 +2171,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
     const existing = dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'County Public Safety' });
     await expect(existing).toContainText('Alias List: County Dispatch · Existing');
     const regional = dialog(page).locator('.spectrum-search-review-system').filter({ hasText: 'Regional Services' });
+    await openReviewSystem(regional);
     const name = regional.getByLabel('New Alias List name for WACN 0xABC00 (703488) · SysID 0x234 (564)');
     await expect(name).toBeVisible();
     await expect(regional.getByText('An existing compatible Alias List with this name will be used.', { exact: true })).toHaveCount(0);
@@ -2156,7 +2190,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
   });
 }
 
-test('search review keeps the explicit Alias List choice visible when channel customization is closed', async ({ page }) => {
+test('search review keeps the explicit Alias List choice visible while System identity is collapsed', async ({ page }) => {
   const state = await install(page, { ambiguous: true });
   await complete(page);
   await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
@@ -2164,11 +2198,96 @@ test('search review keeps the explicit Alias List choice visible when channel cu
   const alias = dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)', { exact: true });
   await expect(alias).toBeVisible();
   await expect(alias.locator('option[value="0"]')).toHaveText('Create a new Alias List');
-  await dialog(page).getByRole('button', { name: 'Customize', exact: true }).click();
-  await dialog(page).getByRole('button', { name: 'Done', exact: true }).click();
+  const identity = dialog(page).locator('details').filter({ has: page.locator(':scope > summary')
+    .filter({ hasText: /^System identity$/ }) });
+  await expect(identity).toHaveJSProperty('open', false);
+  await identity.locator(':scope > summary').click();
+  await expect(identity).toHaveJSProperty('open', true);
+  await identity.locator(':scope > summary').click();
+  await expect(identity).toHaveJSProperty('open', false);
+  await expect(dialog(page).getByRole('button', { name: /^(?:Done|Customize)$/ })).toHaveCount(0);
   await expect(alias).toBeVisible();
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
 });
+
+for (const [theme, width] of [['dark', 1280], ['light', 1280], ['light', 390]]) {
+  test(`six-channel review expands one system at a time and omits completion Details in ${theme} at ${width}px`,
+    async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 1000 });
+      const state = await install(page, { theme, ...sixChannelReviewFixture(),
+        aliasImportCounts: { 41: { added: 6650 }, 42: { added: 454 }, 43: { added: 131 } } });
+      await complete(page);
+      await dialog(page).getByRole('button', { name: 'Select all available', exact: true }).click();
+      await dialog(page).getByRole('button', { name: 'Review 6 channels', exact: true }).click();
+      const modal = dialog(page);
+      const systems = modal.locator('.spectrum-search-review-system');
+      const first = systems.nth(0);
+      const last = systems.nth(2);
+      const capture = async name => {
+        const fileName = `six-channel-${name}-${theme}-${width}.png`;
+        const output = process.env.VCE_DISCOVERY_UI_SCREENSHOT_DIR;
+        if (output) mkdirSync(output, { recursive: true });
+        await modal.locator('.spectrum-discovery-stage').evaluate(element => { element.scrollTop = 0; });
+        await modal.screenshot({ animations: 'disabled',
+          path: output ? resolve(output, fileName) : testInfo.outputPath(fileName) });
+      };
+      await expect(systems).toHaveCount(3);
+      await expect(first).toHaveJSProperty('open', true);
+      await expect(systems.nth(1)).toHaveJSProperty('open', false);
+      await expect(last).toHaveJSProperty('open', false);
+      await expect(modal.locator('.spectrum-search-review-channel:visible')).toHaveCount(3);
+      await expect(modal.getByRole('button', { name: /^(?:Done|Customize)$/ })).toHaveCount(0);
+      const identity = first.locator('details').filter({ has: page.locator('summary')
+        .filter({ hasText: /^System identity$/ }) });
+      await expect(identity).toHaveJSProperty('open', false);
+      await capture('review');
+      const channelName = first.getByLabel('Channel name for 773.83125 MHz', { exact: true });
+      const aliasName = first.getByRole('textbox', { name: /^New Alias List name for / });
+      const originalName = await channelName.inputValue();
+      const originalAlias = await aliasName.inputValue();
+      await channelName.fill('My Cuyahoga control');
+      await aliasName.fill('My MARCS aliases');
+      await openReviewSystem(systems.nth(1));
+      await expect(first).toHaveJSProperty('open', false);
+      await expect(modal.locator('.spectrum-search-review-channel:visible')).toHaveCount(1);
+      await capture('review-switched');
+      await openReviewSystem(last);
+      await expect(systems.nth(1)).toHaveJSProperty('open', false);
+      await expect(modal.locator('.spectrum-search-review-channel:visible')).toHaveCount(2);
+      await openReviewSystem(first);
+      await expect(last).toHaveJSProperty('open', false);
+      await expect(channelName).toHaveValue('My Cuyahoga control');
+      await expect(aliasName).toHaveValue('My MARCS aliases');
+      await identity.locator(':scope > summary').focus();
+      await page.keyboard.press('Space');
+      await expect(identity).toHaveJSProperty('open', true);
+      await expect(first).toHaveJSProperty('open', true);
+      await identity.locator(':scope > summary').click();
+      await expect(identity).toHaveJSProperty('open', false);
+      await channelName.fill('');
+      await openReviewSystem(last);
+      await modal.getByRole('button', { name: 'Continue', exact: true }).click();
+      await expect(first).toHaveJSProperty('open', true);
+      await expect(last).toHaveJSProperty('open', false);
+      await expect(channelName).toBeFocused();
+      await channelName.fill(originalName);
+      await aliasName.fill(originalAlias);
+      expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(0);
+      expect(await modal.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+      await addChannels(page, 6, importYes);
+      await expect(modal.getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
+      await expect(modal.locator('.modal-header').getByRole('heading', { name: '6 channels added', exact: true })).toBeVisible();
+      await expect(modal.locator('.discovery-completion-channel')).toHaveCount(6);
+      await expect(modal.locator('.discovery-completion-group')).toHaveCount(3);
+      await expect(modal.locator('.discovery-completion-details')).toHaveCount(0);
+      await expect(modal.getByText('Details', { exact: true })).toHaveCount(0);
+      for (const count of ['6,650 talkgroups added', '454 talkgroups added', '131 talkgroups added'])
+        await expect(modal.getByText(count, { exact: true })).toBeVisible();
+      await capture('completion');
+      expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
+      expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import'))).toHaveLength(3);
+    });
+}
 
 test('signed-in search offers its missing frequency lookup region directly', async ({ page }) => {
   const state = await install(page, { directoryConfiguration: { account: { state: 'VALID_PREMIUM' } } });
@@ -2315,7 +2434,6 @@ test('requires a choice for ambiguous alias groups and preserves drafts after st
   await addChannels(page);
   expect(state.requests.some((request) => request.path.endsWith('/save'))).toBe(false);
   await dialog(page).getByLabel('Alias List for WACN 0xBEE00 (781824) · SysID 0x348 (840)').selectOption('22');
-  await dialog(page).getByRole('button', { name: 'Customize', exact: true }).click();
   await dialog(page).getByLabel('Channel name for 773.08125 MHz').fill('My North Control');
   await addChannels(page);
   await expect(dialog(page)).toContainText('Saved choices changed');
@@ -2874,14 +2992,14 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['ligh
         const style = getComputedStyle(title);
         return { marginBlockStart: style.marginBlockStart, marginBlockEnd: style.marginBlockEnd,
           fontSize: style.fontSize, fontWeight: style.fontWeight,
-          headerHeight: title.closest('header').getBoundingClientRect().height };
+          headerHeight: title.closest('summary').getBoundingClientRect().height };
       });
       if (viewport.width > 900) expect(reviewAppearance.headerHeight).toBeLessThanOrEqual(80);
       await testInfo.attach('Review header spacing', {
         body: JSON.stringify(reviewAppearance), contentType: 'application/json'
       });
-      await marcsReview.getByRole('button', { name: 'Customize', exact: true }).click();
       const identity = marcsReview.locator('details').filter({ has: page.locator('summary').filter({ hasText: /^System identity$/ }) });
+      await expect(identity).toHaveJSProperty('open', false);
       await identity.locator('summary').click();
       await expect(identity).toHaveAttribute('open', '');
       await expect(identity).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
@@ -3087,7 +3205,7 @@ test('wide DMR review submits the explicit channel map through the shared editor
   await dialog(page).getByRole('button', { name: 'Review 1 channel', exact: true }).click();
   await expect(dialog(page)).toContainText('Unmapped channels can be followed only when the system broadcasts their frequencies.');
   await expect(dialog(page).locator('.channel-map-row')).toHaveCount(1);
-  const mapFits = await dialog(page).locator('.spectrum-search-review-customize').evaluate((element) =>
+  const mapFits = await dialog(page).locator('.spectrum-search-review-settings').evaluate((element) =>
     element.scrollWidth <= element.clientWidth + 1);
   expect(mapFits).toBe(true);
   const boundedReview = await dialog(page).evaluate((element) => {
