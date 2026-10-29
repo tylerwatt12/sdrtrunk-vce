@@ -23,6 +23,12 @@ For a problem with receiving or playback, include your VCE version, what happene
 [bug report](https://github.com/tylerwatt12/sdrtrunk-vce/issues). Screenshots and relevant log excerpts can help; remove
 credentials and private information before posting them.
 
+## Knowledgebase
+
+| Problem | Article |
+| --- | --- |
+| Another application rejects NXDN talkgroup 0 or shows the wrong ID | [Using NXDN talkgroup 0 with other applications — draft](talkgroup-zero-compatibility.md) |
+
 ## Technical references
 
 You do not need these references to start listening. They explain integration, saved data, and implementation details
