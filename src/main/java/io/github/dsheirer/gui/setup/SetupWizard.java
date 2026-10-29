@@ -46,6 +46,7 @@ import static io.github.dsheirer.gui.setup.SetupProgress.State.*;
 /** Pre-receiver Swing setup session. No receiver services or device controllers are constructed here. */
 public final class SetupWizard extends JDialog
 {
+    private static final String SAVE_ERROR = "Settings could not be saved. Check database access and free disk space; retry before continuing.";
     public record Result(UserPreferences preferences, PortableDataRootLock lock, boolean startChannels,
                          boolean openWebAfterSetup)
     {
@@ -111,6 +112,7 @@ public final class SetupWizard extends JDialog
     private boolean startChannels = true;
     private boolean sourceCommitted;
     private boolean restartRequired;
+    private boolean listenerRecovery;
     private StatsWebServerService liveServer;
     private DatabaseMigrationChain.PreflightReport startupMigrationPlan;
     private boolean managedRecordingCatalogNeedsUpgrade;
@@ -134,6 +136,7 @@ public final class SetupWizard extends JDialog
         SwingUtilities.invokeAndWait(() -> {
             SetupWizard wizard = new SetupWizard(new String[]{"--setup-wizard"}, root, null);
             holder[0] = wizard; wizard.preferences = preferences; wizard.progress = progress; wizard.liveServer = server;
+            wizard.listenerRecovery = true;
             wizard.limitedVisit = progress.isComplete();
             wizard.showPage(SetupStep.WEB);
             wizard.fail(server.getRuntimeState().statusMessage());
@@ -326,8 +329,8 @@ public final class SetupWizard extends JDialog
         navigation.setAlignmentX(Component.LEFT_ALIGNMENT);
         exit.addActionListener(e -> leave());
         back.addActionListener(e -> {
-            if(!busy && reviewingSource) showPage(SetupStep.SOURCE);
-            else if(!busy && step.ordinal() > 0) showPage(SetupStep.values()[step.ordinal()-1]);
+            SetupStep previous = previousStep();
+            if(!busy && previous != null) showPage(previous);
         });
         next.addActionListener(e -> { if(!busy) attempt(accept); });
         WizardStyles.primary(next); WizardStyles.secondary(back);
@@ -473,6 +476,7 @@ public final class SetupWizard extends JDialog
     private void showPage(SetupStep id)
     {
         if(busy) return;
+        if(listenerRecovery && id != SetupStep.WEB && id != SetupStep.REVIEW) id = SetupStep.WEB;
         closeRadioReferenceSetup();
         if(managedRecordingCatalogNeedsUpgrade) id = SetupStep.SOURCE;
         else if(!limitedVisit && id == SetupStep.REVIEW && progress != null && progress.get(SetupStep.JMBE) == NEEDS_ATTENTION)
@@ -618,10 +622,13 @@ public final class SetupWizard extends JDialog
         output.clear();
         console.setText("");
         Path chosen = input.toAbsolutePath().normalize();
-        if(!chosen.equals(selectedSource)) backupConfirmed = false;
+        if(!chosen.equals(selectedSource))
+        {
+            backupConfirmed = false;
+            migrationContent = MigrationContent.CONFIGURATION_ONLY;
+        }
         selectedSource = chosen;
         Path source = selectedSource;
-        migrationContent = MigrationContent.CONFIGURATION_ONLY;
         //A different selection invalidates the old Proceed action before any inspection can fail.
         page.removeAll();
         title.setText("Choose settings");
@@ -821,8 +828,9 @@ public final class SetupWizard extends JDialog
             app.setStatsWebServerPort((Integer)port.getValue());
             app.setStatsWebServerNetworkAccessEnabled(network.isSelected());
             app.setStatsWebServerEnabled(true);
+            webAdjusted = false;
             if(changed) progress.set(step, COMPLETE);
-            if(liveServer != null) { progress.set(step, COMPLETE); if(persist()) showPage(SetupStep.REVIEW); }
+            if(listenerRecovery) { progress.set(step, COMPLETE); if(persist()) showPage(SetupStep.REVIEW); }
             else completeAndContinue();
         };
     }
@@ -998,7 +1006,7 @@ public final class SetupWizard extends JDialog
             String name = username.getText().trim();
             char[] entered = secret.getPassword();
             char[] credential = entered.length > 0 ? entered : (rr.getPassword() == null ? new char[0] : rr.getPassword().toCharArray());
-            job("Testing RadioReference connection…", null, () -> {
+            boolean started = job("Testing RadioReference connection…", null, () -> {
                 RadioReferenceDirectoryService service = new RadioReferenceDirectoryService();
                 try
                 {
@@ -1023,7 +1031,14 @@ public final class SetupWizard extends JDialog
                     }
                 });
                 else region.disconnected(true);
-            });
+            }, failure -> radioReferenceFailed(verification, region, failure));
+            if(!started)
+            {
+                verification.removeAll();
+                verification.add(text("Connection not verified."));
+                verification.revalidate();
+                verification.repaint();
+            }
         });
         testConnection.setAlignmentX(Component.LEFT_ALIGNMENT);
         account.add(testConnection);
@@ -1032,9 +1047,7 @@ public final class SetupWizard extends JDialog
         append(new WizardSection("Location", region)); append(Box.createVerticalStrut(8));
         defer("Set up later");
         accept = () -> {
-            boolean verified = rrVerified;
             boolean changed = saveRadioReferenceAccount(username, secret, region, rr);
-            rrVerified = verified;
             if(changed) progress.set(step, COMPLETE); completeAndContinue();
         };
     }
@@ -1069,10 +1082,24 @@ public final class SetupWizard extends JDialog
 
     private void closeRadioReferenceSetup()
     {
+        rrVerified = false;
+        rrPremium = false;
         if(rrSetupRegion != null) { rrSetupRegion.close(); rrSetupRegion = null; }
         RadioReferenceDirectoryService service = rrSetupService;
         rrSetupService = null;
         if(service != null) worker.execute(service::close);
+    }
+
+    private void radioReferenceFailed(JPanel verification, SetupRadioReferenceRegion region, Throwable failure)
+    {
+        rrVerified = false;
+        rrPremium = false;
+        disconnectRadioReferenceSetup(region);
+        verification.removeAll();
+        verification.add(text("Connection not verified."));
+        verification.revalidate();
+        verification.repaint();
+        fail(safeFailure(failure));
     }
 
     private void showRadioReferenceResult(JPanel verification, boolean premium)
@@ -1162,7 +1189,10 @@ public final class SetupWizard extends JDialog
         };
         button("Rescan",scan);
         accept = () -> { if(progress.get(step) == NEEDS_ATTENTION) deferCurrent(); else completeAndContinue(); };
-        SwingUtilities.invokeLater(() -> { if(step == SetupStep.HARDWARE && !busy) scan.run(); });
+        long pageGeneration = generation;
+        SwingUtilities.invokeLater(() -> {
+            if(step == SetupStep.HARDWARE && generation == pageGeneration && !busy) scan.run();
+        });
     }
 
     private void calibrationPage()
@@ -1192,11 +1222,30 @@ public final class SetupWizard extends JDialog
         job("Preparing to optimize decoding…",runner::cancel,() -> runner.run(manager.getUncalibrated(), value -> {
             completed=value.completed(); total=value.total();
             operation=completed==total ? "Saving your decoding choices…" : "Checking decoding methods · " + (completed+1) + " of " + total;
-        },output), result -> {
-            if(result.cancelled()) { progress.set(step,DEFERRED); persist(); showPage(step); detailsToggle.setVisible(true); notice("Optimization stopped", "Completed checks are saved. Run the remaining checks now, or choose Use defaults for now.",false); return; }
-            if(result.failed()>0) { progress.set(step,NEEDS_ATTENTION); persist(); showPage(step); detailsToggle.setVisible(true); fail("Some checks couldn’t finish. Your successful results are saved. Try the remaining checks again, or choose Use defaults for now."); return; }
-            progress.set(step,COMPLETE); persist(); showPage(step);
-        });
+        },output), this::calibrationFinished);
+    }
+
+    private void calibrationFinished(CalibrationRunner.Result result)
+    {
+        SetupProgress.State previous = progress.get(step);
+        progress.set(step, result.cancelled() ? DEFERRED : result.failed() > 0 ? NEEDS_ATTENTION : COMPLETE);
+        if(!persist())
+        {
+            progress.set(step, previous);
+            updateNavigation();
+            return;
+        }
+        showPage(step);
+        if(result.cancelled())
+        {
+            detailsToggle.setVisible(true);
+            notice("Optimization stopped", "Completed checks are saved. Run the remaining checks now, or choose Use defaults for now.",false);
+        }
+        else if(result.failed() > 0)
+        {
+            detailsToggle.setVisible(true);
+            fail("Some checks couldn’t finish. Your successful results are saved. Try the remaining checks again, or choose Use defaults for now.");
+        }
     }
 
     private boolean vaultLocked()
@@ -1223,10 +1272,11 @@ public final class SetupWizard extends JDialog
             "\nEvent logs: " + dirs.getDirectoryEventLog() + "\nApplication logs: " +
             dirs.getDirectoryApplicationLog() + "\nStreaming: " + dirs.getDirectoryStreaming());
         var app = preferences.getApplicationPreference();
-        if(!autoStart.isEmpty() || progress.isImported() || progress.isComplete())
+        if(!listenerRecovery && (!autoStart.isEmpty() || progress.isImported() || progress.isComplete()))
             paragraph("Channels selected to start: " + (autoStart.isEmpty() ? "None — you can add channels after setup." : String.join(", ",autoStart)));
         JCheckBox launchChannels = WizardStyles.checkBox("Start these channels when VCE opens", startChannels);
-        if(!autoStart.isEmpty()) append(launchChannels);
+        launchChannels.addItemListener(event -> startChannels = launchChannels.isSelected());
+        if(!listenerRecovery && !autoStart.isEmpty()) append(launchChannels);
         if(vaultLocked())
         {
             paragraph("Your saved encryption keys are locked. Unlock them to use them, or continue without them for this run.");
@@ -1244,7 +1294,6 @@ public final class SetupWizard extends JDialog
             append(new WizardDisclosure("What's new", WhatsNewDialog.createReleaseNotesView(notes)));
         });
         accept = () -> {
-            startChannels = launchChannels.isSelected();
             if(!progress.isDone(SetupStep.ADMINISTRATOR)) throw new IllegalArgumentException("Complete administrator setup before launching.");
             if(vaultLocked()) throw new IllegalArgumentException("Unlock the vault or choose to continue without it for this run.");
             job("Checking web access…", null, () -> {
@@ -1260,7 +1309,7 @@ public final class SetupWizard extends JDialog
                 }
                 return true;
             }, ignored -> {
-                if(firstRunGuideEligible && liveServer == null &&
+                if(firstRunGuideEligible && !listenerRecovery &&
                     app.getStatsWebServerCertificateMode() == WebCertificateMode.AUTOMATIC)
                     showCertificateGuide();
                 else finishAndLaunch();
@@ -1311,12 +1360,12 @@ public final class SetupWizard extends JDialog
         dispose();
     }
 
-    private <T> void job(String description, Runnable cancelAction, Callable<T> work, Consumer<T> success)
+    private <T> boolean job(String description, Runnable cancelAction, Callable<T> work, Consumer<T> success)
     {
-        job(description, cancelAction, work, success, null);
+        return job(description, cancelAction, work, success, null);
     }
 
-    private <T> void job(String description, Runnable cancelAction, Callable<T> work, Consumer<T> success,
+    private <T> boolean job(String description, Runnable cancelAction, Callable<T> work, Consumer<T> success,
                          Consumer<Throwable> failureHandler)
     {
         String cancelCaption = step == SetupStep.HARDWARE ? "Skip discovery" : "Cancel operation";
@@ -1325,11 +1374,22 @@ public final class SetupWizard extends JDialog
             operation = "Stopping safely…";
             cancelAction.run();
         };
-        if(busy) return;
+        if(busy) return false;
         SetupProgress.State previous = progress == null ? PENDING : progress.get(step);
         busy=true; cancellation=cancellationRequest; long attempt=++generation;
         clearErrorFeedback();
-        if(progress != null) { progress.set(step,RUNNING); persist(); }
+        if(progress != null)
+        {
+            progress.set(step,RUNNING);
+            if(!persist())
+            {
+                progress.set(step,previous);
+                busy = false;
+                cancellation = null;
+                updateNavigation();
+                return false;
+            }
+        }
         operation=description; operationStartedNanos=System.nanoTime(); completed=0; total=0;
         output.clear(); output.accept(description);
         meter.setVisible(true); cancel.setVisible(cancellationRequest!=null); cancel.setEnabled(true); updateNavigation();
@@ -1346,10 +1406,12 @@ public final class SetupWizard extends JDialog
                 {
                     boolean stopped=problem instanceof InterruptedException ||
                         problem instanceof CancellationException;
-                    if(progress!=null) { progress.set(step,stopped?DEFERRED:NEEDS_ATTENTION); persist(); }
+                    boolean progressSaved = true;
+                    if(progress!=null) { progress.set(step,stopped?DEFERRED:NEEDS_ATTENTION); progressSaved = persist(); }
                     if(failureHandler != null)
                     {
                         attempt(() -> failureHandler.accept(problem));
+                        if(!progressSaved) fail(SAVE_ERROR);
                         updateNavigation();
                         return;
                     }
@@ -1378,7 +1440,7 @@ public final class SetupWizard extends JDialog
                     String detail = stopped ? summary : safeFailureDetail(problem, summary);
                     output.accept("Error: " + detail);
                     if(step == SetupStep.SOURCE && VceUpgradeService.isPending(root)) showPage(SetupStep.SOURCE);
-                    fail(summary, detail);
+                    fail(progressSaved ? summary : SAVE_ERROR + " " + summary, detail);
                 }
                 else
                 {
@@ -1388,6 +1450,7 @@ public final class SetupWizard extends JDialog
                 }
             });
         });
+        return true;
     }
 
     private void migrationProgress(String value)
@@ -1438,12 +1501,18 @@ public final class SetupWizard extends JDialog
     {
         return SetupReadiness.nextStep(progress, step, limitedVisit);
     }
+    private SetupStep previousStep()
+    {
+        if(listenerRecovery) return step == SetupStep.REVIEW ? SetupStep.WEB : null;
+        if(reviewingSource) return SetupStep.SOURCE;
+        return step.ordinal() > 0 ? SetupStep.values()[step.ordinal() - 1] : null;
+    }
     private void deferCurrent() { progress.set(step,DEFERRED); if(persist()) showPage(nextStep()); }
     private void defer(String caption) { WizardStyles.quiet(button(caption,this::deferCurrent)); }
     private void save() throws Exception { Preferences.userRoot().flush(); progress.save(database); }
     private boolean persist()
     {
-        try { save(); return true; } catch(Exception e) { fail("Settings could not be saved. Check database access and free disk space; retry before continuing."); return false; }
+        try { save(); return true; } catch(Exception e) { fail(SAVE_ERROR); return false; }
     }
     private void leave()
     {
@@ -1460,7 +1529,7 @@ public final class SetupWizard extends JDialog
     {
         enableTree(page,!busy && !restartRequired);
         back.setEnabled(!busy && !restartRequired && !certificateGuideVisible &&
-            (reviewingSource || preferences!=null && step.ordinal()>0));
+            (reviewingSource || preferences != null) && previousStep() != null);
         next.setEnabled(!busy && !restartRequired && canContinue.getAsBoolean());
         exit.setEnabled(!busy);
         for(var entry:steps.entrySet())
@@ -1472,7 +1541,7 @@ public final class SetupWizard extends JDialog
             button.setToolTipText(label(state)); button.getAccessibleContext().setAccessibleDescription(label(state));
             button.setEnabled(!busy && !restartRequired && !certificateGuideVisible &&
                 (!managedRecordingCatalogNeedsUpgrade || id==SetupStep.SOURCE) &&
-                (id==step || preferences!=null && (liveServer==null || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
+                (id==step || preferences!=null && (!listenerRecovery || id==SetupStep.WEB || id==SetupStep.REVIEW) &&
                 (progress.isDone(id) || state==DEFERRED || state==NEEDS_ATTENTION)));
             button.setFont(WizardStyles.bodyFont().deriveFont(id==step?Font.BOLD:Font.PLAIN));
             Color fill=id==step ? WizardStyles.surface() : UIManager.getColor("Panel.background");

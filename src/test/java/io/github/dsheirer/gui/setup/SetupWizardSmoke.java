@@ -247,6 +247,54 @@ public final class SetupWizardSmoke
         click(wizard,"Exit setup"); awaitClosed(wizard);
     }
 
+    /** Source-specific choices survive reviewing the same folder and reset only for another folder. */
+    private static void exerciseTransferChoiceState(SetupWizard wizard, Path root) throws Exception
+    {
+        Path source = transferSource(root), database = source.resolve("database/sdrtrunk.sqlite");
+        Path other = root.resolveSibling(root.getFileName() + "-other").resolve("data");
+        Path otherDatabase = other.resolve("database/sdrtrunk.sqlite");
+        io.github.dsheirer.database.upgrade.Format62TestDatabase.create(otherDatabase);
+        byte[] before = Files.readAllBytes(database), otherBefore = Files.readAllBytes(otherDatabase);
+        javax.swing.SwingUtilities.invokeAndWait(() -> select(wizard,"Upgrade existing VCE"));
+        chooseSource(wizard,source);
+        awaitVisibleText(wizard,"Review settings");
+        assertTransferChoices(wizard,false);
+        javax.swing.SwingUtilities.invokeAndWait(() -> descendants(wizard).stream()
+            .filter(component -> component instanceof javax.swing.JCheckBox box && box.isShowing() &&
+                "Keep activity and statistics".equals(box.getText()))
+            .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow().doClick());
+        confirmBackup(wizard);
+        assertTransferChoices(wizard,true);
+        chooseSource(wizard,source,"Choose different settings");
+        awaitVisibleText(wizard,"Review settings");
+        assertTransferChoices(wizard,true);
+        capture(wizard,root,"same-source-choices-retained");
+
+        chooseSource(wizard,other,"Choose different settings");
+        awaitVisibleText(wizard,"Review settings");
+        assertTransferChoices(wizard,false);
+        assertSourceFeedback(wizard,false);
+        capture(wizard,root,"different-source-choices-reset");
+        assertNoPreparedDatabase(root);
+        if(!java.util.Arrays.equals(before,Files.readAllBytes(database)) ||
+            !java.util.Arrays.equals(otherBefore,Files.readAllBytes(otherDatabase)))
+            throw new AssertionError("Reviewing source-specific choices changed a source database");
+        click(wizard,"Exit setup"); awaitClosed(wizard);
+    }
+
+    private static void assertTransferChoices(SetupWizard wizard, boolean selected) throws Exception
+    {
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            var choices = descendants(wizard).stream().filter(MigrationContentChoices.class::isInstance)
+                .map(MigrationContentChoices.class::cast).findFirst().orElseThrow();
+            var content = selected ? io.github.dsheirer.database.upgrade.MigrationContent.FULL :
+                io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY;
+            if(choices.selectedContent() != content || backupChoice(wizard).isSelected() != selected ||
+                wizard.getRootPane().getDefaultButton().isEnabled() != selected)
+                throw new AssertionError("History, backup confirmation, or the upgrade gate did not follow the selected source");
+        });
+    }
+
     private static String assertSourceFeedback(SetupWizard wizard, boolean failed) throws Exception
     {
         String[] report = {null};
@@ -356,6 +404,10 @@ public final class SetupWizardSmoke
         if(mode.equals("transfer-source-retry"))
         {
             exerciseSourceRetry(target,root); return;
+        }
+        if(mode.equals("transfer-choice-state"))
+        {
+            exerciseTransferChoiceState(target,root); return;
         }
         if(mode.startsWith("transfer-"))
         {
