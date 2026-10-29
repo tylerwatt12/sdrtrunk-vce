@@ -13,9 +13,17 @@ import java.sql.DriverManager;
 /** Exact populated format-32 fixture produced only by the adjacent format-31 migration. */
 public final class Format32TestDatabase
 {
+    private static final DatabaseFixtureTemplate TEMPLATE =
+        new DatabaseFixtureTemplate(32, Format32TestDatabase::build);
+
     private Format32TestDatabase() {}
 
     public static Path create(Path database) throws Exception
+    {
+        return TEMPLATE.create(database);
+    }
+
+    private static Path build(Path database) throws Exception
     {
         Format31TestDatabase.create(database);
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
