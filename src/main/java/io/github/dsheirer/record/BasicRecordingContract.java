@@ -22,6 +22,7 @@ import io.github.dsheirer.identifier.radio.FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.string.StringIdentifier;
 import io.github.dsheirer.identifier.talkgroup.FullyQualifiedTalkgroupIdentifier;
+import io.github.dsheirer.identifier.talkgroup.TalkgroupIdentifier;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
@@ -41,8 +42,9 @@ import java.util.List;
  * Shared recording filenames and standard ID3/WAV metadata.
  *
  * <p>External importers depend on Basic filenames and existing ID3/WAV fields in every recording/export mode.
- * Qualified radio and talkgroup text uses the captured local numeric ID, including zero, independently of the
- * receiving system. Full home identities and explicit working-address facts belong in the additional ID3 fields.
+ * Radio and talkgroup text uses the captured numeric ID, including zero, rather than display annotations. Qualified
+ * identities use their local ID; NXDN Type-D identities retain the complete packed address. Full home identities
+ * and explicit working-address facts belong in the additional ID3 fields.
  * All recording modes consume the same resolved call attribution.</p>
  */
 public final class BasicRecordingContract
@@ -101,13 +103,13 @@ public final class BasicRecordingContract
 
     private static String identifierText(Identifier<?> identifier)
     {
-        if(identifier instanceof FullyQualifiedRadioIdentifier radio)
+        if(identifier instanceof RadioIdentifier radio)
         {
-            return Integer.toString(radio.getValue());
+            return radio.getValue() != null ? Integer.toString(radio.getValue()) : "";
         }
-        if(identifier instanceof FullyQualifiedTalkgroupIdentifier group)
+        if(identifier instanceof TalkgroupIdentifier group)
         {
-            return Integer.toString(group.getValue());
+            return group.getValue() != null ? Integer.toString(group.getValue()) : "";
         }
         if(identifier instanceof PatchGroupIdentifier patch)
         {

@@ -22,7 +22,14 @@ import io.github.dsheirer.record.managed.ManagedRecordingCatalog;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.alias.id.radio.Radio;
+import io.github.dsheirer.identifier.Form;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
+import io.github.dsheirer.module.decode.dmr.identifier.DmrTier3Radio;
 import io.github.dsheirer.module.decode.nxdn.NXDNConventionalCallFixture;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -80,7 +87,7 @@ class VceRecordingMetadataFileTest
     @TempDir Path mDirectory;
 
     @Test
-    void decodedNxdnZeroSurvivesActualFilesAndCatalogWithoutChangingLegacyTags() throws Exception
+    void decodedNxdnZeroSurvivesActualFilesAndCatalogWithNumericBasicId() throws Exception
     {
         AliasList aliases = new AliasList(new io.github.dsheirer.alias.AliasListDefinition("NXDN",
             io.github.dsheirer.alias.AliasListFamily.NXDN));
@@ -99,8 +106,8 @@ class VceRecordingMetadataFileTest
             Recording recording = writeAndRead(call, name, format, null);
             assertExistingFieldsUnchanged(call, call.snapshot().identifierCollection(), recording);
             ID3v24Tag standard = new ID3v24Tag(recording.id3());
-            assertEquals("0x0000 NULL GROUP\"Dispatch\"", standard.getTitle(),
-                "Legacy title grammar is independent of ordinary web TG 0 presentation");
+            assertEquals("0\"Dispatch\"", standard.getTitle(),
+                "The ID is numeric while the existing quoted alias grammar remains intact");
             assertEquals("19", standard.getArtist());
             assertEquals("0", recording.vceFields().get("VCE_TALKGROUP"));
             assertEquals("NXDN", recording.vceFields().get("VCE_PROTOCOL"));
@@ -124,6 +131,139 @@ class VceRecordingMetadataFileTest
                 assertEquals(19, rows.getFirst().toMap().get("source_id"));
             }
         }
+    }
+
+    @Test
+    void numericIdsSurviveRealFilesInBothModesWithFrozenAliasesAndUnchangedAdditionalFacts() throws Exception
+    {
+        DMRTalkgroup compressed = new DMRTalkgroup(146410);
+        compressed.setCompressed(true);
+        List<NumericCase> cases = List.of(
+            new NumericCase("zero", NXDNRadioIdentifier.createFrom(19), NXDNTalkgroupIdentifier.createTo(0),
+                19, 0, TrunkedIdentityDomain.NXDN_TYPE_C),
+            new NumericCase("reserved", NXDNRadioIdentifier.createFrom(0xFFF0),
+                NXDNTalkgroupIdentifier.createTo(0xFFF0), 65520, 65520, TrunkedIdentityDomain.NXDN_TYPE_C),
+            new NumericCase("all", NXDNRadioIdentifier.createFrom(0xFFFF),
+                NXDNTalkgroupIdentifier.createTo(0xFFFF), 65535, 65535, TrunkedIdentityDomain.NXDN_TYPE_C),
+            new NumericCase("type-d", NXDNRadioIdentifier.createTypeDFrom((2 << 11) | 2),
+                NXDNTalkgroupIdentifier.createTypeDTo((1 << 11) | 1), 4098, 2049,
+                TrunkedIdentityDomain.NXDN_TYPE_D),
+            new NumericCase("type-d-other-home", NXDNRadioIdentifier.createTypeDFrom((2 << 11) | 2),
+                NXDNTalkgroupIdentifier.createTypeDTo((2 << 11) | 1), 4098, 4097,
+                TrunkedIdentityDomain.NXDN_TYPE_D),
+            new NumericCase("type-d-radio-destination", NXDNRadioIdentifier.createTypeDFrom((2 << 11) | 2),
+                NXDNRadioIdentifier.createTypeDTo((1 << 11) | 1), 4098, 2049,
+                TrunkedIdentityDomain.NXDN_TYPE_D),
+            new NumericCase("dmr-compressed-gateway", DmrTier3Radio.createFrom(0xFFFEC0), compressed,
+                16776896, 100000, TrunkedIdentityDomain.STANDARD));
+        UserPreferences preferences = new UserPreferences();
+        RecordingMode previous = preferences.getRecordPreference().getRecordingMode();
+        try(ManagedRecordingCatalog catalog = new ManagedRecordingCatalog(mDirectory.resolve("numeric.sqlite"),
+            mDirectory))
+        {
+            int sequence = 100;
+            for(RecordingMode mode: RecordingMode.values())
+            {
+                preferences.getRecordPreference().setRecordingMode(mode);
+                for(NumericCase item: cases)
+                {
+                    Protocol protocol = item.source().getProtocol();
+                    AliasList aliases = new AliasList(new io.github.dsheirer.alias.AliasListDefinition(
+                        "NUMERIC", protocol == Protocol.NXDN ? io.github.dsheirer.alias.AliasListFamily.NXDN :
+                            io.github.dsheirer.alias.AliasListFamily.DMR));
+                    Alias sourceAlias = new Alias("LAB SOURCE 0xABCD");
+                    sourceAlias.setMatchIdentifier(new Radio(protocol, item.expectedSource()));
+                    Alias targetAlias = new Alias("LAB TARGET 0xBEEF");
+                    targetAlias.setMatchIdentifier(item.destination().getForm() == Form.RADIO ?
+                        new Radio(protocol, item.expectedTarget()) : new Talkgroup(protocol, item.expectedTarget()));
+                    aliases.addAlias(sourceAlias);
+                    aliases.addAlias(targetAlias);
+                    IdentifierCollection identifiers = identifiers(SystemConfigurationIdentifier.create("LABSYSTEM"),
+                        SiteConfigurationIdentifier.create("001-001"),
+                        ChannelNameConfigurationIdentifier.create("LABCHANNEL"),
+                        DecoderTypeConfigurationIdentifier.create(protocol == Protocol.NXDN ? DecoderType.NXDN : DecoderType.DMR),
+                        FrequencyConfigurationIdentifier.create(461125000L), item.source(), item.destination());
+                    if(protocol == Protocol.NXDN)
+                    {
+                        List<Identifier> captured = new ArrayList<>(identifiers.getIdentifiers());
+                        captured.add(new NXDNTalkerAliasIdentifier("OTA NAME KEPT OUT OF FILE METADATA")
+                            .bindTo(identifiers));
+                        identifiers = new IdentifierCollection(captured);
+                    }
+                    CompletedAudioCall call = numericCall(identifiers, aliases, item.domain(), sequence++);
+                    sourceAlias.setName("EDITED AFTER SNAPSHOT");
+                    targetAlias.setName("EDITED AFTER SNAPSHOT");
+                    String expectedArtist = item.expectedSource() + " LAB SOURCE 0xABCD";
+                    String expectedTitle = item.expectedTarget() + "\"LAB TARGET 0xBEEF\"";
+                    Map<String,String> expectedExtra = new LinkedHashMap<>();
+                    if(item.destination().getForm() == Form.TALKGROUP)
+                        expectedExtra.put("VCE_TALKGROUP", Integer.toString(item.expectedTarget()));
+                    expectedExtra.put("VCE_FREQUENCY_HZ", "461125000");
+                    expectedExtra.put("VCE_PROTOCOL", protocol.name());
+                    for(RecordFormat format: RecordFormat.values())
+                    {
+                        Path folder = mDirectory.resolve(mode + "-" + item.name());
+                        Files.createDirectories(folder);
+                        Path file = BasicRecordingContract.nextPath(folder, identifiers, format, 1000L, 1);
+                        assertTrue(file.getFileName().toString().matches("\\d{8}_\\d{6}_LABSYSTEM_001-001_LABCHANNEL__TO_" +
+                            item.expectedTarget() + "_FROM_" + item.expectedSource() + "\\" + format.getExtension()));
+                        AudioCallRecorder.write(call, file, format, preferences);
+                        byte[] bytes = Files.readAllBytes(file);
+                        Recording recording = readRecording(bytes, format);
+                        ID3v24Tag tag = new ID3v24Tag(recording.id3());
+                        assertEquals(expectedTitle, tag.getTitle(), item.name());
+                        assertEquals(expectedArtist, tag.getArtist(), item.name());
+                        assertEquals("LABSYSTEM", tag.getGrouping());
+                        assertEquals("LABCHANNEL", tag.getAlbum());
+                        assertEquals(BasicRecordingContract.composer(), tag.getComposer());
+                        assertEquals(expectedExtra, recording.vceFields(), "Existing VCE facts have unchanged meanings");
+                        assertEquals(Set.of("TCOM", "TCON", "TIT1", "TALB", "TIT2", "TPE1", "TDAT", "TYER", "COMM"),
+                            recording.frames().stream().filter(frame -> !frame.name().equals("TXXX"))
+                                .map(Frame::name).collect(java.util.stream.Collectors.toSet()),
+                            "Numeric IDs add no basic ID3 fields");
+                        if(format == RecordFormat.WAVE)
+                        {
+                            Map<String,String> info = waveInfoFields(recording.waveChunks().get("LIST"));
+                            assertEquals(expectedTitle, info.get("INAM"));
+                            assertEquals(expectedArtist, info.get("IART"));
+                        }
+                        CountDownLatch indexed = new CountDownLatch(1);
+                        assertTrue(catalog.submit(file, call, bytes.length, indexed::countDown));
+                        assertTrue(indexed.await(5, TimeUnit.SECONDS));
+                        String relative = mDirectory.relativize(file).toString().replace('\\', '/');
+                        var stored = catalog.search(ManagedRecordingCatalog.SearchFilter.builder()
+                            .fromMs(0L).toMs(5000L).build()).calls().stream()
+                            .filter(row -> row.relativePath().equals(relative)).findFirst().orElseThrow();
+                        assertEquals(item.expectedSource(), stored.sourceId());
+                        assertEquals(item.expectedTarget(), stored.targetId());
+                        assertArrayEquals(bytes, Files.readAllBytes(catalog.audioPath(stored.id())),
+                            "The file supplied to listening/download keeps the complete recording bytes");
+                    }
+                }
+            }
+        }
+        finally
+        {
+            preferences.getRecordPreference().setRecordingMode(previous);
+        }
+    }
+
+    private record NumericCase(String name, Identifier<?> source, Identifier<?> destination,
+                               int expectedSource, int expectedTarget, TrunkedIdentityDomain domain) {}
+
+    private static CompletedAudioCall numericCall(IdentifierCollection identifiers, AliasList aliases,
+                                                 TrunkedIdentityDomain domain, int sequence)
+    {
+        Protocol protocol = identifiers.getFromIdentifier().getProtocol();
+        CallLegSource source = new CallLegSource(protocol == Protocol.NXDN ? DecoderType.NXDN : DecoderType.DMR,
+            domain == TrunkedIdentityDomain.NXDN_TYPE_D ? "00000000-0000-0000-0000-000000000099" :
+                "00000000-0000-0000-0000-000000000098", "LABCHANNEL", null, 0, null, domain, null, false);
+        AudioCallId id = new AudioCallId(sequence, 1, 0);
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(id, null, aliases, identifiers, Set.of(),
+            1000L, 2000L, 1, 1, 1000L, 2000L, false, true, CallEncryptionState.UNKNOWN, true, null,
+            VoiceCallQuality.EMPTY, CallLegId.from(id), source, null);
+        return new CompletedAudioCall(snapshot, call(identifiers, source, VoiceCallQuality.EMPTY,
+            CallEncryptionState.UNKNOWN, 0).audioBuffers());
     }
 
     @Test

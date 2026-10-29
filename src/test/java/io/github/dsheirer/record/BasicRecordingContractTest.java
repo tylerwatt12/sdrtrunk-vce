@@ -19,6 +19,7 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
@@ -31,6 +32,13 @@ import io.github.dsheirer.identifier.tone.P25ToneIdentifier;
 import io.github.dsheirer.identifier.tone.Tone;
 import io.github.dsheirer.identifier.tone.ToneSequence;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
+import io.github.dsheirer.module.decode.dmr.identifier.DmrTier3Radio;
+import io.github.dsheirer.module.decode.dmr.message.type.Tier3Gateway;
+import io.github.dsheirer.module.decode.am.AMTalkgroup;
+import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
+import io.github.dsheirer.module.decode.fleetsync2.identifier.FleetsyncIdentifier;
+import io.github.dsheirer.module.decode.mdc1200.identifier.MDC1200Identifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.P25RadioPresence;
@@ -43,6 +51,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.tait.identifier.TaitIdentifier;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import java.nio.file.Files;
@@ -63,19 +72,19 @@ class BasicRecordingContractTest
     @TempDir Path mDirectory;
 
     @Test
-    void nxdnZeroKeepsTheExistingFilenameAndIdentifierGrammar()
+    void nxdnZeroUsesNumericIdentityWithinTheExistingFilenameGrammar()
     {
         var identifiers = new IdentifierCollection(List.of(SystemConfigurationIdentifier.create("System"),
             SiteConfigurationIdentifier.create("Site"), ChannelNameConfigurationIdentifier.create("Channel"),
             NXDNTalkgroupIdentifier.createTo(0), NXDNRadioIdentifier.createFrom(19)));
         for(RecordFormat format: RecordFormat.values())
         {
-            assertEquals("20261007_123456_System_Site_Channel__TO_0x0000-NULL-GROUP_FROM_19" + format.getExtension(),
+            assertEquals("20261007_123456_System_Site_Channel__TO_0_FROM_19" + format.getExtension(),
                 BasicRecordingContract.filename(identifiers, format, WRITER_TIME, 1, 1));
-            assertEquals("20261007_123456_System_Site_Channel__TO_0x0000-NULL-GROUP_FROM_19_V2" + format.getExtension(),
+            assertEquals("20261007_123456_System_Site_Channel__TO_0_FROM_19_V2" + format.getExtension(),
                 BasicRecordingContract.filename(identifiers, format, WRITER_TIME, 1, 2));
         }
-        assertEquals("0x0000 NULL GROUP", BasicRecordingContract.targetIdentifier(identifiers.getToIdentifier()));
+        assertEquals("0", BasicRecordingContract.targetIdentifier(identifiers.getToIdentifier()));
         assertEquals("19", BasicRecordingContract.sourceIdentifier(identifiers.getFromIdentifier()));
     }
 
@@ -151,13 +160,101 @@ class BasicRecordingContractTest
     }
 
     @Test
-    void plainProtocolsAndNxdnSpecialAddressesRetainTheirUpstreamRepresentation()
+    void ordinaryNumericProtocolsKeepTheirExistingScalarIdentity()
     {
-        assertEquals("70001", BasicRecordingContract.sourceIdentifier(APCO25RadioIdentifier.createFrom(70001)));
-        assertEquals("70001", BasicRecordingContract.sourceIdentifier(DMRRadio.createFrom(70001)));
-        assertEquals("7001", BasicRecordingContract.sourceIdentifier(NXDNRadioIdentifier.createFrom(7001)));
-        assertEquals("03-0025", BasicRecordingContract.sourceIdentifier(NXDNRadioIdentifier.createTypeDFrom((3 << 11) | 25)));
-        assertEquals("0xFFF0 TRUNKING CONTROLLER", BasicRecordingContract.sourceIdentifier(NXDNRadioIdentifier.createFrom(0xFFF0)));
+        for(Identifier<?> target: List.<Identifier<?>>of(APCO25Talkgroup.create(12345),
+            DMRTalkgroup.create(12345), NXDNTalkgroupIdentifier.createTo(12345), new AMTalkgroup(12345),
+            new NBFMTalkgroup(12345), MDC1200Identifier.createTo(12345),
+            FleetsyncIdentifier.createToUser(12345)))
+        {
+            assertEquals("12345", BasicRecordingContract.targetIdentifier(target));
+            assertEquals("20261007_123456__TO_12345.mp3", BasicRecordingContract.filename(
+                new IdentifierCollection(List.of(target)), RecordFormat.MP3, WRITER_TIME, 1, 1));
+        }
+        for(Identifier<?> source: List.<Identifier<?>>of(APCO25RadioIdentifier.createFrom(12345),
+            DMRRadio.createFrom(12345), NXDNRadioIdentifier.createFrom(12345),
+            MDC1200Identifier.createFrom(12345), FleetsyncIdentifier.createFromUser(12345)))
+        {
+            assertEquals("12345", BasicRecordingContract.sourceIdentifier(source));
+        }
+    }
+
+    @Test
+    void nxdnSpecialAddressesExportTheirFullNumericValuesInBothRoles()
+    {
+        for(int value: List.of(0, 65520, 65535))
+        {
+            assertEquals(Integer.toString(value),
+                BasicRecordingContract.targetIdentifier(NXDNTalkgroupIdentifier.createTo(value)));
+        }
+        for(int value: List.of(65520, 65521, 65522, 65523, 65524, 65525, 65535))
+        {
+            assertEquals(Integer.toString(value),
+                BasicRecordingContract.sourceIdentifier(NXDNRadioIdentifier.createFrom(value)));
+            assertEquals(Integer.toString(value),
+                BasicRecordingContract.targetIdentifier(NXDNRadioIdentifier.createTo(value)));
+        }
+        assertEquals("0xFFFF ALL UNITS", NXDNRadioIdentifier.createFrom(65535).toString(),
+            "Correcting recording IDs must not change the diagnostic display formatter");
+    }
+
+    @Test
+    void typeDExportsRetainEveryAddressBitAndDoNotMergeDifferentHomeRepeaters()
+    {
+        for(int address = 0; address <= 65535; address++)
+        {
+            int target = Integer.parseInt(BasicRecordingContract.targetIdentifier(
+                NXDNTalkgroupIdentifier.createTypeDTo(address)));
+            int source = Integer.parseInt(BasicRecordingContract.sourceIdentifier(
+                NXDNRadioIdentifier.createTypeDFrom(address)));
+            assertEquals(address, target, "The complete Type-D talkgroup address must survive export");
+            assertEquals(address, source, "The complete Type-D radio address must survive export");
+        }
+        assertEquals("2073", BasicRecordingContract.targetIdentifier(NXDNTalkgroupIdentifier.createTypeDTo(2073)));
+        assertEquals("4121", BasicRecordingContract.targetIdentifier(NXDNTalkgroupIdentifier.createTypeDTo(4121)));
+        assertEquals("03-0025", NXDNRadioIdentifier.createTypeDFrom(6169).toString());
+        var identifiers = new IdentifierCollection(List.of(
+            NXDNTalkgroupIdentifier.createTypeDTo(6169), NXDNRadioIdentifier.createTypeDFrom(65535)));
+        for(RecordFormat format: RecordFormat.values())
+        {
+            assertEquals("20261007_123456__TO_6169_FROM_65535_V2" + format.getExtension(),
+                BasicRecordingContract.filename(identifiers, format, WRITER_TIME, 1, 2));
+        }
+    }
+
+    @Test
+    void dmrUsesTheNormalizedCompressedGroupAndNumericGatewayWithoutDisplayAnnotations()
+    {
+        var group = new DMRTalkgroup(147874);
+        group.setCompressed(true);
+        assertEquals("101111(c)", group.toString());
+        assertEquals("101111", BasicRecordingContract.targetIdentifier(group));
+        for(Tier3Gateway gateway: Tier3Gateway.values())
+        {
+            if(gateway == Tier3Gateway.RESERVED) continue;
+            var radio = DmrTier3Radio.createFrom(gateway.getValue());
+            assertEquals(gateway.getLabel(), radio.toString());
+            assertEquals(Integer.toString(gateway.getValue()), BasicRecordingContract.sourceIdentifier(radio));
+        }
+        var identifiers = new IdentifierCollection(List.of(group, DmrTier3Radio.createFrom(16776896)));
+        assertEquals("20261007_123456__TO_101111_FROM_16776896.mp3",
+            BasicRecordingContract.filename(identifiers, RecordFormat.MP3, WRITER_TIME, 1, 1));
+    }
+
+    @Test
+    void trueStringIdentitiesKeepTextAndLeadingZerosInsteadOfBeingCoercedToNumbers()
+    {
+        var source = TaitIdentifier.createFrom("AB-001X");
+        var target = TaitIdentifier.createTo("00012");
+        assertEquals("AB-001X", BasicRecordingContract.sourceIdentifier(source));
+        assertEquals("00012", BasicRecordingContract.targetIdentifier(target));
+        assertEquals("20261007_123456__TO_00012_FROM_AB-001X.mp3",
+            BasicRecordingContract.filename(new IdentifierCollection(List.of(source, target)),
+                RecordFormat.MP3, WRITER_TIME, 1, 1));
+        assertEquals("+1(555)-0100", BasicRecordingContract.sourceIdentifier(
+            io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber.createFrom("+1(555)-0100")));
+        assertEquals("", BasicRecordingContract.sourceIdentifier(null));
+        assertEquals("", BasicRecordingContract.targetIdentifier(null));
     }
 
     @Test

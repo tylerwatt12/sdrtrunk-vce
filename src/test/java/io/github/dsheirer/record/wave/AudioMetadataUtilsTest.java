@@ -34,6 +34,7 @@ import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
@@ -46,6 +47,15 @@ import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier
 import io.github.dsheirer.identifier.decoder.DecoderLogicalChannelNameIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.am.AMTalkgroup;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
+import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
+import io.github.dsheirer.module.decode.dmr.identifier.DmrTier3Radio;
+import io.github.dsheirer.module.decode.fleetsync2.identifier.FleetsyncIdentifier;
+import io.github.dsheirer.module.decode.mdc1200.identifier.MDC1200Identifier;
+import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
@@ -53,6 +63,7 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifie
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25FullyQualifiedTalkgroupIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
+import io.github.dsheirer.module.decode.tait.identifier.TaitIdentifier;
 import io.github.dsheirer.protocol.Protocol;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -80,6 +91,97 @@ class AudioMetadataUtilsTest
             APCO25Talkgroup.create(100), APCO25RadioIdentifier.createFrom(200)));
 
         assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases), "200 Unit", "100\"Dispatch\"");
+    }
+
+    @Test
+    void nxdnSpecialIdsStayNumericInMp3AndWaveWithHexLookingAliasNamesIntact() throws Exception
+    {
+        AliasList aliases = new AliasList(new AliasListDefinition("NXDN", AliasListFamily.NXDN));
+        addAlias(aliases, "0xFFFF Dispatch", new Talkgroup(Protocol.NXDN, 0));
+        addAlias(aliases, "0xFFF0 Unit", new Radio(Protocol.NXDN, 65535));
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            NXDNTalkgroupIdentifier.createTo(0), NXDNRadioIdentifier.createFrom(65535))), aliases),
+            "65535 0xFFF0 Unit", "0\"0xFFFF Dispatch\"");
+
+        for(int value: List.of(65520, 65535))
+        {
+            assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+                NXDNTalkgroupIdentifier.createTo(value), NXDNRadioIdentifier.createFrom(19))), null),
+                "19", Integer.toString(value));
+        }
+        for(int value: List.of(65520, 65521, 65522, 65523, 65524, 65525, 65535))
+        {
+            assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+                NXDNRadioIdentifier.createTo(value), NXDNRadioIdentifier.createFrom(value))), null),
+                Integer.toString(value), Integer.toString(value));
+        }
+    }
+
+    @Test
+    void typeDSourceAndDestinationTagsPreserveHomeRepeaterAndLocalAddressTogether() throws Exception
+    {
+        //The same unit number on different home repeaters must not collapse to a single exported ID.
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            NXDNTalkgroupIdentifier.createTypeDTo(2073), NXDNRadioIdentifier.createTypeDFrom(4121))), null),
+            "4121", "2073");
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            NXDNTalkgroupIdentifier.createTypeDTo(6169), NXDNRadioIdentifier.createTypeDFrom(65535))), null),
+            "65535", "6169");
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            NXDNTalkgroupIdentifier.createTypeDTo(0), NXDNRadioIdentifier.createTypeDFrom(2047))), null),
+            "2047", "0");
+    }
+
+    @Test
+    void normalizedDmrGroupsAndGatewayRadiosKeepTheExistingTagLayout() throws Exception
+    {
+        var group = new DMRTalkgroup(147874);
+        group.setCompressed(true);
+        AliasList aliases = new AliasList(new AliasListDefinition("DMR", AliasListFamily.DMR));
+        addAlias(aliases, "Dispatch", new Talkgroup(Protocol.DMR, 101111));
+        addAlias(aliases, "Gateway", new Radio(Protocol.DMR, 16776896));
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            group, DmrTier3Radio.createFrom(16776896))), aliases),
+            "16776896 Gateway", "101111\"Dispatch\"");
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            DmrTier3Radio.createTo(16777215), DMRRadio.createFrom(12345))), null), "12345", "16777215");
+    }
+
+    @Test
+    void ordinaryNumericProtocolTagsRemainUnchanged() throws Exception
+    {
+        for(Identifier<?> target: List.<Identifier<?>>of(APCO25Talkgroup.create(12345),
+            DMRTalkgroup.create(12345), NXDNTalkgroupIdentifier.createTo(12345), new AMTalkgroup(12345),
+            new NBFMTalkgroup(12345), MDC1200Identifier.createTo(12345),
+            FleetsyncIdentifier.createToUser(12345)))
+        {
+            assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(target)), null),
+                null, "12345");
+        }
+        for(Identifier<?> source: List.<Identifier<?>>of(APCO25RadioIdentifier.createFrom(12345),
+            DMRRadio.createFrom(12345), NXDNRadioIdentifier.createFrom(12345),
+            MDC1200Identifier.createFrom(12345), FleetsyncIdentifier.createFromUser(12345)))
+        {
+            assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(source)), null),
+                "12345", null);
+        }
+    }
+
+    @Test
+    void stringIdentitiesRetainTextAndLeadingZerosInStandardTags() throws Exception
+    {
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            TaitIdentifier.createFrom("AB-001X"), TaitIdentifier.createTo("00012"))), null), "AB-001X", "00012");
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            io.github.dsheirer.module.decode.p25.identifier.telephone.APCO25TelephoneNumber.createFrom("+1(555)-0100"))),
+            null), "+1(555)-0100", null);
+    }
+
+    @Test
+    void missingRadioSourceIsNotInventedWhenTheDestinationIsValidZero() throws Exception
+    {
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(
+            NXDNTalkgroupIdentifier.createTo(0), NXDNRadioIdentifier.createFrom(0))), null), null, "0");
     }
 
     @Test

@@ -124,10 +124,10 @@ class AudioRecordingManagerTest
                     assertSame(source, observed.getFirst());
                     Path saved = written.getFirst();
                     assertTrue(saved.getFileName().toString().matches(
-                        "\\d{8}_\\d{6}__TO_0x0000-NULL-GROUP_FROM_19" + Pattern.quote(format.getExtension())),
-                        "Basic filenames retain their existing NXDN identifier grammar");
+                        "\\d{8}_\\d{6}__TO_0_FROM_19" + Pattern.quote(format.getExtension())),
+                        "Basic filenames retain their schema with the actual numeric NXDN ID");
                     ID3v24Tag tag = standardRecordingTag(saved, format);
-                    assertEquals("0x0000 NULL GROUP\"Security\"", tag.getTitle());
+                    assertEquals("0\"Security\"", tag.getTitle());
                     assertEquals("19", tag.getArtist());
                     assertEquals(0, manager.getQueueStatus().droppedRecordings());
                 }
@@ -189,7 +189,7 @@ class AudioRecordingManagerTest
                 assertTrue(saved.getFileName().toString().matches(
                     "\\d{8}T\\d{9}Z_0_19_[0-9a-f-]{36}\\.mp3"));
                 ID3v24Tag tag = standardRecordingTag(saved, RecordFormat.MP3);
-                assertEquals("0x0000 NULL GROUP\"Security\"", tag.getTitle());
+                assertEquals("0\"Security\"", tag.getTitle());
                 assertEquals("19", tag.getArtist());
                 var rows = catalog.search(ManagedRecordingCatalog.SearchFilter.builder()
                     .fromMs(0L).toMs(5_000L).protocol("NXDN").talkgroupId(0).build()).calls();

@@ -133,8 +133,82 @@ public class AudioStreamingManagerTest
             assertEquals(Set.of(route("NXDN calls")), new HashSet<>(recording.getBroadcastChannels()));
             assertEquals(1_000, recording.getRecordingLength());
             var tags = new com.mpatric.mp3agic.Mp3File(recording.getPath().toString()).getId3v2Tag();
-            assertEquals("0x0000 NULL GROUP\"Dispatch\"", tags.getTitle());
+            assertEquals("0\"Dispatch\"", tags.getTitle());
             assertEquals("19", tags.getArtist());
+        }
+        finally
+        {
+            manager.stop();
+            scheduler.shutdownNow();
+            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
+        }
+    }
+
+    @Test
+    void nxdnTypeDAndSpecialAddressesKeepTheirFullNumericIdsInEncodedStreamingTags() throws Exception
+    {
+        var typeDSource = io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier
+            .createTypeDFrom((2 << 11) | 7);
+        var typeDTarget = io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier
+            .createTypeDTo((3 << 11) | 25);
+        var specialSource = io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier.createFrom(0xFFF0);
+        var specialTarget = io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier.createTo(0xFFFF);
+        List<Identifier<?>> sources = List.of(typeDSource, specialSource);
+        List<Identifier<?>> targets = List.of(typeDTarget, specialTarget);
+        List<String> expectedTitles = List.of("6169\"0xABCD Dispatch\"", "65535\"0xABCD Dispatch\"");
+        List<String> expectedArtists = List.of("4103", "65520");
+        UserPreferences preferences = new UserPreferences();
+        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
+        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
+        List<AudioRecording> delivered = new ArrayList<>();
+        AudioStreamingManager manager = new AudioStreamingManager(delivered::add, BroadcastFormat.MP3,
+            preferences, null, scheduler, (completed, path, prefs, identifiers, normalize) ->
+                AudioCallRecorder.write(completed, path, RecordFormat.MP3, prefs, identifiers, normalize));
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
+            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            manager.start();
+            for(int index = 0; index < sources.size(); index++)
+            {
+                AliasList aliases = new AliasList(new AliasListDefinition("NXDN numeric", AliasListFamily.NXDN));
+                Alias alias = new Alias("0xABCD Dispatch");
+                alias.setMatchIdentifier(new Talkgroup(Protocol.NXDN, ((Number)targets.get(index).getValue()).intValue()));
+                alias.addBroadcastChannel(route("NXDN numeric"));
+                aliases.addAlias(alias);
+                MutableIdentifierCollection identifiers = new MutableIdentifierCollection();
+                identifiers.update(sources.get(index));
+                identifiers.update(targets.get(index));
+                long started = System.currentTimeMillis();
+                AudioCallId callId = new AudioCallId(index + 1, index + 1, 0);
+                CallLegSource legSource = new CallLegSource(DecoderType.NXDN, "numeric-streaming", "NXDN", null,
+                    aliases.getId(), null, index == 0 ?
+                        io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.NXDN_TYPE_D :
+                        io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.NXDN_TYPE_C,
+                    io.github.dsheirer.configuration.ChannelConfigurationPolicy.ChannelKind.TRUNKED, false);
+                AudioCallSnapshot snapshot = new AudioCallSnapshot(callId, null, aliases, identifiers.copyOf(),
+                    Set.of(route("NXDN numeric")), started, started + 1_000, 1, 1, started, started + 1_000,
+                    false, true, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
+                    CallLegId.from(callId), legSource, null);
+                manager.receive(new CompletedAudioCall(snapshot, List.of(new float[8_000])));
+                assertEquals(index, delivered.size(), "Encoding remains on the output worker");
+                manager.new AudioSegmentProcessor().run();
+                assertEquals(index + 1, delivered.size());
+                AudioRecording recording = delivered.get(index);
+                var tags = new com.mpatric.mp3agic.Mp3File(recording.getPath().toString()).getId3v2Tag();
+                assertEquals(expectedTitles.get(index), tags.getTitle());
+                assertEquals(expectedArtists.get(index), tags.getArtist());
+                assertEquals(targets.get(index), recording.getIdentifierCollection().getToIdentifier());
+                assertEquals(sources.get(index), recording.getIdentifierCollection().getFromIdentifier());
+                assertEquals(1_000, recording.getRecordingLength());
+                assertTrue(recording.getPath().getFileName().toString().matches(".*\\d+_\\d{8}_\\d{6}.*\\.mp3"),
+                    "The temporary streaming filename schema is independent of ID serialization");
+            }
+            assertEquals("03-0025", typeDTarget.toString(), "Human-readable Type-D formatting remains intact");
+            assertEquals("0xFFFF ALL GROUPS", specialTarget.toString(), "Display labels are not machine export values");
         }
         finally
         {
