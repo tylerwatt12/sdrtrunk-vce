@@ -22,17 +22,22 @@ const contracts = [
   ["alert enrollment QR codes", "alerts-qr.test.js", "stats-web/assets/features/alerts-qr.js"],
   ["channel editor composition", "channel-editor.test.js", "stats-web/assets/app.js"],
   ["frontend foundation", "frontend-foundation.test.js", "stats-web/assets/core"],
+  ["operational preferences", "operational-preferences.test.js", "stats-web/assets/app.js"],
   ["health alert settings", "health-alert-settings.test.js", "stats-web/assets/app.js"],
   ["Live detail filters", "live-detail-filters.test.js", "stats-web/assets/app.js"],
   ["Live presentation", "live-presentation.test.js", "stats-web/assets/app.js"],
   ["Live bandwidth", "live-bandwidth.test.js", "stats-web/assets/app.js"],
   ["Live impaired network", "live-network-simulation.test.js", "stats-web/assets/app.js"],
   ["Live focus recovery", "live-focus-recovery.test.js", "stats-web/assets/app.js"],
+  ["Live channel history", "live-channel-history.test.js", "stats-web/assets/app.js"],
   ["Call matching deltas", "call-matching-deltas.test.js", "stats-web/assets/app.js"],
   ["Call count scopes and dates", "call-count-scope.test.js", "stats-web/assets/app.js"],
   ["Tuner allocation", "tuner-allocation.test.js", "stats-web/assets/app.js"],
   ["Receiver nicknames", "receiver-nicknames.test.js", "stats-web/assets/app.js"],
   ["source names", "source-names.test.js", "stats-web/assets/core/source-names.js"],
+  ["system names", "system-names.test.js", "stats-web/assets/core/system-labels.js"],
+  ["system context presentation", "system-context-presentation.test.js", "stats-web/assets/app.js"],
+  ["radio labels", "radio-labels.test.js", "stats-web/assets/core/radio-labels.js"],
   ["source name preference", "source-name-preference.test.js", "stats-web/assets/app.js"],
   ["public Alias navigation", "public-alias-navigation.test.js", "stats-web/assets/app.js"],
   ["recordings playback", "recordings-playback.test.js", "stats-web/assets/features/recordings.js"],
@@ -48,7 +53,12 @@ const contracts = [
   ["channel patches", "channel-patches.test.js", "stats-web/assets/app.js"],
   ["CSS architecture", "css-architecture.test.js", "stats-web/assets/app.css"],
   ["page lifecycle", "page-lifecycle.test.js", "stats-web/assets/core/page-lifecycle.js"],
+  ["page loading", "page-loading.test.js", "stats-web/assets/app.js"],
   ["radio identity presentation", "radio-identity-presentation.test.js", "stats-web/assets/app.js"],
+  ["ISSI workspace", "issi-workspace.test.js", "stats-web/assets/app.js"],
+  ["retained system identity", "retained-system-identity.test.js", "stats-web/assets/features/retained-statistics.js"],
+  ["trunked discovery", "trunked-discovery-ui.test.js", "stats-web/assets"],
+  ["remote support", "remote-support.test.js", "stats-web/assets/features/remote-support.js"],
   ["external RF analysis", "radioresolve-analysis.test.js", "stats-web/assets/features/radioresolve-analysis.js"],
   ["receiver-health alert catalog", "receiver-health-alerts.test.js", "stats-web/assets/core"],
   ["receiver-health pagination", "receiver-health-pagination.test.js", "stats-web/assets/app.js"],
@@ -58,14 +68,49 @@ const contracts = [
   ["tuner idle markers", "tuner-idle-markers.test.js", "stats-web/assets/app.js"],
   ["spectrum display preferences", "spectrum-display-preferences.test.js", "stats-web/assets/core/spectrum-display-preferences.js"],
   ["spectrum automatic range", "spectrum-auto-range.test.js", "stats-web/assets/app.js"],
+  ["spectrum live tuning", "spectrum-live-tune.test.js", "stats-web/assets/features/spectrum-live-tune.js"],
   ["diagnostic strength encoding", "diagnostic-strength.test.js", "stats-web/assets/app.js"],
   ["Direct Listen entrypoints", "direct-listen-entry.test.js", "stats-web/assets/core/direct-listen-entry.js"],
   ["Direct Listen session", "direct-listen-session.test.js", "stats-web/assets/core/direct-listen.js"],
   ["Direct Listen", "direct-listen.test.js", "stats-web/assets/core/direct-listen.js"],
   ["web call player", "web-call-player.test.js", "stats-web/assets/web-call-player.js"],
   ["paging-tone detection settings", "paging-tone-detection.test.js", "stats-web/assets/features/paging-tone-detection.js"],
+  ["paging-tone summaries", "paging-tone-summary.test.js", "stats-web/assets/core/call-audio-details.js"],
   ["call filtering settings", "call-filtering.test.js", "stats-web/assets/features/call-filtering.js"]
 ];
+
+// Some contracts invoke exported checks in sibling test files. Derive those helpers
+// from their literal imports so each file needs only one execution entry point.
+function verifyContractInventory() {
+  const files = new Set(fs.readdirSync(__dirname).filter((filename) => filename.endsWith('.test.js')));
+  const registered = new Set();
+  const included = new Set();
+  function include(filename) {
+    if (included.has(filename)) return;
+    if (!files.has(filename)) throw new Error(`Missing contract: ${filename}`);
+    included.add(filename);
+    const source = fs.readFileSync(path.join(__dirname, filename), 'utf8');
+    for (const match of source.matchAll(/\brequire\s*\(\s*(['"])\.\/([^'"]+\.test(?:\.js)?)\1\s*\)/g)) {
+      include(match[2].endsWith('.js') ? match[2] : `${match[2]}.js`);
+    }
+  }
+  for (const [, filename] of contracts) {
+    if (registered.has(filename)) throw new Error(`Duplicate contract entry: ${filename}`);
+    registered.add(filename);
+    include(filename);
+  }
+  const missing = [...files].filter((filename) => !included.has(filename)).sort();
+  if (missing.length) throw new Error(`Unregistered web contracts: ${missing.join(', ')}`);
+  console.log(`${included.size} web test files covered by ${registered.size} entry points and ` +
+    `${included.size - registered.size} bundled helpers.`);
+}
+
+try {
+  verifyContractInventory();
+} catch (error) {
+  console.error(`[FAIL] web contract inventory: ${error.message}`);
+  process.exit(1);
+}
 
 let failures = 0;
 for (const [name, filename, resourcePath] of contracts) {

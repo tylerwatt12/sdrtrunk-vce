@@ -106,6 +106,8 @@ const context = {
   searchBar: () => null, pageParameters: () => ({}), groupIdentityColumns: [],
   pagedTableContent: () => null, radioSystemChannelColumns: [], pagedSection: () => null,
   section: (_title, value) => value, metrics: () => null,
+  systemCallCounts: () => null, systemCallTitle: () => '', channelCallCounts: () => null,
+  callCountDates: () => null,
   keyValues: (values) => { facts.push(...values); return null; }, dateTime: () => '',
   signalingMetrics: () => null, signalingActionRows: () => [], activityMetricGuide: () => null,
   fragment: (...values) => { const value = node('fragment'); value.append(...values); return value; },
