@@ -481,10 +481,8 @@ public final class SetupWizard extends JDialog
         certificateGuideVisible = false;
         back.setVisible(true);
         step = id; generation++;
-        page.removeAll(); danger.setVisible(false); errorReport = ""; copyError.setVisible(false);
-        copyError.setText("Copy error");
-        diagnostics.setVisible(false);
-        detailsToggle.setVisible(false); detailsToggle.setText("Show details");
+        page.removeAll();
+        clearErrorFeedback();
         title.setText(id.title());
         next.setText(id == SetupStep.REVIEW ? "Finish setup" : "Continue");
         canContinue = () -> true;
@@ -616,6 +614,9 @@ public final class SetupWizard extends JDialog
         if(busy || sourceCommitted) return;
         if(preferences != null || hasExistingProfile(database))
             throw new IllegalStateException("Settings can only be imported into a new installation.");
+        clearErrorFeedback();
+        output.clear();
+        console.setText("");
         Path chosen = input.toAbsolutePath().normalize();
         if(!chosen.equals(selectedSource)) backupConfirmed = false;
         selectedSource = chosen;
@@ -1274,10 +1275,7 @@ public final class SetupWizard extends JDialog
         certificateGuideVisible = true;
         title.setText("Setup complete");
         page.removeAll();
-        danger.setVisible(false);
-        diagnostics.setVisible(false);
-        detailsToggle.setVisible(false);
-        copyError.setVisible(false);
+        clearErrorFeedback();
         back.setVisible(false);
         next.setText("Launch VCE & open browser");
         paragraph("Your browser may show a warning because VCE creates its own security certificate. Check that the address matches the one below before continuing.");
@@ -1330,13 +1328,13 @@ public final class SetupWizard extends JDialog
         if(busy) return;
         SetupProgress.State previous = progress == null ? PENDING : progress.get(step);
         busy=true; cancellation=cancellationRequest; long attempt=++generation;
+        clearErrorFeedback();
         if(progress != null) { progress.set(step,RUNNING); persist(); }
-        danger.setVisible(false); errorReport=""; copyError.setVisible(false); copyError.setText("Copy error");
         operation=description; operationStartedNanos=System.nanoTime(); completed=0; total=0;
         output.clear(); output.accept(description);
         meter.setVisible(true); cancel.setVisible(cancellationRequest!=null); cancel.setEnabled(true); updateNavigation();
         cancel.setText(cancelCaption);
-        diagnostics.setVisible(false); detailsToggle.setVisible(true); detailsToggle.setText("Show details");
+        detailsToggle.setVisible(true);
         worker.submit(() -> {
             T result=null; Throwable failure=null;
             try { result=work.call(); } catch(Exception | LinkageError e) { failure=e; }
@@ -1492,6 +1490,17 @@ public final class SetupWizard extends JDialog
         if(component instanceof Container container) for(Component child:container.getComponents()) enableTree(child,enabled);
     }
     private void attempt(Runnable action) { try { action.run(); } catch(Exception e) { fail(e instanceof IllegalArgumentException ? e.getMessage() : "This action failed. Check settings and retry."); } }
+    private void clearErrorFeedback()
+    {
+        danger.setVisible(false);
+        danger.setText("");
+        errorReport = "";
+        copyError.setVisible(false);
+        copyError.setText("Copy error");
+        diagnostics.setVisible(false);
+        detailsToggle.setVisible(false);
+        detailsToggle.setText("Show details");
+    }
     private void fail(String message)
     {
         fail(message, message);

@@ -206,6 +206,77 @@ public final class SetupWizardSmoke
         click(wizard,"Exit setup"); awaitClosed(wizard);
     }
 
+    /** Exercise real source correction without starting an import or creating destination settings. */
+    private static void exerciseSourceRetry(SetupWizard wizard, Path root) throws Exception
+    {
+        String missing = "No saved VCE settings were found.";
+        Path source = transferSource(root), database = source.resolve("database/sdrtrunk.sqlite");
+        byte[] before = Files.readAllBytes(database);
+        Path empty = Files.createDirectories(root.resolveSibling(root.getFileName() + "-empty"));
+        javax.swing.SwingUtilities.invokeAndWait(() -> select(wizard,"Upgrade existing VCE"));
+        chooseSource(wizard,empty);
+        awaitVisibleText(wizard,missing);
+        String firstError = assertSourceFeedback(wizard,true);
+        capture(wizard,root,"source-invalid");
+
+        chooseSource(wizard,null,"Choose different settings");
+        if(!firstError.equals(assertSourceFeedback(wizard,true)))
+            throw new AssertionError("Canceling source selection changed the current error");
+
+        for(int recovery = 0; recovery < 2; recovery++)
+        {
+            chooseSource(wizard,source,"Choose different settings");
+            awaitVisibleText(wizard,"Review settings");
+            assertSourceFeedback(wizard,false);
+            javax.swing.SwingUtilities.invokeAndWait(() -> {
+                if(backupChoice(wizard).isSelected() || wizard.getRootPane().getDefaultButton().isEnabled())
+                    throw new AssertionError("Correcting the source bypassed manual backup confirmation");
+            });
+            confirmBackup(wizard);
+            assertNoPreparedDatabase(root);
+            if(!java.util.Arrays.equals(before,Files.readAllBytes(database)))
+                throw new AssertionError("Correcting the selected folder changed its saved settings");
+            capture(wizard,root,"source-recovered-" + (recovery + 1));
+            if(recovery == 0)
+            {
+                chooseSource(wizard,empty,"Choose different settings");
+                awaitVisibleText(wizard,missing);
+                assertSourceFeedback(wizard,true);
+            }
+        }
+        click(wizard,"Exit setup"); awaitClosed(wizard);
+    }
+
+    private static String assertSourceFeedback(SetupWizard wizard, boolean failed) throws Exception
+    {
+        String[] report = {null};
+        javax.swing.SwingUtilities.invokeAndWait(() -> {
+            try
+            {
+                var danger = (javax.swing.JTextArea)wizardField(wizard,"danger");
+                var copy = (javax.swing.JButton)wizardField(wizard,"copyError");
+                var diagnostics = (javax.swing.JScrollPane)wizardField(wizard,"diagnostics");
+                var toggle = (javax.swing.JButton)wizardField(wizard,"detailsToggle");
+                report[0] = (String)wizardField(wizard,"errorReport");
+                if(danger.isVisible() != failed || copy.isVisible() != failed)
+                    throw new AssertionError("Source feedback visibility does not match the current selection");
+                if(failed ? !report[0].contains("No saved VCE settings were found.") : !report[0].isBlank())
+                    throw new AssertionError("Source error report does not match the current selection");
+                if(diagnostics.isVisible() || toggle.isVisible() || !toggle.getText().equals("Show details"))
+                    throw new AssertionError("Source selection retained details from another operation");
+            }
+            catch(ReflectiveOperationException failure) { throw new RuntimeException(failure); }
+        });
+        return report[0];
+    }
+
+    private static Object wizardField(SetupWizard wizard, String name) throws ReflectiveOperationException
+    {
+        var field = SetupWizard.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(wizard);
+    }
+
     private static void exerciseXml(SetupWizard wizard, Path root) throws Exception
     {
         Path playlist = root.resolveSibling(root.getFileName() + "-playlist.xml");
@@ -281,6 +352,10 @@ public final class SetupWizardSmoke
         {
             assertNoPreparedDatabase(root);
             click(target,"Exit setup"); awaitClosed(target); return;
+        }
+        if(mode.equals("transfer-source-retry"))
+        {
+            exerciseSourceRetry(target,root); return;
         }
         if(mode.startsWith("transfer-"))
         {
@@ -600,7 +675,18 @@ public final class SetupWizardSmoke
 
     private static void chooseSource(SetupWizard wizard,Path source) throws Exception
     {
-        javax.swing.SwingUtilities.invokeLater(() -> wizard.getRootPane().getDefaultButton().doClick());
+        chooseSource(wizard,source,null);
+    }
+
+    /** A null source cancels; a named action reopens the chooser from a review or error page. */
+    private static void chooseSource(SetupWizard wizard,Path source,String action) throws Exception
+    {
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            if(action == null) wizard.getRootPane().getDefaultButton().doClick();
+            else descendants(wizard).stream().filter(component -> component instanceof javax.swing.JButton button &&
+                button.isShowing() && button.isEnabled() && action.equals(button.getText()))
+                .map(javax.swing.JButton.class::cast).findFirst().orElseThrow().doClick();
+        });
         for(int attempt=0;attempt<400;attempt++)
         {
             boolean[] chosen={false};
@@ -608,7 +694,11 @@ public final class SetupWizardSmoke
                 for(java.awt.Window window:java.awt.Window.getWindows())
                     for(java.awt.Component component:descendants(window))
                         if(component instanceof javax.swing.JFileChooser chooser && chooser.isShowing())
-                        { chooser.setSelectedFile(source.toFile()); chooser.approveSelection(); chosen[0]=true; return; }
+                        {
+                            if(source == null) chooser.cancelSelection();
+                            else { chooser.setSelectedFile(source.toFile()); chooser.approveSelection(); }
+                            chosen[0]=true; return;
+                        }
             });
             if(chosen[0]) return;
             Thread.sleep(50);
