@@ -1,4 +1,4 @@
-import { ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName } from './discovery-radioreference.js?v=18';
+import { ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName } from './discovery-radioreference.js?v=19';
 import { createActionWorkflow } from '../core/action-workflows.js?v=1';
 
 let creatorSequence = 0;

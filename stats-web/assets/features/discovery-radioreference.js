@@ -340,7 +340,9 @@ export function createDiscoveryAliasListChoice(ui, {
   const collision = node('p', 'ui-feedback ui-feedback-error');
   collision.setAttribute('role', 'status');
   const defaults = node('p', 'ui-field-hint', 'New Alias Lists use your Default listening list.');
-  element.append(found, formField('Alias List', uiSelectFrame(select)), newField, collision, defaults);
+  const fields = node('div', 'ui-editor-sections');
+  fields.append(formField('Alias List', uiSelectFrame(select)), newField);
+  element.append(found, fields, collision, defaults);
   const value = () => select.value === '' ? null : Number(select.value);
   const newName = () => input.value.trim();
   const name = () => value() > 0 ? lists.find((list) => Number(list.id) === value())?.name || '' : newName();
