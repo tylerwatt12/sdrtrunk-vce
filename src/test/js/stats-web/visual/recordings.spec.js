@@ -5,6 +5,7 @@ const { tourHistoryFixture } = require('./fixtures/tour-history.cjs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { selectAudioPanel } = require('./audio-dock-controls.cjs');
+const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 const { expectFormWorkflowGeometry, expectStableFormWorkflowInsets, captureFormWorkflowEvidence,
   holdFormWorkflowFailure } = require('./fixtures/form-workflow-geometry.cjs');
 
@@ -337,7 +338,16 @@ async function openRecordings(page, options = {}) {
 }
 
 
+async function ensureSearchOpen(page) {
+  const toggle = page.locator('#recordings-filters-toggle');
+  const fullText = page.getByRole('searchbox', { name: 'Full text', exact: true });
+  await expect(toggle).toBeVisible();
+  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+  await expect(fullText).toBeVisible();
+}
+
 async function openPicker(page, topic = 'targets', name = 'Talkgroups & channels') {
+  await ensureSearchOpen(page);
   await page.locator(`#recordings-open-${topic}`).click();
   const dialog = page.getByRole('dialog', { name, exact: true }); await expect(dialog).toBeVisible(); return dialog;
 }
@@ -375,6 +385,7 @@ async function expectCallActionDescriptions(dialog, expectedCount = 11) {
   }
 }
 async function searchNow(page, state) {
+  await ensureSearchOpen(page);
   const count = state.requestedFilters.length;
   await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
   await expect.poll(() => state.requestedFilters.length).toBe(count + 1);
@@ -1348,8 +1359,17 @@ for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
     await expect(page.locator('.recordings-call-title')).toContainText(['Fire Dispatch', 'County fire dispatch', 'Airport tower', 'Digital conventional', 'Water operations', 'Local dispatch']);
     await expect(page.locator('.recordings-call').nth(3)).not.toContainText('Talkgroup 0');
     await expect(page.locator('.recordings-call').nth(5)).toContainText('Talkgroup 0');
-    await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Search recordings', exact: true })).toBeVisible();
+    const filters = page.locator('#recordings-filters-toggle');
+    if (device === 'desktop') {
+      await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Search recordings', exact: true })).toBeVisible();
+    } else {
+      await expect(filters).toBeVisible();
+      await expect(filters).toHaveAttribute('aria-expanded', 'false');
+      await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toBeHidden();
+      await expect(page.locator('.recordings-filter-summary')).toContainText('Past 24 hours');
+      await expect(page.locator('.recordings-call').first()).toBeInViewport();
+    }
     await expect(page.getByRole('button', { name: /Share|Activity|Address|Receiver node/ })).toHaveCount(0);
     const layout = await page.evaluate(() => {
       const left = document.querySelector('.recordings-search-panel').getBoundingClientRect();
@@ -1359,7 +1379,7 @@ for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
     });
     expect(layout.overflow).toBeLessThanOrEqual(0);
     if (device === 'desktop') { expect(layout.right.x).toBeGreaterThanOrEqual(layout.left.right); expect(layout.right.width / layout.left.width).toBeGreaterThan(2); }
-    else expect(layout.right.y).toBeGreaterThanOrEqual(layout.left.bottom);
+    else expect(layout.right.y).toBeLessThan(400);
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-workspace-${theme}-${device}.png`, componentScreenshot);
     const picker = await openPicker(page);
     await expect(picker.locator('.recordings-picker-choice')).toHaveCount(6);
@@ -1370,14 +1390,16 @@ for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
   });
 }
 
-test('compact results group context, filters and selection with the pager before the first call', async ({ page }) => {
+test('results group context and selection with the pager before the first call', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openRecordings(page, { calls: browsingCalls(3), paginate: true, nextCursor: 'fixture:3',
     query: { system_key: systemKey, talkgroup_identity_key: 'v1-g-00001-001-1201' } });
   const results = page.locator('.recordings-results-panel');
   await expect(results.getByRole('heading', { name: 'All recordings', exact: true })).toHaveCount(0);
   await expect(results.locator('.recordings-results-scope')).toHaveText('Past 24 hours');
-  await expect(results.locator('.recordings-results-actions').getByRole('combobox')).toHaveCount(2);
+  await expect(results.locator('.recordings-results-actions').getByRole('combobox')).toHaveCount(3);
+  await expect(page.locator('.recordings-filter-summary')).toContainText('Past 24 hours');
+  await expect(page.locator('.recordings-search-panel .recordings-selected-filters')).toBeVisible();
   await expect(results.locator('.recordings-page-selection')).toHaveText('Select page');
   const state = results.locator('.recordings-results-state');
   await expect(state.getByRole('checkbox', { name: 'Select all calls on this page', exact: true })).toBeVisible();
@@ -1388,17 +1410,15 @@ test('compact results group context, filters and selection with the pager before
       const bounds = element.querySelector(selector).getBoundingClientRect();
       return { x: bounds.x, y: bounds.y, right: bounds.right, bottom: bounds.bottom };
     };
-    return { scope: rect('.recordings-results-scope'), chips: rect('.recordings-selected-filters'),
+    return { scope: rect('.recordings-results-scope'),
       toolbar: rect('.recordings-results-toolbar'), date: rect('.recordings-result-date'),
       title: rect('.recordings-call-title'), metadata: rect('.recordings-call-head'),
       actions: rect('.recordings-call-actions'), selection: rect('.recordings-call-select') };
   });
-  expect(geometry.chips.y).toBeGreaterThanOrEqual(geometry.scope.bottom);
-  expect(geometry.toolbar.y).toBeGreaterThanOrEqual(geometry.chips.bottom);
+  expect(geometry.toolbar.y).toBeGreaterThanOrEqual(geometry.scope.bottom);
   expect(geometry.date.y).toBeGreaterThanOrEqual(geometry.toolbar.bottom);
   expect(geometry.date.y - geometry.scope.y).toBeLessThan(200);
-  expect(Math.abs(geometry.scope.x - geometry.chips.x)).toBeLessThanOrEqual(1);
-  expect(Math.abs(geometry.chips.x - geometry.toolbar.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.scope.x - geometry.toolbar.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.toolbar.x - geometry.date.x)).toBeLessThanOrEqual(1);
   expect(geometry.metadata.y).toBeGreaterThanOrEqual(geometry.title.bottom);
   expect(Math.abs(geometry.actions.y - geometry.title.y)).toBeLessThanOrEqual(6);
@@ -1432,20 +1452,24 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     const transcript = 'DispatchInteroperability'.repeat(12);
     await openRecordings(page, { call: linkedCall, theme, nextCursor: 'fixture:1', query: { transcript, system_key: systemKey } });
     const results = page.locator('.recordings-results-panel');
-    const chip = results.getByRole('button', { name: `Remove Full text: ${transcript} filter`, exact: true });
+    await ensureSearchOpen(page);
+    const chip = page.getByRole('button', { name: `Remove Full text: ${transcript} filter`, exact: true });
     await expect(chip).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     for (const selector of ['.recordings-filter-chip', '.recordings-results-actions select',
       '.recordings-call-actions button', '.recordings-pager']) {
-      for (const control of await results.locator(selector).all()) {
+      for (const control of await page.locator(selector).all()) {
         const bounds = await control.boundingBox();
         expect(bounds.x).toBeGreaterThanOrEqual(0);
         expect(bounds.x + bounds.width, `${selector}: ${await control.getAttribute('class')}`).toBeLessThanOrEqual(width);
       }
     }
-    await expect(results).toHaveScreenshot(`recordings-compact-long-filter-${theme}-${width}.png`, componentScreenshot);
+    await chip.scrollIntoViewIfNeeded();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const beforeFocus = await chip.boundingBox();
     await chip.focus();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Shift+Tab');
     await expect(chip).toBeFocused();
     const hint = page.getByRole('tooltip');
     await expect(hint).toContainText(`Full text: ${transcript}`);
@@ -1453,11 +1477,98 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     expect(afterFocus.height).toBe(beforeFocus.height);
     expect(hintBounds.x).toBeGreaterThanOrEqual(0);
     expect(hintBounds.x + hintBounds.width).toBeLessThanOrEqual(width);
+    if (width <= 700) await page.getByRole('dialog', { name: 'Filters', exact: true })
+      .getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(results).toHaveScreenshot(`recordings-compact-long-filter-${theme}-${width}.png`, componentScreenshot);
     await page.locator('.recordings-call-select').check();
     await expect(results.locator('.recordings-results-toolbar .recordings-selected')).toContainText('1 selected');
     await expect(results.locator('.recordings-result-count > span').first()).toBeHidden();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await expect(results).toHaveScreenshot(`recordings-compact-selected-${theme}-${width}.png`, componentScreenshot);
+  });
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
+  test(`compact rows retain aliases, actions and active browsing state at ${width}px in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await stubRecordingAudio(page);
+    const calls = [
+      { ...linkedCall, transcript_excerpt: 'Engine four arriving at staging.' },
+      { ...linkedCall, id: 18, start_ms: call.start_ms - 60_000, source_ota_alias: 'ENG 5' }
+    ];
+    const state = await openRecordings(page, { calls, theme,
+      transcription: { status: 'COMPLETE', text: 'Engine four arriving at staging.' } });
+    const rows = page.locator('.recordings-call');
+    await expect(rows).toHaveCount(2);
+    await rows.first().locator('.recordings-card-play').click();
+    await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
+    await rows.nth(1).locator('.recordings-call-info').click();
+    await page.getByRole('dialog', { name: 'Call actions', exact: true })
+      .getByRole('button', { name: 'Add to queue', exact: true }).click();
+    await rows.nth(1).locator('.recordings-call-select').check();
+    const requests = state.requestedFilters.length;
+    const cardHeight = (await rows.first().boundingBox()).height;
+    const layout = page.getByRole('combobox', { name: 'Results layout', exact: true });
+    await layout.selectOption('compact');
+    await expect(page.locator('.recordings-call-list')).toHaveClass(/recordings-call-list-compact/);
+    await expect(page.locator('.recordings-call-compact')).toHaveCount(2);
+    await expect(rows.first().locator('.recordings-call-title')).toHaveText('Fire Dispatch');
+    await expect(rows.first().locator('.recordings-call-title a')).toHaveAttribute('href', /view=group-identity/);
+    await expect(rows.first().locator('.recordings-call-identity')).toContainText('Talkgroup 1201');
+    await expect(rows.first().locator('.recordings-call-source')).toContainText('ENG 4');
+    await expect(rows.first().locator('.recordings-call-meta')).toContainText('Metro Public Safety');
+    await expect(rows.first()).toHaveClass(/recordings-call-playing/);
+    await expect(rows.nth(1)).toHaveClass(/recordings-call-queued/);
+    await expect(rows.nth(1).locator('.recordings-call-select')).toBeChecked();
+    await expect(page.locator('.recordings-selected')).toContainText('1 selected');
+    expect((await rows.first().boundingBox()).height).toBeLessThan(cardHeight);
+    expect(state.requestedFilters).toHaveLength(requests);
+    expect(await page.evaluate(() => window.recordingPlays)).toHaveLength(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+    await expectContrast(page, { rootSelector: '.recordings-library',
+      reportName: `recordings-compact-rows-${theme}-${width}` });
+    await expect(page.locator('.recordings-results-panel'))
+      .toHaveScreenshot(`recordings-compact-rows-${theme}-${width}.png`, {
+        ...componentScreenshot, style: '#topbar, #desktop-playback-slot { visibility: hidden !important; }'
+      });
+
+    const detailsButton = rows.first().getByRole('button', { name: 'Call details', exact: true });
+    await detailsButton.focus();
+    await detailsButton.press('Enter');
+    const details = page.getByRole('dialog', { name: 'Call details', exact: true });
+    await expect(details).toBeVisible();
+    await selectRecordingDetailTab(details, 'Transcript');
+    await expect(details.getByRole('tabpanel').filter({ visible: true })).toContainText('Engine four arriving at staging.');
+    await expect(details.getByRole('link', { name: 'Download recording', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(detailsButton).toBeFocused();
+    await rows.first().locator('.recordings-call-info').click();
+    const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    await expect(actions.getByRole('link', { name: 'Search this talkgroup', exact: true }))
+      .toHaveAttribute('href', /talkgroup_identity_key=v1-g-00001-001-1201/);
+    await page.keyboard.press('Escape');
+
+    if (width <= 700) {
+      const touch = await page.context().newCDPSession(page);
+      await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
+      await expect.poll(() => page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+      for (const control of await rows.first().locator('.recordings-call-actions button').all()) {
+        const bounds = await control.boundingBox();
+        expect(bounds.width).toBeGreaterThanOrEqual(44);
+        expect(bounds.height).toBeGreaterThanOrEqual(44);
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      }
+      await touch.detach();
+    }
+    await layout.selectOption('cards');
+    await expect(page.locator('.recordings-call-compact')).toHaveCount(0);
+    await expect(rows.first().locator('.recordings-transcript-preview')).toBeVisible();
+    await expect(rows.first()).toHaveClass(/recordings-call-playing/);
+    await expect(rows.nth(1)).toHaveClass(/recordings-call-queued/);
+    await expect(rows.nth(1).locator('.recordings-call-select')).toBeChecked();
+    expect(state.requestedFilters).toHaveLength(requests);
+    expect(await page.evaluate(() => window.recordingPlays)).toHaveLength(1);
   });
 }
 
@@ -1661,10 +1772,12 @@ test('applied chips show pending removal, support undo and Discard, and survive 
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('transcript');
   expect(state.requestedFilters.at(-1).high_interest).toBe('1');
 
+  const beforeClear = state.requestedFilters.length;
   await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
-  await expect(chips.getByRole('button', { name: /Undo removal of High Interest/ })).toBeVisible();
-  await searchNow(page, state);
+  await expect.poll(() => state.requestedFilters.length).toBe(beforeClear + 1);
   await expect(chips).not.toContainText('High Interest');
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('high_interest');
+  expect(state.requestedFilters.at(-1)).not.toHaveProperty('transcript');
 });
 
 test('call actions reuse VCE playback choices and route Live to the saved channel', async ({ page }) => {
@@ -2451,6 +2564,7 @@ for (const theme of ['light']) {
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await openRecordings(page, { theme });
     await expect(page.locator('.recordings-call')).toHaveCount(1);
+    await ensureSearchOpen(page);
     const submit = searchButton(page);
     const before = await submit.evaluate(element => getComputedStyle(element, '::before').borderTopWidth);
     await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('dispatch');
@@ -2502,6 +2616,9 @@ for (const theme of ['light']) {
     }
     await submit.focus();
     await submit.press('Enter');
-    await expectSearchHalo(submit, false);
+    await expect(page.getByRole('dialog', { name: 'Filters', exact: true })).toBeHidden();
+    await expect(page.locator('.recordings-filter-summary')).toContainText('dispatch');
+    await ensureSearchOpen(page);
+    await expectSearchHalo(searchButton(page), false);
   });
 }

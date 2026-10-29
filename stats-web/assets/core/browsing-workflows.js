@@ -48,8 +48,9 @@ export function createBrowsingPager({ node, className = '', ariaLabel = 'Results
 }
 
 export function createFilterDisclosure({ node, openReadOnlyModal, form, panel, fields = [panel],
-  button, clearAction = null, applyLabel = 'Apply filters', initialExpanded = false,
-  returnFocusSelector = null, id = 'browse-filters', media = '(max-width: 700px)' }) {
+  button, clearAction = null, applyAction = null, applyLabel = 'Apply filters', initialExpanded = false,
+  returnFocusSelector = null, id = 'browse-filters', media = '(max-width: 700px)',
+  closeOnSubmit = true }) {
   button.type = 'button';
   button.classList.add('ui-filter-toggle');
   panel.classList.add('ui-filter-panel');
@@ -63,13 +64,13 @@ export function createFilterDisclosure({ node, openReadOnlyModal, form, panel, f
   };
   synchronize();
   let modal = null;
-  button.addEventListener('click', () => {
+  const open = () => {
     if (!isPhone()) {
       panel.hidden = !panel.hidden;
       synchronize();
       return;
     }
-    if (modal) return;
+    if (modal) return modal;
     // Mark exact locations before moving controls; their values and listeners
     // remain intact when closing without applying the draft.
     const locations = fields.map((field) => {
@@ -97,13 +98,20 @@ export function createFilterDisclosure({ node, openReadOnlyModal, form, panel, f
       clear.addEventListener('click', () => { modal?.close(); clearAction.click(); });
       actions.append(clear);
     }
-    const apply = node('button', 'ui-button ui-button-primary', applyLabel);
-    apply.type = 'button';
-    apply.addEventListener('click', () => form.requestSubmit());
+    const apply = applyAction || node('button', 'ui-button ui-button-primary', applyLabel);
+    let applyMarker = null;
+    if (applyAction) {
+      applyMarker = apply.ownerDocument.createComment('filter apply location');
+      apply.before(applyMarker);
+    } else {
+      apply.type = 'button';
+      apply.addEventListener('click', () => form.requestSubmit());
+    }
     actions.append(cancel, apply);
     sheet.append(node('p', 'ui-field-detail',
       `Closing keeps your choices. ${applyLabel} updates the results.`), sheetFields, actions);
     const restore = () => {
+      applyMarker?.replaceWith(apply);
       for (const { field, marker, hidden, controls } of locations) {
         marker.replaceWith(field);
         if (field === panel) field.hidden = hidden;
@@ -119,9 +127,15 @@ export function createFilterDisclosure({ node, openReadOnlyModal, form, panel, f
     modal.dialog.id = `${id}-dialog`;
     button.setAttribute('aria-controls', modal.dialog.id);
     button.setAttribute('aria-expanded', 'true');
-  });
-  form.addEventListener('submit', () => modal?.close());
-  return { synchronize };
+    return modal;
+  };
+  button.addEventListener('click', open);
+  if (closeOnSubmit) form.addEventListener('submit', () => modal?.close());
+  return {
+    synchronize, open,
+    close: (onClosed) => modal ? modal.close(onClosed) : true,
+    get isOpen() { return Boolean(modal); }
+  };
 }
 
 export function scanListAvailabilityLabel(row) {

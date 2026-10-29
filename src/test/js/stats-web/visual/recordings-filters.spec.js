@@ -119,7 +119,10 @@ async function talkgroupSearchLink(page, card = page.locator('.recordings-call')
 async function openRecordingFilters(page, topic = 'more') {
   const title = { more: 'More filters', radios: 'Source radios', targets: 'Talkgroups & channels', systems: 'System' }[topic];
   const dialog = page.getByRole('dialog', { name: title, exact: true });
-  if (!await dialog.isVisible()) await page.locator(`#recordings-open-${topic}`).click();
+  if (!await dialog.isVisible()) {
+    if (!await page.locator(`#recordings-open-${topic}`).isVisible()) await page.locator('#recordings-filters-toggle').click();
+    await page.locator(`#recordings-open-${topic}`).click();
+  }
   await expect(dialog).toBeVisible();
   return dialog;
 }
@@ -141,6 +144,77 @@ async function captureEvidence(page, name) {
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: path.join(process.env.RECORDING_FILTER_EVIDENCE, name) });
 }
+
+test('phone Filters preserve nested choices until search and keep filter clearing separate from selection', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await openRecordings(page);
+  const filters = page.locator('#recordings-filters-toggle');
+  const summary = page.locator('.recordings-filter-summary');
+  const sheet = page.getByRole('dialog', { name: 'Filters', exact: true });
+  await expect(filters).toHaveAttribute('aria-expanded', 'false');
+  await expect(summary).toContainText('Past 24 hours');
+  await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toBeHidden();
+  await filters.click();
+  await expect(sheet).toBeVisible();
+  await sheet.getByRole('combobox', { name: 'Time range', exact: true }).selectOption('custom');
+  await sheet.getByRole('button', { name: 'Search recordings', exact: true }).click();
+  await expect(sheet.locator('.recordings-search-error')).toContainText('Choose a date range');
+  await expect(sheet).toBeVisible();
+  expect(state.requests).toHaveLength(1);
+  await sheet.getByRole('searchbox', { name: 'Full text', exact: true }).fill('dispatch');
+  await sheet.getByRole('combobox', { name: 'Full text range', exact: true }).selectOption('time');
+  await sheet.getByRole('combobox', { name: 'Time range', exact: true }).selectOption('7d');
+  const system = await openRecordingFilters(page, 'systems');
+  await system.locator('.recordings-picker-choice input').first().check();
+  await system.getByRole('button', { name: 'Use selection', exact: true }).click();
+  await expect(sheet).toBeVisible();
+  await expect(sheet.locator('#recordings-open-systems')).toContainText('Metro Public Safety');
+  await sheet.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(sheet).toBeHidden();
+  await expect(filters).toBeFocused();
+  await expect(summary).not.toContainText('dispatch');
+  await expect(summary).not.toContainText('Metro Public Safety');
+  expect(state.requests).toHaveLength(1);
+
+  await filters.click();
+  await expect(sheet.getByRole('searchbox', { name: 'Full text', exact: true })).toHaveValue('dispatch');
+  await expect(sheet.getByRole('combobox', { name: 'Time range', exact: true })).toHaveValue('7d');
+  await expect(sheet.locator('#recordings-open-systems')).toContainText('Metro Public Safety');
+  const radios = await openRecordingFilters(page, 'radios');
+  await radios.getByRole('searchbox', { name: 'Find radios', exact: true }).fill('ENG 4');
+  await radios.locator('.recordings-picker-choice input').first().check();
+  await radios.getByRole('button', { name: 'Use selection', exact: true }).click();
+  await expect(sheet).toBeVisible();
+  expect(state.requests).toHaveLength(1);
+  await sheet.getByRole('button', { name: 'Search recordings', exact: true }).click();
+  await expect.poll(() => state.requests.length).toBe(2);
+  await expect(sheet).toBeHidden();
+  expect(state.requests.at(-1)).toMatchObject({ transcript: 'dispatch', system_key: systemKey });
+  expect(JSON.parse(state.requests.at(-1).radios)).toMatchObject([{ id: call.source_id, system_key: systemKey }]);
+  await expect(summary).toContainText('Past 7 days');
+  await expect(filters.locator('.recordings-filter-count')).toHaveText(/^[1-9]\d*$/);
+  await expect(page.locator('.recordings-call').first()).toBeInViewport();
+
+  await page.locator('.recordings-call-select').check();
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
+  await expect(page.locator('.recordings-call-select')).not.toBeChecked();
+  await expect(filters.locator('.recordings-filter-count')).toHaveText(/^[1-9]\d*$/);
+  expect(state.requests).toHaveLength(2);
+  await page.locator('.recordings-call-select').check();
+  await filters.click();
+  await expect(sheet.locator('.recordings-selected-filters')).toContainText('dispatch');
+  await expect(sheet.locator('.recordings-selected-filters')).toContainText('Metro Public Safety');
+  await sheet.getByRole('button', { name: 'Clear filters', exact: true }).click();
+  await expect.poll(() => state.requests.length).toBe(3);
+  await expect(sheet).toBeHidden();
+  for (const key of ['transcript', 'system_key', 'radios', 'radio_role', 'radio_identity_key', 'radio_id'])
+    expect(state.requests.at(-1)).not.toHaveProperty(key);
+  await expect(summary).toHaveText('Past 24 hours');
+  await expect(filters.locator('.recordings-filter-count')).toBeHidden();
+  await expect(page.locator('.recordings-call-select')).not.toBeChecked();
+  await expect(page.locator('.recordings-selected')).toBeHidden();
+  expect(state.unexpected).toEqual([]);
+});
 
 test('explicit talkgroup searches preserve applied dates, full text, duration, source and sort while ignoring drafts', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });

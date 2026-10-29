@@ -1,6 +1,8 @@
 .recordings-library,
 .recordings-admin { min-width: 0; }
 .recordings-search { min-width: 0; }
+.recordings-filter-toolbar { min-width: 0; margin-bottom: var(--space-3); }
+.recordings-filter-summary { flex: 1 1 20ch; min-width: 0; margin: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .recordings-browser {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
@@ -8,6 +10,7 @@
   min-width: 0;
   overflow: clip;
 }
+.recordings-browser:has(> .recordings-search-panel[hidden]) { grid-template-columns: minmax(0, 1fr); }
 .recordings-search-panel {
   min-width: 0;
   display: grid;
@@ -40,7 +43,6 @@
 .recordings-picker-copy { display: grid; gap: var(--space-1); min-width: 0; flex: 1; }
 .recordings-picker-button small { color: var(--muted); overflow-wrap: anywhere; font-size: var(--font-size-meta); }
 .recordings-picker-chevron { color: var(--muted); font-size: var(--font-size-dialog-title); }
-.recordings-filter-count { font-size: var(--font-size-meta); color: var(--muted); }
 .recordings-selection-paths:empty { display: none; }
 .recordings-selection-paths { display: grid; gap: var(--space-2); }
 .recordings-selection-paths p { margin: 0; border-left: 2px solid var(--line); padding-left: var(--space-2); color: var(--muted); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
@@ -67,6 +69,7 @@
 .recordings-pager-actions { flex-wrap: nowrap; gap: var(--space-1); }
 .recordings-pager-count { flex-basis: auto; flex-shrink: 0; margin-right: 0; white-space: nowrap; font-size: var(--font-size-meta); }
 .recordings-call-list { display: grid; min-width: 0; gap: var(--space-3); }
+.recordings-call-list-compact { gap: 0; }
 .recordings-result-date { font-size: var(--font-size-meta); color: var(--muted); margin: var(--space-2) 0 0; letter-spacing: .045em; text-transform: uppercase; font-weight: var(--font-weight-medium); }
 .recordings-call-gap { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-3); min-width: 0; }
 .recordings-call-gap::before, .recordings-call-gap::after { content: ''; height: 1px; background: var(--line); }
@@ -84,6 +87,10 @@
 .recordings-call-meta { color: var(--muted); font-size: var(--font-size-meta); margin: 0; overflow-wrap: anywhere; }
 .recordings-call-source { margin-top: var(--space-1); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
 .recordings-call-source > span { color: var(--muted); }
+.recordings-call-compact { padding: var(--space-3) 0; border-bottom-color: var(--line); }
+.recordings-call-compact .recordings-call-source { margin-top: 0; }
+.recordings-call-compact .recordings-transcript-preview,
+.recordings-call-compact .recordings-call-summary { display: none; }
 .recordings-call-status { font-size: var(--font-size-meta); color: var(--accent); }
 .recordings-call-status[hidden] { display: none; }
 .recordings-call-queued { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
@@ -359,6 +366,20 @@
   .recordings-call { grid-template-columns: minmax(0, 1fr); gap: var(--space-2) var(--space-3); }
   .recordings-call-selectable { grid-template-columns: auto minmax(0, 1fr); }
   .recordings-call-actions { grid-column: -2 / -1; justify-self: end; }
+  .recordings-call-compact { grid-template-columns: minmax(0, 1fr) auto; }
+  .recordings-call-compact.recordings-call-selectable { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .recordings-call-compact .recordings-call-main { display: contents; }
+  .recordings-call-compact .recordings-call-heading { min-width: 0; grid-column: 1; grid-row: 1; }
+  .recordings-call-compact.recordings-call-selectable .recordings-call-heading { grid-column: 2; }
+  .recordings-call-compact .recordings-call-actions { grid-row: 1; }
+  .recordings-call-compact .recordings-call-head,
+  .recordings-call-compact .recordings-call-meta,
+  .recordings-call-compact .recordings-call-source,
+  .recordings-call-compact .recordings-call-tone { grid-column: 1 / -1; }
+  .recordings-call-compact.recordings-call-selectable .recordings-call-head,
+  .recordings-call-compact.recordings-call-selectable .recordings-call-meta,
+  .recordings-call-compact.recordings-call-selectable .recordings-call-source,
+  .recordings-call-compact.recordings-call-selectable .recordings-call-tone { grid-column: 2 / -1; }
   .recordings-picker-results { max-height: none; overflow: visible; }
   .recordings-picker-choice { padding-left: var(--space-2); }
   .recordings-tone-fields, .recordings-property-fields, .recordings-call-menu-grid,
