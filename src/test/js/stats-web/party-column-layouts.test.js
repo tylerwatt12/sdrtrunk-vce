@@ -89,6 +89,21 @@ async function checkPartyColumnLayouts(core = defaultCore) {
     layouts.mergePartyColumns(definition.type, declared, saved);
 
   const defaults = await import(pathToFileURL(path.join(core, 'table-defaults.js')).href);
+  const receiverColumns = columns([...live.current, 'receiver']);
+  const savedLive = savedLayout(live.current);
+  savedLive.column_order.reverse();
+  savedLive.column_widths.channel = 307;
+  savedLive.hidden_columns = ['tags'];
+  savedLive.collapsed_groups = ['site-1'];
+  const originalLive = structuredClone(savedLive);
+  const withReceiver = layouts.upgradeTableLayout(live.type, receiverColumns, savedLive);
+  assert.deepEqual(withReceiver, { ...originalLive, schema: [...live.current, 'receiver'],
+    column_order: [...originalLive.column_order, 'receiver'], hidden_columns: ['tags', 'receiver'] },
+    'Introducing the optional receiver column preserves saved Live choices and starts it hidden.');
+  assert.deepEqual(savedLive, originalLive, 'Upgrading a Live layout does not alter the saved input.');
+  assert.equal(layouts.normalize(receiverColumns, withReceiver).reset, false);
+  assert.deepEqual(layouts.upgradeTableLayout(live.type, columns(live.current), savedLive), savedLive,
+    'The existing Live schema keeps its personalized layout.');
   for (const definition of identities) {
     const replacement = Object.fromEntries(Object.entries(definition.merged)
       .flatMap(([id, members]) => members.map((member) => [member, id])));

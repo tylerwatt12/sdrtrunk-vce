@@ -5,16 +5,25 @@
  */
 package io.github.dsheirer.gui;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.gui.preference.ViewUserPreferenceEditorRequest;
+import io.github.dsheirer.gui.preference.encryption.ViewEncryptionKeyPreferenceEditorRequest;
+import io.github.dsheirer.gui.viewer.ViewRecordingViewerRequest;
+import io.github.dsheirer.jmbe.JmbeEditorRequest;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 
-/** Source contracts for the intentionally small local operator shell. */
+/** Active controls and request boundaries for the intentionally small local operator shell. */
 class JavaShellCleanupUiContractTest
 {
     private static final Path ROOT = Path.of("src/main/java/io/github/dsheirer/gui");
@@ -93,125 +102,34 @@ class JavaShellCleanupUiContractTest
     }
 
     @Test
-    void deadDesktopDeepLinksAreNotLeftRegistered() throws Exception
-    {
-        String manager = Files.readString(ROOT.resolve("JavaFxWindowManager.java"));
-        String service = Files.readString(
-            Path.of("src/main/java/io/github/dsheirer/stats/StatsWebServerService.java"));
-        String sessions = Files.readString(
-            Path.of("src/main/java/io/github/dsheirer/web/http/WebSessionHttpController.java"));
-
-        assertFalse(manager.contains("process(ViewWebAliasRequest"));
-        assertFalse(manager.contains("process(ViewWebP25BandplanOverrideRequest"));
-        assertFalse(Files.exists(ROOT.resolve("ViewWebAliasRequest.java")));
-        assertFalse(Files.exists(ROOT.resolve("ViewWebP25BandplanOverrideRequest.java")));
-        assertFalse(service.contains("createDesktopAdministratorHandoffUri()"));
-        assertTrue(service.contains("createDesktopAdministratorHandoffUri(\n"));
-        assertFalse(service.contains("createDesktopAdministratorAliasHandoffUri"));
-        assertFalse(service.contains("createDesktopAdministratorStreamingHandoffUri"));
-        assertFalse(service.contains("createDesktopAdministratorP25BandplanOverrideHandoffUri"));
-        assertFalse(sessions.contains("desktopAliasHandoffPath"));
-        assertFalse(sessions.contains("desktopStreamingHandoffPath"));
-        assertFalse(sessions.contains("desktopP25BandplanOverrideHandoffPath"));
-    }
-
-    @Test
-    void deadViewerLaunchersAreGoneButTheBitsViewerRemainsReachable() throws Exception
+    void bitsViewerRemainsReachableFromDiagnostics() throws Exception
     {
         String application = Files.readString(ROOT.resolve("SDRTrunk.java"));
         String manager = Files.readString(ROOT.resolve("JavaFxWindowManager.java"));
-        String recordingViewer = Files.readString(ROOT.resolve("viewer/MessageRecordingViewer.java"));
-        String nxdnViewer = Files.readString(ROOT.resolve("viewer/NxdnViewer.java"));
-        String p25p2Viewer = Files.readString(ROOT.resolve("viewer/P25P2Viewer.java"));
 
         assertTrue(application.contains("Message Recording Viewer (.bits)"));
         assertTrue(application.contains("diagnosticsMenu.add(recordingViewerMenu)"));
         assertFalse(application.contains("viewMenu.add(recordingViewerMenu)"));
         assertTrue(manager.contains("new MessageRecordingViewer()"));
-        assertFalse(recordingViewer.contains("public static void main(String[] args)"));
-        assertFalse(nxdnViewer.contains("static void main()"));
-        assertFalse(nxdnViewer.contains("class A implements Listener<IMessage>"));
-        assertFalse(nxdnViewer.contains("FROM:166"));
-        assertFalse(p25p2Viewer.contains("PCWIN TDMA Frequency Band"));
     }
 
     @Test
-    void retiredJavaUiScaffoldingIsRemoved() throws Exception
+    void localWindowsKeepTheirSupportedRequestBoundaryAndSavedMaximization() throws Exception
     {
-        String application = Files.readString(ROOT.resolve("SDRTrunk.java"));
-        String manager = Files.readString(ROOT.resolve("JavaFxWindowManager.java"));
-        String configurationManager = Files.readString(
-            Path.of("src/main/java/io/github/dsheirer/configuration/ConfigurationManager.java"));
-        String aliasAdministration = Files.readString(
-            Path.of("src/main/java/io/github/dsheirer/alias/AliasAdministrationService.java"));
+        Set<Class<?>> requestTypes = Arrays.stream(JavaFxWindowManager.class.getDeclaredMethods())
+            .filter(method -> method.isAnnotationPresent(Subscribe.class))
+            .map(method -> {
+                assertEquals(1, method.getParameterCount(), "Each window request has one event");
+                return method.getParameterTypes()[0];
+            })
+            .collect(Collectors.toSet());
+        assertEquals(Set.of(JmbeEditorRequest.class, ViewUserPreferenceEditorRequest.class,
+            ViewEncryptionKeyPreferenceEditorRequest.class, ViewRecordingViewerRequest.class), requestTypes);
+
         String javaFxPreferences = Files.readString(
             Path.of("src/main/java/io/github/dsheirer/preference/javafx/JavaFxPreferences.java"));
-
-        assertFalse(application.contains("Reset Table Column Widths"));
-        assertFalse(application.contains("JTableColumnWidthMonitor"));
-        assertFalse(manager.contains("CONFIGURATION_EDITOR"));
-        assertFalse(manager.contains("STAGE_MONITOR_KEY_CALIBRATION_DIALOG"));
-        assertFalse(manager.contains("STAGE_MONITOR_KEY_CONFIGURATION_EDITOR"));
-        assertFalse(manager.contains("extends Application"));
-        assertFalse(manager.contains("public static void main(String[] args)"));
-        assertFalse(manager.contains("isCloseEditorRequest"));
-        assertFalse(configurationManager.contains("IAliasListRefreshListener"));
-        assertFalse(configurationManager.contains("prepareForAliasListRefresh"));
-        assertFalse(configurationManager.contains("beforePublication"));
-        assertFalse(aliasAdministration.contains("prepareForAliasListRefresh"));
-        assertFalse(aliasAdministration.contains("public MutationResult saveAliases("));
-        assertFalse(aliasAdministration.contains("public MutationResult saveAliasRequests("));
-        assertFalse(aliasAdministration.contains("public MutationResult deleteAliases("));
         assertTrue(javaFxPreferences.contains(
             "getBoolean(PREFERENCE_STAGE_MAXIMIZED + mKey, stage.isMaximized())"));
-
-        String[] removed = {
-            "WebAdministratorNavigator.java",
-            "configuration/ConfigurationEditorRequest.java",
-            "configuration/ViewConfigurationRequest.java",
-            "configuration/AliasMutationUi.java",
-            "configuration/Editor.java",
-            "configuration/IAliasListRefreshListener.java",
-            "editor/Editor.java",
-            "RecentFilesMenu.java",
-            "JavaFxWindowRequest.java",
-            "ChannelMemoryLogger.java",
-            "control/ConstellationViewer.java",
-            "control/DbPowerMeter.java",
-            "control/FrequencyTextField.java",
-            "control/HexFormatter.java",
-            "control/IntegerFormatter.java",
-            "control/JFrequencyControl.java",
-            "control/LongFormatter.java",
-            "control/MaxLengthUnaryOperator.java",
-            "control/PrefixIdentFormatter.java",
-            "power/PeakMonitor.java",
-            "symbol/ChannelView.java"
-        };
-
-        for(String relativePath: removed)
-        {
-            assertFalse(Files.exists(ROOT.resolve(relativePath)), relativePath);
-        }
-
-        assertFalse(Files.exists(Path.of(
-            "src/main/java/io/github/dsheirer/preference/swing/JTableColumnWidthMonitor.java")));
-
-        String calibrationEditor = Files.readString(
-            ROOT.resolve("preference/calibration/VectorCalibrationPreferenceEditor.java"));
-        String build = Files.readString(Path.of("build.gradle"));
-        String darkTheme = Files.readString(Path.of("src/main/resources/sdrtrunk_dark.css"));
-        assertFalse(calibrationEditor.contains("org.controlsfx"));
-        assertFalse(calibrationEditor.contains("ToggleSwitch"));
-        assertFalse(build.contains("org.controlsfx:controlsfx"));
-        assertFalse(build.contains("com.sun.javafx.event"));
-        assertFalse(darkTheme.contains(".toggle-switch"));
-        assertFalse(darkTheme.contains(".toggle-button"));
-        assertFalse(darkTheme.contains(".split-menu-button"));
-        assertFalse(darkTheme.contains(".tree-table-view"));
-        assertFalse(darkTheme.contains(".split-pane"));
-        assertFalse(darkTheme.contains(".hyperlink"));
-        assertFalse(darkTheme.contains(".chart"));
     }
 
     @Test

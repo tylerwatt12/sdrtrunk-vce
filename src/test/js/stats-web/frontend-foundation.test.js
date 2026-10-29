@@ -2288,6 +2288,11 @@ async function main() {
     column_widths: {}, hidden_columns: ['name', 'frequency', 'status'], collapsed_groups: []
   }).reset_reason, 'all-columns-hidden');
   assert.equal(tableLayouts.tableId('live.channels'), 'live.channels');
+  for (const [type, id, expected] of [
+    ['dashboard-receivers', 'name', 442], ['live-events', 'from', 220],
+    ['live-events', 'to', 220], ['live-events', 'details', 600],
+    ['live-messages', 'message', 1200]
+  ]) assert.equal(tableDefaults.width(type, { id }), expected, `${type}: ${id} default width`);
   assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }, 'detailed'), 260);
   assert.equal(tableDefaults.width('live-channels', { id: 'decode-health' }), 105);
   assert.equal(tableDefaults.width('radioreference-sites', { id: 'site' }), 340);

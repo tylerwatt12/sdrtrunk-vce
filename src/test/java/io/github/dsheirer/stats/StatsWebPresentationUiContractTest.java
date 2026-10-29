@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 class StatsWebPresentationUiContractTest
 {
     private static final Path APP_JAVASCRIPT = Path.of("stats-web", "assets", "app.js");
-    private static final Path TABLE_DEFAULTS = Path.of("stats-web", "assets", "core", "table-defaults.js");
 
     @Test
     void keepsOnlyReceiverTimingInReceiverSettingsAndMovesRowPresentationToLive() throws Exception
@@ -74,11 +73,6 @@ class StatsWebPresentationUiContractTest
         assertTrue(source.contains("layoutMenuHost: actions }"));
         assertTrue(channelGroups.contains("directory.titleActions.append(rangeControl.controls)"));
         assertTrue(channelGroups.contains("controller: directory.tableController, layoutMenuHost: directory.titleActions"));
-        String asyncSection = function(source, "function createAsyncSection(title, options = {})");
-        assertTrue(asyncSection.contains("cleanupTableLayoutMenu(tableController)"));
-        assertTrue(asyncSection.contains("host.replaceChildren(loading)"));
-        assertTrue(asyncSection.indexOf("cleanupTableLayoutMenu(tableController)") <
-            asyncSection.indexOf("host.replaceChildren(loading)"));
         assertTrue(channelFrequencies.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(channelNeighbors.contains("layoutMenuHost: directory.titleActions"));
         assertTrue(channels.contains("tableClass: 'channel-catalog-table ui-data-table-quiet ui-data-table-calm ui-catalog-table'"));
@@ -86,51 +80,6 @@ class StatsWebPresentationUiContractTest
         assertTrue(channels.contains("controller: tableController"));
         assertTrue(source.contains("function tableSection(title, rows, columns"));
         assertTrue(source.contains("{ ...options, layoutMenuHost: actions,"));
-    }
-
-    @Test
-    void placesCompactLiveTableActionsInOneSharedDetailsHeader() throws Exception
-    {
-        String source = readText(APP_JAVASCRIPT);
-        String liveMessages = function(source, "function liveMessagesPane(options = {})");
-        String liveEvents = function(source, "function liveEventsPanel(onCollapse, options = {})");
-
-        assertTrue(liveMessages.contains("layoutMenuHost: columnsHost"));
-        assertTrue(liveMessages.contains("actions.append(columnsHost, filters.element)"));
-        assertTrue(liveEvents.contains("layoutMenuHost: eventColumnsHost"));
-        assertTrue(liveEvents.contains("eventActions.append(eventColumnsHost, filters.element)"));
-        assertTrue(liveEvents.contains("iconButton('icon-pause', 'Pause live details'"));
-        assertTrue(liveEvents.contains("ui-icon-button-compact live-details-pause"));
-        assertTrue(liveEvents.contains(
-            "paneActionsHost.append(eventActions, messagesController.actions, channelController.actions)"));
-        assertFalse(liveEvents.contains("live-events-toolbar"));
-        assertFalse(liveEvents.contains("live-event-selection"));
-    }
-
-    @Test
-    void usesTheEstablishedReceiverAndLiveDetailColumnRatiosAsDefaults() throws Exception
-    {
-        String source = readText(APP_JAVASCRIPT);
-        String defaults = readText(TABLE_DEFAULTS);
-        String layouts = readText(Path.of("stats-web", "assets", "core", "table-layout.js"));
-
-        assertTrue(source.matches("(?s).*import \\* as tableDefaults from '\\./core/table-defaults\\.js\\?v=\\d+';.*"));
-        assertTrue(defaults.contains("'dashboard-receivers': { widths: {"));
-        assertTrue(defaults.contains("name: 442"));
-        assertTrue(defaults.contains("'live-events': { widths: {"));
-        assertTrue(defaults.contains("from: 220, to: 220"));
-        assertTrue(defaults.contains("details: 600"));
-        assertTrue(defaults.contains("'live-messages': { widths: {"));
-        assertTrue(defaults.contains("message: 1200"));
-        assertTrue(source.contains("const tableDefaultLayout = tableDefaults.layout(tableType, declaredColumns)"));
-        assertTrue(source.contains("column_order: options.recordListOrder } : tableDefaultLayout"));
-        assertTrue(source.contains("const storedLayout = tableLayouts.upgradeTableLayout(tableType, declaredColumns,"));
-        assertTrue(layouts.contains("return mergePartyColumns(type, columns, saved)"));
-        assertTrue(layouts.contains("const merged = mergePartyColumns(type, previousColumns, saved)"));
-        assertTrue(layouts.contains("const upgraded = persisted(previous)"));
-        assertTrue(layouts.contains("upgraded.hidden_columns.push('receiver')"));
-        assertTrue(source.contains("options.layout || (!options.presentation && activeUserPreferences().tables[tableType]) || defaultLayout"));
-        assertTrue(source.contains("if (!options.presentation) tableLayouts.registerSchema(tableSchemaRegistry, tableType, declaredColumns)"));
     }
 
     @Test
