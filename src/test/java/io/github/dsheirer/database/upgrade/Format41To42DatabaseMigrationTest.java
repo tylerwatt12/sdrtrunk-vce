@@ -99,7 +99,7 @@ class Format41To42DatabaseMigrationTest
                 assertEquals(62,
                     DatabaseFormatCatalog.inspect(connection).version());
                 assertEquals("0", scalar(statement, """
-                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>12
+                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>13
                         OR json_extract(preferences_json, '$.presentation.live_row_density') IS NOT 'normal'
                     """));
                 connection.commit();

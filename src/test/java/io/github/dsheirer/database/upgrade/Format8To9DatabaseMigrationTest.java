@@ -68,7 +68,7 @@ class Format8To9DatabaseMigrationTest
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=12
+                WHERE json_extract(preferences_json, '$.version')=13
                   AND json_extract(preferences_json, '$.guides.automatic_page_guides')=1
                   AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
                   AND json_extract(preferences_json,
@@ -77,7 +77,7 @@ class Format8To9DatabaseMigrationTest
                       '$.presentation.retain_last_call_on_idle_rows')=1
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
-                  AND preferences_revision=12
+                  AND preferences_revision=13
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),

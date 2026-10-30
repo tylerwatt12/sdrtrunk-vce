@@ -11,7 +11,6 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.web.settings.WebUserPreferences;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -89,10 +88,10 @@ class Format35To36DatabaseMigrationTest
                 boolean activeOnly = new ObjectMapper().readTree(prior.json()).path("presentation")
                     .path("show_only_active_trunked_channels").booleanValue();
                 assertEquals(activeOnly ? "order_appeared" : "lcn",
-                    WebUserPreferencesCodec.decode(current.json()).presentation().liveChannelSort());
+                    new ObjectMapper().readTree(current.json()).at("/presentation/live_channel_sort").textValue());
                 assertEquals(new ObjectMapper().readTree(prior.json()).path("presentation")
                     .path("source_name_display").textValue(),
-                    WebUserPreferencesCodec.decode(current.json()).presentation().sourceNameDisplay());
+                    new ObjectMapper().readTree(current.json()).at("/presentation/source_name_display").textValue());
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
             }

@@ -82,7 +82,7 @@ class Format34To35DatabaseMigrationTest
                 assertEquals(migrateToCurrent(prior.json()), current.json());
                 assertEquals(prior.revision() + 4, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
-                assertTrue("talker_alias".equals(WebUserPreferencesCodec.decode(current.json()).presentation().sourceNameDisplay()));
+                assertTrue("talker_alias".equals(new ObjectMapper().readTree(current.json()).at("/presentation/source_name_display").textValue()));
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
             }

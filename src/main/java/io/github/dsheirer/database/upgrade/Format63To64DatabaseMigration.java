@@ -56,7 +56,8 @@ final class Format63To64DatabaseMigration implements DatabaseMigrationStep
             configuration.setAutoCommit(false);
             int created = ReceiverNicknameSchema.initializeMissing(configuration);
             DatabaseFormatCatalog.stamp(configuration, targetVersion());
-            DatabaseFormatCatalog.requireCurrent(configuration);
+            if(DatabaseFormatCatalog.inspect(configuration).version() != 64)
+                throw new SQLException("Receiver nickname migration did not reach exact format 64");
             configuration.commit();
             return created;
         }

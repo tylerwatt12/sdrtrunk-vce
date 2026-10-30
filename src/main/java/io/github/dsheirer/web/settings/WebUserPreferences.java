@@ -21,7 +21,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                  Scanner scanner, Presentation presentation, Tuner tuner,
                                  HealthAlerts healthAlerts, Guides guides, Map<String,TableLayout> tables)
 {
-    public static final int CURRENT_VERSION = 12;
+    public static final int CURRENT_VERSION = 13;
     public static final int MINIMUM_APPEARANCE_HUE = 0;
     public static final int MAXIMUM_APPEARANCE_HUE = 359;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
@@ -35,6 +35,8 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
     public static final int MINIMUM_TARGET_BURST_LIMIT = 1;
     public static final int MAXIMUM_TARGET_BURST_LIMIT = 20;
     public static final int DEFAULT_TARGET_BURST_LIMIT = 4;
+    public static final int MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS = 60;
+    public static final int DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS = 5;
     public static final int MAXIMUM_DISABLED_HEALTH_ALERT_CODES = 128;
     private static final Pattern STABLE_ID = Pattern.compile("[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*");
 
@@ -79,7 +81,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                                int liveDetailRowLimit)
     {
         return new WebUserPreferences(CURRENT_VERSION, new Appearance("light", null), new PageTitles(true),
-            new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT), new Scanner("normal"),
+            new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT, DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
                 decodeQualityDisplayMode, liveDetailRowLimit, true, false, false, "talker_alias", "order_appeared", "normal"),
             new Tuner(-140, 0, 1, true, true, false, false, "balanced"), new HealthAlerts(List.of()),
@@ -105,7 +107,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
     }
 
     public record Playback(double volume, List<Long> selectedScanListIds, boolean targetGrouping,
-                           int targetBurstLimit)
+                           int targetBurstLimit, int callDisplayHangtimeSeconds)
     {
         public Playback
         {
@@ -136,6 +138,12 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             {
                 throw new IllegalArgumentException("playback.target_burst_limit must be between " +
                     MINIMUM_TARGET_BURST_LIMIT + " and " + MAXIMUM_TARGET_BURST_LIMIT);
+            }
+
+            if(callDisplayHangtimeSeconds < 0 || callDisplayHangtimeSeconds > MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS)
+            {
+                throw new IllegalArgumentException("playback.call_display_hangtime_seconds must be between 0 and " +
+                    MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS);
             }
 
             selectedScanListIds = List.copyOf(selectedScanListIds);

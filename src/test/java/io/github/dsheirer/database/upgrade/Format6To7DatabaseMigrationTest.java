@@ -65,14 +65,14 @@ class Format6To7DatabaseMigrationTest
             assertEquals("format-6-to-7", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=12
+                WHERE json_extract(preferences_json, '$.version')=13
                   AND json_extract(preferences_json, '$.guides.automatic_page_guides')=1
                   AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
                   AND json_extract(preferences_json, '$.playback.target_grouping')=1
                   AND json_extract(preferences_json, '$.playback.target_burst_limit')=4
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=12
+                  AND preferences_revision=13
                 """));
             assertEquals("1.0:0:1.0:0", scalar(connection, """
                 SELECT min(json_extract(preferences_json, '$.playback.volume')) || ':' ||

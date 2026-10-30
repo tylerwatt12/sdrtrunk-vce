@@ -665,7 +665,7 @@ public final class ApplicationMigrationService
      * Additional workspace for migrating an application-owned database, after exact source admission. This excludes
      * any profile copy, selected backup and free-space reserve, which the caller must budget separately. Format 62's
      * full migration keeps detailed history pages in place and budgets only the compact structures it changes.
-     * The exact full-content 63-to-64 plan changes configuration only and leaves its paired activity file untouched.
+     * The exact full-content format-63/64-to-65 plans change configuration only and leave paired activity untouched.
      */
     public static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content)
         throws IOException, SQLException
@@ -681,7 +681,7 @@ public final class ApplicationMigrationService
         if(content == MigrationContent.FULL)
         {
             if(plan.source().version() == 62) return splitWorkspace(database);
-            if(plan.source().version() == 63 && plan.target().version() == 64)
+            if((plan.source().version() == 63 || plan.source().version() == 64) && plan.target().version() == 65)
                 return sqliteFileFootprint(database);
         }
         return sqliteFootprint(database);

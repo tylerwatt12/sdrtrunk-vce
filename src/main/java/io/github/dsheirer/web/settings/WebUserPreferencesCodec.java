@@ -32,7 +32,8 @@ public final class WebUserPreferencesCodec
         .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
         .registerModule(new SimpleModule().addDeserializer(WebUserPreferences.Appearance.class,
             new AppearanceDeserializer()).addDeserializer(WebUserPreferences.Guides.class,
-            new GuidesDeserializer()));
+            new GuidesDeserializer()).addDeserializer(WebUserPreferences.Playback.class,
+            new PlaybackDeserializer()));
 
     private WebUserPreferencesCodec()
     {
@@ -80,6 +81,41 @@ public final class WebUserPreferencesCodec
             throw new IOException("Web user preferences exceed the storage bound");
         }
         return json;
+    }
+
+    /** Playback choices are explicit JSON scalars; numeric strings and fractional seconds are refused. */
+    private static final class PlaybackDeserializer extends StdDeserializer<WebUserPreferences.Playback>
+    {
+        private PlaybackDeserializer() { super(WebUserPreferences.Playback.class); }
+
+        @Override
+        public WebUserPreferences.Playback deserialize(JsonParser parser, DeserializationContext context)
+            throws IOException
+        {
+            JsonNode playback = context.readTree(parser);
+            if(!playback.isObject() || playback.size() != 5 || !playback.has("volume") ||
+                !playback.get("volume").isNumber() || !playback.has("selected_scan_list_ids") ||
+                !playback.get("selected_scan_list_ids").isArray() || !playback.has("target_grouping") ||
+                !playback.get("target_grouping").isBoolean() || !playback.has("target_burst_limit") ||
+                !playback.get("target_burst_limit").isIntegralNumber() ||
+                !playback.get("target_burst_limit").canConvertToInt() ||
+                !playback.has("call_display_hangtime_seconds") ||
+                !playback.get("call_display_hangtime_seconds").isIntegralNumber() ||
+                !playback.get("call_display_hangtime_seconds").canConvertToInt())
+            {
+                throw JsonMappingException.from(parser, "playback must contain exactly the typed playback choices");
+            }
+            java.util.List<Long> selected = new java.util.ArrayList<>();
+            for(JsonNode id: playback.get("selected_scan_list_ids"))
+            {
+                if(!id.isIntegralNumber() || !id.canConvertToLong())
+                    throw JsonMappingException.from(parser, "Selected scan-list identifiers must be integers");
+                selected.add(id.longValue());
+            }
+            return new WebUserPreferences.Playback(playback.get("volume").doubleValue(), selected,
+                playback.get("target_grouping").booleanValue(), playback.get("target_burst_limit").intValue(),
+                playback.get("call_display_hangtime_seconds").intValue());
+        }
     }
 
     /** A saved tour choice must be an explicit JSON boolean, without scalar coercion or extra fields. */
