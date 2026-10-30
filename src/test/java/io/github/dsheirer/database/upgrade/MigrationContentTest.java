@@ -347,7 +347,7 @@ class MigrationContentTest
     @Test void configurationOnlyIsRefusedForAnAlreadyCurrentDatabase() throws Exception
     {
         Path root = directory.resolve("already-current");
-        Path source = Format64TestDatabase.create(database(root));
+        Path source = CurrentFormatTestDatabase.create(database(root));
         byte[] before = Files.readAllBytes(source);
 
         var failure = assertThrows(IllegalArgumentException.class, () -> service().migrateCurrent(root, false,
@@ -356,6 +356,27 @@ class MigrationContentTest
 
         assertArrayEquals(before, Files.readAllBytes(source));
         assertFalse(Files.exists(source.getParent().resolve("backups")));
+    }
+
+    @Test void pairedInPlaceSettingsOnlyUpdatesRequireExtractionBeforeChangingEitherStore() throws Exception
+    {
+        for(int version: List.of(63, 64))
+        {
+            Path root = directory.resolve("paired-settings-only-" + version);
+            Path source = database(root);
+            if(version == 63) Format63TestDatabase.create(source);
+            else Format64TestDatabase.create(source);
+            Path activity = io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(source);
+            byte[] configurationBefore = Files.readAllBytes(source);
+            byte[] activityBefore = Files.readAllBytes(activity);
+
+            var failure = assertThrows(IllegalArgumentException.class, () -> service().migrateCurrent(root, true,
+                MigrationContent.CONFIGURATION_ONLY, null));
+            assertTrue(failure.getMessage().contains("settings-extraction"));
+            assertArrayEquals(configurationBefore, Files.readAllBytes(source));
+            assertArrayEquals(activityBefore, Files.readAllBytes(activity));
+            assertFalse(Files.exists(source.getParent().resolve("backups")));
+        }
     }
 
     @Test void aConfigurationOnlyFailureBeforeCommitRollsBackTheDiscardAndCanBeRetried() throws Exception
@@ -506,9 +527,10 @@ class MigrationContentTest
         assertEquals(before.keySet(), after.keySet());
         for(var entry: before.entrySet())
         {
-            assertEquals(JSON.readTree(Format62WebUserPreferencesCodec.migrateFromFormat61(entry.getValue().json()).json()),
+            assertEquals(JSON.readTree(Format65WebUserPreferencesCodec.migrateFromFormat64(
+                    Format62WebUserPreferencesCodec.migrateFromFormat61(entry.getValue().json()).json()).json()),
                 JSON.readTree(after.get(entry.getKey()).json()));
-            assertEquals(entry.getValue().revision() + 1, after.get(entry.getKey()).revision());
+            assertEquals(entry.getValue().revision() + 2, after.get(entry.getKey()).revision());
         }
     }
 

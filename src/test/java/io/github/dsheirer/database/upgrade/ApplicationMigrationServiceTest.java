@@ -961,8 +961,8 @@ class ApplicationMigrationServiceTest
         assertTrue(result.importedPreviousProfile());
         assertTrue(result.completedWithRepairsOrSkippedItems());
         assertCurrentFormat(targetDatabase);
-        // Rebased revision plus the source-name, Live-sort, row-density, and guide preference upgrades.
-        assertEquals("7", scalar(targetDatabase,
+        // Rebased revision plus the later preference upgrades, including personal call display hangtime.
+        assertEquals("8", scalar(targetDatabase,
             "SELECT preferences_revision FROM web_user WHERE primary_admin=1"));
         assertEquals("1", scalar(targetDatabase, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
@@ -1359,10 +1359,11 @@ class ApplicationMigrationServiceTest
             SELECT hex(password_salt) || ':' || hex(password_hash)
             FROM web_user WHERE username='operator'
             """));
-        assertEquals(Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(
+        assertEquals(Format65WebUserPreferencesCodec.migrateFromFormat64(
+            Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(
             Format36WebUserPreferencesCodec.migrateFromFormat35(
                 Format35WebUserPreferencesCodec.migrateFromFormat34(
-                    Format23WebUserPreferencesCodec.migrateToFormat31(preferencesBefore))))).json(), scalar(database,
+                    Format23WebUserPreferencesCodec.migrateToFormat31(preferencesBefore))))).json()).json(), scalar(database,
             "SELECT preferences_json FROM web_user WHERE username='operator'"));
         assertCurrentFormat(database);
         int stepCount = DatabaseFormatCatalog.CURRENT_VERSION - 26;

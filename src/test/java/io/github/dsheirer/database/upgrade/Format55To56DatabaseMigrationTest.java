@@ -357,7 +357,8 @@ class Format55To56DatabaseMigrationTest
                             table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(column)))
                         { assertNull(rows.getObject(column)); continue; }
                         if(CurrentFormatTestDatabase.addedMessageCounter(rows, column)) continue;
-                        Object value = CurrentFormatTestDatabase.retainedValue(table, rows, column);
+                        Object value = CurrentFormatTestDatabase.retainedValue(table, rows, column,
+                            splitProjection ? DatabaseFormatCatalog.CURRENT_VERSION : 62);
                         if(table.equals("application_settings") && PORTABLE_KEY.equals(key) && column == 2)
                         {
                             ObjectNode portable = (ObjectNode)JSON.readTree((String)value);

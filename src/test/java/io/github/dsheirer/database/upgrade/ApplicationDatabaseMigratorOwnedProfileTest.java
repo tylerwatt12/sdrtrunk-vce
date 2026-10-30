@@ -233,7 +233,8 @@ class ApplicationDatabaseMigratorOwnedProfileTest
         Result result = run(profile.stage().toString(), profile.source().toString(), profile.target().toString(), OWNED);
         assertEquals(ApplicationDatabaseMigrator.EXIT_SUCCESS, result.code(), result::error);
         ConfigurationHistoryDatabase.validatePair(profile.stage());
-        assertEquals("64", scalar(profile.stage(), "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+            scalar(profile.stage(), "SELECT value FROM database_metadata WHERE key='database_format_version'"));
         assertEquals("63", scalar(stagedActivity, "SELECT value FROM database_metadata WHERE key='database_format_version'"));
         assertArrayEquals(configuration, Files.readAllBytes(profile.sourceDatabase()));
         assertArrayEquals(activity, Files.readAllBytes(sourceActivity));

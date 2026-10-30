@@ -34,7 +34,7 @@ class Format51To52DatabaseMigrationTest
             Map<String,RetainedIndex> indexes;
             try(Connection connection = open(database))
             {
-                before = contents(connection);
+                before = contentsForCurrentUpgrade(connection);
                 indexes = indexDefinitions(connection);
             }
             List<String> progress = new ArrayList<>();
@@ -55,7 +55,7 @@ class Format51To52DatabaseMigrationTest
                 try(Connection connection = open(result.safetyBackup()))
                 {
                     assertEquals(51, DatabaseFormatCatalog.inspect(connection).version());
-                    assertEquals(before, contents(connection));
+                    assertEquals(before, contentsForCurrentUpgrade(connection));
                     integrity(connection);
                 }
             }
@@ -74,7 +74,7 @@ class Format51To52DatabaseMigrationTest
             Path dataRoot = directory.resolve("service-rollback-" + backup);
             Path database = populatedPrior(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
             Map<String,List<String>> before;
-            try(Connection connection = open(database)) { before = contents(connection); }
+            try(Connection connection = open(database)) { before = contentsForCurrentUpgrade(connection); }
             assertThrows(CancellationException.class, () -> new ApplicationMigrationService().migrateCurrent(
                 dataRoot, backup, message ->
                 {
@@ -84,7 +84,7 @@ class Format51To52DatabaseMigrationTest
             try(Connection connection = open(database))
             {
                 assertEquals(51, DatabaseFormatCatalog.inspect(connection).version());
-                assertEquals(before, contents(connection));
+                assertEquals(before, contentsForCurrentUpgrade(connection));
                 integrity(connection);
             }
             Path backups = database.getParent().resolve("backups");
@@ -97,7 +97,7 @@ class Format51To52DatabaseMigrationTest
                     try(Connection connection = open(retained.getFirst()))
                     {
                         assertEquals(51, DatabaseFormatCatalog.inspect(connection).version());
-                        assertEquals(before, contents(connection));
+                        assertEquals(before, contentsForCurrentUpgrade(connection));
                         integrity(connection);
                     }
                 }
@@ -229,7 +229,12 @@ class Format51To52DatabaseMigrationTest
 
     private static Map<String,List<String>> contents(Connection connection) throws Exception
     {
-        return contents(connection, false);
+        return contents(connection, false, 62);
+    }
+
+    private static Map<String,List<String>> contentsForCurrentUpgrade(Connection connection) throws Exception
+    {
+        return contents(connection, false, DatabaseFormatCatalog.CURRENT_VERSION);
     }
 
     private static Map<String,List<String>> currentContents(Connection connection) throws Exception
@@ -243,10 +248,11 @@ class Format51To52DatabaseMigrationTest
             assertTrue(row.getLong(2) > 0);
             assertFalse(row.next());
         }
-        return contents(connection, true);
+        return contents(connection, true, DatabaseFormatCatalog.CURRENT_VERSION);
     }
 
-    private static Map<String,List<String>> contents(Connection connection, boolean excludeNicknameDefault) throws Exception
+    private static Map<String,List<String>> contents(Connection connection, boolean excludeNicknameDefault,
+                                                    int targetFormat) throws Exception
     {
         List<String> tables=CurrentFormatTestDatabase.retainedMonolithTables(connection);
         Map<String,List<String>> result=new LinkedHashMap<>();
@@ -268,7 +274,7 @@ class Format51To52DatabaseMigrationTest
                             table.equals("receiver_activity_event") && "duration_ms".equals(rows.getMetaData().getColumnName(column)))
                         { assertNull(rows.getObject(column)); continue; }
                         if(CurrentFormatTestDatabase.addedMessageCounter(rows, column)) continue;
-                        Object value=CurrentFormatTestDatabase.retainedValue(table, rows, column);
+                        Object value=CurrentFormatTestDatabase.retainedValue(table, rows, column, targetFormat);
                         row.add(value instanceof byte[] bytes?java.util.HexFormat.of().formatHex(bytes):String.valueOf(value));
                     }
                     values.add(row.toString());

@@ -231,7 +231,8 @@ class NightlyFormat20ToCurrentMigrationTest
                 JsonNode target = MAPPER.readTree(scalar(connection,
                     "SELECT preferences_json FROM web_user WHERE id=" + user.getKey()));
                 assertOriginalPreferences(user.getValue(), target, "");
-                assertEquals(12, target.path("version").asInt());
+                assertEquals(13, target.path("version").asInt());
+                assertEquals(5, target.path("playback").path("call_display_hangtime_seconds").asInt());
                 assertTrue(target.path("appearance").path("hue").isNull());
                 assertEquals("talker_alias", target.path("presentation").path("source_name_display").asText());
                 assertEquals("normal", target.path("presentation").path("live_row_density").asText());

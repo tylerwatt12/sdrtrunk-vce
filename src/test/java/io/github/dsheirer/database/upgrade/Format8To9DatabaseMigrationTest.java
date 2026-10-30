@@ -71,6 +71,7 @@ class Format8To9DatabaseMigrationTest
                 WHERE json_extract(preferences_json, '$.version')=13
                   AND json_extract(preferences_json, '$.guides.automatic_page_guides')=1
                   AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
+                  AND json_extract(preferences_json, '$.playback.call_display_hangtime_seconds')=5
                   AND json_extract(preferences_json,
                       '$.presentation.show_only_active_trunked_channels')=0
                   AND json_extract(preferences_json,
@@ -270,7 +271,8 @@ class Format8To9DatabaseMigrationTest
                     '$.presentation.live_row_density',
                     '$.guides',
                     '$.playback.target_grouping',
-                    '$.playback.target_burst_limit') AS row_value
+                    '$.playback.target_burst_limit',
+                    '$.playback.call_display_hangtime_seconds') AS row_value
                 FROM web_user ORDER BY id)
             """);
     }

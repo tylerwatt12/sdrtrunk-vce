@@ -250,6 +250,9 @@ public final class ApplicationDatabaseMigrator
                 if(content == MigrationContent.CONFIGURATION_ONLY && source.version() >= DatabaseFormatCatalog.CURRENT_VERSION)
                     throw new IllegalArgumentException("Configuration-only in-place conversion requires an older database. " +
                         "Use the VCE upgrade settings-extraction workflow for a current profile.");
+                if(content == MigrationContent.CONFIGURATION_ONLY && source.version() >= 63)
+                    throw new IllegalArgumentException("Configuration-only in-place conversion of a paired profile " +
+                        "requires the VCE upgrade settings-extraction workflow.");
                 if(source.version() >= 63)
                     io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(normalized);
                 plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);

@@ -82,7 +82,8 @@ class HistoricalActivityDiscardMigrationTest
         try(var connection = open(SdrTrunkDatabasePath.getDatabasePath(targetRoot)))
         {
             assertEquals(before.rows(), readConfiguration(connection, before.columns(), before.filters()));
-            long preferenceSteps = java.util.stream.IntStream.of(30, 34, 35, 42, 61).filter(sourceVersion -> sourceVersion >= version).count();
+            long preferenceSteps = java.util.stream.IntStream.of(30, 34, 35, 42, 61, 64)
+                .filter(sourceVersion -> sourceVersion >= version).count();
             try(var statement = connection.createStatement(); var rows = statement.executeQuery(
                 "SELECT id,tier,primary_admin,preferences_json,preferences_revision FROM web_user"))
             {
@@ -93,7 +94,8 @@ class HistoricalActivityDiscardMigrationTest
                     assertEquals(rows.getInt(3) == 1 ? "ADMIN" : "USER", rows.getString(2));
                     var targetPreferences = json.readTree(rows.getString(4));
                     assertOriginalPreferences(json.readTree(preferences.get(id)), targetPreferences, true);
-                    assertEquals(12, targetPreferences.path("version").asInt());
+                    assertEquals(13, targetPreferences.path("version").asInt());
+                    assertEquals(5, targetPreferences.path("playback").path("call_display_hangtime_seconds").asInt());
                     assertTrue(targetPreferences.path("guides").path("automatic_page_guides").asBoolean());
                     assertEquals(preferenceRevisions.get(id) + preferenceSteps, rows.getLong(5));
                 }

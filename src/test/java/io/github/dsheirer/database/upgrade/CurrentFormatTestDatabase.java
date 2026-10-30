@@ -289,16 +289,33 @@ public final class CurrentFormatTestDatabase
     /** Compare the exact declared preference conversion while preserving every other account field. */
     static Object retainedValue(String table, ResultSet rows, int column) throws Exception
     {
+        return retainedValue(table, rows, column, 62);
+    }
+
+    /** Frozen single-file comparisons stop at 62; full-current comparisons include later declared upgrades. */
+    static Object retainedValue(String table, ResultSet rows, int column, int targetFormat) throws Exception
+    {
         if(table.equals("web_user"))
         {
             String name = rows.getMetaData().getColumnName(column);
+            if(!name.equals("preferences_json") && !name.equals("preferences_revision"))
+                return rows.getObject(column);
             String preferences = rows.getString("preferences_json");
-            if(new com.fasterxml.jackson.databind.ObjectMapper().readTree(preferences).path("version").asInt() == 11)
+            int version = new com.fasterxml.jackson.databind.ObjectMapper().readTree(preferences).path("version").asInt();
+            int revisions = 0;
+            if(version == 11)
             {
-                if(name.equals("preferences_json"))
-                    return Format62WebUserPreferencesCodec.migrateFromFormat61(preferences).json();
-                if(name.equals("preferences_revision")) return rows.getLong(column) + 1;
+                preferences = Format62WebUserPreferencesCodec.migrateFromFormat61(preferences).json();
+                version = 12;
+                revisions++;
             }
+            if(targetFormat >= 65 && version == 12)
+            {
+                preferences = Format65WebUserPreferencesCodec.migrateFromFormat64(preferences).json();
+                revisions++;
+            }
+            if(name.equals("preferences_json")) return preferences;
+            if(name.equals("preferences_revision")) return rows.getLong(column) + revisions;
         }
         return rows.getObject(column);
     }

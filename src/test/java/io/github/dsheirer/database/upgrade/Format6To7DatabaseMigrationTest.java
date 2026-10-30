@@ -164,7 +164,7 @@ class Format6To7DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "unusable per-user browser preferences", 1);
-            assertEquals("11", scalar(connection,
+            assertEquals("12", scalar(connection,
                 "SELECT preferences_revision FROM web_user WHERE id=1"));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
@@ -179,7 +179,7 @@ class Format6To7DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "unusable per-user browser preferences", 1);
-            assertEquals("11", scalar(connection,
+            assertEquals("12", scalar(connection,
                 "SELECT preferences_revision FROM web_user WHERE id=1"));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
