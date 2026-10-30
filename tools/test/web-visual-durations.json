@@ -6,782 +6,782 @@
   "inventorySha256": "89add76bb35353bbb7b4af0cefbbe993223e39b6f9e0e4616f039b71a6e5490f",
   "files": {
     "access-landing.spec.js": {
-      "durationMs": 10793,
+      "durationMs": 12822,
       "caseCount": 12,
       "source": "measured"
     },
     "account-tour-history.spec.js": {
-      "durationMs": 12249,
+      "durationMs": 11185,
       "caseCount": 10,
       "source": "measured"
     },
     "activity-filters-app.spec.js": {
-      "durationMs": 35726,
+      "durationMs": 30112,
       "caseCount": 27,
       "source": "measured"
     },
     "admin-accounts-access.spec.js": {
-      "durationMs": 9236,
+      "durationMs": 9286,
       "caseCount": 8,
       "source": "measured"
     },
     "admin-reorganization.spec.js": {
-      "durationMs": 77935,
+      "durationMs": 68003,
       "caseCount": 48,
       "source": "measured"
     },
     "admin-settings-design.spec.js": {
-      "durationMs": 2511,
+      "durationMs": 4308,
       "caseCount": 3,
       "source": "measured"
     },
     "administration-guide.spec.js": {
-      "durationMs": 4775,
+      "durationMs": 7997,
       "caseCount": 5,
       "source": "measured"
     },
     "alerts.spec.js": {
-      "durationMs": 99581,
+      "durationMs": 73035,
       "caseCount": 80,
       "source": "measured"
     },
     "alias-bulk-sticky.spec.js": {
-      "durationMs": 3446,
+      "durationMs": 2745,
       "caseCount": 5,
       "source": "measured"
     },
     "alias-channel-usage.spec.js": {
-      "durationMs": 588,
+      "durationMs": 1979,
       "caseCount": 2,
       "source": "measured"
     },
     "alias-defaults-save-workflows.spec.js": {
-      "durationMs": 1998,
+      "durationMs": 1534,
       "caseCount": 2,
       "source": "measured"
     },
     "alias-export.spec.js": {
-      "durationMs": 8284,
+      "durationMs": 6925,
       "caseCount": 7,
       "source": "measured"
     },
     "alias-import-choice.spec.js": {
-      "durationMs": 2617,
+      "durationMs": 5397,
       "caseCount": 3,
       "source": "measured"
     },
     "alias-inventory.spec.js": {
-      "durationMs": 2118,
+      "durationMs": 2282,
       "caseCount": 2,
       "source": "measured"
     },
     "alias-list-create.spec.js": {
-      "durationMs": 2081,
+      "durationMs": 2207,
       "caseCount": 2,
       "source": "measured"
     },
     "alias-list-delete-checkbox.spec.js": {
-      "durationMs": 1630,
+      "durationMs": 1595,
       "caseCount": 2,
       "source": "measured"
     },
     "alias-list-rename.spec.js": {
-      "durationMs": 6385,
+      "durationMs": 4551,
       "caseCount": 3,
       "source": "measured"
     },
     "alias-save-workflows.spec.js": {
-      "durationMs": 6140,
+      "durationMs": 5152,
       "caseCount": 5,
       "source": "measured"
     },
     "alias-section-groups.spec.js": {
-      "durationMs": 7685,
+      "durationMs": 8030,
       "caseCount": 4,
       "source": "measured"
     },
     "alias-transfer-review.spec.js": {
-      "durationMs": 11039,
+      "durationMs": 7510,
       "caseCount": 6,
       "source": "measured"
     },
     "alias-view-tabs.spec.js": {
-      "durationMs": 8395,
+      "durationMs": 5255,
       "caseCount": 6,
       "source": "measured"
     },
     "alias-workspace.spec.js": {
-      "durationMs": 13259,
+      "durationMs": 8047,
       "caseCount": 8,
       "source": "measured"
     },
     "aliases-guide.spec.js": {
-      "durationMs": 13729,
+      "durationMs": 8386,
       "caseCount": 4,
       "source": "measured"
     },
     "analog-alias-inventory.spec.js": {
-      "durationMs": 4139,
+      "durationMs": 2879,
       "caseCount": 2,
       "source": "measured"
     },
     "application-log.spec.js": {
-      "durationMs": 21621,
+      "durationMs": 18836,
       "caseCount": 10,
       "source": "measured"
     },
     "audio-dock-entity-links.spec.js": {
-      "durationMs": 4267,
+      "durationMs": 4353,
       "caseCount": 4,
       "source": "measured"
     },
     "audio-dock-gallery.spec.js": {
-      "durationMs": 7405,
-      "caseCount": 9,
+      "durationMs": 13741,
+      "caseCount": 17,
       "source": "measured"
     },
     "audio-dock-guide.spec.js": {
-      "durationMs": 4470,
+      "durationMs": 4265,
       "caseCount": 10,
       "source": "measured"
     },
     "audio-dock-header.spec.js": {
-      "durationMs": 24083,
+      "durationMs": 24020,
       "caseCount": 18,
       "source": "measured"
     },
     "audio-dock-lifecycle.spec.js": {
-      "durationMs": 3659,
+      "durationMs": 3118,
       "caseCount": 2,
       "source": "measured"
     },
     "audio-dock-playback-feedback.spec.js": {
-      "durationMs": 3431,
+      "durationMs": 3459,
       "caseCount": 4,
       "source": "measured"
     },
     "audio-dock-preference-errors.spec.js": {
-      "durationMs": 1215,
-      "caseCount": 1,
+      "durationMs": 2146,
+      "caseCount": 2,
       "source": "measured"
     },
     "audio-dock-refinements.spec.js": {
-      "durationMs": 25783,
+      "durationMs": 26513,
       "caseCount": 14,
       "source": "measured"
     },
     "audio-dock-source-toggle.spec.js": {
-      "durationMs": 5192,
+      "durationMs": 5965,
       "caseCount": 11,
       "source": "measured"
     },
     "audio-dock-super-collapse.spec.js": {
-      "durationMs": 20283,
+      "durationMs": 30803,
       "caseCount": 15,
       "source": "measured"
     },
     "audio-dock.spec.js": {
-      "durationMs": 30833,
+      "durationMs": 43368,
       "caseCount": 22,
       "source": "measured"
     },
     "browsing-workflows.spec.js": {
-      "durationMs": 2058,
+      "durationMs": 2183,
       "caseCount": 2,
       "source": "measured"
     },
     "bulk-operation-feedback.spec.js": {
-      "durationMs": 9315,
+      "durationMs": 11870,
       "caseCount": 10,
       "source": "measured"
     },
     "bulk-operation-responsiveness.spec.js": {
-      "durationMs": 9993,
+      "durationMs": 7219,
       "caseCount": 8,
       "source": "measured"
     },
     "call-filtering.spec.js": {
-      "durationMs": 2978,
+      "durationMs": 2738,
       "caseCount": 2,
       "source": "measured"
     },
     "call-matching.spec.js": {
-      "durationMs": 71648,
+      "durationMs": 64921,
       "caseCount": 38,
       "source": "measured"
     },
     "call-relations-lifecycle.spec.js": {
-      "durationMs": 5485,
+      "durationMs": 3621,
       "caseCount": 3,
       "source": "measured"
     },
     "channel-catalog-mobile.spec.js": {
-      "durationMs": 12548,
+      "durationMs": 9403,
       "caseCount": 4,
       "source": "measured"
     },
     "channel-editor-mobile.spec.js": {
-      "durationMs": 6560,
+      "durationMs": 4273,
       "caseCount": 4,
       "source": "measured"
     },
     "channel-enrichment.spec.js": {
-      "durationMs": 13705,
+      "durationMs": 10570,
       "caseCount": 14,
       "source": "measured"
     },
     "channel-form-workflows.spec.js": {
-      "durationMs": 9297,
+      "durationMs": 6806,
       "caseCount": 7,
       "source": "measured"
     },
     "channel-protocol-relevance.spec.js": {
-      "durationMs": 7275,
+      "durationMs": 5284,
       "caseCount": 4,
       "source": "measured"
     },
     "channel-remote-quality.spec.js": {
-      "durationMs": 2771,
+      "durationMs": 2288,
       "caseCount": 5,
       "source": "measured"
     },
     "channel-setup-comparison.spec.js": {
-      "durationMs": 2965,
+      "durationMs": 2361,
       "caseCount": 4,
       "source": "measured"
     },
     "channel-setup-guide.spec.js": {
-      "durationMs": 14176,
+      "durationMs": 11465,
       "caseCount": 9,
       "source": "measured"
     },
     "channel-setup.spec.js": {
-      "durationMs": 16440,
+      "durationMs": 18830,
       "caseCount": 9,
       "source": "measured"
     },
     "contrast-audit.spec.js": {
-      "durationMs": 842,
+      "durationMs": 674,
       "caseCount": 9,
       "source": "measured"
     },
     "count-time-chart.spec.js": {
-      "durationMs": 5169,
+      "durationMs": 3801,
       "caseCount": 5,
       "source": "measured"
     },
     "dashboard-activity.spec.js": {
-      "durationMs": 3349,
+      "durationMs": 1897,
       "caseCount": 2,
       "source": "measured"
     },
     "dashboard-call-statistics.spec.js": {
-      "durationMs": 3816,
+      "durationMs": 2184,
       "caseCount": 3,
       "source": "measured"
     },
     "dashboard-remote-quality.spec.js": {
-      "durationMs": 30823,
+      "durationMs": 2890,
       "caseCount": 5,
       "source": "measured"
     },
     "described-navigation.spec.js": {
-      "durationMs": 7972,
+      "durationMs": 6146,
       "caseCount": 4,
       "source": "measured"
     },
     "design-system.spec.js": {
-      "durationMs": 35438,
+      "durationMs": 30256,
       "caseCount": 18,
       "source": "measured"
     },
     "direct-listen-gallery.spec.js": {
-      "durationMs": 3108,
+      "durationMs": 2065,
       "caseCount": 2,
       "source": "measured"
     },
     "direct-listen.spec.js": {
-      "durationMs": 15094,
+      "durationMs": 9563,
       "caseCount": 10,
       "source": "measured"
     },
     "directory-live-updates.spec.js": {
-      "durationMs": 12849,
+      "durationMs": 11760,
       "caseCount": 3,
       "source": "measured"
     },
     "discovery-review.spec.js": {
-      "durationMs": 1452,
+      "durationMs": 1509,
       "caseCount": 2,
       "source": "measured"
     },
     "filled-surfaces.spec.js": {
-      "durationMs": 16707,
+      "durationMs": 14418,
       "caseCount": 8,
       "source": "measured"
     },
     "form-workflows.spec.js": {
-      "durationMs": 12398,
+      "durationMs": 9994,
       "caseCount": 11,
       "source": "measured"
     },
     "guide-context.spec.js": {
-      "durationMs": 14469,
+      "durationMs": 16939,
       "caseCount": 6,
       "source": "measured"
     },
     "inline-identity-action.spec.js": {
-      "durationMs": 2433,
+      "durationMs": 2313,
       "caseCount": 4,
       "source": "measured"
     },
     "issi-identity-parity.spec.js": {
-      "durationMs": 8149,
+      "durationMs": 5306,
       "caseCount": 6,
       "source": "measured"
     },
     "listen-map.spec.js": {
-      "durationMs": 12063,
+      "durationMs": 8083,
       "caseCount": 13,
       "source": "measured"
     },
     "live-activity-batch.spec.js": {
-      "durationMs": 2718,
+      "durationMs": 1745,
       "caseCount": 2,
       "source": "measured"
     },
     "live-conventional-aggregate.spec.js": {
-      "durationMs": 17872,
+      "durationMs": 15261,
       "caseCount": 5,
       "source": "measured"
     },
     "live-guide.spec.js": {
-      "durationMs": 9361,
+      "durationMs": 8721,
       "caseCount": 3,
       "source": "measured"
     },
     "live-identity-columns.spec.js": {
-      "durationMs": 13444,
+      "durationMs": 14899,
       "caseCount": 20,
       "source": "measured"
     },
     "live-remote-origin.spec.js": {
-      "durationMs": 15201,
+      "durationMs": 14279,
       "caseCount": 14,
       "source": "measured"
     },
     "live-sort.spec.js": {
-      "durationMs": 24631,
+      "durationMs": 15665,
       "caseCount": 14,
       "source": "measured"
     },
     "loading-indicators.spec.js": {
-      "durationMs": 2319,
+      "durationMs": 1929,
       "caseCount": 2,
       "source": "measured"
     },
     "main-guide.spec.js": {
-      "durationMs": 10639,
+      "durationMs": 9232,
       "caseCount": 4,
       "source": "measured"
     },
     "map-guide.spec.js": {
-      "durationMs": 1547,
+      "durationMs": 1643,
       "caseCount": 1,
       "source": "measured"
     },
     "message-catalog-app.spec.js": {
-      "durationMs": 3423,
+      "durationMs": 2452,
       "caseCount": 2,
       "source": "measured"
     },
     "metric-cards.spec.js": {
-      "durationMs": 4608,
+      "durationMs": 4313,
       "caseCount": 3,
       "source": "measured"
     },
     "mobile-audit.spec.js": {
-      "durationMs": 9934,
+      "durationMs": 7874,
       "caseCount": 13,
       "source": "measured"
     },
     "mobile-form-panels.spec.js": {
-      "durationMs": 11084,
+      "durationMs": 9877,
       "caseCount": 5,
       "source": "measured"
     },
     "mobile-navigation-dock.spec.js": {
-      "durationMs": 26928,
+      "durationMs": 20152,
       "caseCount": 8,
       "source": "measured"
     },
     "modal-interactions.spec.js": {
-      "durationMs": 11067,
+      "durationMs": 8504,
       "caseCount": 11,
       "source": "measured"
     },
     "my-settings-focused.spec.js": {
-      "durationMs": 12439,
-      "caseCount": 10,
+      "durationMs": 8701,
+      "caseCount": 11,
       "source": "measured"
     },
     "operational-preferences.spec.js": {
-      "durationMs": 6299,
+      "durationMs": 5802,
       "caseCount": 9,
       "source": "measured"
     },
     "ota-alias.spec.js": {
-      "durationMs": 29822,
+      "durationMs": 28420,
       "caseCount": 4,
       "source": "measured"
     },
     "p25-visualizer-actions.spec.js": {
-      "durationMs": 7633,
+      "durationMs": 8968,
       "caseCount": 4,
       "source": "measured"
     },
     "p25-visualizer-background.spec.js": {
-      "durationMs": 12259,
+      "durationMs": 47400,
       "caseCount": 1,
       "source": "measured"
     },
     "p25-visualizer-controls.spec.js": {
-      "durationMs": 3053,
+      "durationMs": 2647,
       "caseCount": 3,
       "source": "measured"
     },
     "p25-visualizer-focus-fade.spec.js": {
-      "durationMs": 20974,
+      "durationMs": 7831,
       "caseCount": 2,
       "source": "measured"
     },
     "p25-visualizer-guide.spec.js": {
-      "durationMs": 7059,
+      "durationMs": 6851,
       "caseCount": 1,
       "source": "measured"
     },
     "p25-visualizer-hover-hit.spec.js": {
-      "durationMs": 74581,
+      "durationMs": 21144,
       "caseCount": 6,
       "source": "measured"
     },
     "p25-visualizer-label-depth.spec.js": {
-      "durationMs": 113862,
+      "durationMs": 30674,
       "caseCount": 12,
       "source": "measured"
     },
     "p25-visualizer-listen-focus.spec.js": {
-      "durationMs": 26664,
+      "durationMs": 10687,
       "caseCount": 4,
       "source": "measured"
     },
     "p25-visualizer-menu.spec.js": {
-      "durationMs": 29704,
+      "durationMs": 1365,
       "caseCount": 4,
       "source": "measured"
     },
     "p25-visualizer-overview.spec.js": {
-      "durationMs": 11896,
+      "durationMs": 37863,
       "caseCount": 4,
       "source": "measured"
     },
     "p25-visualizer-renderer.spec.js": {
-      "durationMs": 35465,
+      "durationMs": 55934,
       "caseCount": 9,
       "source": "measured"
     },
     "p25-visualizer-settings.spec.js": {
-      "durationMs": 2815,
+      "durationMs": 2903,
       "caseCount": 4,
       "source": "measured"
     },
     "p25-visualizer-snapshot.spec.js": {
-      "durationMs": 6718,
+      "durationMs": 6914,
       "caseCount": 4,
       "source": "measured"
     },
     "p25-visualizer-startup.spec.js": {
-      "durationMs": 2103,
+      "durationMs": 2285,
       "caseCount": 4,
       "source": "measured"
     },
     "p25-visualizer-talkgroups.spec.js": {
-      "durationMs": 19566,
+      "durationMs": 23426,
       "caseCount": 10,
       "source": "measured"
     },
     "page-loading.spec.js": {
-      "durationMs": 14948,
+      "durationMs": 15515,
       "caseCount": 8,
       "source": "measured"
     },
     "paging-tone-detection.spec.js": {
-      "durationMs": 2986,
+      "durationMs": 3191,
       "caseCount": 2,
       "source": "measured"
     },
     "playback-hangtime.spec.js": {
-      "durationMs": 7685,
+      "durationMs": 4224,
       "caseCount": 4,
-      "source": "estimated"
+      "source": "measured"
     },
     "player-menu.spec.js": {
-      "durationMs": 3254,
+      "durationMs": 3795,
       "caseCount": 3,
       "source": "measured"
     },
     "radio-home-identity.spec.js": {
-      "durationMs": 3788,
+      "durationMs": 4607,
       "caseCount": 5,
       "source": "measured"
     },
     "radioreference-connect.spec.js": {
-      "durationMs": 6545,
+      "durationMs": 9160,
       "caseCount": 9,
       "source": "measured"
     },
     "radioreference-guide.spec.js": {
-      "durationMs": 12804,
+      "durationMs": 13398,
       "caseCount": 4,
       "source": "measured"
     },
     "radioreference-import.spec.js": {
-      "durationMs": 61753,
+      "durationMs": 41515,
       "caseCount": 62,
       "source": "measured"
     },
     "recordings-filters.spec.js": {
-      "durationMs": 10538,
-      "caseCount": 13,
+      "durationMs": 16184,
+      "caseCount": 14,
       "source": "measured"
     },
     "recordings-guide.spec.js": {
-      "durationMs": 7524,
+      "durationMs": 11437,
       "caseCount": 4,
       "source": "measured"
     },
     "recordings.spec.js": {
-      "durationMs": 97362,
-      "caseCount": 87,
+      "durationMs": 102441,
+      "caseCount": 90,
       "source": "measured"
     },
     "remote-channel-origin.spec.js": {
-      "durationMs": 1456,
+      "durationMs": 1630,
       "caseCount": 2,
       "source": "measured"
     },
     "remote-links.spec.js": {
-      "durationMs": 61083,
-      "caseCount": 36,
+      "durationMs": 90760,
+      "caseCount": 40,
       "source": "measured"
     },
     "retained-statistics.spec.js": {
-      "durationMs": 63448,
+      "durationMs": 47987,
       "caseCount": 40,
       "source": "measured"
     },
     "scan-list-members-workspace.spec.js": {
-      "durationMs": 1045,
+      "durationMs": 979,
       "caseCount": 1,
       "source": "measured"
     },
     "scan-list-playback.spec.js": {
-      "durationMs": 11487,
+      "durationMs": 13048,
       "caseCount": 2,
       "source": "measured"
     },
     "scan-list-save-workflows.spec.js": {
-      "durationMs": 2660,
+      "durationMs": 2353,
       "caseCount": 2,
       "source": "measured"
     },
     "scan-lists-guide.spec.js": {
-      "durationMs": 5192,
+      "durationMs": 3834,
       "caseCount": 2,
       "source": "measured"
     },
     "scanner-controls.spec.js": {
-      "durationMs": 74433,
-      "caseCount": 20,
+      "durationMs": 49552,
+      "caseCount": 23,
       "source": "measured"
     },
     "scanner-guide.spec.js": {
-      "durationMs": 53625,
-      "caseCount": 8,
+      "durationMs": 48523,
+      "caseCount": 9,
       "source": "measured"
     },
     "section-notices.spec.js": {
-      "durationMs": 982,
+      "durationMs": 925,
       "caseCount": 2,
       "source": "measured"
     },
     "setup-guide-lifecycle.spec.js": {
-      "durationMs": 36157,
+      "durationMs": 35052,
       "caseCount": 20,
       "source": "measured"
     },
     "shared-player-presentation.spec.js": {
-      "durationMs": 15370,
+      "durationMs": 8603,
       "caseCount": 8,
-      "source": "estimated"
+      "source": "measured"
     },
     "site-issi-bands.spec.js": {
-      "durationMs": 2310,
+      "durationMs": 2243,
       "caseCount": 3,
       "source": "measured"
     },
     "site-style-app.spec.js": {
-      "durationMs": 21250,
-      "caseCount": 14,
+      "durationMs": 21415,
+      "caseCount": 18,
       "source": "measured"
     },
     "site-style-gallery.spec.js": {
-      "durationMs": 5134,
+      "durationMs": 3871,
       "caseCount": 7,
       "source": "measured"
     },
     "source-name-display.spec.js": {
-      "durationMs": 4570,
+      "durationMs": 4700,
       "caseCount": 3,
       "source": "measured"
     },
     "specialized-contrast.spec.js": {
-      "durationMs": 8123,
+      "durationMs": 11116,
       "caseCount": 4,
       "source": "measured"
     },
     "spectrum-discovery.spec.js": {
-      "durationMs": 132324,
+      "durationMs": 121685,
       "caseCount": 112,
       "source": "measured"
     },
     "spectrum-guide.spec.js": {
-      "durationMs": 50967,
+      "durationMs": 51103,
       "caseCount": 4,
       "source": "measured"
     },
     "spectrum-live-drag.spec.js": {
-      "durationMs": 29970,
-      "caseCount": 21,
+      "durationMs": 29969,
+      "caseCount": 22,
       "source": "measured"
     },
     "spectrum-recording.spec.js": {
-      "durationMs": 5610,
+      "durationMs": 6075,
       "caseCount": 14,
       "source": "measured"
     },
     "spectrum-search.spec.js": {
-      "durationMs": 233937,
-      "caseCount": 135,
+      "durationMs": 248646,
+      "caseCount": 137,
       "source": "measured"
     },
     "spectrum-session-takeover.spec.js": {
-      "durationMs": 13318,
+      "durationMs": 21264,
       "caseCount": 17,
       "source": "measured"
     },
     "spectrum-takeover-release-lifecycle.spec.js": {
-      "durationMs": 8438,
+      "durationMs": 10578,
       "caseCount": 8,
       "source": "measured"
     },
     "spectrum-tuner-takeover.spec.js": {
-      "durationMs": 10088,
-      "caseCount": 14,
+      "durationMs": 23910,
+      "caseCount": 19,
       "source": "measured"
     },
     "streaming-guide.spec.js": {
-      "durationMs": 6155,
+      "durationMs": 9008,
       "caseCount": 3,
       "source": "measured"
     },
     "streaming.spec.js": {
-      "durationMs": 37407,
+      "durationMs": 38757,
       "caseCount": 32,
       "source": "measured"
     },
     "table-autofit-interactions.spec.js": {
-      "durationMs": 1884,
+      "durationMs": 2381,
       "caseCount": 2,
       "source": "measured"
     },
     "table-autofit-measurement.spec.js": {
-      "durationMs": 5065,
+      "durationMs": 6944,
       "caseCount": 8,
       "source": "measured"
     },
     "table-cell-containment.spec.js": {
-      "durationMs": 1816,
+      "durationMs": 1150,
       "caseCount": 2,
       "source": "measured"
     },
     "table-default-widths.spec.js": {
-      "durationMs": 5814,
+      "durationMs": 9447,
       "caseCount": 6,
       "source": "measured"
     },
     "table-overflow.spec.js": {
-      "durationMs": 7861,
+      "durationMs": 11489,
       "caseCount": 6,
       "source": "measured"
     },
     "theme-hue.spec.js": {
-      "durationMs": 18098,
+      "durationMs": 22177,
       "caseCount": 12,
       "source": "measured"
     },
     "topics-guide.spec.js": {
-      "durationMs": 2523,
+      "durationMs": 3445,
       "caseCount": 3,
       "source": "measured"
     },
     "tuner-allocation.spec.js": {
-      "durationMs": 57190,
+      "durationMs": 57413,
       "caseCount": 24,
       "source": "measured"
     },
     "tuner-frequency-actions.spec.js": {
-      "durationMs": 7202,
+      "durationMs": 8945,
       "caseCount": 8,
       "source": "measured"
     },
     "tuner-navigation.spec.js": {
-      "durationMs": 26898,
+      "durationMs": 13635,
       "caseCount": 14,
-      "source": "estimated"
+      "source": "measured"
     },
     "tuner-readout-responsive.spec.js": {
-      "durationMs": 2481,
+      "durationMs": 5058,
       "caseCount": 4,
       "source": "measured"
     },
     "tuners-guide.spec.js": {
-      "durationMs": 30823,
+      "durationMs": 31632,
       "caseCount": 5,
       "source": "measured"
     },
     "tuners.spec.js": {
-      "durationMs": 38481,
+      "durationMs": 30964,
       "caseCount": 32,
       "source": "measured"
     },
     "web-diagnostic-log.spec.js": {
-      "durationMs": 15453,
+      "durationMs": 15677,
       "caseCount": 6,
       "source": "measured"
     },
     "web-revision-lifecycle.spec.js": {
-      "durationMs": 2979,
+      "durationMs": 1733,
       "caseCount": 4,
       "source": "measured"
     },
     "welcome-guide-preference.spec.js": {
-      "durationMs": 10269,
+      "durationMs": 13585,
       "caseCount": 6,
       "source": "measured"
     },
     "welcome-guides.spec.js": {
-      "durationMs": 18879,
+      "durationMs": 21552,
       "caseCount": 13,
       "source": "measured"
     }
