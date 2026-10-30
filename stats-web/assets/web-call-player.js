@@ -2,10 +2,11 @@ import { systemLabel, systemName, homeSystemName } from './core/system-labels.js
 import { p25IdentityFacts, p25IdentifierText } from './core/radio-labels.js?v=7';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { createDirectListenSession, directListenTargetKey } from './core/direct-listen.js?v=1';
+import { createCallDisplayRetention, DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS,
+  MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS } from './core/call-display-retention.js?v=1';
 
 export class WebCallPlayer {
   static MAXIMUM_SEEN_CALL_IDS = 2048;
-  static IDLE_CALL_DISPLAY_MS = 5000;
   static MAXIMUM_SCAN_LISTS = 128;
   static MAXIMUM_SELECTED_SCAN_LISTS = 16;
   static MAXIMUM_QUEUED_CALLS = 100;
@@ -32,8 +33,8 @@ export class WebCallPlayer {
     this.currentSourceSampleRate = null;
     this.lastHeardSourceSampleRate = null;
     this.idleDisplayCall = null;
-    this.idleDisplayTimer = null;
-    this.idleDisplayDeadline = 0;
+    this.callDisplayHangtimeSeconds = DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS;
+    this.idleDisplayRetention = null;
     this.source = null;
     this.analyserNode = null;
     this.spectrumSamples = null;
@@ -138,10 +139,13 @@ export class WebCallPlayer {
     if (Number.isInteger(burstLimit) && burstLimit >= 1 && burstLimit <= 20) {
       this.targetBurstLimit = burstLimit;
     }
+    if (Object.hasOwn(preferences, 'call_display_hangtime_seconds')) {
+      this.setCallDisplayHangtimeSeconds(preferences.call_display_hangtime_seconds, false);
+    }
     this.render();
   }
 
-  writePreferences({ volume = false } = {}) {
+  writePreferences({ volume = false, hangtime = false } = {}) {
     if (!this.preferenceWriter) {
       if (volume) this.volumeEditPending = false;
       return Promise.resolve();
@@ -154,6 +158,8 @@ export class WebCallPlayer {
       target_grouping: this.targetGrouping,
       target_burst_limit: this.targetBurstLimit
     };
+    if (hangtime) snapshot.call_display_hangtime_seconds =
+      this.callDisplayHangtimeSeconds ?? DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS;
     const revision = this.volumeEditRevision || 0;
     const writeId = this.preferenceWriteSequence = (this.preferenceWriteSequence || 0) + 1;
     const pending = this.pendingPreferenceWrites ||= new Map();
@@ -212,6 +218,7 @@ export class WebCallPlayer {
       directListen: { allowed: Boolean(this.directListenAllowed), ...this.directListenSession?.snapshot() },
       maximumSelectedScanLists: this.maximumSelectedScanLists,
       volume: this.volume,
+      callDisplayHangtimeSeconds: this.callDisplayHangtimeSeconds ?? DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS,
       targetGrouping: this.targetGrouping,
       targetBurstLimit: this.targetBurstLimit
     };
@@ -838,6 +845,8 @@ export class WebCallPlayer {
       this.clearQueuedCalls();
       this.lastPlaybackTargetKey = null;
       this.consecutiveTargetCalls = 0;
+      this.holdTarget = null;
+      this.heldDisplayCall = null;
       this.stopCurrent();
       this.replayingLast = false;
       this.stopAfterReplay = false;
@@ -1077,6 +1086,7 @@ export class WebCallPlayer {
       if (token !== this.loadToken || source !== this.source) return;
       if (this.replayingLast) {
         const stopAfterReplay = this.stopAfterReplay;
+        const completed = this.current;
         source.disconnect();
         this.stopProgress();
         this.source = null;
@@ -1089,10 +1099,11 @@ export class WebCallPlayer {
           this.stopped = true;
           this.paused = false;
           if (this.audioContext?.state === 'running') this.audioContext.suspend().catch(() => {});
+          this.showIdleDisplay(completed);
           this.setStatus('Ready');
           this.render();
         } else {
-          this.playNext();
+          this.playNext(completed);
         }
         return;
       }
@@ -1142,30 +1153,36 @@ export class WebCallPlayer {
   }
 
   clearIdleDisplay() {
-    if (this.idleDisplayTimer !== null) {
-      window.clearTimeout(this.idleDisplayTimer);
-      this.idleDisplayTimer = null;
-    }
+    this.idleDisplayRetention?.clear();
     this.idleDisplayCall = null;
-    this.idleDisplayDeadline = 0;
   }
 
   showIdleDisplay(call) {
-    this.clearIdleDisplay();
-    if (!call) return;
-    this.idleDisplayCall = call;
-    this.idleDisplayDeadline = Date.now() + WebCallPlayer.IDLE_CALL_DISPLAY_MS;
-    const expire = () => {
-      if (this.idleDisplayCall !== call) return;
-      const remaining = this.idleDisplayDeadline - Date.now();
-      if (remaining > 0) {
-        this.idleDisplayTimer = window.setTimeout(expire, remaining);
-        return;
-      }
-      this.clearIdleDisplay();
-      this.render();
-    };
-    this.idleDisplayTimer = window.setTimeout(expire, WebCallPlayer.IDLE_CALL_DISPLAY_MS);
+    this.callDisplayRetention().show(call);
+  }
+
+  callDisplayRetention() {
+    if (!this.idleDisplayRetention) {
+      this.idleDisplayRetention = createCallDisplayRetention({
+        getHangtimeSeconds: () => this.callDisplayHangtimeSeconds ?? DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS,
+        onChange: () => {
+          this.idleDisplayCall = this.idleDisplayRetention.current();
+          this.render();
+        }
+      });
+    }
+    return this.idleDisplayRetention;
+  }
+
+  setCallDisplayHangtimeSeconds(value, persist = true) {
+    const seconds = Number(value);
+    if (!Number.isInteger(seconds) || seconds < 0 || seconds > MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS) return false;
+    if (seconds === this.callDisplayHangtimeSeconds) return true;
+    this.callDisplayHangtimeSeconds = seconds;
+    this.idleDisplayRetention?.refresh();
+    this.render();
+    if (persist) this.writePreferences({ hangtime: true });
+    return true;
   }
 
   displayCall() {
@@ -1173,7 +1190,7 @@ export class WebCallPlayer {
     if (this.holdTarget && this.heldDisplayCall?._playbackTargetKey === this.holdTarget) {
       return this.heldDisplayCall;
     }
-    return this.idleDisplayCall && Date.now() < this.idleDisplayDeadline ? this.idleDisplayCall : null;
+    return this.idleDisplayRetention?.current() || null;
   }
 
   getPlaybackPosition() {

@@ -20,7 +20,7 @@ function copy(value) {
 test('health alert preferences are versioned, bounded, and use stable unique codes', async () => {
   const schema = await loadModule('preference-schema');
   const defaults = schema.validate(copy(schema.defaults));
-  assert.equal(defaults.version, 12);
+  assert.equal(defaults.version, 13);
   assert.deepEqual(defaults.health_alerts, { disabled_codes: [] });
 
   const maximum = Array.from({ length: 128 }, (_unused, index) => `alert-${index}`);
@@ -43,6 +43,24 @@ test('health alert preferences are versioned, bounded, and use stable unique cod
   assert.throws(() => schema.validate({ ...defaults, version: 3 }), /version is unsupported/);
   const { health_alerts: _removed, ...withoutHealthAlerts } = defaults;
   assert.throws(() => schema.validate(withoutHealthAlerts), /unknown or missing settings/);
+});
+
+test('call display hangtime is an explicit shared preference in whole seconds', async () => {
+  const schema = await loadModule('preference-schema');
+  const defaults = copy(schema.defaults);
+  assert.equal(defaults.playback.call_display_hangtime_seconds, 5);
+  for (const seconds of [0, 5, 60]) {
+    const profile = copy(defaults);
+    profile.playback.call_display_hangtime_seconds = seconds;
+    assert.equal(schema.validate(profile).playback.call_display_hangtime_seconds, seconds);
+  }
+  for (const invalid of [-1, 61, 0.5, '5', null, true, [], {}]) {
+    const profile = copy(defaults);
+    profile.playback.call_display_hangtime_seconds = invalid;
+    assert.throws(() => schema.validate(profile), /call_display_hangtime_seconds/);
+  }
+  delete defaults.playback.call_display_hangtime_seconds;
+  assert.throws(() => schema.validate(defaults), /unknown or missing settings/);
 });
 
 test('the status icon catalog contains only receiving and decoding failures', async () => {

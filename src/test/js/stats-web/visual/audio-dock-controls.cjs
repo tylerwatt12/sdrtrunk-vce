@@ -50,6 +50,7 @@ async function openAudioVolume(page) {
 
 async function expectAudioSettings(dock) {
   const fields = [
+    ['spinbutton', 'Call display hangtime (seconds)', 'Keep the last call and its details visible after playback ends. Applies to Scanner and the player in Live and Recordings. Set to 0 to clear immediately.'],
     ['checkbox', 'Group calls by target', 'Keeps calls for the same group together to preserve conversationality'],
     ['spinbutton', 'Calls per target', 'When grouping is on, switch to another waiting target after this many consecutive calls.'],
     ['checkbox', 'Playing call in page title', 'Show the playing Live call in browser tab titles outside Scanner.'],

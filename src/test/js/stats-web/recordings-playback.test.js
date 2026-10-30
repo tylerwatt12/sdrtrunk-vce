@@ -58,6 +58,31 @@ const deferred = () => { let resolve; const promise = new Promise((done) => { re
 const call = (id, start = id * 1000) => ({ id, start_ms: start, duration_ms: 30_000,
   talkgroup_id: 1201, talkgroup_alias: 'North Dispatch', source_id: 1863924, protocol: 'APCO25_PHASE2' });
 
+function displayClock() {
+  let now = 10_000, nextTimer = 0;
+  const timers = new Map();
+  return {
+    now: () => now,
+    setTimeout: (callback, delay) => {
+      const timer = ++nextTimer;
+      timers.set(timer, { callback, due: now + delay });
+      return timer;
+    },
+    clearTimeout: (timer) => timers.delete(timer),
+    advance(milliseconds) {
+      const target = now + milliseconds;
+      let next;
+      while ((next = [...timers].sort((a, b) => a[1].due - b[1].due)[0]) && next[1].due <= target) {
+        now = next[1].due;
+        timers.delete(next[0]);
+        next[1].callback();
+      }
+      now = target;
+    },
+    pending: () => timers.size
+  };
+}
+
 async function main() {
   const modulePath = path.resolve(process.argv[2] || path.resolve(__dirname,
     '../../../../stats-web/assets/features/recordings.js'));
@@ -69,6 +94,7 @@ async function main() {
   const callValueFormatUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/call-value-format.js')).href;
   const callAudioDetailsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/call-audio-details.js')).href;
   const formWorkflowsUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/form-workflows.js')).href;
+  const callDisplayRetentionUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../core/call-display-retention.js')).href;
   const guideDataUrl = pathToFileURL(path.resolve(path.dirname(modulePath), '../guides/recordings-data.js')).href;
   const executable = source.replace(/^import .*dual-range.*;\r?\n/m, 'const createDualRange = () => {};\n')
     .replace(/from '\.\.\/core\/system-labels\.js\?v=\d+'/, `from '${labelsUrl}'`)
@@ -77,6 +103,7 @@ async function main() {
     .replace(/from '\.\.\/core\/call-value-format\.js\?v=\d+'/, `from '${callValueFormatUrl}'`)
     .replace(/from '\.\.\/core\/call-audio-details\.js\?v=\d+'/, `from '${callAudioDetailsUrl}'`)
     .replace(/from '\.\.\/core\/form-workflows\.js\?v=\d+'/, `from '${formWorkflowsUrl}'`)
+    .replace(/from '\.\.\/core\/call-display-retention\.js\?v=\d+'/, `from '${callDisplayRetentionUrl}'`)
     .replace(/from '\.\.\/guides\/recordings-data\.js\?v=\d+'/, `from '${guideDataUrl}'`);
   const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter,
     recordingIdentitySelections, recordingIdentitySelectionKey, recordingDiscoveryPeriod,
@@ -295,6 +322,7 @@ async function main() {
   global.Audio = class extends AudioFixture { constructor() { super(); audios.push(this); } };
   const make = (requestJson, overrides = {}) => createRecordingsFeature({ node, requestJson,
     stopLiveAudio: async () => {}, isPrimaryAdmin: () => false, canViewRadio: () => true,
+    callDisplayRetentionClock: displayClock(),
     entityRefHref: (ref) => ref?.key ? `/entity/${ref.key}` : null,
     anchor: (label, target, className) => { const link = node('a', className, label); link.setAttribute('href', target); return link; },
     href: (view, query) => `?view=${view}&${new URLSearchParams(query)}`, ...overrides });
@@ -323,12 +351,14 @@ async function main() {
     playback.setVolume(0.35);
     assert.equal(playback.viewState().volume, 0.35);
     playback.stop();
-    assert.equal(playback.viewState().current.id, 1, 'Stop must retain the displayed recording metadata');
+    assert.equal(playback.viewState().current.id, 1, 'Stop must retain the recording for replay');
+    assert.equal(playback.viewState().displayCall, null, 'Stop must clear the visible call immediately');
     assert.equal(playback.viewState().stopped, true);
     await playback.toggle();
     assert.equal(playback.viewState().playing, true, 'Play after Stop must restart the retained recording');
     await playback.toggle();
     assert.equal(playback.viewState().paused, true);
+    assert.equal(playback.viewState().displayCall.id, 1, 'Pause keeps the current call visible');
     const notificationCount = notifications.length;
     unsubscribe();
     playback.setVolume(0.4);
@@ -419,17 +449,110 @@ async function main() {
     assert.deepEqual(passive.viewState().queue.map((row) => row.id), [2, 3]);
     assert.equal(passiveAudio.playCount, 1);
 
-    const finished = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) })).playback;
+    const finishedClock = displayClock();
+    const finished = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
+      { callDisplayRetentionClock: finishedClock }).playback;
+    const finishedNotifications = [];
+    finished.subscribeState((snapshot) => finishedNotifications.push(snapshot));
     finished.playClicked(call(1));
     await settle();
     audios.at(-1).emit('ended');
     await settle();
     assert.equal(finished.viewState().stopped, true);
     assert.equal(finished.viewState().current.id, 1);
+    assert.equal(finished.viewState().displayCall.id, 1, 'Natural completion retains the displayed call');
+    finishedClock.advance(4999);
+    assert.equal(finished.viewState().displayCall.id, 1);
+    finishedClock.advance(1);
+    assert.equal(finished.viewState().displayCall, null, 'The default five-second deadline clears the display');
+    assert.equal(finishedNotifications.at(-1).displayCall, null, 'Expiry updates all subscribed player presentations');
+    assert.equal(finished.viewState().current.id, 1, 'Expiry preserves the recording for transport controls');
+    assert.equal(finishedClock.pending(), 0);
     finished.playClicked(call(2));
     await settle();
     assert.equal(finished.viewState().current.id, 2, 'A finished queue must start the clicked call instead of replaying retained metadata');
     assert.deepEqual(finished.viewState().queue, []);
+
+    const queuedEndClock = displayClock();
+    const queuedEnd = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
+      { callDisplayRetentionClock: queuedEndClock }).playback;
+    queuedEnd.play(call(1));
+    await settle();
+    queuedEnd.play(call(2), 'queue');
+    audios.at(-1).emit('ended');
+    await settle();
+    assert.equal(queuedEnd.viewState().displayCall.id, 2, 'A queued call replaces the completed call without waiting');
+    assert.equal(queuedEnd.viewState().playing, true);
+    queuedEndClock.advance(5000);
+    assert.equal(queuedEnd.viewState().displayCall.id, 2, 'An old deadline cannot clear a later playing call');
+    assert.equal(queuedEndClock.pending(), 0);
+    audios.at(-1).emit('ended');
+    await settle();
+    queuedEndClock.advance(2000);
+    queuedEnd.applyPlaybackPreferences({ call_display_hangtime_seconds: 10 });
+    queuedEndClock.advance(7999);
+    assert.equal(queuedEnd.viewState().displayCall.id, 2);
+    queuedEndClock.advance(1);
+    assert.equal(queuedEnd.viewState().displayCall, null, 'Preference changes use the original completion timestamp');
+    await queuedEnd.toggle();
+    queuedEnd.applyPlaybackPreferences({ call_display_hangtime_seconds: 0 });
+    audios.at(-1).emit('ended');
+    await settle();
+    assert.equal(queuedEnd.viewState().displayCall, null, 'Zero hangtime clears immediately on natural completion');
+    assert.equal(queuedEndClock.pending(), 0);
+
+    const lateRetainedDetails = deferred();
+    const detailsClock = displayClock();
+    const retainedDetails = make(() => lateRetainedDetails.promise,
+      { callDisplayRetentionClock: detailsClock }).playback;
+    retainedDetails.play(call(1));
+    await settle();
+    audios.at(-1).emit('ended');
+    await settle();
+    detailsClock.advance(4000);
+    lateRetainedDetails.resolve({ call: { ...call(1), channel_name: 'Retained channel' },
+      transcription: { status: 'complete', text: 'Late transcript.' } });
+    await settle();
+    assert.equal(retainedDetails.viewState().displayCall.channel_name, 'Retained channel');
+    assert.equal(retainedDetails.viewState().displayCall.transcription.text, 'Late transcript.');
+    detailsClock.advance(1000);
+    assert.equal(retainedDetails.viewState().displayCall, null, 'Late call details cannot extend the display deadline');
+    await retainedDetails.toggle();
+    await retainedDetails.toggle();
+    detailsClock.advance(60_000);
+    assert.equal(retainedDetails.viewState().paused, true);
+    assert.equal(retainedDetails.viewState().displayCall.id, 1, 'Paused recordings remain visible beyond hangtime');
+    await retainedDetails.toggle();
+    audios.at(-1).emit('ended');
+    await settle();
+    assert.equal(detailsClock.pending(), 1);
+    retainedDetails.stop();
+    assert.equal(retainedDetails.viewState().displayCall, null);
+    assert.equal(detailsClock.pending(), 0, 'Stop cancels a pending completed-call deadline');
+    await retainedDetails.toggle();
+    audios.at(-1).emit('ended');
+    await settle();
+    retainedDetails.reset();
+    assert.equal(retainedDetails.viewState().current, null);
+    assert.equal(retainedDetails.viewState().displayCall, null);
+    assert.equal(detailsClock.pending(), 0, 'Permission reset cancels retained call information');
+
+    const continuationClock = displayClock();
+    const retainedContinuationRequest = deferred();
+    const retainedContinuation = make((url) => url.includes('?') ? retainedContinuationRequest.promise :
+      Promise.resolve({ call: call(1) }), { callDisplayRetentionClock: continuationClock }).playback;
+    retainedContinuation.play(call(1), 'continue');
+    await settle();
+    audios.at(-1).emit('ended');
+    await settle();
+    assert.equal(retainedContinuation.viewState().displayCall.id, 1);
+    continuationClock.advance(5000);
+    assert.equal(retainedContinuation.viewState().displayCall, null,
+      'Waiting for the next matching calls cannot prolong the completed call');
+    retainedContinuationRequest.resolve({ calls: [], next_cursor: null });
+    await settle();
+    assert.equal(retainedContinuation.viewState().displayCall, null,
+      'A late empty continuation cannot restart hangtime');
 
     let startStops = 0;
     const pendingClickStart = deferred();

@@ -763,7 +763,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         String changeVolume = function(source, "  changeVolume(write = false)");
         String applyPreferences = function(source, "  applyPreferences(preferences, options = {})");
-        String writePreferences = function(source, "  writePreferences({ volume = false } = {})");
+        String writePreferences = function(source, "  writePreferences({ volume = false, hangtime = false } = {})");
         String bindControls = function(source, "  bindControls()");
         String ensureAudioContext = function(source, "  ensureAudioContext()");
         String startCurrent = function(source, "  startCurrent()");
@@ -1096,8 +1096,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Engineer"));
         String transport = function(source, "function arrangeScannerPlayback(bar, player, signal, options = {})");
         assertTrue(transport.contains("const allowed = () => capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)"));
-        assertTrue(transport.contains("const openMenu = options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker))"));
-        assertTrue(transport.contains("'scanner-player-menu', () => openMenu(menu)"));
+        assertTrue(transport.contains("(options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker)))(menu)"));
+        assertTrue(transport.contains("menu.id = 'scanner-player-menu'"));
         assertFalse(source.contains("function openPlaybackAvoidList("));
         assertFalse(scanner.contains("Recent Calls"));
         assertTrue(html.contains("aria-label=\"Replay last call\""));

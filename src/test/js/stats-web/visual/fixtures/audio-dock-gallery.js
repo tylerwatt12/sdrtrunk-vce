@@ -97,7 +97,7 @@ export async function mountAudioDockGallery(parameters) {
     source_ota_alias: `ENG ${unit}`, source_home_id: 30910 + unit,
     source_entity_ref: { ...sourceRef, identity_key: `v1-r-00001-001-${30910 + unit}` } });
   const recordingState = {
-    current: empty ? null : currentRecording,
+    current: empty ? null : currentRecording, displayCall: empty ? null : currentRecording,
     queue: empty ? [] : [2, 3, 4].map((index) => ({ ...currentRecording, id: 16 + index,
       ...radioFields(index + 3), start_ms: started + index * 60_000 })),
     history: empty ? [] : [{ ...currentRecording, id: 16, ...radioFields(3), start_ms: started - 60_000 }],
@@ -130,7 +130,10 @@ export async function mountAudioDockGallery(parameters) {
   const recordingObservers = new Set();
   const emit = (state, observers) => observers.forEach((listener) => listener({ ...state }));
   const notifyLive = () => emit(liveState, liveObservers);
-  const notifyRecording = () => emit(recordingState, recordingObservers);
+  const notifyRecording = () => {
+    recordingState.displayCall = recordingState.stopped ? null : recordingState.current;
+    emit(recordingState, recordingObservers);
+  };
   const subscribe = (state, observers, listener) => {
     observers.add(listener); listener({ ...state });
     return () => observers.delete(listener);
@@ -168,7 +171,7 @@ export async function mountAudioDockGallery(parameters) {
     viewState: () => ({ ...recordingState }),
     subscribeState: (listener) => subscribe(recordingState, recordingObservers, listener),
     renderDetails: (host, call, options) => detailRenderer.playback.renderDetails(host, call, options),
-    renderTranscript: (host) => detailRenderer.playback.renderTranscript(host, recordingState.current),
+    renderTranscript: (host, call) => detailRenderer.playback.renderTranscript(host, call),
     toggle: async () => { recordingState.playing = !recordingState.playing; recordingState.stopped = false;
       recordingState.paused = !recordingState.playing; recordingState.status = recordingState.playing ? 'Playing recording' : 'Paused'; notifyRecording(); },
     next: async () => { if (recordingState.current) recordingState.history.push(recordingState.current);
@@ -193,10 +196,13 @@ export async function mountAudioDockGallery(parameters) {
     loadSharedQueue: async () => {}
   };
   let titlePreference = true;
+  let callDisplayHangtimeSeconds = 5;
   const audioDock = createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer: () => live,
     access: () => ({ live: true, recordings: fixture !== 'restricted' }), entityRefHref,
     canViewRadio: () => true, href, getTitlePreference: () => titlePreference,
-    setTitlePreference: async (value) => { titlePreference = value; } });
+    setTitlePreference: async (value) => { titlePreference = value; },
+    getCallDisplayHangtimeSeconds: () => callDisplayHangtimeSeconds,
+    setCallDisplayHangtimeSeconds: async (value) => { callDisplayHangtimeSeconds = value; } });
 
   const dock = document.querySelector('#audio-dock');
   const clickNamed = (label) => [...dock.querySelectorAll('button')].find((button) =>

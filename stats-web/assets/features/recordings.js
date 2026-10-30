@@ -5,6 +5,8 @@ import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { callAudioDetailGroups } from '../core/call-audio-details.js?v=7';
 import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 import { createActionWorkflow } from '../core/action-workflows.js?v=1';
+import { createCallDisplayRetention, DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS,
+  MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS } from '../core/call-display-retention.js?v=1';
 import { createRecordingsGuideData, RECORDINGS_GUIDE_CALL_ID } from '../guides/recordings-data.js?v=1';
 
 const CALLS = '/api/v1/recordings/calls';
@@ -715,6 +717,22 @@ export function createRecordingsFeature(deps) {
   let clickMode = 'queue';
   let queueEntrySequence = 0;
   let queueResume = null;
+  let callDisplayHangtimeSeconds = DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS;
+  const callDisplayRetention = createCallDisplayRetention({
+    ...deps.callDisplayRetentionClock,
+    getHangtimeSeconds: () => callDisplayHangtimeSeconds,
+    onChange: drawQueue
+  });
+
+  function applyPlaybackPreferences(preferences = {}) {
+    const configured = preferences.call_display_hangtime_seconds;
+    const seconds = Number.isInteger(configured) && configured >= 0 && configured <= MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS ?
+      configured : DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS;
+    if (seconds === callDisplayHangtimeSeconds) return;
+    callDisplayHangtimeSeconds = seconds;
+    callDisplayRetention.refresh();
+    drawQueue();
+  }
 
   function queueEntry(row) {
     return { ...row, _queueEntryKey: `recording-entry-${++queueEntrySequence}` };
@@ -733,7 +751,7 @@ export function createRecordingsFeature(deps) {
       loading: false, pendingStart: false, stopped: true, token: 0, detailsToken: 0, detailsLoading: false, detailsError: '', status: '' };
     ['timeupdate', 'loadedmetadata', 'durationchange', 'play', 'pause', 'volumechange']
       .forEach((event) => audio.addEventListener(event, drawQueue));
-    audio.addEventListener('ended', () => void advance());
+    audio.addEventListener('ended', () => void advance({ completed: true }));
     audio.addEventListener('error', () => {
       if (!player?.current) return;
       player.status = 'This recording could not be played. Moving to the next call.';
@@ -748,7 +766,9 @@ export function createRecordingsFeature(deps) {
     const callDuration = Number(value(state.current, 'duration_ms', 'call_duration_ms')) / 1000;
     const total = Number.isFinite(measuredDuration) && measuredDuration > 0 ? measuredDuration :
       (Number.isFinite(callDuration) && callDuration > 0 ? callDuration : 0);
-    return { intentRevision: playbackIntentRevision, current: state.current, queue: [...state.queue], history: [...state.history],
+    const displayCall = state.stopped ? (callDisplayRetention.current() ? state.current : null) : state.current;
+    return { intentRevision: playbackIntentRevision, current: state.current, displayCall,
+      callDisplayHangtimeSeconds, queue: [...state.queue], history: [...state.history],
       playing: Boolean(state.current && !state.stopped && !state.audio.paused),
       paused: Boolean(state.current && !state.stopped && state.audio.paused), stopped: state.stopped, loading: state.loading,
       status: state.status, duration: total, currentTime: Number(state.audio.currentTime) || 0,
@@ -789,6 +809,7 @@ export function createRecordingsFeature(deps) {
           state.audio.src = audioUrl(current);
           state.audio.currentTime = 0;
           state.stopped = false;
+          callDisplayRetention.clear();
         }
         state.status = state.mode === 'continue' && state.continuation ? 'Continuing through matching calls' : '';
         try { await state.audio.play(); }
@@ -808,13 +829,14 @@ export function createRecordingsFeature(deps) {
     if (!player) return;
     const state = player;
     state.token++;
+    state.stopped = true;
+    callDisplayRetention.clear();
     state.audio.pause();
     state.audio.removeAttribute('src');
     state.audio.load();
     state.continuation = null;
     state.loading = false;
     state.pendingStart = false;
-    state.stopped = true;
     state.status = 'Stopped.';
     drawQueue();
   }
@@ -887,12 +909,15 @@ export function createRecordingsFeature(deps) {
     return continuation.request;
   }
 
-  async function advance({ remember = true, failed = false } = {}) {
+  async function advance({ remember = true, failed = false, completed = false } = {}) {
     const state = recordedPlayer();
     if (state.loading) return;
     const token = state.token;
     state.loading = true;
     state.pendingStart = true;
+    state.stopped = true;
+    if (completed) callDisplayRetention.show(state.current);
+    else callDisplayRetention.clear();
     drawQueue();
     try {
       state.audio.pause();
@@ -922,6 +947,7 @@ export function createRecordingsFeature(deps) {
       state.current = next;
       state.pendingStart = false;
       state.stopped = false;
+      callDisplayRetention.clear();
       state.status = state.mode === 'continue' ? 'Continuing through matching calls' : '';
       state.audio.src = audioUrl(next);
       state.audio.currentTime = 0;
@@ -957,6 +983,8 @@ export function createRecordingsFeature(deps) {
     state.detailsToken++;
     state.audio.pause();
     state.current = null;
+    state.stopped = true;
+    callDisplayRetention.clear();
     state.queue = [queueEntry(row)];
     state.history = [];
     state.loading = false;
@@ -1077,7 +1105,8 @@ export function createRecordingsFeature(deps) {
   }
 
   const playback = {
-    subscribeState, viewState: playbackState, toggle: toggleAudio, next: () => { playbackIntentRevision++; return advance(); }, previous: previousAudio,
+    subscribeState, viewState: playbackState, applyPlaybackPreferences,
+    toggle: toggleAudio, next: () => { playbackIntentRevision++; return advance(); }, previous: previousAudio,
     stop: stopAudio, reset: resetAudio, seek: seekAudio, skipSeconds: (seconds) => seekAudio(playbackState().currentTime + Number(seconds)),
     setVolume: (volume) => {
       if (!Number.isFinite(Number(volume))) return;

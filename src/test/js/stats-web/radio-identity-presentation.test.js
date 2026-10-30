@@ -299,6 +299,7 @@ const detailNode = (tag, className = '', initialText = '') => ({
 });
 const dockDetails = vm.runInNewContext(`(() => {
   let liveState = {};
+  const current = () => Object.hasOwn(liveState, 'displayCall') ? liveState.displayCall : liveState.current;
   let navigationAllowed = true;
   const panelHost = node('div');
   const canViewRadio = () => navigationAllowed;

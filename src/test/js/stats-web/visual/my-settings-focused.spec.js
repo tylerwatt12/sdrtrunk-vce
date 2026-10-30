@@ -8,6 +8,7 @@ test.setTimeout(12_000);
 const { openSettingsApp, selectSettingsCategory } = require('./fixtures/my-settings-app.cjs');
 const { presentations } = require('./fixtures/site-style-cases.cjs');
 const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
+const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 for (const presentation of presentations) {
   test(`focused categories keep one editor visible in ${presentation.name}`, async ({ page }) => {
@@ -31,6 +32,21 @@ for (const presentation of presentations) {
     for (const group of await groups.all()) await expect(group).not.toHaveAttribute('open');
     await expect(status.locator('input[type="checkbox"]')).toHaveCount(8);
     await expect(workspace).toHaveScreenshot(`focused-status-${presentation.name}.png`);
+    await selectSettingsCategory(page, 'listening', 'Listening settings');
+    const listening = page.getByRole('form', { name: 'Listening settings', exact: true });
+    const hangtime = listening.getByRole('spinbutton', { name: 'Call display hangtime (seconds)', exact: true });
+    await expect(listening).toBeVisible();
+    await expect(page.getByRole('form')).toHaveCount(1);
+    await expect(hangtime).toHaveValue('5');
+    await expect(hangtime).toHaveAttribute('min', '0');
+    await expect(hangtime).toHaveAttribute('max', '60');
+    await expect(hangtime).toHaveAttribute('step', '1');
+    await expect(hangtime).toHaveAccessibleDescription(
+      'Keep the last call and its details visible after playback ends. Applies to Scanner and the player in Live and Recordings. Set to 0 to clear immediately.');
+    await expect(listening.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+    await expectNoHorizontalOverflow(page);
+    await expectContrast(page, { reportName: `listening-settings-${presentation.name}` });
+    await expect(workspace).toHaveScreenshot(`focused-listening-${presentation.name}.png`);
     await selectSettingsCategory(page, 'pages', 'Page preferences');
     await expect(page.getByRole('form')).toHaveCount(0);
     const directory = workspace.locator('.ui-settings-destinations');
@@ -44,6 +60,36 @@ for (const presentation of presentations) {
     await expect(workspace).toHaveScreenshot(`focused-pages-${presentation.name}.png`);
   });
 }
+
+test('listening hangtime saves zero and sixty while a failed save retains its draft', async ({ page }) => {
+  const savedPlayback = { volume: 0.45, selected_scan_list_ids: [], target_grouping: false,
+    target_burst_limit: 7, call_display_hangtime_seconds: 5 };
+  const state = await openSettingsApp(page, { holdSaves: true, preferences: { playback: savedPlayback } });
+  await selectSettingsCategory(page, 'listening', 'Listening settings');
+  const editor = page.getByRole('form', { name: 'Listening settings', exact: true });
+  const hangtime = editor.getByRole('spinbutton', { name: 'Call display hangtime (seconds)', exact: true });
+  const save = editor.getByRole('button', { name: 'Save changes', exact: true });
+  await hangtime.fill('0');
+  await save.click();
+  await expect.poll(() => state.pending.length).toBe(1);
+  state.pending.shift()(503);
+  await expect(editor).toContainText('Your settings could not be saved. Your choices are still here. Try saving again.');
+  await expect(hangtime).toHaveValue('0');
+  await expect(save).toBeEnabled();
+  expect(state.profiles.listener.playback).toEqual(savedPlayback);
+  await save.click();
+  await expect.poll(() => state.pending.length).toBe(1);
+  state.pending.shift()(200);
+  await expect(save).toBeDisabled();
+  expect(state.profiles.listener.playback).toEqual({ ...savedPlayback, call_display_hangtime_seconds: 0 });
+  await hangtime.fill('60');
+  await save.click();
+  await expect.poll(() => state.pending.length).toBe(1);
+  state.pending.shift()(200);
+  await expect(save).toBeDisabled();
+  expect(state.profiles.listener.playback).toEqual({ ...savedPlayback, call_display_hangtime_seconds: 60 });
+  expect(state.writes).toHaveLength(3);
+});
 
 test('phone section picker restores its selection when a dirty category change is cancelled', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 740 });

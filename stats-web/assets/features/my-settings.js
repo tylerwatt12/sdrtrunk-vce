@@ -1,3 +1,5 @@
+import { createCallDisplayHangtimeField } from '../core/call-display-settings.js?v=1';
+
 // Focused personal settings reuse the settings composition, choice controls,
 // form workflow and confirmation modal on desktops and phones in both themes.
 export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFormWorkflow,
@@ -8,6 +10,7 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
     { id: 'appearance', label: 'Appearance', icon: 'icon-display' },
     { id: 'names', label: 'Source names', icon: 'icon-identities' },
     { id: 'status', label: 'Status icon', icon: 'icon-health' },
+    { id: 'listening', label: 'Listening settings', icon: 'icon-playback-controls' },
     { id: 'pages', label: 'Page preferences', icon: 'icon-dashboard' }
   ];
   const snapshot = readSnapshot();
@@ -16,7 +19,8 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const sectionValue = (preferences) => active === 'appearance' ? clone(preferences.appearance) :
     active === 'names' ? preferences.presentation.source_name_display :
-      active === 'status' ? [...preferences.health_alerts.disabled_codes].sort() : null;
+      active === 'status' ? [...preferences.health_alerts.disabled_codes].sort() :
+        active === 'listening' ? preferences.playback.call_display_hangtime_seconds : null;
   const element = node('div', 'ui-settings-workspace ui-settings-workspace-focused user-settings-workspace');
   const navigation = node('nav', 'ui-settings-navigation');
   navigation.setAttribute('aria-label', 'Personal preferences');
@@ -103,7 +107,7 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
     else picker.value = active;
   };
   for (const [index, category] of categories.entries()) {
-    if (index === 0 || index === 3) {
+    if (index === 0 || category.id === 'pages') {
       const group = node('div', 'ui-settings-nav-group');
       const items = node('div', 'ui-settings-nav-items');
       group.append(items);
@@ -280,11 +284,19 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
     body.append(groups);
   }
 
+  function listeningControls(body) {
+    const { field } = createCallDisplayHangtimeField(node, {
+      id: 'my-settings-call-display-hangtime', value: draft,
+      onChange: (value) => { draft = value; }
+    });
+    body.append(field);
+  }
+
   function pagePreferences(body) {
     body.append(node('p', 'ui-settings-intro', 'Change these preferences from the page you’re using.'));
     const destinations = node('div', 'ui-settings-destinations');
     [
-      ['Scanner', 'icon-scanner', 'Playback, scan lists and call details', 'Scanner → Settings and playback controls'],
+      ['Scanner', 'icon-scanner', 'Playback, scan lists and call details', 'Scanner → Player menu'],
       ['Live', 'icon-live', 'Row density, sorting and decoded details', 'Live → Presentation'],
       ['Tuner spectrum', 'icon-spectrum', 'Display range, waterfall and FFT', 'Tuners → Spectrum'],
       ['Table layouts', 'icon-columns', 'Column order, visibility and widths', 'Any table → Columns']
@@ -314,6 +326,7 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
     form.setAttribute('aria-label', category.label);
     if (active === 'appearance') appearanceControls(body);
     else if (active === 'names') sourceNameControls(body);
+    else if (active === 'listening') listeningControls(body);
     else statusControls(body);
     const feedback = node('div', 'admin-form-message');
     feedback.setAttribute('role', 'status');
@@ -346,6 +359,7 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
             { code: 'preference_session_changed' });
           if (selectedSection === 'appearance') preferences.appearance = clone(submitted);
           else if (selectedSection === 'names') preferences.presentation.source_name_display = submitted;
+          else if (selectedSection === 'listening') preferences.playback.call_display_hangtime_seconds = submitted;
           else preferences.health_alerts.disabled_codes = [
             ...preferences.health_alerts.disabled_codes.filter((id) => !knownAlerts.has(id)),
             ...submitted.filter((id) => knownAlerts.has(id))
