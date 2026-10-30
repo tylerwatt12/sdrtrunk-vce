@@ -121,6 +121,7 @@
 }
 @media (max-width: 380px) {
   .ui-audio-transport-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ui-audio-transport-options:not(:has(> [data-audio-action="hold"]:not([hidden]))) { display: grid; }
   .ui-audio-transport-options > .ui-audio-control { width: 100%; }
 }
 .ui-audio-sources {

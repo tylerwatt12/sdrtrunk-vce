@@ -132,9 +132,22 @@ for (const viewport of [{ width: 320, height: 480 }]) {
         dock.locator('.audio-dock-controls').boundingBox()
       ]);
       return noticeBounds.y >= headerBounds.y + headerBounds.height &&
-        noticeBounds.y + noticeBounds.height <= controlsBounds.y;
-    }).toBe(true);
+        noticeBounds.y + noticeBounds.height <= controlsBounds.y ? null : {
+          notice: noticeBounds, header: headerBounds, controls: controlsBounds
+        };
+    }).toBeNull();
+    expect(await notice.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom) >=
+        parseFloat(style.lineHeight);
+    }), 'The bounded error notice must retain a readable text line').toBe(true);
     await expectReachableControls();
+    await test.info().attach('error-notice-geometry', { contentType: 'application/json', body: JSON.stringify({
+      notice: await notice.boundingBox(), header: await dock.locator('.audio-dock-header').boundingBox(),
+      controls: await dock.locator('.audio-dock-controls').boundingBox()
+    }) });
+    if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: `${process.env.WEB_REVIEW_DIR}/audio-error-max-drag-${
+      await page.evaluate(() => matchMedia('(pointer: coarse)').matches ? 'touch' : 'mouse')}.png` });
     await resize.evaluate((element) => element.releasePointerCapture(window.audioGalleryPointerId));
     await page.mouse.up();
     await expect(dock).not.toHaveAttribute('data-dragging', 'true');

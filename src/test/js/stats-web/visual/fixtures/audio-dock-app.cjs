@@ -100,6 +100,9 @@ async function openAudioApp(page, options = {}) {
   let preferences = structuredClone((await import(pathToFileURL(file).href)).defaults);
   preferences.appearance.theme = options.theme || 'light';
   if (Number.isFinite(options.volume)) preferences.playback.volume = options.volume;
+  if (Number.isFinite(options.callDisplayHangtimeSeconds)) {
+    preferences.playback.call_display_hangtime_seconds = options.callDisplayHangtimeSeconds;
+  }
   const rows = options.calls || Array.from({ length: 30 }, (_, index) => ({ ...recording,
     id: 17 + index, start_ms: started + index * 60_000, end_ms: started + index * 60_000 + 42_000,
     source_id: 30914 + index, source_alias: `Engine ${4 + index}`, source_ota_alias: `ENG ${4 + index}`,

@@ -395,7 +395,7 @@ test('short desktop full player hides every control and restores in its original
 
 test('recording completion while hidden preserves detail disclosures and keeps the idle dock hidden', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
-  await openApp(page);
+  await openApp(page, { callDisplayHangtimeSeconds: 0 });
   await chooseRecording(page, 0);
   await size(page, 'full');
   await selectAudioPanel(dock(page), 'Details');

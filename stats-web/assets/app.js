@@ -47,7 +47,7 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=43';
+import { createAudioDock } from './core/audio-dock.js?v=44';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=1';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
@@ -374,7 +374,7 @@ function applicationNoticeStack() {
     stack = node('div', 'preference-status preference-status-stack');
     stack.id = 'application-notices';
     const preferences = document.getElementById('preference-status');
-    preferences?.before(stack);
+    document.body.append(stack);
     if (preferences) { preferences.classList.remove('preference-status'); stack.append(preferences); }
   }
   return stack;

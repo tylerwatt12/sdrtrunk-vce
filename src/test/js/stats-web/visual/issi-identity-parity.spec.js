@@ -72,6 +72,10 @@ for (const presentation of [
       expect(filter.searchParams.get('system_key')).toBe(systemKey);
       expect(filter.searchParams.has('talkgroup_id')).toBe(false);
       await search.click();
+      if (presentation.name === 'phone') {
+        await page.locator('#recordings-filters-toggle').click();
+        await expect(page.locator('.recordings-selected-filters')).toBeVisible();
+      }
       await expect(page.locator('.recordings-selected-filters')
         .getByRole('button', { name: 'Remove Talkgroup: Dispatch filter', exact: true })).toContainText('Dispatch');
       await expectNoHorizontalOverflow(page);
@@ -83,7 +87,7 @@ for (const presentation of [
       await page.setViewportSize(presentation.viewport);
       const errors = [];
       page.on('pageerror', error => errors.push(error.message));
-      await openAudioApp(page, { feedCallsEnabled: false });
+      await openAudioApp(page, { feedCallsEnabled: false, callDisplayHangtimeSeconds: 0 });
       const pending = [];
       let cursor = 0;
       await page.route('**/api/v1/calls/feed*', route => route.fulfill({ json: {

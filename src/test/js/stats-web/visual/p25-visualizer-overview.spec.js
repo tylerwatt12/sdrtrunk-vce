@@ -40,6 +40,7 @@ async function openOverview(page, theme, width) {
       return surface => { graph = factory(surface); return graph; };
     } };
     const clicks = [];
+    let hoveredId = null;
     renderer = await createP25Renderer({ host, mode: 'manual', library,
       onNodeClick: node => {
         if (node.type !== 'system') return;
@@ -47,6 +48,12 @@ async function openOverview(page, theme, width) {
         renderer.setData(buildP25Graph(state, node.systemKey), { animate: false });
         renderer.enterSystem(node.systemKey, { immediate: true });
       } });
+    const originalHover = graph.onNodeHover();
+    graph.onNodeHover(function (...args) {
+      const result = originalHover?.apply(this, args);
+      hoveredId = args[0]?.id || null;
+      return result;
+    });
     const overview = () => {
       renderer.setData(buildP25Graph(state), { animate: false });
       renderer.showOverview({ immediate: true });
@@ -120,7 +127,8 @@ async function openOverview(page, theme, width) {
     };
     window.overviewFixture = { renderer, graph, overview, repaint, singleOverview, inspect,
       painted: () => objects().size === 7 && graph.renderer().info.render.calls > 0,
-      clicks: () => [...clicks], nodeTypes: () => graph.graphData().nodes.map(node => node.type).sort() };
+      clicks: () => [...clicks], hoveredId: () => hoveredId,
+      nodeTypes: () => graph.graphData().nodes.map(node => node.type).sort() };
     overview();
   });
   await page.clock.runFor(150);
@@ -238,11 +246,15 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
         testInfo.outputPath(`overview-${theme}-${width}.png`)
     });
     let target;
+    let candidateId = null;
+    await page.mouse.move(0, 0);
     await expect.poll(async () => {
       await page.clock.runFor(64);
       const scene = await page.evaluate(() => window.overviewFixture.inspect({ hitTargets: true }));
-      const candidate = scene.systems.find(system => system.clearClick && system.labelClickable);
-      if (!candidate) return false;
+      const candidate = candidateId ? scene.systems.find(system => system.id === candidateId) :
+        scene.systems.find(system => system.clearClick && system.labelClickable);
+      if (!candidate?.clearClick || !candidate.labelClickable) return false;
+      candidateId = candidate.id;
       await page.mouse.move(candidate.screen.x, candidate.screen.y);
       await page.clock.runFor(64);
       const current = await page.evaluate(() => window.overviewFixture.inspect({ hitTargets: true }));
@@ -251,8 +263,9 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
           Math.hypot(settled.screen.x - candidate.screen.x, settled.screen.y - candidate.screen.y) > 1) return false;
       const picked = await page.locator('.network-visualizer-canvas canvas')
         .evaluate(canvas => canvas.classList.contains('clickable'));
-      if (picked) target = settled;
-      return picked;
+      const hovered = await page.evaluate(() => window.overviewFixture.hoveredId());
+      if (picked && hovered === candidateId) target = settled;
+      return picked && hovered === candidateId;
     }, { message: 'The actual settled sphere is picked before clicking' }).toBe(true);
     expect(target, 'At least one system has an unobstructed sphere and caption').toBeTruthy();
     await page.mouse.click(target.screen.x, target.screen.y);

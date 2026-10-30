@@ -297,7 +297,7 @@ test('Recordings navigates from another page even when that source is already se
 });
 
 test('live Details keeps every label and disclosure state through active, paused and idle calls', async ({ page }) => {
-  const state = await openApp(page);
+  const state = await openApp(page, { callDisplayHangtimeSeconds: 0 });
   await size(page, 'full');
   await expectResizeHintAbove(page);
   await panel(page, 'Details');
@@ -347,7 +347,7 @@ test('live Details keeps every label and disclosure state through active, paused
 });
 
 test('recording Details retains static and received-site labels but clears values after end or stop', async ({ page }) => {
-  await openApp(page);
+  await openApp(page, { callDisplayHangtimeSeconds: 0 });
   await size(page, 'full');
   await selectDockSource(player(page), 'recordings');
   await panel(page, 'Details');

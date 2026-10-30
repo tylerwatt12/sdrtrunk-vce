@@ -1135,8 +1135,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       else if (panel === 'details') {
         if (source === 'recordings') {
           const mount = node('div'); panelHost.append(mount);
-          recordings.renderDetails(mount, call, { shell: true, empty: !call });
-          if (call) callAudioDetailGroups(call).forEach(([label, rows]) => group(label, rows));
+          const detailsCall = call || active.current;
+          recordings.renderDetails(mount, detailsCall, { shell: true, empty: !call });
+          if (detailsCall) callAudioDetailGroups(detailsCall)
+            .forEach(([label, rows]) => group(label, rows, { empty: !call }));
           mount.querySelectorAll('details > dl').forEach(list => {
             list.classList.remove('ui-form-section'); const wrapper = node('div', 'ui-section-body'); list.replaceWith(wrapper); wrapper.append(list);
           });

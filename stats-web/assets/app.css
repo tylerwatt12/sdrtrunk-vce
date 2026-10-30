@@ -10,7 +10,7 @@
 @import url("./styles/tokens.css?v=57") layer(tokens);
 @import url("./styles/components/semantic-text.css?v=7") layer(components);
 @import url("./styles/components/controls.css?v=51") layer(components);
-@import url("./styles/components/audio-controls.css?v=14") layer(components);
+@import url("./styles/components/audio-controls.css?v=15") layer(components);
 @import url("./styles/compositions/workspaces.css?v=40") layer(compositions);
 @import url("./styles/compositions/tables.css?v=20") layer(compositions);
 @import url("./styles/compositions/browsing.css?v=1") layer(compositions);
