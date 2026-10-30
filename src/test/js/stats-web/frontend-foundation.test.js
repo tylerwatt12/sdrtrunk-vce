@@ -2156,12 +2156,13 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 12,
+    version: 13,
     appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: true },
     guides: { automatic_page_guides: true },
     playback: {
-      volume: 1, selected_scan_list_ids: [], target_grouping: true, target_burst_limit: 4
+      volume: 1, selected_scan_list_ids: [], target_grouping: true, target_burst_limit: 4,
+      call_display_hangtime_seconds: 5
     },
     scanner: { detail_mode: 'normal' },
     presentation: {

@@ -1,8 +1,8 @@
 // Temporary observations for the production Scanner. The real player supplies
 // target selection, queue order, Hold, Avoid, Pause, Stop, and Replay behavior.
 // Only its receiver feed and audio transport are replaced with inert memory data.
-import { WebCallPlayer } from '../web-call-player.js?v=24';
-import { defaults, validate } from '../core/preference-schema.js?v=8';
+import { WebCallPlayer } from '../web-call-player.js?v=25';
+import { defaults, validate } from '../core/preference-schema.js?v=9';
 import { createDirectListenSession } from '../core/direct-listen.js?v=1';
 
 const COUNTY = 'p25:bee00:123';
@@ -93,7 +93,7 @@ export function createScannerGuideData({ signal, section, directListenAllowed = 
     lastHeard: null, lastHeardBuffer: null, lastHeardSourceSampleRate: 8000,
     replayingLast: false, stopAfterReplay: false, holdTarget: null, heldDisplayCall: null,
     current: null, currentBuffer: null, currentSourceSampleRate: 8000, source: null,
-    idleDisplayCall: null, idleDisplayTimer: null, idleDisplayDeadline: 0,
+    idleDisplayCall: null, idleDisplayRetention: null, callDisplayHangtimeSeconds: 5,
     audioContext: clock, analyserNode: {}, gainNode: null, playbackStartedAt: 0,
     progressFrame: null, transportToken: 0, loadToken: 0, loadController: null,
     feedActive: true, feedCursor: null, feedGeneration: 0, feedController: null, feedTimer: null,
@@ -114,11 +114,6 @@ export function createScannerGuideData({ signal, section, directListenAllowed = 
     render() { if (available()) { this.renderStatus(); this.notifyStateObservers(); } },
     renderVolume() {}, renderScanLists() {}, updateScanListStatus() {},
     ensureAudioContext() {}, startProgress() {}, stopProgress() {},
-    clearIdleDisplay() { this.idleDisplayCall = null; this.idleDisplayDeadline = 0; },
-    showIdleDisplay(call) {
-      this.idleDisplayCall = call;
-      this.idleDisplayDeadline = Date.now() + WebCallPlayer.IDLE_CALL_DISPLAY_MS;
-    },
     ensureConnected() {
       if (!available() || this.stopped || !this.hasListeningSelection()) return false;
       this.feedActive = true;
@@ -166,6 +161,7 @@ export function createScannerGuideData({ signal, section, directListenAllowed = 
     preferences = clone(requested);
     preferenceRevision += 1;
     preferenceUpdates += 1;
+    engine.setCallDisplayHangtimeSeconds(preferences.playback.call_display_hangtime_seconds, false);
     engine.targetGrouping = preferences.playback.target_grouping;
     engine.targetBurstLimit = preferences.playback.target_burst_limit;
     engine.volume = preferences.playback.volume;
@@ -175,7 +171,7 @@ export function createScannerGuideData({ signal, section, directListenAllowed = 
     engine.render();
     return clone(preferences);
   };
-  engine.preferenceWriter = playback => updatePreferences(draft => { draft.playback = clone(playback); });
+  engine.preferenceWriter = playback => updatePreferences(draft => { draft.playback = { ...draft.playback, ...clone(playback) }; });
   const method = name => (...args) => {
     check();
     const result = WebCallPlayer.prototype[name].apply(engine, args);
@@ -254,6 +250,7 @@ export function createScannerGuideData({ signal, section, directListenAllowed = 
     engine.transportToken += 1;
     engine.loadToken += 1;
     engine.stopSource();
+    engine.clearIdleDisplay();
     engine.current = null;
     engine.currentBuffer = null;
     engine.lastHeard = null;

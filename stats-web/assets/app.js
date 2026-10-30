@@ -1,5 +1,5 @@
 import * as routeFoundation from './core/routes.js?v=11';
-import * as preferenceSchema from './core/preference-schema.js?v=8';
+import * as preferenceSchema from './core/preference-schema.js?v=9';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { receiverDisplayName } from './core/receiver-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
@@ -17,7 +17,7 @@ import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=9';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
-import { createMySettingsWorkspace } from './features/my-settings.js?v=1';
+import { createMySettingsWorkspace } from './features/my-settings.js?v=2';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
 import { createGuideController } from './guides/controller.js?v=42';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
@@ -40,19 +40,19 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=64';
+import { createRecordingsFeature } from './features/recordings.js?v=65';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=42';
+import { createAudioDock } from './core/audio-dock.js?v=43';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=1';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=24';
+import { WebCallPlayer } from './web-call-player.js?v=25';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -414,6 +414,7 @@ function applyUserPreferenceSnapshot(snapshot) {
   if (snapshot.loaded || snapshot.identity === null) clearUserPreferenceError();
   const preferences = snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
   personalSettingsWorkspace?.onSnapshot(snapshot);
+  recordingsFeature.playback.applyPlaybackPreferences(preferences.playback);
   webCallPlayer?.setDirectListenIdentity(snapshot.identity);
   applyTheme();
   pageTitleController.update({ prependPlaying: preferences.page_titles.prepend_playing_call });
@@ -8369,7 +8370,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : topics ? [
       import('./features/alerts.js?v=25'), import('./guides/topics-presentation.js?v=1')
     ] : scanner ? [
-      Promise.resolve(null), import('./guides/scanner-presentation.js?v=5')
+      Promise.resolve(null), import('./guides/scanner-presentation.js?v=6')
     ] : main ? [
       Promise.resolve(null), import('./guides/main-presentation.js?v=1')
     ] : live ? [
@@ -12251,7 +12252,7 @@ function synchronizePlaybackAccess(accessChanged = false) {
       scanListStatus: 'playback-scan-list-status'
     }, { getSourceNameDisplay: sourceNameDisplayMode });
     webCallPlayer.setPreferenceWriter((playback) => {
-      return updateUserPreferences((preferences) => { preferences.playback = playback; });
+      return updateUserPreferences((preferences) => { preferences.playback = { ...preferences.playback, ...playback }; });
     });
     webCallPlayer.applyPreferences(activeUserPreferences().playback,
       { identity: userPreferenceController.snapshot().identity });
@@ -31931,7 +31932,7 @@ async function renderStreaming() {
 
 async function renderAdminRemoteLinks(renderContext) {
   const { requestJson } = administrationRequestDependencies(renderContext);
-  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=23');
+  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=24');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createRemoteLinksWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconGlyph, remoteOriginIcon, createFormWorkflow,
@@ -36214,7 +36215,7 @@ async function openCallRelations(kind, id) {
   let relationsModule;
   try {
     [relationsModule] = await Promise.all([
-      import('./features/call-relations.js?v=9'), loadActivityMessageTypes()
+      import('./features/call-relations.js?v=10'), loadActivityMessageTypes()
     ]);
   } catch (error) {
     if (!renderIsCurrent(renderContext)) return;
@@ -36250,6 +36251,15 @@ const audioDock = createAudioDock({
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
   getSourceNameDisplay: sourceNameDisplayMode,
   getTitlePreference: () => activeUserPreferences().page_titles.prepend_playing_call,
+  getCallDisplayHangtimeSeconds: () => activeUserPreferences().playback.call_display_hangtime_seconds,
+  setCallDisplayHangtimeSeconds: (value) => settleUserPreferenceMutation((preferences) => {
+    preferences.playback.call_display_hangtime_seconds = value;
+  }).then((preferences) => {
+    if (preferences && !accessSession.authenticated) {
+      webCallPlayer?.applyPreferences(preferences.playback);
+      recordingsFeature.playback.applyPlaybackPreferences(preferences.playback);
+    }
+  }),
   setTitlePreference: (value) => settleUserPreferenceMutation((preferences) => {
     preferences.page_titles.prepend_playing_call = value;
   })

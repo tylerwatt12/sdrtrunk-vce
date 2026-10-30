@@ -338,7 +338,7 @@ export function createRemoteLinksWorkspace(deps) {
       pendingSnapshot = null;
       draw(value);
       if (focused) [...host.querySelectorAll('[data-remote-action]')]
-        .find((control) => control.dataset.remoteAction === focused)?.focus();
+        .find((control) => control.dataset.remoteAction === focused)?.focus({ preventScroll: true });
     }
   }
 

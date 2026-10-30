@@ -764,7 +764,7 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         String changeVolume = function(source, "  changeVolume(write = false)");
         String applyPreferences = function(source, "  applyPreferences(preferences, options = {})");
-        String writePreferences = function(source, "  writePreferences({ volume = false } = {})");
+        String writePreferences = function(source, "  writePreferences({ volume = false, hangtime = false } = {})");
         String bindControls = function(source, "  bindControls()");
         String ensureAudioContext = function(source, "  ensureAudioContext()");
         String startCurrent = function(source, "  startCurrent()");

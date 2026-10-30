@@ -11,7 +11,6 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.web.settings.WebUserPreferences;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -62,7 +61,7 @@ class Format30To31DatabaseMigrationTest
                 assertEquals(migrateToCurrent(prior.json()), current.json());
                 assertEquals(prior.revision() + 5, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
-                assertTrue(WebUserPreferencesCodec.decode(current.json()).appearance().hue() == null);
+                assertTrue(new ObjectMapper().readTree(current.json()).at("/appearance/hue").isNull());
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
             }

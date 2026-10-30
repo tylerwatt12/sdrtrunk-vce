@@ -364,7 +364,7 @@ public final class ConfigurationOnlyDatabaseSnapshot
             if(!Objects.equals(ConfigurationHistorySchema.metadata(configuration, ConfigurationHistorySchema.PAIR_ID_KEY),
                 ConfigurationHistorySchema.metadata(activity, ConfigurationHistorySchema.PAIR_ID_KEY)))
                 throw new SQLException("The configuration and activity databases belong to different profiles.");
-            if(version == 63 && "64".equals(ConfigurationHistorySchema.metadata(activity,
+            if(version < Integer.parseInt(ConfigurationHistorySchema.metadata(activity,
                 DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
                 throw new SQLException("The configuration and activity database versions are incompatible.");
             activity.rollback();

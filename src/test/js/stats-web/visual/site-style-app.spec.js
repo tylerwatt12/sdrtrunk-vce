@@ -63,6 +63,7 @@ const openAliasChannelScope = async (page) => {
   await expect(page.locator('.alias-coverage-channel-grid')).toBeVisible();
 };
 const additionalCases = [
+  ['settings-listening', 'view=settings&section=listening', '.user-settings-workspace', 'Call display hangtime (seconds)'],
   ['network-visualizer-overview', 'view=network-visualizer', '.network-visualizer-scope-title', systemName,
     async page => {
       await page.getByRole('button', { name: 'All systems', exact: false }).click();
@@ -194,6 +195,15 @@ async function expectSuccessfulPage(page, fixture, name, selector, content) {
     await expect(appearance.locator('.admin-form-message')).toHaveText('');
     expect(fixture.requests).toContain('/api/v1/me/preferences');
   }
+  if (name === 'settings-listening') {
+    const listening = page.getByRole('form', { name: 'Listening settings', exact: true });
+    await expect(listening).toBeVisible();
+    await expect(listening.getByRole('spinbutton', { name: 'Call display hangtime (seconds)', exact: true }))
+      .toHaveValue('5');
+    await expect(listening.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
+    await expect(listening.locator('.admin-form-message')).toHaveText('');
+    expect(fixture.requests).toContain('/api/v1/me/preferences');
+  }
   if (name === 'admin-display') {
     const liveTiming = page.locator('.receiver-settings-form input[type="number"]');
     await expect(liveTiming).toBeEnabled();
@@ -268,6 +278,16 @@ for (const { name: presentation, theme, viewport } of [presentations[0], present
 }
 
 for (const { name: presentation, theme, viewport } of presentations) {
+  test(`populated route style settings-listening ${presentation}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const fixture = await installSiteStyleApplication(page, theme);
+    const [name, query, selector, content] = additionalCases.find(([id]) => id === 'settings-listening');
+    await page.goto(`/app.html?${query}`);
+    await expectSuccessfulPage(page, fixture, name, selector, content);
+    await expectSharedTypography(page);
+    await expectNoHorizontalOverflow(page);
+    await auditPageContrast(page, `${name}-${presentation}`);
+  });
   test(`populated route style network-visualizer ${presentation}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const fixture = await installSiteStyleApplication(page, theme);

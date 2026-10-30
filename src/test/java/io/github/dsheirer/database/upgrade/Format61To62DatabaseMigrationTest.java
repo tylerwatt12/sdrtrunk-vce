@@ -9,7 +9,6 @@ import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
 import io.github.dsheirer.database.ConfigurationHistoryDatabase;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.web.settings.WebUserPreferences;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -86,7 +85,7 @@ class Format61To62DatabaseMigrationTest
                     effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT && effect.affectedRows() == 1));
                 for(var entry: preferences(connection).entrySet())
                 {
-                    WebUserPreferencesCodec.decode(entry.getValue().json());
+                    Format62WebUserPreferencesCodec.validate(entry.getValue().json());
                     assertTrue(entry.getValue().revision() > 0);
                     if(entry.getKey() != primaryId(connection))
                     {
@@ -133,7 +132,7 @@ class Format61To62DatabaseMigrationTest
         ObjectNode prior = (ObjectNode)JSON.readTree(current);
         prior.put("version", 11); prior.remove("guides");
         assertEquals(JSON.readTree(legacy), prior);
-        assertTrue(WebUserPreferencesCodec.decode(current).guides().automaticPageGuides());
+        assertTrue(JSON.readTree(current).path("guides").path("automatic_page_guides").booleanValue());
         assertThrows(IOException.class, () -> Format62WebUserPreferencesCodec.validate(legacy));
         assertThrows(IOException.class, () -> Format43WebUserPreferencesCodec.validate(current));
         for(String value: List.of("null", "0", "1", "\"true\"", "[]", "{}"))
@@ -163,7 +162,7 @@ class Format61To62DatabaseMigrationTest
             assertEquals(expected, JSON.readTree(current.json()));
             assertEquals(prior.revision() + 1, current.revision());
             assertEquals(prior.updatedAt(), current.updatedAt());
-            assertTrue(WebUserPreferencesCodec.decode(current.json()).guides().automaticPageGuides());
+            assertTrue(JSON.readTree(current.json()).path("guides").path("automatic_page_guides").booleanValue());
         }
     }
 

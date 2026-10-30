@@ -100,12 +100,12 @@ class Format63To64DatabaseMigrationTest
 
     @Test void incompatibleCompanionVersionAndRoleAreRefused() throws Exception
     {
-        Path database = Format64TestDatabase.create(directory.resolve("invalid.sqlite"));
+        Path database = Format65TestDatabase.create(directory.resolve("invalid.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(database);
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + history))
         {
             io.github.dsheirer.database.SdrTrunkDatabaseStartup.setMetadata(connection,
-                DatabaseFormatCatalog.FORMAT_VERSION_KEY, "65");
+                DatabaseFormatCatalog.FORMAT_VERSION_KEY, "66");
         }
         assertThrows(SQLException.class, () -> ConfigurationHistoryDatabase.validatePair(database));
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + history))
@@ -141,7 +141,7 @@ class Format63To64DatabaseMigrationTest
     {
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database))
         {
-            assertEquals(64, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA quick_check"))
             { assertTrue(rows.next()); assertEquals("ok", rows.getString(1)); }
             try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA foreign_key_check"))

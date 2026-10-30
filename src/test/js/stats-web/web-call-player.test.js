@@ -35,6 +35,10 @@ async function main() {
   const { WebCallPlayer } = await import(pathToFileURL(playerPath).href);
   const { rememberSystemNames } = await import(pathToFileURL(path.join(path.dirname(playerPath),
     'core/system-labels.js')).href + '?v=2');
+  const { Controller: PreferenceController } = await import(pathToFileURL(path.join(path.dirname(playerPath),
+    'core/user-preferences.js')).href);
+  const preferenceSchema = await import(pathToFileURL(path.join(path.dirname(playerPath),
+    'core/preference-schema.js')).href);
 
   let now = 0;
   let nextTimerId = 1;
@@ -194,8 +198,8 @@ async function main() {
       holdTarget: null,
       heldDisplayCall: null,
       idleDisplayCall: null,
-      idleDisplayTimer: null,
-      idleDisplayDeadline: 0,
+      callDisplayHangtimeSeconds: 5,
+      idleDisplayRetention: null,
       renderCount: 0,
       render() { this.renderCount++; }
     });
@@ -211,7 +215,7 @@ async function main() {
     now = 5000;
     assert.equal(presentation.displayCall(), null);
     finalTimer.callback();
-    assert.equal(presentation.renderCount, 1);
+    assert.equal(presentation.renderCount, 2);
 
     const held = { _callId: 'held', _playbackTargetKey: 'target:held' };
     presentation.holdTarget = held._playbackTargetKey;
@@ -221,6 +225,44 @@ async function main() {
     presentation.holdTarget = null;
     assert.equal(presentation.displayCall(), null,
       'Releasing Hold must remove the retained call details');
+
+    now = 10000;
+    presentation.setCallDisplayHangtimeSeconds(10, false);
+    presentation.showIdleDisplay(first);
+    assert.equal(presentation.idleDisplayRetention.deadline, 20000);
+    now = 13000;
+    presentation.applyPreferences({ call_display_hangtime_seconds: 6 });
+    assert.equal(presentation.idleDisplayRetention.endedAt, 10000);
+    assert.equal(presentation.idleDisplayRetention.deadline, 16000,
+      'A changed hangtime must keep the actual playback completion as its origin');
+    now = 14000;
+    presentation.render();
+    assert.equal(presentation.displayCall(), first);
+    assert.equal(presentation.idleDisplayRetention.deadline, 16000,
+      'Rendering or inspecting details cannot restart the hangtime');
+    presentation.setCallDisplayHangtimeSeconds(12, false);
+    assert.equal(presentation.idleDisplayRetention.deadline, 22000);
+    now = 17000;
+    presentation.setCallDisplayHangtimeSeconds(6, false);
+    assert.equal(presentation.displayCall(), null,
+      'Shortening an elapsed hangtime clears the completed call immediately');
+    presentation.setCallDisplayHangtimeSeconds(12, false);
+    assert.equal(presentation.displayCall(), null, 'A changed preference cannot revive an expired call');
+    presentation.setCallDisplayHangtimeSeconds(0, false);
+    presentation.showIdleDisplay(first);
+    assert.equal(presentation.displayCall(), null, 'Zero hangtime clears completed details immediately');
+    for (const invalid of [-1, 61, 0.5, NaN]) {
+      assert.equal(presentation.setCallDisplayHangtimeSeconds(invalid, false), false);
+      assert.equal(presentation.callDisplayHangtimeSeconds, 0);
+    }
+    now = 20000;
+    presentation.setCallDisplayHangtimeSeconds(5, false);
+    presentation.showIdleDisplay(first);
+    now = 26000;
+    presentation.setCallDisplayHangtimeSeconds(60, false);
+    assert.equal(presentation.displayCall(), null,
+      'A delayed background expiry callback cannot let a longer preference revive an expired call');
+    now = 0;
 
     assert.equal(WebCallPlayer.waveSampleRate(wave()), 8_000);
     assert.equal(WebCallPlayer.waveSampleRate(new ArrayBuffer(44)), null);
@@ -725,8 +767,9 @@ async function main() {
     });
     preferencePlayer.applyPreferences({
       volume: 0.5, selected_scan_list_ids: [1], target_grouping: false,
-      target_burst_limit: 2
+      target_burst_limit: 2, call_display_hangtime_seconds: 9
     });
+    assert.equal(preferencePlayer.callDisplayHangtimeSeconds, 9);
     assert.equal(preferencePlayer.subscriptionChanges, 0,
       'Unrelated preference saves must not restart a live call feed at a new cursor');
     preferencePlayer.applyPreferences({
@@ -734,6 +777,45 @@ async function main() {
       target_burst_limit: 2
     });
     assert.equal(preferencePlayer.subscriptionChanges, 1);
+    let savedPlaybackPreferences;
+    preferencePlayer.preferenceWriter = async snapshot => { savedPlaybackPreferences = snapshot; };
+    preferencePlayer.setCallDisplayHangtimeSeconds(60);
+    await Promise.resolve();
+    assert.equal(savedPlaybackPreferences.call_display_hangtime_seconds, 60,
+      'Playback preference writes must retain the selected call display hangtime');
+    assert.deepEqual(savedPlaybackPreferences.selected_scan_list_ids, [2]);
+
+    let releaseHangtimeSave;
+    const pendingHangtimeSave = new Promise(resolve => { releaseHangtimeSave = resolve; });
+    let confirmedPreferences = structuredClone(preferenceSchema.defaults), preferenceRevision = 1;
+    const controller = new PreferenceController({ defaults: preferenceSchema.defaults,
+      validate: preferenceSchema.validate, fetch: async (_path, options) => {
+        if (options.method === 'PUT') {
+          if (preferenceRevision === 1) await pendingHangtimeSave;
+          confirmedPreferences = JSON.parse(options.body); preferenceRevision++;
+        }
+        return { ok: true, json: async () => ({ revision: preferenceRevision, preferences: confirmedPreferences }) };
+      } });
+    await controller.activate('listener');
+    const universalSave = controller.update(preferences => { preferences.playback.call_display_hangtime_seconds = 10; });
+    let normalPlaybackSnapshot;
+    const delayedPreferences = Object.assign(Object.create(WebCallPlayer.prototype), {
+      volume: 0.25, selectedScanListIds: new Set(['2']), targetGrouping: false,
+      targetBurstLimit: 2, callDisplayHangtimeSeconds: 5,
+      preferenceWriter(snapshot) {
+        normalPlaybackSnapshot = snapshot;
+        return controller.update(preferences => { preferences.playback = { ...preferences.playback, ...snapshot }; });
+      }
+    });
+    const laterVolumeSave = delayedPreferences.writePreferences({ volume: true });
+    await Promise.resolve();
+    assert.equal(Object.hasOwn(normalPlaybackSnapshot, 'call_display_hangtime_seconds'), false,
+      'Volume, list and grouping writes must not resubmit an older universal hangtime');
+    releaseHangtimeSave();
+    await Promise.all([universalSave, laterVolumeSave]);
+    assert.equal(controller.read().preferences.playback.call_display_hangtime_seconds, 10,
+      'A queued playback save cannot undo a hangtime save whose response was still pending');
+    assert.equal(controller.read().preferences.playback.volume, 0.25);
 
     let audioSource;
     const heard = { _callId: 'heard' };
@@ -821,6 +903,45 @@ async function main() {
       };
       return player;
     }
+
+    const completion = pauseFixture();
+    delete completion.clearIdleDisplay;
+    completion.current = heard;
+    completion.currentBuffer = heardBuffer;
+    completion.callDisplayHangtimeSeconds = 8;
+    completion.startCurrent();
+    completion.source.onended();
+    assert.equal(completion.current, null);
+    assert.equal(completion.displayCall(), heard, 'Natural completion retains the completed live call');
+    assert.equal(completion.viewState().callDisplayHangtimeSeconds, 8);
+    await completion.replayLastCall();
+    completion.source.onended();
+    assert.equal(completion.displayCall(), heard, 'Replay completion uses the same live hangtime');
+    completion.stopped = true;
+    await completion.replayLastCall();
+    completion.source.onended();
+    assert.equal(completion.stopped, true);
+    assert.equal(completion.displayCall(), heard,
+      'A replay started while stopped still retains its completed details');
+    completion.stopped = false;
+    completion.holdTarget = 'held';
+    completion.heldDisplayCall = { _playbackTargetKey: 'held' };
+    await completion.togglePlayback();
+    assert.equal(completion.displayCall(), null, 'Stop clears both retained and held call details');
+    assert.equal(completion.holdTarget, null);
+
+    const immediateNext = pauseFixture();
+    delete immediateNext.clearIdleDisplay;
+    const nextHeard = { _callId: 'next' };
+    immediateNext.showIdleDisplay(heard);
+    immediateNext.takeNextCall = () => nextHeard;
+    immediateNext.callMatchesSelection = () => true;
+    immediateNext.isAllowed = () => true;
+    immediateNext.loadCurrent = async function () { this.loaded = this.current; };
+    await immediateNext.playNext(heard);
+    assert.equal(immediateNext.loaded, nextHeard, 'Display hangtime must never delay the next queued call');
+    assert.equal(immediateNext.displayCall(), nextHeard);
+    assert.equal(immediateNext.idleDisplayCall, null);
 
     const switching = selectionFixture();
     switching.current = switching.normalizeCall(overlap);

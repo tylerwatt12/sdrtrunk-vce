@@ -4,6 +4,7 @@ import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
 import { callAudioDetailGroups } from './call-audio-details.js?v=7';
+import { createCallDisplayHangtimeField } from './call-display-settings.js?v=1';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
@@ -12,6 +13,7 @@ import { callAudioDetailGroups } from './call-audio-details.js?v=7';
 export function createAudioDock({ node, iconButton, uiToggleField, recordings, getLivePlayer: getRealLivePlayer, access, openRecordings, openScanListCoverage, refreshScanLists,
   entityRefHref, canViewRadio, href, getTitlePreference, setTitlePreference,
   getSourceNameDisplay = () => 'talker_alias',
+  getCallDisplayHangtimeSeconds = () => 5, setCallDisplayHangtimeSeconds = async () => {},
   radioIdentifier = (_call, value) => value }) {
   const dock = node('section', 'audio-dock ui-audio-surface');
   dock.id = 'audio-dock';
@@ -86,7 +88,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (icon) button.querySelector('use')?.setAttribute('href', `#icon-${icon}`);
   };
   const state = () => source === 'live' ? liveState : recordingState;
-  const current = () => state().displayCall || state().current;
+  const current = () => {
+    const snapshot = state();
+    return Object.hasOwn(snapshot, 'displayCall') ? snapshot.displayCall : snapshot.current;
+  };
   const identityType = (form, fallback = 'ID') =>
     ({ TALKGROUP: 'TGID', PATCH_GROUP: 'Patch', RADIO: 'Radio' })[String(form || '').toUpperCase()] || fallback;
   const sourceId = (call) => {
@@ -638,7 +643,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   };
   function openPanel(value, invoker) {
     if (guidePresentation) return;
-    if (!isAllowed() || source === 'recordings' && ['listening', 'direct', 'settings', 'avoids'].includes(value)) return;
+    if (!isAllowed() || source === 'recordings' && ['listening', 'direct', 'avoids'].includes(value)) return;
     if (menuPanels.has(value)) {
       if (!menuPanels.has(panel)) { menuReturnSize = size; contextInvoker = invoker || contextInvoker; }
     } else { menuReturnSize = null; contextInvoker = invoker || contextInvoker; }
@@ -669,7 +674,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       ['Listening settings', 'playback-controls', 'settings'],
       ['Clear queue', 'clear-queue', 'clear', queueCount()]
     ] : [['Call details', 'info-circle', 'details'], ['Queue', 'scan-lists', 'queue', queueCount()],
-      ['Transcript', 'messages', 'transcript'], ['Recording library', 'recording', 'library']];
+      ['Transcript', 'messages', 'transcript'], ['Listening settings', 'playback-controls', 'settings'],
+      ['Recording library', 'recording', 'library']];
     const choices = node('div', 'ui-surface audio-dock-selection-list');
     items.forEach(([label, icon, destination, count]) => {
       const button = node('button', 'ui-select-list-item'); button.type = 'button';
@@ -759,8 +765,9 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     panelHost.append(disclosure);
   }
   function renderLiveDetails() {
-    const call = liveState.current || {};
-    const options = { empty: !liveState.current || liveState.stopped, includeEmpty: true };
+    const displayed = current();
+    const call = displayed || {};
+    const options = { empty: !displayed, includeEmpty: true };
     panelHost.append(factList([
       ['Target', title(call), call.target_entity_ref], ['Target ID', targetId(call), call.target_entity_ref],
       ['Source', sourceName(call), call.source_entity_ref], ['Source ID', sourceId(call), call.source_entity_ref],
@@ -1016,6 +1023,18 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   function renderSettings() {
     const settings = node('div', 'audio-dock-settings');
     panelHost.append(settings);
+    const { field: hangtimeField, input: hangtime } = createCallDisplayHangtimeField(node, {
+      id: 'audio-dock-call-display-hangtime', value: getCallDisplayHangtimeSeconds()
+    });
+    hangtime.addEventListener('change', userAction(() => {
+      if (!hangtime.checkValidity()) { hangtime.reportValidity(); return; }
+      hangtime.disabled = true;
+      const refresh = () => { panelKey = ''; render(); };
+      void Promise.resolve().then(() => setCallDisplayHangtimeSeconds(Number(hangtime.value)))
+        .then(refresh, refresh);
+    }));
+    settings.append(hangtimeField);
+    if (source !== 'live') return;
     const groupField = uiToggleField('Group calls by target', liveState.targetGrouping !== false,
       'Group calls by target', 'Keeps calls for the same group together to preserve conversationality');
     const grouping = groupField.querySelector('input'); grouping.id = 'audio-dock-target-grouping';
@@ -1099,11 +1118,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     contextTitle.textContent = names[panel];
     setLabel(back, menuPanels.has(panel) && panel !== 'menu' ? 'Back to menu' : externalManagement ? 'Back to Scanner' : 'Back to player');
     contextSubtitle.textContent = panel === 'menu' ? (source === 'live' ? 'Live listening' : 'Recordings') : panel === 'listening' ? `${selected} of ${(liveState.scanLists || []).length + (liveState.directListen?.allowed ? 1 : 0)} selected` :
-      panel === 'direct' ? `${liveState.directListen?.targets.length || 0} ${liveState.directListen?.targets.length === 1 ? 'target' : 'targets'} · This session` : panel === 'queue' ? `${queueCount()} queued` : panel === 'avoids' ? `${(liveState.avoids || []).length} avoided` : panel === 'settings' ? 'Live listening preferences' :
-      source === 'live' && panel === 'details' && !active.current ? 'Waiting for a call' : title(call);
+      panel === 'direct' ? `${liveState.directListen?.targets.length || 0} ${liveState.directListen?.targets.length === 1 ? 'target' : 'targets'} · This session` : panel === 'queue' ? `${queueCount()} queued` : panel === 'avoids' ? `${(liveState.avoids || []).length} avoided` : panel === 'settings' ? 'Playback preferences' :
+      panel === 'details' && !call ? 'Waiting for a call' : title(call);
     const panelState = panel === 'menu' ? [liveState.scanLists, liveState.directListen, liveState.avoids, queueCount()] : panel === 'listening' ? [active.scanLists, active.directListen, active.maximumSelectedScanLists, active.scanListCatalogReady, active.scanListCatalogState] :
       panel === 'direct' ? [liveState.directListen] :
-      panel === 'avoids' ? [liveState.avoids, liveState.scanLists, liveState.directListen?.allowed] : panel === 'settings' ? [liveState.targetGrouping, liveState.targetBurstLimit, getTitlePreference()] :
+      panel === 'avoids' ? [liveState.avoids, liveState.scanLists, liveState.directListen?.allowed] : panel === 'settings' ? [getCallDisplayHangtimeSeconds(), liveState.targetGrouping, liveState.targetBurstLimit, getTitlePreference()] :
       panel === 'queue' ? [active.current, active.queue, active.scanLists, active.continuation, active.stopped, active.paused, selectedQueueKey] :
       panel === 'transcript' ? [call?.id, call?.transcription, active.detailsLoading, active.detailsError] :
       [active.current, call, active.stopped, active.scanLists, active.detailsLoading, active.detailsError];
@@ -1116,13 +1135,13 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       else if (panel === 'details') {
         if (source === 'recordings') {
           const mount = node('div'); panelHost.append(mount);
-          recordings.renderDetails(mount, active.current, { shell: true, empty: !active.current || active.stopped });
-          if (active.current && !active.stopped) callAudioDetailGroups(active.current).forEach(([label, rows]) => group(label, rows));
+          recordings.renderDetails(mount, call, { shell: true, empty: !call });
+          if (call) callAudioDetailGroups(call).forEach(([label, rows]) => group(label, rows));
           mount.querySelectorAll('details > dl').forEach(list => {
             list.classList.remove('ui-form-section'); const wrapper = node('div', 'ui-section-body'); list.replaceWith(wrapper); wrapper.append(list);
           });
         } else renderLiveDetails();
-      } else if (panel === 'transcript') { const mount = node('div'); panelHost.append(mount); recordings.renderTranscript(mount); }
+      } else if (panel === 'transcript') { const mount = node('div'); panelHost.append(mount); recordings.renderTranscript(mount, call); }
       else if (panel === 'queue') renderQueue(); else if (panel === 'listening') renderListening();
       else if (panel === 'direct') renderDirectListen();
       else if (panel === 'avoids') renderAvoids(); else renderSettings();
@@ -1227,7 +1246,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     setLabel(hold, liveState.holdTarget ? 'Release hold' : 'Hold current target'); hold.setAttribute('aria-pressed', String(Boolean(liveState.holdTarget)));
     avoid.disabled = !isAllowed() || !liveState.currentReady || liveState.replayingLast;
     volumeControl.update(active.volume, isAllowed());
-    if (source === 'live' && panel === 'transcript' || source === 'recordings' && ['listening', 'direct', 'settings', 'avoids'].includes(panel)) { panel = null; panelKey = ''; }
+    if (source === 'live' && panel === 'transcript' || source === 'recordings' && ['listening', 'direct', 'avoids'].includes(panel)) { panel = null; panelKey = ''; }
     renderSidebar(); renderPanel(); dock.querySelectorAll('[data-click-mode]').forEach(select => { if (select.value !== recordingState.clickMode) select.value = recordingState.clickMode; });
     updateProgress(); measure(); synchronizeLoops();
     if (guidePresentation) [dock, volumePopover].forEach(root => root.querySelectorAll('input, select, textarea').forEach(control => {

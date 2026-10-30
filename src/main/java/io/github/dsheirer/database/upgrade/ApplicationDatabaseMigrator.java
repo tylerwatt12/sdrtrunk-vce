@@ -1596,7 +1596,7 @@ public final class ApplicationDatabaseMigrator
     {
         String format = io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
             DatabaseFormatCatalog.FORMAT_VERSION_KEY);
-        if("63".equals(format) || "64".equals(format))
+        if("63".equals(format) || "64".equals(format) || "65".equals(format))
         {
             DatabaseFormatCatalog.requireCurrent(connection);
             if(io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE.equals(

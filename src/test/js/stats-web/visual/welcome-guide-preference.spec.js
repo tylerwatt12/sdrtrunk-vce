@@ -104,7 +104,7 @@ for (const theme of ['light', 'dark']) test(`Welcome presents the account guide 
   await expect(choice(page)).toBeEnabled();
   await expect(choice(page)).toBeChecked();
   expect(server.writes).toHaveLength(1);
-  expect(server.writes[0].body.version).toBe(12);
+  expect(server.writes[0].body.version).toBe(13);
   expect(server.writes[0].body.guides).toEqual({ automatic_page_guides: false });
   const evidence = process.env.WELCOME_GUIDE_PREFERENCE_EVIDENCE;
   if (evidence) fs.mkdirSync(evidence, { recursive: true });

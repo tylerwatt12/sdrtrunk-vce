@@ -11,7 +11,6 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.web.settings.WebUserPreferences;
-import io.github.dsheirer.web.settings.WebUserPreferencesCodec;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -88,10 +87,10 @@ class Format42To43DatabaseMigrationTest
                 assertEquals(expectedPreferences(prior.json()), new ObjectMapper().readTree(current.json()));
                 assertEquals(prior.revision() + 2, current.revision());
                 assertTrue(current.updatedAtMs() >= prior.updatedAtMs());
-                assertEquals("normal", WebUserPreferencesCodec.decode(current.json()).presentation().liveRowDensity());
+                assertEquals("normal", new ObjectMapper().readTree(current.json()).at("/presentation/live_row_density").textValue());
                 assertEquals(new ObjectMapper().readTree(prior.json()).path("presentation")
                     .path("source_name_display").textValue(),
-                    WebUserPreferencesCodec.decode(current.json()).presentation().sourceNameDisplay());
+                    new ObjectMapper().readTree(current.json()).at("/presentation/source_name_display").textValue());
                 assertTrue(MessageDigest.isEqual(credentials.get(entry.getKey()),
                     credentialDigests(statement).get(entry.getKey())), "Account or credential changed");
             }

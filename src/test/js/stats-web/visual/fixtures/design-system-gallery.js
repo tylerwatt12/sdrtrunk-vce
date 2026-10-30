@@ -554,10 +554,11 @@ if (view === 'admin-support' || view === 'gallery') {
 }
 
 if (view === 'focused-settings') {
-  const { createMySettingsWorkspace } = await import('/assets/features/my-settings.js?v=1');
+  const { createMySettingsWorkspace } = await import('/assets/features/my-settings.js?v=2');
   const { confirmAction } = await createGalleryModalFoundation();
   const host = document.querySelector('[data-focused-settings-gallery]');
   const defaults = () => ({ appearance: { theme, hue: null },
+    playback: { call_display_hangtime_seconds: 5 },
     presentation: { source_name_display: 'talker_alias' }, health_alerts: { disabled_codes: [] } });
   let preferences = defaults();
   const node = (tag, className = '', text = null) => {

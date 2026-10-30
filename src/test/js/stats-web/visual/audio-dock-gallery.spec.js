@@ -26,6 +26,30 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
 for (const theme of ['light', 'dark']) {
   for (const width of [1280, 390]) {
     for (const source of ['live', 'recordings']) {
+      test(`shared listening settings ${source} ${theme} ${width}px`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 900 });
+        const dock = await openGallery(page, { theme, source, panel: 'settings' });
+        const settings = dock.locator('.audio-dock-settings');
+        const hangtime = settings.getByRole('spinbutton', { name: 'Call display hangtime (seconds)', exact: true });
+        await expect(hangtime).toHaveValue('5');
+        await expect(hangtime).toHaveAttribute('min', '0');
+        await expect(hangtime).toHaveAttribute('max', '60');
+        await expectNoHorizontalOverflow(page);
+        await page.evaluate(() => document.activeElement?.blur());
+        await expect(page.getByRole('tooltip')).toBeHidden();
+        await expectContrast(page, { rootSelector: '#audio-dock-panel' });
+        await page.keyboard.press('Escape');
+        await expect(page.getByRole('tooltip')).toBeHidden();
+        await expect(dock.locator('#audio-dock-context-title')).toHaveText('Listening settings');
+        await expect(dock).toHaveScreenshot(`${source}-settings-${theme}-${width < 900 ? 'mobile' : 'desktop'}.png`);
+      });
+    }
+  }
+}
+
+for (const theme of ['light', 'dark']) {
+  for (const width of [1280, 390]) {
+    for (const source of ['live', 'recordings']) {
       test(`talkgroup links and queue inspection remain readable ${source} ${theme} ${width}px`, async ({ page }) => {
         await page.setViewportSize({ width, height: 900 });
         const dock = await openGallery(page, { theme, source, panel: width < 900 ? 'queue' : '' });
