@@ -25,7 +25,8 @@ function ohioDiscoveryFixture(theme) {
 
 function tuner() {
   return { id: 'idle-a', name: 'Test receiver', tuner_class: 'AIRSPY', status: 'ENABLED',
-    available: true, operator_state: 'setup', channel_count: 0, frequency_hz: 851012500,
+    available: true, operator_state: 'setup', operator_generation: 1, transition: null,
+    stopped_channels: [], channel_count: 0, frequency_hz: 851012500,
     spectrum_target_id: 'target-a', sample_rate_hz: 10000000,
     settings: [{ id: 'frequency_mhz', label: 'Center frequency', value: 851.0125,
       editable: true, availability: 'setup', minimum: 24, maximum: 1800,
@@ -160,6 +161,10 @@ async function install(page, state = {}) {
     state.tuner.operator_state = 'live';
     state.tuner.channel_count = 1;
   }
+  if (Number.isInteger(state.browseChannelCount)) {
+    state.tuner.operator_state = 'live';
+    state.tuner.channel_count = state.browseChannelCount;
+  }
   state.tuner.settings.find((setting) => setting.id === 'center_frequency_locked').value = state.locked === true;
   state.requests = [];
   state.completedSaveIndexes = [];
@@ -189,6 +194,19 @@ async function install(page, state = {}) {
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
     if (path === '/api/v1/admin/tuners') return respond({ tuners: [state.tuner] });
+    if (path === '/api/v1/admin/tuners/idle-a/state' && request.method() === 'PUT') {
+      expect(body.operator_generation).toBe(state.tuner.operator_generation);
+      if (body.state === 'setup' && state.tuner.operator_state === 'live') {
+        if (ownership) ownership.stoppedChannels = state.tuner.channel_count;
+        state.tuner.stopped_channels = state.tuner.channel_count ?
+          [{ id: 'previous-channel', name: 'Original distant receiver channel' }] : [];
+      }
+      state.tuner.operator_state = body.state;
+      state.tuner.operator_generation += 1;
+      state.tuner.channel_count = body.state === 'live' ? ownership?.stoppedChannels || 0 : 0;
+      if (body.state === 'live') state.tuner.stopped_channels = [];
+      return respond({ status: 'accepted' }, 202);
+    }
     if (path.startsWith('/api/v1/admin/tuners/idle-a/settings/')) {
       const setting = state.tuner.settings.find((candidate) => candidate.id === path.split('/').at(-1));
       setting.value = body.value;
@@ -200,7 +218,7 @@ async function install(page, state = {}) {
         if (request.method() === 'DELETE') {
           if (ownership.active && ownership.active.lease_id !== body.lease_id) return route.fulfill({ status: 409,
             json: { error: { code: 'tuner_browse_unavailable', message: 'Spectrum tuner session belongs to another browser' } } });
-          if (ownership.active?.takeover) {
+          if (ownership.active?.takeover && body.keep_setup !== true) {
             state.previousChannelsNotResumed = body.handoff && state.leavePreviousStopped ?
               [{ id: 'previous-channel', name: 'Original distant receiver channel' }] : [];
             state.tuner.channel_count = state.previousChannelsNotResumed.length ? 0 : ownership.stoppedChannels;
@@ -222,8 +240,8 @@ async function install(page, state = {}) {
           ownership.active = { lease_id: `owned-browse-${++ownership.nextLease}`, takeover: body.takeover === true };
         }
         const result = { ...ownership.active, expires_at_epoch_ms: Date.now() + 30000,
-          can_tune: ownership.active.takeover, tuner: structuredClone(state.tuner),
-          stopped_channels: ownership.active.takeover ? [{ id: 'previous-channel', name: 'Original distant receiver channel' }] : [] };
+          can_tune: state.tuner.operator_state === 'setup' && state.tuner.channel_count === 0,
+          tuner: structuredClone(state.tuner), stopped_channels: structuredClone(state.tuner.stopped_channels) };
         if (body.lease_id && state.delayOwnedRenewalOnce) {
           state.delayOwnedRenewalOnce = false;
           await new Promise((release) => { state.releaseOwnedRenewal = release; });
@@ -241,7 +259,8 @@ async function install(page, state = {}) {
       }
       if (Number.isInteger(state.browseChannelCount)) state.tuner.channel_count = state.browseChannelCount;
       return respond({ lease_id: 'browse-a', expires_at_epoch_ms: Date.now() + 30000,
-        can_tune: !state.running && state.tuner.channel_count === 0, tuner: state.tuner });
+        can_tune: state.tuner.operator_state === 'setup' && !state.running && state.tuner.channel_count === 0,
+        tuner: state.tuner });
     }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: state.liveSpectrum ? [{
       target_id: 'target-a', label: 'Test receiver', center_frequency_hz: 851012500,
@@ -1586,7 +1605,7 @@ test('managed Spectrum keeps organized toolbar rows and updates one persistent f
   await expect(toolbar.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toHaveCount(0);
   await expect(rail).toHaveCount(1);
   await expect(rail.getByText('Select a signal', { exact: true })).toBeVisible();
-  await expect(toolbar.locator('.spectrum-browse-message')).toHaveText('Drag to tune · Zoom to pan');
+  await expect(toolbar.locator('.spectrum-browse-message')).toHaveText('Tuning enabled');
   await expect(rail).toContainText(
     'Click a signal in the spectrum or waterfall to see its frequency and available actions.');
   const toolbarRows = await toolbar.evaluate((element) => {
@@ -1895,6 +1914,8 @@ test('idle receiver browsing renews and releases on leaving Spectrum', async ({ 
   await expect.poll(() => state.requests.filter((request) => request.path.endsWith('/browse') &&
     request.body.lease_id === 'browse-a').length).toBeGreaterThan(0);
   await page.evaluate(() => document.querySelector('a[data-view="dashboard"]').click());
+  await page.getByRole('alertdialog', { name: 'Leave this page?', exact: true })
+    .getByRole('button', { name: 'Leave stopped', exact: true }).click();
   await expect.poll(() => state.requests.filter((request) => request.path.endsWith('/browse') &&
     request.method === 'DELETE').length).toBeGreaterThan(0);
 });
@@ -2349,11 +2370,16 @@ test('real Spectrum rail ends RF checking after a published-save failure and ret
   expect(state.requests.filter(({ path, method, body }) => path.endsWith('/browse') &&
     method === 'DELETE' && body.lease_id === 'owned-browse-2')).toHaveLength(0);
   await page.evaluate(() => document.querySelector('a[data-view="dashboard"]').click());
+  await page.getByRole('alertdialog', { name: 'Leave this page?', exact: true })
+    .getByRole('button', { name: 'Go Live & leave', exact: true }).click();
   await expect.poll(() => state.ownership.active).toBe(null);
   const releases = state.requests.filter(({ path, method, body }) => path.endsWith('/browse') &&
     method === 'DELETE' && body.lease_id === 'owned-browse-2');
   expect(releases).toHaveLength(1);
-  expect(releases[0].body).toEqual({ lease_id: 'owned-browse-2' });
+  expect(releases[0].body).toEqual({ lease_id: 'owned-browse-2', keep_setup: true });
+  await expect.poll(() => state.requests.filter(({ path, method, body }) => path.endsWith('/state') &&
+    method === 'PUT' && body.state === 'live').length).toBe(1);
+  await expect(page).toHaveURL(/view=dashboard/);
   expect(state.tuner.channel_count).toBe(state.ownership.stoppedChannels);
   expect(state.requests.filter(({ path }) => path.endsWith('/save'))).toHaveLength(1);
 });

@@ -17,10 +17,11 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: 'wait' });
 });
 
-function tuner(centerHz) {
+function tuner(centerHz, operatorState, operatorGeneration) {
   return {
     id: 'idle-a', name: 'Test receiver', tuner_class: 'AIRSPY', status: 'ENABLED',
-    available: true, operator_state: 'setup', channel_count: 0, frequency_hz: centerHz,
+    available: true, operator_state: operatorState, operator_generation: operatorGeneration,
+    channel_count: 0, frequency_hz: centerHz,
     spectrum_target_id: 'target-a', sample_rate_hz: SAMPLE_RATE_HZ,
     minimum_frequency_hz: 24000000, maximum_frequency_hz: 1800000000,
     settings: [
@@ -209,7 +210,8 @@ async function install(page) {
   });
   const preferences = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
-  const state = { centerHz: INITIAL_CENTER_HZ, requests: [], tunes: [], controls: [],
+  const state = { centerHz: INITIAL_CENTER_HZ, operatorState: 'setup', operatorGeneration: 1,
+    requests: [], tunes: [], controls: [],
     browses: [], holdNextBrowse: false, failNextBrowse: false,
     heldControls: [], holdNextControl: false };
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -236,7 +238,18 @@ async function install(page) {
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
-    if (path === '/api/v1/admin/tuners') return respond({ tuners: [tuner(state.centerHz)] });
+    if (path === '/api/v1/admin/tuners') return respond({ tuners: [
+      tuner(state.centerHz, state.operatorState, state.operatorGeneration)
+    ] });
+    if (path === '/api/v1/admin/tuners/idle-a/state' && method === 'PUT') {
+      if (body.operator_generation != null && body.operator_generation !== state.operatorGeneration)
+        return route.fulfill({ status: 409, json: { error: {
+          code: 'tuner_state_changed', message: 'The tuner changed.'
+        } } });
+      state.operatorState = body.state;
+      state.operatorGeneration += 1;
+      return respond({ status: 'accepted' }, 202);
+    }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [{ target_id: 'target-a',
       label: 'Test receiver', center_frequency_hz: state.centerHz, sample_rate_hz: SAMPLE_RATE_HZ }] });
     if (path === frequencyPath && method === 'PUT') {
@@ -264,7 +277,8 @@ async function install(page) {
       }
       if (body.takeover === true) state.takeover = true;
       const record = { body, snapshot: { lease_id: 'browse-a', expires_at_epoch_ms: Date.now() + 30000,
-        takeover: state.takeover === true, can_tune: true, tuner: tuner(state.centerHz) }, fail: state.failNextBrowse };
+        takeover: state.takeover === true, can_tune: state.operatorState === 'setup',
+        tuner: tuner(state.centerHz, state.operatorState, state.operatorGeneration) }, fail: state.failNextBrowse };
       state.failNextBrowse = false;
       const gate = state.holdNextBrowse ? new Promise((release) => { record.release = release; }) : null;
       state.holdNextBrowse = false;
@@ -373,6 +387,9 @@ test('one display choice changes both plots, disables manual controls and follow
   // Keep a real unsubscribe pending while hard navigation replaces its owning document.
   state.holdNextControl = true;
   await page.getByRole('link', { name: 'VCE home', exact: true }).click();
+  const departure = page.getByRole('alertdialog', { name: 'Leave this page?', exact: true });
+  await expect(departure).toBeVisible();
+  await departure.getByRole('button', { name: 'Leave stopped', exact: true }).click();
   await expect(page).toHaveURL(/view=dashboard/);
   await expect.poll(() => state.heldControls.length).toBe(1);
   const held = state.heldControls[0];
@@ -657,6 +674,11 @@ test('leaving Spectrum discards the queued center and ignores a late tune respon
       window.detachedSpectrumCenter = document.querySelector('.spectrum-browse-center');
       document.querySelector('a[data-view="dashboard"]').click();
     });
+    const departure = page.getByRole('alertdialog', { name: 'Leave this page?', exact: true });
+    await expect(departure).toBeVisible();
+    // Release the captured drag before using the real departure button.
+    await page.mouse.up();
+    await departure.getByRole('button', { name: 'Leave stopped', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
     await expect.poll(() => state.requests.some((request) => request.path.endsWith('/browse') &&
       request.method === 'DELETE')).toBe(true);
@@ -668,6 +690,37 @@ test('leaving Spectrum discards the queued center and ignores a late tune respon
     await expect(page.locator('.spectrum-browse-center')).toHaveCount(0);
     expect(await page.evaluate(() => window.detachedSpectrumCenter.textContent)).toBe(detachedText);
     await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
+  } finally { state.releaseAll(); }
+});
+
+test('Go Live and leave waits for the pending center tune before releasing Setup', async ({ page }, testInfo) => {
+  const state = await install(page);
+  try {
+    const gesture = await beginDrag(page, plot(page));
+    await moveDrag(page, gesture, 0.55);
+    await expectTuneCount(state, 1);
+    await page.mouse.up();
+    await page.getByRole('link', { name: 'VCE home', exact: true }).click();
+    const departure = page.getByRole('alertdialog', { name: 'Leave this page?', exact: true });
+    await expect(departure).toBeVisible();
+    const beforeConfirmation = state.requests.length;
+    await departure.getByRole('button', { name: 'Go Live & leave', exact: true }).click();
+    await expect(departure.getByRole('status')).toHaveText('Going Live…');
+    await expect(departure.getByRole('button', { name: 'Go Live & leave', exact: true })).toBeDisabled();
+    const modeOrRelease = request => request.path.endsWith('/state') && request.method === 'PUT' ||
+      request.path.endsWith('/browse') && request.method === 'DELETE';
+    const beforeRelease = state.requests.slice(beforeConfirmation);
+    expect(beforeRelease.filter(modeOrRelease)).toEqual([]);
+    await state.release(0);
+    await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
+    const changes = state.requests.slice(beforeConfirmation).filter(modeOrRelease);
+    expect(changes.map(request => request.method)).toEqual(['DELETE', 'PUT']);
+    expect(changes[1].body).toEqual({ state: 'live', operator_generation: 1 });
+    expect(state.operatorState).toBe('live');
+    expect(state.tunes).toHaveLength(1);
+    await testInfo.attach('departure-order.json', { contentType: 'application/json',
+      body: JSON.stringify({ beforeTuneRelease: beforeRelease,
+        afterTuneRelease: state.requests.slice(beforeConfirmation + beforeRelease.length) }, null, 2) });
   } finally { state.releaseAll(); }
 });
 

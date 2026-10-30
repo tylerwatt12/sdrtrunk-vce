@@ -120,6 +120,7 @@ function requestTunerSetupLeave(target, onLeave) {
             title: 'Leave this page?', cancelLabel: 'Stay here', alternateLabel: 'Leave stopped',
             confirmLabel: 'Go Live & leave', tone: 'primary', pending: 'Going Live…',
             onConfirm: async () => {
+              await workspace?.settle?.({ includeTuning: true });
               await workspace?.leaveStopped?.();
               await goLiveFromTunerSetup(tuner);
             }
@@ -21897,11 +21898,16 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       tuners = tunerInventoryRows(inventory).filter((tuner) =>
         !['ERROR', 'REMOVED', 'UNSUPPORTED'].includes(String(tuner.status).toUpperCase()));
       const selectedId = selectedTuner?.id;
-      select.replaceChildren(...tuners.map((tuner) => {
+      const tunerOptions = tuners.map((tuner) => {
         const option = node('option', '', tunerOptionLabel(tuner));
         option.value = tuner.id;
+        option.dataset.tunerId = tuner.id;
         return option;
-      }));
+      });
+      if (choose) select.replaceChildren(...tunerOptions);
+      else reconcileKeyedChildren(select, tunerOptions, 'tunerId', (current, next) => {
+        if (current.textContent !== next.textContent) current.textContent = next.textContent;
+      });
       select.disabled = probeActive || !tuners.length;
       if (!tuners.length) {
         if (guideMode) throw new Error('The example receiver could not be loaded.');
@@ -22053,10 +22059,10 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
     setupTuners: () => [...setupSnapshots.values()],
     leaveStopped: () => releaseLease(false),
     goLive: () => finishTakeover(),
-    settle: async () => {
+    settle: async ({ includeTuning = false } = {}) => {
       await pendingModeChange;
       const deadline = Date.now() + 30_000;
-      while (!disposed && (tuning || liveTune?.busy)) {
+      while (includeTuning && !disposed && (tuning || liveTune?.busy)) {
         if (Date.now() >= deadline) throw new Error('The tuner is still tuning. Wait a moment before leaving.');
         await new Promise((resolve) => window.setTimeout(resolve, 50));
       }
