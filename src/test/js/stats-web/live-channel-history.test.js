@@ -7,6 +7,8 @@ const test = require('node:test');
 const vm = require('node:vm');
 const source = fs.readFileSync(process.argv[2] || path.resolve(__dirname,
   '../../../../stats-web/assets/app.js'), 'utf8');
+const rangeSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/features/channel-signal-auto-range.js'), 'utf8').replace(/^export /gm, '');
 
 function functionSource(name) {
   const start = source.indexOf(`function ${name}(`);
@@ -34,12 +36,15 @@ function harness() {
       this._width = 300;
       this._height = 150;
       if (tag === 'canvas') this.context = {
-        rows: new Map(), points: [], setTransform() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+        rows: new Map(), points: [], trace: [], setTransform() {}, beginPath() {},
+        moveTo: (x, y) => { if (this.context.strokeStyle === '#55c7ff') this.context.trace.push([x, y]); },
+        lineTo: (x, y) => { if (this.context.strokeStyle === '#55c7ff') this.context.trace.push([x, y]); },
+        stroke() {},
         drawImage() {},
         fillRect: (x, y, width, height) => {
           if (this.offscreen) this.context.rows.clear();
           else if (this.context.fillStyle === '#65d6a6') this.context.points.push([x, y]);
-          else this.context.points.length = 0;
+          else { this.context.points.length = 0; this.context.trace.length = 0; }
         },
         createImageData: (width, height) => ({ data: new Uint8ClampedArray(width * height * 4) }),
         putImageData: (image, _x, y) => this.context.rows.set(y, Array.from(image.data))
@@ -61,11 +66,14 @@ function harness() {
     Float32Array, Uint8ClampedArray,
     node: (tag, className = '', textContent = '') => Object.assign(new Element(tag), { className, textContent }),
     badge: textContent => Object.assign(new Element('span'), { textContent }),
+    iconButton: (_icon, label) => { const button = new Element('button');
+      button.setAttribute('aria-label', label); return button; },
     document: { hidden: false, createElement: tag => new Element(tag, true),
       addEventListener() {}, removeEventListener() {} },
     window: { devicePixelRatio: 1, requestAnimationFrame: callback => draws.push(callback),
       addEventListener: (name, callback) => windowEvents.set(name, callback), removeEventListener() {} },
-    updateDiagnosticReadouts() {}, frequency: value => value / 1_000_000,
+    updateDiagnosticReadouts: (element, values) => { element.readouts = values; },
+    frequency: value => value / 1_000_000,
     tunerWaterfallPalette: () => Uint8ClampedArray.from({ length: 1024 }, (_, index) => index % 256),
     DIAGNOSTIC_FRAME_TYPES: { HEARTBEAT: 0, STATE: 1, CHANNEL_SIGNAL: 2, CHANNEL_SYMBOLS: 3 },
     diagnosticJsonPayload: frame => frame.state, diagnosticFloatPayload: frame => frame.values,
@@ -77,6 +85,7 @@ function harness() {
       return connection;
     }
   });
+  vm.runInContext(rangeSource, context);
   for (const name of ['liveDetailSelectionDelta', 'liveDetailTransportParameters',
     'liveChannelStateMatchesSelection', 'liveChannelPane']) vm.runInContext(functionSource(name), context);
   const pane = context.liveChannelPane();
@@ -92,13 +101,19 @@ function harness() {
       signal_state: 'live', symbols_state: 'live', maximum_visible_symbols: 8, ...overrides } });
     flush();
   };
-  const frame = (type, sequence, values, generation = 7) => {
-    connection.callbacks.onFrame({ type, sequence, generation, values: Float32Array.from(values) });
+  const frame = (type, sequence, values, generation = 7, metadata = {}) => {
+    connection.callbacks.onFrame({ type, sequence, generation, ...metadata, values: Float32Array.from(values) });
     flush();
   };
   const waterfall = elements.find(element => element.offscreen);
   const symbols = elements.find(element => element.attributes['aria-label'] === 'Selected channel demodulated symbols');
-  return { pane, state, frame, waterfall, symbols, select, connection: () => connection,
+  const signal = elements.find(element => element.tag === 'canvas' && !element.offscreen);
+  const signalReadouts = elements.find(element => element.readouts?.[0]?.[0] === 'Center');
+  const rangeButton = elements.find(element => element.attributes['aria-label'] === 'Recalculate signal display range');
+  return { pane, state, frame, waterfall, symbols, signal, rangeButton, select, connection: () => connection,
+    readout: name => signalReadouts.readouts.find(([label]) => label === name)?.[1],
+    view(name) { elements.find(element => element.dataset.view === name).click(); flush(); },
+    recalculate() { rangeButton.click(); flush(); },
     resize(width, ratio) { size.width = width; context.window.devicePixelRatio = ratio;
       windowEvents.get('resize')(); flush(); } };
 }
@@ -183,6 +198,144 @@ test('reconnecting to a restarted producer with the same generation resets its s
     h.state(7, { frequency_correction: { channel_correction_hz: -6 } });
     assert.equal(h.waterfall.context.rows.size, 1, 'Later metadata on that connection still preserves history');
     assert.equal(h.symbols.context.points.length, 2);
+  } finally { h.pane.close(); }
+});
+
+function channelSpectrum({ bins = 128, noiseDb = -86, signalDb = -59 } = {}) {
+  return Array.from({ length: bins }, (_, index) => {
+    const offset = Math.abs(index - bins / 2) / bins;
+    if (offset > 0.35) return -155;
+    if (offset < 0.055) return signalDb;
+    return noiseDb + (index % 3 - 1);
+  });
+}
+
+function displayRange(h) {
+  const match = /^(-?\d+(?:\.\d+)?) to (-?\d+(?:\.\d+)?) dB$/.exec(h.readout('Display range'));
+  assert.ok(match, `Expected a calibrated display range, got ${h.readout('Display range')}`);
+  return { floorDb: Number(match[1]), ceilingDb: Number(match[2]) };
+}
+
+function expectedColor(raw, { floorDb, ceilingDb }) {
+  const clamped = Math.max(floorDb, Math.min(ceilingDb, raw));
+  const color = Math.round((clamped - floorDb) / (ceilingDb - floorDb) * 255);
+  return [color * 4 % 256, (color * 4 + 1) % 256, (color * 4 + 2) % 256, 255];
+}
+
+test('channel calibration recolors retained waterfall rows and shares its range with the FFT', () => {
+  const h = harness();
+  try {
+    h.state();
+    const values = channelSpectrum();
+    h.frame(2, 1, values);
+    const uncalibrated = h.waterfall.context.rows.get(255).slice();
+    assert.equal(h.readout('Display range'), 'Calibrating…');
+    assert.equal(h.rangeButton.disabled, true);
+    for (let sequence = 2; sequence <= 8; sequence++) h.frame(2, sequence, values);
+    const range = displayRange(h);
+    assert.ok(range.floorDb > -115, 'Suppressed outer bins must not determine the display floor');
+    assert.ok(range.ceilingDb < -30, 'The signal should use useful vertical and color range');
+    assert.ok(range.ceilingDb - range.floorDb >= 20, 'Noise needs a conservative dynamic range');
+    assert.equal(h.rangeButton.disabled, false);
+    assert.equal(h.readout('Peak'), '-59.0 dB', 'Display scaling does not alter the measured peak');
+    const calibrated = h.waterfall.context.rows.get(255);
+    assert.notDeepEqual(calibrated, uncalibrated, 'Existing history is repainted when calibration finishes');
+    for (const row of h.waterfall.context.rows.values()) assert.deepEqual(row, calibrated);
+    assert.equal(h.waterfall.context.rows.size, 8);
+    const center = values.length / 2;
+    assert.deepEqual(calibrated.slice(center * 4, center * 4 + 4), expectedColor(values[center], range));
+    h.view('fft');
+    assert.equal(h.signal.context.trace.length, values.length);
+    const expectedY = (range.ceilingDb - values[center]) / (range.ceilingDb - range.floorDb) * 180;
+    assert.ok(Math.abs(h.signal.context.trace[center][1] - expectedY) < 1e-8,
+      'FFT positions use the same limits as waterfall colors');
+    const retainedRange = h.readout('Display range');
+    h.state(7, { revision: 2, frequency_correction: { channel_correction_hz: -6 } });
+    h.frame(2, 9, channelSpectrum({ noiseDb: -60, signalDb: -30 }));
+    assert.equal(h.readout('Display range'), retainedRange, 'Later signal variations do not pump the range');
+    assert.deepEqual(h.waterfall.context.rows.get(255), calibrated);
+    h.frame(2, 10, channelSpectrum({ noiseDb: -50, signalDb: -20 }), 6);
+    assert.equal(h.waterfall.context.rows.size, 9, 'A stale producer cannot affect calibrated history');
+    assert.equal(h.readout('Display range'), retainedRange);
+  } finally { h.pane.close(); }
+});
+
+test('manual recalibration keeps the current colors until the new range can repaint all history', () => {
+  const h = harness();
+  try {
+    h.state();
+    const initial = channelSpectrum();
+    for (let sequence = 1; sequence <= 8; sequence++) h.frame(2, sequence, initial);
+    const beforeRange = displayRange(h);
+    const beforeRow = h.waterfall.context.rows.get(255).slice();
+    h.recalculate();
+    assert.equal(h.readout('Display range'), 'Calibrating…');
+    assert.equal(h.rangeButton.disabled, true);
+    assert.deepEqual(h.waterfall.context.rows.get(255), beforeRow);
+    const shifted = channelSpectrum({ noiseDb: -76, signalDb: -49 });
+    for (let sequence = 9; sequence <= 15; sequence++) h.frame(2, sequence, shifted);
+    assert.equal(h.readout('Display range'), 'Calibrating…');
+    assert.deepEqual(h.waterfall.context.rows.get(255), beforeRow, 'Collecting samples preserves the existing scale');
+    h.frame(2, 16, shifted);
+    const afterRange = displayRange(h);
+    assert.notDeepEqual(afterRange, beforeRange);
+    const center = initial.length / 2;
+    assert.deepEqual(h.waterfall.context.rows.get(255).slice(center * 4, center * 4 + 4),
+      expectedColor(initial[center], afterRange), 'Original dB samples survive a display-range change');
+    assert.deepEqual(h.waterfall.context.rows.get(240).slice(center * 4, center * 4 + 4),
+      expectedColor(shifted[center], afterRange));
+    assert.equal(h.waterfall.context.rows.size, 16);
+  } finally { h.pane.close(); }
+});
+
+test('signal source changes recalibrate signal history while preserving symbols and sequence guards', () => {
+  const h = harness();
+  try {
+    h.state(7, { sample_rate_hz: 50_000, fft_size: 128 });
+    const values = channelSpectrum();
+    const metadata = { sampleRateHz: 50_000, centerFrequencyHz: 851_012_500 };
+    for (let sequence = 1; sequence <= 8; sequence++) h.frame(2, sequence, values, 7, metadata);
+    h.frame(3, 1, [0, 1]);
+    displayRange(h);
+    h.state(7, { sample_rate_hz: 100_000, fft_size: 128 });
+    assert.equal(h.waterfall.context.rows.size, 0);
+    assert.equal(h.readout('Display range'), '—');
+    assert.equal(h.symbols.context.points.length, 2);
+    h.frame(2, 8, values, 7, metadata);
+    assert.equal(h.waterfall.context.rows.size, 0, 'A state-only source change does not reset duplicate protection');
+    h.frame(2, 9, values, 7, { ...metadata, sampleRateHz: 100_000 });
+    assert.equal(h.waterfall.context.rows.size, 1);
+    assert.equal(h.readout('Display range'), 'Calibrating…');
+    h.frame(2, 10, channelSpectrum({ bins: 256 }), 7, { ...metadata, sampleRateHz: 100_000 });
+    assert.equal(h.waterfall.width, 256);
+    assert.equal(h.waterfall.context.rows.size, 1, 'Changing frame bin count clears incompatible signal history');
+    assert.equal(h.symbols.context.points.length, 2);
+    h.frame(2, 10, channelSpectrum({ bins: 256 }), 7, { ...metadata, sampleRateHz: 100_000 });
+    assert.equal(h.waterfall.context.rows.size, 1);
+    h.frame(2, 11, channelSpectrum({ bins: 256 }), 7,
+      { sampleRateHz: 96_000, centerFrequencyHz: 851_037_500 });
+    assert.equal(h.waterfall.context.rows.size, 1, 'Frame domain metadata also invalidates calibration');
+    assert.equal(h.symbols.context.points.length, 2);
+    h.frame(3, 1, [1, 2]);
+    assert.equal(h.symbols.context.points.length, 2, 'Signal-only changes retain symbol duplicate protection');
+  } finally { h.pane.close(); }
+});
+
+test('the raw waterfall ring remains bounded while wrapping and repainting', () => {
+  const h = harness();
+  try {
+    h.state();
+    const values = channelSpectrum();
+    for (let sequence = 1; sequence <= 300; sequence++) h.frame(2, sequence, values);
+    assert.equal(h.waterfall.context.rows.size, 256);
+    h.recalculate();
+    for (let sequence = 301; sequence <= 308; sequence++)
+      h.frame(2, sequence, channelSpectrum({ noiseDb: -76, signalDb: -49 }));
+    assert.equal(h.waterfall.context.rows.size, 256);
+    const range = displayRange(h);
+    const center = values.length / 2;
+    assert.deepEqual(h.waterfall.context.rows.get(0).slice(center * 4, center * 4 + 4),
+      expectedColor(values[center], range), 'Wrapped older rows are repainted from their retained dB values');
   } finally { h.pane.close(); }
 });
 

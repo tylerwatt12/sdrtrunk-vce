@@ -32,6 +32,7 @@ const contracts = [
   ["Live impaired network", "live-network-simulation.test.js", "stats-web/assets/app.js"],
   ["Live focus recovery", "live-focus-recovery.test.js", "stats-web/assets/app.js"],
   ["Live channel history", "live-channel-history.test.js", "stats-web/assets/app.js"],
+  ["channel signal automatic range", "channel-signal-auto-range.test.js", "stats-web/assets/features/channel-signal-auto-range.js"],
   ["Call matching deltas", "call-matching-deltas.test.js", "stats-web/assets/app.js"],
   ["Call count scopes and dates", "call-count-scope.test.js", "stats-web/assets/app.js"],
   ["Tuner allocation", "tuner-allocation.test.js", "stats-web/assets/app.js"],

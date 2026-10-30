@@ -47,6 +47,7 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
+import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=44';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=1';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
@@ -15124,6 +15125,8 @@ function liveChannelPane(options = {}) {
   let signalPeak = null;
   let signalLatencyMs = null;
   const latencyClock = { offsetMs: null };
+  const signalAutoRange = createChannelSignalAutoRange();
+  let signalDomain = null;
   let signalView = 'fft';
   const waterfallBuffer = document.createElement('canvas');
   const waterfallContext = waterfallBuffer.getContext('2d', { alpha: false });
@@ -15131,6 +15134,7 @@ function liveChannelPane(options = {}) {
   let waterfallRowImage = null;
   let newestWaterfallRow = -1;
   let nextWaterfallRow = -1;
+  let waterfallRows = [];
   let symbolValues = new Float32Array(4800);
   symbolValues.fill(Number.NaN);
   let symbolCursor = 0;
@@ -15172,7 +15176,8 @@ function liveChannelPane(options = {}) {
     signalViewToggle.append(button);
     return button;
   });
-  signalDiagnostic.header.append(signalViewToggle);
+  const signalRangeButton = iconButton('icon-refresh', 'Recalculate signal display range');
+  signalDiagnostic.header.append(signalViewToggle, signalRangeButton);
   const diagnosticGrid = node('div', 'channel-diagnostic-grid');
   diagnosticGrid.append(signalDiagnostic.card, symbolDiagnostic.card);
   pane.append(diagnosticGrid);
@@ -15185,10 +15190,14 @@ function liveChannelPane(options = {}) {
   const updateReadouts = () => {
     const centerFrequencyHz = Number(state?.frequency_hz ?? state?.center_frequency_hz ??
       selection?.bindingFrequencyHz);
+    const { floorDb, ceilingDb } = signalAutoRange.range();
+    signalRangeButton.disabled = !signalValues.length || signalAutoRange.pending();
     updateDiagnosticReadouts(signalDiagnostic.readouts, [
       ['Center', centerFrequencyHz ? `${frequency(centerFrequencyHz)} MHz` : '—'],
       ['Peak', Number.isFinite(signalPeak) ? `${signalPeak.toFixed(1)} dB` : '—'],
-      ['Latency', Number.isFinite(signalLatencyMs) ? `${Math.round(signalLatencyMs)}ms` : '—']
+      ['Latency', Number.isFinite(signalLatencyMs) ? `${Math.round(signalLatencyMs)}ms` : '—'],
+      ['Display range', !signalValues.length ? '—' : signalAutoRange.pending() ? 'Calibrating…' :
+        `${floorDb} to ${ceilingDb} dB`]
     ]);
     updateDiagnosticReadouts(symbolDiagnostic.readouts, [
       ['Decoder', state?.decoder_profile || state?.protocol || '—']
@@ -15234,6 +15243,27 @@ function liveChannelPane(options = {}) {
     waterfallRowImage = waterfallContext.createImageData(waterfallBuffer.width, 1);
     newestWaterfallRow = -1;
     nextWaterfallRow = waterfallBuffer.height - 1;
+    waterfallRows = Array(waterfallBuffer.height).fill(null);
+  };
+
+  const paintWaterfallRow = (values, physicalRow) => {
+    const { floorDb, ceilingDb } = signalAutoRange.range();
+    const row = waterfallRowImage;
+    values.forEach((raw, index) => {
+      const value = Number.isFinite(raw) && raw !== -196 ? Math.max(floorDb, Math.min(ceilingDb, raw)) : floorDb;
+      const color = Math.round((value - floorDb) / (ceilingDb - floorDb) * 255);
+      row.data[index * 4] = waterfallPalette[color * 4];
+      row.data[index * 4 + 1] = waterfallPalette[color * 4 + 1];
+      row.data[index * 4 + 2] = waterfallPalette[color * 4 + 2];
+      row.data[index * 4 + 3] = 255;
+    });
+    waterfallContext.putImageData(row, 0, physicalRow);
+  };
+
+  const repaintWaterfall = () => {
+    waterfallRows.forEach((values, physicalRow) => {
+      if (values) paintWaterfallRow(values, physicalRow);
+    });
   };
 
   const addWaterfallFrame = (values) => {
@@ -15241,18 +15271,20 @@ function liveChannelPane(options = {}) {
     if (waterfallBuffer.width !== values.length || waterfallBuffer.height !== 256 || !waterfallRowImage) {
       resetWaterfall(values.length);
     }
-    const row = waterfallRowImage;
-    values.forEach((raw, index) => {
-      const value = Number.isFinite(raw) ? Math.max(-120, Math.min(0, raw)) : -120;
-      const color = Math.max(0, Math.min(255, Math.round((value + 120) / 120 * 255)));
-      row.data[index * 4] = waterfallPalette[color * 4];
-      row.data[index * 4 + 1] = waterfallPalette[color * 4 + 1];
-      row.data[index * 4 + 2] = waterfallPalette[color * 4 + 2];
-      row.data[index * 4 + 3] = 255;
-    });
-    waterfallContext.putImageData(row, 0, nextWaterfallRow);
+    waterfallRows[nextWaterfallRow] = values.slice();
+    paintWaterfallRow(values, nextWaterfallRow);
     newestWaterfallRow = nextWaterfallRow;
     nextWaterfallRow = (nextWaterfallRow - 1 + waterfallBuffer.height) % waterfallBuffer.height;
+  };
+
+  const resetSignalHistory = () => {
+    signalValues = new Float32Array(0);
+    signalPeak = null;
+    signalLatencyMs = null;
+    signalDomain = null;
+    latencyClock.offsetMs = null;
+    signalAutoRange.reset();
+    resetWaterfall();
   };
 
   const drawWaterfall = (prepared) => {
@@ -15281,14 +15313,15 @@ function liveChannelPane(options = {}) {
     drawBackground(prepared);
     if (signalValues.length < 2) return;
     const { context, cssWidth, cssHeight } = prepared;
+    const { floorDb, ceilingDb } = signalAutoRange.range();
     context.strokeStyle = '#55c7ff';
     context.lineWidth = 1.5;
     context.beginPath();
     for (let index = 0; index < signalValues.length; index += 1) {
       const raw = signalValues[index];
-      const value = Number.isFinite(raw) ? Math.max(-120, Math.min(0, raw)) : -120;
+      const value = Number.isFinite(raw) && raw !== -196 ? Math.max(floorDb, Math.min(ceilingDb, raw)) : floorDb;
       const x = index * cssWidth / (signalValues.length - 1);
-      const y = -value / 120 * cssHeight;
+      const y = (ceilingDb - value) / (ceilingDb - floorDb) * cssHeight;
       if (index === 0) context.moveTo(x, y);
       else context.lineTo(x, y);
     }
@@ -15346,17 +15379,17 @@ function liveChannelPane(options = {}) {
   signalViewButtons.forEach((button) => {
     button.addEventListener('click', () => setSignalView(button.dataset.view));
   });
+  signalRangeButton.addEventListener('click', () => {
+    signalAutoRange.reset({ keepRange: true });
+    updateReadouts();
+  });
 
   const clearPlots = (message) => {
     state = null;
     generation = -1;
     signalSequence = 0;
     symbolSequence = 0;
-    signalValues = new Float32Array(0);
-    signalPeak = null;
-    signalLatencyMs = null;
-    latencyClock.offsetMs = null;
-    resetWaterfall();
+    resetSignalHistory();
     symbolValues = new Float32Array(4800);
     symbolValues.fill(Number.NaN);
     symbolCursor = 0;
@@ -15392,6 +15425,7 @@ function liveChannelPane(options = {}) {
   const sync = () => {
     const remote = selection?.remote === true;
     signalViewToggle.hidden = remote;
+    signalRangeButton.hidden = remote;
     signalDiagnostic.readouts.hidden = remote;
     symbolDiagnostic.readouts.hidden = remote;
     if (remote) {
@@ -15441,18 +15475,16 @@ function liveChannelPane(options = {}) {
           const nextState = diagnosticJsonPayload(frame);
           if (!liveChannelStateMatchesSelection(selection, expectedSubscriptionId, nextState)) return;
           const resetHistory = awaitingState || frame.generation !== generation;
+          const signalSourceChanged = state && ['frequency_hz', 'sample_rate_hz', 'fft_size'].some((key) =>
+            Number(nextState[key]) > 0 && Number(state[key]) > 0 && Number(nextState[key]) !== Number(state[key]));
           awaitingState = false;
           state = nextState;
           generation = frame.generation;
           if (resetHistory) {
             signalSequence = 0;
             symbolSequence = 0;
-            signalValues = new Float32Array(0);
-            signalPeak = null;
-            signalLatencyMs = null;
-            latencyClock.offsetMs = null;
-            resetWaterfall();
           }
+          if (resetHistory || signalSourceChanged) resetSignalHistory();
           const maximumSymbols = Math.max(1, Number(state?.maximum_visible_symbols) || 4800);
           if (resetHistory || symbolValues.length !== maximumSymbols) {
             symbolValues = new Float32Array(maximumSymbols);
@@ -15479,14 +15511,22 @@ function liveChannelPane(options = {}) {
         if (frame.type === DIAGNOSTIC_FRAME_TYPES.CHANNEL_SIGNAL) {
           if (frame.sequence <= signalSequence) return;
           signalSequence = frame.sequence;
-          signalValues = diagnosticFloatPayload(frame);
+          const incoming = diagnosticFloatPayload(frame);
+          if (!incoming.length) return;
+          const domain = [frame.centerFrequencyHz || state?.frequency_hz || 0,
+            frame.sampleRateHz || state?.sample_rate_hz || 0,
+            frame.fftSize || state?.fft_size || incoming.length, incoming.length].join(':');
+          if (signalDomain !== null && domain !== signalDomain) resetSignalHistory();
+          signalDomain = domain;
+          signalValues = incoming;
           signalPeak = null;
           for (let index = 0; index < signalValues.length; index += 1) {
-            if (Number.isFinite(signalValues[index]) &&
+            if (Number.isFinite(signalValues[index]) && signalValues[index] !== -196 &&
                 (!Number.isFinite(signalPeak) || signalValues[index] > signalPeak)) signalPeak = signalValues[index];
           }
           if (frame.centerFrequencyHz > 0 && state) state.frequency_hz = frame.centerFrequencyHz;
           signalLatencyMs = diagnosticFrameLatency(frame, latencyClock);
+          if (signalAutoRange.observe(signalValues)) repaintWaterfall();
           addWaterfallFrame(signalValues);
           signalDiagnostic.overlay.hidden = true;
           updateReadouts();
@@ -15558,6 +15598,7 @@ function liveChannelPane(options = {}) {
     setPaused(value) { paused = value; sync(); },
     close() {
       closeStream();
+      resetSignalHistory();
       sizeObserver?.disconnect();
       document.removeEventListener('visibilitychange', onVisibilityChange);
       window.removeEventListener('resize', onResize);
