@@ -105,7 +105,7 @@ for (const scenario of [
     await stop.click();
     await expect(stop).toBeDisabled();
     await choose(1, true);
-    await expect(primary).toHaveAttribute('aria-label', scanner ? 'Play browser call audio' : 'Listen live');
+    await expect(primary).toHaveAttribute('aria-label', 'Listen live');
     await expect(stop).toBeDisabled();
     await expectNoPolling();
     expect(await activeSources(page)).toBe(0);

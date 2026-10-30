@@ -70,9 +70,7 @@
   gap: var(--space-1);
 }
 .audio-dock-header-end .ui-audio-dismiss { margin-inline-start: 0; }
-.audio-dock-meta,
-.audio-dock-time { color: var(--audio-muted); font-size: var(--font-size-label); }
-.audio-dock-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.audio-dock-meta { color: var(--audio-muted); font-size: var(--font-size-label); }
 .audio-dock-single-line { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .audio-dock-desktop-scanlists,
 .audio-dock-library-control { flex: 0 0 auto; }
@@ -128,19 +126,7 @@
 .audio-dock-transmitting strong { font-size: var(--font-size-subheading); min-height: calc(var(--font-size-subheading) * var(--line-height-body)); overflow-wrap: anywhere; }
 .audio-dock-technical { display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); min-height: calc(var(--font-size-label) * var(--line-height-body)); }
 .audio-dock-controls { position: relative; flex: 0 0 auto; padding: var(--space-2) var(--space-4) var(--space-3); background: var(--surface); border-top: 1px solid var(--line); }
-.audio-dock-timing { display: flex; align-items: center; gap: var(--space-2); height: var(--audio-dock-timing-height); }
-.audio-dock-timing > progress,
-.audio-dock-timing > input { flex: 1; min-width: 0; }
-.audio-dock-timing > input { height: var(--control-height-comfortable); margin: 0; }
-.audio-dock-timing > span { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.audio-dock-primary-controls { display: flex; align-items: center; justify-content: center; gap: var(--space-3); margin-top: var(--space-2); }
-.audio-dock-transport-main,
-.audio-dock-transport-options { display: contents; }
-.audio-dock-hold { font: inherit; font-weight: var(--font-weight-control); }
-.audio-dock-hold[aria-pressed="true"] { color: var(--accent); background: var(--accent-soft); }
-.audio-dock-avoid-actions { display: flex; align-items: center; gap: 0; flex: 0 0 auto; }
-.audio-dock-avoid-actions > .ui-button { min-height: var(--control-height-comfortable); }
-.audio-dock-avoid-action { padding-inline: var(--space-2); }
+.audio-dock-primary-controls { margin-top: var(--space-2); }
 .audio-dock-up-next { min-width: 0; min-height: 0; display: flex; flex-direction: column; padding: var(--space-4); border-inline-start: 1px solid var(--line); border-radius: 0; background: var(--surface); }
 .audio-dock-up-next.ui-listening-queue { padding: var(--space-4); border-radius: 0; }
 .audio-dock-queue-heading { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); padding-bottom: var(--space-3); }
@@ -205,16 +191,13 @@
 .audio-dock-compact-copy :is(strong, span),
 .audio-dock-slim-copy :is(strong, span) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audio-dock-mini-controls { display: flex; align-items: center; gap: var(--space-1); }
-.audio-dock-compact-bottom { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
-.audio-dock-compact-bottom progress { flex: 1; min-width: 0; }
+.audio-dock-compact-bottom { margin-top: var(--space-2); }
 .audio-dock-queue-count { display: flex; align-items: center; gap: var(--space-1); margin-inline-start: var(--space-2); min-height: var(--control-height-comfortable); color: var(--muted); font-size: var(--font-size-label); white-space: nowrap; }
 .audio-dock-queue-count svg { width: var(--audio-inline-glyph-size); height: var(--audio-inline-glyph-size); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .audio-dock[data-state="collapsed"] :is(.audio-dock-header, .audio-dock-expanded, .audio-dock-compact) { display: none; }
 .audio-dock[data-state="collapsed"] .audio-dock-slim,
 .audio-dock[data-drag-origin="collapsed"] .audio-dock-slim { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: linear-gradient(135deg, var(--listening-stage-wash), var(--surface) 80%); }
-.audio-dock-slim .audio-dock-play { --icon-action-size: var(--control-height-comfortable); }
 .audio-dock-slim-copy strong { font-size: var(--font-size-body); }
-.audio-dock-volume-popover { width: var(--audio-volume-popover-width); max-width: calc(100vw - var(--space-4)); }
 .audio-dock-notice { position: fixed; z-index: calc(var(--audio-dock-layer) + 1); min-width: 0; margin: 0; overflow: auto; overflow-wrap: anywhere; }
 :root:has(body.has-audio-dock) { scroll-padding-top: calc(var(--app-header-offset, 0px) + var(--space-2)); }
 @media (min-width: 901px) {
@@ -263,12 +246,6 @@
   .audio-dock-next-copy :is(strong, span) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .audio-dock-next-teaser svg { width: var(--audio-inline-glyph-size); height: var(--audio-inline-glyph-size); flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .audio-dock-controls { padding: var(--space-1) var(--space-3) var(--space-2); }
-  .audio-dock-primary-controls { gap: var(--audio-source-gap); }
-  .audio-dock-primary-controls [data-volume-trigger],
-  .audio-dock-mini-controls [data-volume-trigger] { width: var(--control-height-comfortable); min-width: var(--control-height-comfortable); height: var(--control-height-comfortable); padding: 0; }
-  .audio-dock-primary-controls [data-volume-value],
-  .audio-dock-mini-controls [data-volume-value] { display: none; }
-  .audio-dock-timing { height: var(--audio-dock-timing-mobile-height); }
   .audio-dock-context { min-height: var(--audio-dock-context-mobile-height); }
 }
 @media (max-width: 480px) {
@@ -277,11 +254,6 @@
 }
 @media (max-width: 359px) {
   .audio-dock-header { gap: 0; padding-inline: var(--space-1); }
-  .audio-dock .audio-dock-primary-controls { flex-direction: column; gap: var(--space-2); }
-  .audio-dock .audio-dock-transport-main,
-  .audio-dock .audio-dock-transport-options { width: 100%; display: flex; justify-content: center; align-items: center; gap: var(--space-2); }
-  .audio-dock[data-source="recordings"] .audio-dock-primary-controls .audio-dock-play { --icon-action-size: var(--control-height-comfortable); }
-  .audio-dock-avoid-action { font-size: var(--font-size-label); }
   .audio-dock-source-native { width: var(--audio-dock-source-narrow-width); }
   .audio-dock-source-native select { font-size: var(--font-size-label); }
   .audio-dock-library-control .audio-dock-scan-label { display: none; }

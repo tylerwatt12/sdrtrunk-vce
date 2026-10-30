@@ -67,8 +67,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       await expectNoHorizontalOverflow(page);
     }
     await chooseSize(dock, 'full');
-    await expect(dock.getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeVisible();
-    await expect(dock.getByRole('button', { name: 'Avoid', exact: true })).toBeVisible();
+    await expect(dock.getByRole('button', { name: 'Hold current target', exact: true })).toBeVisible();
+    await expect(dock.getByRole('button', { name: 'Avoid current target', exact: true })).toBeVisible();
     expect(state.feedRequests).toBe(0);
     expect(state.requests.filter(request => /admin\/channels\/.+\/(start|stop)/.test(request.path))).toEqual([]);
   });

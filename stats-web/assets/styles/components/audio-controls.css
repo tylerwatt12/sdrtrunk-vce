@@ -42,24 +42,86 @@
   white-space: nowrap;
 }
 .ui-audio-dismiss { margin-inline-start: var(--space-2); }
-.ui-audio-command {
+/* One command and transport pattern for Scanner and every dock size. */
+.ui-audio-control {
   --icon-action-size: var(--audio-action-size);
-  color: var(--audio-ink);
-  background: var(--audio-surface);
-  border-color: var(--interactive-border);
-  border-radius: var(--radius-control);
-  box-shadow: none;
+  min-height: var(--audio-action-size);
 }
-.ui-audio-command-primary {
-  --icon-action-size: var(--audio-play-size);
-  color: var(--audio-accent-ink);
-  background: var(--audio-accent);
-  border-color: var(--audio-accent);
-  border-radius: 50%;
+.ui-audio-transport {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
-.ui-audio-command-primary:hover:not(:disabled) {
-  color: var(--audio-accent-ink);
-  background: var(--audio-accent-hover);
+.ui-audio-transport-main,
+.ui-audio-transport-options {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ui-audio-transport-options > .ui-audio-control:not(.ui-icon-button, .ui-audio-volume-trigger) {
+  min-width: var(--audio-target-action-width);
+  padding-inline: var(--space-2);
+}
+.ui-audio-timing {
+  min-width: 0;
+  min-height: var(--audio-timing-height);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.ui-audio-timing > progress,
+.ui-audio-timing > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ui-audio-timing > input {
+  height: var(--control-height-comfortable);
+  margin: 0;
+  accent-color: var(--audio-playback-progress);
+}
+.ui-audio-time {
+  flex: 0 0 auto;
+  color: var(--audio-muted);
+  font-size: var(--font-size-label);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ui-audio-time:last-of-type { margin-inline-start: auto; }
+@media (pointer: coarse) {
+  .ui-audio-control,
+  .ui-audio-transport { --audio-action-size: var(--control-height-touch); }
+}
+@media (max-width: 680px), (max-height: 500px) and (pointer: coarse) {
+  .ui-audio-transport { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+  .ui-audio-transport-main {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .ui-audio-transport-main:has(> [data-audio-action="previous"]:not([hidden])) {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .ui-audio-transport-main > .ui-audio-control { width: 100%; min-width: 0; }
+  .ui-audio-transport-options {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--audio-action-size) max-content;
+  }
+  .ui-audio-transport-options > .ui-audio-control:not(.ui-icon-button, .ui-audio-volume-trigger) {
+    width: 100%;
+    min-width: 0;
+  }
+  .ui-audio-transport-options:not(:has(> [data-audio-action="hold"]:not([hidden]))) {
+    display: flex;
+    justify-content: flex-end;
+  }
+}
+@media (max-width: 380px) {
+  .ui-audio-transport-options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ui-audio-transport-options > .ui-audio-control { width: 100%; }
 }
 .ui-audio-sources {
   min-width: 0;
@@ -153,45 +215,12 @@
   border-radius: var(--radius-control);
   overflow: hidden;
   background: var(--audio-raised);
-  accent-color: var(--audio-accent);
+  accent-color: var(--audio-playback-progress);
 }
 .ui-audio-progress::-webkit-progress-bar { background: var(--audio-raised); }
-.ui-audio-progress::-webkit-progress-value { background: var(--audio-accent); }
-.ui-audio-progress::-moz-progress-bar { background: var(--audio-accent); }
+.ui-audio-progress::-webkit-progress-value { background: var(--audio-playback-progress); }
+.ui-audio-progress::-moz-progress-bar { background: var(--audio-playback-progress); }
 .ui-audio-range { accent-color: var(--audio-accent); }
-
-.ui-audio-volume-control {
-  min-width: 0;
-  min-height: var(--control-height-comfortable);
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--audio-volume-text, var(--audio-muted));
-  font-size: var(--font-size-label);
-}
-
-.ui-audio-volume-label {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  white-space: nowrap;
-}
-
-.ui-audio-volume-control .ui-audio-range {
-  width: 100%;
-  min-width: 0;
-  height: var(--control-height-comfortable);
-  flex: 1 1 auto;
-  margin: 0;
-  accent-color: var(--audio-volume-accent, var(--audio-accent));
-}
-
-.ui-audio-volume-output {
-  flex: 0 0 var(--audio-volume-output-width);
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
 
 /* Listening player variants reuse the global control and selection primitives. */
 .ui-audio-context-trigger {
@@ -227,14 +256,16 @@
 }
 .ui-audio-volume-trigger {
   --ui-control-radius: var(--radius-compact);
-  min-height: var(--control-height-comfortable);
-  min-width: var(--control-height-comfortable);
+  min-height: var(--audio-action-size);
+  min-width: var(--audio-action-size);
   padding-inline: var(--space-2);
   gap: var(--space-1);
   font-size: var(--font-size-label);
   white-space: nowrap;
 }
 .ui-audio-volume-popover {
+  width: var(--audio-volume-popover-width);
+  max-width: calc(100vw - var(--space-4));
   --ui-popover-padding: var(--space-2);
   border-radius: var(--audio-volume-fill-radius);
 }
@@ -250,7 +281,7 @@
   padding-inline: var(--space-4);
   color: var(--audio-ink);
   background: var(--audio-quiet);
-  border: 1px solid var(--line);
+  border: 1px solid var(--interactive-border);
   border-radius: var(--audio-volume-fill-radius);
   overflow: hidden;
   font-size: var(--font-size-control);

@@ -11,15 +11,15 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=2") layer(reset);',
-  '@import url("./styles/tokens.css?v=56") layer(tokens);',
+  '@import url("./styles/tokens.css?v=57") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=7") layer(components);',
   '@import url("./styles/components/controls.css?v=51") layer(components);',
-  '@import url("./styles/components/audio-controls.css?v=13") layer(components);',
+  '@import url("./styles/components/audio-controls.css?v=14") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=40") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=20") layer(compositions);',
   '@import url("./styles/compositions/browsing.css?v=1") layer(compositions);',
-  '@import url("./styles/compositions/app-chrome.css?v=22") layer(compositions);',
-  '@import url("./styles/compositions/audio-dock.css?v=26") layer(compositions);',
+  '@import url("./styles/compositions/app-chrome.css?v=23") layer(compositions);',
+  '@import url("./styles/compositions/audio-dock.css?v=27") layer(compositions);',
   '@import url("./styles/compositions/charts.css?v=10") layer(compositions);',
   '@import url("./styles/compositions/modals.css?v=29") layer(compositions);',
   '@import url("./styles/compositions/discovery-completion.css?v=2") layer(compositions);',
@@ -748,6 +748,7 @@ function validateTunerSpectrumFeature(stylesheets, entry) {
 function validateScannerFeature(stylesheets, entry) {
   const scanner = stylesheetModule(stylesheets, entry, 'features/scanner.css').source;
   const chrome = stylesheetModule(stylesheets, entry, 'compositions/app-chrome.css').source;
+  const audio = stylesheetModule(stylesheets, entry, 'components/audio-controls.css').source;
   for(const selector of ['.scanner-page', '.scanner-workspace', '.scanner-console-main',
     '.scanner-now-playing', '.scanner-display', '.scanner-scan-lists']) {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -776,10 +777,12 @@ function validateScannerFeature(stylesheets, entry) {
     'Mode changes must not move the page through browser scroll anchoring');
   assert.match(chrome, /\.ui-scanner-transport\s*\{/,
     'Scanner must reuse the shared transport composition');
-  assert.match(chrome, /\.scanner-playback-controls\s*\{/,
-    'Scanner must expose its primary controls directly');
-  assert.match(chrome, /\.scanner-playback-secondary\s*\{/,
-    'Scanner must expose its secondary controls directly');
+  assert.match(audio, /\.ui-audio-transport-main\s*,/,
+    'Scanner and dock must share their primary transport composition');
+  assert.match(audio, /\.ui-audio-transport-options\s*\{/,
+    'Scanner and dock must share their target and player actions');
+  assert.match(audio, /\.ui-audio-timing\s*\{/,
+    'Scanner and dock must share their timing composition');
   assert.doesNotMatch(scanner + chrome, /scanner-expanded|scanner-player-host|scanner-playback-more/,
     'Scanner presentation must not depend on relocated global controls or a hidden More menu');
   assert.doesNotMatch(scanner, /:root\[data-theme="dark"\]/,

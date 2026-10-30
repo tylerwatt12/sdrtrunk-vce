@@ -1,3 +1,4 @@
+import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './audio-controls.js?v=1';
 import { systemLabel, systemName, systemIdentity, homeSystemName } from './system-labels.js?v=2';
 import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
@@ -58,8 +59,6 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   let menuReturnSize = null;
   const menuPanels = new Set(['menu', 'listening', 'direct', 'avoids', 'settings']);
   const menuTriggers = [];
-  let volumeInvoker = null;
-  let volumeReturnFocus = true;
   let sharedQueueKey = '';
   const playbackStatuses = new Map([
     ['waiting', 'Waiting'], ['waiting for the next matching call', 'Waiting'],
@@ -71,9 +70,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   ]);
 
   const command = (label, icon, action, primary = false) => {
-    const button = iconButton(`icon-${icon}`, label,
-      `ui-button ui-icon-button${primary ? ' ui-button-primary ui-audio-command-primary audio-dock-play' : ' ui-button-quiet'}`);
-    button.addEventListener('click', userAction(action));
+    const button = createAudioCommand(iconButton, label, icon, userAction(action), primary);
+    if (primary) button.classList.add('audio-dock-play');
     return button;
   };
   const textButton = (label, action) => {
@@ -463,7 +461,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   appendIcon(sourceFrame, 'chevron-down');
   headerStart.append(sourceFrame);
   const makeMenuTrigger = id => {
-    const button = iconButton('icon-menu', 'Player menu', 'ui-button ui-button-quiet ui-icon-button');
+    const button = createAudioCommand(iconButton, 'Player menu', 'menu');
     button.id = id; button.dataset.playerMenuTrigger = ''; button.dataset.guideTarget = 'player-menu';
     button.setAttribute('aria-controls', 'audio-dock-panel'); button.setAttribute('aria-expanded', 'false');
     button.addEventListener('click', () => openPlayerMenu(button));
@@ -495,26 +493,21 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const miniControls = node('div', 'audio-dock-mini-controls');
   const miniPlay = command('Play audio', 'play', toggle, true);
   const miniNext = command('Next call', 'skip', next);
-  const makeVolumeTrigger = (id) => {
-    const button = iconButton('icon-speaker', 'Volume', 'ui-button ui-button-quiet ui-audio-volume-trigger');
-    button.id = id; button.dataset.volumeTrigger = '';
-    button.setAttribute('popovertarget', 'audio-dock-volume-popover');
-    button.setAttribute('aria-controls', 'audio-dock-volume-popover'); button.setAttribute('aria-expanded', 'false');
-    const value = node('span'); value.dataset.volumeValue = ''; button.append(value);
-    button.addEventListener('click', () => { volumeInvoker = button; volumeReturnFocus = true; });
-    return button;
-  };
+  const volumeControl = createAudioVolume({ node, iconButton, host: document.querySelector('.app-shell'), id: 'audio-dock',
+    onInput: value => changeVolume(value, false),
+    onCommit: () => { if (!guidePresentation && source === 'live') getLivePlayer()?.writePreferences({ volume: true }); }
+  });
+  const volumePopover = volumeControl.popover;
+  const closeVolume = returnFocus => volumeControl.close(returnFocus);
+  const makeVolumeTrigger = id => volumeControl.createTrigger(id);
   const miniVolume = makeVolumeTrigger('audio-dock-compact-volume');
   const miniMenu = makeMenuTrigger('audio-dock-compact-menu');
   miniControls.append(miniPlay, miniNext, miniMenu, miniVolume);
   now.append(compactCopy, miniControls);
-  const compactTiming = node('div', 'audio-dock-compact-bottom');
-  const compactElapsed = node('span', 'audio-dock-time');
-  const compactProgress = node('progress', 'ui-audio-progress');
-  compactProgress.max = 1; compactProgress.value = 0; compactProgress.setAttribute('aria-label', 'Call progress');
-  const compactDuration = node('span', 'audio-dock-time');
-  compactTiming.append(compactElapsed, compactProgress, compactDuration, count);
-  compact.append(now, compactTiming);
+  const compactTiming = createAudioTiming({ node, className: 'audio-dock-compact-bottom' });
+  [compactTiming.elapsed, compactTiming.duration].forEach(element => element.classList.add('audio-dock-time'));
+  compactTiming.element.append(count);
+  compact.append(now, compactTiming.element);
 
   const slim = node('div', 'audio-dock-slim');
   const slimCopy = node('button', 'audio-dock-slim-copy');
@@ -596,40 +589,31 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   nextCopy.append(nextTitle, nextSubtitle); teaser.append(nextLabel, nextCopy); appendIcon(teaser, 'chevron-right');
   mainScroll.append(hero, context, teaser);
   const controls = node('footer', 'audio-dock-controls');
-  const timing = node('div', 'audio-dock-timing');
-  const elapsed = node('span', 'audio-dock-time');
   const seek = node('input', 'ui-range ui-audio-range');
   seek.type = 'range'; seek.min = '0'; seek.max = '1'; seek.step = '0.1'; seek.value = '0';
   seek.setAttribute('aria-label', 'Recording position');
   seek.addEventListener('input', userAction(() => recordings.seek(Number(seek.value))));
-  const progress = node('progress', 'ui-audio-progress');
-  progress.max = 1; progress.value = 0; progress.setAttribute('aria-label', 'Live call progress');
-  const duration = node('span', 'audio-dock-time'); timing.append(elapsed, seek, progress, duration);
-  const transport = node('div', 'audio-dock-transport audio-dock-primary-controls');
-  const transportMain = node('div', 'audio-dock-transport-main');
-  transportMain.setAttribute('role', 'group'); transportMain.setAttribute('aria-label', 'Playback controls');
-  const previous = command('Previous recording', 'previous', () => void recordings.previous());
-  const rewind = command('Back 10s', 'rewind', () => recordings.skipSeconds(-10));
-  const replay = command('Replay last call', 'replay', () => void getLivePlayer()?.replayLastCall());
-  const play = command('Play audio', 'play', toggle, true);
-  const forward = command('Forward 10s', 'forward', () => recordings.skipSeconds(10));
-  const skip = command('Next call', 'skip', next);
-  const stop = command('Stop listening', 'stop', () => {
-    if (source === 'recordings') recordings.stop();
-    else if (!liveState.stopped) void getLivePlayer()?.togglePlayback();
-  });
-  transportMain.append(previous, rewind, replay, play, forward, skip, stop);
-  const options = node('div', 'audio-dock-transport-options');
-  options.setAttribute('role', 'group'); options.setAttribute('aria-label', 'Additional playback controls');
-  const hold = textButton('Hd', () => getLivePlayer()?.toggleHold());
-  hold.className = 'ui-button ui-button-quiet ui-icon-button audio-dock-hold';
-  const avoids = node('div', 'audio-dock-avoid-actions'); avoids.setAttribute('role', 'group'); avoids.setAttribute('aria-label', 'Avoid controls');
-  const avoid = textButton('Av', () => getLivePlayer()?.avoidCurrent()); avoid.className = 'ui-button ui-button-quiet audio-dock-avoid-action';
-  setLabel(avoid, 'Avoid');
-  avoids.append(avoid);
+  const timing = createAudioTiming({ node, seek, className: 'audio-dock-timing' });
+  [timing.elapsed, timing.duration].forEach(element => element.classList.add('audio-dock-time'));
   const fullMenu = makeMenuTrigger('audio-dock-menu');
-  const expandedVolume = makeVolumeTrigger('audio-dock-expanded-volume'); options.append(hold, avoids, fullMenu, expandedVolume);
-  transport.append(transportMain, options); controls.append(timing, transport); main.append(mainScroll, controls);
+  const expandedVolume = makeVolumeTrigger('audio-dock-expanded-volume');
+  const sharedTransport = createAudioTransport({ node, iconButton, menu: fullMenu, volume: expandedVolume, actions: {
+    previous: userAction(() => void recordings.previous()), rewind: userAction(() => recordings.skipSeconds(-10)),
+    replay: userAction(() => void getLivePlayer()?.replayLastCall()), play: userAction(toggle),
+    forward: userAction(() => recordings.skipSeconds(10)), skip: userAction(next),
+    stop: userAction(() => {
+      if (source === 'recordings') recordings.stop();
+      else if (!liveState.stopped) void getLivePlayer()?.togglePlayback();
+    }),
+    hold: userAction(() => getLivePlayer()?.toggleHold()), avoid: userAction(() => getLivePlayer()?.avoidCurrent())
+  } });
+  const { previous, rewind, replay, play, forward, skip, stop, hold, avoid } = sharedTransport;
+  sharedTransport.element.classList.add('audio-dock-transport', 'audio-dock-primary-controls');
+  sharedTransport.main.classList.add('audio-dock-transport-main');
+  sharedTransport.options.classList.add('audio-dock-transport-options');
+  play.classList.add('audio-dock-play');
+  hold.classList.add('audio-dock-hold'); avoid.classList.add('audio-dock-avoid-action');
+  controls.append(timing.element, sharedTransport.element); main.append(mainScroll, controls);
 
   const sidebar = node('aside', 'audio-dock-up-next ui-listening-queue');
   const queueHeading = node('div', 'audio-dock-queue-heading');
@@ -648,45 +632,6 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const headerControls = document.querySelector('.app-shell .header-controls');
   headerControls.insertBefore(restore, headerControls.querySelector('#receiver-health-indicator'));
 
-  const volumePopover = node('div', 'ui-popover ui-audio-volume-popover audio-dock-volume-popover');
-  volumePopover.id = 'audio-dock-volume-popover'; volumePopover.setAttribute('popover', 'auto');
-  volumePopover.setAttribute('role', 'dialog'); volumePopover.setAttribute('aria-label', 'Volume controls');
-  const volumeFill = node('label', 'ui-audio-volume-fill audio-dock-volume');
-  const volume = node('input', 'ui-range ui-audio-range ui-audio-volume-fill-range');
-  volume.id = 'audio-dock-volume'; volume.type = 'range'; volume.min = '0'; volume.max = '1'; volume.step = '0.05';
-  volume.autofocus = true; volume.setAttribute('aria-label', 'Volume');
-  volume.addEventListener('input', () => changeVolume(volume.value, false));
-  volume.addEventListener('change', () => { if (source === 'live') getLivePlayer()?.writePreferences({ volume: true }); });
-  const volumeOutput = node('output', 'ui-audio-volume-fill-output'); volumeOutput.htmlFor = volume.id;
-  volumeFill.append(node('span', 'ui-audio-volume-fill-label', 'Volume'), volume, volumeOutput); volumePopover.append(volumeFill);
-  document.querySelector('.app-shell').append(volumePopover);
-  const syncVolumeExpanded = (open) => [miniVolume, expandedVolume].forEach(button => button.setAttribute('aria-expanded', String(open && button === volumeInvoker)));
-  function closeVolume(returnFocus = false) {
-    if (!volumePopover.matches(':popover-open')) { syncVolumeExpanded(false); return; }
-    volumeReturnFocus = returnFocus; volumePopover.hidePopover(); volumeReturnFocus = true;
-  }
-  function positionVolume() {
-    if (!volumeInvoker || !volumePopover.matches(':popover-open')) return;
-    const viewport = window.visualViewport;
-    const bounds = { left: viewport?.offsetLeft || 0, top: viewport?.offsetTop || 0,
-      width: viewport?.width || innerWidth, height: viewport?.height || innerHeight };
-    const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--space-2')) || 8;
-    volumePopover.style.width = `${Math.min(300, bounds.width - gap * 2)}px`;
-    volumePopover.style.maxHeight = `${Math.max(0, bounds.height - gap * 2)}px`;
-    const anchor = volumeInvoker.getBoundingClientRect(), rect = volumePopover.getBoundingClientRect();
-    volumePopover.style.left = `${Math.max(bounds.left + gap, Math.min(anchor.left, bounds.left + bounds.width - rect.width - gap))}px`;
-    volumePopover.style.top = `${Math.max(bounds.top + gap, Math.min(anchor.top - rect.height - gap, bounds.top + bounds.height - rect.height - gap))}px`;
-  }
-  volumePopover.addEventListener('beforetoggle', event => {
-    if (event.newState === 'closed') {
-      syncVolumeExpanded(false);
-      if (volumeReturnFocus && volumePopover.contains(document.activeElement) && volumeInvoker?.isConnected && volumeInvoker.getClientRects().length) volumeInvoker.focus({ preventScroll: true });
-    }
-  });
-  volumePopover.addEventListener('toggle', () => {
-    const open = volumePopover.matches(':popover-open'); syncVolumeExpanded(open);
-    if (open) { positionVolume(); volume.focus({ preventScroll: true }); }
-  });
   const message = (text, error = false) => {
     const item = node('p', `ui-feedback${error ? ' ui-feedback-error' : ''}`, text);
     item.setAttribute('role', error ? 'alert' : 'status'); return item;
@@ -721,7 +666,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       ['Lists', 'scan-lists', 'listening', (liveState.scanLists || []).filter(item => item.selected).length + (liveState.directListen?.selected ? 1 : 0)],
       ...(liveState.directListen?.allowed ? [['Direct Listen', 'direct-listen', 'direct', liveState.directListen.targets.length]] : []),
       ['Avoid List', 'skip', 'avoids', (liveState.avoids || []).length],
-      ['Listening settings', 'playback-controls', 'settings']
+      ['Listening settings', 'playback-controls', 'settings'],
+      ['Clear queue', 'clear-queue', 'clear', queueCount()]
     ] : [['Call details', 'info-circle', 'details'], ['Queue', 'scan-lists', 'queue', queueCount()],
       ['Transcript', 'messages', 'transcript'], ['Recording library', 'recording', 'library']];
     const choices = node('div', 'ui-surface audio-dock-selection-list');
@@ -732,9 +678,15 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       const leading = node('span', 'ui-record-card-icon'); appendIcon(leading, icon); button.append(leading);
       button.append(node('span', 'ui-record-card-copy', label));
       if (count !== undefined) button.append(node('span', 'ui-pill ui-pill-compact', String(count)));
-      const trailing = node('span', 'ui-record-card-icon'); appendIcon(trailing, 'chevron-right'); button.append(trailing);
+      if (destination === 'clear') button.disabled = !queueCount();
+      if (destination !== 'clear') {
+        const trailing = node('span', 'ui-record-card-icon'); appendIcon(trailing, 'chevron-right'); button.append(trailing);
+      }
       button.addEventListener('click', userAction(() => {
-        if (destination === 'library') { closePanel(); openRecordings?.(); }
+        if (destination === 'clear') {
+          if (source === 'live') getLivePlayer()?.clearQueue(); else recordings.clearQueue();
+          closePanel();
+        } else if (destination === 'library') { closePanel(); openRecordings?.(); }
         else openPanel(destination);
       }));
       choices.append(button);
@@ -1112,11 +1064,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   function updateProgress() {
     if (dock.hidden || superCollapsed && !mobileLayout.matches || size === 'collapsed') return;
     const snapshot = guideScanListState || guideRecordingState || (source === 'live' ? getLivePlayer()?.viewState() || liveState : recordings.viewState());
-    const total = Math.max(0, Number(snapshot.duration) || 0), position = Math.max(0, Number(snapshot.currentTime) || 0);
-    elapsed.textContent = compactElapsed.textContent = time(position); duration.textContent = compactDuration.textContent = time(total);
-    progress.value = compactProgress.value = total ? Math.min(1, position / total) : 0;
-    seek.max = String(total || 1); if (document.activeElement !== seek) seek.value = String(Math.min(position, total));
-    seek.disabled = !isAllowed() || !total; seek.setAttribute('aria-valuetext', `${time(position)} of ${time(total)}`);
+    const timingOptions = { recording: source === 'recordings', allowed: isAllowed() };
+    timing.update(snapshot, timingOptions); compactTiming.update(snapshot, timingOptions);
   }
   const spectrumLevels = new Float32Array(64);
   const spectrumNodes = [fullWave, compactWave, slimWave];
@@ -1266,22 +1215,18 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (playbackFeedback.textContent !== engineStatus) playbackFeedback.textContent = engineStatus;
     playbackFeedback.hidden = ordinary || dock.hidden;
     updateAge();
-    const playLabel = playing ? live ? 'Pause live audio' : 'Pause recording' : live ? active.paused ? 'Resume live audio' : 'Listen live' : 'Play recording';
-    [play, miniPlay, slimPlay].forEach(button => { setLabel(button, playLabel, playing ? 'pause' : 'play'); button.disabled = !isAllowed() || !live && !active.current && !queueCount(); });
+    const playback = audioPlaybackAction(active, { recording: !live });
+    [play, miniPlay, slimPlay].forEach(button => { setLabel(button, playback.label, playback.icon); button.disabled = !isAllowed() || !live && !active.current && !queueCount(); });
     [miniNext, skip].forEach(button => { button.disabled = !isAllowed() || (live ? !active.current && !queueCount() : !active.canNext); });
     previous.disabled = !isAllowed() || !active.canPrevious; rewind.disabled = forward.disabled = !isAllowed() || !active.current || !active.duration;
     replay.disabled = !isAllowed() || !liveState.lastCallReady || liveState.paused;
     [previous, rewind, forward].forEach(button => { button.hidden = live; }); replay.hidden = !live;
     stop.disabled = !isAllowed() || (live ? Boolean(active.stopped) : !active.current && !queueCount()); setLabel(stop, live ? 'Stop listening' : 'Stop recording');
-    hold.hidden = avoids.hidden = !live;
-    hold.disabled = !isAllowed() || !liveState.currentReady && !liveState.holdTarget;
-    setLabel(hold, liveState.holdTarget ? 'Release hold' : 'Hold this talkgroup'); hold.setAttribute('aria-pressed', String(Boolean(liveState.holdTarget)));
+    hold.hidden = avoid.hidden = !live;
+    hold.disabled = !isAllowed() || liveState.replayingLast || !liveState.currentReady && !liveState.holdTarget;
+    setLabel(hold, liveState.holdTarget ? 'Release hold' : 'Hold current target'); hold.setAttribute('aria-pressed', String(Boolean(liveState.holdTarget)));
     avoid.disabled = !isAllowed() || !liveState.currentReady || liveState.replayingLast;
-    seek.hidden = live; progress.hidden = !live;
-    const level = Math.max(0, Math.min(1, Number(active.volume ?? 1))), percent = Math.round(level * 100);
-    [miniVolume, expandedVolume].forEach(button => { setLabel(button, `Volume, ${percent} percent`, level ? 'speaker' : 'speaker-muted'); button.querySelector('[data-volume-value]').textContent = `${percent}%`; button.disabled = !isAllowed(); });
-    if (document.activeElement !== volume) volume.value = String(level); volume.disabled = !isAllowed();
-    volume.setAttribute('aria-valuetext', level ? `${percent} percent` : 'Muted, 0 percent'); volumeOutput.textContent = `${percent}%`; volumeFill.style.setProperty('--audio-volume-percent', `${percent}%`);
+    volumeControl.update(active.volume, isAllowed());
     if (source === 'live' && panel === 'transcript' || source === 'recordings' && ['listening', 'direct', 'settings', 'avoids'].includes(panel)) { panel = null; panelKey = ''; }
     renderSidebar(); renderPanel(); dock.querySelectorAll('[data-click-mode]').forEach(select => { if (select.value !== recordingState.clickMode) select.value = recordingState.clickMode; });
     updateProgress(); measure(); synchronizeLoops();
@@ -1460,7 +1405,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     window.removeEventListener('blur', cancelSizeGesture);
     window.visualViewport?.removeEventListener('resize', viewportChanged); window.visualViewport?.removeEventListener('scroll', viewportChanged);
     document.removeEventListener('visibilitychange', visibilityChanged); dock.removeEventListener('keydown', escapeContext);
-    cancelPresentationMotion(); restore.remove(); volumePopover.remove(); playbackFeedback.remove(); unsubscribeLive(); unsubscribeRecordings();
+    cancelPresentationMotion(); restore.remove(); volumeControl.destroy(); playbackFeedback.remove(); unsubscribeLive(); unsubscribeRecordings();
     resizeObserver.disconnect(); routeObserver.disconnect(); dock.remove(); document.body.classList.remove('has-audio-dock'); document.documentElement.style.removeProperty('--audio-dock-height');
   } };
 }

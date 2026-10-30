@@ -47,7 +47,8 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createAudioDock } from './core/audio-dock.js?v=41';
+import { createAudioDock } from './core/audio-dock.js?v=42';
+import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=1';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
@@ -12065,99 +12066,91 @@ function placePlaybackBar() {
 }
 
 function arrangeScannerPlayback(bar, player, signal, options = {}) {
-  const openMenu = options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker));
-  const controls = node('div', 'scanner-playback-controls');
-  controls.setAttribute('role', 'group');
-  controls.setAttribute('aria-label', 'Playback controls');
-  const secondary = node('div', 'scanner-playback-secondary');
-  secondary.setAttribute('role', 'group');
-  secondary.setAttribute('aria-label', 'Target and queue actions');
+  let closed = false;
   const allowed = () => capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO);
-  const action = (button, id, callback) => {
-    button.id = id;
-    button.type = 'button';
-    button.addEventListener('click', () => {
-      if (allowed() && !button.disabled) callback();
-    }, { signal });
-    return button;
-  };
-  const primary = action(iconButton('icon-play', 'Play browser call audio',
-    'ui-button ui-button-primary ui-icon-button scanner-playback-primary'), 'scanner-play', () => {
-    if (player.viewState().stopped) void player.togglePlayback();
-    else void player.togglePause();
+  const canAct = () => !closed && !signal?.aborted && !options.readOnly && !options.isSuspended?.() && allowed();
+  const run = callback => event => { if (canAct() && !event?.currentTarget?.disabled) callback(); };
+  const volumeControl = createAudioVolume({ node, iconButton, host: document.querySelector('.app-shell'),
+    id: options.readOnly ? 'scanner-example' : 'scanner', signal,
+    onInput: value => { if (canAct()) player.setVolume(value, false); },
+    onCommit: value => { if (canAct()) player.setVolume(value); }
   });
+  const volume = volumeControl.createTrigger('scanner-volume-button');
+  const menu = createAudioCommand(iconButton, 'Player menu', 'menu', run(() => {
+    volumeControl.close(false);
+    (options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker)))(menu);
+  }));
+  menu.id = 'scanner-player-menu';
+  menu.setAttribute('aria-controls', 'audio-dock-panel');
+  const transport = createAudioTransport({ node, iconButton, menu, volume, actions: {
+    play: run(() => {
+      if (player.viewState().stopped) void player.togglePlayback();
+      else void player.togglePause();
+    }),
+    replay: run(() => void player.replayLastCall()), skip: run(() => player.skip()),
+    stop: run(() => { if (!player.viewState().stopped) void player.togglePlayback(); }),
+    hold: run(() => player.toggleHold()), avoid: run(() => player.avoidCurrent())
+  } });
+  const { play: primary, skip, replay, hold, stop, avoid } = transport;
+  Object.entries({ play: primary, skip, replay, hold, stop, avoid }).forEach(([name, button]) => {
+    button.id = `scanner-${name}`;
+  });
+  primary.classList.add('scanner-playback-primary');
   primary.dataset.uiHintPlacement = 'above';
-  const skip = action(iconButton('icon-skip', 'Skip current call'), 'scanner-skip', () => player.skip());
-  const replay = action(iconButton('icon-replay', 'Replay last call'), 'scanner-replay',
-    () => void player.replayLastCall());
-  const hold = action(node('button', 'ui-button ui-button-secondary ui-icon-button', 'Hd'),
-    'scanner-hold', () => player.toggleHold());
-  controls.append(primary, skip, replay, hold);
-  const textAction = (text, id, callback) => action(node('button', 'ui-button ui-button-secondary', text), id, callback);
-  const stop = textAction('Stop', 'scanner-stop', () => {
-    if (!player.viewState().stopped) void player.togglePlayback();
-  });
-  const avoid = textAction('Av', 'scanner-avoid', () => player.avoidCurrent());
-  const menu = action(iconButton('icon-menu', 'Player menu'), 'scanner-player-menu', () => openMenu(menu));
-  const clear = textAction('Clear', 'scanner-clear-queue', () => player.clearQueue());
-  secondary.append(stop, avoid, menu, clear);
-
-  const volumeControl = node('label', 'ui-audio-volume-control');
-  volumeControl.append(node('span', 'ui-audio-volume-label', 'Volume'));
-  const volume = node('input', 'ui-range ui-audio-range');
-  volume.id = 'scanner-volume';
-  volume.type = 'range';
-  volume.min = '0';
-  volume.max = '1';
-  volume.step = '0.05';
-  volume.setAttribute('aria-label', 'Browser playback volume');
-  volume.addEventListener('input', () => {
-    if (allowed()) player.setVolume(Number(volume.value), false);
-  }, { signal });
-  volume.addEventListener('change', () => {
-    if (allowed()) player.setVolume(Number(volume.value));
-  }, { signal });
-  const output = node('output', 'ui-audio-volume-output');
-  output.htmlFor = volume.id;
-  output.setAttribute('aria-hidden', 'true');
-  volumeControl.append(volume, output);
-
-  bar.append(controls, secondary, volumeControl);
-  const label = (button, text) => {
-    button.setAttribute('aria-label', text);
-    button.dataset.uiHint = text;
-  };
-  const draw = (state) => {
-    const access = allowed();
-    const primaryLabel = state.stopped ?
-      'Play browser call audio' : state.paused ? 'Resume browser call audio' :
-        'Pause audio and keep collecting calls (queue is limited)';
-    if (primary.getAttribute('aria-label') !== primaryLabel) {
-      setIconButton(primary, state.stopped || state.paused ? 'icon-play' : 'icon-pause', primaryLabel);
+  transport.main.classList.add('scanner-playback-controls');
+  transport.options.classList.add('scanner-playback-secondary');
+  const timing = createAudioTiming({ node });
+  bar.append(timing.element, transport.element);
+  let progressTimer = null;
+  const synchronize = state => {
+    const visible = !closed && !signal?.aborted && bar.isConnected && !document.hidden && !options.isSuspended?.();
+    if (!visible) {
+      if (progressTimer !== null) { window.clearInterval(progressTimer); progressTimer = null; }
+      volumeControl.close(false);
+      return;
     }
+    const snapshot = state || player.viewState();
+    if (snapshot.playing && progressTimer === null) progressTimer = window.setInterval(() => {
+      if (closed || signal?.aborted) { synchronize(); return; }
+      const snapshot = player.viewState();
+      timing.update(snapshot);
+      synchronize(snapshot);
+    }, 250);
+    else if (!snapshot.playing && progressTimer !== null) {
+      window.clearInterval(progressTimer); progressTimer = null;
+    }
+  };
+  const label = (button, text) => {
+    button.setAttribute('aria-label', text); button.dataset.uiHint = text;
+  };
+  const draw = state => {
+    const access = allowed();
+    const playback = audioPlaybackAction(state);
+    if (primary.getAttribute('aria-label') !== playback.label) setIconButton(primary, `icon-${playback.icon}`, playback.label);
     primary.disabled = !access;
-    primary.setAttribute('aria-pressed', String(!state.stopped && !state.paused));
     skip.disabled = !access || (!state.current && !state.queuedCount);
     replay.disabled = !access || !state.lastCallReady || state.paused;
     hold.disabled = !access || state.replayingLast || (!state.holdTarget && !state.currentReady);
     hold.setAttribute('aria-pressed', String(Boolean(state.holdTarget)));
-    label(hold, state.holdTarget ? 'Release browser hold' : 'Hold the current target in this browser');
+    label(hold, state.holdTarget ? 'Release hold' : 'Hold current target');
     stop.disabled = !access || state.stopped;
-    label(stop, 'Stop browser call audio');
     avoid.disabled = !access || !state.currentReady || state.replayingLast;
-    label(avoid, 'Avoid current target');
     menu.disabled = !access;
-    clear.disabled = !access || !state.queuedCount;
-    label(clear, `Clear ${state.queuedCount} queued browser call(s)`);
-    volume.disabled = !access;
-    volume.value = String(state.volume);
-    const percentage = Math.round(state.volume * 100);
-    volume.setAttribute('aria-valuetext', `${percentage} percent`);
-    output.textContent = `${percentage}%`;
+    volumeControl.update(state.volume, access);
+    timing.update(state);
+    synchronize(state);
   };
   const unsubscribe = player.subscribeState(draw);
-  signal?.addEventListener('abort', unsubscribe, { once: true });
-  return { close: unsubscribe };
+  const visibilityChanged = () => synchronize();
+  document.addEventListener('visibilitychange', visibilityChanged, { signal });
+  const close = () => {
+    if (closed) return;
+    closed = true; unsubscribe(); synchronize(); volumeControl.destroy();
+    document.removeEventListener('visibilitychange', visibilityChanged);
+  };
+  signal?.addEventListener('abort', close, { once: true });
+  if (signal?.aborted) close();
+  return { close, synchronize: () => draw(player.viewState()) };
 }
 
 function initializePlaybackHeader() {
@@ -12868,7 +12861,7 @@ function renderScanner(options = {}) {
   const display = node('div', 'scanner-display ui-listening-hero');
   display.dataset.scannerMode = detailMode;
   displayShell.append(display);
-  nowPlaying.append(statusBar, displayShell);
+  nowPlaying.append(statusBar, displayShell, playerHost);
   const upNext = node('aside', 'scanner-up-next ui-listening-queue');
   upNext.setAttribute('aria-label', 'Up next');
   const queueDisclosure = node('details', 'ui-section-disclosure ui-listening-queue-disclosure scanner-queue-disclosure');
@@ -12898,7 +12891,7 @@ function renderScanner(options = {}) {
   updateQueueDisclosure();
 
   consoleMain.append(nowPlaying, upNext);
-  chassis.append(playerHost, consoleMain);
+  chassis.append(consoleMain);
   page.append(chassis);
   const heading = pageHeader('Scanner', 'Listen to completed calls from this receiver');
   const headingActions = node('div', 'scanner-header-actions');
@@ -12912,6 +12905,7 @@ function renderScanner(options = {}) {
     options.mount(heading, host);
   } else if (!beginPage(renderContext, heading, host)) return;
   const playbackControls = arrangeScannerPlayback(transport, player, renderContext.signal, {
+    readOnly: guideMode, isSuspended: () => guideSuspended,
     openPlayerMenu: invoker => { if (!guideMode) audioDock.openPlayerMenu(invoker); }
   });
 
@@ -13067,6 +13061,7 @@ function renderScanner(options = {}) {
     setGuideSuspended(value) {
       if (guideMode || disposed) return;
       guideSuspended = Boolean(value);
+      playbackControls.synchronize();
 
     },
     async prepareGuide(section, context) {

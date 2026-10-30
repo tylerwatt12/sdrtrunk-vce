@@ -166,7 +166,7 @@ test('icon actions show hints on hover and keyboard-visible focus only', async (
   await expect(page.locator('.visual-app-chrome-example .theme-toggle')).toHaveCSS('width', '40px');
   await page.goto('/design-system.html?theme=light&view=scanner');
   await expect(page.locator('.visual-scanner-example .scanner-playback-controls > .ui-icon-button').first())
-    .toHaveCSS('width', '40px');
+    .toHaveCSS('width', '42px');
 });
 
 test('disabled icon hint stays visible outside a table', async ({ page }) => {

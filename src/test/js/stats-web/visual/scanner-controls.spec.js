@@ -13,73 +13,93 @@ async function openScannerPanel(page, name) {
   return dock.locator('#audio-dock-panel');
 }
 
-async function expectFullWidthScannerActions(page) {
-  await page.locator('#scanner-playback-bar').scrollIntoViewIfNeeded();
-  const bar = await page.locator('#scanner-playback-bar').boundingBox();
-  const padding = await page.locator('#scanner-playback-bar').evaluate(element => {
-    const style = getComputedStyle(element);
-    return { left: parseFloat(style.paddingLeft), right: parseFloat(style.paddingRight) };
+async function clearScannerQueue(page) {
+  await page.locator('#scanner-player-menu').click();
+  const menu = page.locator('#audio-dock-panel');
+  await expect(page.locator('#audio-dock-context-title')).toHaveText('Player menu');
+  await menu.getByRole('button', { name: 'Clear queue', exact: true }).click();
+  if (await menu.isVisible()) await page.keyboard.press('Escape');
+  await expect(page.locator('#audio-dock')).toBeHidden();
+}
+
+async function expectScannerTransportOrder(page) {
+  const bar = page.locator('#scanner-playback-bar');
+  await expect(bar.locator('.ui-audio-transport-main > button:visible')).toHaveCount(4);
+  expect(await bar.locator('.ui-audio-transport-main > button:visible').evaluateAll(buttons =>
+    buttons.map(button => button.id))).toEqual(['scanner-replay', 'scanner-play', 'scanner-skip', 'scanner-stop']);
+  expect(await bar.locator('.ui-audio-transport-options > button:visible').evaluateAll(buttons =>
+    buttons.map(button => button.id))).toEqual(['scanner-hold', 'scanner-avoid', 'scanner-player-menu', 'scanner-volume-button']);
+  await expect(bar.locator('#scanner-hold')).toHaveText('Hd');
+  await expect(bar.locator('#scanner-avoid')).toHaveText('Av');
+  await expect(bar.locator('#scanner-play')).toHaveClass(/ui-button-primary/);
+  await expect(bar.locator('#scanner-clear-queue')).toHaveCount(0);
+  const geometry = await bar.evaluate(element => {
+    const timing = element.querySelector('.ui-audio-timing').getBoundingClientRect();
+    const transport = element.querySelector('.ui-audio-transport').getBoundingClientRect();
+    const display = document.querySelector('.scanner-display').getBoundingClientRect();
+    return { timingBottom: timing.bottom, transportTop: transport.top, displayBottom: display.bottom, barTop: element.getBoundingClientRect().top };
   });
+  expect(geometry.timingBottom).toBeLessThanOrEqual(geometry.transportTop);
+  expect(geometry.displayBottom).toBeLessThanOrEqual(geometry.barTop);
+}
+
+async function expectFullWidthScannerActions(page) {
+  await expectScannerTransportOrder(page);
+  const bar = page.locator('#scanner-playback-bar');
+  await bar.scrollIntoViewIfNeeded();
   const rows = [];
-  for (const selector of ['.scanner-playback-controls', '.scanner-playback-secondary']) {
-    const controls = page.locator(selector);
+  for (const selector of ['.ui-audio-transport-main', '.ui-audio-transport-options']) {
+    const controls = bar.locator(selector);
     const row = await controls.boundingBox();
     rows.push(row);
-    expect(row.x).toBeCloseTo(bar.x + padding.left, 1);
-    expect(row.x + row.width).toBeCloseTo(bar.x + bar.width - padding.right, 1);
-    const buttons = await controls.locator(':scope > button').evaluateAll(elements =>
+    const buttons = await controls.locator(':scope > button:visible').evaluateAll(elements =>
       elements.map(element => {
+        element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
         const box = element.getBoundingClientRect();
+        const host = element.parentElement.getBoundingClientRect();
         const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
-        return { left: box.left, right: box.right, width: box.width, height: box.height,
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom,
+          width: box.width, height: box.height, hostLeft: host.left, hostRight: host.right,
           reachable: Boolean(hit && element.contains(hit)) };
       }));
     expect(buttons).toHaveLength(4);
-    expect(buttons[0].left).toBeCloseTo(row.x, 1);
-    expect(buttons.at(-1).right).toBeCloseTo(row.x + row.width, 1);
     for (const button of buttons) {
-      expect(button.width).toBeCloseTo((row.width - 3 * 8) / 4, 1);
+      expect(button.left).toBeGreaterThanOrEqual(button.hostLeft - 1);
+      expect(button.right).toBeLessThanOrEqual(button.hostRight + 1);
+      expect(button.width).toBeGreaterThanOrEqual(40);
       expect(button.height).toBeGreaterThanOrEqual(40);
       expect(button.reachable).toBe(true);
     }
-    for (let index = 1; index < buttons.length; index += 1) {
-      expect(buttons[index].left - buttons[index - 1].right).toBeCloseTo(8, 1);
+    for (let index = 1; index < buttons.length; index++) {
+      const previous = buttons[index - 1], next = buttons[index];
+      if (Math.abs(next.top - previous.top) < 1) expect(next.left - previous.right).toBeGreaterThanOrEqual(7);
+      else expect(next.top).toBeGreaterThanOrEqual(previous.bottom + 7);
+    }
+    if (selector === '.ui-audio-transport-main') {
+      expect(buttons[0].left).toBeCloseTo(buttons[0].hostLeft, 1);
+      expect(buttons.at(-1).right).toBeCloseTo(buttons.at(-1).hostRight, 1);
+      for (const button of buttons) expect(button.width).toBeCloseTo((row.width - 3 * 8) / 4, 1);
     }
   }
-  expect(rows[1].y).toBeGreaterThanOrEqual(rows[0].y + rows[0].height + 8);
-  const volume = await page.locator('#scanner-playback-bar .ui-audio-volume-control').boundingBox();
-  expect(volume.x).toBeCloseTo(bar.x + padding.left, 1);
-  expect(volume.x + volume.width).toBeCloseTo(bar.x + bar.width - padding.right, 1);
+  expect(rows[1].y).toBeGreaterThanOrEqual(rows[0].y + rows[0].height + 7);
 }
 
 async function expectCompactDesktopScannerActions(page) {
-  const widths = await page.locator('.scanner-playback-controls > button').evaluateAll(buttons =>
-    buttons.map(button => button.getBoundingClientRect().width));
-  expect(widths).toEqual(Array(4).fill(40));
-  const secondaryWidths = await page.locator('.scanner-playback-secondary > button').evaluateAll(buttons =>
-    buttons.map(button => button.getBoundingClientRect().width));
-  expect(secondaryWidths).toHaveLength(4);
-  for (const width of secondaryWidths) expect(width).toBeGreaterThanOrEqual(68);
-  const volume = await page.locator('.scanner-playback-transport .ui-audio-volume-control').boundingBox();
-  expect(volume.width).toBe(220);
-  const display = await page.locator('.scanner-display').boundingBox();
-  const transport = await page.locator('.scanner-playback-transport').boundingBox();
-  expect(transport.y + transport.height).toBeLessThanOrEqual(display.y);
-  const barHeight = await page.locator('#scanner-playback-bar').evaluate(element => {
-    const style = getComputedStyle(element);
-    return { height: element.getBoundingClientRect().height, chrome: parseFloat(style.paddingTop) +
-      parseFloat(style.paddingBottom) + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth) };
-  });
-  expect(barHeight.height).toBeLessThanOrEqual(40 + barHeight.chrome);
-  const actions = await page.locator('#scanner-playback-bar > *').evaluateAll(elements =>
-    elements.map(element => {
-      const box = element.getBoundingClientRect();
-      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom };
-    }));
-  for (let index = 1; index < actions.length; index += 1) {
-    expect(actions[index].left).toBeGreaterThanOrEqual(actions[index - 1].right);
-    expect(actions[index].top).toBe(actions[0].top);
+  await expectScannerTransportOrder(page);
+  const primary = page.locator('#scanner-playback-bar .ui-audio-transport-main > button:visible');
+  const widths = await primary.evaluateAll(buttons => buttons.map(button => button.getBoundingClientRect().width));
+  expect(widths).toHaveLength(4);
+  for (const width of widths) expect(width).toBeGreaterThanOrEqual(40);
+  for (const width of widths) expect(width).toBeCloseTo(widths[0], 1);
+  const utilities = page.locator('#scanner-playback-bar .ui-audio-transport-options > button:visible');
+  for (const button of await utilities.all()) {
+    const bounds = await button.boundingBox();
+    expect(bounds.width).toBeGreaterThanOrEqual(40);
+    expect(bounds.height).toBeGreaterThanOrEqual(40);
   }
+  const bar = await page.locator('#scanner-playback-bar').boundingBox();
+  const display = await page.locator('.scanner-display').boundingBox();
+  expect(display.y + display.height).toBeLessThanOrEqual(bar.y);
 }
 
 async function activeSourceCount(page) {
@@ -120,6 +140,89 @@ async function expectPhoneQueueFits(page, list) {
     return Boolean(bounds && bounds.y >= 0 && bounds.y + bounds.height <= viewportHeight + 1);
   }).toBe(true);
 }
+
+test('Scanner progress follows decoded playback position and stays still while paused', async ({ page }) => {
+  await page.clock.install();
+  await openAudioApp(page, { view: 'scanner' });
+  const primary = page.locator('#scanner-play');
+  const timing = page.locator('#scanner-playback-bar .ui-audio-timing');
+  const progress = timing.locator('progress');
+  await primary.click();
+  await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
+  await expect(progress).toBeVisible();
+  await page.evaluate(() => { window.audioTest.contexts.at(-1).currentTime = 8; });
+  await page.clock.runFor(260);
+  await expect(timing.locator('.ui-audio-time').first()).toHaveText('00:08');
+  await expect(timing.locator('.ui-audio-time').last()).toHaveText('00:42');
+  await expect.poll(() => progress.evaluate(element => element.value / element.max)).toBeCloseTo(8 / 42, 5);
+  const sources = await page.evaluate(() => window.audioTest.liveSources.length);
+  await primary.click();
+  await expect(primary).toHaveAttribute('aria-label', 'Resume live audio');
+  expect(await page.evaluate(() => window.audioTest.contexts.at(-1).state)).toBe('suspended');
+  await page.clock.runFor(1500);
+  await expect(timing.locator('.ui-audio-time').first()).toHaveText('00:08');
+  expect(await progress.evaluate(element => element.value / element.max)).toBeCloseTo(8 / 42, 5);
+  await primary.click();
+  await page.evaluate(() => { window.audioTest.contexts.at(-1).currentTime = 13; });
+  await page.clock.runFor(260);
+  await expect(timing.locator('.ui-audio-time').first()).toHaveText('00:13');
+  expect(await progress.evaluate(element => element.value / element.max)).toBeCloseTo(13 / 42, 5);
+  expect(await page.evaluate(() => window.audioTest.liveSources.length)).toBe(sources);
+  const detachedProgress = await progress.elementHandle();
+  await page.locator('.brand').click();
+  await expect(page.locator('body')).toHaveAttribute('data-view', 'dashboard');
+  expect(await detachedProgress.evaluate(element => element.isConnected)).toBe(false);
+  await page.evaluate(() => { window.audioTest.contexts.at(-1).currentTime = 20; });
+  await page.clock.runFor(510);
+  expect(await detachedProgress.evaluate(element => element.value / element.max)).toBeCloseTo(13 / 42, 5);
+});
+
+test('Scanner progress waits for decoded duration without inventing a percentage or total', async ({ page }) => {
+  await openAudioApp(page, { view: 'scanner' });
+  await page.evaluate(() => {
+    window.AudioContext.prototype.decodeAudioData = () => new Promise(resolve => {
+      window.audioTest.completeDecode = resolve;
+    });
+  });
+  await page.locator('#scanner-play').click();
+  const timing = page.locator('#scanner-playback-bar .ui-audio-timing');
+  await expect(timing).toContainText('Duration unavailable');
+  await expect(timing.locator('progress')).toBeHidden();
+  await expect(timing).not.toContainText('00:42');
+  await expect(timing).not.toContainText('%');
+  await expect.poll(() => page.evaluate(() => typeof window.audioTest.completeDecode)).toBe('function');
+  await page.evaluate(() => window.audioTest.completeDecode({ duration: 42, sampleRate: 16000 }));
+  await expect(timing.locator('progress')).toBeVisible();
+  await expect(timing.locator('.ui-audio-time').last()).toHaveText('00:42');
+  await expect(timing).not.toContainText('Duration unavailable');
+});
+
+test('Scanner and expanded dock share transport order while recordings keep their own actions', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openAudioApp(page, { view: 'scanner', feedCallsEnabled: false });
+  await expectScannerTransportOrder(page);
+  const scanner = page.locator('#scanner-playback-bar');
+  const snapshot = async transport => transport.locator('.ui-audio-transport-main > button:visible').evaluateAll(buttons =>
+    buttons.map(button => ({ icon: button.querySelector('use').getAttribute('href'),
+      primary: button.classList.contains('ui-button-primary'),
+      height: button.getBoundingClientRect().height,
+      shape: getComputedStyle(button).borderRadius })));
+  const scannerCommands = await snapshot(scanner);
+  expect(scannerCommands.map(button => button.icon)).toEqual(['#icon-replay', '#icon-play', '#icon-skip', '#icon-stop']);
+  await page.locator('.brand').click();
+  const dock = page.locator('#audio-dock');
+  await dock.locator('#audio-dock-size-handle').press('End');
+  await expect(dock).toHaveAttribute('data-state', 'full');
+  expect(await snapshot(dock)).toEqual(scannerCommands);
+  await expect(dock.locator('.ui-audio-transport-options > button').first()).toHaveText('Hd');
+  await expect(dock.locator('.ui-audio-transport-options > button').nth(1)).toHaveText('Av');
+  await dock.getByRole('combobox', { name: 'Audio source', exact: true }).selectOption('recordings');
+  expect((await snapshot(dock)).map(button => button.icon)).toEqual([
+    '#icon-previous', '#icon-rewind', '#icon-play', '#icon-forward', '#icon-skip', '#icon-stop'
+  ]);
+  await expect(dock.getByRole('button', { name: 'Hold current target', exact: true })).toBeHidden();
+  await expect(dock.getByRole('button', { name: 'Avoid current target', exact: true })).toBeHidden();
+});
 
 for (const radio of [true, false]) {
   test(`Scanner queued talkgroup links preserve identity and Radio access ${radio}`, async ({ page }) => {
@@ -192,7 +295,7 @@ for (const theme of ['light', 'dark']) {
     const list = upNext.locator('.scanner-up-next-list');
     const queuedCalls = list.locator(':scope > li[data-ui-hint]');
     for (const id of ['scanner-skip', 'scanner-replay', 'scanner-hold', 'scanner-stop',
-      'scanner-avoid', 'scanner-clear-queue']) await expect(page.locator(`#${id}`)).toBeDisabled();
+      'scanner-avoid']) await expect(page.locator(`#${id}`)).toBeDisabled();
     await expect(page.locator('#scanner-player-menu')).toBeEnabled();
     if (desktop) await expectCompactDesktopScannerActions(page);
     else await expectFullWidthScannerActions(page);
@@ -206,7 +309,7 @@ for (const theme of ['light', 'dark']) {
     await expect.poll(() => activeSourceCount(page)).toBe(1);
     const sourcesBeforePause = await page.evaluate(() => window.audioTest.liveSources.length);
     await primary.click();
-    await expect(primary).toHaveAttribute('aria-label', 'Resume browser call audio');
+    await expect(primary).toHaveAttribute('aria-label', 'Resume live audio');
     await expect.poll(() => page.evaluate(() => window.audioTest.contexts.at(-1).state)).toBe('suspended');
     pending.push(call('Fire Dispatch', 'Engine 5'), call('Police Dispatch', 'Unit 7'),
       call('Fire Dispatch', 'Engine 6'), call('Medical Dispatch', 'Medic 1'));
@@ -252,7 +355,7 @@ for (const theme of ['light', 'dark']) {
       await expect(summary).toBeFocused();
     }
     await primary.click();
-    await expect(primary).toHaveAttribute('aria-label', /Pause audio/);
+    await expect(primary).toHaveAttribute('aria-label', 'Pause live audio');
     await expect.poll(() => page.evaluate(() => window.audioTest.contexts.at(-1).state)).toBe('running');
     expect(await page.evaluate(() => window.audioTest.liveSources.length)).toBe(sourcesBeforePause);
 
@@ -262,7 +365,7 @@ for (const theme of ['light', 'dark']) {
     await expect(queuedCalls).toHaveCount(2);
     await expect(upNext).not.toContainText('Unit 7');
     await expect(queuedCalls.first()).toContainText('Engine 5');
-    await page.locator('#scanner-clear-queue').click();
+    await clearScannerQueue(page);
     await expect(queuedCalls).toHaveCount(0);
     await expect(count).toHaveText('0 queued');
     await expect(upNext).toContainText('Waiting for calls');
@@ -300,15 +403,17 @@ for (const theme of ['light', 'dark']) {
     await expect(count).toHaveText('1 queued');
     await expect(queuedCalls).toHaveCount(1);
     await expect(queuedCalls.first()).toContainText('Unit 10');
-    await page.locator('#scanner-clear-queue').click();
+    await clearScannerQueue(page);
     await expect(count).toHaveText('0 queued');
     await expect(queuedCalls).toHaveCount(0);
     await expect(title).toHaveText('Medical Dispatch');
     await page.locator('#scanner-stop').click();
     await expect.poll(() => activeSourceCount(page)).toBe(0);
-    await expect(primary).toHaveAttribute('aria-label', 'Play browser call audio');
+    await expect(primary).toHaveAttribute('aria-label', 'Listen live');
     await expect(page.locator('#scanner-stop')).toBeDisabled();
-    await expect(page.locator('#scanner-clear-queue')).toBeDisabled();
+    await page.locator('#scanner-player-menu').click();
+    await expect(page.locator('#audio-dock-panel').getByRole('button', { name: 'Clear queue', exact: true })).toBeDisabled();
+    await page.keyboard.press('Escape');
     await page.screenshot({ path: test.info().outputPath(`scanner-direct-actions-${theme}.png`) });
     expect(errors).toEqual([]);
   });
@@ -341,7 +446,7 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['dark
     await expect(modes.locator('option')).toHaveText(['Simple', 'Normal', 'Advanced', 'Engineer']);
     await expect(page.locator('.scanner-playback-primary')).toBeVisible();
     for (const id of ['scanner-skip', 'scanner-replay', 'scanner-hold', 'scanner-stop',
-      'scanner-avoid', 'scanner-player-menu', 'scanner-clear-queue', 'scanner-volume']) {
+      'scanner-avoid', 'scanner-player-menu', 'scanner-volume-button']) {
       await expect(page.locator(`#${id}`)).toBeVisible();
     }
     await expect(page.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
@@ -349,8 +454,8 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['dark
     await expect(page.locator('#desktop-playback-slot #playback-volume')).toHaveCount(1);
     await expect(page.locator('#desktop-playback-slot #playback-skip')).toHaveCount(1);
     const transport = await page.locator('#scanner-playback-bar').boundingBox();
-    const callStage = await page.locator('.scanner-console-main').boundingBox();
-    expect(transport.y + transport.height).toBeLessThanOrEqual(callStage.y);
+    const callStage = await page.locator('.scanner-display').boundingBox();
+    expect(callStage.y + callStage.height).toBeLessThanOrEqual(transport.y);
     expect(await page.locator('#scanner-playback-bar').evaluate(element => getComputedStyle(element).position)).toBe('static');
     if (viewport.width >= 1181) await expectCompactDesktopScannerActions(page);
     await page.screenshot({ path: test.info().outputPath(`scanner-${theme}-${viewport.width}.png`), fullPage: true });
@@ -373,11 +478,11 @@ for (const [theme, viewport] of [['light', { width: 1280, height: 900 }], ['dark
     await page.keyboard.press('Escape');
     const primary = page.locator('.scanner-playback-primary');
     await primary.click();
-    await expect(primary).toHaveAttribute('aria-label', /Pause audio/);
+    await expect(primary).toHaveAttribute('aria-label', 'Pause live audio');
     await primary.click();
-    await expect(primary).toHaveAttribute('aria-label', 'Resume browser call audio');
+    await expect(primary).toHaveAttribute('aria-label', 'Resume live audio');
     await primary.click();
-    await expect(primary).toHaveAttribute('aria-label', /Pause audio/);
+    await expect(primary).toHaveAttribute('aria-label', 'Pause live audio');
     const disclosure = page.locator('.scanner-queue-disclosure');
     const summary = disclosure.locator('summary');
     const queueList = disclosure.locator('.scanner-up-next-list');
@@ -462,36 +567,47 @@ test('Scanner scan-list loading, retry and selection limit', async ({ page }) =>
 
 for (const theme of ['light']) {
   for (const width of [320, 390]) {
-    test(`Scanner native volume ${theme} ${width}`, async ({ page }) => {
+    test(`Scanner shared volume popup ${theme} ${width}`, async ({ page }) => {
       await page.setViewportSize({ width, height: width === 320 ? 568 : 844 });
       const state = await openAudioApp(page, { view: 'scanner', theme, volume: 0.75, feedCallsEnabled: false });
-      const volume = page.locator('#scanner-volume');
-      const output = page.locator('#scanner-playback-bar .ui-audio-volume-output');
+      const trigger = page.locator('#scanner-volume-button');
+      const popup = page.locator('#scanner-volume-popover');
+      const volume = popup.getByRole('slider', { name: 'Volume', exact: true });
+      const output = popup.locator('output');
       const globalInput = await page.locator('#playback-volume').elementHandle();
       const globalInputStyle = await globalInput.evaluate(element => ({
         classes: element.className, parentClasses: element.parentElement.className
       }));
-      await expect(volume).toHaveClass(/ui-range ui-audio-range/);
-      await expect(page.locator('#scanner-playback-bar .ui-audio-volume-label')).toHaveText('Volume');
-      await expect(output).toHaveText('75%');
+      await expect(trigger).toHaveText('75%');
+      await expect(trigger).toHaveClass(/ui-audio-volume-trigger/);
       await expectFullWidthScannerActions(page);
+      await trigger.click();
+      await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+      await expect(volume).toBeFocused();
+      await expect(output).toHaveText('75%');
       const bounds = await volume.boundingBox();
-      expect(bounds.height).toBe(40);
-      await expect(page.locator('#scanner-playback-bar .ui-audio-volume-control')).toHaveCSS('background-image', 'none');
       await volume.click({ position: { x: bounds.width / 2, y: bounds.height / 2 } });
       await expect(volume).toHaveValue('0.5');
       await expect(output).toHaveText('50%');
       await volume.press('ArrowRight');
       await expect(volume).toHaveValue('0.55');
       await expect(output).toHaveText('55%');
+      await expect(trigger).toHaveText('55%');
       await expect(volume).toHaveAttribute('aria-valuetext', '55 percent');
       await expect.poll(() => state.preferenceWrites.at(-1)?.playback?.volume).toBe(0.55);
+      await volume.press('Escape');
+      await expect(popup).toBeHidden();
+      await expect(trigger).toBeFocused();
       await page.reload();
+      await expect(trigger).toHaveText('55%');
+      await trigger.click();
       await expect(volume).toHaveValue('0.55');
       await expect(output).toHaveText('55%');
       const reloadedGlobalInput = await page.locator('#playback-volume').elementHandle();
-      await page.screenshot({ path: test.info().outputPath(`scanner-proportions-${theme}-${width}.png`) });
       const input = await volume.elementHandle();
+      await page.keyboard.press('Escape');
+      await page.screenshot({ path: test.info().outputPath(`scanner-proportions-${theme}-${width}.png`) });
+      await trigger.click();
       await page.locator('.brand').click();
       await expect(page.locator('body')).toHaveAttribute('data-view', 'dashboard');
       expect(await input.evaluate(element => element.isConnected)).toBe(false);
@@ -501,29 +617,28 @@ for (const theme of ['light']) {
       }))).toEqual(globalInputStyle);
       expect(await reloadedGlobalInput.evaluate(element => element.value)).toBe('0.55');
       expect(await reloadedGlobalInput.evaluate(element => element.getAttribute('aria-valuetext'))).toBe('55 percent');
-      await expect(page.locator('#scanner-volume')).toHaveCount(0);
-      await expect(output).toHaveCount(0);
-      await expect(page.locator('.playback-volume-label')).toHaveText('VOL');
+      await expect(trigger).toHaveCount(0);
+      await expect(popup).toHaveCount(0);
       await page.locator('.primary-nav a[data-view="scanner"]').evaluate(element => element.click());
-      await expect(output).toHaveCount(1);
-      await expect(output).toHaveText('55%');
+      await expect(trigger).toHaveCount(1);
+      await expect(trigger).toHaveText('55%');
+      await expect(popup).toHaveCount(1);
       expect(await input.evaluate(element => element.isConnected)).toBe(false);
       expect(await reloadedGlobalInput.evaluate(element => element.isConnected)).toBe(true);
-      await expect(volume).toHaveCount(1);
     });
   }
 }
 
 test.describe('Landscape phone playback', () => {
   test.use({ hasTouch: true, isMobile: true, viewport: { width: 844, height: 390 } });
-  test('keeps the transport above the call in a short coarse-pointer viewport', async ({ page }) => {
+  test('keeps shared transport reachable below the call in a short coarse-pointer viewport', async ({ page }) => {
     await installSiteStyleApplication(page, 'dark');
     await page.goto('/app.html?view=scanner');
     expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
     await expect(page.locator('.scanner-playback-primary')).toBeVisible();
     const bar = await page.locator('#scanner-playback-bar').boundingBox();
-    const callStage = await page.locator('.scanner-console-main').boundingBox();
-    expect(bar.y + bar.height).toBeLessThanOrEqual(callStage.y);
+    const callStage = await page.locator('.scanner-display').boundingBox();
+    expect(callStage.y + callStage.height).toBeLessThanOrEqual(bar.y);
     expect(await page.locator('#scanner-playback-bar').evaluate(element => getComputedStyle(element).position)).toBe('static');
     await expectFullWidthScannerActions(page);
     await expect(page.locator('.scanner-queue-trigger, .scanner-queue-panel')).toHaveCount(0);
@@ -572,7 +687,7 @@ for (const theme of ['light']) {
   await expect(page.locator('.scanner-display')).toHaveAttribute('data-scanner-mode', 'simple');
   expect(await page.locator('.scanner-console').evaluate(element => element.offsetHeight)).toBeLessThan(tallHeight);
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(scrollY);
-  await page.locator('#scanner-clear-queue').click();
+  await clearScannerQueue(page);
   await expect(page.locator('.scanner-up-next-count')).toHaveText('0 queued');
   const avoids = await openScannerPanel(page, 'Avoid List');
   await expect(avoids).toBeVisible();
@@ -588,6 +703,7 @@ test('Revoked call-audio access disables Scanner controls and blocks stale selec
   const checkbox = await lists.locator('input[id^="audio-dock-scan-list-"]').first().elementHandle();
   const trigger = await page.locator('#scanner-player-menu').elementHandle();
   const volume = await page.locator('#scanner-volume').elementHandle();
+  const volumeTrigger = await page.locator('#scanner-volume-button').elementHandle();
   const primary = await page.locator('.scanner-playback-primary').elementHandle();
   const writes = state.preferenceWrites.length;
   state.session.capabilities['call-audio'] = false;
@@ -595,6 +711,8 @@ test('Revoked call-audio access disables Scanner controls and blocks stale selec
   await expect.poll(() => checkbox.evaluate(element => element.disabled)).toBe(true);
   expect(await trigger.evaluate(element => element.disabled)).toBe(true);
   expect(await volume.evaluate(element => element.disabled)).toBe(true);
+  expect(await volumeTrigger.evaluate(element => element.disabled)).toBe(true);
+  await expect(page.locator('#scanner-volume-popover')).toBeHidden();
   expect(await primary.evaluate(element => element.disabled)).toBe(true);
   await expect(lists).toBeHidden();
   await checkbox.evaluate(element => {

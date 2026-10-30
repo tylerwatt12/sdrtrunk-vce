@@ -7,6 +7,7 @@ import * as tableLayouts from '/assets/core/table-layout.js';
 import { createTableOverflow } from '/assets/core/table-overflow.js?v=2';
 import { createDualRange } from '/assets/core/dual-range.js';
 import { mountAudioDockGallery } from '/visual/audio-dock-gallery.js';
+import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume } from '/assets/core/audio-controls.js?v=1';
 import { createFormWorkflow } from '/assets/core/form-workflows.js';
 import { createBrowsingPager, createFilterDisclosure, pageRangeText, scanListAvailabilityPill } from '/assets/core/browsing-workflows.js';
 import { createGalleryModalFoundation } from '/visual/modal-foundation-gallery.js';
@@ -1487,14 +1488,86 @@ if (view === 'activity-filters' || view === 'scanner') {
     });
     queueViewport.addEventListener('change', updateQueueDisclosure);
     updateQueueDisclosure();
+    // Execute the same controls, timing and native volume popup as both players.
     const scannerBar = scannerPage.querySelector('#scanner-playback-bar');
-    const volume = scannerBar.querySelector('.ui-audio-range');
-    const volumeOutput = scannerBar.querySelector('.ui-audio-volume-output');
-    volume.addEventListener('input', () => {
-      const percent = Math.round(Number(volume.value) * 100);
-      volume.setAttribute('aria-valuetext', `${percent} percent`);
-      volumeOutput.textContent = `${percent}%`;
+    const node = (tag, className = '', text = null) => {
+      const element = document.createElement(tag);
+      element.className = className;
+      if (text !== null) element.textContent = String(text);
+      return element;
+    };
+    const documentSource = await fetch('/app.html').then(response => response.text());
+    const sprite = new DOMParser().parseFromString(documentSource, 'text/html').querySelector('.icon-sprite');
+    if (sprite) document.body.prepend(document.importNode(sprite, true));
+    const iconButton = (iconId, label, className) => {
+      const button = node('button', className);
+      button.type = 'button';
+      button.setAttribute('aria-label', label);
+      button.dataset.uiHint = label;
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      svg.setAttribute('aria-hidden', 'true');
+      use.setAttribute('href', `#${iconId}`);
+      svg.append(use); button.append(svg);
+      return button;
+    };
+    const sample = { current: { call_id: 'gallery-scanner-call' }, currentTime: 8, duration: 32,
+      playing: true, paused: false, stopped: false, holdTarget: null, volume: 0.75, queuedCount: 8 };
+    const timing = createAudioTiming({ node });
+    let controls;
+    const volumeControl = createAudioVolume({ node, iconButton, host: document.body,
+      id: 'scanner', onInput: value => { sample.volume = value; draw(); } });
+    const volumeButton = volumeControl.createTrigger('scanner-volume-button');
+    const clearQueue = () => {
+      sample.queuedCount = 0;
+      scannerPage.querySelector('.scanner-up-next-count').textContent = '0 queued';
+      scannerPage.querySelector('.scanner-up-next-list').replaceChildren();
+      scannerPage.querySelector('.scanner-up-next-preview strong').textContent = 'Waiting for calls';
+      scannerPage.querySelector('.scanner-up-next-preview .ui-muted').textContent = '—';
+    };
+    const menu = createAudioCommand(iconButton, 'Player menu', 'menu', () => {
+      void createGalleryModalFoundation().then(({ openReadOnlyModal }) => {
+        const content = node('div', 'ui-surface');
+        const clear = node('button', 'ui-select-list-item', 'Clear queue');
+        clear.type = 'button'; clear.disabled = !sample.queuedCount;
+        content.append(clear);
+        const modal = openReadOnlyModal('Player menu', content);
+        clear.addEventListener('click', () => { clearQueue(); modal.close(); });
+      });
     });
+    menu.id = 'scanner-player-menu';
+    controls = createAudioTransport({ node, iconButton, menu, volume: volumeButton, actions: {
+      play: () => { sample.stopped = false; sample.playing = !sample.playing; sample.paused = !sample.playing; draw(); },
+      replay: () => { sample.currentTime = 0; draw(); },
+      skip: () => { sample.currentTime = 0; draw(); },
+      stop: () => { sample.stopped = true; sample.playing = false; sample.paused = false; draw(); },
+      hold: () => { sample.holdTarget = sample.holdTarget ? null : { label: 'County Fire Dispatch' }; draw(); },
+      avoid: () => { sample.currentTime = 0; draw(); }
+    } });
+    controls.main.classList.add('scanner-playback-controls');
+    controls.options.classList.add('scanner-playback-secondary');
+    for (const [name, button] of Object.entries({ play: controls.play, replay: controls.replay,
+      skip: controls.skip, stop: controls.stop, hold: controls.hold, avoid: controls.avoid })) button.id = `scanner-${name}`;
+    const draw = () => {
+      timing.update(sample);
+      const label = sample.playing ? 'Pause live audio' : sample.paused ? 'Resume live audio' : 'Listen live';
+      controls.play.setAttribute('aria-label', label); controls.play.dataset.uiHint = label;
+      controls.play.querySelector('use').setAttribute('href', sample.playing ? '#icon-pause' : '#icon-play');
+      controls.hold.setAttribute('aria-pressed', String(Boolean(sample.holdTarget)));
+      controls.hold.setAttribute('aria-label', sample.holdTarget ? 'Release hold' : 'Hold current target');
+      controls.hold.dataset.uiHint = controls.hold.getAttribute('aria-label');
+      const status = scannerPage.querySelector('.scanner-live-status');
+      status.textContent = sample.stopped ? 'Stopped' : sample.paused ? 'Paused' : sample.holdTarget ? 'Holding' : 'Listening';
+      status.classList.toggle('ui-pill-success', !sample.stopped && !sample.paused);
+      controls.stop.disabled = sample.stopped;
+      controls.replay.disabled = !sample.current || sample.paused;
+      controls.skip.disabled = !sample.current && !sample.queuedCount;
+      controls.hold.disabled = controls.avoid.disabled = !sample.current;
+      volumeControl.update(sample.volume, true);
+    };
+    scannerBar.append(timing.element, controls.element);
+    draw();
+    scannerPage.dataset.sharedAudioReady = 'true';
     if (parameters.get('state') === 'idle') {
       const display = scannerPage.querySelector('.scanner-display');
       const height = display.getBoundingClientRect().height;
@@ -1518,6 +1591,7 @@ if (view === 'activity-filters' || view === 'scanner') {
       display.querySelectorAll('.scanner-audio-wave i').forEach(bar => { bar.style.height = '3px'; });
       display.style.minHeight = `${height}px`;
       scannerPage.querySelector('.scanner-relative-age').textContent = 'Waiting for a call';
+      sample.current = null; sample.currentTime = sample.duration = 0; sample.playing = false; sample.stopped = true; draw();
     }
   }
 }

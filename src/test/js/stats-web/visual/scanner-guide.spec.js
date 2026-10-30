@@ -410,7 +410,7 @@ test('Scanner restores a paused original call, Engineer view, volume and shared 
   await page.locator('#scanner-play').click();
   await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
   await page.locator('#scanner-play').click();
-  await expect(page.locator('#scanner-play')).toHaveAttribute('aria-label', 'Resume browser call audio');
+  await expect(page.locator('#scanner-play')).toHaveAttribute('aria-label', 'Resume live audio');
   await page.getByRole('combobox', { name: 'Scanner detail level', exact: true }).selectOption('engineer');
   await expect.poll(() => fixture.preferenceWrites.length).toBeGreaterThan(0);
   const dock = page.locator('#audio-dock');
@@ -445,7 +445,7 @@ test('Scanner restores a paused original call, Engineer view, volume and shared 
   await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
   await expect(page.getByRole('combobox', { name: 'Scanner detail level', exact: true })).toHaveValue('engineer');
   await expect(page.locator('#scanner-volume')).toHaveValue('0.35');
-  await expect(page.locator('#scanner-play')).toHaveAttribute('aria-label', 'Resume browser call audio');
+  await expect(page.locator('#scanner-play')).toHaveAttribute('aria-label', 'Resume live audio');
   await expect(dock).toBeVisible();
   await expect(dock.locator('#audio-dock-context-title')).toHaveText('Lists');
   expect(await dock.locator('#audio-dock-panel input[type=checkbox]').evaluateAll(inputs =>
@@ -460,6 +460,73 @@ test('Scanner restores a paused original call, Engineer view, volume and shared 
   expect(fixture.preferenceWrites.length).toBe(writes);
   expect(await page.evaluate(() => ({ contexts: window.audioTest.contexts.length,
     sources: window.audioTest.liveSources.length, recordings: window.audioTest.recordings.length }))).toEqual(audioBefore);
+  expect(effects.samples).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
+test('Scanner guide isolates the shared volume popup and stale Scanner controls', async ({ page }) => {
+  const effects = observeEffects(page), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const fixture = await openAudioApp(page, { view: 'scanner', volume: .35, feedCallsEnabled: false });
+  const popup = page.locator('#scanner-volume-popover');
+  const trigger = page.locator('#scanner-volume-button');
+  await trigger.click();
+  await expect(popup).toBeVisible();
+  const originalPopup = await popup.elementHandle();
+  const originalInput = await popup.getByRole('slider', { name: 'Volume', exact: true }).elementHandle();
+  const originalTrigger = await trigger.elementHandle();
+  const originalPlay = await page.locator('#scanner-play').elementHandle();
+  const audioSnapshot = () => page.evaluate(() => ({
+    contexts: window.audioTest.contexts.map(context => context.state),
+    sources: window.audioTest.liveSources.map(source => source.active),
+    recordings: window.audioTest.recordings
+  }));
+  const audioBefore = await audioSnapshot(), writes = fixture.preferenceWrites.length;
+  await page.locator('#page-guide-button').evaluate(button => button.click());
+  await start(page);
+  await expect(page.locator('[data-guide-example="scanner"]')).toBeVisible();
+  await expect(popup).toHaveCount(1);
+  await expect(popup).toBeHidden();
+  await expect(page.locator('#scanner-example-volume-popover')).toHaveCount(1);
+  await expect(page.locator('#scanner-example-volume')).toHaveCount(1);
+  await expect(page.locator('#content #scanner-volume-button')).toHaveAttribute('popovertarget', 'scanner-example-volume-popover');
+  expect(await originalTrigger.evaluate(element => document.getElementById(element.id) === element)).toBe(false);
+  await originalInput.evaluate(element => {
+    element.value = '0.05';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await originalTrigger.evaluate(element => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+  await originalPlay.evaluate(element => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+  const sampleInput = page.locator('#scanner-example-volume');
+  await sampleInput.evaluate(element => {
+    element.value = '0.9';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await expect(popup).toBeHidden();
+  await expect(page.locator('#playback-volume')).toHaveValue('0.35');
+  expect(fixture.preferenceWrites.length).toBe(writes);
+  expect(await audioSnapshot()).toEqual(audioBefore);
+  await page.keyboard.press('Escape');
+  await expect(guide(page)).toHaveCount(0);
+  await expect(page.locator('#scanner-example-volume-popover, #scanner-example-volume')).toHaveCount(0);
+  expect(await originalPopup.evaluate(element => document.getElementById(element.id) === element)).toBe(true);
+  expect(await originalTrigger.evaluate(element => document.getElementById(element.id) === element)).toBe(true);
+  expect(await originalInput.evaluate(element => element.value)).toBe('0.35');
+  await expect(trigger).toHaveText('35%');
+  await page.locator('.brand').click();
+  await expect(page.locator('body')).toHaveAttribute('data-view', 'dashboard');
+  expect(await originalPopup.evaluate(element => element.isConnected)).toBe(false);
+  await originalInput.evaluate(element => {
+    element.value = '0.8';
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await originalPlay.evaluate(element => element.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+  expect(fixture.preferenceWrites.length).toBe(writes);
+  expect(await audioSnapshot()).toEqual(audioBefore);
   expect(effects.samples).toEqual([]);
   expect(errors).toEqual([]);
 });

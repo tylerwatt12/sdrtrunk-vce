@@ -1739,8 +1739,10 @@ async function main() {
   assert.match(scannerRenderer, /scanner-now-playing/);
   assert.match(scannerRenderer, /consoleMain\.append\(nowPlaying, upNext\)/,
     'Scanner must pair its listening stage with the browser queue');
-  assert.match(scannerRenderer, /chassis\.append\(playerHost, consoleMain\)/,
-    'Scanner controls must precede its call stage and queue in reading and keyboard order');
+  assert.match(scannerRenderer, /nowPlaying\.append\(statusBar, displayShell, playerHost\)/,
+    'Scanner transport must follow the current call display in the listening-stage footer');
+  assert.match(scannerRenderer, /chassis\.append\(consoleMain\)/,
+    'Scanner must keep the transport inside its call stage beside the browser queue');
   assert.match(scannerRenderer, /const calls = state\.queue;/,
     'The listening stage must render the complete scheduled browser queue');
   assert.doesNotMatch(scannerRenderer, /state\.queue\.slice\(/,
@@ -1772,20 +1774,34 @@ async function main() {
   assert.doesNotMatch(scannerRenderer, /scannerControl\(|scanner-controls|scanner-utility-row/,
     'Scanner must avoid bespoke oversized controls');
   const scannerPlayback = functionBinding(appSource, 'arrangeScannerPlayback');
-  assert.match(scannerPlayback, /controls\.append\(primary, skip, replay, hold\)/,
-    'Skip, Replay and Hold must remain directly visible');
+  assert.match(scannerPlayback, /createAudioTransport\(\{ node, iconButton, menu, volume, actions: \{/,
+    'Scanner must reuse the dock’s shared transport and its visible actions');
+  for (const action of ['play', 'replay', 'skip', 'stop', 'hold', 'avoid']) {
+    assert.match(scannerPlayback, new RegExp(`\\b${action}: run\\(`),
+      `Scanner must retain the shared ${action} action`);
+  }
   assert.match(scannerPlayback, /player\.togglePlayback\(\)[\s\S]*player\.togglePause\(\)/,
     'The Scanner primary action must use the shared player directly');
-  assert.match(scannerPlayback, /secondary\.append\(stop, avoid, menu, clear\)/,
-    'Secondary playback actions keep one shared Player menu directly visible');
+  assert.match(scannerPlayback, /createAudioCommand\(iconButton, 'Player menu', 'menu'/,
+    'Scanner must keep the shared Player menu directly visible');
+  assert.match(scannerPlayback, /createAudioVolume\(/,
+    'Scanner and the dock must share the same volume popup');
+  assert.match(scannerPlayback, /createAudioTiming\(\{ node \}\)/,
+    'Scanner progress must use the same timing presentation as the dock');
+  assert.match(scannerPlayback, /bar\.append\(timing\.element, transport\.element\)/,
+    'Scanner progress must remain separate from the transport buttons');
+  assert.match(scannerPlayback, /timing\.update\(snapshot\)/,
+    'Playing progress must read the existing player snapshot');
   assert.doesNotMatch(scannerPlayback, /scanner-queue-trigger|scanner-queue-panel|queueTrigger|queuePanel/,
     'Scanner transport must leave queued calls in the listening stage');
   assert.doesNotMatch(scannerPlayback, /document\.getElementById\('playback-|marker\.replaceWith|scanner-expanded/,
     'Scanner must own its controls without moving global player elements');
   assert.doesNotMatch(scannerPlayback, /visualViewport|ResizeObserver|scanner-playback-height/,
     'Scanner controls must remain in normal page flow without viewport tracking or reserved space');
-  assert.match(scannerPlayback, /addEventListener\('abort', unsubscribe, \{ once: true \}\)/,
-    'Leaving Scanner must release its player subscription');
+  assert.match(scannerPlayback, /closed = true; unsubscribe\(\); synchronize\(\); volumeControl\.destroy\(\)/,
+    'Leaving Scanner must release its player subscription, progress refresh and volume popup');
+  assert.match(scannerPlayback, /addEventListener\('abort', close, \{ once: true \}\)/,
+    'Scanner transport cleanup must follow the page lifecycle');
   const scannerCallRenderer = functionBinding(appSource, 'renderScannerCall');
   assert.match(scannerCallRenderer,
     /detailLevel >= SCANNER_DETAIL_LEVELS\.normal[\s\S]*scanner-audio-wave/,

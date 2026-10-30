@@ -62,7 +62,7 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
     await expect(player).toBeVisible();
     await fullControls(page);
     await player.getByRole('button', { name: 'Listen live', exact: true }).click();
-    await expect(player.getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
+    await expect(player.getByRole('button', { name: 'Hold current target', exact: true })).toBeEnabled();
     for (const panel of ['Details', 'Queue', 'Scan Lists', 'Settings']) {
       await selectPanel(page, panel);
       await expectReachableControls(player);
@@ -249,7 +249,7 @@ test('Scan Lists and Settings keep keyboard focus and values while calls arrive 
   const burst = dock(page).getByRole('spinbutton', { name: 'Calls per target' });
   await burst.focus();
   state.feedCallsEnabled = true;
-  await expect(dock(page).getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
+  await expect(dock(page).getByRole('button', { name: 'Hold current target', exact: true })).toBeEnabled();
   await expect(burst).toBeFocused();
   await burst.fill('7');
   await burst.dispatchEvent('change');
@@ -271,7 +271,7 @@ test('adding a recording to the queue preserves live playback and its selected s
   await openAudioApp(page);
   await fullControls(page);
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
-  await expect(dock(page).getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
+  await expect(dock(page).getByRole('button', { name: 'Hold current target', exact: true })).toBeEnabled();
   await dock(page).locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('ArrowDown');
   await page.locator('.recordings-call-info').first().click();
   await page.getByRole('dialog', { name: 'Call actions', exact: true })
@@ -312,7 +312,7 @@ test('live volume updates immediately during dragging and persists only the fina
   const state = await openAudioApp(page, { volume: 0.65 });
   await fullControls(page);
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
-  await expect(dock(page).getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
+  await expect(dock(page).getByRole('button', { name: 'Hold current target', exact: true })).toBeEnabled();
   await expect.poll(() => state.preferenceWrites.length).toBeGreaterThan(0);
   const volume = await openAudioVolume(page);
   await expect(volume).toHaveValue('0.65');

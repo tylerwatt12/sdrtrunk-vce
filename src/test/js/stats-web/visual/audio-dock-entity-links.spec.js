@@ -92,7 +92,7 @@ test('avoided talkgroups keep their detail destination after playback clears the
   await dock(page).locator('.audio-dock-compact-copy').click();
   await dock(page).getByRole('button', { name: 'Listen live', exact: true }).click();
   await expectDestination(hero(page).getByRole('link'), page, recording.target_entity_ref);
-  await dock(page).getByRole('button', { name: 'Avoid', exact: true }).click();
+  await dock(page).getByRole('button', { name: 'Avoid current target', exact: true }).click();
   await selectAudioPanel(dock(page), 'Avoid List');
   const avoided = dock(page).locator('#audio-dock-panel .ui-record-card-copy');
   await expectDestination(avoided.getByRole('link'), page, recording.target_entity_ref);

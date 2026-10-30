@@ -457,10 +457,10 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 844, height: 390 }
     state.feed.pending.push(liveCall);
     await player(page).getByRole('button', { name: 'Listen live', exact: true }).click();
     await burst.focus();
-    await expect(player(page).getByRole('button', { name: 'Avoid', exact: true })).toBeEnabled();
+    await expect(player(page).getByRole('button', { name: 'Avoid current target', exact: true })).toBeEnabled();
     await expect(burst).toBeFocused();
     await expect(burst).toHaveValue('7');
-    await player(page).getByRole('button', { name: 'Avoid', exact: true }).click();
+    await player(page).getByRole('button', { name: 'Avoid current target', exact: true }).click();
     await panel(page, 'Avoid List');
     const remove = player(page).getByRole('button', { name: 'Remove Fire Dispatch from Avoid List', exact: true });
     await expect(remove).toBeVisible();

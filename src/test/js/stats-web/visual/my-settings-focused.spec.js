@@ -142,7 +142,7 @@ for (const [name, theme, viewport] of [
     const handle = player.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible');
     await handle.press('End');
     await player.getByRole('button', { name: 'Listen live', exact: true }).click();
-    await expect(player.getByRole('button', { name: 'Hold this talkgroup', exact: true })).toBeEnabled();
+    await expect(player.getByRole('button', { name: 'Hold current target', exact: true })).toBeEnabled();
     const observations = [];
     for (const size of ['collapsed', 'minimal', 'full']) {
       await handle.press(size === 'full' ? 'End' : 'Home');
