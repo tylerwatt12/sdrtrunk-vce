@@ -9,11 +9,24 @@ const dmrProfile = require(path.resolve(__dirname,
   .find((profile) => profile.id === 'dmr');
 
 async function expectWithin(element, container) {
-  const outer = await container.boundingBox();
-  const inner = await element.boundingBox();
-  expect(inner).not.toBeNull();
-  expect(inner.x).toBeGreaterThanOrEqual(outer.x - 1);
-  expect(inner.x + inner.width).toBeLessThanOrEqual(outer.x + outer.width + 1);
+  await expect.poll(async () => {
+    const host = await container.elementHandle();
+    try {
+      // Popup placement can move both nodes between separate boundingBox calls.
+      return await element.evaluate((node, parent) => {
+        const outer = parent?.getBoundingClientRect();
+        const inner = node.getBoundingClientRect();
+        return {
+          outer: outer && { left: outer.left, right: outer.right },
+          inner: { left: inner.left, right: inner.right },
+          rendered: Boolean(parent?.isConnected && node.isConnected &&
+            outer.width > 0 && outer.height > 0 && inner.width > 0 && inner.height > 0),
+          leftFits: Boolean(outer && inner.left >= outer.left - 1),
+          rightFits: Boolean(outer && inner.right <= outer.right + 1)
+        };
+      }, host);
+    } finally { await host?.dispose(); }
+  }).toMatchObject({ rendered: true, leftFits: true, rightFits: true });
 }
 
 for (const width of [320, 390, 430]) {

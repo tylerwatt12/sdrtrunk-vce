@@ -663,7 +663,8 @@ test('a label press pauses an attention tween and release resumes its remaining 
   await tick(page, 100);
   await press(page);
   const held = await state(page);
-  await tick(page, 2000);
+  // These long advances inspect endpoints; retain rendered frames for the resumed-motion check below.
+  await page.clock.fastForward(2000);
   const paused = await state(page);
   paused.camera.forEach((coordinate, index) => expect(coordinate).toBeCloseTo(held.camera[index], 10));
   paused.target.forEach((coordinate, index) => expect(coordinate).toBeCloseTo(held.target[index], 10));
@@ -673,7 +674,7 @@ test('a label press pauses an attention tween and release resumes its remaining 
   const resuming = await state(page);
   expect(resuming.camera).not.toEqual(held.camera);
   expect(await page.evaluate(() => window.labelDepthFixture.graph.controls().enabled)).toBe(false);
-  await tick(page, 1000);
+  await page.clock.fastForward(1000);
   expect(await page.evaluate(() => window.labelDepthFixture.graph.controls().enabled)).toBe(true);
   await page.evaluate(() => window.labelDepthFixture.renderer.dispose());
 });
