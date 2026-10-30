@@ -21,7 +21,7 @@ function tuner(setup = false) {
       { id: 'frequency_mhz', label: 'Center frequency', value: 773.08125, editable: true,
         availability: 'setup', minimum: 24, maximum: 1800,
         dependencies: [{ setting_id: 'center_frequency_locked', equals: false }] },
-      { id: 'center_frequency_locked', label: 'Lock center', kind: 'boolean', value: !setup,
+      { id: 'center_frequency_locked', label: 'Lock center', kind: 'boolean', value: false,
         editable: true, availability: 'live', dependencies: [] }
     ]
   };
@@ -30,7 +30,7 @@ function tuner(setup = false) {
 function sessionState(options = {}) {
   const state = {
     requests: [], sequence: 0, owner: null, leaseId: null, sessionRevision: null,
-    takeover: false, stoppedChannels: [], prepared: false,
+    takeover: false, stoppedChannels: [], prepared: false, operatorGeneration: 1,
     claimAllowed: options.claimAllowed !== false,
     delayClaim: false, releaseClaim: null
   };
@@ -50,7 +50,10 @@ async function install(page, state, owner, options = {}) {
   const snapshot = () => ({
     lease_id: state.leaseId, expires_at_epoch_ms: Date.now() + 30000,
     takeover: state.takeover, can_tune: state.prepared,
-    stopped_channels: state.stoppedChannels, tuner: tuner(state.prepared)
+    stopped_channels: state.takeover ? state.stoppedChannels : [], tuner: {
+      ...tuner(state.prepared), stopped_channels: state.stoppedChannels,
+      operator_generation: state.operatorGeneration
+    }
   });
 
   await page.route('**/api/v1/**', async (route) => {
@@ -81,7 +84,17 @@ async function install(page, state, owner, options = {}) {
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
-    if (path === '/api/v1/admin/tuners') return respond({ tuners: [tuner(state.prepared)] });
+    if (path === '/api/v1/admin/tuners') return respond({ tuners: [snapshot().tuner] });
+    if (path === '/api/v1/admin/tuners/receiver-a/state' && method === 'PUT') {
+      if (body.operator_generation != null && body.operator_generation !== state.operatorGeneration)
+        return fail('tuner_state_changed', 'The tuner changed.');
+      if (body.state === 'setup' && !state.prepared)
+        state.stoppedChannels = [{ id: 'channel-a', name: 'County control' }];
+      state.prepared = body.state === 'setup';
+      if (!state.prepared) state.stoppedChannels = [];
+      state.operatorGeneration += 1;
+      return respond({ status: 'accepted' }, 202);
+    }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [] });
     if (path === '/api/v1/dashboard/main') return respond({ quality: { current: [] },
       directory: { systems: [], channels: [] } });
@@ -92,8 +105,10 @@ async function install(page, state, owner, options = {}) {
         state.leaseId = null;
         state.sessionRevision = null;
         state.takeover = false;
-        state.prepared = false;
-        state.stoppedChannels = [];
+        if (!body.keep_setup) {
+          state.prepared = false;
+          state.stoppedChannels = [];
+        }
         return respond({ released: true });
       }
       if (body.claim_session) {
@@ -114,7 +129,7 @@ async function install(page, state, owner, options = {}) {
       if (body.takeover === true) {
         state.takeover = true;
         state.prepared = true;
-        state.stoppedChannels = [{ configuration_id: 'channel-a', name: 'County control' }];
+        state.stoppedChannels = [{ id: 'channel-a', name: 'County control' }];
       }
       state.acquire(owner);
       return respond(snapshot());
@@ -143,7 +158,8 @@ async function prepareFirstSession(page, state) {
   const warning = page.getByRole('alertdialog', { name: 'Stop channels to tune?' });
   await warning.getByRole('button', { name: 'Stop channels and tune', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Setup', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  expect(state.takeover).toBe(true);
+  expect(state.prepared).toBe(true);
+  expect(state.takeover).toBe(false);
 }
 
 test('a second browser explicitly inherits Setup and the displaced browser stops renewing or releasing it', async ({ page, context }) => {
@@ -161,7 +177,7 @@ test('a second browser explicitly inherits Setup and the displaced browser stops
 
   await takeover.click();
   await expect(second.getByRole('button', { name: 'Setup', exact: true })).toHaveAttribute('aria-pressed', 'true');
-  await expect(second.getByText('1 channel stopped · Resume when finished', { exact: true })).toBeVisible();
+  await expect(second.getByText('1 channel stopped · Go Live to resume', { exact: true })).toBeVisible();
   await expect(second.getByRole('group', { name: 'Center frequency', exact: true })).toHaveAttribute('aria-disabled', 'false');
   expect(browseRequests(state, 'second-browser').filter((request) => request.body.claim_session)
     .map((request) => request.body)).toEqual([{ claim_session: revision }]);
@@ -179,7 +195,7 @@ test('a second browser explicitly inherits Setup and the displaced browser stops
   await expect(page.getByRole('heading', { name: 'Main', exact: true })).toBeVisible();
   expect(browseRequests(state, 'first-browser', 'DELETE')).toHaveLength(displacedDeletes);
   expect(state.owner).toBe('second-browser');
-  expect(state.takeover).toBe(true);
+  expect(state.prepared).toBe(true);
   await page.close();
   expect(browseRequests(state, 'first-browser', 'DELETE')).toHaveLength(displacedDeletes);
   expect(state.owner).toBe('second-browser');

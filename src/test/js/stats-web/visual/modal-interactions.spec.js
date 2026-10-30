@@ -118,6 +118,7 @@ async function installDismissalHarness(page) {
       `let activeReadOnlyModal = null; let route = new URLSearchParams(location.search);
        const aliasEditorWorkspaceController = null;
        const personalSettingsWorkspace = null;
+       const requestTunerSetupLeave = () => true;
        ${source}\n${navigation}
        return { openReadOnlyModal, closeReadOnlyModal, confirmAction, navigateTo };`)(node,
       value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton,

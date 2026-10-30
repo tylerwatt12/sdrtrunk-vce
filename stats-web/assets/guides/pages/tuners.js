@@ -20,7 +20,7 @@ export function tunersSteps(documentValue, preparePlayer, preparePage) {
   };
   const steps = [
     { id: 'modes', title: 'Three modes for a tuner', paragraphs: [], items: [
-      { label: 'Live', text: 'Available for receiving channels.' },
+      { label: 'Live', text: 'Available for receiving channels; resumes channels stopped for Setup.' },
       { label: 'Setup', text: 'The receiver stays on for adjustments while its channels stop.' },
       { label: 'Disabled', text: 'Channels stop and the receiver hardware turns off.' }
     ] },

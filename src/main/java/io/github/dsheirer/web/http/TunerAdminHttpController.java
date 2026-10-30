@@ -322,7 +322,7 @@ public final class TunerAdminHttpController
         try
         {
             JsonNode request = WebHttpSupport.readJsonObject(exchange, "POST".equals(method) ?
-                Set.of("lease_id", "takeover", "claim_session") : Set.of("lease_id", "handoff"));
+                Set.of("lease_id", "takeover", "claim_session") : Set.of("lease_id", "handoff", "keep_setup"));
             String leaseId = optionalLease(request);
             if("DELETE".equals(method))
             {
@@ -330,7 +330,11 @@ public final class TunerAdminHttpController
                 JsonNode handoff = request.get("handoff");
                 if(handoff != null && !handoff.isBoolean())
                     throw new IllegalArgumentException("handoff must be true or false");
-                mSettings.releaseBrowse(tuner, leaseId, handoff != null && handoff.booleanValue()).join();
+                JsonNode keepSetup = request.get("keep_setup");
+                if(keepSetup != null && !keepSetup.isBoolean())
+                    throw new IllegalArgumentException("keep_setup must be true or false");
+                mSettings.releaseBrowse(tuner, leaseId, handoff != null && handoff.booleanValue(),
+                    keepSetup != null && keepSetup.booleanValue()).join();
                 ApiHttpResponse.sendData(exchange, 200, Map.of("released", true,
                     "previous_channels_not_resumed", mSettings.previousChannelsNotResumed(tuner)));
             }
@@ -408,7 +412,11 @@ public final class TunerAdminHttpController
         if(tuner == null) return;
         try
         {
-            JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("state"));
+            JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("state", "operator_generation"));
+            JsonNode generation = request.get("operator_generation");
+            if(generation != null && (!generation.canConvertToLong() || !generation.isIntegralNumber() ||
+                generation.longValue() < 0))
+                throw new WebHttpSupport.RequestException(422, "invalid_tuner_state", "operator_generation must be a nonnegative integer");
             JsonNode raw = request.get("state");
             if(raw == null || !raw.isTextual())
             {
@@ -425,7 +433,8 @@ public final class TunerAdminHttpController
                 ApiHttpResponse.sendError(exchange, 422, "invalid_tuner_state", "Unknown tuner state");
                 return;
             }
-            ApiHttpResponse.sendData(exchange, 202, mSettings.requestState(tuner, state));
+            ApiHttpResponse.sendData(exchange, 202, mSettings.requestState(tuner, state,
+                generation != null ? generation.longValue() : null));
         }
         catch(WebHttpSupport.RequestException exception)
         {

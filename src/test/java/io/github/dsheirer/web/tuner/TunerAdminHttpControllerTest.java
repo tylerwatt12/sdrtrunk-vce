@@ -156,6 +156,32 @@ class TunerAdminHttpControllerTest
             assertEquals(422, fixture.send(path, "POST",
                 "{\"claim_session\":\"revision\",\"lease_id\":\"lease\"}").statusCode());
             assertEquals(422, fixture.send(path, "DELETE", "{}").statusCode());
+            assertEquals(422, fixture.send(path, "DELETE", "{\"lease_id\":\"lease\",\"keep_setup\":\"yes\"}").statusCode());
+            assertEquals(422, fixture.send(path, "DELETE", "{\"lease_id\":\"lease\",\"keep_setup\":true,\"handoff\":true}").statusCode());
+        }
+    }
+
+    @Test
+    void leavingStoppedPreservesSetupAndRejectsAnOlderOperatorGeneration() throws Exception
+    {
+        try(ServerFixture fixture = new ServerFixture(new FakeManager(), true))
+        {
+            String path = TunerAdminHttpController.PATH + "/" + TunerAdministrationService.opaqueId(fixture.mPhysical);
+            var acquired = fixture.send(path + "/browse", "POST", "{\"takeover\":true}");
+            assertEquals(200, acquired.statusCode());
+            String lease = MAPPER.readTree(acquired.body()).at("/data/lease_id").asText();
+            long generation = fixture.mPhysical.getOperatorGeneration();
+            assertEquals(200, fixture.send(path + "/browse", "DELETE",
+                "{\"lease_id\":\"" + lease + "\",\"keep_setup\":true}").statusCode());
+            assertEquals(DiscoveredTuner.OperatorState.SETUP, fixture.mPhysical.getOperatorState());
+            assertEquals(generation, fixture.mPhysical.getOperatorGeneration());
+            assertEquals(409, fixture.send(path + "/state", "PUT",
+                "{\"state\":\"live\",\"operator_generation\":" + (generation - 1) + "}").statusCode());
+            assertEquals(DiscoveredTuner.OperatorState.SETUP, fixture.mPhysical.getOperatorState());
+            assertEquals(422, fixture.send(path + "/state", "PUT",
+                "{\"state\":\"live\",\"operator_generation\":1.5}").statusCode());
+            assertEquals(422, fixture.send(path + "/state", "PUT",
+                "{\"state\":\"live\",\"operator_generation\":-1}").statusCode());
         }
     }
 

@@ -1799,10 +1799,12 @@ class StatsWebInteractionUiContractTest
         assertTrue(tunerPage.contains("pageConnections.add(spectrum)"));
         assertTrue(tunerPage.contains("pageHeader('Browse Spectrum'"));
         assertTrue(html.contains("id=\"nav-tuner-spectrum-label\">Browser Spectrum</span>"));
-        assertTrue(tunerPage.contains("for (const next of ['live', 'setup'])"));
+        assertTrue(tunerPage.contains("for (const next of ['live', 'setup', 'disabled'])"));
         assertTrue(tunerPage.contains("node('div', 'ui-segmented')"));
-        assertTrue(tunerPage.contains("if (next === 'setup') void takeOverSelectedTuner()"));
-        assertTrue(tunerPage.contains("else void finishTakeover()"));
+        assertTrue(tunerPage.contains("const state = tunerOperatorState(tuner)"));
+        assertTrue(tunerPage.contains("String(next === state)"));
+        assertTrue(tunerPage.contains("changeSelectedMode(tuner, 'setup')"));
+        assertTrue(tunerPage.contains("changeSelectedMode(selectedInventoryTuner(), 'live')"));
         assertTrue(tunerPage.contains("unavailableHint: true"));
         assertTrue(tunerPage.contains("Active channels keep the center frequency fixed. Switch to Setup mode to retune"));
         assertFalse(tunerPage.contains("iconButton('icon-power'"));

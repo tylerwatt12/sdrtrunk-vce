@@ -133,6 +133,7 @@ async function install(page, options = {}) {
     failDiscoveryDeleteOnce: Boolean(options.failDiscoveryDeleteOnce),
     releaseDiscoveryPost: null, releaseDiscoveryDelete: null
   };
+  const inventory = [tuner('active-a', { active: true }), tuner('idle-b')];
   const preferenceModule = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
 
@@ -162,9 +163,17 @@ async function install(page, options = {}) {
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
-    if (path === '/api/v1/admin/tuners') return respond({ tuners: [
-      tuner('active-a', { active: true }), tuner('idle-b')
-    ] });
+    if (path === '/api/v1/admin/tuners') return respond({ tuners: inventory });
+    const stateTarget = path.match(/^\/api\/v1\/admin\/tuners\/([^/]+)\/state$/);
+    if (stateTarget && method === 'PUT') {
+      const current = inventory.find((candidate) => candidate.id === stateTarget[1]);
+      if (body.state === 'setup' && current.operator_state === 'live' && current.channel_count)
+        current.stopped_channels = [{ id: 'channel-a', name: 'County control' }];
+      current.operator_state = body.state;
+      current.channel_count = body.state === 'live' ? 2 : 0;
+      if (body.state === 'live') current.stopped_channels = [];
+      return respond({ status: 'accepted' }, 202);
+    }
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: options.liveSpectrum ? [{
       target_id: 'target-active-a', label: 'Dispatch receiver', center_frequency_hz: 773081250,
       sample_rate_hz: 10000000
@@ -197,7 +206,7 @@ async function install(page, options = {}) {
       return respond(discoverySnapshot());
     }
     if (path === '/api/v1/admin/spectrum-search/catalog') return respond({
-      tuners: [tuner('active-a', { active: true }), tuner('idle-b')], suggested_tuner_id: 'idle-b',
+      tuners: inventory, suggested_tuner_id: 'idle-b',
       presets: [
         { id: '700mhz', label: '700 MHz · 769–775 MHz',
           ranges: [{ minimum_hz: 769000000, maximum_hz: 775000000 }] },
@@ -240,14 +249,16 @@ async function install(page, options = {}) {
           state.failNextRenewal = null;
           return fail(failure.message, failure.code, failure.status);
         }
+        const current = inventory.find((candidate) => candidate.id === id);
         return respond({ lease_id: body.lease_id, expires_at_epoch_ms: Date.now() + 30000,
-          takeover: true, can_tune: true, stopped_channels: [{ id: 'channel-a', name: 'County control' }],
-          tuner: preparedTuner() });
+          takeover: false, can_tune: current.operator_state === 'setup',
+          stopped_channels: [], tuner: current });
       }
-      const value = id === 'active-a' ? tuner(id, { active: true }) : tuner(id);
-      return respond({ lease_id: `monitor-${++state.monitorSequence}`,
+      const value = inventory.find((candidate) => candidate.id === id);
+      return respond({ lease_id: value.operator_state === 'setup' ? `takeover-${++state.takeoverSequence}` :
+        `monitor-${++state.monitorSequence}`,
         expires_at_epoch_ms: Date.now() + 30000, takeover: false,
-        can_tune: id === 'idle-b', stopped_channels: [], tuner: value });
+        can_tune: value.operator_state === 'setup', stopped_channels: [], tuner: value });
     }
     return respond({});
   });
@@ -285,7 +296,7 @@ async function openDiscoveryFromSpectrum(page) {
   return dialog;
 }
 
-test('failed Resume keeps takeover ownership and renews its lease', async ({ page }) => {
+test('failed Live transition keeps Setup observation and renews its lease', async ({ page }) => {
   await page.clock.install();
   const state = await install(page);
   await takeControl(page);
@@ -303,7 +314,7 @@ test('failed Resume keeps takeover ownership and renews its lease', async ({ pag
   await expect.poll(renewals).toBeGreaterThan(before);
 });
 
-test('failed tuner switch retains the takeover and does not browse the new receiver', async ({ page }) => {
+test('failed tuner switch retains Setup observation and does not browse the new receiver', async ({ page }) => {
   const state = await install(page);
   await takeControl(page);
   state.failNextDelete = true;
@@ -424,7 +435,7 @@ test('forced close during discovery POST deletes the created probe before Spectr
   expect(resumeIndex).toBeGreaterThan(deleteIndex);
 });
 
-test('temporary renewal failure keeps takeover ownership and retries automatically', async ({ page }) => {
+test('temporary renewal failure keeps the actual Setup mode and retries automatically', async ({ page }) => {
   await page.clock.install();
   const state = await install(page);
   await takeControl(page);
@@ -433,7 +444,7 @@ test('temporary renewal failure keeps takeover ownership and retries automatical
     request.method === 'POST' && request.body.lease_id === 'takeover-1').length;
 
   await page.clock.fastForward(10_100);
-  await expect(page.getByText('Connection interrupted. Your stopped channels are still under Spectrum control; retrying automatically.',
+  await expect(page.getByText('Connection interrupted. Spectrum will retry this receiver automatically.',
     { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'false');
   const afterFailure = renewals();
@@ -441,10 +452,10 @@ test('temporary renewal failure keeps takeover ownership and retries automatical
   await page.clock.fastForward(10_100);
   await expect.poll(renewals).toBeGreaterThan(afterFailure);
   await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'false');
-  await expect(page.getByText('1 channel stopped · Resume when finished', { exact: true })).toBeVisible();
+  await expect(page.getByText('1 channel stopped · Go Live to resume', { exact: true })).toBeVisible();
 });
 
-test('confirmed renewal ownership conflict clears the expired takeover', async ({ page }) => {
+test('confirmed renewal ownership conflict clears observation without inventing Live mode', async ({ page }) => {
   await page.clock.install();
   const state = await install(page);
   await takeControl(page);
@@ -453,7 +464,7 @@ test('confirmed renewal ownership conflict clears the expired takeover', async (
 
   await page.clock.fastForward(10_100);
   await expect(page.getByText('Spectrum tuner session expired; reopen Spectrum', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Retry browsing', exact: true })).toBeVisible();
 });
 

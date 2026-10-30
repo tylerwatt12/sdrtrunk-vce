@@ -103,7 +103,7 @@ public final class TunerDiagnosticService implements AutoCloseable
         mReceiverReferences = Objects.requireNonNull(receiverReferences);
     }
 
-    /** Lists live tuners serving channels and tuners explicitly held in Setup. */
+    /** Lists receiving tuners, explicit Setup tuners, and idle Live tuners held only for Spectrum observation. */
     public List<Target> targets()
     {
         synchronized(mLifecycleLock)
