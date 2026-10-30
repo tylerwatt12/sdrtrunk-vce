@@ -3,22 +3,13 @@
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const vm = require('vm');
+const { functionSource: extractFunctionSource } = require('./source-functions.cjs');
 
 const applicationPath = process.argv[2];
 assert.ok(applicationPath, 'The app.js path is required.');
 const application = fs.readFileSync(applicationPath, 'utf8');
 
-function functionSource(signature) {
-  const start = application.indexOf(signature);
-  if (start < 0) throw new Error(`Missing ${signature}`);
-  const openingBrace = application.indexOf('{', start + signature.length);
-  let depth = 0;
-  for (let index = openingBrace; index < application.length; index += 1) {
-    if (application[index] === '{') depth += 1;
-    else if (application[index] === '}' && --depth === 0) return application.slice(start, index + 1);
-  }
-  throw new Error(`Unterminated ${signature}`);
-}
+const functionSource = signature => extractFunctionSource(application, signature);
 
 const responses = [];
 let requestCount = 0;
