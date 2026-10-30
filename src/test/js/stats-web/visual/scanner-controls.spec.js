@@ -9,6 +9,15 @@ const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 
 async function openScannerPanel(page, name) {
   const dock = page.locator('#audio-dock');
+  // The generic dock briefly precedes Scanner after reload; wait for its inline owner.
+  const trigger = page.locator('#scanner-player-menu');
+  await expect(trigger).toBeVisible();
+  await expect(trigger).toBeEnabled();
+  const title = dock.locator('#audio-dock-context-title');
+  if (!await title.isVisible() || await title.textContent() !== 'Player menu') {
+    await trigger.click();
+    await expect(title).toHaveText('Player menu');
+  }
   await selectAudioPanel(dock, name);
   return dock.locator('#audio-dock-panel');
 }
