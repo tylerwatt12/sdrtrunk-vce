@@ -15,6 +15,7 @@ import io.github.dsheirer.stats.StatsHistoryContext;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -65,8 +66,8 @@ final class ReceiverActivityRetention
     private static Pass runPass(Connection connection, long cutoffEpochMilliseconds, LongSupplier nanoTime,
                                 AtomicLong historyGeneration) throws SQLException
     {
-        //An interrupted SQLite DELETE can roll back its entire transaction. Each task must own only its statement,
-        //so earlier completed batches stay durable and the writer is released when an expensive task is interrupted.
+        //Each task owns its transaction so cancellation cannot reach the driver's hidden auto-commit statements.
+        //Earlier completed tasks remain durable when an expensive DELETE is interrupted.
         if(!connection.getAutoCommit())
         {
             throw new SQLException("Activity retention requires an idle database writer connection");
@@ -523,44 +524,110 @@ final class ReceiverActivityRetention
         {
             long taskStartedAt = nanoTime.getAsLong();
             boolean[] budgetExhausted = {false};
-            ProgressHandler.setHandler(connection, SQLITE_PROGRESS_STEPS, new ProgressHandler()
+            try { connection.setAutoCommit(false); }
+            catch(SQLException failure) { throw new ReceiverActivityMaintenance.UnsafeResetConnectionException(failure); }
+            SQLException failure = null;
+            int deleted = -1;
+
+            try
             {
-                @Override
-                protected int progress()
+                ProgressHandler.setHandler(connection, SQLITE_PROGRESS_STEPS, new ProgressHandler()
                 {
-                    long now = nanoTime.getAsLong();
-                    budgetExhausted[0] = now - taskStartedAt >= MAXIMUM_TASK_NANOSECONDS ||
-                        now - passStartedAt >= MAXIMUM_PASS_NANOSECONDS;
-                    return budgetExhausted[0] ? 1 : 0;
-                }
-            });
-            try(PreparedStatement statement = connection.prepareStatement(sql))
-            {
-                int index = 1;
-                if(usesCutoff)
+                    @Override
+                    protected int progress()
+                    {
+                        long now = nanoTime.getAsLong();
+                        budgetExhausted[0] = now - taskStartedAt >= MAXIMUM_TASK_NANOSECONDS ||
+                            now - passStartedAt >= MAXIMUM_PASS_NANOSECONDS;
+                        return budgetExhausted[0] ? 1 : 0;
+                    }
+                });
+                try(PreparedStatement statement = connection.prepareStatement(sql))
                 {
-                    statement.setLong(index++, cutoff);
+                    int index = 1;
+                    if(usesCutoff)
+                    {
+                        statement.setLong(index++, cutoff);
+                    }
+                    statement.setInt(index, maximumRows);
+                    deleted = statement.executeUpdate();
                 }
-                statement.setInt(index, maximumRows);
-                int deleted = statement.executeUpdate();
-                if(deleted > 0 && historyEvents && historyGeneration != null)
-                {
-                    historyGeneration.incrementAndGet();
-                }
-                return deleted;
             }
-            catch(SQLException e)
+            catch(SQLException exception)
             {
-                if(budgetExhausted[0] && e.getErrorCode() == 9) //SQLITE_INTERRUPT
-                {
-                    return -1;
-                }
-                throw new SQLException("Activity retention task failed [" + name + "]", e);
+                failure = exception;
             }
             finally
             {
-                //The long-lived statistics connection also handles ingestion and status writes after retention.
-                ProgressHandler.clearHandler(connection);
+                try
+                {
+                    ProgressHandler.clearHandler(connection);
+                }
+                catch(SQLException cleanupFailure)
+                {
+                    if(failure != null) cleanupFailure.addSuppressed(failure);
+                    throw new ReceiverActivityMaintenance.UnsafeResetConnectionException(cleanupFailure);
+                }
+            }
+
+            if(failure == null)
+            {
+                try { connection.commit(); }
+                catch(SQLException commitFailure) { failure = commitFailure; }
+            }
+
+            if(failure != null)
+            {
+                boolean interrupted = budgetExhausted[0] && failure.getErrorCode() == 9 &&
+                    failure.getSuppressed().length == 0; //SQLITE_INTERRUPT
+                try
+                {
+                    rollback(connection, interrupted);
+                    connection.setAutoCommit(true);
+                }
+                catch(SQLException cleanupFailure)
+                {
+                    failure.addSuppressed(cleanupFailure);
+                    //An unproven transaction reaches the owning writer's fail-stop path without being committed.
+                    throw new ReceiverActivityMaintenance.UnsafeResetConnectionException(failure);
+                }
+                if(interrupted) return -1;
+                throw new SQLException("Activity retention task failed [" + name + "]", failure);
+            }
+
+            try { connection.setAutoCommit(true); }
+            catch(SQLException restorationFailure)
+            {
+                throw new ReceiverActivityMaintenance.UnsafeResetConnectionException(restorationFailure);
+            }
+            if(deleted > 0 && historyEvents && historyGeneration != null)
+            {
+                historyGeneration.incrementAndGet();
+            }
+            return deleted;
+        }
+
+        private static void rollback(Connection connection, boolean interrupted) throws SQLException
+        {
+            try
+            {
+                connection.rollback();
+            }
+            catch(SQLException rollbackFailure)
+            {
+                if(!interrupted) throw rollbackFailure;
+
+                //SQLite may already have rolled back an interrupted DELETE while JDBC still expects a transaction.
+                //BEGIN proves the old transaction is gone; restoring auto-commit then ends only this empty probe.
+                try(Statement statement = connection.createStatement())
+                {
+                    statement.execute("BEGIN");
+                }
+                catch(SQLException probeFailure)
+                {
+                    rollbackFailure.addSuppressed(probeFailure);
+                    throw rollbackFailure;
+                }
             }
         }
     }

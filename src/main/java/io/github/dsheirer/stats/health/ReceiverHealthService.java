@@ -848,18 +848,7 @@ public final class ReceiverHealthService implements AutoCloseable
         {
             ReceiverActivityStatus status = mActivityLogService.getStatus();
             delta("observer:statistics", status.recordsDropped(), now);
-            String activityState = switch(status.state())
-            {
-                case DISABLED -> "Off";
-                case STARTING -> "Starting";
-                case RUNNING -> "On";
-                case PAUSED -> "Paused for reset";
-                case STOPPED -> "Not running";
-                case FAILED -> "Error";
-            };
-            rows.add(row("Activity", "Activity history", activityState,
-                "", status.recordsDropped() > 0 ? "info" : "healthy",
-                "Saved " + status.recordsWritten() + " · Dropped " + status.recordsDropped()));
+            rows.add(activityMeasurement(status));
         }
 
         Map<String,Object> webStatus;
@@ -909,6 +898,23 @@ public final class ReceiverHealthService implements AutoCloseable
             "info", "Channel views " + channelSessions + " · Tuner views " + tunerSessions));
 
         measurements.add(section("supporting", "Web and browser audio", rows));
+    }
+
+    static Map<String,Object> activityMeasurement(ReceiverActivityStatus status)
+    {
+        String activityState = switch(status.state())
+        {
+            case DISABLED -> "Off";
+            case STARTING -> "Starting";
+            case RUNNING -> "On";
+            case PAUSED -> "Paused for reset";
+            case STOPPED -> "Not running";
+            case FAILED -> "Error";
+        };
+        String severity = status.state() == ReceiverActivityStatus.State.FAILED ? "warning" :
+            status.recordsDropped() > 0 ? "info" : "healthy";
+        return row("Activity", "Activity history", activityState, "", severity,
+            "Saved " + status.recordsWritten() + " · Dropped " + status.recordsDropped());
     }
 
     /** Keeps loss counters tied to their producer, and remembers an assignment after a failed tuner is stopped. */

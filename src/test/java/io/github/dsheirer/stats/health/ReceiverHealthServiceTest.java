@@ -24,6 +24,7 @@ import io.github.dsheirer.source.tuner.Tuner;
 import io.github.dsheirer.source.tuner.test.TestTuner;
 import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import io.github.dsheirer.preference.application.ApplicationPreference;
+import io.github.dsheirer.stats.activity.ReceiverActivityStatus;
 import io.github.dsheirer.support.WebDiagnosticLogService;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -151,6 +152,32 @@ class ReceiverHealthServiceTest
         assertEquals(1L, summary.get("warning_count"));
         assertEquals(0L, summary.get("critical_count"));
         assertFalse(summary.containsKey("diagnostic_count"));
+    }
+
+    @Test
+    void failedActivityHistoryWarnsEvenWhenNoDropsWereCounted()
+    {
+        for(long dropped: new long[]{0, 7})
+        {
+            ReceiverActivityStatus status = new ReceiverActivityStatus(true, true, false, false, 15,
+                ReceiverActivityStatus.State.FAILED, "", 1_000L, 100L, dropped, "Database writer stopped");
+            Map<String,Object> measurement = ReceiverHealthService.activityMeasurement(status);
+
+            assertEquals("Error", measurement.get("value"));
+            assertEquals("warning", measurement.get("severity"));
+            assertEquals("Saved 100 · Dropped " + dropped, measurement.get("detail"));
+        }
+    }
+
+    @Test
+    void runningActivityHistoryKeepsHistoricalDropsInformational()
+    {
+        ReceiverActivityStatus status = new ReceiverActivityStatus(true, true, true, true, 15,
+            ReceiverActivityStatus.State.RUNNING, "", 1_000L, 100L, 7L, null);
+        Map<String,Object> measurement = ReceiverHealthService.activityMeasurement(status);
+
+        assertEquals("On", measurement.get("value"));
+        assertEquals("info", measurement.get("severity"));
     }
 
     @Test

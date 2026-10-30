@@ -1430,6 +1430,7 @@ class ReceiverActivityWriter implements AutoCloseable
 
     private static boolean isDatabaseBusy(SQLException exception)
     {
+        if(exception instanceof ReceiverActivityMaintenance.UnsafeResetConnectionException) return false;
         Throwable throwable = exception;
 
         while(throwable != null)

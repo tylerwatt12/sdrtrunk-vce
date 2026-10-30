@@ -13,22 +13,120 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.stats.site.TrunkedSiteSchema;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.Function;
+import org.sqlite.jdbc4.JDBC4Connection;
 
 /** Regression coverage for the single bounded routine-retention path. */
 class ReceiverActivityRetentionTest
 {
     private static final String CONFIGURATION_ID = "123e4567-e89b-42d3-a456-426614174000";
+
+    @Test
+    void expiredCleanupBudgetCannotPoisonWarmedWriter() throws Exception
+    {
+        // Xerial reuses hidden BEGIN/COMMIT statements. Sweep their accumulated 1,000-opcode boundary.
+        for(int warmup = 0; warmup < 1_000; warmup++)
+        {
+            try(Connection connection = DriverManager.getConnection("jdbc:sqlite::memory:"))
+            {
+                initializeRetentionBoundaryFixture(connection);
+                try(PreparedStatement statement = connection.prepareStatement(
+                    "UPDATE statistics_status SET updated_at_ms=updated_at_ms+1"))
+                {
+                    for(int index = 0; index < warmup; index++) statement.executeUpdate();
+                }
+
+                AtomicInteger clockReads = new AtomicInteger();
+                ReceiverActivityRetention.runPass(connection, 1, () -> clockReads.incrementAndGet() <= 3 ?
+                    0 : ReceiverActivityRetention.MAXIMUM_PASS_NANOSECONDS + 1);
+
+                connection.setAutoCommit(false);
+                ReceiverActivitySchema.updateStatus(connection, "next_batch", "1");
+                connection.commit();
+                connection.setAutoCommit(true);
+                assertEquals(1, ReceiverActivitySchema.readStatusLong(connection, "next_batch"),
+                    "normal ingestion must remain usable after " + warmup + " warmup writes");
+            }
+        }
+    }
+
+    @Test
+    void failedRollbackCannotCommitAnUnprovenTransaction(@TempDir Path temporary) throws Exception
+    {
+        Path database = temporary.resolve("failed-rollback.sqlite");
+        String url = "jdbc:sqlite:" + database;
+        AtomicLong nanoTime = new AtomicLong();
+        AtomicBoolean rollbackFailed = new AtomicBoolean();
+        AtomicBoolean restoredAfterFailure = new AtomicBoolean();
+        try(Connection connection = new JDBC4Connection(url, database.toString(), new Properties())
+        {
+            @Override
+            public void rollback() throws SQLException
+            {
+                rollbackFailed.set(true);
+                throw new SQLException("Injected rollback failure");
+            }
+
+            @Override
+            public void setAutoCommit(boolean autoCommit) throws SQLException
+            {
+                if(autoCommit && rollbackFailed.get()) restoredAfterFailure.set(true);
+                super.setAutoCommit(autoCommit);
+            }
+
+            @Override
+            public PreparedStatement prepareStatement(String sql) throws SQLException
+            {
+                PreparedStatement statement = super.prepareStatement(sql);
+                if(!sql.startsWith("DELETE FROM receiver_activity_tone")) return statement;
+                return (PreparedStatement)Proxy.newProxyInstance(PreparedStatement.class.getClassLoader(),
+                    new Class<?>[]{PreparedStatement.class}, (proxy, method, arguments) -> {
+                        if(method.getName().equals("executeUpdate"))
+                        {
+                            try(Statement work = createStatement())
+                            {
+                                work.executeUpdate("INSERT INTO pending_marker VALUES(1)");
+                                nanoTime.set(ReceiverActivityRetention.MAXIMUM_PASS_NANOSECONDS + 1);
+                                // Interrupt a SELECT so the pending write transaction remains active.
+                                try(ResultSet result = work.executeQuery("""
+                                    WITH RECURSIVE n(value) AS
+                                        (VALUES(1) UNION ALL SELECT value+1 FROM n WHERE value<4000)
+                                    SELECT sum(value) FROM n
+                                    """)) { result.next(); }
+                            }
+                        }
+                        try { return method.invoke(statement, arguments); }
+                        catch(InvocationTargetException exception) { throw exception.getCause(); }
+                    });
+            }
+        }; Connection observer = DriverManager.getConnection(url))
+        {
+            initializeRetentionBoundaryFixture(connection);
+            execute(connection, "CREATE TABLE pending_marker(value INTEGER)");
+            assertThrows(SQLException.class,
+                () -> ReceiverActivityRetention.runPass(connection, 1, nanoTime::get));
+            assertTrue(rollbackFailed.get());
+            assertFalse(restoredAfterFailure.get(), "uncertain cleanup must never commit the pending write");
+            assertFalse(connection.getAutoCommit());
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM pending_marker"));
+            assertEquals(0, scalar(observer, "SELECT count(*) FROM pending_marker"));
+        }
+    }
 
     @Test
     void interruptedDeletePreservesCommittedTasksAndReleasesPreferencesWriter(@TempDir Path temporary)
@@ -99,6 +197,12 @@ class ReceiverActivityRetentionTest
             assertEquals(3, scalar(connection, "SELECT count(*) FROM conventional_activity_bucket"),
                 "interruption rolls back the whole current statement, including its first deleted row");
             assertTrue(connection.getAutoCommit());
+
+            connection.setAutoCommit(false);
+            ReceiverActivitySchema.updateStatus(connection, "next_batch", "1");
+            connection.commit();
+            connection.setAutoCommit(true);
+            assertEquals(1, ReceiverActivitySchema.readStatusLong(connection, "next_batch"));
 
             // This UPDATE crosses the progress-callback threshold while the clock still exceeds the deadline.
             execute(connection, """
@@ -432,6 +536,17 @@ class ReceiverActivityRetentionTest
             assertEquals(1, scalar(connection, "SELECT count(*) FROM p25_subscriber_identity"),
                 "time retention removes the old observation and its now-unreferenced subscriber only");
         }
+    }
+
+    private static void initializeRetentionBoundaryFixture(Connection connection) throws Exception
+    {
+        execute(connection, "CREATE TABLE statistics_status(key TEXT PRIMARY KEY, value TEXT, updated_at_ms INTEGER)");
+        execute(connection, "CREATE TABLE receiver_activity_event(id INTEGER PRIMARY KEY, observed_at_ms INTEGER)");
+        execute(connection, "CREATE INDEX idx_receiver_activity_event_retention ON receiver_activity_event(observed_at_ms,id)");
+        execute(connection, "CREATE TABLE receiver_activity_tone(event_id INTEGER, ordinal INTEGER)");
+        execute(connection, "CREATE TEMP VIEW configured_channel AS SELECT 1");
+        execute(connection, "CREATE TEMP VIEW configured_p25_subscriber_identity AS SELECT 1");
+        ReceiverActivitySchema.updateStatus(connection, ReceiverActivityRetention.CURSOR_STATUS_KEY, "0");
     }
 
     private static Connection open() throws Exception

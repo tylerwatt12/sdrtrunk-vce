@@ -81,7 +81,7 @@ class ReceiverActivityWriterTest
                         if(failureMode.equals("rollback") && method.getName().equals("rollback") && injected.get())
                         {
                             rollbackFailed.set(true);
-                            throw new java.sql.SQLException("controlled reset rollback failure");
+                            throw new java.sql.SQLException("controlled reset rollback failure: SQLITE_BUSY");
                         }
                         if(method.getName().equals("setAutoCommit") && Boolean.TRUE.equals(arguments[0]) && rollbackFailed.get())
                             committedAfterFailedRollback.set(true);
@@ -136,6 +136,7 @@ class ReceiverActivityWriterTest
             assertThrows(ExecutionException.class, () -> request.result().get(2, TimeUnit.SECONDS));
             assertTrue(closedBeforeCompletion.get(), "The unsafe connection must close before reset admission is released");
             assertEquals(ReceiverActivityStatus.State.FAILED, writer.getStatus().state());
+            assertEquals(0, request.progress().databaseBusyRetries(), "unsafe connections must never be retried");
             assertFalse(writer.enqueue(activity(ReceiverActivityRecords.Action.GRANT, System.currentTimeMillis())));
             assertFalse(committedAfterFailedRollback.get(), "A failed rollback must never be followed by an implicit COMMIT");
             if(!failureMode.equals("rollback"))
