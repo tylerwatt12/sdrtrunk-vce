@@ -1,0 +1,779 @@
+{
+  "version": 1,
+  "shards": 4,
+  "workers": 2,
+  "caseCount": 1691,
+  "inventorySha256": "87746730992c75e38c45ad935512d0ad4dc3a5f7df9d8e2c7d28bdc5c1429ffc",
+  "files": {
+    "access-landing.spec.js": {
+      "durationMs": 10793,
+      "caseCount": 12,
+      "source": "measured"
+    },
+    "account-tour-history.spec.js": {
+      "durationMs": 12249,
+      "caseCount": 10,
+      "source": "measured"
+    },
+    "activity-filters-app.spec.js": {
+      "durationMs": 35726,
+      "caseCount": 27,
+      "source": "measured"
+    },
+    "admin-accounts-access.spec.js": {
+      "durationMs": 9236,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "admin-reorganization.spec.js": {
+      "durationMs": 77935,
+      "caseCount": 48,
+      "source": "measured"
+    },
+    "admin-settings-design.spec.js": {
+      "durationMs": 2511,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "administration-guide.spec.js": {
+      "durationMs": 4775,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "alerts.spec.js": {
+      "durationMs": 99581,
+      "caseCount": 80,
+      "source": "measured"
+    },
+    "alias-bulk-sticky.spec.js": {
+      "durationMs": 3446,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "alias-channel-usage.spec.js": {
+      "durationMs": 588,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "alias-defaults-save-workflows.spec.js": {
+      "durationMs": 1998,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "alias-export.spec.js": {
+      "durationMs": 8284,
+      "caseCount": 7,
+      "source": "measured"
+    },
+    "alias-import-choice.spec.js": {
+      "durationMs": 2617,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "alias-inventory.spec.js": {
+      "durationMs": 2118,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "alias-list-create.spec.js": {
+      "durationMs": 2081,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "alias-list-delete-checkbox.spec.js": {
+      "durationMs": 1630,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "alias-list-rename.spec.js": {
+      "durationMs": 6385,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "alias-save-workflows.spec.js": {
+      "durationMs": 6140,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "alias-section-groups.spec.js": {
+      "durationMs": 7685,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "alias-transfer-review.spec.js": {
+      "durationMs": 11039,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "alias-view-tabs.spec.js": {
+      "durationMs": 8395,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "alias-workspace.spec.js": {
+      "durationMs": 13259,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "aliases-guide.spec.js": {
+      "durationMs": 13729,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "analog-alias-inventory.spec.js": {
+      "durationMs": 4139,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "application-log.spec.js": {
+      "durationMs": 21621,
+      "caseCount": 10,
+      "source": "measured"
+    },
+    "audio-dock-entity-links.spec.js": {
+      "durationMs": 4267,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "audio-dock-gallery.spec.js": {
+      "durationMs": 7405,
+      "caseCount": 9,
+      "source": "measured"
+    },
+    "audio-dock-guide.spec.js": {
+      "durationMs": 4470,
+      "caseCount": 10,
+      "source": "measured"
+    },
+    "audio-dock-header.spec.js": {
+      "durationMs": 24083,
+      "caseCount": 18,
+      "source": "measured"
+    },
+    "audio-dock-lifecycle.spec.js": {
+      "durationMs": 3659,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "audio-dock-playback-feedback.spec.js": {
+      "durationMs": 3431,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "audio-dock-preference-errors.spec.js": {
+      "durationMs": 1215,
+      "caseCount": 1,
+      "source": "measured"
+    },
+    "audio-dock-refinements.spec.js": {
+      "durationMs": 25783,
+      "caseCount": 14,
+      "source": "measured"
+    },
+    "audio-dock-source-toggle.spec.js": {
+      "durationMs": 5192,
+      "caseCount": 11,
+      "source": "measured"
+    },
+    "audio-dock-super-collapse.spec.js": {
+      "durationMs": 20283,
+      "caseCount": 15,
+      "source": "measured"
+    },
+    "audio-dock.spec.js": {
+      "durationMs": 30833,
+      "caseCount": 22,
+      "source": "measured"
+    },
+    "browsing-workflows.spec.js": {
+      "durationMs": 2058,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "bulk-operation-feedback.spec.js": {
+      "durationMs": 9315,
+      "caseCount": 10,
+      "source": "measured"
+    },
+    "bulk-operation-responsiveness.spec.js": {
+      "durationMs": 9993,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "call-filtering.spec.js": {
+      "durationMs": 2978,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "call-matching.spec.js": {
+      "durationMs": 71648,
+      "caseCount": 38,
+      "source": "measured"
+    },
+    "call-relations-lifecycle.spec.js": {
+      "durationMs": 5485,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "channel-catalog-mobile.spec.js": {
+      "durationMs": 12548,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "channel-editor-mobile.spec.js": {
+      "durationMs": 6560,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "channel-enrichment.spec.js": {
+      "durationMs": 13705,
+      "caseCount": 14,
+      "source": "measured"
+    },
+    "channel-form-workflows.spec.js": {
+      "durationMs": 9297,
+      "caseCount": 7,
+      "source": "measured"
+    },
+    "channel-protocol-relevance.spec.js": {
+      "durationMs": 7275,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "channel-remote-quality.spec.js": {
+      "durationMs": 2771,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "channel-setup-comparison.spec.js": {
+      "durationMs": 2965,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "channel-setup-guide.spec.js": {
+      "durationMs": 14176,
+      "caseCount": 9,
+      "source": "measured"
+    },
+    "channel-setup.spec.js": {
+      "durationMs": 16440,
+      "caseCount": 9,
+      "source": "measured"
+    },
+    "contrast-audit.spec.js": {
+      "durationMs": 842,
+      "caseCount": 9,
+      "source": "measured"
+    },
+    "count-time-chart.spec.js": {
+      "durationMs": 5169,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "dashboard-activity.spec.js": {
+      "durationMs": 3349,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "dashboard-call-statistics.spec.js": {
+      "durationMs": 3816,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "dashboard-remote-quality.spec.js": {
+      "durationMs": 30823,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "described-navigation.spec.js": {
+      "durationMs": 7972,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "design-system.spec.js": {
+      "durationMs": 35438,
+      "caseCount": 18,
+      "source": "measured"
+    },
+    "direct-listen-gallery.spec.js": {
+      "durationMs": 3108,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "direct-listen.spec.js": {
+      "durationMs": 15094,
+      "caseCount": 10,
+      "source": "measured"
+    },
+    "directory-live-updates.spec.js": {
+      "durationMs": 12849,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "discovery-review.spec.js": {
+      "durationMs": 1452,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "filled-surfaces.spec.js": {
+      "durationMs": 16707,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "form-workflows.spec.js": {
+      "durationMs": 12398,
+      "caseCount": 11,
+      "source": "measured"
+    },
+    "guide-context.spec.js": {
+      "durationMs": 14469,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "inline-identity-action.spec.js": {
+      "durationMs": 2433,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "issi-identity-parity.spec.js": {
+      "durationMs": 8149,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "listen-map.spec.js": {
+      "durationMs": 12063,
+      "caseCount": 13,
+      "source": "measured"
+    },
+    "live-activity-batch.spec.js": {
+      "durationMs": 2718,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "live-conventional-aggregate.spec.js": {
+      "durationMs": 17872,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "live-guide.spec.js": {
+      "durationMs": 9361,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "live-identity-columns.spec.js": {
+      "durationMs": 13444,
+      "caseCount": 20,
+      "source": "measured"
+    },
+    "live-remote-origin.spec.js": {
+      "durationMs": 15201,
+      "caseCount": 14,
+      "source": "measured"
+    },
+    "live-sort.spec.js": {
+      "durationMs": 24631,
+      "caseCount": 14,
+      "source": "measured"
+    },
+    "loading-indicators.spec.js": {
+      "durationMs": 2319,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "main-guide.spec.js": {
+      "durationMs": 10639,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "map-guide.spec.js": {
+      "durationMs": 1547,
+      "caseCount": 1,
+      "source": "measured"
+    },
+    "message-catalog-app.spec.js": {
+      "durationMs": 3423,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "metric-cards.spec.js": {
+      "durationMs": 4608,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "mobile-audit.spec.js": {
+      "durationMs": 9934,
+      "caseCount": 13,
+      "source": "measured"
+    },
+    "mobile-form-panels.spec.js": {
+      "durationMs": 11084,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "mobile-navigation-dock.spec.js": {
+      "durationMs": 26928,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "modal-interactions.spec.js": {
+      "durationMs": 11067,
+      "caseCount": 11,
+      "source": "measured"
+    },
+    "my-settings-focused.spec.js": {
+      "durationMs": 12439,
+      "caseCount": 10,
+      "source": "measured"
+    },
+    "operational-preferences.spec.js": {
+      "durationMs": 6299,
+      "caseCount": 9,
+      "source": "measured"
+    },
+    "ota-alias.spec.js": {
+      "durationMs": 29822,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "p25-visualizer-actions.spec.js": {
+      "durationMs": 7633,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "p25-visualizer-background.spec.js": {
+      "durationMs": 12259,
+      "caseCount": 1,
+      "source": "measured"
+    },
+    "p25-visualizer-controls.spec.js": {
+      "durationMs": 3053,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "p25-visualizer-focus-fade.spec.js": {
+      "durationMs": 20974,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "p25-visualizer-guide.spec.js": {
+      "durationMs": 7059,
+      "caseCount": 1,
+      "source": "measured"
+    },
+    "p25-visualizer-hover-hit.spec.js": {
+      "durationMs": 74581,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "p25-visualizer-label-depth.spec.js": {
+      "durationMs": 113862,
+      "caseCount": 12,
+      "source": "measured"
+    },
+    "p25-visualizer-listen-focus.spec.js": {
+      "durationMs": 26664,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "p25-visualizer-menu.spec.js": {
+      "durationMs": 29704,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "p25-visualizer-overview.spec.js": {
+      "durationMs": 11896,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "p25-visualizer-renderer.spec.js": {
+      "durationMs": 35465,
+      "caseCount": 9,
+      "source": "measured"
+    },
+    "p25-visualizer-settings.spec.js": {
+      "durationMs": 2815,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "p25-visualizer-snapshot.spec.js": {
+      "durationMs": 6718,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "p25-visualizer-startup.spec.js": {
+      "durationMs": 2103,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "p25-visualizer-talkgroups.spec.js": {
+      "durationMs": 19566,
+      "caseCount": 10,
+      "source": "measured"
+    },
+    "page-loading.spec.js": {
+      "durationMs": 14948,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "paging-tone-detection.spec.js": {
+      "durationMs": 2986,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "player-menu.spec.js": {
+      "durationMs": 3254,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "radio-home-identity.spec.js": {
+      "durationMs": 3788,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "radioreference-connect.spec.js": {
+      "durationMs": 6545,
+      "caseCount": 9,
+      "source": "measured"
+    },
+    "radioreference-guide.spec.js": {
+      "durationMs": 12804,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "radioreference-import.spec.js": {
+      "durationMs": 61753,
+      "caseCount": 62,
+      "source": "measured"
+    },
+    "recordings-filters.spec.js": {
+      "durationMs": 10538,
+      "caseCount": 13,
+      "source": "measured"
+    },
+    "recordings-guide.spec.js": {
+      "durationMs": 7524,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "recordings.spec.js": {
+      "durationMs": 97362,
+      "caseCount": 87,
+      "source": "measured"
+    },
+    "remote-channel-origin.spec.js": {
+      "durationMs": 1456,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "remote-links.spec.js": {
+      "durationMs": 61083,
+      "caseCount": 36,
+      "source": "measured"
+    },
+    "retained-statistics.spec.js": {
+      "durationMs": 63448,
+      "caseCount": 40,
+      "source": "measured"
+    },
+    "scan-list-members-workspace.spec.js": {
+      "durationMs": 1045,
+      "caseCount": 1,
+      "source": "measured"
+    },
+    "scan-list-playback.spec.js": {
+      "durationMs": 11487,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "scan-list-save-workflows.spec.js": {
+      "durationMs": 2660,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "scan-lists-guide.spec.js": {
+      "durationMs": 5192,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "scanner-controls.spec.js": {
+      "durationMs": 74433,
+      "caseCount": 20,
+      "source": "measured"
+    },
+    "scanner-guide.spec.js": {
+      "durationMs": 53625,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "section-notices.spec.js": {
+      "durationMs": 982,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "setup-guide-lifecycle.spec.js": {
+      "durationMs": 36157,
+      "caseCount": 20,
+      "source": "measured"
+    },
+    "shared-player-presentation.spec.js": {
+      "durationMs": 15370,
+      "caseCount": 8,
+      "source": "estimated"
+    },
+    "site-issi-bands.spec.js": {
+      "durationMs": 2310,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "site-style-app.spec.js": {
+      "durationMs": 21250,
+      "caseCount": 14,
+      "source": "measured"
+    },
+    "site-style-gallery.spec.js": {
+      "durationMs": 5134,
+      "caseCount": 7,
+      "source": "measured"
+    },
+    "source-name-display.spec.js": {
+      "durationMs": 4570,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "specialized-contrast.spec.js": {
+      "durationMs": 8123,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "spectrum-discovery.spec.js": {
+      "durationMs": 132324,
+      "caseCount": 112,
+      "source": "measured"
+    },
+    "spectrum-guide.spec.js": {
+      "durationMs": 50967,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "spectrum-live-drag.spec.js": {
+      "durationMs": 29970,
+      "caseCount": 21,
+      "source": "measured"
+    },
+    "spectrum-recording.spec.js": {
+      "durationMs": 5610,
+      "caseCount": 14,
+      "source": "measured"
+    },
+    "spectrum-search.spec.js": {
+      "durationMs": 233937,
+      "caseCount": 135,
+      "source": "measured"
+    },
+    "spectrum-session-takeover.spec.js": {
+      "durationMs": 13318,
+      "caseCount": 17,
+      "source": "measured"
+    },
+    "spectrum-takeover-release-lifecycle.spec.js": {
+      "durationMs": 8438,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "spectrum-tuner-takeover.spec.js": {
+      "durationMs": 10088,
+      "caseCount": 14,
+      "source": "measured"
+    },
+    "streaming-guide.spec.js": {
+      "durationMs": 6155,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "streaming.spec.js": {
+      "durationMs": 37407,
+      "caseCount": 32,
+      "source": "measured"
+    },
+    "table-autofit-interactions.spec.js": {
+      "durationMs": 1884,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "table-autofit-measurement.spec.js": {
+      "durationMs": 5065,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "table-cell-containment.spec.js": {
+      "durationMs": 1816,
+      "caseCount": 2,
+      "source": "measured"
+    },
+    "table-default-widths.spec.js": {
+      "durationMs": 5814,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "table-overflow.spec.js": {
+      "durationMs": 7861,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "theme-hue.spec.js": {
+      "durationMs": 18098,
+      "caseCount": 12,
+      "source": "measured"
+    },
+    "topics-guide.spec.js": {
+      "durationMs": 2523,
+      "caseCount": 3,
+      "source": "measured"
+    },
+    "tuner-allocation.spec.js": {
+      "durationMs": 57190,
+      "caseCount": 24,
+      "source": "measured"
+    },
+    "tuner-frequency-actions.spec.js": {
+      "durationMs": 7202,
+      "caseCount": 8,
+      "source": "measured"
+    },
+    "tuner-readout-responsive.spec.js": {
+      "durationMs": 2481,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "tuners-guide.spec.js": {
+      "durationMs": 30823,
+      "caseCount": 5,
+      "source": "measured"
+    },
+    "tuners.spec.js": {
+      "durationMs": 38481,
+      "caseCount": 32,
+      "source": "measured"
+    },
+    "web-diagnostic-log.spec.js": {
+      "durationMs": 15453,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "web-revision-lifecycle.spec.js": {
+      "durationMs": 2979,
+      "caseCount": 4,
+      "source": "measured"
+    },
+    "welcome-guide-preference.spec.js": {
+      "durationMs": 10269,
+      "caseCount": 6,
+      "source": "measured"
+    },
+    "welcome-guides.spec.js": {
+      "durationMs": 18879,
+      "caseCount": 13,
+      "source": "measured"
+    }
+  }
+}

@@ -126,6 +126,8 @@ jobs:
           python-version: '3.13'
       - name: Check browser behavior contracts
         run: node src/test/js/stats-web/run-contracts.js
+      - name: Check browser shard inventory guards
+        run: node --test tools/test/web-visual-shards.test.cjs
       - name: Check Nightly preparation and publication guards
         run: node src/test/js/release/nightly-workflow.test.js .github/workflows/nightly.yml
       - name: Check packaged database smoke contracts
@@ -152,13 +154,15 @@ jobs:
       - name: Install the pinned Chromium browser
         run: npx playwright install chromium
       - name: Compare design-system screenshots
-        run: npm run test:web-visual -- --workers=2 --shard=${{ matrix.shard }}/4
+        run: node tools/test/web-visual-shards.cjs --shard=${{ matrix.shard }}/4
       - name: Save browser timings and results
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: web-design-system-results-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: build/playwright-report/results.json
+          path: |
+            build/playwright-report/results.json
+            build/playwright-shards/shard-${{ matrix.shard }}-inventory.json
           if-no-files-found: ignore
           retention-days: 14
       - name: Upload visual differences

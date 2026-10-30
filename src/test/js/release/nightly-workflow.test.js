@@ -364,7 +364,8 @@ function verifyParallelPreparationWiring() {
     'Every browser shard must run exactly once.');
   assert.match(visual, /runs-on: macos-15/);
   assert.match(visual, /fail-fast: false/);
-  assert.match(visual, /npm run test:web-visual -- --workers=2 --shard=\$\{\{ matrix\.shard \}\}\/4/);
+  assert.match(visual, /node tools\/test\/web-visual-shards\.cjs --shard=\$\{\{ matrix\.shard \}\}\/4/);
+  assert.match(visual, /build\/playwright-shards\/shard-\$\{\{ matrix\.shard \}\}-inventory\.json/);
   assert.doesNotMatch(visual, /--grep|--test-ignore|--update-snapshots|continue-on-error/,
     'Sharding must retain the complete browser suite and fail on errors.');
   assert.match(visual, /name: web-design-system-visual-differences-\$\{\{ matrix\.shard \}\}/);
@@ -383,6 +384,7 @@ function verifyParallelPreparationWiring() {
   assert.match(contracts, /run: node src\/test\/js\/stats-web\/run-contracts\.js/,
     'Pure JavaScript contracts run directly, without a Java subprocess wrapper.');
   assert.match(contracts, /run: node src\/test\/js\/release\/nightly-workflow\.test\.js/);
+  assert.match(contracts, /run: node --test tools\/test\/web-visual-shards\.test\.cjs/);
   assert.match(contracts, /python -m unittest discover -s tools\/release/);
   assert.match(contracts, /python -m unittest discover -s tools\/build/);
   assert.match(job('package'), /needs: \[validate, catalog\]/,
