@@ -719,7 +719,8 @@ test('Revoked call-audio access disables Scanner controls and blocks stale selec
   const primary = await page.locator('.scanner-playback-primary').elementHandle();
   const writes = state.preferenceWrites.length;
   state.session.capabilities['call-audio'] = false;
-  await page.clock.runFor(10_010);
+  // One session poll is required; replaying every intervening audio frame is unrelated.
+  await page.clock.fastForward(10_010);
   await expect.poll(() => checkbox.evaluate(element => element.disabled)).toBe(true);
   expect(await trigger.evaluate(element => element.disabled)).toBe(true);
   expect(await volume.evaluate(element => element.disabled)).toBe(true);

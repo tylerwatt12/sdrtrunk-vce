@@ -83,8 +83,10 @@ async function expectCuesAtViewport(wrapper) {
 }
 
 async function hideColumns(parts, page, ids = null) {
-  await parts.root.getByRole('button', { name: 'Choose table columns' }).click();
+  const trigger = parts.root.getByRole('button', { name: 'Choose table columns' });
+  await trigger.click();
   const chooser = page.locator('.table-layout-panel:visible');
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true');
   const columnIds = ids || await chooser.getByRole('checkbox').evaluateAll((elements) =>
     elements.map((element) => element.dataset.layoutColumnId));
   for (const id of columnIds) {
@@ -93,6 +95,8 @@ async function hideColumns(parts, page, ids = null) {
       const previousCount = await parts.table.locator('thead th').count();
       await checkbox.uncheck();
       await expect(parts.table.locator('thead th')).toHaveCount(previousCount - 1);
+      // Each saved layout replaces and reopens its chooser before the next real click.
+      await expect(trigger).toHaveAttribute('aria-expanded', 'true');
     }
   }
   return chooser;

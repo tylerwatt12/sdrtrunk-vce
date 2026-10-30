@@ -185,6 +185,20 @@ const centerReadout = (dialog) => dialog.locator('.ui-fact-row:has(dt:text-is("C
 const receivingMarker = (host, titleText) => host.locator(
   '.chart-window-selected, .chart-window-other, .chart-window-unscoped').and(host.getByLabel(titleText, { exact: false }));
 
+async function markerAppearance(marker) {
+  let appearance;
+  await expect.poll(async () => {
+    // Resizing redraws SVGs even with live updates paused; sample a current node atomically.
+    appearance = await marker.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { connected: element.isConnected, fill: style.fill, stroke: style.stroke,
+        strokeWidth: parseFloat(style.strokeWidth), tag: element.tagName };
+    });
+    return appearance.connected && appearance.fill !== '' && appearance.stroke !== '';
+  }).toBe(true);
+  return appearance;
+}
+
 for (const theme of ['light']) {
   test(`compact channel catalog starts with running channels and keeps recognizable names in ${theme}`, async ({ page }, testInfo) => {
     const app = await openApp(page, { choose: false, catalog: pickerCatalog(), theme });
@@ -849,11 +863,8 @@ for (const theme of ['light']) {
       const selectedCall = tunerRow(page, 1).locator('.chart-window-selected.chart-window-call');
       const otherCall = receivingMarker(tunerRow(page, 4), 'Call 856.21250 MHz · Colonie Simulcast');
       await expect(otherCall).toHaveCSS('fill', 'none');
-      const selectedStyle = await selectedCall.evaluate((element) => ({
-        fill: getComputedStyle(element).fill, stroke: getComputedStyle(element).stroke }));
-      const otherStyle = await otherCall.evaluate((element) => ({
-        fill: getComputedStyle(element).fill, stroke: getComputedStyle(element).stroke,
-        strokeWidth: parseFloat(getComputedStyle(element).strokeWidth), tag: element.tagName }));
+      const selectedStyle = await markerAppearance(selectedCall);
+      const otherStyle = await markerAppearance(otherCall);
       expect(selectedStyle.fill).not.toBe('none');
       expect(otherStyle.fill).toBe('none');
       expect(otherStyle.stroke).not.toBe('none');
@@ -861,7 +872,7 @@ for (const theme of ['light']) {
       expect(otherStyle.tag).toBe('circle');
       expect(selectedStyle.fill).not.toBe(otherStyle.stroke);
       const unknown = tunerRow(page, 1).locator('.chart-window-unscoped');
-      expect(await unknown.evaluate((element) => getComputedStyle(element).fill)).toBe('none');
+      expect((await markerAppearance(unknown)).fill).toBe('none');
       await page.screenshot({ animations: 'disabled', path: testInfo.outputPath(`shared-tuner-map-${theme}-${width}.png`), fullPage: true });
     }
   });
