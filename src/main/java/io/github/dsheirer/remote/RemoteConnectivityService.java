@@ -75,6 +75,8 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private static final int MAXIMUM_REMOTE_FEEDS_GLOBALLY = 128;
     private static final int OUTBOUND_PACKET_CAPACITY = 2_048;
     private static final long MAXIMUM_OUTBOUND_QUEUE_AGE_NANOS = TimeUnit.SECONDS.toNanos(2);
+    private static final String SELF_LINK_STATUS =
+        "Cannot send feeds to this receiver. Choose a different destination receiver.";
     private static final SecureRandom RANDOM = new SecureRandom();
     private final ConfigurationManager mConfiguration;
     private final ChannelAdministrationService mChannels;
@@ -436,6 +438,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         String host = boundedText(request.destinationHost(), 255, "Destination host");
         requirePort(request.destinationPort());
         String senderId = canonicalUuid(request.senderId());
+        if(request.enabled() && isSelfLink(mSettings, senderId)) throw new IllegalArgumentException(SELF_LINK_STATUS);
         Set<String> exported = new HashSet<>();
         for(String channelId: request.exportedChannelConfigurationIds())
         {
@@ -727,6 +730,12 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     {
         if(port < 1 || port > 65_535) throw new IllegalArgumentException("Port must be between 1 and 65535");
         return port;
+    }
+
+    private static boolean isSelfLink(Settings settings, String senderId)
+    {
+        // Sender IDs are issued by the destination. Our own IDs identify this receiver through any host alias.
+        return settings.trustedSenders().stream().anyMatch(sender -> sender.senderId().equals(senderId));
     }
 
     private static String canonicalUuid(String value)
@@ -1104,6 +1113,11 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                 {
                     if(outbound.equals(mSettings.outbound())) mOutboundState = SenderConnectionState.DISABLED;
                 }
+            }
+            else if(isSelfLink(settings, outbound.senderId()))
+            {
+                // Also fence configurations saved before self-link validation was introduced.
+                outboundFailed(outbound, SELF_LINK_STATUS);
             }
             else if(mOutbound == null)
             {

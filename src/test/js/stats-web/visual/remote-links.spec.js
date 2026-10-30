@@ -178,6 +178,30 @@ for (const [theme, viewport] of [
   ['light', { width: 1280, height: 900 }],
   ['dark', { width: 390, height: 844 }]
 ]) {
+  test(`${theme} self-link rejection keeps sending settings available to correct`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await openApp(page, theme);
+    const message = 'Cannot send feeds to this receiver. Choose a different destination receiver.';
+    await page.route('**/api/v1/admin/remote-links/sender-connection', route =>
+      route.fulfill({ status: 422, json: { error: { code: 'invalid_remote_link', message } } }));
+    await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
+    await page.getByRole('button', { name: 'Set up sending', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: 'Sending settings', exact: true });
+    await editor.getByLabel('Enable sending', { exact: true }).press('Space');
+    await editor.getByLabel('Destination host', { exact: true }).fill('localhost');
+    await editor.getByRole('textbox', { name: /^Sender ID/ }).fill(senderId);
+    await editor.getByLabel(/^Shared secret/).fill(fixtureSecret);
+    await editor.getByRole('button', { name: 'Save sender', exact: true }).click();
+
+    await expect(editor.getByRole('alert')).toHaveText(message);
+    await expect(editor.getByLabel('Destination host', { exact: true })).toHaveValue('localhost');
+    await expect(editor.getByRole('textbox', { name: /^Sender ID/ })).toHaveValue(senderId);
+    await expect(editor.getByLabel(/^Shared secret/)).toHaveValue(fixtureSecret);
+    await expect(editor.getByRole('button', { name: 'Save sender', exact: true })).toBeEnabled();
+    await expectRemoteWorkflowGeometry(editor);
+    await captureFormWorkflowEvidence(editor.locator('form'), `remote-self-link-${theme}`);
+  });
+
   test(`${theme} remote links tabs distinguish both directions and keep consistent spacing`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await openApp(page, theme);
