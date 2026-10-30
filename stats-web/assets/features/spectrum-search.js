@@ -417,24 +417,51 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     }
   };
   const receiverPreparationState = (tuner) => {
+    const isDisabled = String(tuner.operator_state || '').toLowerCase() === 'disabled';
     const channelCount = Math.max(0, Number(tuner.channel_count || 0));
     const lockSetting = (tuner.settings || []).find((setting) => setting.id === 'center_frequency_locked');
     const reasonText = String(tuner.reason || '');
     const needsStop = channelCount > 0 || /channel|serving/i.test(reasonText);
     const locked = tuner.center_frequency_locked === true || lockSetting?.value === true ||
       /lock center|center.*lock|unlock/i.test(reasonText);
-    const canPrepare = typeof context.prepareReceiver === 'function' && tuner.takeover_allowed !== false &&
-      (needsStop || locked);
-    return { tuner, channelCount, reasonText, needsStop, locked, canPrepare };
+    const canPrepare = isDisabled || (typeof context.prepareReceiver === 'function' &&
+      tuner.takeover_allowed !== false && (needsStop || locked));
+    return { tuner, channelCount, reasonText, needsStop, locked, canPrepare, isDisabled };
   };
   const prepareReceiver = (state) => trackReceiverUse(() => prepareReceiverUse(state));
-  const prepareReceiverUse = async ({ tuner }) => {
+  const prepareReceiverUse = async ({ tuner, isDisabled }) => {
     if (busy) return;
     const operation = generation;
     setBusy(true);
     clearFeedback();
     feedback.hidden = true;
     try {
+      if (isDisabled) {
+        await request(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/state`, {
+          method: 'PUT', body: { state: 'setup', ...(tuner.operator_generation !== undefined ?
+            { operator_generation: tuner.operator_generation } : {}) }
+        });
+        const deadline = Date.now() + 30_000;
+        while (current() && operation === generation) {
+          const inventory = await request('/api/v1/admin/tuners', { csrf: false });
+          if (!current() || operation !== generation) return;
+          const started = (inventory.tuners || []).find((candidate) => candidate.id === tuner.id);
+          if (!started) throw new Error('This tuner is no longer available. Choose another receiver.');
+          if (!started.transition) {
+            if (started.maintenance_error) throw new Error(started.maintenance_error);
+            if (String(started.operator_state || '').toLowerCase() !== 'setup')
+              throw new Error('The receiver did not enter Setup. Check its connection and try again.');
+            await refreshReceiverCatalog();
+            if (!current() || operation !== generation) return;
+            receiverId = tuner.id;
+            showBand();
+            return;
+          }
+          if (Date.now() >= deadline) throw new Error('The receiver is still starting. Refresh its status shortly.');
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+        }
+        return;
+      }
       const acquired = await context.prepareReceiver(tuner);
       if (!acquired) return;
       if (!current() || operation !== generation) {
@@ -457,13 +484,13 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     } finally { if (current()) setBusy(false); }
   };
   const receiverCard = (state) => {
-    const { tuner, channelCount, reasonText, needsStop, locked, canPrepare } = state;
-    const status = channelCount ? `${channelCount} channel${channelCount === 1 ? '' : 's'} running` :
+    const { tuner, channelCount, reasonText, needsStop, locked, canPrepare, isDisabled } = state;
+    const status = isDisabled ? 'Disabled' : channelCount ? `${channelCount} channel${channelCount === 1 ? '' : 's'} running` :
       needsStop ? 'Channels running' : locked ? 'Center locked' : 'Unavailable';
     const row = node('article', 'ui-surface spectrum-search-receiver-card');
     row.setAttribute('role', 'listitem');
     const heading = node('div', 'spectrum-search-receiver-heading');
-    const statusPill = uiPill(status, 'warning');
+    const statusPill = uiPill(status, isDisabled ? 'neutral' : 'warning');
     statusPill.classList.add('spectrum-search-receiver-status');
     heading.append(node('strong', '', receiverDisplayName(tuner)), statusPill);
     const details = node('p', 'muted spectrum-search-receiver-detail', receiverSummary(tuner));
@@ -472,7 +499,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (!canPrepare && reasonText) copy.append(node('p', 'muted', reasonText));
     row.append(copy);
     if (canPrepare) {
-      const prepareLabel = needsStop ? 'Stop channels and use' : 'Unlock and use';
+      const prepareLabel = isDisabled ? 'Start Setup' : needsStop ? 'Stop channels and use' : 'Unlock and use';
       const prepare = uiActionButton(prepareLabel, '', () => void prepareReceiver(state),
         'ui-button ui-button-primary spectrum-search-prepare-receiver');
       prepare.setAttribute('aria-label', `${prepareLabel}: ${receiverDisplayName(tuner)}`);
@@ -538,7 +565,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     if (current() && operation === generation && (lease || liveJob())) scheduleRenewal();
   };
   const showBand = () => {
-    const available = (catalog.tuners || []).filter((tuner) => tuner.eligible);
+    const available = (catalog.tuners || []).filter((tuner) => tuner.eligible &&
+      String(tuner.operator_state || '').toLowerCase() !== 'disabled');
     show('band', 0, available.length ? 'Choose where to look' : 'Choose a receiver');
     if (!available.length) {
       summary.replaceChildren();
@@ -549,6 +577,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
         state.needsStop && state.canPrepare);
       const anyPreparation = blockedTuners.some((state) => state.canPrepare);
       const anyStopping = blockedTuners.some((state) => state.needsStop && state.canPrepare);
+      const anyDisabled = blockedTuners.some((state) => state.isDisabled);
       const unavailable = node('div', 'spectrum-search-unavailable');
       const introduction = node('div', 'ui-notice ui-notice-warning spectrum-search-unavailable-intro');
       introduction.append(node('strong', '', !blockedTuners.length ? 'No receivers are available' :
@@ -556,7 +585,7 @@ export function openSpectrumSearchWizard(ui, context = {}) {
           'No receiver is ready for a search'),
       node('p', '', !blockedTuners.length ? 'Connect or enable a supported receiver, then refresh this list.' :
         allStopping ? 'Choose one below. VCE will stop its active channels for the search and restart the channels it stopped when you finish. Calls in progress will end and will not resume.' :
-          anyPreparation ? (anyStopping ?
+          anyPreparation ? (anyDisabled ? 'Start Setup on a receiver before using it for a search.' : anyStopping ?
             'Choose an action below. VCE restores temporary changes when you finish. Stopping channels may end calls in progress.' :
             'Choose Unlock and use below. VCE will restore Lock center when you finish.') :
             'Check the reason below, then manage receivers or refresh this list.'));
@@ -767,6 +796,13 @@ export function openSpectrumSearchWizard(ui, context = {}) {
     void directory.load();
     form.addEventListener('submit', (event) => event.preventDefault());
     stage.append(form);
+    const disabledReceivers = (catalog.tuners || []).map(receiverPreparationState)
+      .filter((state) => state.isDisabled);
+    if (disabledReceivers.length) {
+      const otherReceivers = node('section', 'spectrum-search-unavailable');
+      otherReceivers.append(node('h4', '', 'Disabled receivers'), receiverList(disabledReceivers));
+      stage.append(otherReceivers);
+    }
     updateContext();
     button('Cancel', () => modal.close());
     findSignals = button('Find signals', () => {
@@ -810,7 +846,8 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       const id = receiverId;
       usedReceiverId = id;
       const acquired = await request(browsePath(id), { method: 'POST',
-        body: reusingPreparedReceiver ? { lease_id: lease.lease_id } : {} });
+        body: reusingPreparedReceiver ? { lease_id: lease.lease_id } :
+          String(receiver()?.operator_state || 'live').toLowerCase() === 'setup' ? {} : { takeover: true } });
       if (!current() || operation !== generation) {
         await releaseLateLease(acquired, id);
         return;

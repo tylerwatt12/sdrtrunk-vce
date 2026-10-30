@@ -156,7 +156,11 @@ public final class TunerSettingsService implements AutoCloseable
     private void clearBrowse(DiscoveredTuner tuner, BrowseSession expected)
     {
         OperatorSession existing = mSessions.get(tuner);
-        if(existing != null && existing.browse == expected) existing.browse = null;
+        if(existing != null && existing.browse == expected)
+        {
+            existing.browse = null;
+            if(tuner == expected.target) tuner.setSpectrumObserved(false);
+        }
     }
 
     public List<TunerSettingCatalog.SettingDescriptor> describe(DiscoveredTuner tuner)
@@ -339,11 +343,20 @@ public final class TunerSettingsService implements AutoCloseable
 
     public MutationResult requestState(DiscoveredTuner tuner, DiscoveredTuner.OperatorState state)
     {
+        return requestState(tuner, state, null);
+    }
+
+    /** A departing browser may act only on the operator decision it actually observed. */
+    public MutationResult requestState(DiscoveredTuner tuner, DiscoveredTuner.OperatorState state,
+                                       Long operatorGeneration)
+    {
         synchronized(mLifecycleLock)
         {
             ensureOpen();
             ensurePresent(tuner);
             Objects.requireNonNull(state);
+            if(operatorGeneration != null && tuner.operatorGeneration() != operatorGeneration)
+                throw new SettingUnavailableException("The tuner mode changed. Review its current mode and try again.");
             if(lifecycleGroup(tuner).stream().anyMatch(DiscoveredTuner::isDiscoveryHeld))
             {
                 throw new SettingUnavailableException("Signal identification is using this tuner");
@@ -476,6 +489,8 @@ public final class TunerSettingsService implements AutoCloseable
             }
             if(tuner.getTunerStatus() == TunerStatus.ERROR || tuner.getTunerStatus() == TunerStatus.REMOVED)
                 throw new SettingUnavailableException("Selected tuner is unavailable for live Spectrum");
+            if(tuner.getOperatorState() == DiscoveredTuner.OperatorState.DISABLED)
+                throw new SettingUnavailableException("Start Setup to inspect this tuner");
             boolean recording = tuner.getTunerClass() == TunerClass.RECORDING_TUNER;
             if(recording && takeover)
                 throw new SettingUnavailableException("Recording playback has a fixed capture window; tuning takeover is unavailable");
@@ -509,7 +524,7 @@ public final class TunerSettingsService implements AutoCloseable
                     boolean idle = group.stream().allMatch(TunerSettingsService::isIdle);
                     if(!idle && !takeover && (!tuner.isAvailable() || !tuner.hasTuner() || isIdle(tuner)))
                         throw new SettingUnavailableException("Channels are using this tuner's paired hardware");
-                    if(idle || takeover)
+                    if(takeover)
                     {
                         for(DiscoveredTuner member: group)
                             previous.put(member, member.getOperatorState());
@@ -521,10 +536,12 @@ public final class TunerSettingsService implements AutoCloseable
                         }
                         for(DiscoveredTuner member: group)
                         {
+                            if(previous.get(member) == DiscoveredTuner.OperatorState.DISABLED) continue;
                             member.prepareForSetup();
                         }
                         for(DiscoveredTuner member: group)
                         {
+                            if(previous.get(member) == DiscoveredTuner.OperatorState.DISABLED) continue;
                             if(!member.enterSetup()) throw new IllegalStateException("Tuner unavailable");
                         }
                     }
@@ -544,12 +561,14 @@ public final class TunerSettingsService implements AutoCloseable
                             }
                         }
                     }
-                    BrowseSession session = new BrowseSession(tuner, group, previous, tuner.getTunerClass() != TunerClass.RECORDING_TUNER && (idle || takeover),
+                    BrowseSession session = new BrowseSession(tuner, group, previous,
+                        tuner.getOperatorState() == DiscoveredTuner.OperatorState.SETUP && (idle || takeover),
                         takeover, stopped, centerLocks);
                     synchronized(mLifecycleLock)
                     {
                         ensureOpen();
                         group.forEach(member -> session(member).browse = session);
+                        tuner.setSpectrumObserved(true);
                     }
                     return session.lease();
                 }
@@ -577,10 +596,22 @@ public final class TunerSettingsService implements AutoCloseable
                 throw new SettingUnavailableException("The Spectrum session ended. Retry browsing this tuner.");
             BrowseConflictException conflict = browseConflict(tuner, owner);
             if(!conflict.claimAllowed() || !Objects.equals(owner.revision, sessionRevision)) throw conflict;
-            owner.id = UUID.randomUUID().toString();
-            owner.revision = UUID.randomUUID().toString();
-            owner.expiresAt = mClock.getAsLong() + BROWSE_LIFETIME_MS;
-            return owner.lease();
+            List<DiscoveredTuner> locked = lockAllocationGroup(owner.group);
+            try
+            {
+                // Taking control is a newer operator decision even when the displayed mode stays Setup.
+                // Fence a displaced page's pending navigation action as well as its former lease token.
+                for(DiscoveredTuner member: owner.group)
+                {
+                    member.claimOperatorOwnership();
+                    owner.adoptOperatorGeneration(member);
+                }
+                owner.id = UUID.randomUUID().toString();
+                owner.revision = UUID.randomUUID().toString();
+                owner.expiresAt = mClock.getAsLong() + BROWSE_LIFETIME_MS;
+                return owner.lease();
+            }
+            finally { unlockAllocationGroup(locked); }
         }
     }
 
@@ -626,6 +657,14 @@ public final class TunerSettingsService implements AutoCloseable
         return endBrowse(tuner, leaseId, handoff, null, null, false);
     }
 
+    /** Ends observation while retaining the operator's explicit Setup choice and its paused channels. */
+    public CompletableFuture<Void> releaseBrowse(DiscoveredTuner tuner, String leaseId, boolean handoff,
+                                                boolean keepSetup)
+    {
+        if(handoff && keepSetup) throw new IllegalArgumentException("handoff and keep_setup cannot be combined");
+        return endBrowse(tuner, leaseId, handoff, null, null, false, keepSetup);
+    }
+
     /** Starts the saved channel on the lifecycle worker before competing allocation can change this center. */
     public <T> CompletableFuture<T> handoffBrowse(DiscoveredTuner tuner, String leaseId, Supplier<T> start)
     {
@@ -659,6 +698,13 @@ public final class TunerSettingsService implements AutoCloseable
     private <T> CompletableFuture<T> endBrowse(DiscoveredTuner tuner, String leaseId, boolean handoff,
                                              Supplier<T> start, ProbeHold handoffHold, boolean closingRestore)
     {
+        return endBrowse(tuner, leaseId, handoff, start, handoffHold, closingRestore, false);
+    }
+
+    private <T> CompletableFuture<T> endBrowse(DiscoveredTuner tuner, String leaseId, boolean handoff,
+                                             Supplier<T> start, ProbeHold handoffHold, boolean closingRestore,
+                                             boolean keepSetup)
+    {
         synchronized(mLifecycleLock)
         {
             if(closingRestore)
@@ -685,6 +731,18 @@ public final class TunerSettingsService implements AutoCloseable
                 List<DiscoveredTuner> locked = lockAllocationGroup(owner.group);
                 try
                 {
+                    if(keepSetup)
+                    {
+                        if(!owner.ownsModes()) throw new BrowseOwnershipLostException();
+                        retainStoppedChannels(owner);
+                        for(DiscoveredTuner member: owner.pendingCenterLockMembers())
+                        {
+                            restoreCenterLock(member, owner.centerLocks.get(member));
+                            owner.markCenterLockRestored(member);
+                        }
+                        synchronized(mLifecycleLock) { abandonBrowse(tuner); }
+                        return null;
+                    }
                     if(handoff) return completeBrowseHandoff(tuner, owner, handoffHold, start);
                     boolean ownsModes = owner.ownsModes();
                     RuntimeException failure = null;
@@ -1222,11 +1280,14 @@ public final class TunerSettingsService implements AutoCloseable
     private static void restoreBrowseMode(DiscoveredTuner tuner, DiscoveredTuner.OperatorState mode,
                                           boolean handoff)
     {
-        if(handoff || mode == DiscoveredTuner.OperatorState.LIVE)
+        if(mode == DiscoveredTuner.OperatorState.DISABLED)
+        {
+            tuner.setEnabled(false);
+        }
+        else if(handoff || mode == DiscoveredTuner.OperatorState.LIVE)
         {
             if(!tuner.enterLive()) throw new IllegalStateException("Tuner unavailable");
         }
-        else if(mode == DiscoveredTuner.OperatorState.DISABLED) tuner.setEnabled(false);
     }
 
     private void abandonBrowse(DiscoveredTuner tuner)
@@ -1578,11 +1639,14 @@ public final class TunerSettingsService implements AutoCloseable
                 {
                     throw new IllegalStateException("Use Setup");
                 }
-                if(!tuner.enterLive())
+                if(current == DiscoveredTuner.OperatorState.SETUP)
+                {
+                    restoreOnce(tuner, true);
+                }
+                else if(!tuner.enterLive())
                 {
                     throw new IllegalStateException("Tuner unavailable");
                 }
-                session(tuner).stoppedChannels = List.of();
             }
         }
     }
@@ -1716,6 +1780,11 @@ public final class TunerSettingsService implements AutoCloseable
 
     private void restoreOnce(DiscoveredTuner tuner)
     {
+        restoreOnce(tuner, false);
+    }
+
+    private void restoreOnce(DiscoveredTuner tuner, boolean goLiveOnFailure)
+    {
         List<RememberedChannel> remembered = session(tuner).stoppedChannels;
         tuner.beginRestoreAllocation();
         RestoreResult result;
@@ -1729,7 +1798,7 @@ public final class TunerSettingsService implements AutoCloseable
         }
         session(tuner).restoreResult = result;
         retainFailedChannels(tuner, remembered, result.failed());
-        if(!result.failed().isEmpty())
+        if(!goLiveOnFailure && !result.failed().isEmpty())
         {
             return;
         }
@@ -1901,7 +1970,7 @@ public final class TunerSettingsService implements AutoCloseable
                     }
                     mClosed = true;
                     mBrowseExpiry.shutdownNow();
-                    mSessions.values().forEach(session -> session.browse = null);
+                    mSessions.forEach((tuner, session) -> { tuner.setSpectrumObserved(false); session.browse = null; });
                     mPendingOperations.forEach(request -> request.completeExceptionally(
                         new IllegalStateException("Tuner settings service is stopping")));
                     mPendingOperations.clear();

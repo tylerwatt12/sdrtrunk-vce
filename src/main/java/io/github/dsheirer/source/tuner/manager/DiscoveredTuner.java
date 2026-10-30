@@ -52,6 +52,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private volatile Thread mRestoreAllocationThread;
     private volatile boolean mDiscoveryHeld;
     private volatile long mOperatorGeneration;
+    private volatile boolean mSpectrumObserved;
     private volatile String mAllocationPreferredName;
     private String mErrorMessage;
     private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
@@ -178,6 +179,11 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     }
 
     long operatorGeneration() { return mOperatorGeneration; }
+    /** Identifies the current operator decision without exposing hardware identity. */
+    public long getOperatorGeneration() { return mOperatorGeneration; }
+    /** Caller already owns the allocation lifecycle gate when transferring an existing control session. */
+    void claimOperatorOwnership() { mOperatorGeneration++; }
+    void setSpectrumObserved(boolean observed) { mSpectrumObserved = observed; }
     boolean isDiscoveryHeld() { return mDiscoveryHeld; }
     void setDiscoveryHeld(boolean held) { mDiscoveryHeld = held; }
 
@@ -209,7 +215,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
 
     /**
      * Read-only diagnostics may observe a running recording even without channels: its WAV producer is already
-     * active. Physical tuners still require active channels or an explicit Setup hold.
+     * active. A Spectrum observation may also keep an idle Live tuner visible without reserving it from channels.
      */
     public boolean isAvailableForDiagnostics()
     {
@@ -223,7 +229,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
             return false;
         }
         return tuner.getTunerController() instanceof RecordingTunerController recording ?
-            recording.isPlaybackRunning() : getOperatorState() == OperatorState.SETUP ||
+            recording.isPlaybackRunning() : getOperatorState() == OperatorState.SETUP || mSpectrumObserved ||
             tuner.getChannelSourceManager() != null && tuner.getChannelSourceManager().getTunerChannelCount() > 0;
     }
 

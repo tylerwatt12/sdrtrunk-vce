@@ -11,7 +11,7 @@ const BALANCED_FRAME_INTERVAL_MS = 100; // TunerDiagnosticService.FRAMES_PER_SEC
 function recording(tunerClass = 'recording_tuner') {
   return {
     id: 'recording-a', name: 'Test baseband.wav', tuner_class: tunerClass,
-    status: 'enabled', available: true, operator_state: 'in_use', channel_count: 1,
+    status: 'enabled', available: true, operator_state: 'live', channel_count: 1,
     frequency_hz: CENTER_HZ, sample_rate_hz: RATE_HZ,
     spectrum_target_id: 'recording-target', settings: []
   };
@@ -236,7 +236,9 @@ for (const theme of ['light']) {
         .toHaveAttribute('aria-disabled', 'true');
       await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
       await expect(page.locator('.tuner-spectrum-waterfall .channel-diagnostic-overlay')).toBeHidden();
-      await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeHidden();
+      await expect(page.getByRole('group', { name: 'Tuner mode', exact: true }).getByRole('button'))
+        .toHaveText(['Live', 'Setup', 'Disabled']);
+      await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
       await expectRenderedRecordingPlots(page);
       expect(state.subscriptions.some((subscriptions) =>
         subscriptions?.tuner_diagnostics?.target_id === 'recording-target')).toBe(true);
@@ -316,7 +318,9 @@ test('playing WAV without channels is Playing and renders actual spectrum sample
   await install(page, { channelCount: 0 });
   await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
   await expect(page.getByRole('combobox', { name: 'Tuner', exact: true })).toContainText('Playing');
-  await expect(page.getByRole('button', { name: 'Setup', exact: true })).toBeHidden();
+  await expect(page.getByRole('group', { name: 'Tuner mode', exact: true }).getByRole('button'))
+    .toHaveText(['Live', 'Setup', 'Disabled']);
+  await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('a newly available recording target binds on lease renewal without leaving Spectrum', async ({ page }) => {

@@ -168,6 +168,7 @@ async function install(page, state = {}) {
     if (limits) Object.assign(receiver, { minimum_frequency_hz: limits[0], maximum_frequency_hz: limits[1] });
   });
   if (state.busyWide) state.tuners[1] = { ...state.tuners[1], operator_state: 'live', channel_count: 2 };
+  if (state.receiverMode) state.tuners.forEach((receiver) => { receiver.operator_state = state.receiverMode; });
   let leaseSequence = 0;
   const takeoverLeases = new Set();
   const preferenceModule = await import(pathToFileURL(resolve(root, 'stats-web/assets/core/preference-schema.js')).href);
@@ -239,6 +240,11 @@ async function install(page, state = {}) {
         return fail('Receiver measurements are unavailable', 'tuner_read_failed', 503);
       }
       return respond(inventory);
+    }
+    if (path.endsWith('/state') && request.method() === 'PUT') {
+      const receiver = state.tuners.find((candidate) => candidate.id === path.split('/').at(-2));
+      receiver.operator_state = body.state;
+      return respond({ status: 'accepted' }, 202);
     }
     if (path.endsWith('/browse')) {
       if (request.method() === 'DELETE') {
@@ -414,7 +420,8 @@ async function install(page, state = {}) {
   await expect(page.getByRole('button', { name: 'Find Trunked Systems', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Find Trunked Systems', exact: true }).click();
   await expect(dialog(page).getByRole('heading', {
-    name: state.noIdle || state.lockedOnly || state.noCatalogTuners ? 'Choose a receiver' : 'Choose where to look'
+    name: state.noIdle || state.lockedOnly || state.noCatalogTuners || state.receiverMode === 'disabled' ?
+      'Choose a receiver' : 'Choose where to look'
   })).toBeVisible();
   return state;
 }
@@ -1517,6 +1524,32 @@ test('uses one widest idle receiver and acquires its own browse session when sea
   await expect(dialog(page).getByText('Search results', { exact: true })).toHaveCount(0);
   await expect(dialog(page).locator('tbody tr:visible')).toHaveCount(4);
   await expect(dialog(page).locator('.spectrum-search-system-group:visible')).toHaveCount(2);
+});
+
+test('an idle Live receiver is temporarily reserved for Find Trunked Systems', async ({ page }) => {
+  const state = await install(page, { receiverMode: 'live' });
+  await complete(page);
+  const acquisition = state.requests.find((request) => request.path.endsWith('/browse') && request.method === 'POST');
+  expect(acquisition.body).toEqual({ takeover: true });
+  await dialog(page).getByRole('button', { name: 'Close Find Trunked Systems', exact: true }).click();
+  await expect.poll(() => state.requests.some((request) => request.path.endsWith('/browse') &&
+    request.method === 'DELETE')).toBe(true);
+  expect(state.requests.filter((request) => request.path.endsWith('/browse') && request.method === 'DELETE')
+    .every((request) => request.body.keep_setup !== true)).toBe(true);
+});
+
+test('Find Trunked Systems requires an explicit Setup action for Disabled receivers', async ({ page }) => {
+  const state = await install(page, { receiverMode: 'disabled' });
+  await expect(dialog(page).getByRole('button', { name: 'Start Setup: Wide receiver', exact: true })).toBeVisible();
+  await expect(dialog(page).getByRole('button', { name: 'Find signals', exact: true })).toHaveCount(0);
+  expect(state.requests.some((request) => request.path.endsWith('/browse') || request.path.endsWith('/state'))).toBe(false);
+  await dialog(page).getByRole('button', { name: 'Start Setup: Wide receiver', exact: true }).click();
+  await expect(dialog(page).getByRole('button', { name: 'Find signals', exact: true })).toBeEnabled();
+  expect(state.requests.filter((request) => request.path.endsWith('/state'))
+    .map((request) => request.body.state)).toEqual(['setup']);
+  await complete(page);
+  const acquisition = state.requests.find((request) => request.path.endsWith('/browse') && request.method === 'POST');
+  expect(acquisition.body).toEqual({});
 });
 
 test('uses only eligible receivers when a wider receiver is busy', async ({ page }) => {

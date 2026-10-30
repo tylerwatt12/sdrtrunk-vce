@@ -27,6 +27,7 @@
   --audio-shadow: var(--shadow-raised);
   --audio-radius: var(--radius-card);
   --audio-dock-width: 490px;
+  --audio-dock-height: 0px;
   --audio-dock-full-width: 760px;
   --audio-dock-queue-width: 240px;
   --audio-dock-queue-height: 392px;
@@ -97,6 +98,8 @@
   --content-idle-opacity: .6;
   --catalog-rail-width: 280px;
   --catalog-rail-header-offset: 64px;
+  --app-header-offset: var(--catalog-rail-header-offset);
+  --recordings-filter-sticky-top: var(--app-header-offset);
   --catalog-item-padding-block: 10px;
   --catalog-item-padding-inline: 11px;
   --catalog-focus-width: 2px;

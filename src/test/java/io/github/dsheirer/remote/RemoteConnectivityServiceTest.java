@@ -16,6 +16,7 @@ import io.github.dsheirer.channel.ChannelDefinition;
 import io.github.dsheirer.configuration.ConfigurationManager;
 import io.github.dsheirer.configuration.ChannelConfigurationSnapshot;
 import io.github.dsheirer.controller.channel.Channel;
+import io.github.dsheirer.controller.channel.ChannelEvent;
 import io.github.dsheirer.controller.channel.event.ChannelStartProcessingRequest;
 import io.github.dsheirer.database.SdrTrunkDatabasePath;
 import io.github.dsheirer.database.SdrTrunkDatabase;
@@ -72,6 +73,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -127,6 +129,121 @@ class RemoteConnectivityServiceTest
         assertEquals(7L, RemoteConnectivityService.preferredAliasList(noPreference,
             List.of(choices.get(2), choices.getFirst())).aliasListId());
         assertNull(RemoteConnectivityService.preferredAliasList(noPreference, List.of()));
+    }
+
+    @Test
+    void rejectsLocallyIssuedSendingCredentialsForEveryHostWithoutReplacingAnExistingConnection() throws Exception
+    {
+        String destinationSenderId = UUID.randomUUID().toString();
+        try(Installation sender = new Installation(mTemp.resolve("reject-self-link"));
+            RemoteLinkTransport.Server destination = RemoteLinkTransport.listen("127.0.0.1", availablePort(),
+                id -> destinationSenderId.equals(id) ? "synthetic-destination-key" : null, NO_OP_LISTENER))
+        {
+            CreateSenderResult ownCredentials = sender.remote.createSender(sender.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Own receiver credentials"));
+            sender.remote.updateSenderConnection(sender.remote.snapshot().revision(),
+                new SenderConnectionUpdate(true, "127.0.0.1", destination.port(), destinationSenderId,
+                    "synthetic-destination-key", List.of()));
+            sender.remote.start();
+            await(() -> sender.remote.snapshot().senderConnection().state() ==
+                RemoteLinkAdministrationService.SenderConnectionState.CONNECTED);
+            var original = sender.remote.snapshot();
+            var store = new RemoteLinkSettingsStore(sender.configuration.getDatabasePath());
+            var saved = store.load();
+            Object connection = privateField(sender.remote, "mOutbound");
+
+            for(String host: List.of("127.0.0.1", "::1", "localhost", "192.0.2.22", "receiver.example.invalid"))
+            {
+                var error = assertThrows(IllegalArgumentException.class,
+                    () -> sender.remote.updateSenderConnection(original.revision(),
+                        new SenderConnectionUpdate(true, host, destination.port(), ownCredentials.senderId(),
+                            ownCredentials.secret(), List.of())));
+                assertEquals("Cannot send feeds to this receiver. Choose a different destination receiver.",
+                    error.getMessage());
+                assertEquals(original, sender.remote.snapshot());
+                assertEquals(saved, store.load());
+                assertSame(connection, privateField(sender.remote, "mOutbound"));
+                assertTrue(((RemoteLinkTransport.Connection)connection).isOpen());
+            }
+
+            //The receiver-issued identity still identifies a self-link when the supplied key is wrong or omitted.
+            for(String key: List.of("synthetic-wrong-key", ""))
+            {
+                assertThrows(IllegalArgumentException.class,
+                    () -> sender.remote.updateSenderConnection(original.revision(),
+                        new SenderConnectionUpdate(true, "receiver.example.invalid", destination.port(),
+                            ownCredentials.senderId(), key, List.of())));
+                assertEquals(original, sender.remote.snapshot());
+                assertEquals(saved, store.load());
+                assertSame(connection, privateField(sender.remote, "mOutbound"));
+            }
+        }
+    }
+
+    @Test
+    void savedSelfLinkCannotConnectOrPublishFeedsAfterReload() throws Exception
+    {
+        try(Installation host = new Installation(mTemp.resolve("saved-self-link")))
+        {
+            Channel local = host.addControl("Local feed", 851_012_500L);
+            CreateSenderResult ownCredentials = host.remote.createSender(host.remote.snapshot().revision(),
+                new RemoteLinkAdministrationService.CreateSenderRequest("Own receiver credentials"));
+            int port = availablePort();
+            var store = new RemoteLinkSettingsStore(host.configuration.getDatabasePath());
+            var current = store.load();
+            var saved = new RemoteLinkSettingsStore.Settings(current.revision() + 1, true, "127.0.0.1", port,
+                current.trustedSenders(), new RemoteLinkSettingsStore.Outbound(true, "127.0.0.1", port,
+                    ownCredentials.senderId(), ownCredentials.secret(), List.of(local.getConfigurationId())));
+            store.save(saved);
+            host.remote.close();
+
+            try(RemoteConnectivityService reloaded = new RemoteConnectivityService(host.configuration, host.channels))
+            {
+                //The normal startup loads saved channels after constructing the remote service.
+                host.configuration.getChannelModel().receive(new ChannelEvent(local,
+                    ChannelEvent.Event.NOTIFICATION_CONFIGURATION_CHANGE));
+                ProcessingChain chain = new ProcessingChain(local, host.configuration.getAliasModel());
+                chain.setSource(new RemoteP25BitstreamSource(851_012_500L, P25RemotePhase.PHASE_1,
+                    "test-saved-self-export"));
+                try
+                {
+                    reloaded.channelStarted(local, new ChannelStartProcessingRequest(local), chain);
+                    reloaded.start();
+                    await(() -> "Cannot send feeds to this receiver. Choose a different destination receiver."
+                        .equals(reloaded.snapshot().senderConnection().statusMessage()));
+
+                    var snapshot = reloaded.snapshot();
+                    assertEquals(ListenerState.LISTENING, snapshot.listener().state());
+                    assertEquals(RemoteLinkAdministrationService.SenderConnectionState.DISCONNECTED,
+                        snapshot.senderConnection().state());
+                    assertTrue(snapshot.senderConnection().enabled());
+                    assertEquals(0L, snapshot.senderConnection().lastConnectedAtMs());
+                    assertEquals(SenderState.WAITING, snapshot.senders().getFirst().state());
+                    assertTrue(snapshot.senders().getFirst().feeds().isEmpty());
+                    assertTrue(privateMap(reloaded, "mPeers").isEmpty());
+                    assertTrue(privateMap(reloaded, "mExports").isEmpty());
+                    assertNull(privateField(reloaded, "mOutbound"));
+                    assertEquals(saved, store.load());
+                    assertEquals(List.of(local), host.configuration.getChannelModel().getChannels());
+
+                    var disabled = reloaded.updateSenderConnection(snapshot.revision(),
+                        new SenderConnectionUpdate(false, "127.0.0.1", port, ownCredentials.senderId(), "",
+                            List.of(local.getConfigurationId())));
+                    assertEquals(RemoteLinkAdministrationService.SenderConnectionState.DISABLED,
+                        disabled.senderConnection().state());
+                    assertNull(disabled.senderConnection().statusMessage());
+                    assertFalse(store.load().outbound().enabled());
+                    assertEquals(ownCredentials.secret(), store.load().outbound().secret());
+                    reloaded.removeSenderConnection(disabled.revision());
+                    assertEquals(RemoteLinkSettingsStore.Outbound.disabled(), store.load().outbound());
+                }
+                finally
+                {
+                    reloaded.channelStopped(local, chain);
+                    chain.dispose();
+                }
+            }
+        }
     }
 
     @Test

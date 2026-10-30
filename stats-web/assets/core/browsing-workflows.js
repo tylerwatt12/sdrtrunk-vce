@@ -50,23 +50,38 @@ export function createBrowsingPager({ node, className = '', ariaLabel = 'Results
 export function createFilterDisclosure({ node, openReadOnlyModal, form, panel, fields = [panel],
   button, clearAction = null, applyAction = null, applyLabel = 'Apply filters', initialExpanded = false,
   returnFocusSelector = null, id = 'browse-filters', media = '(max-width: 700px)',
-  closeOnSubmit = true }) {
+  closeOnSubmit = true, phonePresentation = 'sheet', initialPhoneExpanded = false,
+  onPresentationChange = null, signal = null, desktopCollapsible = true }) {
   button.type = 'button';
   button.classList.add('ui-filter-toggle');
   panel.classList.add('ui-filter-panel');
   if (!panel.id) panel.id = `${id}-panel`;
   if (!form.id) form.id = `${id}-form`;
-  const isPhone = () => window.matchMedia(media).matches;
-  panel.hidden = isPhone() || !initialExpanded;
+  const mediaQuery = window.matchMedia(media);
+  const isPhone = () => mediaQuery.matches;
+  const usesPhoneSheet = () => isPhone() && phonePresentation !== 'inline';
+  let desktopExpanded = !desktopCollapsible || Boolean(initialExpanded);
+  let phoneExpanded = Boolean(initialPhoneExpanded);
+  panel.hidden = isPhone() ? phonePresentation !== 'inline' || !phoneExpanded : !desktopExpanded;
   const synchronize = () => {
+    const phone = isPhone();
+    const expanded = !usesPhoneSheet() && !panel.hidden;
     button.setAttribute('aria-controls', panel.id);
-    button.setAttribute('aria-expanded', String(!isPhone() && !panel.hidden));
+    button.setAttribute('aria-expanded', String(expanded));
+    onPresentationChange?.({ phone, expanded });
   };
   synchronize();
   let modal = null;
   const open = () => {
-    if (!isPhone()) {
+    if (!isPhone() && !desktopCollapsible) {
+      panel.hidden = false;
+      synchronize();
+      return;
+    }
+    if (!usesPhoneSheet()) {
       panel.hidden = !panel.hidden;
+      if (isPhone()) phoneExpanded = !panel.hidden;
+      else desktopExpanded = !panel.hidden;
       synchronize();
       return;
     }
@@ -129,10 +144,25 @@ export function createFilterDisclosure({ node, openReadOnlyModal, form, panel, f
     button.setAttribute('aria-expanded', 'true');
     return modal;
   };
+  const presentationChanged = () => {
+    panel.hidden = isPhone() ? phonePresentation !== 'inline' || !phoneExpanded : !desktopExpanded;
+    synchronize();
+  };
+  let disposed = false;
+  const dispose = () => {
+    if (disposed) return;
+    disposed = true;
+    if (onPresentationChange) mediaQuery.removeEventListener('change', presentationChanged);
+    signal?.removeEventListener('abort', dispose);
+  };
+  if (!signal?.aborted) {
+    if (onPresentationChange) mediaQuery.addEventListener('change', presentationChanged);
+    signal?.addEventListener('abort', dispose, { once: true });
+  }
   button.addEventListener('click', open);
   if (closeOnSubmit) form.addEventListener('submit', () => modal?.close());
   return {
-    synchronize, open,
+    synchronize, open, dispose,
     close: (onClosed) => modal ? modal.close(onClosed) : true,
     get isOpen() { return Boolean(modal); }
   };

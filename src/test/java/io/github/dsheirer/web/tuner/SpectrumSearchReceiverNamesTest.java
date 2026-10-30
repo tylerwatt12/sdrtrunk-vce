@@ -48,6 +48,7 @@ class SpectrumSearchReceiverNamesTest
         String selected = baseline.tuners().getFirst().id();
         assertEquals("Canonical hardware receiver", baseline.tuners().getFirst().name());
         assertTrue(baseline.tuners().getFirst().eligible());
+        assertEquals(receiver.getOperatorGeneration(), baseline.tuners().getFirst().operatorGeneration());
         assertEquals(selected, baseline.suggestedTunerId());
 
         for(String nickname : List.of("Roof antenna", "Desk antenna", ""))
@@ -66,6 +67,14 @@ class SpectrumSearchReceiverNamesTest
         }
         var serialized = ApiHttpResponse.normalizePayload(tuners.item(receiver));
         assertFalse(serialized.toString().contains("display_name"), "Pure display helper adds no API field");
+        long priorGeneration = baseline.tuners().getFirst().operatorGeneration();
+        assertTrue(receiver.enterSetup());
+        var updated = catalog(tuners);
+        assertEquals("setup", updated.tuners().getFirst().operatorState());
+        assertTrue(updated.tuners().getFirst().operatorGeneration() > priorGeneration,
+            "A refreshed Find Trunked Systems choice must fence the mode shown by an older chooser");
+        assertEquals(receiver.getOperatorGeneration(), ApiHttpResponse.normalizePayload(updated)
+            .at("/tuners/0/operator_generation").asLong());
     }
 
     private static SpectrumSearchService.Catalog catalog(TunerAdministrationService tuners) throws Exception

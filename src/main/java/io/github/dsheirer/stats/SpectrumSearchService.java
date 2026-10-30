@@ -816,10 +816,11 @@ public final class SpectrumSearchService implements AutoCloseable
             boolean supported = found != null && configuration != null &&
                 (found.getTunerStatus() == TunerStatus.ENABLED || found.getTunerStatus() == TunerStatus.DISABLED) &&
                 bandwidth >= 100000 && maximum > minimum;
-            boolean eligible = supported && item.channelCount() == 0 && item.transition() == null && !groupBusy && !locked &&
+            boolean disabled = "disabled".equals(item.operatorState());
+            boolean eligible = supported && !disabled && item.channelCount() == 0 && item.transition() == null && !groupBusy && !locked &&
                 (runtime == null || recording || !runtime.getTunerController().isLockedSampleRate());
-            boolean takeoverAllowed = supported && !groupTransition;
-            String reason = eligible ? null : channelCount > 0 ?
+            boolean takeoverAllowed = supported && !disabled && !groupTransition;
+            String reason = disabled ? "Start Setup to use this receiver" : eligible ? null : channelCount > 0 ?
                 channelCount + " active channel" + (channelCount == 1 ? "" : "s") + " will stop" :
                 locked ? "Center frequency is locked" : groupTransition ? "Receiver settings are changing" :
                     "Choose an available receiver";
@@ -827,7 +828,7 @@ public final class SpectrumSearchService implements AutoCloseable
             if(recording && center != null) { minimum = Math.max(1, center-bandwidth/2); maximum = center+bandwidth/2; }
             targets.add(new SearchTuner(item.id(), item.displayName(), eligible, takeoverAllowed, reason, channelCount,
                 locked, item.operatorState(), bandwidth, minimum, maximum,
-                center, recording ? "recording" : "receiver", recording));
+                center, recording ? "recording" : "receiver", recording, item.operatorGeneration()));
         }
         String suggested = targets.stream().filter(SearchTuner::eligible)
             .max(Comparator.comparingLong(SearchTuner::usableBandwidthHz)).map(SearchTuner::id).orElse(null);
@@ -926,8 +927,18 @@ public final class SpectrumSearchService implements AutoCloseable
     public record SearchTuner(String id, String name, boolean eligible, boolean takeoverAllowed, String reason,
                               int channelCount, boolean centerFrequencyLocked, String operatorState,
                               long usableBandwidthHz, long minimumFrequencyHz, long maximumFrequencyHz,
-                              Long centerFrequencyHz, String sourceType, boolean fixedWindow)
+                              Long centerFrequencyHz, String sourceType, boolean fixedWindow,
+                              long operatorGeneration)
     {
+        public SearchTuner(String id, String name, boolean eligible, boolean takeoverAllowed, String reason,
+                           int channelCount, boolean centerFrequencyLocked, String operatorState,
+                           long usableBandwidthHz, long minimumFrequencyHz, long maximumFrequencyHz,
+                           Long centerFrequencyHz, String sourceType, boolean fixedWindow)
+        {
+            this(id, name, eligible, takeoverAllowed, reason, channelCount, centerFrequencyLocked, operatorState,
+                usableBandwidthHz, minimumFrequencyHz, maximumFrequencyHz, centerFrequencyHz, sourceType,
+                fixedWindow, 0);
+        }
         public SearchTuner(String id,String name,boolean eligible,boolean takeoverAllowed,String reason,int channelCount,boolean centerFrequencyLocked,String operatorState,long usableBandwidthHz,long minimumFrequencyHz,long maximumFrequencyHz,Long centerFrequencyHz)
         { this(id,name,eligible,takeoverAllowed,reason,channelCount,centerFrequencyLocked,operatorState,usableBandwidthHz,minimumFrequencyHz,maximumFrequencyHz,centerFrequencyHz,"receiver",false); }
     }

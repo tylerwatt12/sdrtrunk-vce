@@ -153,7 +153,11 @@ async function mockTuners(page, mutations, state = {}) {
       current.operator_state = target;
       current.available = target !== 'disabled';
       if (target !== 'live') current.channel_count = 0;
-      if (target === 'live') current.stopped_channels = [];
+      if (target === 'live') {
+        current.channel_count = current.stopped_channels.length;
+        current.stopped_channels = [];
+        current.restore_result = { failed: [] };
+      }
       current.spectrum_available = target === 'setup';
       await respond({ status: 'applied' });
       return;
@@ -1009,7 +1013,7 @@ test('segmented Disabled mode confirms hardware shutdown', async ({ page }) => {
   ]);
 });
 
-test('Go live without resuming explains and clears the stopped-channel choice', async ({ page }) => {
+test('Live resumes stopped channels without a second confirmation', async ({ page }) => {
   const mutations = [];
   const current = operatorTuner({ operator_state: 'setup', stopped_channels: [
     { id: 'channel-a', name: 'County Control' }, { id: 'channel-b', name: 'City Dispatch' }
@@ -1020,15 +1024,12 @@ test('Go live without resuming explains and clears the stopped-channel choice', 
   const action = page.getByRole('group', { name: 'Tuner mode' })
     .getByRole('button', { name: 'Live' });
   await action.click();
-  const confirmation = page.getByRole('alertdialog', { name: 'Go live without resuming' });
-  await expect(confirmation).toContainText('will no longer remember them for the Resume action');
-  await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
-  await confirmation.getByRole('button', { name: 'Go live without resuming', exact: true }).click();
-  await expect(confirmation).toBeHidden();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
   await expect(page.getByRole('group', { name: 'Tuner mode' })
     .getByRole('button', { name: 'Live' })).toHaveAttribute('aria-pressed', 'true');
   expect(mutations.filter((mutation) => mutation.type === 'state')).toEqual([{ type: 'state', state: 'live' }]);
   expect(mutations.filter((mutation) => mutation.type === 'restore')).toHaveLength(0);
+  expect(current.channel_count).toBe(2);
 });
 
 test('delayed restore failure reports only channels that could not start', async ({ page }) => {
