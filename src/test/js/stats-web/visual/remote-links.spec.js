@@ -73,6 +73,11 @@ async function openApp(page, theme = 'light', options = {}) {
     sender_id: '22222222-2222-4222-8222-222222222222', display_name: 'West receiver',
     feeds: [{ ...current.senders[0].feeds[0], feed_id: 'west-control', display_name: 'Metro West',
       channel_configuration_id: 'local-channel-west' }] });
+  if (options.senderCount) current.senders = Array.from({ length: options.senderCount }, (_, index) => ({
+    ...current.senders[0], sender_id: `sample-sender-${index + 1}`, display_name: `Sample sender ${index + 1}`,
+    feeds: [{ ...current.senders[0].feeds[0], feed_id: `sample-feed-${index + 1}`,
+      channel_configuration_id: `sample-channel-${index + 1}` }]
+  }));
   let reads = 0;
   let removals = 0;
   let removalBlock = null;
@@ -649,6 +654,34 @@ test('polling refreshes status and restores a focused remote action', async ({ p
   await action.click();
   await expect(page.getByRole('dialog', { name: 'Receive settings' })).toBeVisible();
 });
+
+for (const [theme, viewport] of [
+  ['light', { width: 1280, height: 800 }],
+  ['dark', { width: 390, height: 844 }]
+]) {
+  test(`${theme} polling keeps a scrolled reader in place`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await openApp(page, theme, { senderCount: 24 });
+    const toggle = page.locator('.remote-links-sender-card').first().locator('.ui-disclosure-toggle');
+    await toggle.click();
+    await toggle.click();
+    const direction = page.getByRole('tab', { name: 'Receive here', exact: true });
+    for (const action of [toggle, direction]) {
+      await action.focus();
+      await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
+      const bottom = await page.evaluate(() => window.scrollY);
+      expect(bottom).toBeGreaterThan(viewport.height);
+      expect(await action.evaluate(element => element.getBoundingClientRect().bottom)).toBeLessThan(0);
+      for (let refresh = 0; refresh < 2; refresh += 1) {
+        const oldToggle = await toggle.elementHandle();
+        await expect.poll(() => oldToggle.evaluate(element => element.isConnected), { timeout: 7000 }).toBe(false);
+        expect(Math.abs(await page.evaluate(() => window.scrollY) - bottom)).toBeLessThanOrEqual(1);
+        await expect(action).toBeFocused();
+        await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+      }
+    }
+  });
+}
 
 test('sender disclosure choices and focus survive status polling independently', async ({ page }) => {
   const app = await openApp(page, 'light', { multipleSenders: true });

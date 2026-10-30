@@ -31932,7 +31932,7 @@ async function renderStreaming() {
 
 async function renderAdminRemoteLinks(renderContext) {
   const { requestJson } = administrationRequestDependencies(renderContext);
-  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=23');
+  const { createRemoteLinksWorkspace } = await import('./features/remote-links.js?v=24');
   if (!renderIsCurrent(renderContext)) return;
   const workspace = createRemoteLinksWorkspace({
     node, formField, uiSelectFrame, uiToggleField, uiStatus, uiSegmentedControl, iconGlyph, remoteOriginIcon, createFormWorkflow,
