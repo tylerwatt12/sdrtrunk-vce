@@ -74,7 +74,8 @@ class StatsWebActivityFiltersUiContractTest
         assertTrue(toolbar.contains("button: moreTrigger, clearAction: clear"));
         assertTrue(toolbar.contains("returnFocusSelector: `#${moreTrigger.id}`"));
         assertTrue(disclosure.contains("button.setAttribute('aria-controls', panel.id)"));
-        assertTrue(disclosure.contains("button.setAttribute('aria-expanded', String(!isPhone() && !panel.hidden))"));
+        assertTrue(disclosure.contains("const expanded = !usesPhoneSheet() && !panel.hidden"));
+        assertTrue(disclosure.contains("button.setAttribute('aria-expanded', String(expanded))"));
         assertTrue(disclosure.contains("apply.addEventListener('click', () => form.requestSubmit())"));
         assertTrue(disclosure.contains("marker.replaceWith(field)"));
         assertTrue(disclosure.contains("returnFocusSelector, onClose: restore"));
