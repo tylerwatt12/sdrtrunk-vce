@@ -702,7 +702,7 @@ test('search imports into a same-name existing Alias List and retries without cr
   await addChannels(page, 1, importYes);
   await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toBeEnabled();
   await dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true }).click();
-  await expect(dialog(page)).toContainText('1 added, 1 updated, 3 unchanged.');
+  await expect(dialog(page)).toContainText('Talkgroups: 1 added, 1 updated, 3 unchanged');
   expect(state.createdListByGroup.size).toBe(0);
   const saves = state.requests.filter(({ path }) => path.endsWith('/save'));
   expect(saves).toHaveLength(1);
@@ -764,7 +764,7 @@ test('search coalesces imports for multiple selected site groups using the same 
   await expect(dialog(page).locator('.spectrum-discovery-review dl dd').first()).toHaveText('MARCS Dispatch');
   await addChannels(page, 2, importYes);
   await expect(dialog(page)).toContainText('2 channels added');
-  await expect(dialog(page).getByText('73 added, 0 updated, 0 unchanged.', { exact: true })).toHaveCount(1);
+  await expect(dialog(page).getByText('73 talkgroups added', { exact: true })).toHaveCount(1);
   await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body))
     .toEqual([{ alias_list_id: 21 }]);
@@ -1013,7 +1013,7 @@ test('search leaves unrelated pending RadioReference groups out of the selected 
   await expect(dialog(page).locator('.spectrum-discovery-review dl')).toHaveCount(1);
   await addChannels(page, 1, importYes);
   await expect(dialog(page)).toContainText('1 channel added');
-  await expect(dialog(page).getByText('73 added, 0 updated, 0 unchanged.', { exact: true })).toHaveCount(1);
+  await expect(dialog(page).getByText('73 talkgroups added', { exact: true })).toHaveCount(1);
   await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
   const saves = state.requests.filter(({ path }) => path.endsWith('/save'));
   expect(saves).toHaveLength(1);
@@ -1075,7 +1075,7 @@ test('search offers every confirmed system and reports empty talkgroups beside s
   await expect(dialog(page)).toContainText(ohioSystems.cleveland);
   await addChannels(page, 4, importYes);
   await expect(dialog(page)).toContainText('4 channels added');
-  await expect(dialog(page).getByText('73 added, 0 updated, 0 unchanged.', { exact: true })).toHaveCount(2);
+  await expect(dialog(page).getByText('73 talkgroups added', { exact: true })).toHaveCount(2);
   await expect(dialog(page).getByText('No talkgroups available', { exact: true })).toHaveCount(1);
   await expect(dialog(page).getByRole('button', { name: 'Done', exact: true })).toBeEnabled();
   expect(state.requests.filter(({ path }) => path.endsWith('/aliases/import')).map(({ body }) => body.alias_list_id)).toEqual([41, 42, 43]);
