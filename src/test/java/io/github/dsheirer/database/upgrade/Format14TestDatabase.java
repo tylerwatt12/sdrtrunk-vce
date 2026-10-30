@@ -1,36 +1,22 @@
 package io.github.dsheirer.database.upgrade;
 
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.sql.DriverManager;
 
 /** Exact populated format 14, derived only through the immutable preceding migration. */
 public final class Format14TestDatabase
 {
-    private static byte[] sTemplate;
+    private static final DatabaseFixtureTemplate TEMPLATE =
+        new DatabaseFixtureTemplate(14, Format14TestDatabase::build);
 
     private Format14TestDatabase()
     {
     }
 
-    public static synchronized Path create(Path database) throws Exception
+    public static Path create(Path database) throws Exception
     {
-        Path target = database.toAbsolutePath().normalize();
-        Files.createDirectories(target.getParent());
-
-        if(sTemplate == null)
-        {
-            build(target);
-            sTemplate = Files.readAllBytes(target);
-        }
-        else
-        {
-            Files.write(target, sTemplate, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
-        }
-
-        return target;
+        return TEMPLATE.create(database);
     }
 
     private static void build(Path database) throws Exception
