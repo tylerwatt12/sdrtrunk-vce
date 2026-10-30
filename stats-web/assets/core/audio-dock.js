@@ -4,7 +4,7 @@ import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
 import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
 import { callAudioDetailGroups } from './call-audio-details.js?v=7';
-import { createCallDisplayHangtimeField } from './call-display-settings.js?v=1';
+import { createCallDisplayHangtimeField } from './call-display-settings.js?v=2';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
@@ -1024,7 +1024,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const settings = node('div', 'audio-dock-settings');
     panelHost.append(settings);
     const { field: hangtimeField, input: hangtime } = createCallDisplayHangtimeField(node, {
-      id: 'audio-dock-call-display-hangtime', value: getCallDisplayHangtimeSeconds()
+      id: 'audio-dock-call-display-hangtime', value: getCallDisplayHangtimeSeconds(), inline: true
     });
     hangtime.addEventListener('change', userAction(() => {
       if (!hangtime.checkValidity()) { hangtime.reportValidity(); return; }
@@ -1050,7 +1050,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     const burstHelp = node('small', '', 'When grouping is on, switch to another waiting target after this many consecutive calls.');
     burstHelp.id = 'audio-dock-burst-help';
     burstCopy.append(node('strong', '', 'Calls per target'), burstHelp);
-    const burst = node('input', 'ui-input'); burst.id = 'audio-dock-target-burst'; burst.type = 'number'; burst.min = '1'; burst.max = '20'; burst.value = liveState.targetBurstLimit || 4;
+    const burst = node('input', 'ui-input ui-input-number'); burst.id = 'audio-dock-target-burst'; burst.type = 'number'; burst.min = '1'; burst.max = '20'; burst.value = liveState.targetBurstLimit || 4;
     burst.setAttribute('aria-label', 'Calls per target');
     burst.setAttribute('aria-describedby', burstHelp.id);
     burst.addEventListener('change', userAction(() => {
@@ -1060,7 +1060,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }));
     burstLabel.append(burstCopy, burst); settings.append(burstLabel);
     const titleField = uiToggleField('Playing call in page title', getTitlePreference(),
-      'Playing call in page title', 'Show the playing Live call in browser tab titles outside Scanner.');
+      'Playing call in page title', 'Keep the Live call in browser tab titles until its display hangtime ends.');
     const prepend = titleField.querySelector('input'); prepend.id = 'audio-dock-title-preference';
     const titleHelp = titleField.querySelector('.ui-toggle-copy small');
     if (titleHelp) { titleHelp.id = 'audio-dock-title-help'; prepend.setAttribute('aria-describedby', titleHelp.id); }

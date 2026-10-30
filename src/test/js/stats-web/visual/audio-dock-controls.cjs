@@ -53,10 +53,10 @@ async function expectAudioSettings(dock) {
     ['spinbutton', 'Call display hangtime (seconds)', 'Keep the last call and its details visible after playback ends. Applies to Scanner and the player in Live and Recordings. Set to 0 to clear immediately.'],
     ['checkbox', 'Group calls by target', 'Keeps calls for the same group together to preserve conversationality'],
     ['spinbutton', 'Calls per target', 'When grouping is on, switch to another waiting target after this many consecutive calls.'],
-    ['checkbox', 'Playing call in page title', 'Show the playing Live call in browser tab titles outside Scanner.'],
+    ['checkbox', 'Playing call in page title', 'Keep the Live call in browser tab titles until its display hangtime ends.'],
   ];
   const settings = dock.locator('.audio-dock-settings');
-  await expect(settings.locator(':scope > .ui-toggle-field')).toHaveCount(3);
+  await expect(settings.locator(':scope > .ui-toggle-field')).toHaveCount(fields.length);
   for (const [role, name, description] of fields) {
     const control = settings.getByRole(role, { name, exact: true });
     await expect(control).toHaveAccessibleDescription(description);

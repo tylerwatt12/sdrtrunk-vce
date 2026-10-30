@@ -122,7 +122,6 @@
   --catalog-phone-row-gap: 9px;
   --catalog-phone-column-gap: 7px;
   --catalog-phone-row-padding: 14px 12px;
-  --audio-burst-width: 76px;
   color-scheme: light;
   --bg: #edf1f4;
   --surface: #ffffff;
@@ -411,6 +410,7 @@
   --spectrum-status-width: 14ch;
   --control-height-comfortable: 40px;
   --control-height-touch: 44px;
+  --control-number-width: 76px;
   --toggle-track-width-compact: 34px;
   --toggle-track-height-compact: 20px;
   --toggle-thumb-size-compact: 16px;

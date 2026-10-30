@@ -166,8 +166,6 @@
 .audio-dock-avoid-row { padding: var(--space-3); }
 .audio-dock-avoid-row .ui-record-card-copy { overflow-wrap: anywhere; }
 .audio-dock-settings { display: grid; gap: var(--space-3); padding-bottom: var(--space-2); }
-.audio-dock-settings .ui-input { flex: 0 0 auto; }
-.audio-dock-context .ui-input { width: var(--audio-burst-width); }
 .audio-dock-context-body > p { margin-block: var(--space-2); }
 .audio-dock-context-body > .ui-notice { margin-top: var(--space-3); }
 .audio-dock-context-heading h3 { margin: 0; }

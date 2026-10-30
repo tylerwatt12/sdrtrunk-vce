@@ -2452,6 +2452,25 @@ async function main() {
   'WEST (2) - VCE - Channel BEE00:941 01-01 (Control)');
   assert.equal(pageTitles.derive({ routeId: 'channel', pageTitle: 'Channel', prependPlaying: false,
     playerState: { playing: true, targetLabel: 'WEST', queuedCount: 2 } }), 'VCE - Channel');
+  for (const routeId of ['scanner', 'channel']) {
+    const pageTitle = routeId === 'scanner' ? 'Scanner' : 'Channel';
+    const retained = { playing: false, targetLabel: '', retainedTargetLabel: 'WEST', queuedCount: 0 };
+    const title = routeId === 'scanner' ? 'WEST' : 'WEST - VCE - Channel';
+    assert.equal(pageTitles.derive({ routeId, pageTitle, prependPlaying: true, playerState: retained }), title,
+      'Enabled call titles use the player-owned completion retention');
+    assert.equal(pageTitles.derive({ routeId, pageTitle, prependPlaying: false, playerState: retained }),
+      `VCE - ${pageTitle}`, 'Disabling call titles clears a retained title immediately');
+    assert.equal(pageTitles.derive({ routeId, pageTitle, prependPlaying: true,
+      playerState: { ...retained, retainedTargetLabel: '' } }), `VCE - ${pageTitle}`,
+    'Expiry restores the normal page title');
+    assert.equal(pageTitles.derive({ routeId, pageTitle, prependPlaying: true,
+      playerState: { playing: false, targetLabel: 'PAUSED', displayCall: { target_alias: 'HELD' } } }),
+    `VCE - ${pageTitle}`, 'Paused and held call details do not create their own title hangtime');
+    assert.equal(pageTitles.derive({ routeId, pageTitle, prependPlaying: true,
+      playerState: { ...retained, playing: true, targetLabel: 'EAST' } }),
+    routeId === 'scanner' ? 'EAST' : 'EAST - VCE - Channel',
+    'A newly playing call takes precedence over a retained title');
+  }
   assert.equal(pageTitles.PRODUCT, 'VCE');
   assert.equal(pageTitles.safeText('A\u202e\n B'), 'A B');
 

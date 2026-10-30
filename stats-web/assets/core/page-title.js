@@ -8,9 +8,9 @@
     return clean || fallback;
   }
 
-  function callTitle(playerState) {
-    if (playerState?.playing !== true) return '';
-    const target = safeText(playerState.targetLabel);
+  function callTitle(playerState, retainCompleted = false) {
+    const target = safeText(playerState?.playing === true ? playerState.targetLabel :
+      retainCompleted ? playerState?.retainedTargetLabel : '');
     if (!target) return '';
     const queued = Math.max(0, Math.trunc(Number(playerState.queuedCount) || 0));
     return queued ? `${target} (${queued})` : target;
@@ -23,7 +23,7 @@
 
   function derive(options = {}) {
     const base = baseTitle(options.pageTitle);
-    const playing = callTitle(options.playerState);
+    const playing = callTitle(options.playerState, options.prependPlaying === true);
     if (!playing) return base;
     if (options.routeId === 'scanner') return playing;
     return options.prependPlaying === true ? `${playing} - ${base}` : base;

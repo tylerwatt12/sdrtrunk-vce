@@ -33,6 +33,7 @@ async function main() {
     path.resolve(__dirname, '../../../../stats-web/assets/web-call-player.js'));
   const source = fs.readFileSync(playerPath, 'utf8');
   const { WebCallPlayer } = await import(pathToFileURL(playerPath).href);
+  const pageTitles = await import(pathToFileURL(path.join(path.dirname(playerPath), 'core/page-title.js')).href);
   const { rememberSystemNames } = await import(pathToFileURL(path.join(path.dirname(playerPath),
     'core/system-labels.js')).href + '?v=2');
   const { Controller: PreferenceController } = await import(pathToFileURL(path.join(path.dirname(playerPath),
@@ -914,6 +915,20 @@ async function main() {
     assert.equal(completion.current, null);
     assert.equal(completion.displayCall(), heard, 'Natural completion retains the completed live call');
     assert.equal(completion.viewState().callDisplayHangtimeSeconds, 8);
+    const retainedTitle = completion.targetLabel(heard);
+    assert.equal(completion.viewState().retainedTargetLabel, retainedTitle);
+    const titleDocument = { title: '' };
+    const titleController = new pageTitles.Controller(titleDocument);
+    titleController.update({ routeId: 'live', pageTitle: 'Live', prependPlaying: true,
+      playerState: completion.viewState() });
+    assert.equal(titleDocument.title, `${retainedTitle} - VCE - Live`);
+    now += 7999;
+    titleController.update({ playerState: completion.viewState() });
+    assert.equal(titleDocument.title, `${retainedTitle} - VCE - Live`);
+    now += 1;
+    titleController.update({ playerState: completion.viewState() });
+    assert.equal(completion.viewState().retainedTargetLabel, '');
+    assert.equal(titleDocument.title, 'VCE - Live', 'The title expires at the same completion deadline as call details');
     await completion.replayLastCall();
     completion.source.onended();
     assert.equal(completion.displayCall(), heard, 'Replay completion uses the same live hangtime');
@@ -928,6 +943,7 @@ async function main() {
     completion.heldDisplayCall = { _playbackTargetKey: 'held' };
     await completion.togglePlayback();
     assert.equal(completion.displayCall(), null, 'Stop clears both retained and held call details');
+    assert.equal(completion.viewState().retainedTargetLabel, '', 'Stop clears the title hangtime');
     assert.equal(completion.holdTarget, null);
 
     const immediateNext = pauseFixture();

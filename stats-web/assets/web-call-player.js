@@ -205,6 +205,7 @@ export class WebCallPlayer {
       paused: this.paused,
       playing: Boolean(this.source) && !this.paused && !this.stopped,
       targetLabel: this.currentTargetLabel(),
+      retainedTargetLabel: this.targetLabel(this.idleDisplayRetention?.current()),
       holdTarget: this.holdTarget,
       queuedCount: this.queuedCount,
       queue: this.scheduledQueue(WebCallPlayer.MAXIMUM_QUEUED_CALLS),

@@ -1,4 +1,4 @@
-import { createCallDisplayHangtimeField } from '../core/call-display-settings.js?v=1';
+import { createCallDisplayHangtimeField } from '../core/call-display-settings.js?v=2';
 
 // Focused personal settings reuse the settings composition, choice controls,
 // form workflow and confirmation modal on desktops and phones in both themes.

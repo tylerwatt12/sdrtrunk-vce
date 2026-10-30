@@ -3,6 +3,7 @@
 const { expect, test } = require('@playwright/test');
 const { selectAudioPanel } = require('./audio-dock-controls.cjs');
 const { selectDockSource } = require('./fixtures/audio-dock-source.cjs');
+const { openAudioApp, liveCall } = require('./fixtures/audio-dock-app.cjs');
 
 async function openHangtimeDock(page, { recordingsOnly = false } = {}) {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -147,3 +148,83 @@ for (const recordingsOnly of [false, true]) {
     await expect(dock.locator('#audio-dock-panel')).not.toContainText('Medic 9');
   });
 }
+
+async function openTitleHangtimeApp(page, { view = 'scanner', seconds = 9, titleEnabled = true } = {}) {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.clock.install({ time: new Date('2026-10-01T12:00:00Z') });
+  const state = await openAudioApp(page, { view, callDisplayHangtimeSeconds: seconds, feedCallsEnabled: false });
+  await expect(page.locator('#content')).toHaveAttribute('aria-busy', 'false');
+  const dock = page.locator('#audio-dock');
+  if (view === 'scanner') await expect(page.locator('#scanner-player-menu')).toBeVisible();
+  else {
+    await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
+    await expect(dock).toHaveAttribute('data-state', 'full');
+  }
+  if (!titleEnabled) {
+    if (view === 'scanner') await page.locator('#scanner-player-menu').click();
+    await selectAudioPanel(dock, 'Listening settings');
+    const title = dock.getByRole('checkbox', { name: 'Playing call in page title', exact: true });
+    await expect(title).toBeChecked();
+    await title.focus(); await title.press('Space');
+    await expect(title).not.toBeChecked();
+    await expect.poll(() => state.preferenceWrites.some(write =>
+      (write.preferences || write).page_titles?.prepend_playing_call === false)).toBe(true);
+    await page.keyboard.press('Escape');
+  }
+  const baseTitle = await page.title();
+  const pending = [{ ...liveCall, call_id: `title-hangtime-${view}-${seconds}-${titleEnabled}` }];
+  let cursor = 0;
+  await page.route('**/api/v1/calls/feed*', route => route.fulfill({ json: {
+    data: { cursor: String(++cursor), reset: false, calls: pending.splice(0) }
+  } }));
+  const start = view === 'scanner' ? page.locator('#scanner-play') :
+    dock.getByRole('button', { name: 'Listen live', exact: true });
+  await start.click();
+  await expect.poll(() => page.evaluate(() => window.audioTest.liveSources.filter(source => source.active).length)).toBe(1);
+  // Pause only after the app and transport settle, so the deadline assertions
+  // compare the actual completion time without real elapsed browser time.
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + 1000));
+  return { dock, baseTitle };
+}
+
+async function finishTitleHangtimeCall(page) {
+  await page.evaluate(() => {
+    const source = window.audioTest.liveSources.find(value => value.active);
+    if (!source?.onended) throw new Error('Expected an active fixture call to complete.');
+    source.active = false;
+    source.onended();
+  });
+}
+
+for (const view of ['scanner', 'recordings']) {
+  test(`page title shares the completed call hangtime in ${view}`, async ({ page }) => {
+    const { dock, baseTitle } = await openTitleHangtimeApp(page, { view });
+    await expect(page).toHaveTitle(/Fire Dispatch/);
+    const playingTitle = await page.title();
+    const identity = view === 'scanner' ? page.locator('.scanner-call-title') : dock.locator('.audio-dock-identity');
+    await finishTitleHangtimeCall(page);
+    await expect(page).toHaveTitle(playingTitle);
+    await expect(identity).toContainText('Fire Dispatch');
+    await page.clock.fastForward(8999);
+    await expect(page).toHaveTitle(playingTitle);
+    await expect(identity).toContainText('Fire Dispatch');
+    await page.clock.fastForward(1);
+    await expect(page).toHaveTitle(baseTitle);
+    await expect(identity).not.toContainText('Fire Dispatch');
+  });
+}
+
+test('page title clears immediately when call display hangtime is zero', async ({ page }) => {
+  const { baseTitle } = await openTitleHangtimeApp(page, { view: 'recordings', seconds: 0 });
+  await expect(page).toHaveTitle(/Fire Dispatch/);
+  await finishTitleHangtimeCall(page);
+  await expect(page).toHaveTitle(baseTitle);
+});
+
+test('page title hangtime follows the title preference while Scanner keeps its active call title', async ({ page }) => {
+  const { baseTitle } = await openTitleHangtimeApp(page, { titleEnabled: false });
+  await expect(page).toHaveTitle(/Fire Dispatch/);
+  await finishTitleHangtimeCall(page);
+  await expect(page).toHaveTitle(baseTitle);
+  await expect(page.locator('.scanner-call-title')).toHaveText('Fire Dispatch');
+});

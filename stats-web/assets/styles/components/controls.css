@@ -14,6 +14,11 @@
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
+.ui-input-number {
+  width: var(--control-number-width);
+  flex: 0 0 auto;
+}
+
 :where(.ui-input, .ui-textarea, .ui-search input)::placeholder {
   color: var(--muted);
   opacity: 1;
