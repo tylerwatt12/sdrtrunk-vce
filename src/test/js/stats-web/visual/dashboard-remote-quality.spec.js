@@ -155,12 +155,12 @@ test('Main keeps one snapshot, usable search, and retained rows after a failed u
   const snapshots = () => requests.filter(request => request.path === '/api/v1/dashboard/main').length;
   expect(snapshots()).toBe(1);
   failNext = true;
-  await page.clock.runFor(5_100);
+  await page.clock.fastForward(5_100);
   await expect(page.getByRole('status').filter({ hasText: 'Systems and channels could not be updated.' })).toBeVisible();
   await expect(link).toBeVisible();
   await expect(search).toHaveValue('County Public Safety');
   await expect(search).toBeFocused();
-  await page.clock.runFor(5_100);
+  await page.clock.fastForward(5_100);
   await expect(page.getByRole('status').filter({ hasText: 'Systems and channels could not be updated.' })).toBeHidden();
   expect(snapshots()).toBe(3);
   expect(requests.filter(request => ['/api/v1/quality', '/api/v1/channel-catalog', '/api/v1/radio-systems',
@@ -169,7 +169,7 @@ test('Main keeps one snapshot, usable search, and retained rows after a failed u
   await link.click();
   await expect(page.locator('body')).toHaveAttribute('data-view', 'channel');
   const before = snapshots();
-  await page.clock.runFor(10_100);
+  await page.clock.fastForward(10_100);
   expect(snapshots()).toBe(before);
   expect(fixture.unexpected).toEqual([]);
   expect(fixture.pageErrors).toEqual([]);

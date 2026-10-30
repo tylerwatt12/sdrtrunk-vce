@@ -554,6 +554,9 @@ test('Scanner scan-list loading, retry and selection limit', async ({ page }) =>
     })) } } });
   });
   await page.goto('/app.html?view=scanner');
+  await expect(page.locator('#scanner-player-menu')).toBeVisible();
+  await expect(page.locator('#scanner-player-menu')).toBeEnabled();
+  await expect.poll(() => reads).toBe(1);
   const lists = await openScannerPanel(page, 'Lists');
   await expect(lists.getByRole('status')).toHaveText('Lists are loading…');
   release();

@@ -247,6 +247,12 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1024, height: 550
         })));
       await handle.press('Home');
       await expect(dock).toHaveAttribute('data-state', 'collapsed');
+      await page.evaluate(() => document.fonts.ready);
+      await expect.poll(() => page.evaluate(() => {
+        const header = document.querySelector('.app-header').getBoundingClientRect();
+        const offset = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-header-offset'));
+        return offset > 0 && offset === Math.ceil(header.height);
+      }), { message: 'Capture Live geometry after the measured header offset is installed' }).toBe(true);
       const baseline = await geometry();
       for (const [key, state] of [['ArrowUp', 'minimal'], ['End', 'full'], ['Home', 'collapsed']]) {
         await handle.press(key);

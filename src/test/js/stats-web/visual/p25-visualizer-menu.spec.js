@@ -66,13 +66,13 @@ test('P25 Visualizer menu follows refreshed availability and failed status', asy
   for (const available of [false, true]) {
     app.change(available);
     const before = app.statusRequests();
-    await page.clock.runFor(10_100);
+    await page.clock.fastForward(10_100);
     await expect.poll(app.statusRequests).toBeGreaterThan(before);
     await expect.poll(() => menuHidden(page)).toBe(!available);
   }
   app.fail();
   const before = app.statusRequests();
-  await page.clock.runFor(10_100);
+  await page.clock.fastForward(10_100);
   await expect.poll(app.statusRequests).toBeGreaterThan(before);
   await expect.poll(() => menuHidden(page)).toBe(true);
   expect(app.catalogRequests()).toBe(0);

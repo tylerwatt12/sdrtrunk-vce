@@ -237,14 +237,24 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       path: directory ? path.join(directory, `overview-${theme}-${width}.png`) :
         testInfo.outputPath(`overview-${theme}-${width}.png`)
     });
-    const interactionScene = await page.evaluate(() => window.overviewFixture.inspect({ hitTargets: true }));
-    const target = interactionScene.systems.find(system => system.clearClick && system.labelClickable);
-    expect(target, 'At least one system has an unobstructed sphere and caption').toBeTruthy();
-    await page.mouse.move(target.screen.x, target.screen.y);
+    let target;
     await expect.poll(async () => {
       await page.clock.runFor(64);
-      return page.locator('.network-visualizer-canvas canvas').evaluate(canvas => canvas.classList.contains('clickable'));
-    }, { message: 'The actual sphere is picked before clicking' }).toBe(true);
+      const scene = await page.evaluate(() => window.overviewFixture.inspect({ hitTargets: true }));
+      const candidate = scene.systems.find(system => system.clearClick && system.labelClickable);
+      if (!candidate) return false;
+      await page.mouse.move(candidate.screen.x, candidate.screen.y);
+      await page.clock.runFor(64);
+      const current = await page.evaluate(() => window.overviewFixture.inspect({ hitTargets: true }));
+      const settled = current.systems.find(system => system.id === candidate.id);
+      if (!settled?.clearClick || !settled.labelClickable ||
+          Math.hypot(settled.screen.x - candidate.screen.x, settled.screen.y - candidate.screen.y) > 1) return false;
+      const picked = await page.locator('.network-visualizer-canvas canvas')
+        .evaluate(canvas => canvas.classList.contains('clickable'));
+      if (picked) target = settled;
+      return picked;
+    }, { message: 'The actual settled sphere is picked before clicking' }).toBe(true);
+    expect(target, 'At least one system has an unobstructed sphere and caption').toBeTruthy();
     await page.mouse.click(target.screen.x, target.screen.y);
     await page.clock.fastForward(100);
     await expect.poll(() => page.evaluate(() => window.overviewFixture.clicks())).toEqual([target.id]);
