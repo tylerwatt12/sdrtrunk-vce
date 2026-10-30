@@ -975,14 +975,13 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     });
     sort.value = state.siteSort;
     sort.disabled = true;
-    const count = node('span', 'muted', 'Loading sites…');
     const refresh = button('Refresh sites');
     refresh.prepend(iconGlyph('icon-refresh'));
     refresh.setAttribute('aria-label', 'Refresh sites from RadioReference');
     refresh.disabled = true;
     refresh.addEventListener('click', () => void renderSites(system, target, systemDocument, true));
     toolbar.append(formField('Search sites & channels', searchFrame),
-      formField('Sort sites', selectFrame(sort)), count, refresh);
+      formField('Sort sites', selectFrame(sort)), refresh);
     const list = node('div', 'radioreference-sites-list');
     list.append(feedback('Loading sites for this system. Large systems may take a minute.', 'loading'));
     target.replaceChildren(toolbar, list);
@@ -1026,9 +1025,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
             (Number(firstValue(b.site, ['number', 'site_number'], 0)) || 0);
         });
         const values = matches.slice(offset, offset + SITE_LIMIT).map((value) => value.site);
-        const countyCount = state.selectedCountyId ? matches.filter(matchingCounty).length : 0;
-        count.textContent = `${formatNumber(matches.length)} of ${formatNumber(catalog.length)} sites` +
-          (countyCount ? ` · ${formatNumber(countyCount)} ${state.selectedCountyName} first` : '');
         const rendered = table(values, [
         { id: 'site', label: 'Site', render: (site) => {
           const identity = node('span', 'radioreference-row-identity');
@@ -1075,7 +1071,6 @@ export function createRadioReferenceImportWorkspace(dependencies) {
     } catch (error) {
       if (state.activeSystemId === systemId(system) && target.dataset.rrTab === 'sites' &&
           target.firstElementChild === toolbar) {
-        count.textContent = 'Sites unavailable';
         const notice = feedback(error.message, 'error');
         const retry = button('Retry sites');
         refresh.disabled = false;
