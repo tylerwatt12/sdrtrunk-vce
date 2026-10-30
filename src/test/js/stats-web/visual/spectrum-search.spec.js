@@ -684,7 +684,7 @@ test('search imports once per new Alias List after releasing the receiver and re
     state.requests.indexOf(imports()[0]));
   await dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true }).click();
   await expect(dialog(page).getByRole('button', { name: 'Retry talkgroup imports', exact: true })).toHaveCount(0);
-  await expect(dialog(page)).toContainText('73 added, 0 updated, 0 unchanged.');
+  await expect(dialog(page).getByText('73 talkgroups added', { exact: true })).toHaveCount(3);
   expect(imports().map(({ body }) => body.alias_list_id)).toEqual([41, 42, 43, 42]);
   expect(savedSearchRequests(state).saves).toHaveLength(1);
   await expect.poll(() => savedSearchRequests(state).jobDeletes.length).toBe(1);
