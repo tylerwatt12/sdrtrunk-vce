@@ -532,8 +532,7 @@ class ApplicationMigrationServiceTest
         SdrTrunkTestDatabase.create(sourceDatabase);
         ApplicationMigrationService.ApprovedMigrationPlan approved =
             ApplicationMigrationService.readMigrationApproval(sourceDatabase);
-        Files.delete(sourceDatabase);
-        Files.deleteIfExists(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(sourceDatabase));
+        Files.move(sourceDatabase.getParent(), mTemporaryFolder.resolve("reviewed-plan-binding-database"));
         Format14TestDatabase.create(sourceDatabase);
 
         IOException exception = assertThrows(IOException.class,
@@ -736,8 +735,7 @@ class ApplicationMigrationServiceTest
         ApplicationMigrationService.ApprovedMigrationPlan approvedPlan =
             ApplicationMigrationService.readMigrationApproval(sourceDatabase);
 
-        Files.delete(sourceDatabase);
-        Files.deleteIfExists(io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(sourceDatabase));
+        Files.move(sourceDatabase.getParent(), mTemporaryFolder.resolve("reviewed-approved-plan-database"));
         Format14TestDatabase.create(sourceDatabase);
 
         Path targetRoot = mTemporaryFolder.resolve("approved-plan-target");
