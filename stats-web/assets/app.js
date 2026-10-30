@@ -35060,6 +35060,11 @@ function tunerAllocationSiteMap(site, snapshot, state, openTuner, tableBuilder =
   state.snapshot = snapshot;
   const tunerButton = (tuner, frequencyHz = null) => {
     const button = node('button', 'ui-button ui-button-link tuner-allocation-tuner-details', tuner.name || 'Tuner');
+    if (tuner.centerLocked === true) {
+      button.prepend(iconGlyph('icon-lock'));
+      button.dataset.uiHint = 'Center frequency locked';
+      button.setAttribute('aria-description', 'Center frequency locked');
+    }
     button.type = 'button';
     button.dataset.tunerId = String(tuner.id);
     button.dataset.allocationFocus = `tuner-${tuner.id}${frequencyHz == null ? '' : `-frequency-${frequencyHz}`}`;
