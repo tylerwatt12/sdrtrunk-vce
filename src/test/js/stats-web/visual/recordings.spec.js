@@ -341,8 +341,8 @@ async function openRecordings(page, options = {}) {
 async function ensureSearchOpen(page) {
   const toggle = page.locator('#recordings-filters-toggle');
   const fullText = page.getByRole('searchbox', { name: 'Full text', exact: true });
-  await expect(toggle).toBeVisible();
-  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+  await expect(page.locator('.recordings-filter-section')).toBeVisible();
+  if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
   await expect(fullText).toBeVisible();
 }
 
@@ -1361,6 +1361,8 @@ for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
     await expect(page.locator('.recordings-call').nth(5)).toContainText('Talkgroup 0');
     const filters = page.locator('#recordings-filters-toggle');
     if (device === 'desktop') {
+      await expect(filters).toBeHidden();
+      await expect(page.locator('h2.recordings-filter-title')).toContainText('Filters');
       await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toBeVisible();
       await expect(page.getByRole('button', { name: 'Search recordings', exact: true })).toBeVisible();
     } else {
@@ -1372,13 +1374,17 @@ for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
     }
     await expect(page.getByRole('button', { name: /Share|Activity|Address|Receiver node/ })).toHaveCount(0);
     const layout = await page.evaluate(() => {
-      const left = document.querySelector('.recordings-search-panel').getBoundingClientRect();
+      const left = document.querySelector('.recordings-filter-section').getBoundingClientRect();
       const right = document.querySelector('.recordings-results-panel').getBoundingClientRect();
       return { left: { x: left.x, y: left.y, right: left.right, bottom: left.bottom, width: left.width },
         right: { x: right.x, y: right.y, width: right.width }, overflow: document.documentElement.scrollWidth - innerWidth };
     });
     expect(layout.overflow).toBeLessThanOrEqual(0);
-    if (device === 'desktop') { expect(layout.right.x).toBeGreaterThanOrEqual(layout.left.right); expect(layout.right.width / layout.left.width).toBeGreaterThan(2); }
+    if (device === 'desktop') {
+      expect(Math.abs(layout.right.y - layout.left.y)).toBeLessThanOrEqual(1);
+      expect(layout.right.x).toBeGreaterThan(layout.left.right);
+      expect(layout.right.width / layout.left.width).toBeGreaterThan(2);
+    }
     else expect(layout.right.y).toBeLessThan(400);
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-workspace-${theme}-${device}.png`, componentScreenshot);
     const picker = await openPicker(page);
@@ -1389,6 +1395,74 @@ for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
     await expect(picker).toHaveScreenshot(`recordings-workspace-picker-${theme}-${device}.png`, componentScreenshot);
   });
 }
+
+test('desktop filter box follows scrolling separately from results and keeps every control reachable', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1400 });
+  const state = await openRecordings(page, { calls: browsingCalls(55) });
+  await expect(page.locator('.recordings-call')).toHaveCount(55);
+  const filterBox = page.locator('.recordings-filter-section');
+  const panel = page.locator('.recordings-search-panel');
+  const fields = panel.locator('.recordings-search-fields');
+  const results = page.locator('.recordings-results-panel');
+  await expect(page.locator('.recordings-browser > .recordings-filter-section.ui-surface')).toHaveCount(1);
+  await expect(page.locator('.recordings-browser > .recordings-results-panel.ui-surface')).toHaveCount(1);
+  await expect(page.locator('.recordings-browser')).not.toHaveClass(/(?:^|\s)ui-surface(?:\s|$)/);
+  const [filterBounds, resultBounds] = await Promise.all([filterBox.boundingBox(), results.boundingBox()]);
+  expect(Math.abs(filterBounds.y - resultBounds.y)).toBeLessThanOrEqual(1);
+  expect(resultBounds.x - filterBounds.x - filterBounds.width).toBeGreaterThan(0);
+  await expect(page.locator('#recordings-filters-toggle')).toBeHidden();
+  await expect(filterBox.locator('h2.recordings-filter-title')).toContainText('Filters');
+  for (const surface of [filterBox, results])
+    await expect(surface).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+  const expectNaturalHeight = async () => {
+    for (const wrapper of [filterBox, panel, fields]) {
+      expect(await wrapper.evaluate(element => element.scrollHeight - element.clientHeight)).toBeLessThanOrEqual(1);
+      await expect(wrapper).toHaveCSS('overflow-y', 'visible');
+    }
+  };
+  await expectNaturalHeight();
+  for (const control of await panel.locator('input:visible, select:visible, button:visible, summary:visible').all()) {
+    const bounds = await control.boundingBox();
+    expect(bounds.y).toBeGreaterThanOrEqual(filterBounds.y);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(filterBounds.y + filterBounds.height);
+    await expect(control).toBeInViewport({ ratio: 1 });
+  }
+  const measure = () => page.evaluate(() => {
+    const filter = document.querySelector('.recordings-filter-section');
+    return { y: filter.getBoundingClientRect().y, stickyTop: parseFloat(getComputedStyle(filter).top),
+      firstCallY: document.querySelector('.recordings-call').getBoundingClientRect().y, scroll: window.scrollY };
+  });
+  await page.evaluate(() => window.scrollTo(0, 800));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(500);
+  const firstScroll = await measure();
+  expect(Math.abs(firstScroll.y - firstScroll.stickyTop)).toBeLessThanOrEqual(2);
+  await page.evaluate(() => window.scrollTo(0, 1300));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(firstScroll.scroll + 300);
+  const secondScroll = await measure();
+  expect(Math.abs(secondScroll.y - firstScroll.y)).toBeLessThanOrEqual(2);
+  expect(secondScroll.firstCallY).toBeLessThan(firstScroll.firstCallY - 300);
+  await expect(filterBox).toBeInViewport();
+  const search = panel.getByRole('button', { name: 'Search recordings', exact: true });
+  const clear = panel.getByRole('button', { name: 'Clear filters', exact: true });
+  await expect(search).toBeInViewport({ ratio: 1 });
+  await expect(clear).toBeInViewport({ ratio: 1 });
+  await page.setViewportSize({ width: 1280, height: 650 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect.poll(async () => Math.abs((await filterBox.boundingBox()).height - filterBounds.height)).toBeLessThanOrEqual(1);
+  await expect.poll(async () => Math.abs((await filterBox.boundingBox()).y - (await results.boundingBox()).y)).toBeLessThanOrEqual(1);
+  await expectNaturalHeight();
+  await page.evaluate(() => window.scrollTo(0, 1300));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(1000);
+  for (const action of [search, clear]) {
+    await expect(action).toBeInViewport({ ratio: 1 });
+    expect(await action.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+    })).toBe(true);
+  }
+  expect(state.requestedFilters).toHaveLength(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+});
 
 test('results group context and selection with the pager before the first call', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -1468,8 +1542,8 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     const beforeFocus = await chip.boundingBox();
     await chip.focus();
-    await page.keyboard.press('Tab');
     await page.keyboard.press('Shift+Tab');
+    await page.keyboard.press('Tab');
     await expect(chip).toBeFocused();
     const hint = page.getByRole('tooltip');
     await expect(hint).toContainText(`Full text: ${transcript}`);
@@ -1477,8 +1551,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     expect(afterFocus.height).toBe(beforeFocus.height);
     expect(hintBounds.x).toBeGreaterThanOrEqual(0);
     expect(hintBounds.x + hintBounds.width).toBeLessThanOrEqual(width);
-    if (width <= 700) await page.getByRole('dialog', { name: 'Filters', exact: true })
-      .getByRole('button', { name: 'Cancel', exact: true }).click();
+    if (width <= 900) await page.locator('#recordings-filters-toggle').click();
     await expect(results).toHaveScreenshot(`recordings-compact-long-filter-${theme}-${width}.png`, componentScreenshot);
     await page.locator('.recordings-call-select').check();
     await expect(results.locator('.recordings-results-toolbar .recordings-selected')).toContainText('1 selected');
@@ -2616,9 +2689,10 @@ for (const theme of ['light']) {
     }
     await submit.focus();
     await submit.press('Enter');
-    await expect(page.getByRole('dialog', { name: 'Filters', exact: true })).toBeHidden();
+    await expect(page.getByRole('dialog', { name: 'Filters', exact: true })).toHaveCount(0);
+    await expect(page.locator('.modal-backdrop')).toHaveCount(0);
+    await expect(page.locator('#recordings-filters-toggle')).toHaveAttribute('aria-expanded', 'true');
     await expect(page.locator('.recordings-filter-summary')).toContainText('dispatch');
-    await ensureSearchOpen(page);
     await expectSearchHalo(searchButton(page), false);
   });
 }

@@ -25,7 +25,7 @@ import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
 import { applyThemeHue, APPEARANCE_SCHEMES } from './core/theme.js?v=2';
-import * as browsingWorkflows from './core/browsing-workflows.js?v=3';
+import * as browsingWorkflows from './core/browsing-workflows.js?v=4';
 import {
   receiverHealthAlertGroups,
   receiverHealthAlertIds,
@@ -40,7 +40,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=65';
+import { createRecordingsFeature } from './features/recordings.js?v=66';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';

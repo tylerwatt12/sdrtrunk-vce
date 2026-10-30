@@ -1,24 +1,26 @@
 .recordings-library,
 .recordings-admin { min-width: 0; }
 .recordings-search { min-width: 0; }
-.recordings-filter-toolbar { min-width: 0; margin-bottom: var(--space-3); }
+.recordings-filter-section { min-width: 0; display: flex; flex-direction: column; }
+.recordings-filter-toolbar { min-width: 0; margin: 0; padding: var(--space-4); }
+.recordings-filter-title { display: flex; align-items: center; gap: var(--space-2); margin: 0; font-size: var(--font-size-body); font-weight: var(--font-weight-medium); }
 .recordings-filter-summary { flex: 1 1 20ch; min-width: 0; margin: 0; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .recordings-browser {
   display: grid;
   grid-template-columns: minmax(240px, 1fr) minmax(0, 3fr);
-  align-items: stretch;
+  align-items: start;
+  gap: var(--space-4);
   min-width: 0;
-  overflow: clip;
 }
-.recordings-browser:has(> .recordings-search-panel[hidden]) { grid-template-columns: minmax(0, 1fr); }
 .recordings-search-panel {
   min-width: 0;
   display: grid;
   gap: var(--space-4);
   align-content: start;
   position: relative;
-  padding: var(--space-5) var(--space-4);
+  padding: 0 var(--space-4) var(--space-4);
 }
+.recordings-search-fields { min-width: 0; display: grid; gap: var(--space-4); align-content: start; }
 .recordings-results-panel { min-width: 0; padding: var(--space-4); }
 .recordings-results-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
 .recordings-results-scope { margin: 0; font-size: var(--font-size-body); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
@@ -353,8 +355,15 @@
 }
 
 
+@media (min-width: 901px) {
+  .recordings-filter-section {
+    position: sticky;
+    top: var(--recordings-filter-sticky-top, var(--app-header-offset, var(--catalog-rail-header-offset)));
+  }
+}
 @media (max-width: 900px) {
   .recordings-browser { grid-template-columns: minmax(0, 1fr); }
+  .recordings-filter-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(var(--control-height-touch), auto) auto; align-items: stretch; }
 }
 @media (max-width: 700px) {
   .read-only-modal.recordings-filters-modal { width: 100vw; }

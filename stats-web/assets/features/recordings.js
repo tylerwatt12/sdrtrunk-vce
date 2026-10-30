@@ -476,8 +476,8 @@ function select(node, options, labelText) {
   return control;
 }
 
-// Reuse map: the shared filter disclosure owns the phone sheet, with focused
-// pickers on the shared modal stack. Both result layouts reuse call identities,
+// Reuse map: the shared filter disclosure owns inline expansion, with focused
+// pickers on the shared modal foundation. Both result layouts reuse call identities,
 // actions, browsing pager and global audio player; density owns only row geometry.
 // Administration keeps its established shared controls and compositions.
 export function createRecordingsFeature(deps) {
@@ -524,6 +524,7 @@ export function createRecordingsFeature(deps) {
   let filterCountHost = null;
   let filterSummary = null;
   let filterDisclosure = null;
+  let disposeFilterPosition = null;
   let resultsLayout = 'cards';
   let selectedHost = null;
   let sortControl = null;
@@ -615,29 +616,47 @@ export function createRecordingsFeature(deps) {
   function replaceSearchForm(focusSelector = null) {
     const previous = pageHost?.querySelector('.recordings-search');
     if (!previous) return;
-    const disclosure = filterDisclosure;
-    const reopen = Boolean(disclosure?.isOpen);
     const expanded = !previous.querySelector('.recordings-search-panel')?.hidden;
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      const results = previous.querySelector('.recordings-results-panel');
-      const next = makeSearchForm(expanded);
-      if (results) next.querySelector('.recordings-browser').append(results);
-      previous.replaceWith(next);
-      if (reopen) next.querySelector('#recordings-filters-toggle')?.focus();
-      const modal = reopen ? filterDisclosure?.open() : null;
-      const focus = () => {
-        const target = (modal?.dialog || next).querySelector(focusSelector || '#recordings-filters-toggle');
-        if (target) modal ? modal.focus(target) : target.focus();
-      };
-      if (focusSelector) {
-        if (modal?.ready) void modal.ready.then(ready => { if (ready) focus(); });
-        else focus();
-      }
+    const results = previous.querySelector('.recordings-results-panel');
+    filterDisclosure?.dispose();
+    disposeFilterPosition?.();
+    const next = makeSearchForm(expanded);
+    if (results) next.querySelector('.recordings-browser').append(results);
+    previous.replaceWith(next);
+    if (focusSelector) next.querySelector(focusSelector)?.focus();
+  }
+
+  function followFilterPosition(section, signal) {
+    if (signal?.aborted) return () => {};
+    const root = section.ownerDocument.documentElement;
+    const view = section.ownerDocument.defaultView;
+    let disposed = false;
+    const update = () => {
+      if (disposed || !section.isConnected) return;
+      const styles = view.getComputedStyle(root);
+      const header = Number.parseFloat(styles.getPropertyValue('--app-header-offset')) || 0;
+      const dock = Number.parseFloat(styles.getPropertyValue('--audio-dock-height')) || 0;
+      const gap = Number.parseFloat(styles.getPropertyValue('--space-4')) || 0;
+      // A tall filter box must page-scroll far enough to reach its bottom.
+      const top = Math.min(header, view.innerHeight - dock - gap - section.getBoundingClientRect().height);
+      section.style.setProperty('--recordings-filter-sticky-top', `${Math.floor(top)}px`);
     };
-    if (!reopen || disclosure.close(finish)) finish();
+    const resize = new ResizeObserver(update);
+    const chrome = new MutationObserver(update);
+    resize.observe(section);
+    chrome.observe(root, { attributes: true, attributeFilter: ['style'] });
+    view.addEventListener('resize', update);
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      resize.disconnect();
+      chrome.disconnect();
+      view.removeEventListener('resize', update);
+      signal?.removeEventListener('abort', dispose);
+    };
+    signal?.addEventListener('abort', dispose, { once: true });
+    update();
+    return dispose;
   }
 
   function effectiveFilters() {
@@ -2375,7 +2394,6 @@ export function createRecordingsFeature(deps) {
       if (modal.close(finish)) finish();
     });
     modal = openReadOnlyModal(title, body, { id: 'recordings-filters', className: 'ui-filter-modal recordings-filters-modal',
-      ...(filterDisclosure?.isOpen ? { stack: 'child' } : {}),
       returnFocusSelector: `#recordings-open-${topic}`,
       onClose: () => { disposed = true; generation++; abort?.abort(); clearTimeout(timer); } });
     if (!modal || modal.ready && !await modal.ready) return;
@@ -2383,9 +2401,9 @@ export function createRecordingsFeature(deps) {
     return modal;
   }
 
-  function makeSearchForm(initialExpanded = true) {
+  function makeSearchForm(initialExpanded) {
     const form = node('form', 'recordings-search');
-    const sidebar = node('aside', 'recordings-search-panel ui-surface ui-surface-soft'); sidebar.setAttribute('aria-label', 'Recording search');
+    const sidebar = node('aside', 'recordings-search-panel'); sidebar.setAttribute('aria-label', 'Recording search');
     const fullText = textInput('Words or "exact phrase"'); fullText.id = 'recordings-input-transcript'; fullText.value = search.transcript; fullText.maxLength = 240;
     const textRange = select(node, [['recent', 'Past 24 hours'], ['time', 'Use Time filter']], 'Full text range'); textRange.value = search.text_range || 'recent';
     const textRangeField = field('Full text range', textRange); textRangeField.hidden = !search.transcript;
@@ -2432,9 +2450,9 @@ export function createRecordingsFeature(deps) {
     const radios = pickerButton('radios', 'Radios', radioCount ? `${radioCount} selected` : 'Any source · name or radio ID', 'icon-scanner');
     const tones = pickerButton('tones', 'Tones & signaling', search.dcs_code ? `DCS ${search.dcs_code}` : search.tone_frequency_hz ? `${search.tone_frequency_hz}${search.tone_then_hz ? ` → ${search.tone_then_hz}` : ''} Hz` : search.paging_tones ? 'Has detected tones' : 'Tones or DCS', 'icon-audio-quality');
     const more = pickerButton('more', 'More filters', [search.protocol ? protocolLabel(search.protocol) : '', search.site ? 'Site' : '', search.min_duration_ms || search.max_duration_ms ? 'Duration' : ''].filter(Boolean).join(' · ') || 'Protocol, site, duration…', 'icon-filter');
-    const filterToggle = addGlyph(button(node, 'Filters', null), 'icon-filter');
+    const filterTitle = node('h2', 'recordings-filter-title', 'Filters');
+    const filterToggle = button(node, 'Filters', null, 'ui-disclosure-toggle');
     filterToggle.id = 'recordings-filters-toggle';
-    filterToggle.setAttribute('aria-haspopup', 'dialog');
     filterCountHost = node('span', 'ui-pill ui-pill-compact recordings-filter-count');
     filterCountHost.hidden = true;
     filterToggle.append(filterCountHost);
@@ -2455,33 +2473,50 @@ export function createRecordingsFeature(deps) {
       selectedSuggestions.clear();
       replaceSearchForm();
       updateDraftFeedback();
-      if (submitSearch()) filterDisclosure?.close();
+      submitSearch();
     }, 'ui-button ui-button-quiet ui-button-compact');
     const discard = button(node, 'Discard changes', () => { if (appliedSearch) Object.assign(search, appliedSearch); selectedSuggestions.clear(); appliedSuggestions.forEach((value, key) => selectedSuggestions.set(key, value)); replaceSearchForm(); updateDraftFeedback(); }, 'ui-button ui-button-quiet ui-button-compact'); discard.id = 'recordings-discard'; discard.hidden = true;
-    const inlineActions = node('div', 'ui-filter-inline-actions');
-    inlineActions.append(submit);
-    actions.append(draftFeedback, searchError, inlineActions, discard);
+    actions.append(draftFeedback, searchError, submit, clear, discard);
     const transcriptField = field('Full text', fullText);
     transcriptField.dataset.guideTarget = 'rec-transcript-search';
     const timeField = field('Time range', range);
     timeField.dataset.guideTarget = 'rec-time-range';
-    sidebar.append(transcriptField, syntax, textRangeField, timeField, override, custom, high, system, targets, paths, radios, tones, more,
-      ...(selectedFiltersHost ? [selectedFiltersHost] : []), actions);
-    filterToolbar.append(filterToggle, filterSummary, clear);
-    const browser = node('div', 'recordings-browser ui-surface'); browser.append(sidebar); form.append(filterToolbar, browser);
+    const fields = node('div', 'recordings-search-fields');
+    fields.append(transcriptField, syntax, textRangeField, timeField, override, custom, high, system, targets, paths, radios, tones, more,
+      ...(selectedFiltersHost ? [selectedFiltersHost] : []));
+    sidebar.append(fields, actions);
+    filterToolbar.append(filterTitle, filterToggle, filterSummary);
+    const filterSection = node('section', 'recordings-filter-section ui-surface');
+    filterSection.setAttribute('aria-label', 'Recording filters');
+    filterSection.append(filterToolbar, sidebar);
+    const browser = node('div', 'recordings-browser'); browser.append(filterSection); form.append(browser);
     form.addEventListener('submit', event => {
       event.preventDefault();
-      if (submitSearch()) filterDisclosure?.close();
+      submitSearch();
     });
     filterDisclosure = null;
+    const signal = captureRenderContext().signal;
     if (deps.guideMode) filterToolbar.hidden = true;
     else filterDisclosure = browsingWorkflows.createFilterDisclosure({ node, openReadOnlyModal, form, panel: sidebar,
-      button: filterToggle, clearAction: clear, applyAction: submit, applyLabel: 'Search recordings', initialExpanded,
-      returnFocusSelector: '#recordings-filters-toggle', id: 'recordings-search-filters', closeOnSubmit: false });
+      button: filterToggle, initialExpanded: true, initialPhoneExpanded: initialExpanded ?? false,
+      desktopCollapsible: false,
+      phonePresentation: 'inline', media: '(max-width: 900px)',
+      signal,
+      onPresentationChange: ({ phone }) => {
+        filterTitle.hidden = phone;
+        filterToggle.hidden = !phone;
+        (phone ? filterToggle : filterTitle).append(filterCountHost);
+      },
+      id: 'recordings-search-filters', closeOnSubmit: false });
+    disposeFilterPosition = followFilterPosition(filterSection, signal);
     updateDraftFeedback(); return form;
   }
 
   async function renderSearchPage() {
+    filterDisclosure?.dispose();
+    filterDisclosure = null;
+    disposeFilterPosition?.();
+    disposeFilterPosition = null;
     const parameters = new URLSearchParams(globalThis.location?.search || '');
     if (!deps.guideMode && parameters.get('recording_filters') === '1') {
       Object.keys(search).forEach(key => { search[key] = parameters.get(key) || ''; });
@@ -2553,7 +2588,7 @@ export function createRecordingsFeature(deps) {
     selectedFiltersHost.setAttribute('aria-label', 'Applied filters');
     const form = makeSearchForm();
     const browser = form.querySelector('.recordings-browser');
-    const resultSection = node('section', 'recordings-results-panel');
+    const resultSection = node('section', 'recordings-results-panel ui-surface');
     resultSection.setAttribute('aria-label', 'Call results');
     const titleBar = node('div', 'recordings-results-heading');
     resultScope = node('p', 'recordings-results-scope', '');
