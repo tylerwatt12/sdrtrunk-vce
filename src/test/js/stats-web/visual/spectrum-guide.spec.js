@@ -305,6 +305,7 @@ test('Browser Spectrum dismissal during example preparation cannot repaint stale
 
 test('Browser Spectrum retains the explained retune observation while reading and resumes sample activity afterward', async ({ page }) => {
   test.setTimeout(45000);
+  await page.clock.install();
   await page.setViewportSize({ width: 1280, height: 720 });
   const { fixture, effects } = await openSpectrum(page, { noHardware: true });
   await start(page);
@@ -314,7 +315,11 @@ test('Browser Spectrum retains the explained retune observation while reading an
   await expect(popup).toContainText('Retuned');
   const originalObservation = await popup.textContent();
   await screenshot(page, 'spectrum-retune-history-before-35s');
-  await page.waitForTimeout(35000);
+  const readingStartedAt = await page.evaluate(() => performance.now());
+  // Preserve every possible 160ms sample tick so unretained history would still age out.
+  for (let elapsed = 0; elapsed < 35_000; elapsed += 160)
+    await page.clock.fastForward(Math.min(160, 35_000 - elapsed));
+  expect(await page.evaluate(() => performance.now()) - readingStartedAt).toBeGreaterThanOrEqual(35_000);
   await expect(popup).toHaveText(originalObservation);
   await expectSpotlight(page, 'waterfall-details');
   await screenshot(page, 'spectrum-retune-history-after-35s');
