@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats;
 
+import static io.github.dsheirer.stats.StatsWebSourceTestSupport.function;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -230,28 +231,5 @@ class StatsWebChannelsUiContractTest
     {
         assertTrue(Files.isRegularFile(APP_JAVASCRIPT), () -> "Missing " + APP_JAVASCRIPT.toAbsolutePath());
         return Files.readString(APP_JAVASCRIPT).replace("\r\n", "\n").replace('\r', '\n');
-    }
-
-    private static String function(String source, String signature)
-    {
-        int start = source.indexOf(signature);
-        assertTrue(start >= 0, () -> "Missing " + signature);
-        int openingBrace = source.indexOf('{', start + signature.length());
-        int depth = 0;
-
-        for(int index = openingBrace; index < source.length(); index++)
-        {
-            char character = source.charAt(index);
-            if(character == '{')
-            {
-                depth++;
-            }
-            else if(character == '}' && --depth == 0)
-            {
-                return source.substring(start, index + 1);
-            }
-        }
-
-        throw new AssertionError("Unterminated " + signature);
     }
 }

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { functionSource: extractFunctionSource } = require('./source-functions.cjs');
 
 const applicationPath = process.argv[2];
 assert.ok(applicationPath, 'The app.js path is required.');
@@ -15,33 +16,7 @@ assert.equal((application.match(/iconField\.append\(aliasIconPreview\(icon\)\)/g
 assert.match(application, /catalog\.get\(name\) \|\| 'no-icon'/,
   'Unknown or custom Alias icons must use the bundled no-icon preview.');
 
-function functionSource(signature) {
-  const start = application.indexOf(signature);
-  if (start < 0) throw new Error(`Missing ${signature}`);
-  const openingBrace = application.indexOf('{', start + signature.length);
-  let depth = 0;
-  let quote = '';
-  let escaped = false;
-  for (let index = openingBrace; index < application.length; index += 1) {
-    const character = application[index];
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (quote) {
-      if (character === '\\') escaped = true;
-      else if (character === quote) quote = '';
-      continue;
-    }
-    if (character === '\'' || character === '"' || character === '`') {
-      quote = character;
-      continue;
-    }
-    if (character === '{') depth += 1;
-    else if (character === '}' && --depth === 0) return application.slice(start, index + 1);
-  }
-  throw new Error(`Unterminated ${signature}`);
-}
+const functionSource = signature => extractFunctionSource(application, signature);
 
 const context = {
   number: (value) => String(value),

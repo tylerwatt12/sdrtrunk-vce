@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats;
 
+import static io.github.dsheirer.stats.StatsWebSourceTestSupport.function;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -1096,8 +1097,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(scanner.contains("Engineer"));
         String transport = function(source, "function arrangeScannerPlayback(bar, player, signal, options = {})");
         assertTrue(transport.contains("const allowed = () => capabilityAllowed(ACCESS_CAPABILITIES.CALL_AUDIO)"));
-        assertTrue(transport.contains("const openMenu = options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker))"));
-        assertTrue(transport.contains("'scanner-player-menu', () => openMenu(menu)"));
+        assertTrue(transport.contains("(options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker)))(menu)"));
+        assertTrue(transport.contains("menu.id = 'scanner-player-menu'"));
         assertFalse(source.contains("function openPlaybackAvoidList("));
         assertFalse(scanner.contains("Recent Calls"));
         assertTrue(html.contains("aria-label=\"Replay last call\""));
@@ -2387,29 +2388,5 @@ class StatsWebInteractionUiContractTest
         String signature = declaration.group();
         assertFalse(declaration.find(), () -> "Ambiguous function " + name);
         return function(source, signature);
-    }
-
-    private static String function(String source, String signature)
-    {
-        int start = source.indexOf(signature);
-        assertTrue(start >= 0, () -> "Missing " + signature);
-        int openingBrace = source.indexOf('{', start + signature.length());
-        int depth = 0;
-
-        for(int index = openingBrace; index < source.length(); index++)
-        {
-            char character = source.charAt(index);
-
-            if(character == '{')
-            {
-                depth++;
-            }
-            else if(character == '}' && --depth == 0)
-            {
-                return source.substring(start, index + 1);
-            }
-        }
-
-        throw new AssertionError("Unterminated " + signature);
     }
 }

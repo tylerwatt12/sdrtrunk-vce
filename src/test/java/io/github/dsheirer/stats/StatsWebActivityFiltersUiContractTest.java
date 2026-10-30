@@ -213,59 +213,7 @@ class StatsWebActivityFiltersUiContractTest
 
     private static String function(String source, String signature)
     {
-        int start = source.indexOf(signature);
-        if(start < 0)
-        {
-            throw new IllegalArgumentException("Missing " + signature);
-        }
-        int brace = source.indexOf('{', start + signature.length());
-        int depth = 0;
-        boolean single = false;
-        boolean dual = false;
-        boolean template = false;
-        boolean escaped = false;
-        for(int index = brace; index < source.length(); index++)
-        {
-            char current = source.charAt(index);
-            if(escaped)
-            {
-                escaped = false;
-                continue;
-            }
-            if((single || dual || template) && current == '\\')
-            {
-                escaped = true;
-                continue;
-            }
-            if(!dual && !template && current == '\'')
-            {
-                single = !single;
-                continue;
-            }
-            if(!single && !template && current == '"')
-            {
-                dual = !dual;
-                continue;
-            }
-            if(!single && !dual && current == '`')
-            {
-                template = !template;
-                continue;
-            }
-            if(single || dual || template)
-            {
-                continue;
-            }
-            if(current == '{')
-            {
-                depth++;
-            }
-            else if(current == '}' && --depth == 0)
-            {
-                return source.substring(start, index + 1);
-            }
-        }
-        throw new IllegalArgumentException("Unterminated " + signature);
+        return StatsWebSourceTestSupport.quotedFunction(source, signature, "Unterminated ");
     }
 
     private static String readText(Path path) throws Exception

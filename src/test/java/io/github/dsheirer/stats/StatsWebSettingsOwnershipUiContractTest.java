@@ -139,8 +139,8 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(scannerPlayback.contains("groupIdentity"));
         assertFalse(scannerPlayback.contains("same channel or talkgroup"));
         assertFalse(scannerPlayback.contains("preferences.presentation"));
-        assertTrue(scannerControls.contains("const openMenu = options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker))"));
-        assertTrue(scannerControls.contains("'scanner-player-menu', () => openMenu(menu)"));
+        assertTrue(scannerControls.contains("(options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker)))(menu)"));
+        assertTrue(scannerControls.contains("menu.id = 'scanner-player-menu'"));
         assertTrue(audioDock.contains("['Listening settings', 'playback-controls', 'settings']"));
         assertTrue(playerSettings.contains("player.applyPreferences({ target_grouping: grouping.checked }); player.writePreferences()"));
         assertTrue(playerSettings.contains("player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences()"));
@@ -181,22 +181,6 @@ class StatsWebSettingsOwnershipUiContractTest
 
     private static String function(String source, String marker)
     {
-        int start = source.indexOf(marker);
-        assertTrue(start >= 0, marker);
-        int opening = source.indexOf('{', start + marker.length());
-        int depth = 0;
-        for(int index = opening; index < source.length(); index++)
-        {
-            char character = source.charAt(index);
-            if(character == '{')
-            {
-                depth++;
-            }
-            else if(character == '}' && --depth == 0)
-            {
-                return source.substring(start, index + 1);
-            }
-        }
-        throw new AssertionError("Unclosed function: " + marker);
+        return StatsWebSourceTestSupport.settingsFunction(source, marker);
     }
 }
