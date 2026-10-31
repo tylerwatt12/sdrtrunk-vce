@@ -2,7 +2,7 @@
 
 // Every gallery composition is reviewed independently in both themes and sizes.
 const galleryViews = [
-  'mobile-table', 'gallery', 'workflows', 'qr-code', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal',
+  'mobile-table', 'gallery', 'loading-indicators', 'text-links', 'workflows', 'qr-code', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal',
   'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters',
   'health-alert-modal', 'focus', 'settings', 'health', 'computer', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'focused-settings', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls',
@@ -15,6 +15,7 @@ const galleryViews = [
 ];
 const gallerySelector = (view) => ({
   gallery: '.design-system-gallery', 'modal-long': '.visual-modal-example',
+  'loading-indicators': '.visual-capture-section', 'text-links': '.visual-text-links-example',
   'radio-directory-panel': '.visual-radio-directory-coverage-example',
   'live-notice': '.visual-live-example',
   'receiving-windows': '.visual-frequency-window-example',
