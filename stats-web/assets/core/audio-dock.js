@@ -1,4 +1,4 @@
-import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './audio-controls.js?v=1';
+import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './audio-controls.js?v=2';
 import { systemLabel, systemName, systemIdentity, homeSystemName } from './system-labels.js?v=2';
 import { formatSourceName } from './source-names.js?v=1';
 import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1';
@@ -16,6 +16,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   getSourceNameDisplay = () => 'talker_alias',
   getCallDisplayHangtimeSeconds = () => 5, setCallDisplayHangtimeSeconds = async () => {},
   setRecordingClickMode = mode => recordings.setClickMode(mode),
+  setVolumePreference = async () => {},
   radioIdentifier = (_call, value) => value }) {
   const dock = node('section', 'audio-dock ui-audio-surface');
   dock.id = 'audio-dock';
@@ -502,7 +503,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   const miniNext = command('Next call', 'skip', next);
   const volumeControl = createAudioVolume({ node, iconButton, host: document.querySelector('.app-shell'), id: 'audio-dock',
     onInput: value => changeVolume(value, false),
-    onCommit: () => { if (!guidePresentation && source === 'live') getLivePlayer()?.writePreferences({ volume: true }); }
+    onCommit: () => {
+      if (guidePresentation) return;
+      if (source === 'live') getLivePlayer()?.writePreferences({ volume: true });
+      else void Promise.resolve().then(() => setVolumePreference(recordingState.volume)).catch(() => {});
+    }
   });
   const volumePopover = volumeControl.popover;
   const closeVolume = returnFocus => volumeControl.close(returnFocus);
@@ -1050,7 +1055,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     if (groupHelp) { groupHelp.id = 'audio-dock-grouping-help'; grouping.setAttribute('aria-describedby', groupHelp.id); }
     grouping.addEventListener('change', userAction(() => {
       const player = getLivePlayer(); if (!player) return;
-      player.applyPreferences({ target_grouping: grouping.checked }); player.writePreferences();
+      player.applyPreferences({ target_grouping: grouping.checked }); player.writePreferences({ grouping: true });
     }));
     settings.append(groupField);
     const burstLabel = node('label', 'ui-toggle-field'); burstLabel.htmlFor = 'audio-dock-target-burst';
@@ -1064,7 +1069,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     burst.addEventListener('change', userAction(() => {
       if (!burst.checkValidity()) { burst.reportValidity(); return; }
       const player = getLivePlayer(); if (!player) return;
-      player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences();
+      player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences({ burst: true });
     }));
     burstLabel.append(burstCopy, burst); settings.append(burstLabel);
     const titleField = uiToggleField('Playing call in page title', getTitlePreference(),

@@ -317,9 +317,11 @@ const defaultP25Affiliations = p25Affiliations([{ id: 1, observed_at_ms: now,
   target_id: 1201, source_alias_name: 'Engine 4', target_alias_name: 'Fire Dispatch' }]);
 
 async function installSiteStyleApplication(page, theme = 'light', liveInitialSnapshot = liveSnapshot, options = {}) {
-  const defaults = (await import(pathToFileURL(path.join(root, 'stats-web/assets/core/preference-schema.js')).href)).defaults;
-  const preferences = structuredClone(defaults);
-  preferences.appearance.theme = theme;
+  const preferenceSchema = await import(pathToFileURL(path.join(root, 'stats-web/assets/core/preference-schema.js')).href);
+  const draftPreferences = structuredClone(preferenceSchema.defaults);
+  draftPreferences.appearance.theme = theme;
+  options.configurePreferences?.(draftPreferences);
+  const preferences = preferenceSchema.validate(draftPreferences);
   const state = { unexpected: [], requests: [], pageErrors: [] };
   state.tourDismissals = { version: 1, dismissed: {} };
   page.on('pageerror', error => state.pageErrors.push(error.message));

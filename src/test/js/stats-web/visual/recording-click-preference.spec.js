@@ -56,7 +56,7 @@ test('recording click mode follows the account across reloads and fresh browsers
 
 for (const theme of ['light', 'dark']) {
   for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
-    test(`guest click mode is page-session only in ${theme} at ${viewport.width}px`, async ({ page }) => {
+    test(`guest click mode persists locally in ${theme} at ${viewport.width}px`, async ({ page }) => {
       await page.setViewportSize(viewport);
       const state = await openAudioApp(page, { authenticated: false, feedCallsEnabled: false });
       if (theme === 'dark') {
@@ -69,7 +69,7 @@ for (const theme of ['light', 'dark']) {
       expect(state.preferenceWrites).toHaveLength(0);
       expect(state.requests.filter(request => request.path === '/api/v1/me/preferences')).toHaveLength(0);
       await page.reload();
-      await expect(await clickMode(page)).toHaveValue('queue');
+      await expect(await clickMode(page)).toHaveValue('once');
       expect(state.preferenceWrites).toHaveLength(0);
     });
   }

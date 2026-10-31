@@ -40,17 +40,21 @@ async function openLive(page, { theme = 'light', replay = true, firstVisit = fal
   page.on('websocket', socket => effects.sockets.push(socket.url()));
   await page.emulateMedia({ reducedMotion: 'reduce' });
   const fixture = await installSiteStyleApplication(page, theme,
-    noHardware ? { revision: 1, tables: [] } : originalSnapshot, { guides: firstVisit });
-  await page.addInitScript(({ firstVisit, key, noHardware }) => {
+    noHardware ? { revision: 1, tables: [] } : originalSnapshot, { guides: firstVisit,
+      configurePreferences(preferences) {
+        Object.assign(preferences.live_workspace, {
+          details_visibility: 'expanded', details_active_tab: 'events', details_panel_percent: 50,
+          picker_collapsed: false
+        });
+        preferences.live_workspace.event_filters.search = noHardware ? '' : 'Original Fire';
+        preferences.live_workspace.message_filters.search = noHardware ? '' : 'Original message';
+      }
+    });
+  await page.addInitScript(({ firstVisit, key }) => {
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1', '1');
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:live:2', '1');
     if (!firstVisit) localStorage.setItem(key, '1');
-    localStorage.setItem('sdrtrunk-vce.live-ui-state.v1', JSON.stringify({
-      details_collapsed: false, details_active_tab: 'events', details_panel_percent: 50,
-      picker_collapsed: false, event_filters: { search: noHardware ? '' : 'Original Fire' },
-      message_filters: { search: noHardware ? '' : 'Original message' }
-    }));
-  }, { firstVisit, key: memoryKey, noHardware });
+  }, { firstVisit, key: memoryKey });
   if (denied.length) {
     const file = path.resolve(__dirname, '../../../../../src/main/java/io/github/dsheirer/web/auth/WebCapability.java');
     const capabilities = Object.fromEntries([...fs.readFileSync(file, 'utf8').matchAll(/^\s+[A-Z_]+\("([^"]+)",/gm)]

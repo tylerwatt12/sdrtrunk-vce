@@ -21,7 +21,7 @@
     { id: 'streaming', label: 'Streaming', title: 'Streaming', parent: 'streaming', access: 'admin-streaming', databaseNotice: false },
     { id: 'tuners', label: 'Tuners', title: 'Tuners', parent: 'tuners', access: 'admin-tuner', databaseNotice: false },
     { id: 'admin', label: 'Administration', title: 'Administration', parent: 'admin', access: 'admin', databaseNotice: false },
-    { id: 'settings', label: 'My Settings', title: 'My Settings', parent: null, capability: 'user-settings', databaseNotice: false },
+    { id: 'settings', label: 'My Settings', title: 'My Settings', parent: null, capability: 'web-access', databaseNotice: false },
     { id: 'credits', label: 'About', title: 'About', parent: 'credits', capability: 'credits', databaseNotice: false }
   ].map((definition) => Object.freeze({ ...definition })));
 

@@ -108,7 +108,12 @@ class StatsWebNavigationHeaderUiContractTest
         assertTrue(access.contains("link.classList.toggle('access-locked', locked)"));
         assertTrue(access.contains("lock.toggleAttribute('hidden', !locked)"));
         assertTrue(access.contains("link.hidden = administratorOnly && locked"));
-        assertTrue(access.contains("link.dataset.view === 'settings' && !accessSession.authenticated"));
+        assertFalse(access.contains("link.dataset.view === 'settings' && !accessSession.authenticated"));
+        String controls = block(source, "function updateAccessControls()");
+        assertTrue(controls.contains("settings.textContent = 'Guest settings'"));
+        assertTrue(controls.contains("settings.hidden = signInRequired"));
+        assertTrue(readText(Path.of("stats-web", "assets", "core", "routes.js"))
+            .contains("{ id: 'settings', label: 'My Settings', title: 'My Settings', parent: null, capability: 'web-access'"));
         assertTrue(access.contains("group.hidden = !group.querySelector"));
     }
 

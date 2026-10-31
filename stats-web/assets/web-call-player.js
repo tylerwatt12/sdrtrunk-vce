@@ -116,10 +116,13 @@ export class WebCallPlayer {
       this.pendingPreferenceWrites?.clear();
     }
     const volume = Number(preferences.volume);
-    if (!this.volumeEditPending && Number.isFinite(volume) && volume >= 0 && volume <= 1) {
-      this.volume = volume;
-      this.ui.volume.value = String(volume);
-      if (this.gainNode) this.gainNode.gain.value = volume;
+    if (Number.isFinite(volume) && volume >= 0 && volume <= 1) {
+      this.confirmedPreferenceVolume = volume;
+      if (!this.volumeEditPending) {
+        this.volume = volume;
+        this.ui.volume.value = String(volume);
+        if (this.gainNode) this.gainNode.gain.value = volume;
+      }
     }
     if (Array.isArray(preferences.selected_scan_list_ids)) {
       const selected = new Set(preferences.selected_scan_list_ids.map(String));
@@ -145,27 +148,30 @@ export class WebCallPlayer {
     this.render();
   }
 
-  writePreferences({ volume = false, hangtime = false } = {}) {
+  writePreferences({ volume = false, hangtime = false, grouping = false, burst = false } = {}) {
     if (!this.preferenceWriter) {
       if (volume) this.volumeEditPending = false;
       return Promise.resolve();
     }
     const selectedScanListIds = [...this.selectedScanListIds].map(Number)
       .filter((id) => Number.isSafeInteger(id) && id > 0).sort((left, right) => left - right);
-    const snapshot = {
-      volume: this.volume,
-      selected_scan_list_ids: selectedScanListIds,
-      target_grouping: this.targetGrouping,
-      target_burst_limit: this.targetBurstLimit
-    };
+    // Each action changes only its own preference fields. A queued list edit
+    // must not write an older volume or overwrite another settings editor.
+    const snapshot = {};
+    if (volume) snapshot.volume = this.volume;
+    if (grouping) snapshot.target_grouping = this.targetGrouping;
+    if (burst) snapshot.target_burst_limit = this.targetBurstLimit;
+    if (!volume && !hangtime && !grouping && !burst) snapshot.selected_scan_list_ids = selectedScanListIds;
     if (hangtime) snapshot.call_display_hangtime_seconds =
       this.callDisplayHangtimeSeconds ?? DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS;
     const revision = this.volumeEditRevision || 0;
     const writeId = this.preferenceWriteSequence = (this.preferenceWriteSequence || 0) + 1;
     const pending = this.pendingPreferenceWrites ||= new Map();
     pending.set(writeId, revision);
-    if (volume) this.volumeCommit = { revision, writeId, settled: false };
-    return Promise.resolve().then(() => this.preferenceWriter(snapshot)).catch(() => {}).finally(() => {
+    if (volume) this.volumeCommit = { revision, writeId, settled: false, failed: false };
+    return Promise.resolve().then(() => this.preferenceWriter(snapshot)).catch(() => {
+      if (this.volumeCommit?.writeId === writeId) this.volumeCommit.failed = true;
+    }).finally(() => {
       pending.delete(writeId);
       const commit = this.volumeCommit;
       if (commit?.writeId === writeId) commit.settled = true;
@@ -175,6 +181,9 @@ export class WebCallPlayer {
       if (commit?.settled && commit.revision === this.volumeEditRevision &&
           ![...pending.values()].some((olderRevision) => olderRevision < commit.revision)) {
         this.volumeEditPending = false;
+        if (commit.failed && Number.isFinite(this.confirmedPreferenceVolume)) {
+          this.applyPreferences({ volume: this.confirmedPreferenceVolume });
+        }
       }
     });
   }

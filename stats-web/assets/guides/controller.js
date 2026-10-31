@@ -1,6 +1,6 @@
 import { openSetupGuide } from '../core/setup-guide.js?v=23';
 import { createGuideDefinition, pageGuideTemplates } from './catalog.js?v=42';
-import { createGuideMemory } from './persistence.js?v=2';
+import { createGuideMemory } from './persistence.js?v=3';
 
 const sessionKey = (context) => JSON.stringify([context.account || '', context.dismissalScope || '',
   context.authenticated === true]);
@@ -10,8 +10,9 @@ const visitKey = (context) => `${sessionKey(context)}:${context.view}${context.v
 // rendering/signing out starts. Tour state stays independent of page builders.
 export function createGuideController({ ui, getContext, navigate, consumeGuide, preparePlayer, preparePage,
   documentValue = globalThis.document, storage, fetchDocument, onHistoryError, onHistorySaved,
-  setAutomaticPageGuides, openGuide = openSetupGuide }) {
+  setAutomaticPageGuides, guestHistory, openGuide = openSetupGuide }) {
   const memory = createGuideMemory(storage, { fetchDocument, onError: onHistoryError, onSaved: onHistorySaved,
+    guestHistory,
     definitions: [{ id: 'welcome', version: createGuideDefinition('welcome').version }, ...Object.values(pageGuideTemplates)] });
   let active = null;
   let generation = 0;
@@ -29,7 +30,8 @@ export function createGuideController({ ui, getContext, navigate, consumeGuide, 
     automaticPageGuides: () => automaticPagesAllowed(getContext()) });
   const contextMatches = (context) => !destroyed && visitKey(getContext()) === visitKey(context);
   const eligible = (context, manual) => !destroyed && context.isDesktop === true &&
-    (manual || context.authenticated === true) && context.canView?.(context.view) !== false;
+    (manual || context.authenticated === true || context.preferenceScope === 'guest' && context.automaticPageGuides === true) &&
+    context.canView?.(context.view) !== false;
   const clearActive = () => {
     generation++;
     const previous = active;

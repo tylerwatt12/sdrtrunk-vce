@@ -1,10 +1,10 @@
-import * as routeFoundation from './core/routes.js?v=11';
+import * as routeFoundation from './core/routes.js?v=12';
 import * as preferenceSchema from './core/preference-schema.js?v=11';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { receiverDisplayName } from './core/receiver-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
-import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
+import { Controller as UserPreferenceController } from './core/user-preferences.js?v=2';
 import * as tableLayouts from './core/table-layout.js?v=6';
 import * as tableDefaults from './core/table-defaults.js?v=33';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
@@ -17,9 +17,9 @@ import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=9';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
-import { createMySettingsWorkspace } from './features/my-settings.js?v=3';
+import { createMySettingsWorkspace } from './features/my-settings.js?v=4';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=46';
+import { createGuideController } from './guides/controller.js?v=47';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -40,21 +40,21 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=71';
+import { createRecordingsFeature } from './features/recordings.js?v=72';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
-import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
+import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=3';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
 import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=46';
-import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=1';
+import { createAudioDock } from './core/audio-dock.js?v=47';
+import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=2';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=27';
+import { WebCallPlayer } from './web-call-player.js?v=28';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -204,25 +204,8 @@ const ACTIVITY_LOG_RANGES = Object.freeze([
 ]);
 const RADIO_REFERENCE_DIRECTORY_TIMEOUT_MILLISECONDS = 15_000;
 const CHANNEL_CONFIGURATION_RETRY_DELAYS_MILLISECONDS = Object.freeze([150, 250, 400, 650, 1_000, 1_500, 2_000]);
-const ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY = 'sdrtrunk-vce-anonymous-table-layouts';
-let anonymousUserPreferences = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
 let sourceNamePresentationRenderer = null;
 let appliedSourceNameDisplay = preferenceSchema.defaults.presentation.source_name_display;
-function upgradeAnonymousTableLayouts(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
-  return Object.fromEntries(Object.entries(value).map(([id, layout]) => [id,
-    layout && typeof layout === 'object' && !Array.isArray(layout) && !Array.isArray(layout.collapsed_groups) ?
-      { ...layout, collapsed_groups: [] } : layout]));
-}
-try {
-  anonymousUserPreferences = preferenceSchema.validate({
-    ...anonymousUserPreferences,
-    tables: upgradeAnonymousTableLayouts(
-      JSON.parse(localStorage.getItem(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY) || '{}'))
-  });
-} catch (_error) {
-  // Invalid or unavailable browser storage falls back to the default table layouts.
-}
 const ALIAS_LIST_FAMILY_LABELS = Object.freeze({
   P25: 'P25', DMR: 'DMR', NXDN: 'NXDN', NBFM: 'Conventional Analog (AM/NBFM)'
 });
@@ -490,8 +473,21 @@ async function jsonDocumentFetch(path, options = {}) {
 }
 
 function activeUserPreferences() {
-  const snapshot = userPreferenceController.read();
-  return snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
+  return userPreferenceController.read().preferences;
+}
+
+function synchronizeGuestPreferenceNotice(snapshot) {
+  let notice = document.getElementById('guest-preference-status');
+  const temporary = snapshot.loaded && snapshot.scope === 'guest' && snapshot.persistence === 'memory';
+  if (!temporary) { notice?.remove(); return; }
+  if (!notice) {
+    notice = node('p', 'ui-notice ui-notice-warning');
+    notice.id = 'guest-preference-status'; notice.setAttribute('role', 'status');
+    applicationNoticeStack().append(notice);
+  }
+  notice.textContent = snapshot.persistenceReason === 'unsupported' ?
+    'The saved guest profile could not be read. Your choices apply to this page. Use Reset guest preferences in My Settings to replace it.' :
+    'Your guest choices apply to this page, but this browser could not save them. Allow site storage to remember them after reload.';
 }
 
 function sourceNameDisplayMode() {
@@ -500,9 +496,10 @@ function sourceNameDisplayMode() {
 
 function applyUserPreferenceSnapshot(snapshot) {
   if (snapshot.loaded || snapshot.identity === null) clearUserPreferenceError();
-  const preferences = snapshot.loaded ? snapshot.preferences : anonymousUserPreferences;
+  synchronizeGuestPreferenceNotice(snapshot);
+  const preferences = snapshot.preferences;
   personalSettingsWorkspace?.onSnapshot(snapshot);
-  recordingsFeature.playback.applyPlaybackPreferences(preferences.playback);
+  recordingsFeature.playback.applyPlaybackPreferences(preferences.playback, { identity: snapshot.identity });
   webCallPlayer?.setDirectListenIdentity(snapshot.identity);
   applyTheme();
   pageTitleController.update({ prependPlaying: preferences.page_titles.prepend_playing_call });
@@ -529,10 +526,12 @@ async function synchronizeUserPreferences() {
   const identity = accessSession.authenticated ?
     JSON.stringify([accessSession.username, accessSession.guideDismissalScope || '']) : null;
   const snapshot = userPreferenceController.snapshot();
-  if (snapshot.identity === identity && (identity === null || snapshot.loaded)) return snapshot;
+  if (snapshot.ready && snapshot.identity === identity && snapshot.loaded) return snapshot;
   userPreferenceError = null;
   try {
-    return await userPreferenceController.activate(identity);
+    const activated = await userPreferenceController.activate(identity);
+    void guideController.synchronizeAccount();
+    return activated;
   } catch (error) {
     return userPreferenceController.snapshot();
   }
@@ -540,13 +539,6 @@ async function synchronizeUserPreferences() {
 
 async function updateUserPreferences(mutator, allowRetry = true) {
   try {
-    if (!accessSession.authenticated) {
-      const draft = JSON.parse(JSON.stringify(anonymousUserPreferences));
-      const returned = mutator(draft);
-      anonymousUserPreferences = preferenceSchema.validate(returned === undefined ? draft : returned);
-      clearUserPreferenceError();
-      return anonymousUserPreferences;
-    }
     const result = await userPreferenceController.update(mutator);
     if (result?.state === 'stale') {
       const error = new Error('The signed-in user changed before these settings were saved.');
@@ -568,48 +560,20 @@ function settleUserPreferenceMutation(mutator, allowRetry = true) {
   return updateUserPreferences(mutator, allowRetry).catch(() => null);
 }
 
-function saveAnonymousTableLayout(tableType, layout = null) {
-  const tables = { ...anonymousUserPreferences.tables };
-  if (layout) tables[tableType] = tableLayouts.persisted(layout);
-  else delete tables[tableType];
-  let preferences;
-  try {
-    preferences = preferenceSchema.validate({ ...anonymousUserPreferences, tables });
-  } catch (error) {
-    showUserPreferenceError(error, null, true);
-    return null;
-  }
-  anonymousUserPreferences = preferences;
-  try {
-    localStorage.setItem(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY, JSON.stringify(preferences.tables));
-  } catch (_) {
-    // Browser storage may be unavailable in private or locked-down sessions. Keep the layout for this page session.
-  }
-  return preferences;
-}
-
 async function saveTableLayoutPreference(tableType, layout) {
-  if (!userPreferenceController.snapshot().loaded) {
-    return accessSession.authenticated ? null : saveAnonymousTableLayout(tableType, layout);
-  }
+  if (!userPreferenceController.read().loaded) return null;
   return settleUserPreferenceMutation((preferences) => {
     preferences.tables[tableType] = tableLayouts.persisted(layout);
   }, false);
 }
 
 async function resetTableLayoutPreference(tableType) {
-  if (!userPreferenceController.snapshot().loaded) {
-    return accessSession.authenticated ? null : saveAnonymousTableLayout(tableType);
-  }
+  if (!userPreferenceController.read().loaded) return null;
   return settleUserPreferenceMutation((preferences) => { delete preferences.tables[tableType]; }, false);
 }
 
 function removeResetTableLayout(tableType) {
   if (tableLayoutResetPending.has(tableType)) return;
-  if (!userPreferenceController.snapshot().loaded && !accessSession.authenticated) {
-    saveAnonymousTableLayout(tableType);
-    return;
-  }
   if (!userPreferenceController.snapshot().loaded) return;
   tableLayoutResetPending.add(tableType);
   void resetTableLayoutPreference(tableType)
@@ -896,7 +860,6 @@ function updateNavigationAccess() {
     const definition = applicationRoutes?.[link.dataset.view];
     const administratorOnly = String(definition?.access || '').startsWith('admin');
     link.hidden = administratorOnly && locked ||
-      link.dataset.view === 'settings' && !accessSession.authenticated ||
       link.dataset.view === 'topics' && alertPushEnabled === false ||
       link.dataset.view === 'network-visualizer' && !p25VisualizerMenuAvailable();
     link.classList.toggle('access-locked', locked);
@@ -967,6 +930,10 @@ function updateAccessControls() {
     const signInRequired = accessSession.capabilities?.[ACCESS_CAPABILITIES.WEB_ACCESS] === false;
     status.textContent = signInRequired ? 'Sign in required' : 'Public';
     status.dataset.uiHint = signInRequired ? 'This receiver requires an account for the web interface' : 'Using public access';
+    settings.hidden = signInRequired;
+    settings.textContent = 'Guest settings';
+    settings.dataset.uiHint = 'Open preferences saved in this browser';
+    settings.setAttribute('aria-label', 'Open guest settings');
     action.textContent = 'Sign In';
     action.disabled = false;
   }
@@ -11649,26 +11616,43 @@ const liveChannelActivityTables = new Map();
 let liveChannelActivityRevision = 0;
 let liveChannelActivityNeedsResync = false;
 let liveChannelActivityActiveTableId = null;
-const LIVE_UI_STATE_STORAGE_KEY = 'sdrtrunk-vce.live-ui-state.v1';
 const LIVE_DETAIL_TAB_IDS = new Set(['events', 'messages', 'channel']);
 
 function liveUiState() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(LIVE_UI_STATE_STORAGE_KEY) || '{}');
-    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return {};
-    return stored;
-  } catch (_) {
-    return {};
-  }
+  const saved = activeUserPreferences().live_workspace;
+  return { ...saved, ...(saved.details_visibility === 'automatic' ? {} :
+    { details_collapsed: saved.details_visibility === 'collapsed' }) };
 }
 
-function storeLiveUiState(update) {
-  try {
-    const current = liveUiState();
-    localStorage.setItem(LIVE_UI_STATE_STORAGE_KEY, JSON.stringify({ ...current, ...update }));
-  } catch (_) {
-    //Live UI state is optional when browser storage is unavailable.
+function createLiveUiStateWriter(renderContext) {
+  const snapshot = userPreferenceController.read();
+  const owner = { renderContext, identity: snapshot.identity, scope: snapshot.scope };
+  return update => storeLiveUiState(update, owner);
+}
+
+function storeLiveUiState(update, owner = null) {
+  const changes = { ...update };
+  if (Object.hasOwn(changes, 'details_collapsed')) {
+    changes.details_visibility = changes.details_collapsed ? 'collapsed' : 'expanded';
+    delete changes.details_collapsed;
   }
+  const context = owner?.renderContext || captureRenderContext();
+  const identity = owner ? owner.identity : userPreferenceController.read().identity;
+  const scope = owner ? owner.scope : userPreferenceController.read().scope;
+  const current = () => {
+    const active = userPreferenceController.read();
+    return renderIsCurrent(context) && active.loaded && active.identity === identity && active.scope === scope;
+  };
+  if (!current()) return Promise.resolve(null);
+  return settleUserPreferenceMutation(preferences => {
+    if (!current()) {
+      throw Object.assign(new Error('The active preference profile changed.'), { code: 'preference_session_changed' });
+    }
+    preferences.live_workspace = { ...preferences.live_workspace, ...changes };
+  }).then(saved => {
+    if (!saved && current()) void render();
+    return saved;
+  });
 }
 
 function liveDetailsPanelPercent(value) {
@@ -11681,6 +11665,7 @@ function liveWorkspaceResizer(workspace, options = {}) {
   const saveUiState = options.storeUiState || storeLiveUiState;
   let detailsPercent = liveDetailsPanelPercent(savedUiState.details_panel_percent);
   let activePointerCleanup = null;
+  let disposed = false;
   const separator = node('div', 'live-workspace-resizer');
   separator.setAttribute('role', 'separator');
   separator.setAttribute('aria-label', 'Resize live channels and details panels');
@@ -11708,9 +11693,10 @@ function liveWorkspaceResizer(workspace, options = {}) {
     detailsPercent = liveDetailsPanelPercent(100 - primaryHeight / availableHeight * 100);
     apply();
   };
-  const persist = () => saveUiState({ details_panel_percent: detailsPercent });
+  const persist = () => { if (!disposed) saveUiState({ details_panel_percent: detailsPercent }); };
 
   separator.addEventListener('pointerdown', (event) => {
+    if (disposed) return;
     if (activePointerCleanup || event.button !== 0 ||
         window.matchMedia('(max-width: 760px)').matches) return;
     event.preventDefault();
@@ -11751,6 +11737,7 @@ function liveWorkspaceResizer(workspace, options = {}) {
     }
   });
   separator.addEventListener('keydown', (event) => {
+    if (disposed) return;
     if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
     if (event.key === 'Home') detailsPercent = 15;
@@ -11760,6 +11747,7 @@ function liveWorkspaceResizer(workspace, options = {}) {
     persist();
   });
   separator.addEventListener('dblclick', () => {
+    if (disposed) return;
     detailsPercent = 25;
     apply();
     persist();
@@ -11768,6 +11756,7 @@ function liveWorkspaceResizer(workspace, options = {}) {
   return {
     element: separator,
     close() {
+      disposed = true;
       activePointerCleanup?.();
       document.documentElement.classList.remove('live-workspace-resizing');
     }
@@ -17507,7 +17496,8 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   const spectrumDisplayPreferences = guideMode ? {
     autoRangeEnabled: () => sampleAutoRange,
     setAutoRangeEnabled: value => { sampleAutoRange = value; }
-  } : createSpectrumDisplayPreferences({ identity: userPreferenceController.snapshot().identity });
+  } : createSpectrumDisplayPreferences({ read: () => activeUserPreferences().tuner,
+    update: mutator => updateUserPreferences(mutator) });
   const frequencyScopes = snapPresetDocument?.scopes || [];
   const basicOperator = panelOptions.basicOperator === true;
   const frequencyCursor = !basicOperator || panelOptions.frequencyCursor === true;
@@ -19667,12 +19657,19 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
     storeBoolean(TUNER_SPECTRUM_IDLE_PREFERENCE, idleChannelsInput.checked);
     renderActiveChannels();
   });
+  const autoRangeWorkflow = createActionWorkflow({ surface: autoRangeToggle.control,
+    controls: [autoRangeInput], renderFeedback: () => {} });
   autoRangeInput.addEventListener('change', () => {
-    spectrumDisplayPreferences.setAutoRangeEnabled(autoRangeInput.checked);
-    if (autoRangeInput.checked && !Number.isFinite(fftAutoFloorDb)) automaticDisplayRange.requestSample();
-    syncAutomaticDisplayRangeReadouts();
-    restoreWaterfallHistory();
-    if (!refining) scheduleDraw();
+    const enabled = autoRangeInput.checked;
+    const refresh = () => {
+      autoRangeInput.checked = spectrumDisplayPreferences.autoRangeEnabled();
+      if (autoRangeInput.checked && !Number.isFinite(fftAutoFloorDb)) automaticDisplayRange.requestSample();
+      syncAutomaticDisplayRangeReadouts(); restoreWaterfallHistory();
+      if (!refining) scheduleDraw();
+    };
+    void autoRangeWorkflow.run(() => spectrumDisplayPreferences.setAutoRangeEnabled(enabled), {
+      onSuccess: refresh, onError: refresh
+    }).catch(() => {});
   });
   if (plotInteractions) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions);
   const onVisibilityChange = () => {
@@ -20339,10 +20336,6 @@ function liveSelectedViewAction(target, label, iconId) {
 async function activateLivePresentationSettings(button) {
   const returnFocusSelector = `#${button.id}`;
   let snapshot = userPreferenceController.snapshot();
-  if (!snapshot.loaded && !accessSession.authenticated) {
-    showLoginModal(returnFocusSelector);
-    return;
-  }
   if (!snapshot.loaded) {
     button.disabled = true;
     button.classList.add('is-loading');
@@ -20832,14 +20825,16 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     onSelectionChange(selection);
   };
 
-  const showTable = (tableId, closeMobilePicker = false) => {
+  const showTable = (tableId, closeMobilePicker = false, persist = false) => {
     const value = tables.get(tableId);
     if (!value) return;
     activeTableId = tableId;
     clearSelection();
-    preferredTableId = tableId;
+    if (persist) {
+      preferredTableId = tableId;
+      saveUiState({ active_channel_table_id: tableId });
+    }
     if (!guideMode) liveChannelActivityActiveTableId = tableId;
-    saveUiState({ active_channel_table_id: tableId });
     const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
     liveTable.tableController.replaceRows(displayed.rows);
     const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
@@ -20907,7 +20902,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       quality.setAttribute('aria-hidden', 'true');
       state.append(quality, node('span', 'channels-tab-state-label'));
       select.append(copy, state);
-      select.addEventListener('click', () => showTable(value.table_id, true));
+      select.addEventListener('click', () => showTable(value.table_id, true, true));
       select.addEventListener('keydown', (event) => {
         const buttons = [...tabBar.querySelectorAll('.channels-tab-select')]
           .filter((button) => !button.closest('.channels-live-tab')?.hidden);
@@ -20917,7 +20912,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
         event.preventDefault();
         const next = buttons[nextIndex];
         next.focus();
-        showTable(next.closest('.channels-live-tab')?.dataset.tableId);
+        showTable(next.closest('.channels-live-tab')?.dataset.tableId, false, true);
       });
       tab.dataset.tableId = value.table_id;
       tab.append(select);
@@ -21155,7 +21150,9 @@ async function renderLive(workspaceOptions = {}) {
     storeUiState: update => Object.assign(sampleUiState, update), registerConnection,
     presentation: { ...activeUserPreferences().presentation, show_only_active_trunked_channels: false,
       show_control_decode_quality: true, show_voice_decode_quality: true,
-      decode_quality_display_mode: 'compact', show_encryption_details: false } } : { registerConnection };
+      decode_quality_display_mode: 'compact', show_encryption_details: false } } : {
+    registerConnection, storeUiState: createLiveUiStateWriter(renderContext)
+  };
   const split = node('div', 'live-split');
   const rightWorkspace = node('div', 'live-right-workspace');
   const workspaceResizer = liveWorkspaceResizer(rightWorkspace, options);
@@ -21220,27 +21217,16 @@ async function renderLive(workspaceOptions = {}) {
 }
 
 let p25VisualizerModulePromise = null;
-const P25_VISUALIZER_SETTINGS_STORAGE_PREFIX = 'sdrtrunk-vce-p25-visualizer-events-v1:';
-
-function p25VisualizerSettingsStorageKey() {
-  const identity = accessSession.authenticated ? accessSession.username : 'anonymous';
-  return `${P25_VISUALIZER_SETTINGS_STORAGE_PREFIX}${encodeURIComponent(String(identity || 'anonymous'))}`;
-}
-
 function loadP25VisualizerEventSettings() {
-  try {
-    return JSON.parse(localStorage.getItem(p25VisualizerSettingsStorageKey()) || 'null');
-  } catch (_error) {
-    return null;
-  }
+  return Object.fromEntries(Object.entries(activeUserPreferences().p25_visualizer.events)
+    .map(([id, choice]) => [id, { highlight: choice.highlight, autoZoom: choice.auto_zoom }]));
 }
 
-function saveP25VisualizerEventSettings(value) {
-  try {
-    localStorage.setItem(p25VisualizerSettingsStorageKey(), JSON.stringify(value));
-  } catch (_error) {
-    throw new Error('Visualizer choices could not be saved in this browser.');
-  }
+async function saveP25VisualizerEventSettings(value) {
+  await updateUserPreferences(preferences => {
+    preferences.p25_visualizer.events = Object.fromEntries(Object.entries(value)
+      .map(([id, choice]) => [id, { highlight: choice.highlight, auto_zoom: choice.autoZoom }]));
+  }, false);
 }
 
 function p25VisualizerDependencies(renderContext, overrides = {}) {
@@ -31861,7 +31847,7 @@ async function savePreferenceForm(workflow, modal, mutate, options) {
   let sessionChanged = false;
   await workflow.save(async () => {
     if (userPreferenceController.snapshot().identity !== identity) {
-      throw Object.assign(new Error('The signed-in account changed.'), { code: 'preference_session_changed' });
+      throw Object.assign(new Error('The active preference profile changed.'), { code: 'preference_session_changed' });
     }
     await updateUserPreferences(mutate, false);
   }, {
@@ -32021,7 +32007,8 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     retainLastCall.control, clearIdleQuality.control,
     encryption.control, controlQuality.control, voiceQuality.control, fields);
   form.append(node('p', 'live-presentation-intro',
-    'These choices affect only this signed-in user.'),
+    snapshot.scope === 'guest' ? snapshot.persistence === 'memory' ? 'These choices apply for this page.' :
+      'These choices are saved in this browser.' : 'These choices are saved with your account.'),
   settingsCardGrid(presentationCard), footer);
   const modal = openReadOnlyModal('Live presentation', form, {
     id: 'live-presentation-settings', className: 'live-presentation-modal', returnFocusSelector
@@ -32055,10 +32042,6 @@ function openLivePresentationSettings(returnFocusSelector = null) {
 async function activateScannerSettings(button) {
   const returnFocusSelector = `#${button.id}`;
   let snapshot = userPreferenceController.snapshot();
-  if (!snapshot.loaded && !accessSession.authenticated) {
-    showLoginModal(returnFocusSelector);
-    return;
-  }
   if (!snapshot.loaded) {
     button.disabled = true;
     button.classList.add('is-loading');
@@ -32114,7 +32097,8 @@ function openScannerSettings(returnFocusSelector = null, options = {}) {
   const footer = node('div', 'settings-form-footer');
   footer.append(message, actions);
   form.append(node('p', 'live-presentation-intro',
-    'These choices affect only this signed-in user.'), settingsCardGrid(card, titleCard), footer);
+    snapshot.scope === 'guest' ? snapshot.persistence === 'memory' ? 'These choices apply for this page.' :
+      'These choices are saved in this browser.' : 'These choices are saved with your account.'), settingsCardGrid(card, titleCard), footer);
   const modal = openModal('Scanner settings', form, {
     id: 'scanner-settings-modal', className: 'scanner-settings-modal modal-size-small',
     returnFocusSelector, guideTargetPlacement: 'center'
@@ -32138,21 +32122,23 @@ function openScannerSettings(returnFocusSelector = null, options = {}) {
 }
 
 function openResetUserPreferences(returnFocusSelector = null) {
+  const snapshot = userPreferenceController.snapshot();
+  if (!snapshot.loaded) return;
+  const guest = snapshot.scope === 'guest';
   const body = node('div', 'admin-confirmation');
-  body.append(node('p', '', 'Reset every personal preference for this account to its default value?'),
-    node('p', 'muted', 'This resets the theme and hue, Scanner and Live choices, volume and scan-list subscriptions, ' +
-      'tuner display, status icon choices, and saved table layouts. It does not change the username, password, ' +
-      'access, receiver configuration, or other users.'));
+  body.append(node('p', '', guest ? 'Reset the guest preferences saved in this browser?' :
+    'Reset every personal preference for this account?'),
+    node('p', 'muted', 'Restore appearance, listening, display choices and table layouts to their defaults.'));
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
   const cancel = node('button', 'ui-button ui-button-secondary', 'Cancel');
   cancel.type = 'button';
-  const reset = node('button', 'ui-button ui-button-danger', 'Reset All Personal Preferences');
+  const reset = node('button', 'ui-button ui-button-danger', guest ? 'Reset guest preferences' : 'Reset personal preferences');
   reset.type = 'button';
   const actions = aliasModalFooter();
   actions.append(cancel, reset);
   body.append(message, actions);
-  const modal = openReadOnlyModal('Reset personal preferences', body, {
+  const modal = openReadOnlyModal(guest ? 'Reset guest preferences' : 'Reset personal preferences', body, {
     id: 'reset-user-preferences', className: 'admin-modal', returnFocusSelector
   });
   if (!modal) return;
@@ -32164,7 +32150,14 @@ function openResetUserPreferences(returnFocusSelector = null) {
     modal.setBusy(true);
     message.textContent = 'Resetting personal preferences…';
     try {
-      await updateUserPreferences(() => preferenceSchema.defaults, false);
+      const active = userPreferenceController.read();
+      if (active.identity !== snapshot.identity || active.scope !== snapshot.scope) {
+        throw Object.assign(new Error('The active preference profile changed.'), { code: 'preference_session_changed' });
+      }
+      const result = await userPreferenceController.resetPreferences();
+      if (result?.state === 'stale') {
+        throw Object.assign(new Error('The active preference profile changed.'), { code: 'preference_session_changed' });
+      }
       modal.setBusy(false);
       if (modal.close()) void render();
     } catch (error) {
@@ -32198,10 +32191,11 @@ async function renderSettings() {
     route.set('section', 'status');
     window.history.replaceState({}, '', currentHref());
   }
-  const header = pageHeader('My Settings', 'Customize your appearance and personal listening preferences.');
+  const snapshot = userPreferenceController.snapshot();
+  const header = pageHeader('My Settings', snapshot.scope === 'guest' ?
+    'Customize the preferences saved in this browser.' : 'Customize your appearance and personal listening preferences.');
   header.classList.add('ui-page-header-focused');
   if (!beginPage(renderContext, header)) return;
-  const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) {
     const unavailable = node('div', 'error', userPreferenceError?.message || 'My Settings could not be loaded.');
     const retry = node('button', 'ui-button ui-button-secondary', 'Retry');
@@ -32221,6 +32215,8 @@ async function renderSettings() {
     updatePreferences: saveFocusedUserPreferences,
     setAppearancePreview: (preview) => { appearanceHuePreview = preview; applyTheme(); },
     confirmAction, openReset: openResetUserPreferences,
+    canAccess: capabilityAllowed, canView: viewAllowed, href,
+    openLivePresentation: (returnFocusSelector) => openLivePresentationSettings(returnFocusSelector),
     initialSection: route.get('section') || 'appearance',
     onSectionChange: (section) => {
       route.set('section', section);
@@ -36548,18 +36544,14 @@ const audioDock = createAudioDock({
   getSourceNameDisplay: sourceNameDisplayMode,
   getTitlePreference: () => activeUserPreferences().page_titles.prepend_playing_call,
   getCallDisplayHangtimeSeconds: () => activeUserPreferences().playback.call_display_hangtime_seconds,
+  setVolumePreference: value => recordingsFeature.playback.commitVolume(() => updateUserPreferences(preferences => {
+    preferences.playback.volume = value;
+  })),
   setRecordingClickMode: (value) => updateUserPreferences((preferences) => {
     preferences.playback.recording_click_mode = value;
-  }).then(() => {
-    recordingsFeature.playback.applyPlaybackPreferences(activeUserPreferences().playback);
   }),
   setCallDisplayHangtimeSeconds: (value) => settleUserPreferenceMutation((preferences) => {
     preferences.playback.call_display_hangtime_seconds = value;
-  }).then((preferences) => {
-    if (preferences && !accessSession.authenticated) {
-      webCallPlayer?.applyPreferences(preferences.playback);
-      recordingsFeature.playback.applyPlaybackPreferences(preferences.playback);
-    }
   }),
   setTitlePreference: (value) => settleUserPreferenceMutation((preferences) => {
     preferences.page_titles.prepend_playing_call = value;
@@ -36572,6 +36564,8 @@ let guidePageReady = false;
 const guideController = createGuideController({
   ui: { node, openReadOnlyModal, mountAccessWireframe, guideSampleData },
   fetchDocument: jsonDocumentFetch,
+  guestHistory: { read: () => userPreferenceController.readGuestTourHistory(),
+    save: dismissed => userPreferenceController.saveGuestTourHistory(dismissed) },
   onHistoryError: (error, { kind, retry }) => showGuideHistoryError(kind, retry),
   onHistorySaved: () => document.getElementById('guide-history-status')?.remove(),
   setAutomaticPageGuides: enabled => updateUserPreferences(preferences => {
@@ -36584,7 +36578,8 @@ const guideController = createGuideController({
     account: accessSession.username,
     dismissalScope: accessSession.guideDismissalScope,
     authenticated: accessSession.authenticated,
-    automaticPageGuides: accessSession.authenticated && userPreferenceController.read().loaded ?
+    preferenceScope: userPreferenceController.read().loaded ? userPreferenceController.read().scope : null,
+    automaticPageGuides: userPreferenceController.read().loaded ?
       userPreferenceController.read().preferences.guides.automatic_page_guides : null,
     isDesktop: guideDesktopLayout.matches,
     canSetup: capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_CHANNELS),

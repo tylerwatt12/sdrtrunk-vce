@@ -332,7 +332,7 @@ test('live volume updates immediately during dragging and persists only the fina
   expect(state.preferenceWrites.at(-1).playback.volume).toBe(0.75);
 });
 
-test('native volume keeps zero and independent levels when switching sources', async ({ page }) => {
+test('native volume preserves zero and shares the saved level when switching sources', async ({ page }) => {
   await openAudioApp(page, { volume: 0.65 });
   await fullControls(page);
   const player = dock(page);
@@ -346,20 +346,20 @@ test('native volume keeps zero and independent levels when switching sources', a
   await expect(player.locator('[data-volume-trigger]:visible')).toBeFocused();
   await selectDockSource(player, 'recordings');
   volume = await openAudioVolume(page);
-  await expect(volume).toHaveValue('1');
+  await expect(volume).toHaveValue('0');
   await volume.press('Home');
   for (let index = 0; index < 8; index++) await volume.press('ArrowRight');
   await expect(volume).toHaveValue('0.4');
   await page.keyboard.press('Escape');
   await selectDockSource(player, 'live');
   volume = await openAudioVolume(page);
-  await expect(volume).toHaveValue('0');
+  await expect(volume).toHaveValue('0.4');
   await volume.press('ArrowRight');
-  await expect(volume).toHaveValue('0.05');
+  await expect(volume).toHaveValue('0.45');
   await page.keyboard.press('Escape');
   await selectDockSource(player, 'recordings');
   volume = await openAudioVolume(page);
-  await expect(volume).toHaveValue('0.4');
+  await expect(volume).toHaveValue('0.45');
 });
 
 test('sidebar inspector retains keyboard focus through queue advances and removes to a surviving row', async ({ page }) => {

@@ -785,6 +785,10 @@ export function createRecordingsFeature(deps) {
   let sharedQueueRequest = 0;
   let playbackIntentRevision = 0;
   let clickMode = 'queue';
+  let preferenceIdentity;
+  let confirmedVolume = 1;
+  let volumeEditRevision = 0;
+  let volumeEditPending = false;
   let queueEntrySequence = 0;
   let queueResume = null;
   let callDisplayHangtimeSeconds = DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS;
@@ -794,13 +798,23 @@ export function createRecordingsFeature(deps) {
     onChange: drawQueue
   });
 
-  function applyPlaybackPreferences(preferences = {}) {
+  function applyPlaybackPreferences(preferences = {}, options = {}) {
+    if (Object.hasOwn(options, 'identity') && options.identity !== preferenceIdentity) {
+      preferenceIdentity = options.identity;
+      volumeEditRevision++;
+      volumeEditPending = false;
+    }
+    const volume = Number(preferences.volume);
+    if (Number.isFinite(volume) && volume >= 0 && volume <= 1) {
+      confirmedVolume = volume;
+      if (!volumeEditPending) recordedPlayer().audio.volume = volume;
+    }
     const mode = ['queue', 'once', 'continue'].includes(preferences.recording_click_mode) ?
       preferences.recording_click_mode : 'queue';
     const configured = preferences.call_display_hangtime_seconds;
     const seconds = Number.isInteger(configured) && configured >= 0 && configured <= MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS ?
       configured : DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS;
-    if (seconds === callDisplayHangtimeSeconds && mode === clickMode) return;
+    if (seconds === callDisplayHangtimeSeconds && mode === clickMode) { drawQueue(); return; }
     clickMode = mode;
     callDisplayHangtimeSeconds = seconds;
     callDisplayRetention.refresh();
@@ -1183,8 +1197,19 @@ export function createRecordingsFeature(deps) {
     stop: stopAudio, reset: resetAudio, seek: seekAudio, skipSeconds: (seconds) => seekAudio(playbackState().currentTime + Number(seconds)),
     setVolume: (volume) => {
       if (!Number.isFinite(Number(volume))) return;
+      volumeEditRevision++;
+      volumeEditPending = true;
       recordedPlayer().audio.volume = Math.max(0, Math.min(1, Number(volume)));
       drawQueue();
+    },
+    commitVolume: (save) => {
+      const revision = volumeEditRevision;
+      return Promise.resolve().then(save).finally(() => {
+        if (revision !== volumeEditRevision) return;
+        volumeEditPending = false;
+        recordedPlayer().audio.volume = confirmedVolume;
+        drawQueue();
+      });
     },
     clearQueue,
     setClickMode: (mode) => {

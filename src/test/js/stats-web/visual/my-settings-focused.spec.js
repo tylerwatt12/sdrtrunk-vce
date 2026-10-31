@@ -43,6 +43,9 @@ for (const presentation of presentations) {
     await expect(hangtime).toHaveAttribute('step', '1');
     await expect(hangtime).toHaveAccessibleDescription(
       'Keep the last call and its details visible after playback ends. Applies to Scanner and the player in Live and Recordings. Set to 0 to clear immediately.');
+    await expect(listening.getByRole('spinbutton', { name: 'Playback volume (%)', exact: true })).toHaveValue('100');
+    await expect(listening.getByRole('spinbutton', { name: 'Calls per target', exact: true })).toHaveValue('4');
+    await expect(listening.getByRole('combobox', { name: 'When a call is clicked', exact: true })).toHaveValue('queue');
     await expect(listening.getByRole('button', { name: 'Save changes', exact: true })).toBeDisabled();
     await expectNoHorizontalOverflow(page);
     await expectContrast(page, { reportName: `listening-settings-${presentation.name}` });
@@ -50,10 +53,13 @@ for (const presentation of presentations) {
     await selectSettingsCategory(page, 'pages', 'Page preferences');
     await expect(page.getByRole('form')).toHaveCount(0);
     const directory = workspace.locator('.ui-settings-destinations');
-    for (const name of ['Scanner', 'Live', 'Tuner spectrum', 'Table layouts']) {
+    for (const name of ['Live', 'P25 Visualizer', 'Table layouts']) {
       await expect(directory.getByText(name, { exact: true })).toBeVisible();
     }
-    await expect(directory.locator('details, input, select, button')).toHaveCount(0);
+    await expect(directory.locator('details, input, select')).toHaveCount(0);
+    await expect(directory.getByRole('link', { name: 'Open Live', exact: true })).toBeVisible();
+    await expect(directory.getByRole('button', { name: 'Open Live presentation', exact: true })).toBeVisible();
+    await expect(directory.getByText('Tuner spectrum', { exact: true })).toHaveCount(0);
     await expect(directory).not.toContainText('Playback volume');
     await expect(directory).not.toContainText('Hidden issue types');
     await expectNoHorizontalOverflow(page);

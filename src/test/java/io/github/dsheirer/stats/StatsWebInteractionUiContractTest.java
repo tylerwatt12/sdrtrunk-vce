@@ -756,7 +756,7 @@ class StatsWebInteractionUiContractTest
     }
 
     @Test
-    void controlsAndPersistsAccountOwnedBrowserPlaybackVolumeIndependentlyOfTransportState() throws Exception
+    void controlsAndPersistsPersonalPlaybackVolumeIndependentlyOfTransportState() throws Exception
     {
         String html = readText(INDEX_HTML);
         String source = readText(WEB_CALL_PLAYER);
@@ -764,7 +764,8 @@ class StatsWebInteractionUiContractTest
         String css = StatsWebStylesheetTestSupport.readAll();
         String changeVolume = function(source, "  changeVolume(write = false)");
         String applyPreferences = function(source, "  applyPreferences(preferences, options = {})");
-        String writePreferences = function(source, "  writePreferences({ volume = false, hangtime = false } = {})");
+        String writePreferences = function(source,
+            "  writePreferences({ volume = false, hangtime = false, grouping = false, burst = false } = {})");
         String bindControls = function(source, "  bindControls()");
         String ensureAudioContext = function(source, "  ensureAudioContext()");
         String startCurrent = function(source, "  startCurrent()");
@@ -786,9 +787,28 @@ class StatsWebInteractionUiContractTest
         assertTrue(bindControls.contains("this.ui.volume.addEventListener('change', () => this.writePreferences({ volume: true }))"));
         assertTrue(writePreferences.contains("const snapshot = {"));
         assertTrue(writePreferences.contains("this.preferenceWriter(snapshot)"));
-        assertTrue(applyPreferences.contains("!this.volumeEditPending && Number.isFinite(volume)"));
+        assertTrue(applyPreferences.contains("this.confirmedPreferenceVolume = volume"));
+        assertTrue(applyPreferences.contains("if (!this.volumeEditPending)"));
+        assertTrue(writePreferences.contains("commit.failed && Number.isFinite(this.confirmedPreferenceVolume)"));
         assertTrue(applyPreferences.contains("options.identity !== this.preferenceIdentity"));
-        assertTrue(writePreferences.contains("volume: this.volume"));
+        assertTrue(writePreferences.contains("if (volume) snapshot.volume = this.volume"));
+        assertTrue(writePreferences.contains("if (grouping) snapshot.target_grouping = this.targetGrouping"));
+        assertTrue(writePreferences.contains("if (burst) snapshot.target_burst_limit = this.targetBurstLimit"));
+        assertTrue(function(application, "function activeUserPreferences()")
+            .contains("userPreferenceController.read().preferences"));
+        assertTrue(function(application, "async function updateUserPreferences(mutator, allowRetry = true)")
+            .contains("userPreferenceController.update(mutator)"));
+        String applySnapshot = function(application, "function applyUserPreferenceSnapshot(snapshot)");
+        assertTrue(applySnapshot.contains(
+            "recordingsFeature.playback.applyPlaybackPreferences(preferences.playback, { identity: snapshot.identity })"));
+        assertTrue(applySnapshot.contains("player.applyPreferences(preferences.playback, { identity: snapshot.identity })"));
+        String controller = readText(Path.of("stats-web", "assets", "core", "user-preferences.js"));
+        String enqueue = function(controller, "    enqueue(");
+        assertTrue(enqueue.contains("if (scope === 'guest')"));
+        assertTrue(enqueue.contains("this.browserPreferences.update(mutator"));
+        assertTrue(enqueue.contains("method: 'PUT'"));
+        assertTrue(enqueue.contains("'If-Match': `\"${revision}\"`"));
+        assertFalse(application.contains("localStorage"));
         assertFalse(changeVolume.contains("this.paused"));
         assertTrue(function(source, "  synchronizeSubscription()").contains("else this.setStatus('Ready')"));
         assertTrue(ensureAudioContext.contains("this.audioContext.createAnalyser()"));
@@ -1413,7 +1433,8 @@ class StatsWebInteractionUiContractTest
         assertFalse(selectedViewAction.contains("node('span'"));
         assertTrue(systems.contains("titleActions.append(presentationSettings)"));
         assertFalse(systems.contains("if (userPreferenceController.snapshot().loaded)"));
-        assertTrue(settingsActivation.contains("showLoginModal(returnFocusSelector)"));
+        assertFalse(settingsActivation.contains("showLoginModal"));
+        assertTrue(settingsActivation.contains("userPreferenceController.snapshot()"));
         assertTrue(settingsActivation.contains("snapshot = await synchronizeUserPreferences()"));
         assertTrue(settingsActivation.contains("openLivePresentationSettings(returnFocusSelector)"));
         assertFalse(upsert.contains("quality.classList.toggle('quality-link'"));
@@ -1494,7 +1515,8 @@ class StatsWebInteractionUiContractTest
         String channel = function(source, "function liveChannelPane(options = {})");
         String systems = function(source, "function liveChannelsSection(onSelectionChange, options = {})");
         String settingsActivation = function(source, "async function activateLivePresentationSettings(button)");
-        String showTable = function(systems, "const showTable = (tableId, closeMobilePicker = false) =>");
+        String showTable = function(systems,
+            "const showTable = (tableId, closeMobilePicker = false, persist = false) =>");
         String reconcileSelection = function(systems, "const reconcileSelection = (displayed) =>");
         String updateVisibleRows = function(systems, "const updateVisibleRows = (value) =>");
         String live = function(source, "async function renderLive(workspaceOptions = {})");
@@ -1510,6 +1532,19 @@ class StatsWebInteractionUiContractTest
             "rightWorkspace.append(channels.element, workspaceResizer.element, eventsPanel.element)"));
         assertTrue(live.contains("const workspaceResizer = liveWorkspaceResizer(rightWorkspace, options)"));
         assertTrue(live.contains("registerConnection(workspaceResizer)"));
+        assertTrue(live.contains("storeUiState: createLiveUiStateWriter(renderContext)"));
+        String stateWriter = function(source, "function createLiveUiStateWriter(renderContext)");
+        assertTrue(stateWriter.contains("identity: snapshot.identity, scope: snapshot.scope"));
+        String storeUiState = function(source, "function storeLiveUiState(update, owner = null)");
+        assertTrue(storeUiState.contains("owner?.renderContext || captureRenderContext()"));
+        assertTrue(storeUiState.contains("renderIsCurrent(context) && active.loaded"));
+        assertTrue(storeUiState.contains("active.identity === identity && active.scope === scope"));
+        assertTrue(storeUiState.contains("if (!current()) return Promise.resolve(null)"));
+        assertTrue(storeUiState.contains("code: 'preference_session_changed'"));
+        assertFalse(storeUiState.contains("localStorage"));
+        assertTrue(showTable.contains("if (persist)"));
+        assertTrue(showTable.contains("saveUiState({ active_channel_table_id: tableId })"));
+        assertFalse(function(systems, "const showFallbackTable = () =>").contains("saveUiState"));
         assertTrue(live.contains("else pageConnections.add(connection)"));
         assertTrue(live.contains("split.append(channels.picker, rightWorkspace)"));
         assertTrue(live.contains("beginPage(renderContext, split)"));
@@ -1531,6 +1566,8 @@ class StatsWebInteractionUiContractTest
         assertTrue(resizer.contains("separator.removeEventListener('lostpointercapture', cancel)"));
         assertTrue(resizer.contains("window.removeEventListener('blur', cancel)"));
         assertTrue(resizer.contains("activePointerCleanup?.()"));
+        assertTrue(resizer.contains("if (!disposed) saveUiState({ details_panel_percent: detailsPercent })"));
+        assertTrue(resizer.indexOf("disposed = true") < resizer.indexOf("activePointerCleanup?.()"));
         assertTrue(systems.contains("node('div', 'section-title-actions ui-section-actions live-channels-title-actions')"));
         assertTrue(systems.contains("layoutMenuHost: titleActions"));
         assertTrue(systems.contains("iconButton('icon-live-presentation', 'Live presentation settings'"));
@@ -1840,7 +1877,12 @@ class StatsWebInteractionUiContractTest
         assertFalse(tuner.contains("All profiles use 8-bit spectrum data."));
         assertTrue(parameters.contains("profile: spectrumProfile"));
         assertTrue(acceptState.contains("Object.hasOwn(TUNER_SPECTRUM_PROFILES, acceptedProfile)"));
-        assertTrue(source.contains("LIVE_UI_STATE_STORAGE_KEY"));
+        assertFalse(source.contains("LIVE_UI_STATE_STORAGE_KEY"));
+        assertTrue(function(source, "function liveUiState()")
+            .contains("activeUserPreferences().live_workspace"));
+        assertTrue(tuner.contains("createSpectrumDisplayPreferences({ read: () => activeUserPreferences().tuner"));
+        assertTrue(tuner.contains("update: mutator => updateUserPreferences(mutator)"));
+        assertFalse(tuner.contains("localStorage"));
         assertFalse(source.contains("TUNER_SPECTRUM_STORAGE_KEY"));
         assertTrue(source.contains("TUNER_SPECTRUM_PROFILE_PREFERENCE = 'profile'"));
         assertFalse(source.contains("function tunerPersistentSpectrumProfile(value)"));

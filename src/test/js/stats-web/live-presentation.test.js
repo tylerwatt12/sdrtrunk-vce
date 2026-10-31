@@ -405,8 +405,8 @@ assert.match(channels, /titleActions\.append\(presentationSettings\)/,
 assert.doesNotMatch(channels,
   /if \(userPreferenceController\.snapshot\(\)\.loaded\) \{[\s\S]*presentationSettings/,
   'Preference loading must not remove the Live settings affordance');
-assert.match(settingsActivation, /showLoginModal\(returnFocusSelector\)/,
-  'Anonymous users must be offered sign-in when opening Live presentation settings');
+assert.doesNotMatch(settingsActivation, /showLoginModal/,
+  'Live presentation uses the active guest or account profile without a sign-in gate');
 assert.match(settingsActivation, /snapshot = await synchronizeUserPreferences\(\)/,
   'Signed-in users can retry a failed preference load from the Live settings action');
 assert.doesNotMatch(channels, /activeRowOrders|activeOrders/,
@@ -628,6 +628,8 @@ assert.match(workspaceResizer, /activePointerCleanup\?\.\(\)/,
   'Page cleanup must end an in-progress resize');
 
 const renderLive = functionSource('renderLive');
+assert.match(renderLive, /storeUiState: createLiveUiStateWriter\(renderContext\)/,
+  'Production Live workspace saves must retain the creating render and preference profile');
 assert.match(renderLive, /const workspaceResizer = liveWorkspaceResizer\(rightWorkspace, options\)/,
   'Live must create one resizer for its right-side workspace');
 assert.match(renderLive, /registerConnection\(workspaceResizer\)/,
@@ -637,3 +639,115 @@ assert.match(renderLive, /else pageConnections\.add\(connection\)/,
 assert.match(renderLive,
   /rightWorkspace\.append\(channels\.element, workspaceResizer\.element, eventsPanel\.element\)/,
   'The separator must render between the channel and details panels');
+
+const { test } = require('node:test');
+const { functionSource: sourceFunction } = require('./source-functions.cjs');
+
+test('Live saves reject old profile callbacks and queued edits after route disposal', async () => {
+  let active = { identity: 'account-a', scope: 'account', loaded: true };
+  let currentContext = { epoch: 1, signal: { aborted: false } };
+  const queue = [], saved = [];
+  const createWriter = vm.runInNewContext(`(() => {
+    ${functionSource('createLiveUiStateWriter')}
+    ${functionSource('storeLiveUiState')}
+    return createLiveUiStateWriter;
+  })()`, {
+    userPreferenceController: { read: () => active },
+    captureRenderContext: () => currentContext,
+    renderIsCurrent: value => value === currentContext && !value.signal.aborted,
+    settleUserPreferenceMutation: mutate => new Promise(resolve => queue.push(() => {
+      const preferences = { live_workspace: {} };
+      try { mutate(preferences); saved.push(preferences); resolve(preferences); } catch (_) { resolve(null); }
+    })),
+    render: () => { throw new Error('Stale Live cleanup must not render the new profile'); }
+  });
+  const accountWriter = createWriter(currentContext);
+  const pendingAccountSave = accountWriter({ details_panel_percent: 45 });
+  active = { identity: null, scope: 'guest', loaded: true };
+  queue.shift()();
+  await pendingAccountSave;
+  assert.equal(saved.length, 0, 'An account edit queued before sign-out must not reach the guest profile');
+  await accountWriter({ picker_collapsed: true });
+  assert.equal(queue.length, 0, 'Old account callbacks must not enqueue guest saves');
+  const guestWriter = createWriter(currentContext);
+  const pendingGuestSave = guestWriter({ details_collapsed: true });
+  currentContext.signal.aborted = true;
+  queue.shift()();
+  await pendingGuestSave;
+  assert.equal(saved.length, 0, 'Disposed route edits must be discarded before mutation');
+  currentContext = { epoch: 2, signal: { aborted: false } };
+  const currentWriter = createWriter(currentContext);
+  const pendingCurrentSave = currentWriter({ details_collapsed: false });
+  queue.shift()();
+  await pendingCurrentSave;
+  assert.deepEqual(JSON.parse(JSON.stringify(saved)), [{ live_workspace: { details_visibility: 'expanded' } }]);
+});
+
+test('Live resizer disposal ends a gesture without persisting an unfinished resize', () => {
+  const makeNode = () => ({
+    listeners: new Map(), append() {}, setAttribute() {},
+    addEventListener(name, action) { this.listeners.set(name, action); },
+    removeEventListener(name) { this.listeners.delete(name); },
+    getBoundingClientRect: () => ({ height: 8 }), setPointerCapture() {},
+    dispatch(name, event) { this.listeners.get(name)?.(event); }
+  });
+  const writes = [];
+  const makeResizer = vm.runInNewContext(`(() => {
+    ${functionSource('liveDetailsPanelPercent')}
+    ${functionSource('liveWorkspaceResizer')}
+    return liveWorkspaceResizer;
+  })()`, {
+    node: makeNode,
+    window: { matchMedia: () => ({ matches: false }), addEventListener() {}, removeEventListener() {} },
+    document: { documentElement: { classList: { add() {}, remove() {} } } }
+  });
+  const workspace = { style: { setProperty() {} }, getBoundingClientRect: () => ({ top: 0, height: 400 }) };
+  const options = { uiState: { details_panel_percent: 25 }, storeUiState: value => writes.push(value) };
+  const unfinished = makeResizer(workspace, options);
+  unfinished.element.dispatch('pointerdown', { button: 0, pointerId: 1, clientY: 250, preventDefault() {} });
+  unfinished.close();
+  assert.equal(writes.length, 0);
+  assert.equal(unfinished.element.listeners.has('pointermove'), false);
+  const finished = makeResizer(workspace, options);
+  finished.element.dispatch('pointerdown', { button: 0, pointerId: 2, clientY: 250, preventDefault() {} });
+  finished.element.dispatch('pointerup', { pointerId: 2, clientY: 200 });
+  assert.equal(writes.length, 1, 'A completed user resize must still save once');
+  finished.close();
+  assert.equal(writes.length, 1, 'Cleanup must not repeat the completed save');
+});
+
+test('automatic Live table fallbacks preserve the explicit preferred table', () => {
+  const show = sourceFunction(source, 'const showTable = (tableId, closeMobilePicker = false, persist = false) =>');
+  const fallback = sourceFunction(source, 'const showFallbackTable = () =>');
+  const make = vm.runInNewContext(`preferred => {
+    let preferredTableId = preferred, activeTableId = null, requestedChannel = null;
+    const tables = new Map(), tabNodes = new Map(), writes = [];
+    const guideMode = false;
+    let liveChannelActivityActiveTableId = null;
+    const saveUiState = value => writes.push(value);
+    const clearSelection = () => {}, updateSelectedView = () => {}, closePicker = () => {};
+    const presentation = {}, liveTable = { tableController: { replaceRows() {} } };
+    ${show};
+    ${fallback};
+    return { showTable, showFallbackTable, writes,
+      preferred: () => preferredTableId, active: () => activeTableId,
+      available(ids) { tables.clear(); ids.forEach(id => tables.set(id, { table_id: id })); activeTableId = null; }
+    };
+  }`, { livePresentedTableRows: () => [], liveCurrentControlRow: () => null });
+  const firstVisit = make(null);
+  firstVisit.available(['fallback']); firstVisit.showFallbackTable();
+  assert.equal(firstVisit.active(), 'fallback');
+  assert.equal(firstVisit.preferred(), null);
+  assert.equal(firstVisit.writes.length, 0, 'Displaying the first available table must not create an explicit preference');
+  firstVisit.available(['preferred', 'fallback']); firstVisit.showTable('preferred', false, true);
+  assert.equal(firstVisit.writes.length, 1, 'An explicit picker selection must save');
+  firstVisit.available(['fallback']); firstVisit.showFallbackTable();
+  assert.equal(firstVisit.active(), 'fallback');
+  assert.equal(firstVisit.preferred(), 'preferred');
+  assert.equal(firstVisit.writes.length, 1, 'Temporary absence must not overwrite the preferred table');
+  firstVisit.available(['preferred', 'fallback']); firstVisit.showFallbackTable();
+  assert.equal(firstVisit.active(), 'preferred', 'The preferred table must be chosen again when available');
+  assert.match(channels, /showTable\(value\.table_id, true, true\)/, 'Pointer selection must opt into saving');
+  assert.match(channels, /showTable\(next\.closest\('\.channels-live-tab'\)\?\.dataset\.tableId, false, true\)/,
+    'Keyboard selection must opt into saving');
+});

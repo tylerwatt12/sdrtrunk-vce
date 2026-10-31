@@ -509,6 +509,29 @@ async function main() {
     assert.equal(clickPreferences.viewState().current.id, 2, 'Switching account preferences restores its queue behavior');
     assert.deepEqual(clickPreferences.viewState().queue.map(row => row.id), [3]);
 
+    const recordingVolume = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) })).playback;
+    recordingVolume.applyPlaybackPreferences({ volume: 0.35 }, { identity: 'account-a' });
+    assert.equal(recordingVolume.viewState().volume, 0.35, 'Recordings starts with the shared saved volume');
+    recordingVolume.setVolume(0.7);
+    recordingVolume.applyPlaybackPreferences({ volume: 0.35 }, { identity: 'account-a' });
+    assert.equal(recordingVolume.viewState().volume, 0.7, 'An earlier settings save cannot interrupt a volume edit');
+    const volumeSaved = deferred();
+    const volumeCommit = recordingVolume.commitVolume(() => volumeSaved.promise);
+    recordingVolume.applyPlaybackPreferences({ volume: 0.7 }, { identity: 'account-a' });
+    volumeSaved.resolve();
+    await volumeCommit;
+    assert.equal(recordingVolume.viewState().volume, 0.7);
+    recordingVolume.setVolume(0.4);
+    await assert.rejects(recordingVolume.commitVolume(() => Promise.reject(new Error('Save unavailable'))));
+    assert.equal(recordingVolume.viewState().volume, 0.7, 'A failed volume save restores the confirmed choice');
+    recordingVolume.setVolume(0.2);
+    const oldVolumeSaved = deferred();
+    const oldVolumeCommit = recordingVolume.commitVolume(() => oldVolumeSaved.promise);
+    recordingVolume.applyPlaybackPreferences({ volume: 0.8 }, { identity: 'account-b' });
+    oldVolumeSaved.resolve();
+    await oldVolumeCommit;
+    assert.equal(recordingVolume.viewState().volume, 0.8, 'An obsolete volume save cannot overwrite another profile');
+
     const queuedEndClock = displayClock();
     const queuedEnd = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
       { callDisplayRetentionClock: queuedEndClock }).playback;

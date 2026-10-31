@@ -1,6 +1,6 @@
 const endpoint = '/api/v1/me/tour-dismissals';
 const identity = context => context.authenticated === true && context.account && context.dismissalScope ?
-  JSON.stringify([context.account, context.dismissalScope]) : null;
+  JSON.stringify([context.account, context.dismissalScope]) : context.preferenceScope === 'guest' ? 'guest' : null;
 
 // Retained only for importing old browser records and retrying an interrupted save.
 export function guideStorageKey(account, dismissalScope, id, version = 1) {
@@ -26,7 +26,7 @@ const merge = (target, source) => {
 
 // Account history is authoritative. Local keys are never consulted by has(); they
 // are imported only after a successful read for the exact account/installation.
-export function createGuideMemory(storage, { fetchDocument, definitions = [], onError, onSaved,
+export function createGuideMemory(storage, { fetchDocument, guestHistory, definitions = [], onError, onSaved,
   setTimer = globalThis.setTimeout, clearTimer = globalThis.clearTimeout } = {}) {
   let active = null;
   const known = new Map(definitions.map(definition => [definition.id, definition.version]));
@@ -42,6 +42,11 @@ export function createGuideMemory(storage, { fetchDocument, definitions = [], on
     active = null;
   };
   async function request(state, method, dismissed) {
+    if (state.key === 'guest') {
+      if (!guestHistory) throw new Error('Guest guide history is unavailable.');
+      const saved = await (method === 'GET' ? guestHistory.read() : guestHistory.save(dismissed));
+      return documentHistory(saved);
+    }
     if (typeof fetchDocument !== 'function') throw new Error('Tour history is unavailable.');
     const response = await fetchDocument(endpoint, { method, signal: state.abort.signal,
       ...(method === 'PUT' ? { headers: { 'Content-Type': 'application/json' },
@@ -109,7 +114,7 @@ export function createGuideMemory(storage, { fetchDocument, definitions = [], on
         if (!current(state)) return false;
         merge(state.history, saved);
         state.loaded = true;
-        importBrowser(state);
+        if (state.key !== 'guest') importBrowser(state);
         if (Object.keys(state.pending).length) void flush(state);
         else onSaved?.();
         return true;
@@ -155,8 +160,10 @@ export function createGuideMemory(storage, { fetchDocument, definitions = [], on
       const state = active;
       if (!state || (state.history[definition.id] || 0) >= definition.version) return;
       merge(state.pending, { [definition.id]: definition.version });
-      try { browserStorage()?.setItem(guideStorageKey(context.account, context.dismissalScope,
-        definition.id, definition.version), '1'); } catch (_) { /* Retry still works for this signed-in session. */ }
+      if (state.key !== 'guest') {
+        try { browserStorage()?.setItem(guideStorageKey(context.account, context.dismissalScope,
+          definition.id, definition.version), '1'); } catch (_) { /* Retry still works for this signed-in session. */ }
+      }
       void retry(context);
     },
     destroy() { cancel(); }

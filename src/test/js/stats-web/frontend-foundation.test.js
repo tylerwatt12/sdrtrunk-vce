@@ -697,9 +697,10 @@ async function main() {
   assert.doesNotMatch(sharedTableSource, /table-layout-menu-inline/);
   assert.match(sharedTableSource, /addColumnResizers\(element, columns/);
   assert.doesNotMatch(sharedTableSource, /if \(userPreferenceController\.snapshot\(\)\.loaded\)/);
-  assert.match(functionBinding(appSource, 'saveAnonymousTableLayout'),
-    /localStorage\.setItem\(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY/);
-  assert.match(appSource, /localStorage\.getItem\(ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY\)/);
+  assert.match(functionBinding(appSource, 'activeUserPreferences'),
+    /return userPreferenceController\.read\(\)\.preferences/);
+  assert.doesNotMatch(appSource, /saveAnonymousTableLayout|anonymousUserPreferences|ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY/,
+    'Guest tables and appearance must use the shared profile instead of a second preference owner');
   assert.doesNotMatch(radioReferenceImportSource, /\{ id: '[^']+'[^\n]*\bwidth: \d+/);
   assert.match(appSource, /typeof column\.renderHeader === 'function'/);
   assert.match(appSource, /column\.renderHeader\(\{ column, tableType, controller: tableController \}\)/);
@@ -738,66 +739,74 @@ async function main() {
   assert.match(updatePreferencesSource, /error\.code = 'preference_session_changed'/);
   assert.match(updatePreferencesSource, /error\?\.code !== 'preference_conflict'/);
   assert.match(updatePreferencesSource, /showUserPreferenceError\(error, retry, true\)/);
-  const preferenceMutationSession = { authenticated: false };
   let preferenceMutationControllerUpdates = 0;
+  let preferenceMutationAccountRequests = 0;
   let preferenceMutationErrors = 0;
   let preferenceMutationClears = 0;
   let preferenceMutationControllerError = null;
   let preferenceMutationControllerProfile = JSON.parse(JSON.stringify(preferenceSchema.defaults));
-  const preferenceMutationController = {
-    update: async (mutator) => {
-      preferenceMutationControllerUpdates += 1;
+  const preferenceMutationStorage = new Map();
+  const preferenceMutationService = new preferences.Controller({
+    defaults: preferenceSchema.defaults, validate: preferenceSchema.validate,
+    storage: { getItem: key => preferenceMutationStorage.get(key) ?? null,
+      setItem: (key, value) => preferenceMutationStorage.set(key, value) },
+    fetch: async (_url, options) => {
+      preferenceMutationAccountRequests += 1;
       if (preferenceMutationControllerError) throw preferenceMutationControllerError;
-      const draft = JSON.parse(JSON.stringify(preferenceMutationControllerProfile));
-      const returned = mutator(draft);
-      preferenceMutationControllerProfile = preferenceSchema.validate(returned === undefined ? draft : returned);
-      return { preferences: preferenceMutationControllerProfile };
+      if (options.method === 'PUT') preferenceMutationControllerProfile = preferenceSchema.validate(JSON.parse(options.body));
+      return response(200, { revision: preferenceMutationAccountRequests, preferences: preferenceMutationControllerProfile });
     }
+  });
+  await preferenceMutationService.activate(null);
+  const preferenceMutationController = {
+    update: mutator => { preferenceMutationControllerUpdates += 1; return preferenceMutationService.update(mutator); },
+    snapshot: () => preferenceMutationService.snapshot()
   };
   const preferenceMutationHarness = vm.runInNewContext(`(() => {
-    let anonymousUserPreferences = JSON.parse(JSON.stringify(preferenceSchema.defaults));
     async function updateUserPreferences(mutator, allowRetry = true)
       ${functionBinding(appSource, 'updateUserPreferences')}
-    return {
-      update: updateUserPreferences,
-      anonymous: () => anonymousUserPreferences
-    };
+    return { update: updateUserPreferences };
   })()`, {
-    accessSession: preferenceMutationSession,
     userPreferenceController: preferenceMutationController,
-    preferenceSchema,
     clearUserPreferenceError: () => { preferenceMutationClears += 1; },
     showUserPreferenceError: () => { preferenceMutationErrors += 1; },
     settleUserPreferenceMutation: () => null
   });
   const publicScannerPreferences = await preferenceMutationHarness.update((profile) => {
     profile.scanner.detail_mode = 'advanced';
+    profile.appearance.theme = 'dark';
   });
   assert.equal(publicScannerPreferences.scanner.detail_mode, 'advanced',
     'Public Scanner display choices must remain active in the anonymous browser profile');
-  assert.equal(preferenceMutationHarness.anonymous().scanner.detail_mode, 'advanced');
-  assert.equal(preferenceMutationControllerUpdates, 0,
-    'Public display preferences must not call the signed-in preference endpoint');
+  assert.equal(preferenceMutationService.read().preferences.scanner.detail_mode, 'advanced');
+  assert.equal(preferenceMutationService.read().preferences.appearance.theme, 'dark');
+  assert.equal(preferenceMutationControllerUpdates, 1, 'Guests use the same preference controller');
+  assert.equal(preferenceMutationAccountRequests, 0, 'Guest profile changes must not request the account endpoint');
   assert.equal(preferenceMutationErrors, 0,
     'Public display preferences must not report a My Settings save failure');
   assert.equal(preferenceMutationClears, 1,
     'A successful public mutation must clear any stale signed-in preference notice');
-  preferenceMutationSession.authenticated = true;
   preferenceMutationControllerError = new Error('User preferences are not loaded.');
+  await assert.rejects(preferenceMutationService.activate('alice'), /User preferences are not loaded/);
   await assert.rejects(() => preferenceMutationHarness.update((profile) => {
     profile.scanner.detail_mode = 'simple';
   }), /User preferences are not loaded/);
-  assert.equal(preferenceMutationHarness.anonymous().scanner.detail_mode, 'advanced',
-    'A signed-in preference failure must not overwrite the anonymous fallback profile');
+  assert.equal(preferenceMutationService.read().preferences.scanner.detail_mode, 'normal',
+    'An unavailable account must use account defaults rather than inherit guest choices');
   assert.equal(preferenceMutationErrors, 1,
     'A signed-in preference failure must remain visible instead of silently falling back');
   preferenceMutationControllerError = null;
+  await preferenceMutationService.activate('alice');
   const signedInPreferences = await preferenceMutationHarness.update((profile) => {
     profile.scanner.detail_mode = 'engineer';
   });
   assert.equal(signedInPreferences.scanner.detail_mode, 'engineer');
-  assert.equal(preferenceMutationControllerUpdates, 2,
-    'Signed-in display preferences must still use server-backed persistence');
+  assert.equal(preferenceMutationControllerUpdates, 3, 'Account and guest mutations share the controller');
+  assert.equal(preferenceMutationAccountRequests, 3, 'Only the account activation, retry and save used the server');
+  await preferenceMutationService.activate(null);
+  assert.equal(preferenceMutationService.read().preferences.scanner.detail_mode, 'advanced');
+  assert.equal(preferenceMutationService.read().preferences.appearance.theme, 'dark',
+    'Returning to guest access restores its separate browser appearance');
   const setThemeSource = functionBinding(appSource, 'setTheme');
   assert.match(setThemeSource, /settleUserPreferenceMutation/,
     'Theme choices must use the same authentication-aware preference mutation path');
@@ -906,14 +915,20 @@ async function main() {
   assert.doesNotMatch(settingsSource, /preferenceCheckbox\(|updateUserPreferences\(/);
   const focusedSettingsSource = fs.readFileSync(path.resolve(core, '../features/my-settings.js'), 'utf8');
   assert.match(focusedSettingsSource, /export function createMySettingsWorkspace/);
-  for (const label of ['Appearance', 'Source names', 'Status icon', 'Page preferences']) {
-    assert.ok(focusedSettingsSource.includes(label), `Focused settings includes ${label}`);
+  const preferenceRegistry = await loadModule('preference-registry');
+  for (const [id, label] of [['appearance', 'Appearance'], ['names', 'Source names'], ['status', 'Status icon'],
+    ['listening', 'Listening settings'], ['guides', 'Guides']]) {
+    assert.ok(focusedSettingsSource.includes(`'${id}'`), `Focused settings includes ${id}`);
+    assert.equal(preferenceRegistry.preferenceGroups.find(group => group.id === id)?.label, label);
   }
+  assert.ok(focusedSettingsSource.includes('Page preferences'));
   assert.match(focusedSettingsSource, /source_name_display/);
   assert.match(focusedSettingsSource, /disabled_codes/);
   const resetSource = functionBinding(appSource, 'openResetUserPreferences');
-  assert.match(resetSource, /updateUserPreferences\(\(\) => preferenceSchema\.defaults, false\)/);
-  assert.match(resetSource, /does not change the username, password/);
+  assert.match(resetSource, /await userPreferenceController\.resetPreferences\(\)/,
+    'Explicit reset authorizes replacing the active guest record using its scope defaults');
+  assert.match(resetSource, /active\.identity !== snapshot\.identity \|\| active\.scope !== snapshot\.scope/,
+    'Reset must remain bound to the account or guest profile that opened the confirmation');
   assert.match(resetSource, /error\?\.code === 'preference_conflict'/);
   assert.match(resetSource, /if \(modal\.close\(\)\) void render\(\)/);
   assert.doesNotMatch(resetSource, /reset\.focus\(\)/);
@@ -955,21 +970,17 @@ async function main() {
   assert.match(appSource, /audioDock\.openPlayerMenu\(invoker\)/,
     'Scanner listening preferences use the shared Player menu.');
   const scannerSettingsActivationSource = functionBinding(appSource, 'activateScannerSettings');
-  assert.match(scannerSettingsActivationSource, /!snapshot\.loaded && !accessSession\.authenticated/);
-  assert.match(scannerSettingsActivationSource, /showLoginModal\(returnFocusSelector\)/);
+  assert.doesNotMatch(scannerSettingsActivationSource, /accessSession\.authenticated|showLoginModal/);
   assert.match(scannerSettingsActivationSource, /snapshot = await synchronizeUserPreferences\(\)/);
   assert.match(scannerSettingsActivationSource, /if \(!button\.isConnected\) return/);
   assert.match(scannerSettingsActivationSource, /openScannerSettings\(returnFocusSelector\)/);
-  const scannerActivationSession = { authenticated: false };
-  let scannerActivationSnapshot = { loaded: false };
-  let scannerActivationLoginTarget = null;
+  let scannerActivationSnapshot = { loaded: true, scope: 'guest', identity: null };
   let scannerActivationOpenTarget = null;
   let scannerActivationSyncs = 0;
   const activateScannerSettings = vm.runInNewContext(
     `(async function(button) ${scannerSettingsActivationSource})`, {
-      accessSession: scannerActivationSession,
       userPreferenceController: { snapshot: () => scannerActivationSnapshot },
-      showLoginModal: (target) => { scannerActivationLoginTarget = target; },
+      showLoginModal: () => { throw new Error('Personal guest controls must not request sign-in'); },
       synchronizeUserPreferences: async () => {
         scannerActivationSyncs += 1;
         return { loaded: true };
@@ -983,12 +994,10 @@ async function main() {
     replaceChildren: () => {}, setAttribute: () => {}, removeAttribute: () => {}
   };
   await activateScannerSettings(scannerActivationButton);
-  assert.equal(scannerActivationLoginTarget, '#scanner-settings',
-    'Public Scanner settings must open the sign-in flow and preserve its focus return target');
   assert.equal(scannerActivationSyncs, 0);
-  assert.equal(scannerActivationOpenTarget, null);
-  scannerActivationSession.authenticated = true;
-  scannerActivationLoginTarget = null;
+  assert.equal(scannerActivationOpenTarget, '#scanner-settings',
+    'A loaded guest profile can open personal settings without signing in');
+  scannerActivationSnapshot = { loaded: false, scope: 'guest', identity: null };
   await activateScannerSettings(scannerActivationButton);
   assert.equal(scannerActivationSyncs, 1);
   assert.equal(scannerActivationOpenTarget, '#scanner-settings');
@@ -1009,11 +1018,34 @@ async function main() {
   assert.match(selectedViewActionSource, /ui-icon-button section-title-icon live-selected-view-action/);
   assert.match(selectedViewActionSource, /return setIconButton\(action, iconId, label\)/);
   assert.doesNotMatch(selectedViewActionSource, /node\('span'/);
-  assert.match(liveSettingsActivationSource, /!snapshot\.loaded && !accessSession\.authenticated/);
-  assert.match(liveSettingsActivationSource, /showLoginModal\(returnFocusSelector\)/);
+  assert.doesNotMatch(liveSettingsActivationSource, /accessSession\.authenticated|showLoginModal/);
   assert.match(liveSettingsActivationSource, /snapshot = await synchronizeUserPreferences\(\)/);
   assert.match(liveSettingsActivationSource, /if \(!button\.isConnected\) return/);
   assert.match(liveSettingsActivationSource, /openLivePresentationSettings\(returnFocusSelector\)/);
+  let liveActivationSnapshot = { loaded: true, scope: 'guest', identity: null };
+  let liveActivationOpenTarget = null;
+  let liveActivationSyncs = 0;
+  const activateLiveSettings = vm.runInNewContext(
+    `(async function(button) ${liveSettingsActivationSource})`, {
+      userPreferenceController: { snapshot: () => liveActivationSnapshot },
+      showLoginModal: () => { throw new Error('Live presentation is a guest viewing choice'); },
+      synchronizeUserPreferences: async () => { liveActivationSyncs += 1; return { loaded: true, scope: 'guest' }; },
+      setIconButton: () => {},
+      openLivePresentationSettings: target => { liveActivationOpenTarget = target; }
+    });
+  const liveActivationButton = { ...scannerActivationButton, id: 'live-presentation-settings', isConnected: true };
+  await activateLiveSettings(liveActivationButton);
+  assert.equal(liveActivationOpenTarget, '#live-presentation-settings');
+  assert.equal(liveActivationSyncs, 0, 'Loaded guest presentation must not require an account request');
+  liveActivationSnapshot = { loaded: false, scope: 'guest', identity: null };
+  liveActivationOpenTarget = null;
+  await activateLiveSettings(liveActivationButton);
+  assert.equal(liveActivationSyncs, 1);
+  assert.equal(liveActivationOpenTarget, '#live-presentation-settings');
+  liveActivationButton.isConnected = false;
+  liveActivationOpenTarget = null;
+  await activateLiveSettings(liveActivationButton);
+  assert.equal(liveActivationOpenTarget, null, 'Navigating away must cancel a delayed personal-settings presentation');
   assert.match(liveChannelsSource, /section\('Live Channels', host, titleActions\)/);
   assert.match(liveChannelsSource, /let requestedChannel = guideMode \? null : route\.get\('channel'\)/,
     'Normal Live deep links select their channel while isolated examples leave the real route alone');
@@ -2263,11 +2295,16 @@ async function main() {
     profile.presentation.live_row_density = density;
     assert.throws(() => preferenceSchema.validate(profile), /presentation.live_row_density/);
   }
-  const upgradedAnonymousTables = vm.runInNewContext(
-    `((value) => ${functionBinding(appSource, 'upgradeAnonymousTableLayouts')})({ sample: {
-      schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []
-    } })`);
-  assert.deepEqual(JSON.parse(JSON.stringify(upgradedAnonymousTables.sample.collapsed_groups)), []);
+  const legacyGuestTables = JSON.stringify({ sample: {
+    schema: ['name'], column_order: ['name'], column_widths: {}, hidden_columns: []
+  } });
+  const upgradedGuest = new preferences.Controller({
+    defaults: preferenceSchema.defaults, validate: preferenceSchema.validate,
+    storage: { getItem: key => key === 'sdrtrunk-vce-anonymous-table-layouts' ? legacyGuestTables : null,
+      setItem: () => {} }, fetch: () => { throw new Error('Guest upgrade must remain local'); }
+  });
+  await upgradedGuest.activate(null);
+  assert.deepEqual(upgradedGuest.read().preferences.tables.sample.collapsed_groups, []);
   const sixteenScanLists = Array.from({ length: 16 }, (_unused, index) => index + 1);
   assert.deepEqual(preferenceSchema.validate({ ...decodedDefaults, playback: {
     ...decodedDefaults.playback, selected_scan_list_ids: sixteenScanLists
@@ -2384,40 +2421,38 @@ async function main() {
   ]).hidden_columns, ['record']);
   const storedAnonymousLayouts = new Map();
   let anonymousStorageFails = false;
-  let anonymousTableErrors = 0;
-  const anonymousTables = vm.runInNewContext(`(() => {
-    let anonymousUserPreferences = JSON.parse(JSON.stringify(preferenceSchema.defaults));
-    function saveAnonymousTableLayout(tableType, layout = null)
-      ${functionBinding(appSource, 'saveAnonymousTableLayout')}
-    return {
-      save: saveAnonymousTableLayout,
-      current: () => anonymousUserPreferences
-    };
-  })()`, {
-    preferenceSchema, tableLayouts,
-    localStorage: { setItem: (key, value) => {
-      if (anonymousStorageFails) throw new Error('Storage is unavailable');
-      storedAnonymousLayouts.set(key, value);
-    } },
-    ANONYMOUS_TABLE_LAYOUTS_STORAGE_KEY: 'table-test',
-    showUserPreferenceError: () => { anonymousTableErrors += 1; }
+  const anonymousTableErrors = [];
+  const anonymousTables = new preferences.Controller({
+    defaults: preferenceSchema.defaults, validate: preferenceSchema.validate,
+    fetch: () => { throw new Error('Guest table layouts must not use an account endpoint'); },
+    storage: {
+      getItem: key => storedAnonymousLayouts.get(key) ?? null,
+      setItem: (key, value) => {
+        if (anonymousStorageFails) throw new Error('Storage is unavailable');
+        storedAnonymousLayouts.set(key, value);
+      }
+    },
+    onError: error => anonymousTableErrors.push(error)
   });
+  await anonymousTables.activate(null);
   const personalized = tableLayouts.setHidden(tableLayouts.resize(
     tableLayouts.move(initialLayout, 'status', 'frequency'), 'name', 144), 'frequency', true);
-  assert.ok(anonymousTables.save('sample', personalized));
-  assert.equal(anonymousTables.current().tables.sample.column_widths.name, 144);
-  assert.deepEqual(JSON.parse(storedAnonymousLayouts.get('table-test')).sample.hidden_columns, ['frequency']);
-  assert.deepEqual(JSON.parse(storedAnonymousLayouts.get('table-test')).sample.collapsed_groups, []);
+  await anonymousTables.update(profile => { profile.tables.sample = tableLayouts.persisted(personalized); });
+  assert.equal(anonymousTables.read().preferences.tables.sample.column_widths.name, 144);
+  const storedGuest = JSON.parse([...storedAnonymousLayouts.values()][0]).preferences;
+  assert.deepEqual(storedGuest.tables.sample.hidden_columns, ['frequency']);
+  assert.deepEqual(storedGuest.tables.sample.collapsed_groups, []);
   anonymousStorageFails = true;
   const sessionOnlyLayout = tableLayouts.resize(personalized, 'name', 188);
-  assert.ok(anonymousTables.save('sample', sessionOnlyLayout));
-  assert.equal(anonymousTables.current().tables.sample.column_widths.name, 188,
+  await anonymousTables.update(profile => { profile.tables.sample = tableLayouts.persisted(sessionOnlyLayout); });
+  assert.equal(anonymousTables.read().preferences.tables.sample.column_widths.name, 188,
     'Anonymous table changes must remain active when browser storage is unavailable');
-  assert.equal(anonymousTableErrors, 0,
+  assert.equal(anonymousTables.read().persistence, 'memory');
+  assert.equal(anonymousTableErrors.length, 0,
     'Browser storage failures must not be reported as a My Settings account failure');
   anonymousStorageFails = false;
-  assert.ok(anonymousTables.save('sample'));
-  assert.equal(anonymousTables.current().tables.sample, undefined);
+  await anonymousTables.update(profile => { delete profile.tables.sample; });
+  assert.equal(anonymousTables.read().preferences.tables.sample, undefined);
   assert.throws(() => tableLayouts.tableId('Live Channels'), /valid stable ID/);
   assert.throws(() => tableLayouts.schema([{ id: 'same' }, { id: 'same' }]), /unique/);
   assert.throws(() => tableLayouts.schema([{ label: 'No ID' }]), /valid stable ID/);
@@ -2680,12 +2715,25 @@ async function main() {
   slow.resolve(response(200, { revision: 9, preferences: dark }));
   assert.deepEqual(await obsolete, { state: 'stale' });
   assert.equal(controller.snapshot().identity, null);
+  assert.equal(controller.snapshot().scope, 'guest');
+  assert.equal(controller.snapshot().loaded, true);
   assert.equal(controller.read().identity, null);
   assert.ok(changes.length >= 5);
   assert.equal(errors.at(-1).code, 'preference_conflict');
 }
 
-main().catch((error) => {
+let foundationCompleted = false;
+process.once('beforeExit', () => {
+  if (!foundationCompleted) {
+    console.error('Frontend foundation contracts ended before an asynchronous check completed.');
+    process.exitCode = 1;
+  }
+});
+main().then(() => {
+  foundationCompleted = true;
+  console.log('Frontend foundation contracts passed.');
+}).catch((error) => {
+  foundationCompleted = true;
   console.error(error?.stack || error);
   process.exitCode = 1;
 });

@@ -26,10 +26,13 @@ const message = (origin, id, timestamp, text = 'Decoded message') => ({ ...origi
   filter_key: `source/${origins.indexOf(origin)}/messages`, filter_label: `${origin.protocol} messages` });
 
 async function openLive(page, theme) {
-  const fixture = await installSiteStyleApplication(page, theme, snapshot);
-  await page.addInitScript(() => localStorage.setItem('sdrtrunk-vce.live-ui-state.v1', JSON.stringify({
-    details_collapsed: false, details_active_tab: 'events', details_panel_percent: 50
-  })));
+  const fixture = await installSiteStyleApplication(page, theme, snapshot, {
+    configurePreferences(preferences) {
+      Object.assign(preferences.live_workspace, {
+        details_visibility: 'expanded', details_active_tab: 'events', details_panel_percent: 50
+      });
+    }
+  });
   const controls = [];
   let autoAcknowledge = true;
   await page.route('**/api/v1/live/multiplex/control', async route => {

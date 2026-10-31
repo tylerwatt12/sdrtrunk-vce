@@ -232,7 +232,7 @@ async function main() {
       'Stale preference responses must not change the audible gain');
     assert.equal(volumePreferences.volumeEditPending, true);
     volumePreferences.applyPreferences({ target_grouping: false });
-    volumePreferences.writePreferences();
+    volumePreferences.writePreferences({ grouping: true });
     await settleVolumeWrites();
     await acknowledgeVolumeWrite(2);
     assert.equal(volumePreferences.volumeEditPending, true,
@@ -863,7 +863,26 @@ async function main() {
     await Promise.resolve();
     assert.equal(savedPlaybackPreferences.call_display_hangtime_seconds, 60,
       'Playback preference writes must retain the selected call display hangtime');
-    assert.deepEqual(savedPlaybackPreferences.selected_scan_list_ids, [2]);
+    assert.equal(savedPlaybackPreferences.selected_scan_list_ids, undefined,
+      'A hangtime save must not overwrite a newer Scan List selection');
+
+    const failedVolume = Object.assign(Object.create(WebCallPlayer.prototype), {
+      volume: 0.35, ui: { volume: { value: '0.35', setAttribute() {},
+        closest() { return { style: { setProperty() {} } }; } } },
+      gainNode: { gain: { value: 0.35 } }, selectedScanListIds: new Set(), stateObservers: new Set(),
+      render() {}, filterQueueForSelectedLists() {}, renderScanLists() {}, synchronizeSubscription() {}
+    });
+    failedVolume.applyPreferences({ volume: 0.35 }, { identity: 'sample-account' });
+    failedVolume.preferenceWriter = async () => {
+      failedVolume.applyPreferences({ volume: 0.35 }, { identity: 'sample-account' });
+      throw new Error('Save unavailable');
+    };
+    failedVolume.setVolume(0.4, false);
+    await failedVolume.writePreferences({ volume: true });
+    assert.equal(failedVolume.volumeEditPending, false);
+    assert.equal(failedVolume.volume, 0.35, 'Failed Live saves restore the same confirmed volume used by Recordings');
+    assert.equal(failedVolume.ui.volume.value, '0.35');
+    assert.equal(failedVolume.gainNode.gain.value, 0.35);
 
     let releaseHangtimeSave;
     const pendingHangtimeSave = new Promise(resolve => { releaseHangtimeSave = resolve; });

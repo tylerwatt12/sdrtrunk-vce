@@ -1,26 +1,35 @@
 import { createCallDisplayHangtimeField } from '../core/call-display-settings.js?v=2';
+import { preferenceGroups } from '../core/preference-registry.js?v=1';
 
 // Focused personal settings reuse the settings composition, choice controls,
 // form workflow and confirmation modal on desktops and phones in both themes.
 export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFormWorkflow,
   schemes, alertGroups, readSnapshot, updatePreferences, setAppearancePreview,
   confirmAction, openReset, initialSection = 'appearance', onSectionChange = () => {},
-  onSessionChanged = () => {} }) {
+  onSessionChanged = () => {}, canAccess = () => false, canView = () => false,
+  href = () => null, openLivePresentation = null }) {
+  const editorGroups = new Set(['appearance', 'names', 'status', 'listening', 'guides']);
   const categories = [
-    { id: 'appearance', label: 'Appearance', icon: 'icon-display' },
-    { id: 'names', label: 'Source names', icon: 'icon-identities' },
-    { id: 'status', label: 'Status icon', icon: 'icon-health' },
-    { id: 'listening', label: 'Listening settings', icon: 'icon-playback-controls' },
+    ...preferenceGroups.filter(group => editorGroups.has(group.id) &&
+      (!group.capability || canAccess(group.capability))),
     { id: 'pages', label: 'Page preferences', icon: 'icon-dashboard' }
   ];
   const snapshot = readSnapshot();
   const identity = snapshot.identity;
+  const scope = snapshot.scope || (identity === null ? 'guest' : 'account');
   const knownAlerts = new Set(alertGroups.flatMap((group) => group.alerts.map((alert) => alert.id)));
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const sectionValue = (preferences) => active === 'appearance' ? clone(preferences.appearance) :
     active === 'names' ? preferences.presentation.source_name_display :
       active === 'status' ? [...preferences.health_alerts.disabled_codes].sort() :
-        active === 'listening' ? preferences.playback.call_display_hangtime_seconds : null;
+        active === 'listening' ? {
+          volume: preferences.playback.volume,
+          target_grouping: preferences.playback.target_grouping,
+          target_burst_limit: preferences.playback.target_burst_limit,
+          call_display_hangtime_seconds: preferences.playback.call_display_hangtime_seconds,
+          recording_click_mode: preferences.playback.recording_click_mode,
+          prepend_playing_call: preferences.page_titles.prepend_playing_call
+        } : active === 'guides' ? preferences.guides.automatic_page_guides : null;
   const element = node('div', 'ui-settings-workspace ui-settings-workspace-focused user-settings-workspace');
   const navigation = node('nav', 'ui-settings-navigation');
   navigation.setAttribute('aria-label', 'Personal preferences');
@@ -41,7 +50,8 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
   const resets = [];
   const isDirty = () => !stopped && !sessionChanged && JSON.stringify(saved) !== JSON.stringify(draft);
   const isBusy = () => Boolean(workflow?.isBusy());
-  const current = () => !stopped && !sessionChanged && readSnapshot().identity === identity;
+  const current = () => !stopped && !sessionChanged && readSnapshot().identity === identity &&
+    (readSnapshot().scope || scope) === scope;
   const preview = () => setAppearancePreview(current() && active === 'appearance' ?
     { identity, theme: draft.theme, hue: draft.hue } : null);
   const focusEditor = () => {
@@ -124,7 +134,7 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
     picker.append(option);
   }
   const resetButton = (mobile) => {
-    const reset = button('Reset personal preferences',
+    const reset = button(scope === 'guest' ? 'Reset guest preferences' : 'Reset personal preferences',
       `ui-button ui-button-quiet ui-settings-reset${mobile ? ' ui-settings-reset-mobile' : ''}`);
     reset.id = mobile ? 'reset-user-preferences-mobile' : 'reset-user-preferences';
     reset.addEventListener('click', () => {
@@ -134,7 +144,13 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
     resets.push(reset);
     return reset;
   };
-  navigation.append(node('p', 'ui-settings-account-note', 'Personal choices for this account.'), resetButton(false));
+  const profileNote = node('p', 'ui-settings-account-note');
+  const updateProfileNote = (value) => {
+    profileNote.textContent = scope === 'guest' ? value.persistence === 'memory' ?
+      'Guest choices apply for this page.' : 'Guest choices saved in this browser.' : 'Personal choices for this account.';
+  };
+  updateProfileNote(snapshot);
+  navigation.append(profileNote, resetButton(false));
   element.append(navigation, pickerField, page, resetButton(true));
   picker.addEventListener('change', () => switchSection(picker.value));
 
@@ -285,27 +301,87 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
   }
 
   function listeningControls(body) {
-    const { field } = createCallDisplayHangtimeField(node, {
-      id: 'my-settings-call-display-hangtime', value: draft,
-      onChange: (value) => { draft = value; }
+    const numberField = (label, value, minimum, maximum, step, onChange, detail = '') => {
+      const { wrapper, heading } = field(label);
+      const input = node('input', 'ui-input ui-input-number');
+      input.type = 'number'; input.min = String(minimum); input.max = String(maximum);
+      input.step = String(step); input.required = true; input.value = String(value);
+      heading.id = `my-settings-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-label`;
+      input.setAttribute('aria-labelledby', heading.id);
+      input.addEventListener('input', () => onChange(Number(input.value)));
+      wrapper.append(input);
+      if (detail) {
+        const help = node('small', 'ui-field-detail', detail); help.id = `${heading.id}-help`;
+        input.setAttribute('aria-describedby', help.id); wrapper.append(help);
+      }
+      body.append(wrapper);
+      return input;
+    };
+    const toggleField = (label, value, onChange) => {
+      const row = node('div', 'ui-field-row');
+      const copy = node('span', 'ui-toggle-copy'); copy.append(node('strong', '', label));
+      const toggle = uiToggle(value, label);
+      toggle.querySelector('input').addEventListener('change', event => onChange(event.target.checked));
+      row.append(copy, toggle); body.append(row);
+    };
+    numberField('Playback volume (%)', Math.round(draft.volume * 100), 0, 100, 1,
+      value => { draft.volume = value / 100; });
+    toggleField('Group calls by target', draft.target_grouping,
+      value => { draft.target_grouping = value; });
+    numberField('Calls per target', draft.target_burst_limit, 1, 20, 1,
+      value => { draft.target_burst_limit = value; },
+      'When grouping is on, switch to another waiting target after this many consecutive calls.');
+    const { field: hangtimeField } = createCallDisplayHangtimeField(node, {
+      id: 'my-settings-call-display-hangtime', value: draft.call_display_hangtime_seconds,
+      onChange: (value) => { draft.call_display_hangtime_seconds = value; }
     });
-    body.append(field);
+    body.append(hangtimeField);
+    const { wrapper, heading } = field('When a call is clicked');
+    const select = node('select', 'ui-select'); select.setAttribute('aria-labelledby', heading.id);
+    [['queue', 'Queue clicked calls'], ['once', 'Play once'], ['continue', 'Continue matching calls']]
+      .forEach(([value, label]) => { const option = node('option', '', label); option.value = value; select.append(option); });
+    select.value = draft.recording_click_mode;
+    select.addEventListener('change', () => { draft.recording_click_mode = select.value; });
+    wrapper.append(select); body.append(wrapper);
+    toggleField('Playing call in page title', draft.prepend_playing_call,
+      value => { draft.prepend_playing_call = value; });
+    if (canView('scanner')) {
+      const lists = node('a', 'link-button', 'Open Scanner for Scan Lists');
+      lists.href = href('scanner'); body.append(lists);
+    }
+  }
+
+  function guideControls(body) {
+    const row = node('div', 'ui-field-row');
+    const copy = node('span', 'ui-toggle-copy');
+    copy.append(node('strong', '', 'Show page guides automatically'));
+    const toggle = uiToggle(draft, 'Show page guides automatically');
+    toggle.querySelector('input').addEventListener('change', event => { draft = event.target.checked; });
+    row.append(copy, toggle); body.append(row);
   }
 
   function pagePreferences(body) {
     body.append(node('p', 'ui-settings-intro', 'Change these preferences from the page you’re using.'));
     const destinations = node('div', 'ui-settings-destinations');
-    [
-      ['Scanner', 'icon-scanner', 'Playback, scan lists and call details', 'Scanner → Player menu'],
-      ['Live', 'icon-live', 'Row density, sorting and decoded details', 'Live → Presentation'],
-      ['Tuner spectrum', 'icon-spectrum', 'Display range, waterfall and FFT', 'Tuners → Spectrum'],
-      ['Table layouts', 'icon-columns', 'Column order, visibility and widths', 'Any table → Columns']
-    ].forEach(([title, glyph, description, location]) => {
+    preferenceGroups.filter(group => !editorGroups.has(group.id)).forEach(group => {
+      const view = group.view || (group.id === 'tables' ?
+        ['live', 'dashboard'].find(candidate => canView(candidate)) : null);
+      if (!view || !canView(view)) return;
       const row = node('div', 'ui-settings-destination');
       const copy = node('div', 'ui-settings-destination-copy');
-      copy.append(node('strong', '', title), node('span', 'ui-settings-destination-description', description),
-        node('span', '', location));
-      row.append(iconGlyph(glyph), copy);
+      copy.append(node('strong', '', group.label));
+      if (group.location) copy.append(node('span', 'ui-settings-destination-description', group.location));
+      const target = href(view);
+      if (target) {
+        const link = node('a', 'link-button', `Open ${group.id === 'tables' ? 'tables' : group.label}`);
+        link.href = target; copy.append(link);
+      }
+      if (group.id === 'live_workspace' && openLivePresentation) {
+        const open = button('Open Live presentation', 'link-button');
+        open.id = 'my-settings-live-presentation';
+        open.addEventListener('click', () => openLivePresentation(`#${open.id}`)); copy.append(open);
+      }
+      row.append(iconGlyph(group.icon), copy);
       destinations.append(row);
     });
     body.append(destinations);
@@ -327,6 +403,7 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
     if (active === 'appearance') appearanceControls(body);
     else if (active === 'names') sourceNameControls(body);
     else if (active === 'listening') listeningControls(body);
+    else if (active === 'guides') guideControls(body);
     else statusControls(body);
     const feedback = node('div', 'admin-form-message');
     feedback.setAttribute('role', 'status');
@@ -355,17 +432,21 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
       const submitted = clone(draft);
       await ownWorkflow.save(async () => {
         await updatePreferences((preferences) => {
-          if (!current()) throw Object.assign(new Error('The signed-in account changed.'),
+          if (!current()) throw Object.assign(new Error('The active preference profile changed.'),
             { code: 'preference_session_changed' });
           if (selectedSection === 'appearance') preferences.appearance = clone(submitted);
           else if (selectedSection === 'names') preferences.presentation.source_name_display = submitted;
-          else if (selectedSection === 'listening') preferences.playback.call_display_hangtime_seconds = submitted;
+          else if (selectedSection === 'listening') {
+            const { prepend_playing_call, ...playback } = submitted;
+            Object.assign(preferences.playback, playback);
+            preferences.page_titles.prepend_playing_call = prepend_playing_call;
+          } else if (selectedSection === 'guides') preferences.guides.automatic_page_guides = submitted;
           else preferences.health_alerts.disabled_codes = [
             ...preferences.health_alerts.disabled_codes.filter((id) => !knownAlerts.has(id)),
             ...submitted.filter((id) => knownAlerts.has(id))
           ];
         });
-        if (!current()) throw Object.assign(new Error('The signed-in account changed.'),
+        if (!current()) throw Object.assign(new Error('The active preference profile changed.'),
           { code: 'preference_session_changed' });
         saved = sectionValue(readSnapshot().preferences);
         draft = clone(saved);
@@ -374,12 +455,13 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
         onSuccess: () => {
           if (!current() || revision !== formRevision) return;
           preview();
-          ownWorkflow.showFeedback('status', 'Changes saved');
+          ownWorkflow.showFeedback('status', readSnapshot().scope === 'guest' && readSnapshot().persistence === 'memory' ?
+            'Changes apply for this page. Browser storage is unavailable.' : 'Changes saved');
         },
         onError: (error) => {
           if (!current() || error?.code === 'preference_session_changed') {
             ownWorkflow.setReady(false);
-            return { state: 'warning', message: 'The signed-in account changed. Reopen My Settings for this account.' };
+            return { state: 'warning', message: 'The active profile changed. Reopen My Settings to continue.' };
           }
           if (error?.code === 'preference_conflict' && !error.reloadError) {
             saved = sectionValue(readSnapshot().preferences);
@@ -403,7 +485,8 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
 
   function onSnapshot(next) {
     if (stopped) return;
-    if (next.identity !== identity || !next.loaded) {
+    updateProfileNote(next);
+    if (next.identity !== identity || (next.scope || scope) !== scope || !next.loaded) {
       sessionChanged = true;
       setAppearancePreview(null);
       workflow?.setReady(false);

@@ -85,7 +85,7 @@ export function createAudioVolume({ node, iconButton, host, id, onInput, onCommi
   const controller = new AbortController();
   const listen = (target, type, handler) => target?.addEventListener(type, handler, { signal: controller.signal });
   const triggers = [];
-  let invoker = null, returnFocus = true, destroyed = false, level = 1, allowed = true;
+  let invoker = null, returnFocus = true, destroyed = false, level = 1, allowed = true, editing = false;
   const popover = node('div', `ui-popover ui-audio-volume-popover ${id}-volume-popover`);
   popover.id = `${id}-volume-popover`; popover.setAttribute('popover', 'auto');
   popover.setAttribute('role', 'dialog'); popover.setAttribute('aria-label', 'Volume controls');
@@ -127,7 +127,7 @@ export function createAudioVolume({ node, iconButton, host, id, onInput, onCommi
     allowed = Boolean(nextAllowed);
     triggers.forEach(paintTrigger);
     const percent = Math.round(level * 100);
-    if (document.activeElement !== input) input.value = String(level);
+    if (!editing) input.value = String(level);
     input.disabled = !allowed; input.setAttribute('aria-valuetext', level ? `${percent} percent` : 'Muted, 0 percent');
     output.textContent = `${percent}%`; fill.style.setProperty('--audio-volume-percent', `${percent}%`);
     if (!allowed) close(false);
@@ -143,10 +143,11 @@ export function createAudioVolume({ node, iconButton, host, id, onInput, onCommi
     triggers.push(button); paintTrigger(button);
     return button;
   };
-  listen(input, 'input', () => { if (allowed) onInput?.(Number(input.value)); });
-  listen(input, 'change', () => { if (allowed) onCommit?.(Number(input.value)); });
+  listen(input, 'input', () => { if (allowed) { editing = true; onInput?.(Number(input.value)); } });
+  listen(input, 'change', () => { editing = false; if (allowed) onCommit?.(Number(input.value)); });
   listen(popover, 'beforetoggle', event => {
     if (event.newState !== 'closed') return;
+    editing = false; input.value = String(level);
     syncExpanded(false);
     if (returnFocus && popover.contains(document.activeElement) && invoker?.isConnected && invoker.getClientRects().length) {
       invoker.focus({ preventScroll: true });

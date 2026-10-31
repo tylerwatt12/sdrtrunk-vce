@@ -1,4 +1,5 @@
-'use strict';
+import { createBrowserPreferences } from './browser-preferences.js?v=1';
+import { guestDefaults } from './preference-registry.js?v=1';
 
   const ENDPOINT = '/api/v1/me/preferences';
 
@@ -44,10 +45,17 @@
       this.defaults = this.validate(copy(options.defaults || {}));
       this.onChange = typeof options.onChange === 'function' ? options.onChange : () => {};
       this.onError = typeof options.onError === 'function' ? options.onError : () => {};
+      this.browserPreferences = options.browserPreferences || createBrowserPreferences({
+        defaults: this.defaults, validate: this.validate, storage: options.storage
+      });
       this.identity = null;
+      this.scope = 'guest';
+      this.ready = false;
       this.generation = 0;
       this.revision = null;
-      this.preferences = copy(this.defaults);
+      this.preferences = this.defaultsForScope();
+      this.persistence = 'memory';
+      this.persistenceReason = null;
       this.pending = Promise.resolve();
       this.readSnapshot = null;
     }
@@ -55,7 +63,11 @@
     snapshot() {
       return Object.freeze({
         identity: this.identity,
-        loaded: this.identity !== null && this.revision !== null,
+        scope: this.scope,
+        ready: this.ready,
+        loaded: this.ready && (this.scope === 'guest' || this.revision !== null),
+        persistence: this.persistence,
+        persistenceReason: this.persistenceReason,
         revision: this.revision,
         preferences: copy(this.preferences)
       });
@@ -76,8 +88,19 @@
     reset(identity = null) {
       this.generation += 1;
       this.identity = identity === null ? null : String(identity);
+      this.scope = this.identity === null ? 'guest' : 'account';
+      this.ready = true;
       this.revision = null;
-      this.preferences = copy(this.defaults);
+      if (this.scope === 'guest') {
+        const guest = this.browserPreferences.load();
+        this.preferences = copy(guest.preferences);
+        this.persistence = guest.persistence;
+        this.persistenceReason = guest.persistenceReason;
+      } else {
+        this.preferences = this.defaultsForScope();
+        this.persistence = 'unavailable';
+        this.persistenceReason = null;
+      }
       this.pending = Promise.resolve();
       this.emit();
       return this.generation;
@@ -94,32 +117,70 @@
         if (generation !== this.generation) return { state: 'stale' };
         this.revision = decoded.revision;
         this.preferences = copy(validated);
+        this.persistence = 'account';
         this.emit();
         return this.snapshot();
       } catch (error) {
-        if (generation === this.generation) this.onError(error);
+        if (generation !== this.generation) return { state: 'stale' };
+        this.onError(error);
         throw error;
       }
     }
 
-    update(mutator) {
-      if (typeof mutator !== 'function') throw new TypeError('A preference update function is required.');
-      if (this.identity === null || this.revision === null) {
-        throw new Error('User preferences are not loaded.');
-      }
-      return this.enqueue(() => {
-        const draft = copy(this.preferences);
-        const returned = mutator(draft);
-        return this.validate(copy(returned === undefined ? draft : returned));
-      });
+    defaultsForScope(scope = this.scope) {
+      if (scope !== 'guest' && scope !== 'account') throw new TypeError('Unknown preference scope.');
+      return this.validate(scope === 'guest' ? guestDefaults(this.defaults) : copy(this.defaults));
     }
 
-    enqueue(nextProfile) {
+    resetPreferences() {
+      return this.update(() => this.defaultsForScope(), { reset: true });
+    }
+
+    readGuestTourHistory() {
+      return this.scope === 'guest' && this.ready ? this.browserPreferences.readTourHistory() : null;
+    }
+
+    saveGuestTourHistory(dismissed) {
+      if (this.scope !== 'guest' || !this.ready) {
+        const error = new Error('The active preference profile changed.');
+        error.code = 'preference_session_changed';
+        throw error;
+      }
+      const history = this.browserPreferences.saveTourHistory(dismissed);
+      const guest = this.browserPreferences.snapshot();
+      this.preferences = copy(guest.preferences);
+      this.persistence = guest.persistence;
+      this.persistenceReason = guest.persistenceReason;
+      this.emit();
+      return history;
+    }
+
+    update(mutator, options = {}) {
+      if (typeof mutator !== 'function') throw new TypeError('A preference update function is required.');
+      if (!this.ready || this.scope === 'account' && this.revision === null) {
+        throw new Error('User preferences are not loaded.');
+      }
+      return this.enqueue(mutator, options);
+    }
+
+    enqueue(mutator, options) {
       const generation = this.generation;
       const identity = this.identity;
+      const scope = this.scope;
       const operation = async () => {
         if (generation !== this.generation || identity !== this.identity) return { state: 'stale' };
-        const validated = nextProfile();
+        if (scope === 'guest') {
+          const saved = this.browserPreferences.update(mutator, options);
+          this.preferences = copy(saved.preferences);
+          this.persistence = saved.persistence;
+          this.persistenceReason = saved.persistenceReason;
+          this.emit();
+          return this.snapshot();
+        }
+        const draft = copy(this.preferences);
+        const returned = mutator(draft);
+        const validated = this.validate(copy(returned === undefined ? draft : returned));
+        if (generation !== this.generation || identity !== this.identity) return { state: 'stale' };
         const revision = this.revision;
         const previous = copy(this.preferences);
         try {
@@ -137,6 +198,7 @@
           if (generation !== this.generation || identity !== this.identity) return { state: 'stale' };
           this.revision = decoded.revision;
           this.preferences = copy(confirmed);
+          this.persistence = 'account';
           this.emit();
           return this.snapshot();
         } catch (error) {

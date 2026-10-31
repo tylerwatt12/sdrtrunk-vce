@@ -137,6 +137,8 @@ assert.equal(first.getAttribute('aria-expanded'), 'true'); assert.equal(second.g
 assert.equal(document.activeElement, audioVolume.input);
 audioVolume.input.value = '0.3'; audioVolume.input.dispatch('input'); audioVolume.input.dispatch('change');
 assert.deepEqual(volumeEvents, [['input', 0.3], ['commit', 0.3]]);
+audioVolume.update(0.65, true);
+assert.equal(audioVolume.input.value, '0.65', 'A confirmed rollback updates the focused slider after its edit commits');
 audioVolume.close(true);
 assert.equal(document.activeElement, first, 'Explicit popup close restores focus to its own invoker.');
 second.dispatch('click'); audioVolume.popover.showPopover();

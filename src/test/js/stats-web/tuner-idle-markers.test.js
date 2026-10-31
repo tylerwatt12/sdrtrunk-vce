@@ -133,7 +133,7 @@ function harness(liveAllowed = true) {
   vm.runInContext(source.slice(source.indexOf('  const optionToggle = (checked, label, detail) => {'),
     source.indexOf("  const profileControl = node('label', 'settings-field-control")), context);
   vm.runInContext(source.slice(source.indexOf("  idleChannelsInput.addEventListener('change'"),
-    source.indexOf('  if (plotInteractions) [spectrum.canvas, waterfall.canvas].forEach(addPlotInteractions)')), context);
+    source.indexOf('  const autoRangeWorkflow = createActionWorkflow')), context);
   const controls = vm.runInContext('({ idleChannelsInput, idleChannelsControl, fftOptions, waterfallOptions })', context);
   const toggle = (control, value) => { control.checked = value; control.dispatch('change'); };
   return { context, controls, toggle,
