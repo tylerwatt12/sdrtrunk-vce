@@ -1083,7 +1083,8 @@ class TunerSettingsServiceTest
             assertTrue(service.ownsBrowse(tuner, lease.leaseId()),
                 "expired heartbeat does not transfer an owned lease before receiver restoration finishes");
             service.expireBrowsing();
-            await(Duration.ofSeconds(2), tuner::isAvailableForAllocation);
+            await(Duration.ofSeconds(2), () -> service.transition(tuner) == null);
+            assertTrue(tuner.isAvailableForAllocation());
             assertFalse(service.ownsBrowse(tuner, lease.leaseId()));
         }
     }
