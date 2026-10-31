@@ -40,7 +40,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=67';
+import { createRecordingsFeature } from './features/recordings.js?v=68';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -2272,7 +2272,8 @@ function directListenAction(row, reference, options = {}) {
     channel].filter(Boolean))].join(' · ');
   const button = iconButton('icon-direct-listen', `Add ${label} to Direct Listen and play`,
     options.labelButton ? 'ui-button ui-button-secondary ui-button-compact' :
-      'ui-button ui-button-quiet ui-icon-button ui-icon-button-inline');
+      options.inline === false ? 'ui-button ui-button-secondary ui-icon-button' :
+        'ui-button ui-button-quiet ui-icon-button ui-icon-button-inline');
   if (options.labelButton) {
     button.dataset.directListenLabelButton = '';
     const text = node('span', 'ui-text-truncate', label);
@@ -2368,7 +2369,7 @@ function recordingDirectListenControl(row) {
   const label = group ? row?.talkgroup_alias || row?.group_alias || row?.talkgroup_name ||
     `${row?.call_type === 'PATCH' ? 'Patch group' : 'Talkgroup'} ${id ?? row?.target_id ?? ''}` :
     row?.channel_name || row?.analog_channel_name || 'Recorded channel';
-  return directListenAction(normalized, target, { id, channelOnly: !group, label });
+  return directListenAction(normalized, target, { id, channelOnly: !group, label, inline: false });
 }
 
 function radioIdentitySortValue(row, options) {

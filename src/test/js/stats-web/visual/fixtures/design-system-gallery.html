@@ -250,7 +250,7 @@
         <div class="ui-badge-group"><a class="ui-pill" href="#">Metropolitan Emergency Communications County Public Safety</a></div>
       </section>
 
-      <section class="ui-surface visual-section">
+      <section class="ui-surface visual-section recordings-results-panel">
         <h2>Actions</h2>
         <p class="visual-section-copy">Prefer compact icon-only actions when the symbol is familiar and space matters; always provide an accessible name and shared hover/focus hint. Keep visible text for ambiguous, primary, or high-consequence actions.</p>
         <div class="visual-row">
@@ -270,8 +270,17 @@
             <svg aria-hidden="true"><use href="#visual-icon-tones"></use></svg>
           </span>
         </div>
+        <button class="ui-link-tile recordings-picker-button" type="button" aria-haspopup="dialog">
+          <svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg>
+          <span class="recordings-picker-copy"><strong>Talkgroups &amp; channels</strong><small>All talkgroups and channels</small></span>
+          <span class="recordings-picker-chevron" aria-hidden="true">›</span>
+        </button>
         <div class="recordings-call-list">
-          <div class="recordings-call-context"><strong>Metro Public Safety</strong><span>North simulcast · P25 Phase 1</span></div>
+          <div class="recordings-call-context ui-surface-inset" aria-label="Common call facts on this page">
+            <div class="recordings-call-context-field" data-field="system"><small>System</small><span>Metro Public Safety</span></div>
+            <div class="recordings-call-context-field" data-field="site"><small>Site</small><span>North simulcast</span></div>
+            <div class="recordings-call-context-field" data-field="protocol"><small>Protocol</small><span>P25 Phase 1</span></div>
+          </div>
           <div class="recordings-call-columns" aria-hidden="true"><span>Time</span><span>Length</span><span>Talkgroup / channel</span><span>Source radio</span><span class="recordings-call-frequency">Frequency</span><span></span></div>
           <article class="recordings-call" aria-label="Fire Dispatch at 10:08 AM">
             <div class="recordings-call-time" data-visual-time-hint data-ui-hint="October 27, 2026, 10:08:00 AM&#10;Call length: 42 seconds">10:08 AM</div>

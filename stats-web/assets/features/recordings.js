@@ -459,6 +459,30 @@ function winningSite(row) {
   return value(row, 'winner_site_name', 'site_name') || siteText(source);
 }
 
+function recordingContextFacts(row) {
+  const system = value(row, 'system_key', 'radio_system_key') || row.radio_system_entity_ref?.key || '';
+  const channel = value(row, 'channel_id') || row.channel_entity_ref?.key || '';
+  const site = row.audio_from && typeof row.audio_from === 'object' ? row.audio_from : row;
+  const coordinates = [value(site, 'wacn'), value(site, 'system_id', 'sysid'),
+    value(site, 'rfss_id', 'rfss'), value(site, 'site_id')];
+  const definitions = [
+    ['system', 'System', systemLabel(row), system],
+    ['channel', 'Channel', value(row, 'channel_name', 'analog_channel_name'), [system, channel]],
+    ['site', 'Site', winningSite(row), [system, row.site_entity_ref?.key || '', ...coordinates]],
+    ['protocol', 'Protocol', row.protocol && row.protocol !== 'UNKNOWN' ? protocolLabel(row.protocol) : '', row.protocol]
+  ];
+  return definitions.filter(([, , text]) => text != null && String(text).trim()).map(([field, title, text, identity]) => ({
+    field, title, text: String(text).trim(), key: JSON.stringify([identity, String(text).trim()])
+  }));
+}
+
+function recordingSharedContext(rows) {
+  if (!rows.length) return [];
+  const contexts = rows.map(recordingContextFacts);
+  return contexts[0].filter(fact => contexts.every(context =>
+    context.some(other => other.field === fact.field && other.key === fact.key)));
+}
+
 function prettify(valueToFormat) {
   return String(valueToFormat || '').replaceAll('_', ' ').toLowerCase().replace(/\b\w/g, (match) => match.toUpperCase());
 }
@@ -586,6 +610,19 @@ export function createRecordingsFeature(deps) {
     return recordingRefinementFilters(match, currentFilters, field);
   }
 
+  function applyResultFilters(filters, prepare = null) {
+    // Explicit call actions refine the displayed result set immediately. Restore
+    // its applied query so an unfinished sidebar draft cannot change the action.
+    Object.keys(search).forEach(key => { search[key] = currentFilters[key] ?? appliedSearch?.[key] ?? ''; });
+    search.range = appliedRange;
+    selectedSuggestions.clear();
+    appliedSuggestions.forEach((suggestion, key) => selectedSuggestions.set(key, suggestion));
+    Object.assign(search, filters);
+    prepare?.();
+    replaceSearchForm();
+    submitSearch({ preservePeriod: true });
+  }
+
   const resultFilterLink = (text, reference, row, field, filterLabel = text) => {
     if (pageHost?.isConnected && row) {
       const match = recordingResultFilter(row, reference, field);
@@ -598,12 +635,7 @@ export function createRecordingsFeature(deps) {
       link.addEventListener('click', (event) => {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
         event.preventDefault();
-        const apply = () => {
-          Object.keys(search).forEach(key => { search[key] = currentFilters[key] ?? ''; });
-          search.range = appliedRange;
-          selectedSuggestions.clear();
-          appliedSuggestions.forEach((suggestion, key) => selectedSuggestions.set(key, suggestion));
-          Object.assign(search, match.filters);
+        const apply = () => applyResultFilters(match.filters, () => {
           if (match.key === 'radios') for (const item of recordingIdentitySelections(match.filters.radios, 'radio'))
             identityLabels.set(`radio:${recordingIdentitySelectionKey(item)}`, `${filterLabel} · ${systemLabel(row)}`);
           selectedSuggestions.set(match.key, { label: String(filterLabel),
@@ -613,9 +645,7 @@ export function createRecordingsFeature(deps) {
           if (match.filters.system_key && match.key !== 'system_key') selectedSuggestions.set('system_key', {
             label: systemLabel(row), id: match.filters.system_key
           });
-          replaceSearchForm();
-          submitSearch();
-        };
+        });
         if (closeReadOnlyModal && !closeReadOnlyModal(false, false, closed => { if (closed) apply(); })) return;
         apply();
       });
@@ -681,11 +711,9 @@ export function createRecordingsFeature(deps) {
     return dispose;
   }
 
-  function effectiveFilters() {
-    const values = { ...search, ...recordingDiscoveryPeriod(search) };
+  function effectiveFilters(period = recordingDiscoveryPeriod(search)) {
+    const values = { ...search, ...period };
     if (values.high_interest) values.min_duration_ms = String(Math.max(Number(values.min_duration_ms) || 0, 10_000));
-    if (recordingChannelSelections(values.channel_ids).length || recordingIdentitySelections(values.talkgroups, 'talkgroup').length)
-      values.targets_any = 'true';
     return Object.fromEntries(Object.entries(values).filter(([key, item]) =>
       key !== 'range' && item !== '' && !(key === 'site' && selectedSuggestions.get('site')?.appliedKeys?.length)));
   }
@@ -736,13 +764,14 @@ export function createRecordingsFeature(deps) {
     status?.replaceChildren(); return true;
   }
 
-  function submitSearch() {
+  function submitSearch({ preservePeriod = false } = {}) {
     acknowledgeSearchDraft();
     if (!validateSearch()) return false;
-    Object.assign(search, recordingDiscoveryPeriod(search));
+    const period = preservePeriod ? { from_ms: search.from_ms, to_ms: search.to_ms } : recordingDiscoveryPeriod(search);
+    Object.assign(search, period);
     // Expanding a relative time range belongs to the same acknowledged search.
     acknowledgeSearchDraft();
-    const submission = { filters: effectiveFilters(), search: { ...search }, suggestions: new Map(selectedSuggestions) };
+    const submission = { filters: effectiveFilters(period), search: { ...search }, suggestions: new Map(selectedSuggestions) };
     void loadPage(0, submission);
     return true;
   }
@@ -1563,16 +1592,17 @@ export function createRecordingsFeature(deps) {
     const source = recordingResultFilter(row, recordingSourceReference(row), 'source');
     const target = recordingResultFilter(row, recordingHasTalkgroup(row) ? row.target_entity_ref : row.channel_entity_ref, recordingHasTalkgroup(row) ? 'target' : 'channel');
     if (source && target) tools.append(addGlyph(button(node, recordingHasTalkgroup(row) ? 'Filter talkgroup + radio' : 'Filter channel + radio', () => run(() => {
-      Object.assign(search, appliedSearch || search, resultSearchFilters(target, 'target'), resultSearchFilters(source, 'source'));
-      replaceSearchForm(); submitSearch();
+      applyResultFilters({ ...resultSearchFilters(target, 'target'), ...resultSearchFilters(source, 'source') });
     })), 'icon-filter'));
     const channel = row.channel_id || row.channel_entity_ref?.key;
-    tools.append(addGlyph(anchor('Go to Live', href('live', channel ? { channel } : {}), 'ui-button ui-button-secondary'), 'icon-live'));
-    const directListen = recordingDirectListenControl?.(row); if (directListen) tools.append(directListen);
+    const liveActions = node('div', 'ui-action-row ui-action-row-start recordings-call-live-actions');
+    liveActions.append(addGlyph(anchor('Go to Live', href('live', channel ? { channel } : {}), 'ui-button ui-button-secondary'), 'icon-live'));
+    const directListen = recordingDirectListenControl?.(row); if (directListen) liveActions.append(directListen);
+    tools.append(liveActions);
     if (openCallRelations) tools.append(addGlyph(button(node, 'Related activity and alerts', () => run(() => openCallRelations('recording', row.id))), 'icon-open-details'));
     for (const item of row.auxiliary_identifiers || []) if (item.kind === 'tone' && item.protocol === 'DCS') {
       tools.append(button(node, `Filter DCS ${item.value}`, () => run(() => {
-        Object.assign(search, appliedSearch || search, { dcs_code: String(item.value) }); replaceSearchForm(); submitSearch();
+        applyResultFilters({ dcs_code: String(item.value) });
       })));
     }
     body.append(tools, node('p', 'recordings-dialog-help', 'Filtering keeps your time range and other filters.'));
@@ -1589,7 +1619,7 @@ export function createRecordingsFeature(deps) {
     return modal;
   }
 
-  function callCard(row) {
+  function callCard(row, sharedContext = []) {
     const card = node('article', 'recordings-call'); card.dataset.recordingId = String(row.id);
     const description = `${label(row)} at ${dateTime(millis(row))}`; card.setAttribute('aria-label', description);
     const info = iconButton ? iconButton('icon-more', `More actions for ${description}`, 'ui-button ui-button-secondary ui-icon-button recordings-call-info') : button(node, '…', null, 'ui-button ui-button-secondary ui-icon-button recordings-call-info');
@@ -1602,6 +1632,19 @@ export function createRecordingsFeature(deps) {
     const id = hasGroup ? recordingGroupId(row, 'target', value(row, 'talkgroup_id', 'group_id')) : targetRadio !== null ? recordingRadioId(row, 'target', targetRadio) : null;
     if (id !== null && !label(row).includes(String(id))) heading.append(node('span', 'recordings-call-identity', String(id)));
     const status = node('span', 'recordings-call-status'); status.hidden = true; heading.append(status);
+    const sharedFields = new Set(sharedContext.map(fact => fact.field));
+    const context = recordingContextFacts(row).filter(fact => !sharedFields.has(fact.field) && fact.text !== label(row));
+    if (context.length) {
+      const reception = node('div', 'recordings-call-reception');
+      const seen = new Set();
+      for (const fact of context) {
+        if (seen.has(fact.text)) continue;
+        seen.add(fact.text);
+        const detail = node('span', 'recordings-call-reception-field', fact.text); detail.dataset.field = fact.field;
+        detail.dataset.uiHint = `${fact.title}: ${fact.text}`; reception.append(detail);
+      }
+      heading.append(reception);
+    }
     const sourceText = sourceLabel(row, getSourceNameDisplay());
     const source = node('div', 'recordings-call-source', sourceText ? sourceText.replace(/^Radio\s+/i, '') : '—');
     source.setAttribute('aria-label', sourceText ? `Source ${sourceText}` : 'Source radio not recorded');
@@ -1874,11 +1917,28 @@ export function createRecordingsFeature(deps) {
         'No matches in this batch. More calls may match; select Next to continue.' :
         'No matching calls. Try a wider time range or fewer filters.', 'empty'));
     } else {
-      let lastDate = '', lastContext = '';
+      const sharedContext = recordingSharedContext(currentResults);
+      if (sharedContext.length) {
+        const context = node('div', 'recordings-call-context ui-surface-inset');
+        context.setAttribute('aria-label', 'Common call facts on this page');
+        const seen = new Set();
+        for (const fact of sharedContext) {
+          if (seen.has(fact.text)) continue;
+          seen.add(fact.text);
+          const field = node('div', 'recordings-call-context-field'); field.dataset.field = fact.field;
+          field.append(node('small', '', fact.title), node('span', '', fact.text)); context.append(field);
+        }
+        resultHost.append(context);
+      }
+      const columns = node('div', `recordings-call-columns${isPrimaryAdmin() ? ' recordings-call-selectable' : ''}`);
+      columns.setAttribute('aria-hidden', 'true');
+      for (const title of [...(isPrimaryAdmin() ? [''] : []), 'Time', 'Length', 'Talkgroup / channel', 'Source radio', 'Frequency', '']) columns.append(node('span', '', title));
+      resultHost.append(columns);
+      let lastDate = '';
       const gaps = recordingPageGaps(currentResults);
       for (const [index, row] of currentResults.entries()) {
         const date = dateTime(millis(row), true);
-        if (date !== lastDate) { resultHost.append(node('h3', 'recordings-result-date', date)); lastDate = date; lastContext = ''; }
+        if (date !== lastDate) { resultHost.append(node('h3', 'recordings-result-date', date)); lastDate = date; }
         else {
           const gap = gaps.get(index);
           if (gap !== undefined) {
@@ -1887,21 +1947,11 @@ export function createRecordingsFeature(deps) {
             divider.setAttribute('role', 'separator');
             divider.dataset.uiHint = `Gap between matching calls: ${label}`;
             divider.setAttribute('aria-label', divider.dataset.uiHint);
-            divider.append(node('span', 'recordings-call-gap-label', `Gap ${label}`));
+            divider.append(node('span', 'recordings-call-gap-label ui-pill', `Gap ${label}`));
             resultHost.append(divider);
           }
         }
-        const contextParts = [systemLabel(row), value(row, 'channel_name', 'analog_channel_name'), winningSite(row), protocolLabel(row.protocol)].filter(Boolean);
-        const contextKey = JSON.stringify([value(row, 'system_key', 'radio_system_key'), row.channel_id, ...contextParts]);
-        if (contextKey !== lastContext) {
-          const context = node('div', 'recordings-call-context');
-          context.append(node('strong', '', contextParts[0] || 'Recorded calls'), node('span', '', contextParts.slice(1).join(' · ')));
-          const columns = node('div', `recordings-call-columns${isPrimaryAdmin() ? ' recordings-call-selectable' : ''}`);
-          columns.setAttribute('aria-hidden', 'true');
-          for (const title of [...(isPrimaryAdmin() ? [''] : []), 'Time', 'Length', 'Talkgroup / channel', 'Source radio', 'Frequency', '']) columns.append(node('span', '', title));
-          resultHost.append(context, columns); lastContext = contextKey;
-        }
-        resultHost.append(callCard(row));
+        resultHost.append(callCard(row, sharedContext));
       }
     }
     drawResultPlayback();
@@ -2413,7 +2463,7 @@ export function createRecordingsFeature(deps) {
     const highCopy = node('span', 'recordings-interest-copy'); highCopy.append(node('strong', '', 'High Interest'), node('small', '', '10 seconds or longer'));
     high.append(highCopy, highState); syncInterest();
     const pickerButton = (key, title, summary, icon) => {
-      const buttonNode = button(node, '', () => void openFilterDialog(key), 'ui-button ui-button-secondary recordings-picker-button');
+      const buttonNode = button(node, '', () => void openFilterDialog(key), 'ui-link-tile recordings-picker-button');
       buttonNode.id = `recordings-open-${key}`; buttonNode.setAttribute('aria-haspopup', 'dialog');
       const copy = node('span', 'recordings-picker-copy'); copy.append(node('strong', '', title), node('small', '', summary)); buttonNode.append(copy, node('span', 'recordings-picker-chevron', '›')); return addGlyph(buttonNode, icon);
     };

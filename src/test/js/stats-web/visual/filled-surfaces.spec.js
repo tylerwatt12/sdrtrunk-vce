@@ -114,6 +114,15 @@ for (const theme of ['light', 'dark']) for (const [device, viewport] of [
     await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
     const gallery = page.locator('.design-system-gallery');
     await expectFilledWithoutFrame(gallery.locator('[data-visual-compact-selection]'));
+    const recordingSurfaces = gallery.locator('section').filter({ has: page.getByRole('heading', { name: 'Actions', exact: true }) });
+    const filterPicker = recordingSurfaces.getByRole('button', { name: /Talkgroups & channels/ });
+    await expectFilledWithoutFrame(recordingSurfaces.locator('.recordings-call-context, .ui-link-tile'));
+    await filterPicker.focus();
+    await expect(filterPicker).toBeFocused();
+    await expect(filterPicker).toHaveCSS('outline-width', '2px');
+    await page.keyboard.press('Tab');
+    await page.mouse.move(0, 0);
+    await expect(recordingSurfaces).toHaveScreenshot(`recording-filled-surfaces-${theme}-${device}.png`);
     const toolbar = gallery.locator('.visual-data-toolbar');
     // A table divider may remain; it must not become another enclosing box.
     for (const edge of ['top', 'right', 'left']) await expect(toolbar).toHaveCSS(`border-${edge}-width`, '0px');

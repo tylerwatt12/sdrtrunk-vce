@@ -1382,20 +1382,85 @@ test('results group context and selection with the pager before the first call',
   await expect(results.locator('.recordings-call > .recordings-call-select')).toHaveCount(3);
 });
 
-test('shared reception context stays attached to the displayed calls through pending filter removal', async ({ page }) => {
+test('page summary shows common facts once across dates and omits facts that vary between calls', async ({ page }) => {
+  const otherSite = { ...linkedCall, id: 18, start_ms: call.start_ms - 24 * 60 * 60_000,
+    channel_id: '00000000-0000-4000-8000-000000000018', channel_name: 'South Ridge Channel',
+    channel_entity_ref: { kind: 'channel', key: '00000000-0000-4000-8000-000000000018' },
+    site_name: 'South Ridge' };
+  await openRecordings(page, { calls: [linkedCall, otherSite] });
+  const summary = page.locator('.recordings-call-context');
+  await expect(summary).toHaveCount(1);
+  await expect(summary.locator('.recordings-call-context-field[data-field="system"]')).toContainText('Metro Public Safety');
+  await expect(summary.locator('.recordings-call-context-field[data-field="protocol"]')).toContainText('P25 Phase 2');
+  await expect(summary.locator('.recordings-call-context-field[data-field="channel"], .recordings-call-context-field[data-field="site"]')).toHaveCount(0);
+  await expect(page.locator('.recordings-call-columns')).toHaveCount(1);
+  await expect(page.locator('.recordings-result-date')).toHaveCount(2);
+  await expect(page.locator('.recordings-call').first()).toContainText('North Ridge');
+  await expect(page.locator('.recordings-call').nth(1)).toContainText('South Ridge');
+});
+
+test('page summary keeps all four facts when every call shares them', async ({ page }) => {
+  await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18,
+    start_ms: call.start_ms - 60_000, source_id: 30915 }] });
+  const summary = page.locator('.recordings-call-context');
+  await expect(summary).toHaveCount(1);
+  await expect(summary.locator('.recordings-call-context-field')).toHaveCount(4);
+  for (const field of ['system', 'channel', 'site', 'protocol']) {
+    await expect(summary.locator(`[data-field="${field}"]`)).toHaveCount(1);
+  }
+  await expect(page.locator('.recordings-call-columns')).toHaveCount(1);
+});
+
+test('page summary omits missing fields instead of borrowing another call’s data', async ({ page }) => {
+  const missing = { ...linkedCall, id: 18, channel_id: null, channel_entity_ref: null,
+    channel_name: null, site_name: null, protocol: null };
+  await openRecordings(page, { calls: [linkedCall, missing] });
+  const summary = page.locator('.recordings-call-context');
+  await expect(summary).toHaveCount(1);
+  await expect(summary.locator('.recordings-call-context-field')).toHaveCount(1);
+  await expect(summary.locator('[data-field="system"]')).toContainText('Metro Public Safety');
+  await expect(page.locator('.recordings-call-columns')).toHaveCount(1);
+});
+
+test('page summary does not combine matching names from different entity identities', async ({ page }) => {
   const otherSystem = { ...linkedCall, id: 18, system_key: 'p25:00002:002',
-    system_name: 'County Public Safety', radio_system_entity_ref: { kind: 'radio_system', key: 'p25:00002:002' } };
-  const state = await openRecordings(page, { calls: [linkedCall, otherSystem], query: { system_key: systemKey } });
-  const context = page.locator('.recordings-call-context');
-  await expect(context).toContainText(['Metro Public Safety', 'County Public Safety']);
-  const displayed = await context.allTextContents();
+    radio_system_entity_ref: { kind: 'radio_system', key: 'p25:00002:002' },
+    channel_id: '00000000-0000-4000-8000-000000000018',
+    channel_entity_ref: { kind: 'channel', key: '00000000-0000-4000-8000-000000000018' },
+    audio_from: { wacn: 2, system_id: 2, rfss: 1, site_id: 1 } };
+  await openRecordings(page, { calls: [linkedCall, otherSystem] });
+  const summary = page.locator('.recordings-call-context');
+  await expect(summary).toHaveCount(1);
+  await expect(summary.locator('.recordings-call-context-field')).toHaveCount(1);
+  await expect(summary.locator('[data-field="protocol"]')).toContainText('P25 Phase 2');
+});
+
+test('page summary is absent when no facts are common while the column heading remains once', async ({ page }) => {
+  const otherSystem = { ...linkedCall, id: 18, system_key: 'nxdn-c:global:7', system_name: 'County Operations',
+    radio_system_entity_ref: { kind: 'radio_system', key: 'nxdn-c:global:7' },
+    channel_id: '00000000-0000-4000-8000-000000000018', channel_name: 'County Channel',
+    channel_entity_ref: { kind: 'channel', key: '00000000-0000-4000-8000-000000000018' },
+    site_name: 'South Ridge', protocol: 'NXDN' };
+  await openRecordings(page, { calls: [linkedCall, otherSystem] });
+  await expect(page.locator('.recordings-call')).toHaveCount(2);
+  await expect(page.locator('.recordings-call-context')).toHaveCount(0);
+  await expect(page.locator('.recordings-call-columns')).toHaveCount(1);
+});
+
+test('page summary stays attached to displayed calls through pending filter removal', async ({ page }) => {
+  const state = await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18 }], query: { system_key: systemKey } });
+  const summary = page.locator('.recordings-call-context');
+  await expect(summary).toHaveCount(1);
+  await expect(summary).toContainText('Metro Public Safety');
+  const displayed = await summary.textContent();
   const systemChip = page.locator('.recordings-selected-filters .recordings-filter-chip[aria-label*="System:"]');
   await expect(systemChip.locator('.recordings-filter-chip-label')).toHaveText('Metro Public Safety');
   await systemChip.click();
   await expect(systemChip).toHaveClass(/recordings-filter-chip-pending/);
-  expect(await context.allTextContents()).toEqual(displayed);
+  await expect(summary).toHaveText(displayed);
   await searchNow(page, state);
-  await expect(context).toContainText(['Metro Public Safety', 'County Public Safety']);
+  await expect(summary).toHaveCount(1);
+  await expect(summary).toHaveText(displayed);
   await expect(page.locator('.recordings-call a')).toHaveCount(0);
 });
 
@@ -1755,6 +1820,17 @@ test('call actions place the existing Direct Listen control beside Go to Live wi
   expect(JSON.parse(await direct.getAttribute('data-direct-listen-target-key')))
     .toEqual(linkedCall.target_entity_ref);
   expect(await direct.evaluate(element => element.previousElementSibling?.textContent.trim())).toBe('Go to Live');
+  const directBounds = await direct.boundingBox();
+  const liveBounds = await actions.getByRole('link', { name: 'Go to Live', exact: true }).boundingBox();
+  expect(directBounds.height).toBe(liveBounds.height);
+  expect(directBounds.width).toBe(directBounds.height);
+  expect(directBounds.height).toBeGreaterThanOrEqual(40);
+  await page.setViewportSize({ width: 390, height: 900 });
+  const mobileDirect = await direct.boundingBox();
+  const mobileLive = await actions.getByRole('link', { name: 'Go to Live', exact: true }).boundingBox();
+  expect(mobileDirect.y).toBe(mobileLive.y);
+  expect(mobileDirect.x).toBeGreaterThan(mobileLive.x);
+  expect(mobileDirect.x + mobileDirect.width).toBeLessThanOrEqual(390);
   await direct.click();
   await expect(direct).toHaveAttribute('aria-pressed', 'true');
   await expect(direct.locator('use')).toHaveAttribute('href', '#icon-check');

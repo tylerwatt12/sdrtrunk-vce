@@ -154,6 +154,7 @@
 
 .ui-button svg,
 .ui-choice-card-with-icon > svg,
+.ui-link-tile:is(button) > svg,
 .ui-segmented-option-icon svg,
 .ui-pill svg,
 .ui-icon-tile svg,
@@ -1195,12 +1196,19 @@ a.ui-link-tile {
   color: var(--link);
 }
 
-a.ui-link-tile:hover {
+.ui-link-tile:is(button) {
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ui-link-tile:is(a, button):hover {
   background: var(--accent-soft);
   text-decoration: none;
 }
 
-a.ui-link-tile:focus-visible {
+.ui-link-tile:is(a, button):focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: -2px;
 }

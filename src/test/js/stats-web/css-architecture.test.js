@@ -13,7 +13,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/base.css?v=2") layer(reset);',
   '@import url("./styles/tokens.css?v=59") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=7") layer(components);',
-  '@import url("./styles/components/controls.css?v=52") layer(components);',
+  '@import url("./styles/components/controls.css?v=53") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=15") layer(components);',
   '@import url("./styles/compositions/workspaces.css?v=40") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=20") layer(compositions);',
@@ -51,7 +51,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=5") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=9") layer(features);',
   '@import url("./styles/features/activity.css?v=7") layer(features);',
-  '@import url("./styles/features/recordings.css?v=26") layer(features);',
+  '@import url("./styles/features/recordings.css?v=27") layer(features);',
   '@import url("./styles/features/call-relations.css?v=1") layer(features);',
   '@import url("./styles/utilities/table-measurement.css?v=2") layer(utilities);',
 ];
