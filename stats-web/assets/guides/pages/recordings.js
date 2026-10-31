@@ -4,7 +4,7 @@ import { contextualTargets } from '../context.js?v=1';
 export function recordingsSteps(documentValue, preparePlayer, preparePage) {
   const contexts = {
     targets: '.read-only-modal',
-    'call-card': '.recordings-call', 'details-button': '.recordings-call', details: '.read-only-modal', 'details-close': '.read-only-modal',
+    'call-card': '.recordings-call', 'details-button': '.read-only-modal', details: '.read-only-modal', 'details-close': '.read-only-modal',
     'actions-button': '.recordings-call', playback: '.read-only-modal',
     'player-overview': '.audio-dock', 'player-button': '.audio-dock', 'click-mode': '.audio-dock'
   };
@@ -23,22 +23,22 @@ export function recordingsSteps(documentValue, preparePlayer, preparePage) {
       paragraphs: ['Select Search recordings to find calls containing those words.'] },
     { id: 'call-card', title: 'Read a saved call',
       paragraphs: ['Each card brings together who spoke, the talkgroup or channel, when it happened, and any saved transcript.'] },
+    { id: 'actions-button', title: 'Choose how to follow a call',
+      paragraphs: ['Open Call actions for playback, recording details, and related traffic.'] },
+    { id: 'playback', title: 'Replay one call or follow the exchange', paragraphs: [], items: [
+      { label: 'Play once', text: 'Start a queue containing only this call.' },
+      { label: 'Continue from here', text: 'Play this call, then newer calls matching your search in time order.' },
+      { label: 'Add to queue', text: 'Put this call at the end of your queue.' }
+    ] },
     { id: 'details-button', title: 'Take a closer look',
-      paragraphs: ['Open Call details to inspect this transmission.'] },
+      paragraphs: ['Select Show more to reveal the transcript, identities, and technical details.'] },
     { id: 'details', title: 'Follow the details', paragraphs: [], items: [
       { label: 'Transcript', text: 'The saved conversation text.' },
       { label: 'Identities', text: 'The talkgroup and radio IDs.' },
       { label: 'Technical', text: 'Reception and signaling details.' }
     ] },
     { id: 'details-close', title: 'Back to your search',
-      paragraphs: ['Close Call details to return to the matching calls.'] },
-    { id: 'actions-button', title: 'Choose where playback begins',
-      paragraphs: ['Open Call actions for playback and conversation search options.'] },
-    { id: 'playback', title: 'Replay one call or follow the exchange', paragraphs: [], items: [
-      { label: 'Play once', text: 'Start a queue containing only this call.' },
-      { label: 'Continue from here', text: 'Play this call, then newer calls matching your search in time order.' },
-      { label: 'Add to queue', text: 'Put this call at the end of your queue.' }
-    ] },
+      paragraphs: ['Close Call actions to return to the matching recordings.'] },
     { id: 'player-overview', title: 'Listen as you browse',
       paragraphs: ['Play saved calls here while you browse. The player shows the current call and how many are waiting.'] },
     { id: 'player-button', title: 'See what’s coming next',

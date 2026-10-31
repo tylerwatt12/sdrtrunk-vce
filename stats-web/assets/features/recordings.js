@@ -121,6 +121,38 @@ export function recordingResultFilter(row, reference, field = '') {
   return { key, filters };
 }
 
+// Refine the selected target without discarding a channel-only search. When the
+// picker contains talkgroups OR channels, retain the branch that admitted this call.
+export function recordingRefinementFilters(match, current = {}, field = '') {
+  const filters = { ...match.filters };
+  const channels = recordingChannelSelections(current.channel_ids);
+  const groups = recordingIdentitySelections(current.talkgroups, 'talkgroup');
+  const alternatives = current.targets_any === 'true' && channels.length && groups.length;
+  if (['talkgroup_id', 'talkgroups'].includes(match.key)) {
+    const identity = filters.talkgroup_identity_key;
+    const selected = match.key === 'talkgroups' ? recordingIdentitySelections(filters.talkgroups, 'talkgroup') : [{
+      id: Number(identity ? identity.split('-').at(-1) : filters.talkgroup_id),
+      system_key: filters.system_key || current.system_key || null, identity_key: identity
+    }];
+    const included = selected.every(next => groups.some(previous => previous.id === next.id &&
+      previous.system_key === next.system_key && (!previous.identity_key || previous.identity_key === next.identity_key)));
+    const retainChannels = channels.length && (!alternatives || !included);
+    filters.channel_ids = retainChannels ? current.channel_ids : '';
+    if (retainChannels || match.key === 'talkgroup_id') filters.targets_any = '';
+    if (match.key === 'talkgroup_id') filters.talkgroups = '';
+  }
+  if (match.key === 'channel_id' && alternatives) {
+    filters.channel_ids = ''; filters.targets_any = '';
+    if (channels.includes(filters.channel_id)) filters.talkgroups = '';
+  }
+  if (['radio_id', 'radios'].includes(match.key)) {
+    if (match.key === 'radio_id') filters.radios = '';
+    if (field === 'source' || field === 'source_entity_ref') filters.radio_role = 'source';
+    if (field === 'target' || field === 'target_entity_ref') filters.radio_role = 'any';
+  }
+  return filters;
+}
+
 function value(row, ...names) {
   for (const name of names) {
     const candidate = row?.[name];
@@ -424,7 +456,7 @@ function siteText(site) {
 
 function winningSite(row) {
   const source = value(row, 'audio_from');
-  return value(row, 'site_name', 'winner_site_name') || siteText(source);
+  return value(row, 'winner_site_name', 'site_name') || siteText(source);
 }
 
 function prettify(valueToFormat) {
@@ -477,14 +509,14 @@ function select(node, options, labelText) {
 }
 
 // Reuse map: the shared filter disclosure owns inline expansion, with focused
-// pickers on the shared modal foundation. Both result layouts reuse call identities,
-// actions, browsing pager and global audio player; density owns only row geometry.
+// pickers on the shared modal foundation. Compact call rows reuse call identities,
+// one action dialog, the browsing pager and global audio player.
 // Administration keeps its established shared controls and compositions.
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
     entityRefHref, stopLiveAudio, href, anchor, iconButton, iconGlyph, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
-    getSourceNameDisplay = () => 'talker_alias', openCallRelations } = deps;
+    getSourceNameDisplay = () => 'talker_alias', openCallRelations, recordingDirectListenControl } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', alias_list_id: '', radio_identity_key: '', talkgroup_identity_key: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -525,7 +557,6 @@ export function createRecordingsFeature(deps) {
   let filterSummary = null;
   let filterDisclosure = null;
   let disposeFilterPosition = null;
-  let resultsLayout = 'cards';
   let selectedHost = null;
   let sortControl = null;
   let pageSizeControl = null;
@@ -552,16 +583,7 @@ export function createRecordingsFeature(deps) {
   }
 
   function resultSearchFilters(match, field) {
-    const filters = { ...match.filters };
-    if (['talkgroup_id', 'talkgroups'].includes(match.key)) {
-      filters.channel_ids = '';
-      if (match.key === 'talkgroup_id') { filters.talkgroups = ''; filters.targets_any = ''; }
-    }
-    if (['radio_id', 'radios'].includes(match.key)) {
-      if (match.key === 'radio_id') filters.radios = '';
-      if (field === 'target' || field === 'target_entity_ref') filters.radio_role = 'any';
-    }
-    return filters;
+    return recordingRefinementFilters(match, currentFilters, field);
   }
 
   const resultFilterLink = (text, reference, row, field, filterLabel = text) => {
@@ -1210,7 +1232,7 @@ export function createRecordingsFeature(deps) {
     return list.childNodes.length ? list : '';
   }
 
-  function factGroups(row, { includeEmpty = false, empty = false } = {}) {
+  function factGroups(row, { includeEmpty = false, empty = false, links = true } = {}) {
     const group = value(row, 'call_type') === 'PATCH' ? 'Patch' : 'Talkgroup';
     const target = label(row);
     const source = sourceLabel(row, getSourceNameDisplay());
@@ -1312,7 +1334,7 @@ export function createRecordingsFeature(deps) {
     return groups.map(([title, facts]) => [title, facts.filter(([, detail]) => includeEmpty ||
       detail !== null && detail !== undefined && detail !== '').map(([name, detail, reference, context]) => [name,
       empty || detail === null || detail === undefined || detail === '' ? '' :
-        reference ? entityLink(detail, typeof reference === 'string' ? row?.[reference] : reference, context || row,
+        !links ? (detail?.nodeType ? detail.textContent : detail) : reference ? entityLink(detail, typeof reference === 'string' ? row?.[reference] : reference, context || row,
           typeof reference === 'string' ? reference : name) : detail])])
       .filter(([, facts]) => facts.length);
   }
@@ -1350,7 +1372,7 @@ export function createRecordingsFeature(deps) {
     host.append(actions);
   }
 
-  function renderTranscript(host, call = player?.current) {
+  function renderTranscript(host, call = player?.current, onUpdated = null) {
     host.replaceChildren();
     if (!call) { host.append(makeNotice('Choose a recording to see its transcript.')); return; }
     const transcript = call.transcription;
@@ -1384,7 +1406,8 @@ export function createRecordingsFeature(deps) {
           player.current = { ...player.current, transcription: result };
           drawQueue();
         }
-        if (host.isConnected) renderTranscript(host, { ...call, transcription: result });
+        onUpdated?.(result);
+        if (host.isConnected) renderTranscript(host, { ...call, transcription: result }, onUpdated);
       } catch (error) {
         if (host.isConnected) {
           retryStatus.replaceChildren(makeNotice(error.message || 'Transcription could not be retried. Try again.', 'error'));
@@ -1395,256 +1418,204 @@ export function createRecordingsFeature(deps) {
     host.append(retry, retryStatus);
   }
 
-  async function openDetails(row) {
-    const body = node('div', 'recordings-detail');
-    body.append(makeNotice('Loading call details…', 'loading'));
-    const modal = openReadOnlyModal('Call details', body, { id: `recording-${row.id}`, className: 'recordings-detail-modal' });
-    if (!modal || (modal.ready && !await modal.ready)) return;
-    try {
-      const detail = await requestJson(`${CALLS}/${encodeURIComponent(String(row.id))}`, { page: false });
-      if (!modal.dialog.isConnected) return;
-      const call = { ...row, ...(detail?.call || detail || {}),
-        ...(detail?.transcription ? { transcription: detail.transcription } : {}) };
-      const heading = node('div', 'recordings-detail-heading');
-      heading.append(node('h3', '', label(call)), node('span', '', dateTime(millis(call))));
-      const tabs = node('nav', 'ui-segmented recordings-detail-tabs');
-      tabs.dataset.guideTarget = 'rec-details';
-      tabs.setAttribute('role', 'tablist');
-      tabs.setAttribute('aria-label', 'Call information');
-      const definitions = [['overview', 'Overview'], ['transcript', 'Transcript'],
-        ['identities', 'Identities'], ['technical', 'Technical'], ['recording', 'Recording']];
-      const panels = new Map();
-      const controls = new Map();
-      const activate = (id) => {
-        for (const [key, panel] of panels) {
-          panel.hidden = key !== id;
-          controls.get(key).setAttribute('aria-selected', String(key === id));
-          controls.get(key).tabIndex = key === id ? 0 : -1;
-        }
-      };
-      for (const [id, title] of definitions) {
-        const panel = node('section', 'ui-editor-sections recordings-detail-facts recordings-detail-panel');
-        if (id === 'transcript') panel.classList.add('recordings-transcript');
-        panel.id = `recording-${row.id}-panel-${id}`;
-        panel.setAttribute('role', 'tabpanel');
-        const tab = button(node, title, () => activate(id), 'ui-segmented-option');
-        tab.id = `recording-${row.id}-tab-${id}`;
-        tab.setAttribute('role', 'tab');
-        tab.setAttribute('aria-controls', panel.id);
-        panel.setAttribute('aria-labelledby', tab.id);
-        tab.addEventListener('keydown', (event) => {
-          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
-          event.preventDefault();
-          const index = definitions.findIndex(([key]) => key === id);
-          const next = event.key === 'Home' ? 0 : event.key === 'End' ? definitions.length - 1 :
-            (index + (event.key === 'ArrowRight' ? 1 : -1) + definitions.length) % definitions.length;
-          const key = definitions[next][0];
-          activate(key);
-          modal.focus(controls.get(key));
-        });
-        panels.set(id, panel);
-        controls.set(id, tab);
-        tabs.append(tab);
-      }
-      const locations = { 'Source & target identities': 'identities', 'Patch member identities': 'identities',
-        'Protocol & signaling': 'technical', 'Additional signaling': 'technical', 'Received site identities': 'technical',
-        'Audio': 'technical', 'Tones': 'technical',
-        'Recording identifiers': 'recording' };
-      for (const [title, facts] of [...factGroups(call), ...callAudioDetailGroups(call)]) {
-        const group = node('section', 'ui-form-section');
-        if (title) group.append(node('h4', 'ui-section-heading', title));
-        const list = node('dl', 'ui-fact-list');
-        facts.forEach(([name, detail]) => appendFact(node, list, name, detail));
-        group.append(list);
-        panels.get(locations[title] || 'overview').append(group);
-      }
-      renderTranscript(panels.get('transcript'), call);
-      for (const [id, panel] of panels) {
-        if (!panel.childNodes.length) panel.append(makeNotice(
-          `No ${id === 'identities' ? 'identity' : id} details were recorded for this call.`));
-      }
-      const download = addGlyph(anchor('Download recording', audioUrl(call), 'ui-button ui-button-secondary'), 'icon-download');
-      download.setAttribute('download', '');
-      const playAfterClose = (mode) => {
-        let started = false;
-        const start = () => { if (!started) { started = true; playbackAction(call, mode); } };
-        if (modal.close(start)) start();
-      };
-      const playbackActions = node('div', 'recordings-detail-playback-actions');
-      playbackActions.setAttribute('role', 'group');
-      playbackActions.setAttribute('aria-label', 'Playback actions');
-      playbackActions.append(
-        addGlyph(button(node, 'Play once', () => playAfterClose('once'), 'ui-button ui-button-primary'), 'icon-play'),
-        addGlyph(button(node, 'Continue from here', () => playAfterClose('continue')), 'icon-forward'),
-        addGlyph(button(node, 'Add to queue', () => playAfterClose('queue')), 'icon-plus'));
-      download.classList.add('recordings-detail-download');
-      const footer = modalFooter(playbackActions, download);
-      footer.classList.add('recordings-detail-footer');
-      activate('overview');
-      body.replaceChildren(heading, tabs, ...panels.values(), footer);
-      modal.focus(controls.get('overview'));
-    } catch (error) {
-      if (modal.dialog.isConnected) body.replaceChildren(makeNotice(error.message ||
-        'Call details are unavailable. Refresh the results and try again.', 'error'));
+  function callEntities(call) {
+    const entities = [];
+    const add = (key, title, text, reference, field, extra = '') => {
+      if (text) entities.push({ key, title, text: String(text), reference, field, extra });
+    };
+    if (recordingHasTalkgroup(call)) {
+      const id = recordingGroupId(call, 'target', value(call, 'talkgroup_id', 'group_id'));
+      const text = label(call);
+      add('talkgroup', call.call_type === 'PATCH' ? 'Patch group' : 'Talkgroup',
+        id != null && !text.includes(String(id)) ? `${text} · ${id}` : text,
+        call.target_entity_ref, 'target', value(call, 'talkgroup_description', 'group_description'));
+    } else if (value(call, 'destination_radio_id') !== null) {
+      add('target-radio', 'Destination radio', label(call), call.target_entity_ref, 'target', value(call, 'destination_radio_description'));
     }
+    add('radio', 'Source radio', sourceLabel(call, getSourceNameDisplay()), recordingSourceReference(call), 'source',
+      homeSystemName(call, 'source') || value(call, 'source_description', 'radio_description'));
+    add('system', 'System', systemLabel(call), call.radio_system_entity_ref, 'system');
+    add('channel', 'Channel', value(call, 'channel_name', 'analog_channel_name'), call.channel_entity_ref, 'channel', frequency(call));
+    const site = call.audio_from || call;
+    const coordinates = [value(site, 'rfss_id', 'rfss'), value(site, 'site_id')];
+    add('site', 'Site', winningSite(call), call.site_entity_ref || site.entity_ref, 'site',
+      coordinates.every(item => item !== null) ? `RFSS ${coordinates[0]} · Site ${coordinates[1]}` : '');
+    return entities;
   }
 
   function openCallActions(row) {
-    const body = node('div', 'recordings-call-menu');
-    body.append(node('p', 'recordings-dialog-help', `${dateTime(millis(row))} · ${protocolLabel(row.protocol)} · ${systemLabel(row)}`));
-    let modal;
-    let actionIndex = 0;
+    let call = row, modal, expanded = false, activeTab = 'overview', loaded = false;
+    const body = node('div', 'recordings-call-menu'); body.dataset.expanded = 'false';
+    body.append(node('p', 'recordings-dialog-help', `${dateTime(millis(row))} · ${duration(row)} · ${protocolLabel(row.protocol)}`));
     const run = perform => { let done = false; const next = () => { if (!done) { done = true; perform(); } }; if (modal.close(next)) next(); };
-    const playback = node('div', 'recordings-call-menu-grid recordings-playback-grid');
-    playback.dataset.guideTarget = 'rec-playback';
-    const actions = node('div', 'recordings-call-menu-grid');
-    const explain = (control, title, description, icon) => {
-      control.classList.add('recordings-call-action');
-      const copy = node('span', 'recordings-action-copy');
-      const help = node('span', 'recordings-action-description', description);
-      help.id = `recording-${row.id}-action-description-${++actionIndex}`;
-      copy.append(node('strong', 'recordings-action-title', title), help);
-      control.replaceChildren(copy);
-      control.setAttribute('aria-label', title);
-      control.setAttribute('aria-describedby', help.id);
-      return addGlyph(control, icon);
+    const playbackSection = node('section', 'recordings-call-action-section'); playbackSection.setAttribute('aria-label', 'Playback');
+    const playbackActions = node('div', 'ui-action-row ui-action-row-start recordings-call-playback'); playbackActions.dataset.guideTarget = 'rec-playback';
+    for (const [mode, title, icon] of [['once', 'Play once', 'icon-play'], ['continue', 'Continue from here', 'icon-forward'], ['queue', 'Add to queue', 'icon-plus']]) {
+      const control = addGlyph(button(node, title, () => run(() => playbackAction(call, mode))), icon);
+      control.setAttribute('aria-label', title); playbackActions.append(control);
+    }
+    playbackSection.append(playbackActions, node('p', 'recordings-dialog-help', 'Play once and Continue from here replace the queue.')); body.append(playbackSection);
+    const information = node('section', 'recordings-call-information');
+    const heading = node('div', 'recordings-call-information-header'); heading.append(node('h3', 'ui-section-heading', 'Call information'));
+    const toggle = addGlyph(button(node, 'Show more', () => {
+      expanded = !expanded; if (expanded) activeTab = 'overview'; renderInformation(); if (expanded) void loadDetails();
+    }, 'ui-button ui-button-link ui-button-compact'), 'icon-chevron-down');
+    toggle.dataset.guideTarget = 'rec-details-button'; toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-controls', `recording-${row.id}-information`); heading.append(toggle);
+    const informationContent = node('div', 'recordings-dialog-content'); informationContent.id = `recording-${row.id}-information`;
+    const tabs = node('nav', 'ui-segmented recordings-detail-tabs'); tabs.dataset.guideTarget = 'rec-details'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Call information');
+    const definitions = [['overview', 'Overview'], ['transcript', 'Transcript'], ['identities', 'Identities'], ['technical', 'Technical'], ['recording', 'Recording']];
+    const panels = new Map(), controls = new Map();
+    const activate = id => {
+      activeTab = id;
+      for (const [key, panel] of panels) { panel.hidden = key !== (expanded ? activeTab : 'overview'); controls.get(key).setAttribute('aria-selected', String(key === activeTab)); controls.get(key).tabIndex = key === activeTab ? 0 : -1; }
     };
-    for (const [mode, title, description, icon] of [
-      ['once', 'Play once', 'Replace the queue and play only this call.', 'icon-play'],
-      ['continue', 'Continue from here', 'Replace the queue and play this call followed by newer calls that match your search.', 'icon-forward'],
-      ['queue', 'Add to queue', 'Add this call to the end of the queue without starting or interrupting playback.', 'icon-plus']])
-      playback.append(explain(button(node, title, () => run(() => playbackAction(row, mode)), 'ui-button ui-button-secondary'), title, description, icon));
-    actions.append(explain(button(node, 'Call details', () => run(() => void openDetails(row)), 'ui-button ui-button-secondary'),
-      'Call details', 'View the transcript and recording details for this call.', 'icon-info-circle'));
-    if (openCallRelations) actions.append(explain(button(node, 'Related activity and alerts',
-      () => run(() => openCallRelations('recording', row.id)), 'ui-button ui-button-secondary'),
-      'Related activity and alerts', 'View activity and alerts saved for this recorded call.', 'icon-open-details'));
-    const use = (title, reference, field, description, icon) => {
-      const filter = recordingResultFilter(row, reference, field);
-      if (!filter) return;
-      const filterLabel = field === 'source' ? sourceLabel(row, getSourceNameDisplay()) : label(row);
-      const link = resultFilterLink(title, reference, row, field, filterLabel);
-      if (typeof link !== 'string') {
-        link.classList.add('ui-button', 'ui-button-secondary');
-        actions.append(explain(link, title, description, icon));
+    for (const [id, title] of definitions) {
+      const panel = node('section', `recordings-detail-panel recordings-detail-facts${id === 'transcript' ? ' recordings-transcript' : ''}`); panel.id = `recording-${row.id}-panel-${id}`; panel.setAttribute('role', 'tabpanel');
+      const tab = button(node, title, () => activate(id), 'ui-segmented-option'); tab.id = `recording-${row.id}-tab-${id}`; tab.setAttribute('role', 'tab'); tab.setAttribute('aria-controls', panel.id); panel.setAttribute('aria-labelledby', tab.id);
+      tab.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault(); const index = definitions.findIndex(([key]) => key === id);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? definitions.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + definitions.length) % definitions.length;
+        activate(definitions[next][0]); modal.focus(controls.get(definitions[next][0]));
+      });
+      panels.set(id, panel); controls.set(id, tab); tabs.append(tab);
+    }
+    const loadStatus = node('div', 'recordings-call-detail-status'), feedback = node('div', 'recordings-form-status');
+    const retry = button(node, 'Retry loading details', () => void loadDetails()); retry.hidden = true; loadStatus.append(feedback, retry);
+    const workflow = createActionWorkflow({ surface: loadStatus, feedback, controls: () => [retry] });
+    informationContent.append(tabs, loadStatus, ...panels.values()); information.append(heading, informationContent); body.append(information);
+    function renderInformation() {
+      body.dataset.expanded = String(expanded); toggle.setAttribute('aria-expanded', String(expanded));
+      toggle.replaceChildren(node('span', '', expanded ? 'Show less' : 'Show more')); addGlyph(toggle, 'icon-chevron-down');
+      tabs.hidden = !expanded; loadStatus.hidden = !expanded || loaded;
+      panels.forEach(panel => panel.replaceChildren());
+      const entities = node('div', 'recordings-call-entities');
+      for (const entity of callEntities(call)) {
+        const line = node('div', 'recordings-call-entity'); line.dataset.entity = entity.key;
+        const identity = node('div', 'recordings-call-entity-identity');
+        const text = node('div', 'recordings-call-entity-value'); text.append(node('span', '', entity.text));
+        if (expanded && entity.extra && String(entity.extra) !== entity.text) text.append(node('small', '', String(entity.extra)));
+        identity.append(node('span', '', entity.title), text);
+        const actions = node('div', 'ui-action-row recordings-call-entity-actions');
+        const filter = resultFilterLink('Filter', entity.reference, call, entity.field, entity.text);
+        const filterAction = typeof filter === 'string' ? button(node, 'Filter') : filter;
+        filterAction.classList.add('ui-button', 'ui-button-secondary', 'ui-button-compact');
+        filterAction.setAttribute('aria-label', `Filter by ${entity.title.toLowerCase()}`);
+        filterAction.dataset.uiHint = `Filter recordings by ${entity.text}`;
+        if (typeof filter === 'string') { filterAction.disabled = true; filterAction.dataset.uiHint = 'This recording has no usable filter identity.'; }
+        addGlyph(filterAction, 'icon-filter'); actions.append(filterAction);
+        const destination = canViewRadio?.() ? entityRefHref?.(entity.reference) : null;
+        const open = destination ? anchor('Open page', destination, 'ui-button ui-button-link ui-button-compact') : button(node, 'Open page', null, 'ui-button ui-button-link ui-button-compact');
+        open.setAttribute('aria-label', `Open ${entity.title.toLowerCase()} page`);
+        open.dataset.uiHint = destination ? `Open ${entity.text}` : !canViewRadio?.() ? 'Radio pages are unavailable for this account.' : 'No matching details page is available for this recorded identity.';
+        if (!destination) open.disabled = true;
+        addGlyph(open, 'icon-open-details'); actions.append(open); line.append(identity, actions); entities.append(line);
       }
-    };
-    const hasGroup = recordingHasTalkgroup(row);
-    use(hasGroup ? 'Search this talkgroup' : 'Search this channel', hasGroup ? row.target_entity_ref : row.channel_entity_ref,
-      hasGroup ? 'target' : 'channel', hasGroup ? 'Show calls on this talkgroup within your current search.' :
-        'Show calls recorded on this channel within your current search.', hasGroup ? 'icon-identities' : 'icon-channel');
-    const sourceRef = recordingSourceReference(row);
-    use('Search this radio', sourceRef, 'source', 'Show calls involving this radio within your current search.', 'icon-scanner');
-    const source = recordingResultFilter(row, sourceRef, 'source');
-    const target = recordingResultFilter(row, hasGroup ? row.target_entity_ref : row.channel_entity_ref, hasGroup ? 'target' : 'channel');
-    const bothTitle = hasGroup ? 'Search talkgroup + radio' : 'Search channel + radio';
-    if (source && target) actions.append(explain(button(node, bothTitle, () => run(() => {
-      Object.assign(search, appliedSearch || search, resultSearchFilters(target, 'target'), resultSearchFilters(source, 'source')); replaceSearchForm(); submitSearch();
-    }), 'ui-button ui-button-secondary'), bothTitle, hasGroup ? 'Show calls involving this radio on this talkgroup.' :
-      'Show calls involving this radio on this channel.', 'icon-search'));
-    actions.append(explain(button(node, 'Open context · ±30 min', () => run(() => {
-      Object.keys(search).forEach(key => { search[key] = ''; }); selectedSuggestions.clear();
-      Object.assign(search, target?.filters || {}, { transcript: '', text_range: 'time', range: 'custom',
-        from_ms: String(millis(row) - 1_800_000), to_ms: String(millis(row) + 1_800_000) });
+      panels.get('overview').append(entities);
+      if (expanded) {
+        const locations = { 'Source & target identities': 'identities', 'Patch member identities': 'identities', 'Protocol & signaling': 'technical',
+          'Additional signaling': 'technical', 'Received site identities': 'technical', Audio: 'technical', Tones: 'technical', 'Recording identifiers': 'recording' };
+        const summary = new Set(['Target', 'Source', 'Radio system', 'Saved channel', 'Winning site']);
+        const groups = [];
+        for (const [title, facts] of [...factGroups(call, { links: false }), ...callAudioDetailGroups(call)]) {
+          if (title) { groups.push([locations[title] || 'overview', title, facts]); continue; }
+          const destinations = new Map();
+          for (const [name, detail] of facts) {
+            if (summary.has(name)) continue;
+            const destination = ['Latest OTA name', 'Alias List'].includes(name) ? 'identities' :
+              ['Also received on', 'Decoder', 'Frequency', 'Timeslot'].includes(name) ? 'technical' : 'overview';
+            if (!destinations.has(destination)) destinations.set(destination, []);
+            destinations.get(destination).push([name, detail]);
+          }
+          for (const [destination, remaining] of destinations) groups.push([destination, '', remaining]);
+        }
+        for (const [destination, title, remaining] of groups) {
+          if (!remaining.length) continue;
+          const group = node('section', 'ui-form-section');
+          if (title) group.append(node('h4', 'ui-section-heading', title));
+          const list = node('dl', `ui-fact-list${!title ? ' recordings-call-extra-facts' : ''}`);
+          remaining.forEach(([name, detail]) => appendFact(node, list, name, detail)); group.append(list);
+          panels.get(destination).append(group);
+        }
+        renderTranscript(panels.get('transcript'), call, transcription => { call = { ...call, transcription }; });
+        const download = addGlyph(anchor('Download recording', audioUrl(call), 'ui-button ui-button-secondary'), 'icon-download');
+        download.setAttribute('download', ''); panels.get('recording').append(download);
+        for (const [id, panel] of panels) if (!panel.childNodes.length) panel.append(makeNotice(`No ${id === 'identities' ? 'identity' : id} details were recorded for this call.`));
+      }
+      activate(expanded ? activeTab : 'overview');
+    }
+    async function loadDetails() {
+      if (loaded || workflow.isBusy()) return;
+      if (modal?.ready && !await modal.ready || !modal?.dialog.isConnected) return;
+      retry.hidden = true;
+      try {
+        await workflow.run(() => requestJson(`${CALLS}/${encodeURIComponent(String(row.id))}`, { page: false }), {
+          pending: 'Loading complete call information…', failure: 'Call information could not be loaded. Try again.',
+          onSuccess: detail => {
+            if (!modal.dialog.isConnected) return;
+            call = { ...row, ...(detail?.call || detail || {}), ...(detail?.transcription ? { transcription: detail.transcription } : {}) };
+            loaded = true; renderInformation();
+          }
+        });
+      } catch (_) { if (modal.dialog.isConnected) retry.hidden = false; }
+    }
+    const tools = node('div', 'ui-action-row ui-action-row-start recordings-call-tools');
+    const source = recordingResultFilter(row, recordingSourceReference(row), 'source');
+    const target = recordingResultFilter(row, recordingHasTalkgroup(row) ? row.target_entity_ref : row.channel_entity_ref, recordingHasTalkgroup(row) ? 'target' : 'channel');
+    if (source && target) tools.append(addGlyph(button(node, recordingHasTalkgroup(row) ? 'Filter talkgroup + radio' : 'Filter channel + radio', () => run(() => {
+      Object.assign(search, appliedSearch || search, resultSearchFilters(target, 'target'), resultSearchFilters(source, 'source'));
       replaceSearchForm(); submitSearch();
-    }), 'ui-button ui-button-secondary'), 'Open context · ±30 min', target ?
-      `Show this ${hasGroup ? 'talkgroup’s' : 'channel’s'} calls from 30 minutes before to 30 minutes after this call.` :
-      'Show calls from 30 minutes before to 30 minutes after this call.', 'icon-replay'));
-    if (canViewRadio?.()) {
-      const entityNames = { talkgroup: 'talkgroup', patch_group: 'patch group', radio: 'radio', channel: 'channel' };
-      for (const reference of [row.target_entity_ref, row.channel_entity_ref]) {
-        const name = entityNames[reference?.kind];
-        const destination = name && entityRefHref?.(reference);
-        if (!destination) continue;
-        const title = `Open ${name}`;
-        actions.append(explain(anchor(title, destination, 'ui-button ui-button-secondary'), title,
-          `View this ${name}’s details page.`, 'icon-open-details'));
-        break;
-      }
-    }
+    })), 'icon-filter'));
     const channel = row.channel_id || row.channel_entity_ref?.key;
-    actions.append(explain(anchor('Go to Live', href('live', channel ? { channel } : {}), 'ui-button ui-button-secondary'),
-      'Go to Live', channel ? 'Open this channel on the Live page.' : 'Open the Live page to browse current traffic.', 'icon-live'));
-    for (const [title, key, grid] of [['Playback', 'playback', playback], ['Explore this call', 'explore', actions]]) {
-      const section = node('section', 'recordings-call-action-section');
-      const heading = node('h3', 'ui-section-heading', title);
-      heading.id = `recording-${row.id}-${key}-actions-title`;
-      section.setAttribute('aria-labelledby', heading.id);
-      section.append(heading, grid);
-      body.append(section);
+    tools.append(addGlyph(anchor('Go to Live', href('live', channel ? { channel } : {}), 'ui-button ui-button-secondary'), 'icon-live'));
+    const directListen = recordingDirectListenControl?.(row); if (directListen) tools.append(directListen);
+    if (openCallRelations) tools.append(addGlyph(button(node, 'Related activity and alerts', () => run(() => openCallRelations('recording', row.id))), 'icon-open-details'));
+    for (const item of row.auxiliary_identifiers || []) if (item.kind === 'tone' && item.protocol === 'DCS') {
+      tools.append(button(node, `Filter DCS ${item.value}`, () => run(() => {
+        Object.assign(search, appliedSearch || search, { dcs_code: String(item.value) }); replaceSearchForm(); submitSearch();
+      })));
     }
+    body.append(tools, node('p', 'recordings-dialog-help', 'Filtering keeps your time range and other filters.'));
+    const context = node('section', 'recordings-call-context-search');
+    context.append(addGlyph(button(node, 'Search around this call · ±30 min', () => run(() => {
+      Object.keys(search).forEach(key => { search[key] = ''; }); selectedSuggestions.clear();
+      Object.assign(search, target?.filters || {}, { transcript: '', text_range: 'time', range: 'custom', from_ms: String(millis(row) - 1_800_000), to_ms: String(millis(row) + 1_800_000) });
+      replaceSearchForm(); submitSearch();
+    }), 'ui-button ui-button-link'), 'icon-replay'), node('p', 'recordings-dialog-help', `New search${target ? ` for this ${recordingHasTalkgroup(row) ? 'talkgroup' : 'channel'}` : ''}. Resets other filters.`));
+    body.append(context); renderInformation();
     modal = openReadOnlyModal('Call actions', body, { id: 'recordings-call-actions', className: 'recordings-actions-modal' });
+    if (!modal) return modal;
+    modal.showMore = async () => { expanded = true; activeTab = 'overview'; renderInformation(); await loadDetails(); };
     return modal;
   }
 
   function callCard(row) {
-    const card = node('article', `recordings-call ${resultsLayout === 'compact' ?
-      'recordings-call-compact' : 'ui-surface ui-surface-soft'}`); card.dataset.recordingId = String(row.id);
-    const action = (icon, glyph, labelText, hint, perform, className) => {
-      const control = iconButton ? iconButton(icon, labelText, className) : button(node, glyph, null, className);
-      control.setAttribute('aria-label', labelText); control.dataset.uiHint = hint; control.addEventListener('click', perform); return control;
-    };
-    const description = `${label(row)} at ${dateTime(millis(row))}`;
-    card.setAttribute('aria-label', description);
-    const play = action('icon-play', '▶', `Play ${description}`, 'Play recording', () => playClicked(row), 'ui-button ui-button-secondary ui-icon-button recordings-card-play');
-    const detail = action('icon-info-circle', 'i', 'Call details', 'Call details', () => void openDetails(row), 'ui-button ui-button-secondary ui-icon-button recordings-call-details');
-    const info = action('icon-more', '…', `More actions for ${description}`, 'Call actions', () => openCallActions(row), 'ui-button ui-button-secondary ui-icon-button recordings-call-info');
-    if (deps.guideMode && Number(row.id) === RECORDINGS_GUIDE_CALL_ID) {
-      card.dataset.guideTarget = 'rec-call-card';
-      detail.dataset.guideTarget = 'rec-details-button';
-      info.dataset.guideTarget = 'rec-actions-button';
-    }
-    const head = node('div', 'recordings-call-head');
-    const time = node('div', 'recordings-call-time'); time.dataset.uiHint = dateTime(millis(row)); time.append(node('strong', '', timeOnly(millis(row))));
-    const groupId = value(row, 'talkgroup_id', 'group_id');
-    const hasGroup = recordingHasTalkgroup(row);
-    const conventional = !hasGroup && value(row, 'destination_radio_id') === null;
-    head.append(time, node('span', 'recordings-call-duration ui-pill ui-pill-compact', duration(row)),
-      node('span', 'recordings-call-protocol', `${protocolLabel(row.protocol)}${conventional ? ' · Conventional' : ''}`));
-    const actions = node('div', 'recordings-call-actions'); actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', `Actions for ${description}`); actions.append(play, detail, info);
-    const main = node('div', 'recordings-call-main');
-    const heading = node('div', 'recordings-call-heading'); const title = node('strong', 'recordings-call-title');
-    title.append(entityLink(label(row), conventional ? row.channel_entity_ref : row.target_entity_ref, row, conventional ? 'channel' : 'target'));
-    const playback = node('span', 'recordings-call-status'); playback.hidden = true; heading.append(title, playback); main.append(heading, head);
-    const context = node('p', 'recordings-call-meta');
-    const parts = [];
-    const system = systemLabel(row);
-    const rowSystemKey = value(row, 'system_key', 'radio_system_key') || row.radio_system_entity_ref?.key;
-    if (system && (!currentFilters.system_key || currentFilters.system_key !== rowSystemKey))
-      parts.push(['system', system, row.radio_system_entity_ref]);
-    const group = value(row, 'talkgroup_group', 'group_name'); if (group) parts.push(['group', group]);
-    const identity = node('span', 'recordings-call-identity');
-    if (hasGroup) identity.append(entityLink(`${row.call_type === 'PATCH' ? 'Patch' : 'Talkgroup'} ${recordingGroupId(row, 'target', groupId)}`, row.target_entity_ref, row, 'target'));
-    else if (value(row, 'destination_radio_id') !== null) identity.append(entityLink(`Radio ${recordingRadioId(row, 'target', row.destination_radio_id)}`, row.target_entity_ref, row, 'target'));
-    else if (frequency(row)) identity.textContent = frequency(row);
-    if (identity.textContent) head.append(identity);
-    parts.forEach(([key, text, ref], index) => { if (index) context.append(' · '); context.append(entityLink(text, ref, row, key)); });
-    if (parts.length) main.append(context);
+    const card = node('article', 'recordings-call'); card.dataset.recordingId = String(row.id);
+    const description = `${label(row)} at ${dateTime(millis(row))}`; card.setAttribute('aria-label', description);
+    const info = iconButton ? iconButton('icon-more', `More actions for ${description}`, 'ui-button ui-button-secondary ui-icon-button recordings-call-info') : button(node, '…', null, 'ui-button ui-button-secondary ui-icon-button recordings-call-info');
+    info.setAttribute('aria-label', `More actions for ${description}`); info.dataset.uiHint = 'Call actions'; info.addEventListener('click', () => openCallActions(row));
+    if (deps.guideMode && Number(row.id) === RECORDINGS_GUIDE_CALL_ID) { card.dataset.guideTarget = 'rec-call-card'; info.dataset.guideTarget = 'rec-actions-button'; }
+    const time = node('div', 'recordings-call-time', timeOnly(millis(row))); time.dataset.uiHint = dateTime(millis(row));
+    const length = node('span', 'recordings-call-duration', duration(row));
+    const heading = node('div', 'recordings-call-heading'); heading.append(node('strong', 'recordings-call-title', label(row)));
+    const hasGroup = recordingHasTalkgroup(row), targetRadio = value(row, 'destination_radio_id');
+    const id = hasGroup ? recordingGroupId(row, 'target', value(row, 'talkgroup_id', 'group_id')) : targetRadio !== null ? recordingRadioId(row, 'target', targetRadio) : null;
+    if (id !== null && !label(row).includes(String(id))) heading.append(node('span', 'recordings-call-identity', String(id)));
+    const status = node('span', 'recordings-call-status'); status.hidden = true; heading.append(status);
     const sourceText = sourceLabel(row, getSourceNameDisplay());
-    const channelName = value(row, 'channel_name', 'analog_channel_name');
-    if (sourceText || channelName && channelName !== label(row)) {
-      const source = node('div', 'recordings-call-source');
-      if (sourceText) source.append(node('span', '', 'Source '), entityLink(sourceText, recordingSourceReference(row), row, 'source'));
-      if (channelName && channelName !== label(row)) {
-        if (sourceText) source.append(node('span', '', ' · '));
-        source.append(entityLink(channelName, row.channel_entity_ref, row, 'channel'));
-      }
-      main.append(source);
-    }
-    for (const item of row.auxiliary_identifiers || []) if (item.kind === 'tone' && item.protocol === 'DCS') {
-      const tone = button(node, `DCS ${item.value}`, () => { search.dcs_code = String(item.value); replaceSearchForm(); updateDraftFeedback(); }, 'ui-button ui-button-secondary ui-button-compact recordings-call-tone'); main.append(tone);
-    }
-    if (row.transcript_excerpt) main.append(node('p', 'recordings-transcript-preview', row.transcript_excerpt));
-    const details = node('details', 'recordings-call-summary'); details.append(node('summary', '', 'Details'));
-    const facts = node('p', '', [value(row, 'channel_name', 'analog_channel_name'), frequency(row), value(row, 'site_name'), conventional ? 'No talkgroup recorded' : ''].filter(Boolean).join(' · ')); details.append(facts);
-    main.append(details);
+    const source = node('div', 'recordings-call-source', sourceText ? sourceText.replace(/^Radio\s+/i, '') : '—');
+    source.setAttribute('aria-label', sourceText ? `Source ${sourceText}` : 'Source radio not recorded');
+    const frequencyCell = node('div', 'recordings-call-frequency', frequency(row) || '—');
+    const actions = node('div', 'recordings-call-actions'); actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', `Actions for ${description}`); actions.append(info);
     if (isPrimaryAdmin()) {
-      const checkbox = node('input', 'recordings-call-select'); checkbox.type = 'checkbox'; checkbox.checked = selection.has(String(row.id));
+      const checkbox = node('input', 'recordings-call-select ui-selection-check'); checkbox.type = 'checkbox'; checkbox.checked = selection.has(String(row.id));
       checkbox.setAttribute('aria-label', `Select ${label(row)} at ${dateTime(millis(row))}`);
       checkbox.addEventListener('change', () => { if (checkbox.checked) selection.add(String(row.id)); else selection.delete(String(row.id)); drawSelection(); });
       card.classList.add('recordings-call-selectable'); card.append(checkbox);
     }
-    card.append(main, actions); return card;
+    card.append(time, length, heading, source, frequencyCell, actions);
+    if (row.transcript_excerpt) card.append(node('p', 'recordings-transcript-preview', row.transcript_excerpt));
+    return card;
   }
 
   function drawResultPlayback(snapshot = player ? playbackState() : null) {
@@ -1661,8 +1632,6 @@ export function createRecordingsFeature(deps) {
       card.classList.toggle('recordings-call-queued', waiting);
       if (active) card.setAttribute('aria-current', 'true'); else card.removeAttribute('aria-current');
       card.setAttribute('aria-busy', String(Boolean(active && snapshot.loading)));
-      const play = card.querySelector('.recordings-card-play');
-      if (play) play.dataset.uiHint = { once: 'Play once', continue: 'Continue from here', queue: 'Queue and play' }[clickMode];
       if (status) { status.textContent = text; status.hidden = !text; }
     });
   }
@@ -1858,7 +1827,7 @@ export function createRecordingsFeature(deps) {
     }, 'ui-button ui-button-danger');
     body.append(status, modalFooter(cancel, remove));
     const modal = openReadOnlyModal('Delete recordings', body, { id: 'delete-recordings',
-      className: 'recordings-detail-modal' });
+      className: 'modal-size-medium' });
     if (!modal) return;
     modal.dialog.setAttribute('role', 'alertdialog');
     body.firstElementChild.id = `${modal.dialog.getAttribute('aria-labelledby')}-message`;
@@ -1898,7 +1867,6 @@ export function createRecordingsFeature(deps) {
 
   function drawResults() {
     if (!resultHost) return;
-    resultHost.classList.toggle('recordings-call-list-compact', resultsLayout === 'compact');
     if (resultScope) resultScope.textContent = searchPeriodLabel(appliedSearch || search);
     resultHost.replaceChildren();
     if (!currentResults.length) {
@@ -1906,11 +1874,11 @@ export function createRecordingsFeature(deps) {
         'No matches in this batch. More calls may match; select Next to continue.' :
         'No matching calls. Try a wider time range or fewer filters.', 'empty'));
     } else {
-      let lastDate = '';
+      let lastDate = '', lastContext = '';
       const gaps = recordingPageGaps(currentResults);
       for (const [index, row] of currentResults.entries()) {
         const date = dateTime(millis(row), true);
-        if (date !== lastDate) { resultHost.append(node('h3', 'recordings-result-date', date)); lastDate = date; }
+        if (date !== lastDate) { resultHost.append(node('h3', 'recordings-result-date', date)); lastDate = date; lastContext = ''; }
         else {
           const gap = gaps.get(index);
           if (gap !== undefined) {
@@ -1922,6 +1890,16 @@ export function createRecordingsFeature(deps) {
             divider.append(node('span', 'recordings-call-gap-label', `Gap ${label}`));
             resultHost.append(divider);
           }
+        }
+        const contextParts = [systemLabel(row), value(row, 'channel_name', 'analog_channel_name'), winningSite(row), protocolLabel(row.protocol)].filter(Boolean);
+        const contextKey = JSON.stringify([value(row, 'system_key', 'radio_system_key'), row.channel_id, ...contextParts]);
+        if (contextKey !== lastContext) {
+          const context = node('div', 'recordings-call-context');
+          context.append(node('strong', '', contextParts[0] || 'Recorded calls'), node('span', '', contextParts.slice(1).join(' · ')));
+          const columns = node('div', `recordings-call-columns${isPrimaryAdmin() ? ' recordings-call-selectable' : ''}`);
+          columns.setAttribute('aria-hidden', 'true');
+          for (const title of [...(isPrimaryAdmin() ? [''] : []), 'Time', 'Length', 'Talkgroup / channel', 'Source radio', 'Frequency', '']) columns.append(node('span', '', title));
+          resultHost.append(context, columns); lastContext = contextKey;
         }
         resultHost.append(callCard(row));
       }
@@ -2608,10 +2586,7 @@ export function createRecordingsFeature(deps) {
       void loadPage(0, null, { reset: true, pageSize: Number(pageSizeControl.value) });
     });
     pageSizeField.append(node('span', 'visually-hidden', 'Calls per page'), pageSizeControl);
-    const layout = select(node, [['cards', 'Cards'], ['compact', 'Compact rows']], 'Results layout');
-    layout.value = resultsLayout;
-    layout.addEventListener('change', () => { resultsLayout = layout.value; drawResults(); });
-    titleActions.append(sortControl, pageSizeField, layout);
+    titleActions.append(sortControl, pageSizeField);
     titleBar.append(titleActions);
     const body = node('div', 'recordings-results-body');
     selectedHost = node('div', 'recordings-selected ui-action-row');
@@ -3136,8 +3111,11 @@ export function createRecordingsFeature(deps) {
     if (!current()) return;
     const call = currentResults.find(row => Number(row.id) === RECORDINGS_GUIDE_CALL_ID);
     if (!call) throw new Error('The example call could not be found.');
-    if (['details', 'details-close'].includes(name)) await openDetails(call);
-    else if (['playback', 'player-overview', 'player-button', 'click-mode'].includes(name)) {
+    if (['details-button', 'details', 'details-close'].includes(name)) {
+      const modal = openCallActions(call);
+      if (modal?.ready && !await modal.ready || !current()) return;
+      if (name !== 'details-button') await modal?.showMore();
+    } else if (['playback', 'player-overview', 'player-button', 'click-mode'].includes(name)) {
       const modal = openCallActions(call);
       if (modal?.ready && !await modal.ready || !current()) return;
       if (['player-overview', 'player-button', 'click-mode'].includes(name)) {
@@ -3198,7 +3176,7 @@ export function createRecordingsFeature(deps) {
       const modal = openReadOnlyModal(title, body, { ...options, guideTarget: true });
       if (modal) {
         modals.push(modal);
-        if (title === 'Call details') modal.dialog.querySelector('.modal-close')?.setAttribute('data-guide-target', 'rec-details-close');
+        if (title === 'Call actions') modal.dialog.querySelector('.modal-close')?.setAttribute('data-guide-target', 'rec-details-close');
         if (title === 'Talkgroups & channels') modal.dialog.querySelector('.modal-content')?.setAttribute('data-guide-target', 'rec-targets');
       }
       return modal;
@@ -3206,7 +3184,7 @@ export function createRecordingsFeature(deps) {
     feature = createRecordingsFeature({ ...deps, guideMode: true, content: host,
       requestJson: sample.requestJson, createAudioElement: sample.createAudioElement,
       openReadOnlyModal: sampleModal, closeReadOnlyModal: () => true,
-      stopLiveAudio: async () => {}, openCallRelations: null,
+      stopLiveAudio: async () => {}, openCallRelations: null, recordingDirectListenControl: null,
       captureRenderContext: () => ({ signal: context.signal }),
       renderIsCurrent: () => !closed && context.isCurrent(),
       beginPage: (_render, header) => {

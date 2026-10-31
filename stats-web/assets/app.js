@@ -19,7 +19,7 @@ import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=3';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=43';
+import { createGuideController } from './guides/controller.js?v=44';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -40,7 +40,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=66';
+import { createRecordingsFeature } from './features/recordings.js?v=67';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -2347,6 +2347,28 @@ function withDirectListenAction(value, row, reference, options = {}) {
   label.append(value instanceof Node ? value : document.createTextNode(String(value || '')));
   result.append(...(options.actionFirst ? [action, label] : [label, action]));
   return result;
+}
+
+function recordingDirectListenControl(row) {
+  const reference = row?.target_entity_ref;
+  if (reference?.kind === 'radio' || row?.destination_radio_id != null || row?.call_type === 'DIRECT') return null;
+  const id = row?.talkgroup_id ?? row?.group_id;
+  const group = !['AM', 'NBFM'].includes(row?.protocol) &&
+    (['talkgroup', 'patch_group'].includes(reference?.kind) || id != null ||
+      ['GROUP', 'PATCH'].includes(row?.call_type));
+  const target = group ? reference : row?.channel_entity_ref;
+  const normalized = {
+    ...row,
+    configuration_id: row?.channel_entity_ref?.key || row?.channel_id,
+    radio_system_key: row?.radio_system_entity_ref?.key || row?.system_key || row?.radio_system_key,
+    ...(group ? { target_id: id ?? row?.target_id,
+      group_identity_kind: ['talkgroup', 'patch_group'].includes(reference?.kind) ? reference.kind :
+        row?.call_type === 'PATCH' ? 'patch_group' : 'talkgroup' } : {})
+  };
+  const label = group ? row?.talkgroup_alias || row?.group_alias || row?.talkgroup_name ||
+    `${row?.call_type === 'PATCH' ? 'Patch group' : 'Talkgroup'} ${id ?? row?.target_id ?? ''}` :
+    row?.channel_name || row?.analog_channel_name || 'Recorded channel';
+  return directListenAction(normalized, target, { id, channelOnly: !group, label });
 }
 
 function radioIdentitySortValue(row, options) {
@@ -36448,6 +36470,7 @@ function recordingsFeatureDependencies(overrides = {}) {
   return {
   node, iconButton, iconGlyph, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
   openCallRelations,
+  recordingDirectListenControl,
   modalFooter: aliasModalFooter,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),

@@ -81,6 +81,7 @@ final class ManagedRecordingLabels
         try(Connection connection = open())
         {
             Map<String,ChannelLabels> channels = new HashMap<>();
+            Map<SiteCoordinates,SiteNavigation> sites = new HashMap<>();
             Map<String,AliasLabels> aliases = new HashMap<>();
             Set<String> patchAliasLookups = new HashSet<>();
             Map<String,String> talkerAliases = new HashMap<>();
@@ -90,6 +91,12 @@ final class ManagedRecordingLabels
             for(Map<String,Object> call: result)
             {
                 String protocol = string(call.get("protocol"));
+                SiteNavigation receivingSite = siteNavigation(connection, call, sites);
+                if(receivingSite != null)
+                {
+                    WebEntityRef.put(call, "site_entity_ref", receivingSite.reference());
+                    put(call, "winner_site_name", receivingSite.name());
+                }
                 String recordedSystem = recordedSystemKey(call, protocol);
                 put(call, "system_key", recordedSystem);
                 String channelId = string(call.get("channel_id"));
@@ -1213,6 +1220,60 @@ final class ManagedRecordingLabels
         }
     }
 
+    /** A recording's receiving site may differ from its saved recording channel, including after retuning. */
+    private static SiteNavigation siteNavigation(Connection connection, Map<String,Object> call,
+                                                  Map<SiteCoordinates,SiteNavigation> cache)
+    {
+        Map<?,?> captured = call.get("audio_from") instanceof Map<?,?> site ? site : call;
+        Integer wacn = coordinate(captured.get("wacn"), 0xFFFFF);
+        Integer system = coordinate(captured.get("system_id"), 0xFFF);
+        Integer rfss = coordinate(captured.containsKey("rfss_id") ? captured.get("rfss_id") : captured.get("rfss"), 0xFF);
+        Integer site = coordinate(captured.get("site_id"), 0xFF);
+        if(wacn == null || system == null || rfss == null || site == null) return null;
+        SiteCoordinates coordinates = new SiteCoordinates(wacn, system, rfss, site);
+        if(cache.containsKey(coordinates)) return cache.get(coordinates);
+        SiteNavigation navigation = null;
+        try(PreparedStatement statement = connection.prepareStatement("""
+            SELECT config.configuration_id,config.site_name,config.name
+            FROM radio_system system
+            JOIN receiver_channel receiver ON receiver.radio_system_id=system.id
+            JOIN p25_site_snapshot site ON site.channel_id=receiver.id
+            JOIN configured_channel config ON config.configuration_id=receiver.configuration_id
+            WHERE system.protocol_code=1 AND system.p25_wacn=? AND system.p25_system_id=?
+                AND site.rfss=? AND site.site=? AND config.channel_kind='TRUNKED'
+            ORDER BY config.sort_order,config.configuration_id
+            LIMIT 1
+            """))
+        {
+            statement.setInt(1, wacn);
+            statement.setInt(2, system);
+            statement.setInt(3, rfss);
+            statement.setInt(4, site);
+            try(ResultSet rows = statement.executeQuery())
+            {
+                if(rows.next())
+                {
+                    String name = string(rows.getString(2));
+                    navigation = new SiteNavigation(WebEntityRef.channel(rows.getString(1)),
+                        name != null ? name : string(rows.getString(3)));
+                }
+            }
+        }
+        catch(SQLException | IllegalArgumentException ignored)
+        {
+            //An absent or unmatched receiving site remains filterable without inventing a page destination.
+        }
+        cache.put(coordinates, navigation);
+        return navigation;
+    }
+
+    private static Integer coordinate(Object value, int maximum)
+    {
+        if(!(value instanceof Number number)) return null;
+        long integral = number.longValue();
+        return integral >= 0 && integral <= maximum && number.doubleValue() == integral ? (int)integral : null;
+    }
+
     private static AliasLabels alias(Connection connection, long listId, String callProtocol, int id, boolean radio)
     {
         String protocol = switch(callProtocol != null ? callProtocol.toUpperCase(Locale.ROOT) : "")
@@ -1328,6 +1389,8 @@ final class ManagedRecordingLabels
 
     private record ChannelLabels(String name, String systemName, String siteName, Long aliasListId,
                                  String systemKey) {}
+    private record SiteCoordinates(int wacn, int systemId, int rfss, int siteId) {}
+    private record SiteNavigation(WebEntityRef.KeyRef reference, String name) {}
     private record AliasLabels(String name, String description, String group) {}
     private record SystemScope(long id, String key, int protocolCode, Integer p25Wacn, Integer p25SystemId,
                                WebEntityRef.KeyRef reference) {}

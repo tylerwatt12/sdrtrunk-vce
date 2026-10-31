@@ -105,10 +105,32 @@ async function main() {
     .replace(/from '\.\.\/core\/form-workflows\.js\?v=\d+'/, `from '${formWorkflowsUrl}'`)
     .replace(/from '\.\.\/core\/call-display-retention\.js\?v=\d+'/, `from '${callDisplayRetentionUrl}'`)
     .replace(/from '\.\.\/guides\/recordings-data\.js\?v=\d+'/, `from '${guideDataUrl}'`);
-  const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter,
+  const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter, recordingRefinementFilters,
     recordingIdentitySelections, recordingIdentitySelectionKey, recordingDiscoveryPeriod,
     recordingGapMilliseconds, recordingPageGaps, recordingGapLabel, recordingSearchTiming } = await import(
     `data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
+  const scopedGroup = { id: 1201, system_key: 'p25:00001:001' };
+  const selectedTarget = { key: 'talkgroups', filters: { talkgroups: JSON.stringify([scopedGroup]), targets_any: 'true' } };
+  const scopedSearch = { channel_ids: JSON.stringify(['north']), from_ms: '1000', transcript: 'dispatch' };
+  const narrowed = { ...scopedSearch, ...recordingRefinementFilters(selectedTarget, scopedSearch) };
+  assert.equal(narrowed.channel_ids, scopedSearch.channel_ids, 'Filtering a talkgroup must retain a channel-only scope');
+  assert.equal(narrowed.targets_any, '', 'The selected talkgroup must intersect the existing channel scope');
+  assert.equal(narrowed.from_ms, '1000'); assert.equal(narrowed.transcript, 'dispatch');
+  const canonicalRadio = { key: 'radio_id', filters: { radio_identity_key: 'v1-r-00001-001-30914' } };
+  assert.equal(recordingRefinementFilters(canonicalRadio, {}, 'source').radio_role, 'source',
+    'A canonical source radio must remain a source-only filter');
+  assert.equal(recordingRefinementFilters(canonicalRadio, {}, 'target').radio_role, 'any',
+    'A destination radio keeps participant matching distinct from the source action');
+  const alternatives = { ...scopedSearch, talkgroups: JSON.stringify([scopedGroup]), targets_any: 'true' };
+  assert.equal(recordingRefinementFilters(selectedTarget, alternatives).channel_ids, '',
+    'A selected talkgroup already admitted by an OR search does not require the other channel branch');
+  const otherGroup = { ...selectedTarget, filters: { talkgroups: JSON.stringify([{ ...scopedGroup, id: 1202 }]), targets_any: 'true' } };
+  assert.equal(recordingRefinementFilters(otherGroup, alternatives).channel_ids, scopedSearch.channel_ids,
+    'A talkgroup admitted only through the channel branch must retain that branch');
+  assert.equal(recordingRefinementFilters({ key: 'channel_id', filters: { channel_id: 'north' } }, alternatives).talkgroups, '',
+    'A selected channel already admitted by OR narrows to that channel');
+  assert.equal(recordingRefinementFilters({ key: 'channel_id', filters: { channel_id: 'south' } }, alternatives).targets_any, '',
+    'A channel admitted only through a talkgroup must intersect that talkgroup scope');
   const earlier = { start_ms: 10_000, end_ms: 40_000, duration_ms: 999_000 };
   const later = { start_ms: 70_000, duration_ms: 5_000 };
   assert.equal(recordingGapMilliseconds(earlier, later), 30_000,

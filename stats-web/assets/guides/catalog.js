@@ -10,7 +10,7 @@ import { spectrumSteps, spectrumOverviewPresentation } from './pages/tuner-spect
 import { liveSteps, liveOverviewPresentation } from './pages/live.js?v=3';
 import { mainSteps, mainOverviewItems } from './pages/dashboard.js?v=3';
 import { scannerSteps } from './pages/scanner.js?v=6';
-import { recordingsSteps } from './pages/recordings.js?v=4';
+import { recordingsSteps } from './pages/recordings.js?v=5';
 import { topicsSteps } from './pages/topics.js?v=1';
 import { mapSteps, mapOverviewPresentation } from './pages/map.js?v=1';
 import { networkVisualizerSteps, networkVisualizerOverviewPresentation } from './pages/network-visualizer.js?v=2';
@@ -80,7 +80,7 @@ export const pageGuideOverviews = Object.freeze(Object.fromEntries(Object.entrie
     Object.freeze({ id: 'overview', overview: true, title, paragraphs: Object.freeze(paragraphs),
       ...(id === 'scan-lists' ? { diagram: 'scan-lists' } : id === 'tuners' ? { diagram: 'tuner-coverage' } : {}) })])));
 // A revised page structure receives a new dismissal version for its first visit.
-const guideVersions = Object.freeze({ 'channel-setup': 5, aliases: 5, 'scan-lists': 8, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5, live: 3, dashboard: 3, scanner: 6, recordings: 4, topics: 3, map: 3, 'network-visualizer': 4, admin: 3 });
+const guideVersions = Object.freeze({ 'channel-setup': 5, aliases: 5, 'scan-lists': 8, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5, live: 3, dashboard: 3, scanner: 6, recordings: 5, topics: 3, map: 3, 'network-visualizer': 4, admin: 3 });
 export const pageGuideTemplates = Object.freeze(Object.fromEntries(routes.map(({ id, title }) => [id,
   Object.freeze({ id, title, version: guideVersions[id] || 2,
     overview: pageGuideOverviews[id], authored: Boolean(authoredPages[id]), steps: Object.freeze([]) })])));

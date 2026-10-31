@@ -150,11 +150,11 @@ async function stubRecordingAudio(page) {
 }
 
 async function openRecordings(page, options = {}) {
-  const tourHistory = tourHistoryFixture({ welcome: 1, recordings: 4 });
+  const tourHistory = tourHistoryFixture({ welcome: 1, recordings: 5 });
   // These fixtures exercise an existing listener's recording workflows.
   // First-visit onboarding is covered by recordings-guide.spec.js.
   await page.addInitScript(() => {
-    for (const account of ['admin', 'anonymous']) for (const [id, version] of [['welcome', 1], ['recordings', 4]]) {
+    for (const account of ['admin', 'anonymous']) for (const [id, version] of [['welcome', 1], ['recordings', 5]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:${account}:recordings-fixture-account:${id}:${version}`, '1');
     }
   });
@@ -187,7 +187,8 @@ async function openRecordings(page, options = {}) {
         guide_dismissal_scope: 'recordings-fixture-account',
         primary: state.admin && state.primary, capabilities: { recordings: true,
           'admin-recordings': state.admin, 'admin-settings': state.admin, dashboard: true,
-          radio: options.radio !== false } } } });
+          radio: options.radio !== false, 'call-audio': options.directListen === true,
+          'direct-listen': options.directListen === true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       await route.fulfill({ json: { revision: 1, preferences } });
     } else if (pathname === '/api/v1/recordings/status') {
@@ -326,6 +327,10 @@ async function openRecordings(page, options = {}) {
         ] : []);
         await route.fulfill({ json: { data: { suggestions } } });
       }
+    } else if (options.directListen && pathname === '/api/v1/scan-lists') {
+      await route.fulfill({ json: { data: { revision: 1, scan_lists: [] } } });
+    } else if (options.directListen && pathname === '/api/v1/calls/feed') {
+      await route.fulfill({ json: { data: { cursor: '1', reset: false, calls: [] } } });
     } else if (pathname === '/api/v1/status') {
       await route.fulfill({ json: { data: {} } });
     } else {
@@ -351,37 +356,34 @@ async function openPicker(page, topic = 'targets', name = 'Talkgroups & channels
   await page.locator(`#recordings-open-${topic}`).click();
   const dialog = page.getByRole('dialog', { name, exact: true }); await expect(dialog).toBeVisible(); return dialog;
 }
-async function openCallDetails(page) {
-  await page.locator('.recordings-call-details').first().click();
+async function openCallDetails(page, card = page.locator('.recordings-call').first()) {
+  await card.locator('.recordings-call-info').click();
+  const dialog = page.getByRole('dialog', { name: 'Call actions', exact: true });
+  await dialog.getByRole('button', { name: 'Show more', exact: true }).click();
+  await expect(dialog.getByRole('tab', { name: 'Overview', exact: true })).toBeVisible();
 }
 
-async function expectCallActionDescriptions(dialog, expectedCount = 11) {
-  const actions = dialog.locator('.recordings-call-action');
-  await expect(actions).toHaveCount(expectedCount);
-  const playback = dialog.getByRole('region', { name: 'Playback', exact: true });
-  const explore = dialog.getByRole('region', { name: 'Explore this call', exact: true });
-  await expect(explore.getByRole('button', { name: 'Related activity and alerts', exact: true }))
-    .toHaveAccessibleDescription('View activity and alerts saved for this recorded call.');
-  await expect(playback.locator('.recordings-action-title'))
-    .toHaveText(['Play once', 'Continue from here', 'Add to queue']);
-  await expect(explore.locator('.recordings-call-action')).toHaveCount(expectedCount - 3);
-  const playbackBounds = await playback.boundingBox(), exploreBounds = await explore.boundingBox();
-  expect(exploreBounds.y).toBeGreaterThanOrEqual(playbackBounds.y + playbackBounds.height);
-  for (const action of await actions.all()) {
-    const title = action.locator('.recordings-action-title');
-    const description = action.locator('.recordings-action-description');
-    await expect(title).toBeVisible();
-    await expect(description).toBeVisible();
-    const sentence = (await description.textContent()).trim();
-    expect(sentence).toMatch(/^[^.!?]+[.]$/);
-    await expect(action).toHaveAccessibleName((await title.textContent()).trim());
-    await expect(action).toHaveAccessibleDescription(sentence);
-    await expect(action.locator('svg')).toHaveCount(1);
-    const [iconBounds, copyBounds] = await Promise.all([
-      action.locator('svg').boundingBox(), action.locator('.recordings-action-copy').boundingBox()
-    ]);
-    expect(Math.abs(iconBounds.y + iconBounds.height / 2 - copyBounds.y - copyBounds.height / 2))
-      .toBeLessThanOrEqual(1);
+async function recordingAction(page, card = page.locator('.recordings-call').first(), name = 'Play once') {
+  await card.locator('.recordings-call-info').click();
+  await page.getByRole('dialog', { name: 'Call actions', exact: true })
+    .getByRole('button', { name, exact: true }).click();
+}
+
+async function expectCallActionDescriptions(dialog) {
+  for (const name of ['Play once', 'Continue from here', 'Add to queue'])
+    await expect(dialog.getByRole('button', { name, exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Related activity and alerts', exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Call details', exact: true })).toHaveCount(0);
+  const more = dialog.getByRole('button', { name: 'Show more', exact: true });
+  await expect(more).toHaveAttribute('aria-expanded', 'false');
+  await expect(dialog.getByRole('tab')).toHaveCount(0);
+  expect(await dialog.locator('.recordings-call-entity').count()).toBeGreaterThan(0);
+  for (const row of await dialog.locator('.recordings-call-entity').all()) {
+    const filter = row.getByRole('link', { name: /^Filter by / });
+    if (await filter.count()) await expect(filter).toHaveAttribute('href', /view=recordings/);
+    else await expect(row.getByRole('button', { name: /^Filter by / })).toBeDisabled();
+    const navigation = row.getByRole('link', { name: /^Open .* page$/ });
+    if (await navigation.count()) await expect(navigation).toHaveAttribute('href', /[?&]view=(?!recordings)/);
   }
 }
 async function searchNow(page, state) {
@@ -778,7 +780,7 @@ test('call details show a transcript and allow administrators to retry failures'
   await openRecordings(page, { transcription: { status: 'complete',
     text: 'Engine four arriving.\nRequesting another unit.', stored_at_ms: Date.parse('2026-09-28T10:09:00Z') } });
   await openCallDetails(page);
-  let detail = page.getByRole('dialog', { name: 'Call details' });
+  let detail = page.getByRole('dialog', { name: 'Call actions' });
   await selectRecordingDetailTab(detail, 'Transcript');
   await expect(detail.locator('.recordings-transcript')).toContainText('Engine four arriving.');
   await expect(detail.locator('.recordings-transcript')).toContainText('Requesting another unit.');
@@ -787,30 +789,35 @@ test('call details show a transcript and allow administrators to retry failures'
   const retryState = await openRecordings(page, { transcription: { status: 'failed',
     text: null, stored_at_ms: null } });
   await openCallDetails(page);
-  detail = page.getByRole('dialog', { name: 'Call details' });
+  detail = page.getByRole('dialog', { name: 'Call actions' });
   await selectRecordingDetailTab(detail, 'Transcript');
   await expect(detail.getByRole('button', { name: 'Retry transcription' })).toBeVisible();
   await detail.getByRole('button', { name: 'Retry transcription' }).click();
   await expect(detail.locator('.recordings-transcript')).toContainText('Pending transcription.');
   expect(retryState.transcription.status).toBe('PENDING');
+  await detail.getByRole('button', { name: 'Show less', exact: true }).click();
+  await detail.getByRole('button', { name: 'Show more', exact: true }).click();
+  await selectRecordingDetailTab(detail, 'Transcript');
+  await expect(detail.locator('.recordings-transcript')).toContainText('Pending transcription.');
+  await expect(detail.getByRole('button', { name: 'Retry transcription' })).toHaveCount(0);
 
   await openRecordings(page, { admin: false,
     transcription: { status: 'failed', text: null, stored_at_ms: null } });
   await openCallDetails(page);
-  detail = page.getByRole('dialog', { name: 'Call details' });
+  detail = page.getByRole('dialog', { name: 'Call actions' });
   await selectRecordingDetailTab(detail, 'Transcript');
   await expect(detail.locator('.recordings-transcript')).toContainText('Transcription failed.');
   await expect(detail.getByRole('button', { name: 'Retry transcription' })).toHaveCount(0);
 
   await openRecordings(page, { transcription: { status: 'too_short', text: null, stored_at_ms: null } });
   await openCallDetails(page);
-  detail = page.getByRole('dialog', { name: 'Call details' });
+  detail = page.getByRole('dialog', { name: 'Call actions' });
   await selectRecordingDetailTab(detail, 'Transcript');
   await expect(detail.locator('.recordings-transcript')).toContainText('shorter than the minimum length');
 
   await openRecordings(page, { transcription: { status: 'disabled', text: null, stored_at_ms: null } });
   await openCallDetails(page);
-  detail = page.getByRole('dialog', { name: 'Call details' });
+  detail = page.getByRole('dialog', { name: 'Call actions' });
   await selectRecordingDetailTab(detail, 'Transcript');
   await expect(detail.locator('.recordings-transcript')).toContainText('Transcription is off.');
 });
@@ -837,7 +844,7 @@ test('call detail tabs retain identities, protocol, recording metadata, download
   await openRecordings(page, { call: richCall,
     transcription: { status: 'COMPLETE', text: 'Engine four arriving at staging.', stored_at_ms: call.start_ms + 60_000 } });
   await openCallDetails(page);
-  const detail = page.getByRole('dialog', { name: 'Call details', exact: true });
+  const detail = page.getByRole('dialog', { name: 'Call actions', exact: true });
   await expect(detail.getByRole('tab')).toHaveText(['Overview', 'Transcript', 'Identities', 'Technical', 'Recording']);
   const overview = detail.getByRole('tab', { name: 'Overview', exact: true });
   await expect(overview).toHaveAttribute('aria-selected', 'true');
@@ -856,8 +863,8 @@ test('call detail tabs retain identities, protocol, recording metadata, download
   let panel = detail.getByRole('tabpanel').filter({ visible: true });
   for (const text of ['Source Radio ID', '30914', 'Fire engine response crew', 'Patch ID', '1201',
     'Patch member identities', 'Fireground', 'Member 1 home identity', '1202']) await expect(panel).toContainText(text);
-  await expect(entityLink(panel,
-    '/?view=group-identity&radio_system_key=p25%3A00001%3A001&identity_key=v1-g-00001-001-1202').first()).toBeVisible();
+  await expect(panel.getByRole('link')).toHaveCount(0);
+  await expect(panel).toContainText('Fireground');
 
   await selectRecordingDetailTab(detail, 'Technical');
   panel = detail.getByRole('tabpanel').filter({ visible: true });
@@ -877,21 +884,22 @@ test('call detail tabs retain identities, protocol, recording metadata, download
   await expect(detail.getByRole('tabpanel').filter({ visible: true })).toContainText('Engine four arriving at staging.');
   await expect(detail.getByRole('button', { name: /Play once|Continue from here|Add to queue/ })).toHaveCount(3);
   await page.keyboard.press('Escape');
-  await expect(page.locator('.recordings-call-details').first()).toBeFocused();
+  await expect(page.locator('.recordings-call-info').first()).toBeFocused();
 });
 
-for (const theme of ['light']) {
+for (const theme of ['light', 'dark']) {
   for (const [device, viewport] of [['desktop', { width: 1280, height: 900 }], ['phone', { width: 390, height: 844 }]]) {
     test(`tabbed call details ${theme} ${device} retain visible actions`, async ({ page }) => {
       await page.setViewportSize(viewport);
       await openRecordings(page, { theme, call: { ...linkedCall, frequency_hz: 851_012_500, timeslot: 1 },
         transcription: { status: 'COMPLETE', text: 'Engine four arriving at staging.', stored_at_ms: call.start_ms + 60_000 } });
       await openCallDetails(page);
-      const detail = page.getByRole('dialog', { name: 'Call details', exact: true });
+      const detail = page.getByRole('dialog', { name: 'Call actions', exact: true });
       await expect(detail.getByRole('tab')).toHaveCount(5);
       for (const name of ['Play once', 'Continue from here', 'Add to queue']) {
         await expect(detail.getByRole('button', { name, exact: true })).toBeVisible();
       }
+      await selectRecordingDetailTab(detail, 'Recording');
       await expect(detail.getByRole('link', { name: 'Download recording', exact: true })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
       await expect(detail).toHaveScreenshot(`recordings-details-${theme}-${device}.png`, componentScreenshot);
@@ -910,20 +918,20 @@ test('call detail footer executes each playback choice once after closing', asyn
   });
   const state = await openRecordings(page, { call: linkedCall });
   await openCallDetails(page);
-  let detail = page.getByRole('dialog', { name: 'Call details', exact: true });
+  let detail = page.getByRole('dialog', { name: 'Call actions', exact: true });
   await detail.getByRole('button', { name: 'Add to queue', exact: true }).click();
   await expect(detail).toBeHidden();
   await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
   await expect(page.locator('.recordings-call-status')).toHaveText('Queued');
   expect(await page.evaluate(() => window.playedRecordingSources)).toEqual([]);
   await openCallDetails(page);
-  detail = page.getByRole('dialog', { name: 'Call details', exact: true });
+  detail = page.getByRole('dialog', { name: 'Call actions', exact: true });
   await detail.getByRole('button', { name: 'Play once', exact: true }).click();
   await expect(detail).toBeHidden();
   await expect.poll(() => page.evaluate(() => window.playedRecordingSources)).toHaveLength(1);
   expect(await page.evaluate(() => window.playedRecordingSources[0])).toMatch(/calls\/17\/audio$/);
   await openCallDetails(page);
-  detail = page.getByRole('dialog', { name: 'Call details', exact: true });
+  detail = page.getByRole('dialog', { name: 'Call actions', exact: true });
   await detail.getByRole('button', { name: 'Continue from here', exact: true }).click();
   await expect(detail).toBeHidden();
   await expect.poll(() => page.evaluate(() => window.playedRecordingSources)).toHaveLength(2);
@@ -972,194 +980,67 @@ for (const [device, viewport] of [['desktop', { width: 1280, height: 900 }],
   }
 }
 
-for (const theme of ['light']) {
-  test(`approved cards and call actions ${theme}`, async ({ page }) => {
+for (const theme of ['light', 'dark']) {
+  test(`compact recordings and unified call actions in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
-    const first = { ...linkedCall, transcript_excerpt: 'Engine four arriving. Requesting another unit.' };
+    const first = { ...linkedCall, transcript_excerpt: 'Engine four arriving. Requesting another unit.',
+      frequency_hz: 851_012_500, site_entity_ref: { kind: 'channel', key: channelId },
+      audio_from: { name: 'North Ridge', configuration_id: channelId, wacn: 1, system_id: 1, rfss_id: 1, site_id: 2 } };
     const second = { ...first, id: 18, source_id: 30915, source_alias: 'Engine 5',
       source_ota_alias: null, source_entity_ref: null, start_ms: first.start_ms + 60_000 };
-    const state = await openRecordings(page, { theme, call: first, calls: [second, first] });
-    await expect(page.locator('.recordings-call-title')).toContainText(['Fire Dispatch', 'Fire Dispatch']);
-    await expect(page.locator('.recordings-call-meta').first()).toContainText('Metro Public Safety');
-    await expect(page.locator('.recordings-call-summary').first()).toContainText('North Ridge');
-    await expect(page.locator('.recordings-library')).not.toContainText('Audio from');
-    await expect(page.locator('.recordings-call-actions')).toHaveCount(2);
-    await expect(page.locator('.recordings-call-actions > button')).toHaveCount(6);
-    await expect(page.locator('.recordings-call .recordings-card-play')).toHaveCount(2);
-    await expect(page.locator('.recordings-call .recordings-call-details')).toHaveCount(2);
-    await expect(page.locator('.recordings-results-panel')).not.toHaveClass(/(?:^|\s)ui-section(?:\s|$)/);
-    await expect(page.locator('.recordings-transcript-preview')).toHaveCount(2);
+    await openRecordings(page, { theme, call: first, calls: [second, first], directListen: true });
+    const cards = page.locator('.recordings-call');
+    await expect(cards).toHaveCount(2);
+    await expect(cards.locator('a, .recordings-card-play, .recordings-call-details, summary')).toHaveCount(0);
+    await expect(cards.locator('.recordings-call-actions > button')).toHaveCount(2);
+    await expect(cards.first()).toContainText('Fire Dispatch');
     await expect(page.locator('.recordings-library')).toHaveScreenshot(`recordings-approved-${theme}.png`, componentScreenshot);
-    const firstCard = page.locator('.recordings-call').first();
-    await firstCard.locator('.recordings-call-info').click();
-    await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Add to queue', exact: true }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
-    await expect(firstCard).toHaveClass(/recordings-call-queued/);
-    await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
-    await firstCard.locator('.recordings-call-info').click();
-    let actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    await cards.first().locator('.recordings-call-info').click();
+    const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
     await expectCallActionDescriptions(actions);
-    const targetSearch = actions.getByRole('link', { name: 'Search this talkgroup', exact: true });
-    await expect(targetSearch).toBeVisible();
-    await expect(targetSearch).toHaveClass(/ui-button-secondary/);
-    await expect(targetSearch).toHaveAttribute('href', /talkgroup_identity_key=v1-g-00001-001-1201/);
-    for (const control of await actions.locator('.recordings-call-action').all()) {
-      await expect(control.locator('svg')).toHaveCount(1);
-    }
     await expect(actions).toHaveScreenshot(`recordings-actions-${theme}.png`, componentScreenshot);
-    await page.keyboard.press('Escape');
-    await expect(firstCard.locator('.recordings-call-info')).toBeFocused();
-    await firstCard.locator('.recordings-call-select').check();
-    await expect(page.locator('.recordings-selected')).toContainText('1 selected');
-    await page.getByRole('searchbox', { name: 'Full text', exact: true }).fill('arriving');
-    await searchNow(page, state);
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-approved-mobile-${theme}.png`, componentScreenshot);
-    await firstCard.locator('.recordings-call-info').click();
-    await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Add to queue', exact: true }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
-    await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
-    await firstCard.locator('.recordings-call-info').click();
-    actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
-    await expectCallActionDescriptions(actions);
-    await expect(actions).toHaveScreenshot(`recordings-actions-mobile-${theme}.png`, componentScreenshot);
-    for (const width of [800, 320]) {
-      await page.setViewportSize({ width, height: 844 });
-      const controls = await actions.locator('.recordings-call-action').all();
-      for (const control of controls) {
-        const bounds = await control.boundingBox();
-        expect(bounds.x).toBeGreaterThanOrEqual(0);
-        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-      }
-      for (const grid of await actions.locator('.recordings-call-menu-grid').all()) {
-        const gridControls = await grid.locator('.recordings-call-action').all();
-        const columns = width <= 700 ? 1 : await grid.evaluate(element =>
-          element.classList.contains('recordings-playback-grid') ? 3 : 2);
-        for (let index = 0; index < gridControls.length; index += columns) {
-          const first = await gridControls[index].boundingBox();
-          for (let offset = 1; offset < columns && index + offset < gridControls.length; offset++) {
-            const next = await gridControls[index + offset].boundingBox();
-            expect(Math.abs(first.y - next.y)).toBeLessThanOrEqual(1);
-            expect(Math.abs(first.height - next.height)).toBeLessThanOrEqual(1);
-          }
-          if (index >= columns) {
-            const previous = await gridControls[index - columns].boundingBox();
-            expect(first.y).toBeGreaterThanOrEqual(previous.y + previous.height);
-          }
-        }
-      }
+    await expect(actions.getByRole('link', { name: 'Filter by talkgroup', exact: true }))
+      .toHaveAttribute('href', /talkgroup_identity_key=v1-g-00001-001-1201/);
+    await expect(actions.getByRole('link', { name: 'Open talkgroup page', exact: true }))
+      .toHaveAttribute('href', /view=group-identity/);
+    const talkgroup = actions.locator('.recordings-call-entity[data-entity="talkgroup"]');
+    await expect(talkgroup).toContainText('Fire Dispatch');
+    await expect(talkgroup.getByRole('link')).toHaveCount(2);
+    for (const width of [1280, 800, 390, 320]) {
+      await page.setViewportSize({ width, height: 900 });
       expect(await actions.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
-      if (width === 320 || theme === 'light') {
+      for (const control of await actions.locator('.recordings-call-entity a').all()) {
+        const box = await control.boundingBox();
+        expect(box.x).toBeGreaterThanOrEqual(0);
+        expect(box.x + box.width).toBeLessThanOrEqual(width);
+      }
+      if (width === 390) await expect(actions).toHaveScreenshot(`recordings-actions-mobile-${theme}.png`, componentScreenshot);
+      if (width === 320 || width === 800 && theme === 'light')
         await expect(actions).toHaveScreenshot(`recordings-actions-flow-${theme}-${width}.png`, componentScreenshot);
-      }
-      if (width === 320) {
-        const live = actions.getByRole('link', { name: 'Go to Live', exact: true });
-        await live.scrollIntoViewIfNeeded();
-        await expect(live).toBeInViewport();
-      }
     }
     await page.keyboard.press('Escape');
-    const touch = await page.context().newCDPSession(page);
-    await touch.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 });
-    await expect.poll(() => page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
-    await firstCard.scrollIntoViewIfNeeded();
-    for (const control of await firstCard.locator('.recordings-call-actions > button').all()) {
-      const bounds = await control.boundingBox();
-      expect(bounds.width).toBeGreaterThanOrEqual(44);
-      expect(bounds.height).toBeGreaterThanOrEqual(44);
-      expect(bounds.x).toBeGreaterThanOrEqual(0);
-      expect(bounds.x + bounds.width).toBeLessThanOrEqual(320);
-    }
-    await touch.detach();
+    await expect(page.locator('.recordings-results-body')).toHaveScreenshot(`recordings-approved-mobile-${theme}.png`, componentScreenshot);
+    await expect(cards.first().locator('.recordings-call-info')).toBeFocused();
+    await cards.first().locator('.recordings-call-select').check();
+    await expect(page.locator('.recordings-selected')).toContainText('1 selected');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
   });
 }
 
-test('card play immediately obeys the player preference for queue, once, and continue', async ({ page }) => {
-  await stubRecordingAudio(page);
-  const state = await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18, start_ms: call.start_ms + 60_000 }] });
-  const cards = page.locator('.recordings-call');
-  const dock = page.locator('#audio-dock');
-  await expect(cards.first().locator('.recordings-card-play')).toHaveAttribute('data-ui-hint', 'Queue and play');
-  await cards.first().locator('.recordings-card-play').click();
-  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
-  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
-  await expect(cards.first()).not.toHaveClass(/recordings-call-queued/);
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-
-  await selectAudioPanel(dock, 'Queue');
-  const preference = dock.locator('#audio-dock-panel').getByRole('combobox', { name: 'When a call is clicked', exact: true });
-  await preference.selectOption('once');
-  await dock.locator('#audio-dock-context-back').click();
-  await cards.first().locator('.recordings-card-play').click();
-  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(2);
-  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
-  await expect(cards.first().locator('.recordings-call-status')).not.toHaveText('Playing');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-
-  await selectAudioPanel(dock, 'Queue');
-  await preference.selectOption('continue');
-  await dock.locator('#audio-dock-context-back').click();
-  await cards.nth(1).locator('.recordings-card-play').focus();
-  await page.keyboard.press('Enter');
-  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(3);
-  await expect(cards.nth(1)).toHaveClass(/recordings-call-playing/);
-  await expect(cards.first()).not.toHaveClass(/recordings-call-playing/);
-  await expect.poll(() => state.requestedFilters.some(filter => filter.sort === 'asc' &&
-    filter.from_ms === String(call.start_ms + 60_000))).toBe(true);
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-
-  await selectAudioPanel(dock, 'Queue');
-  await preference.selectOption('queue');
-  await dock.locator('#audio-dock-context-back').click();
-  await cards.first().locator('.recordings-card-play').click();
-  await expect(dock.locator('.audio-dock-queue-count')).toContainText('1 queued');
-  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(3);
-  await expect(cards.nth(1)).toHaveClass(/recordings-call-playing/);
-});
-
-test('card Play starts the queue, appends without interrupting, and resumes a paused call', async ({ page }) => {
-  await stubRecordingAudio(page);
-  await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18 }, { ...linkedCall, id: 19 }] });
-  const cards = page.locator('.recordings-call');
-  const dock = page.locator('#audio-dock');
-  await cards.first().locator('.recordings-card-play').click();
-  await expect.poll(() => page.evaluate(() => window.recordingPlays)).toEqual([expect.stringMatching(/calls\/17\/audio$/)]);
-  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
-  await page.evaluate(() => { window.recordingAudio.currentTime = 12; });
-  await cards.nth(1).locator('.recordings-card-play').click();
-  await expect(cards.nth(1)).toHaveClass(/recordings-call-queued/);
-  await expect(dock.locator('.audio-dock-queue-count')).toContainText('1 queued');
-  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(1);
-  expect(await page.evaluate(() => window.recordingAudio.currentTime)).toBe(12);
-  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
-  await dock.getByRole('button', { name: 'Pause recording', exact: true }).filter({ visible: true }).click();
-  await expect(cards.first().locator('.recordings-call-status')).toHaveText('Paused');
-  await cards.nth(2).locator('.recordings-card-play').focus();
-  await page.keyboard.press('Enter');
-  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(2);
-  await expect(cards.first()).toHaveClass(/recordings-call-playing/);
-  await expect(dock.locator('.audio-dock-queue-count')).toContainText('2 queued');
-  expect(await page.evaluate(() => window.recordingAudio.currentTime)).toBe(12);
-  await page.evaluate(() => window.recordingAudio.dispatchEvent(new Event('ended')));
-  await expect.poll(() => page.evaluate(() => window.recordingPlays.at(-1))).toMatch(/calls\/18\/audio$/);
-  await expect(cards.nth(1)).toHaveClass(/recordings-call-playing/);
-  await expect(cards.nth(2)).toHaveClass(/recordings-call-queued/);
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-});
-
-test('card Play starts the oldest idle queued call while explicit Add to queue stays passive', async ({ page }) => {
+test('recording rows expose one menu and keep playback choices explicit', async ({ page }) => {
   await stubRecordingAudio(page);
   await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18 }] });
   const cards = page.locator('.recordings-call');
-  await cards.first().locator('.recordings-call-info').click();
-  await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Add to queue', exact: true }).click();
-  await expect(cards.first()).toHaveClass(/recordings-call-queued/);
-  expect(await page.evaluate(() => window.recordingPlays)).toEqual([]);
-  await cards.nth(1).locator('.recordings-card-play').click();
-  await expect.poll(() => page.evaluate(() => window.recordingPlays)).toEqual([expect.stringMatching(/calls\/17\/audio$/)]);
+  await expect(cards.locator('a, .recordings-card-play, .recordings-call-details, summary')).toHaveCount(0);
+  await expect(cards.locator('.recordings-call-actions > button')).toHaveCount(2);
+  await recordingAction(page, cards.first(), 'Play once');
+  await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
   await expect(cards.first()).toHaveClass(/recordings-call-playing/);
+  await recordingAction(page, cards.nth(1), 'Add to queue');
   await expect(cards.nth(1)).toHaveClass(/recordings-call-queued/);
   await expect(page.locator('#audio-dock .audio-dock-queue-count')).toContainText('1 queued');
+  expect(await page.evaluate(() => window.recordingPlays.length)).toBe(1);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('page selection selects and deselects displayed calls and reflects partial selection', async ({ page }) => {
@@ -1338,7 +1219,7 @@ test('cursor paging keeps selection across pages and Clear selection leaves resu
 });
 
 
-for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
+for (const theme of ['light', 'dark']) for (const device of ['desktop', 'phone']) {
   test(`workspace ${theme} ${device} keeps basic search and mixed conventional identities readable`, async ({ page }) => {
     await page.setViewportSize(device === 'phone' ? { width: 390, height: 844 } : { width: 1280, height: 900 });
     const calls = [
@@ -1357,8 +1238,8 @@ for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
     await openRecordings(page, { calls, theme });
     await expect(page.locator('.recordings-call')).toHaveCount(6);
     await expect(page.locator('.recordings-call-title')).toContainText(['Fire Dispatch', 'County fire dispatch', 'Airport tower', 'Digital conventional', 'Water operations', 'Local dispatch']);
-    await expect(page.locator('.recordings-call').nth(3)).not.toContainText('Talkgroup 0');
-    await expect(page.locator('.recordings-call').nth(5)).toContainText('Talkgroup 0');
+    await expect(page.locator('.recordings-call').nth(3).locator('.recordings-call-identity')).toHaveCount(0);
+    await expect(page.locator('.recordings-call').nth(5).locator('.recordings-call-identity')).toHaveText('0');
     const filters = page.locator('#recordings-filters-toggle');
     if (device === 'desktop') {
       await expect(filters).toBeHidden();
@@ -1471,7 +1352,7 @@ test('results group context and selection with the pager before the first call',
   const results = page.locator('.recordings-results-panel');
   await expect(results.getByRole('heading', { name: 'All recordings', exact: true })).toHaveCount(0);
   await expect(results.locator('.recordings-results-scope')).toHaveText('Past 24 hours');
-  await expect(results.locator('.recordings-results-actions').getByRole('combobox')).toHaveCount(3);
+  await expect(results.locator('.recordings-results-actions').getByRole('combobox')).toHaveCount(2);
   await expect(page.locator('.recordings-filter-summary')).toContainText('Past 24 hours');
   await expect(page.locator('.recordings-search-panel .recordings-selected-filters')).toBeVisible();
   await expect(results.locator('.recordings-page-selection')).toHaveText('Select page');
@@ -1486,7 +1367,7 @@ test('results group context and selection with the pager before the first call',
     };
     return { scope: rect('.recordings-results-scope'),
       toolbar: rect('.recordings-results-toolbar'), date: rect('.recordings-result-date'),
-      title: rect('.recordings-call-title'), metadata: rect('.recordings-call-head'),
+      title: rect('.recordings-call-title'),
       actions: rect('.recordings-call-actions'), selection: rect('.recordings-call-select') };
   });
   expect(geometry.toolbar.y).toBeGreaterThanOrEqual(geometry.scope.bottom);
@@ -1494,30 +1375,28 @@ test('results group context and selection with the pager before the first call',
   expect(geometry.date.y - geometry.scope.y).toBeLessThan(200);
   expect(Math.abs(geometry.scope.x - geometry.toolbar.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.toolbar.x - geometry.date.x)).toBeLessThanOrEqual(1);
-  expect(geometry.metadata.y).toBeGreaterThanOrEqual(geometry.title.bottom);
-  expect(Math.abs(geometry.actions.y - geometry.title.y)).toBeLessThanOrEqual(6);
+  expect(Math.abs((geometry.actions.y + geometry.actions.bottom) / 2 -
+    (geometry.title.y + geometry.title.bottom) / 2)).toBeLessThanOrEqual(1);
   expect(geometry.selection.x).toBeLessThan(geometry.title.x);
   await expect(results.locator('.recordings-call > .recordings-call-actions')).toHaveCount(3);
   await expect(results.locator('.recordings-call > .recordings-call-select')).toHaveCount(3);
 });
 
-test('cards omit only the applied system context and preserve it through pending filter removal', async ({ page }) => {
+test('shared reception context stays attached to the displayed calls through pending filter removal', async ({ page }) => {
   const otherSystem = { ...linkedCall, id: 18, system_key: 'p25:00002:002',
     system_name: 'County Public Safety', radio_system_entity_ref: { kind: 'radio_system', key: 'p25:00002:002' } };
   const state = await openRecordings(page, { calls: [linkedCall, otherSystem], query: { system_key: systemKey } });
-  const first = page.locator('.recordings-call').first(), other = page.locator('.recordings-call').nth(1);
-  await expect(first).not.toContainText('Metro Public Safety');
-  await expect(first.locator('.recordings-call-head')).toContainText('Talkgroup 1201');
-  await expect(other).toContainText('County Public Safety');
+  const context = page.locator('.recordings-call-context');
+  await expect(context).toContainText(['Metro Public Safety', 'County Public Safety']);
+  const displayed = await context.allTextContents();
   const systemChip = page.locator('.recordings-selected-filters .recordings-filter-chip[aria-label*="System:"]');
   await expect(systemChip.locator('.recordings-filter-chip-label')).toHaveText('Metro Public Safety');
-  await expect(systemChip).toHaveAccessibleName('Remove System: Metro Public Safety filter');
   await systemChip.click();
   await expect(systemChip).toHaveClass(/recordings-filter-chip-pending/);
-  await expect(first).not.toContainText('Metro Public Safety');
+  expect(await context.allTextContents()).toEqual(displayed);
   await searchNow(page, state);
-  await expect(first).toContainText('Metro Public Safety');
-  await expect(other).toContainText('County Public Safety');
+  await expect(context).toContainText(['Metro Public Safety', 'County Public Safety']);
+  await expect(page.locator('.recordings-call a')).toHaveCount(0);
 });
 
 for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
@@ -1573,28 +1452,25 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
       transcription: { status: 'COMPLETE', text: 'Engine four arriving at staging.' } });
     const rows = page.locator('.recordings-call');
     await expect(rows).toHaveCount(2);
-    await rows.first().locator('.recordings-card-play').click();
+    await recordingAction(page, rows.first());
     await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
     await rows.nth(1).locator('.recordings-call-info').click();
     await page.getByRole('dialog', { name: 'Call actions', exact: true })
       .getByRole('button', { name: 'Add to queue', exact: true }).click();
     await rows.nth(1).locator('.recordings-call-select').check();
     const requests = state.requestedFilters.length;
-    const cardHeight = (await rows.first().boundingBox()).height;
-    const layout = page.getByRole('combobox', { name: 'Results layout', exact: true });
-    await layout.selectOption('compact');
-    await expect(page.locator('.recordings-call-list')).toHaveClass(/recordings-call-list-compact/);
-    await expect(page.locator('.recordings-call-compact')).toHaveCount(2);
+    await expect(page.getByRole('combobox', { name: 'Results layout', exact: true })).toHaveCount(0);
     await expect(rows.first().locator('.recordings-call-title')).toHaveText('Fire Dispatch');
-    await expect(rows.first().locator('.recordings-call-title a')).toHaveAttribute('href', /view=group-identity/);
-    await expect(rows.first().locator('.recordings-call-identity')).toContainText('Talkgroup 1201');
+    await expect(rows.first().locator('a')).toHaveCount(0);
+    await expect(rows.first().locator('.recordings-call-identity')).toContainText('1201');
     await expect(rows.first().locator('.recordings-call-source')).toContainText('ENG 4');
-    await expect(rows.first().locator('.recordings-call-meta')).toContainText('Metro Public Safety');
+    await expect(page.locator('.recordings-call-context').first()).toContainText('Metro Public Safety');
     await expect(rows.first()).toHaveClass(/recordings-call-playing/);
     await expect(rows.nth(1)).toHaveClass(/recordings-call-queued/);
     await expect(rows.nth(1).locator('.recordings-call-select')).toBeChecked();
     await expect(page.locator('.recordings-selected')).toContainText('1 selected');
-    expect((await rows.first().boundingBox()).height).toBeLessThan(cardHeight);
+    if (width > 700) expect((await rows.nth(1).boundingBox()).height).toBeLessThanOrEqual(64);
+    await expect(rows.first().locator('.recordings-transcript-preview')).toBeVisible();
     expect(state.requestedFilters).toHaveLength(requests);
     expect(await page.evaluate(() => window.recordingPlays)).toHaveLength(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
@@ -1605,19 +1481,21 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
         ...componentScreenshot, style: '#topbar, #desktop-playback-slot { visibility: hidden !important; }'
       });
 
-    const detailsButton = rows.first().getByRole('button', { name: 'Call details', exact: true });
+    const detailsButton = rows.first().locator('.recordings-call-info');
     await detailsButton.focus();
     await detailsButton.press('Enter');
-    const details = page.getByRole('dialog', { name: 'Call details', exact: true });
+    const details = page.getByRole('dialog', { name: 'Call actions', exact: true });
     await expect(details).toBeVisible();
+    await details.getByRole('button', { name: 'Show more', exact: true }).click();
     await selectRecordingDetailTab(details, 'Transcript');
     await expect(details.getByRole('tabpanel').filter({ visible: true })).toContainText('Engine four arriving at staging.');
+    await selectRecordingDetailTab(details, 'Recording');
     await expect(details.getByRole('link', { name: 'Download recording', exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(detailsButton).toBeFocused();
     await rows.first().locator('.recordings-call-info').click();
     const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
-    await expect(actions.getByRole('link', { name: 'Search this talkgroup', exact: true }))
+    await expect(actions.getByRole('link', { name: 'Filter by talkgroup', exact: true }))
       .toHaveAttribute('href', /talkgroup_identity_key=v1-g-00001-001-1201/);
     await page.keyboard.press('Escape');
 
@@ -1634,9 +1512,6 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
       }
       await touch.detach();
     }
-    await layout.selectOption('cards');
-    await expect(page.locator('.recordings-call-compact')).toHaveCount(0);
-    await expect(rows.first().locator('.recordings-transcript-preview')).toBeVisible();
     await expect(rows.first()).toHaveClass(/recordings-call-playing/);
     await expect(rows.nth(1)).toHaveClass(/recordings-call-queued/);
     await expect(rows.nth(1).locator('.recordings-call-select')).toBeChecked();
@@ -1710,7 +1585,7 @@ test('target picker keeps Cancel local and submits talkgroups plus channels as o
   expect(state.requestedFilters).toHaveLength(requests);
   await page.locator('.recordings-call-info').click();
   await page.getByRole('dialog', { name: 'Call actions', exact: true })
-    .getByRole('link', { name: 'Search this talkgroup', exact: true }).click();
+    .getByRole('link', { name: 'Filter by talkgroup', exact: true }).click();
   await expect.poll(() => state.requestedFilters.at(-1).talkgroup_identity_key).toBe('v1-g-00001-001-1201');
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('channel_ids');
   expect(state.requestedFilters.at(-1)).not.toHaveProperty('talkgroups');
@@ -1863,10 +1738,41 @@ test('call actions reuse VCE playback choices and route Live to the saved channe
   await menu.getByRole('button', { name: 'Play once', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
   await page.locator('.recordings-call-info').click(); menu = page.getByRole('dialog', { name: 'Call actions', exact: true });
-  await menu.getByRole('button', { name: 'Open context · ±30 min', exact: true }).click();
+  await menu.getByRole('button', { name: 'Search around this call · ±30 min', exact: true }).click();
   await expect.poll(() => state.requestedFilters.length).toBe(2);
   const request = state.requestedFilters.at(-1); expect(Number(request.to_ms) - Number(request.from_ms)).toBe(3600000);
   expect(request).toHaveProperty('talkgroup_identity_key', 'v1-g-00001-001-1201'); expect(request).not.toHaveProperty('transcript');
+});
+
+test('call actions place the existing Direct Listen control beside Go to Live with exact identity and access', async ({ page }) => {
+  await openRecordings(page, { call: linkedCall, directListen: true });
+  await page.locator('.recordings-call-info').click();
+  const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+  const direct = actions.locator('[data-direct-listen-target-key]');
+  await expect(direct).toHaveAccessibleName('Add Fire Dispatch to Direct Listen and play');
+  await expect(direct).toHaveAttribute('aria-pressed', 'false');
+  await expect(direct.locator('use')).toHaveAttribute('href', '#icon-direct-listen');
+  expect(JSON.parse(await direct.getAttribute('data-direct-listen-target-key')))
+    .toEqual(linkedCall.target_entity_ref);
+  expect(await direct.evaluate(element => element.previousElementSibling?.textContent.trim())).toBe('Go to Live');
+  await direct.click();
+  await expect(direct).toHaveAttribute('aria-pressed', 'true');
+  await expect(direct.locator('use')).toHaveAttribute('href', '#icon-check');
+  await direct.click();
+  await expect(direct).toHaveAttribute('aria-pressed', 'false');
+  await expect(direct.locator('use')).toHaveAttribute('href', '#icon-direct-listen');
+  await page.keyboard.press('Escape');
+
+  for (const options of [
+    { call: linkedCall, directListen: false },
+    { call: { ...linkedCall, call_type: 'DIRECT', talkgroup_id: null, destination_radio_id: 30915,
+      target_entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-30915' } }, directListen: true }
+  ]) {
+    await openRecordings(page, options);
+    await page.locator('.recordings-call-info').click();
+    await expect(page.getByRole('dialog', { name: 'Call actions', exact: true })
+      .locator('[data-direct-listen-target-key]')).toHaveCount(0);
+  }
 });
 
 test('recording actions open exact related activity and alerts', async ({ page }) => {
@@ -1905,7 +1811,7 @@ test('call summary shares active playback, keeps controls open, and resumes afte
     recordings: [linkedCall], alerts: []
   } } }));
   await expect(page.locator('.recordings-call')).toHaveCount(1);
-  await page.locator('.recordings-card-play').click();
+  await recordingAction(page);
   await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
   await page.evaluate(() => {
     window.recordingAudio.currentTime = 12;
@@ -2018,48 +1924,48 @@ test('call summary explains a missing recording and allows a fresh playback atte
 });
 
 for (const [name, overrides, title, route] of [
-  ['P25 talkgroup', {}, 'Open talkgroup', {
+  ['P25 talkgroup', {}, 'Open talkgroup page', {
     view: 'group-identity', radio_system_key: systemKey, identity_key: 'v1-g-00001-001-1201'
   }],
   ['DMR talkgroup', { protocol: 'DMR', system_key: 'dmr:tier3:small:7',
     target_entity_ref: { kind: 'talkgroup', radio_system_key: 'dmr:tier3:small:7', identity_key: 'v1-g-x-x-1201' } },
-  'Open talkgroup', { view: 'group-identity', radio_system_key: 'dmr:tier3:small:7', identity_key: 'v1-g-x-x-1201' }],
+  'Open talkgroup page', { view: 'group-identity', radio_system_key: 'dmr:tier3:small:7', identity_key: 'v1-g-x-x-1201' }],
   ['NXDN talkgroup', { protocol: 'NXDN', system_key: 'nxdn-c:global:7',
     target_entity_ref: { kind: 'talkgroup', radio_system_key: 'nxdn-c:global:7', identity_key: 'v1-g-x-x-1201' } },
-  'Open talkgroup', { view: 'group-identity', radio_system_key: 'nxdn-c:global:7', identity_key: 'v1-g-x-x-1201' }],
+  'Open talkgroup page', { view: 'group-identity', radio_system_key: 'nxdn-c:global:7', identity_key: 'v1-g-x-x-1201' }],
   ['P25 patch group', { call_type: 'PATCH',
     target_entity_ref: { kind: 'patch_group', radio_system_key: systemKey, identity_key: 'v1-p-00001-001-1201' } },
-  'Open patch group', { view: 'group-identity', radio_system_key: systemKey, identity_key: 'v1-p-00001-001-1201' }],
+  'Open patch group page', { view: 'group-identity', radio_system_key: systemKey, identity_key: 'v1-p-00001-001-1201' }],
   ['direct radio', { call_type: 'UNIT_TO_UNIT', talkgroup_id: null, talkgroup_alias: null,
     destination_radio_id: 30915,
     target_entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-30915' } },
-  'Open radio', { view: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-30915' }],
+  'Open destination radio page', { view: 'radio', radio_system_key: systemKey, identity_key: 'v1-r-00001-001-30915' }],
   ['AM channel', { protocol: 'AM', talkgroup_id: null, talkgroup_alias: null, target_entity_ref: null },
-  'Open channel', { view: 'channel', configuration_id: channelId }],
+  'Open channel page', { view: 'channel', configuration_id: channelId }],
   ['NBFM channel', { protocol: 'NBFM', talkgroup_id: null, talkgroup_alias: null, target_entity_ref: null },
-  'Open channel', { view: 'channel', configuration_id: channelId }],
+  'Open channel page', { view: 'channel', configuration_id: channelId }],
   ['unresolved digital target', { target_entity_ref: null },
-  'Open channel', { view: 'channel', configuration_id: channelId }],
+  'Open channel page', { view: 'channel', configuration_id: channelId }],
   ['invalid digital target', { target_entity_ref: {
     kind: 'talkgroup', radio_system_key: systemKey, identity_key: 'v1-g-x-001-1201'
-  } }, 'Open channel', { view: 'channel', configuration_id: channelId }]
+  } }, 'Open channel page', { view: 'channel', configuration_id: channelId }]
 ]) {
   test(`call actions open the existing ${name} page separately from a recordings search`, async ({ page }) => {
     const state = await openRecordings(page, { call: { ...linkedCall, ...overrides } });
     const expectedHref = `/?${new URLSearchParams(route)}`;
     if (route.view === 'group-identity') {
-      await expect(page.locator('.recordings-call-title a')).toHaveAttribute('href', expectedHref);
-      await expect(page.locator('.recordings-call-identity a')).toHaveAttribute('href', expectedHref);
+      await expect(page.locator('.recordings-call a')).toHaveCount(0);
     }
     await page.locator('.recordings-call-info').click();
     const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
     const open = actions.getByRole('link', { name: title, exact: true });
     await expect(open).toHaveAttribute('href', expectedHref);
-    await expect(open.locator('.recordings-action-description')).toBeVisible();
     await expect(open.locator('svg')).toHaveCount(1);
-    const search = actions.getByRole('link', { name: /^Search this (talkgroup|channel)$/ });
-    if (name === 'invalid digital target') await expect(search).toHaveCount(0);
-    else await expect(search).toHaveAttribute('href', /view=recordings/);
+    const searches = actions.getByRole('link', { name: /^Filter by / });
+    expect(await searches.count()).toBeGreaterThan(0);
+    for (const search of await searches.all()) await expect(search).toHaveAttribute('href', /view=recordings/);
+    if (name === 'invalid digital target')
+      await expect(actions.getByRole('link', { name: 'Filter by talkgroup', exact: true })).toHaveCount(0);
     await open.click();
     await expect(page).toHaveURL(new RegExp(`${expectedHref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`));
     expect(state.requestedFilters).toHaveLength(1);
@@ -2076,8 +1982,8 @@ test('call actions suppress entity navigation without radio access or a valid en
     await openRecordings(page, options);
     await page.locator('.recordings-call-info').click();
     const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
-    await expect(actions.getByRole('link', { name: /^Open (talkgroup|patch group|radio|channel)$/ })).toHaveCount(0);
-    await expect(actions.getByRole('link', { name: 'Search this radio', exact: true })).toBeVisible();
+    await expect(actions.getByRole('link', { name: /^Open (talkgroup|patch group|radio|channel) page$/ })).toHaveCount(0);
+    await expect(actions.getByRole('link', { name: 'Filter by source radio', exact: true })).toBeVisible();
     await page.keyboard.press('Escape');
   }
 });
@@ -2093,11 +1999,11 @@ test('conventional call actions explain channel and radio searches without inven
   await expectCallActionDescriptions(actions, 11);
   await expect(actions.getByRole('button', { name: 'Related activity and alerts', exact: true })).toBeVisible();
   await expect(actions).not.toContainText(/talkgroup/i);
-  await expect(actions.getByRole('link', { name: 'Search this channel', exact: true }))
+  await expect(actions.getByRole('link', { name: 'Filter by channel', exact: true }))
     .toHaveAttribute('href', new RegExp(`channel_id=${channelId}`));
-  await expect(actions.getByRole('link', { name: 'Search this radio', exact: true }))
+  await expect(actions.getByRole('link', { name: 'Filter by source radio', exact: true }))
     .toHaveAttribute('href', /radios=/);
-  await actions.getByRole('button', { name: 'Search channel + radio', exact: true }).click();
+  await actions.getByRole('button', { name: 'Filter channel + radio', exact: true }).click();
   await expect(actions).toBeHidden();
   await expect.poll(() => state.requestedFilters.length).toBe(2);
   const request = state.requestedFilters.at(-1);
@@ -2107,55 +2013,30 @@ test('conventional call actions explain channel and radio searches without inven
   expect(request).not.toHaveProperty('talkgroup_id');
 });
 
-for (const theme of ['light']) {
-  test(`call details keep playback grouped and download separate at every width in ${theme}`, async ({ page }) => {
-    await page.setViewportSize({ width: 1280, height: 900 });
-    await openRecordings(page, { theme, call: linkedCall });
-    await openCallDetails(page);
-    const detail = page.getByRole('dialog', { name: 'Call details', exact: true });
-    const footer = detail.locator('.recordings-detail-footer');
-    const playback = footer.getByRole('group', { name: 'Playback actions', exact: true });
-    const play = playback.getByRole('button', { name: 'Play once', exact: true });
-    const continued = playback.getByRole('button', { name: 'Continue from here', exact: true });
-    const queue = playback.getByRole('button', { name: 'Add to queue', exact: true });
-    const download = footer.getByRole('link', { name: 'Download recording', exact: true });
-    await expect(playback.locator('button')).toHaveText(['Play once', 'Continue from here', 'Add to queue']);
-    await expect(footer.locator(':scope > *')).toHaveCount(2);
-    await expect(footer.locator(':scope > *').first()).toHaveAttribute('aria-label', 'Playback actions');
-    for (const width of [1280, 800, 700, 390, 320]) {
-      await page.setViewportSize({ width, height: 900 });
-      for (const control of [play, continued, queue, download]) {
-        await expect(control).toBeVisible();
-        const bounds = await control.boundingBox();
-        expect(bounds.x).toBeGreaterThanOrEqual(0);
-        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-      }
-      const [primaryBox, continueBox, queueBox, downloadBox, groupBox] = await Promise.all(
-        [play, continued, queue, download, playback].map(control => control.boundingBox()));
-      if (width <= 700) {
-        expect(primaryBox.y + primaryBox.height).toBeLessThanOrEqual(continueBox.y);
-        if (width <= 430) {
-          expect(continueBox.y + continueBox.height).toBeLessThanOrEqual(queueBox.y);
-          for (const bounds of [primaryBox, continueBox, queueBox]) {
-            expect(bounds.height).toBeLessThanOrEqual(48);
-            expect(Math.abs(bounds.width - groupBox.width)).toBeLessThanOrEqual(1);
-          }
-        } else {
-          expect(Math.abs(continueBox.y - queueBox.y)).toBeLessThanOrEqual(1);
-        }
-        expect(downloadBox.y).toBeGreaterThanOrEqual(groupBox.y + groupBox.height);
-      } else {
-        expect(Math.abs(primaryBox.y - continueBox.y)).toBeLessThanOrEqual(1);
-        expect(Math.abs(primaryBox.y - queueBox.y)).toBeLessThanOrEqual(1);
-      }
-      expect(await detail.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
-      if (width === 320 || theme === 'light' && [800, 700].includes(width)) {
-        await expect(detail).toHaveScreenshot(`recordings-details-flow-${theme}-${width}.png`, componentScreenshot);
-      }
-    }
-  });
-}
+for (const theme of ['light', 'dark']) test(`unified call actions expands in place and keeps playback and downloads available in ${theme}`, async ({ page }) => {
+  await openRecordings(page, { call: linkedCall, theme });
+  await page.locator('.recordings-call-info').click();
+  const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+  await expectCallActionDescriptions(actions);
+  await actions.getByRole('button', { name: 'Show more', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(1);
+  await expect(actions.getByRole('tab')).toHaveText(['Overview', 'Transcript', 'Identities', 'Technical', 'Recording']);
+  for (const width of [1280, 800, 700, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    if (width === 320 || theme === 'light' && [800, 700].includes(width))
+      await expect(actions).toHaveScreenshot(`recordings-details-flow-${theme}-${width}.png`, componentScreenshot);
+    for (const name of ['Play once', 'Continue from here', 'Add to queue'])
+      await expect(actions.getByRole('button', { name, exact: true })).toBeVisible();
+    await selectRecordingDetailTab(actions, 'Recording');
+    await expect(actions.getByRole('link', { name: 'Download recording', exact: true })).toBeVisible();
+    expect(await actions.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+    await actions.getByRole('button', { name: 'Show less', exact: true }).click();
+    await expect(actions.getByRole('tab')).toHaveCount(0);
+    await expect(actions.locator('.recordings-call-entity')).not.toHaveCount(0);
+    await actions.getByRole('button', { name: 'Show more', exact: true }).click();
+    await expect(actions.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
+  }
+});
 
 test('successful searches reset playback and queue while failed searches and cursor paging preserve them', async ({ page }) => {
   await page.addInitScript(() => { HTMLMediaElement.prototype.play = function() { return Promise.resolve(); }; HTMLMediaElement.prototype.pause = function() {}; });
@@ -2225,20 +2106,18 @@ test('High Interest is an explicit toggle and result controls have recognizable 
   }
   await expect(page.getByRole('button', { name: 'Search recordings', exact: true }).locator('svg')).toHaveCount(1);
   await expect(page.locator('.recordings-search-panel .ui-field-label svg')).toHaveCount(0);
-  const details = page.locator('.recordings-call-details');
-  await expect(details).toHaveText('');
-  await expect(details.locator('svg')).toHaveCount(1);
-  await expect(details).toHaveAccessibleName(/Call details/);
-  await details.hover();
-  await expect(page.getByRole('tooltip')).toHaveText('Call details');
-  await page.locator('.recordings-card-play').focus();
-  await page.keyboard.press('Tab');
-  await expect(details).toBeFocused();
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Call actions', exact: true })).toHaveCount(0);
+  const actions = page.locator('.recordings-call-info');
+  await expect(actions).toHaveText('');
+  await expect(actions.locator('svg')).toHaveCount(1);
+  await expect(actions).toHaveAccessibleName(/More actions for/);
+  await actions.hover();
+  await expect(page.getByRole('tooltip')).toHaveText('Call actions');
+  await actions.focus();
+  await actions.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Call actions', exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Call details', exact: true })).toHaveCount(0);
   await page.keyboard.press('Escape');
-  await expect(details).toBeFocused();
+  await expect(actions).toBeFocused();
 });
 
 test('recordings accents follow every color scheme in day and night themes', async ({ page }) => {
@@ -2284,7 +2163,7 @@ test('recordings accents follow every color scheme in day and night themes', asy
     expect(palette.interestBorder, `${palette.theme} ${palette.scheme} High Interest`).toBe(palette.accent);
     expect(palette.cardBorder, `${palette.theme} ${palette.scheme} playing card`).toBe(palette.accent);
     expect(palette.cardShadow).not.toBe('none');
-    expect(palette.durationWeight).toBeGreaterThanOrEqual(600);
+    expect(palette.durationWeight).toBeGreaterThanOrEqual(400);
   }
   for (const theme of ['light', 'dark']) {
     expect(new Set(palettes.filter(palette => palette.theme === theme).map(palette => palette.accent)).size).toBe(8);
@@ -2451,7 +2330,7 @@ test('gap dividers use the earlier end, work in both orders, and exclude short, 
   await expect(gaps).toHaveCount(0);
 });
 
-for (const theme of ['light']) for (const device of ['desktop', 'phone']) {
+for (const theme of ['light', 'dark']) for (const device of ['desktop', 'phone']) {
   test(`browsing controls and matching-call gaps ${theme} ${device}`, async ({ page }) => {
     await page.setViewportSize(device === 'phone' ? { width: 320, height: 844 } : { width: 1280, height: 900 });
     await openRecordings(page, { calls: browsingCalls(3), paginate: true, nextCursor: 'fixture:3', theme });

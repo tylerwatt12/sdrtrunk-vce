@@ -9,8 +9,8 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="recordings"]');
 const steps = ['targets-button', 'targets', 'time-range', 'search', 'transcript-search', 'transcript-submit',
-  'call-card', 'details-button', 'details', 'details-close', 'actions-button', 'playback', 'player-overview', 'player-button', 'click-mode'];
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:recordings:4';
+  'call-card', 'actions-button', 'playback', 'details-button', 'details', 'details-close', 'player-overview', 'player-button', 'click-mode'];
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:recordings:5';
 const evidence = process.env.RECORDINGS_GUIDE_EVIDENCE ||
   path.resolve(__dirname, '../../../../../build/playwright-results/recordings-guide-evidence');
 const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
@@ -150,11 +150,9 @@ async function expectSpotlight(page, id) {
 
 async function expectLessonState(page, id) {
   const picker = page.getByRole('dialog', { name: 'Talkgroups & channels', exact: true });
-  const details = page.getByRole('dialog', { name: 'Call details', exact: true });
   const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
   await expect(picker).toHaveCount(id === 'targets' ? 1 : 0);
-  await expect(details).toHaveCount(['details', 'details-close'].includes(id) ? 1 : 0);
-  await expect(actions).toHaveCount(id === 'playback' ? 1 : 0);
+  await expect(actions).toHaveCount(['playback', 'details-button', 'details', 'details-close'].includes(id) ? 1 : 0);
   await expect(page.locator('.recordings-call').first()).toBeAttached();
   if (id === 'targets-button') await expect(page.locator('#recordings-open-targets')).toBeVisible();
   if (id === 'targets') {
@@ -174,16 +172,16 @@ async function expectLessonState(page, id) {
     await expect(page.getByRole('combobox', { name: 'Full text range', exact: true })).toHaveValue('recent');
     await expect(guide(page)).toContainText('24 hours');
   }
-  if (id === 'details-button') await expect(page.locator('.recordings-call-details').first()).toBeVisible();
+  if (id === 'details-button') await expect(actions.getByRole('button', { name: 'Show more', exact: true })).toBeVisible();
   if (id === 'call-card') {
     await expect(page.locator('[data-guide-target="rec-call-card"]')).toHaveClass(/recordings-call/);
     await expect(guide(page)).toContainText(/call/i);
     await expect(guide(page)).not.toContainText('Open Call details');
   }
   if (['details', 'details-close'].includes(id)) {
-    await expect(details).toBeVisible();
+    await expect(actions).toBeVisible();
     for (const tab of ['Overview', 'Transcript', 'Identities', 'Technical', 'Recording'])
-      await expect(details.getByRole('tab', { name: tab, exact: true })).toBeVisible();
+      await expect(actions.getByRole('tab', { name: tab, exact: true })).toBeVisible();
     await expect(page.locator('.recordings-library')).toBeAttached();
   }
   if (id === 'actions-button') await expect(page.locator('.recordings-call-info').first()).toBeVisible();

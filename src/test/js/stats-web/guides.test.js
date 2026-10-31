@@ -91,7 +91,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('dashboard').version, 3);
   assert.equal(createGuideDefinition('scanner').version, 6);
-  assert.equal(createGuideDefinition('recordings').version, 4);
+  assert.equal(createGuideDefinition('recordings').version, 5);
   assert.equal(createGuideDefinition('topics').version, 3);
   assert.equal(createGuideDefinition('map').version, 3);
   assert.equal(createGuideDefinition('network-visualizer').version, 4);
@@ -1143,7 +1143,7 @@ async function checkGuides(assetsRoot) {
     }
   });
   const recordingsSections = ['overview', 'targets-button', 'targets', 'time-range', 'search', 'transcript-search',
-    'transcript-submit', 'call-card', 'details-button', 'details', 'details-close', 'actions-button', 'playback',
+    'transcript-submit', 'call-card', 'actions-button', 'playback', 'details-button', 'details', 'details-close',
     'player-overview', 'player-button', 'click-mode'];
   assert.deepEqual(recordingsTour.steps.map(step => step.id), recordingsSections);
   assert.equal(recordingsTour.steps[0].prepare, undefined,
@@ -1173,9 +1173,9 @@ async function checkGuides(assetsRoot) {
     assert.equal(recordingsSections.indexOf(opener) + 1, recordingsSections.indexOf(destination),
       'Each Recordings picker, dialog and player destination follows its dedicated actual opening control.');
   }
-  assert.equal(recordingsSections.indexOf('details-close') + 1, recordingsSections.indexOf('actions-button'),
-    'Call details teaches its actual return control before the next lesson.');
-  for (const [introduction, opener] of [['call-card', 'details-button'], ['player-overview', 'player-button']]) {
+  assert.equal(recordingsSections.indexOf('details-close') + 1, recordingsSections.indexOf('player-overview'),
+    'Call actions teaches its actual return control before the player lesson.');
+  for (const [introduction, opener] of [['call-card', 'actions-button'], ['player-overview', 'player-button']]) {
     assert.equal(recordingsSections.indexOf(introduction) + 1, recordingsSections.indexOf(opener),
       'Recordings explains a new surface before highlighting a control inside it.');
   }

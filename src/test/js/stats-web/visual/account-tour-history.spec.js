@@ -103,14 +103,14 @@ test('legacy browser dismissals migrate only their known versions for the exact 
   const legacy = {
     [key(owner.account, owner.scope, 'welcome', 1)]: '1',
     [key(owner.account, owner.scope, 'admin', 2)]: '1',
-    [key(owner.account, owner.scope, 'recordings', 4)]: '1',
+    [key(owner.account, owner.scope, 'recordings', 5)]: '1',
     [key('other-user', owner.scope, 'admin', 3)]: '1',
     [key(owner.account, 'other-scope', 'admin', 3)]: '1',
     [key(owner.account, owner.scope, 'admin', 99)]: '1'
   };
   const fixture = await install(page, server, { legacy });
   await open(page);
-  await expect.poll(() => server.record(owner)).toEqual({ welcome: 1, admin: 2, recordings: 4 });
+  await expect.poll(() => server.record(owner)).toEqual({ welcome: 1, admin: 2, recordings: 5 });
   await expect(guide(page)).toHaveCount(0);
   await page.locator('#page-guide-button').click();
   await expect(guide(page)).toHaveAttribute('data-guide-id', 'admin');

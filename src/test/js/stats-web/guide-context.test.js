@@ -44,7 +44,7 @@ async function checkGuideContext(assetsRoot) {
   })(), [options, panel], 'An explicitly owned floating panel remains visible beside its trigger.');
 
   const contexts = [
-    ['recordings', 'details-button', 'rec-details-button', '.recordings-call'],
+    ['recordings', 'details-button', 'rec-details-button', '.read-only-modal'],
     ['recordings', 'actions-button', 'rec-actions-button', '.recordings-call'],
     ['recordings', 'targets', 'rec-targets', '.read-only-modal'],
     ['recordings', 'details', 'rec-details', '.read-only-modal'],
@@ -88,14 +88,14 @@ async function checkGuideContext(assetsRoot) {
     assert.equal(definition.steps[0].contextTargets, undefined, `${page} keeps its overview free of spotlights.`);
   }
   const recordings = createGuideDefinition('recordings');
-  assert.equal(recordings.version, 4, 'New surface introductions receive their own completed-guide version.');
+  assert.equal(recordings.version, 5, 'New surface introductions receive their own completed-guide version.');
   assert.deepEqual(recordings.steps.slice(1).map(step => step.id), [
     'targets-button', 'targets', 'time-range', 'search', 'transcript-search', 'transcript-submit',
-    'call-card', 'details-button', 'details', 'details-close', 'actions-button', 'playback',
+    'call-card', 'actions-button', 'playback', 'details-button', 'details', 'details-close',
     'player-overview', 'player-button', 'click-mode'
   ], 'Context preserves the approved Recordings workflow and dedicated opening and return stops.');
   assert.deepEqual(recordings.steps.find(step => step.id === 'details-button').paragraphs,
-    ['Open Call details to inspect this transmission.'], 'The visual context update preserves the approved copy.');
+    ['Select Show more to reveal the transcript, identities, and technical details.'], 'The guide teaches the unified information disclosure.');
 }
 
 module.exports = { checkGuideContext };

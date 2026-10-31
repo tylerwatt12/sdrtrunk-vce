@@ -101,6 +101,79 @@ class ManagedRecordingLabelsTest
     }
 
     @Test
+    void receivingSiteNavigationRequiresEveryCapturedCoordinateAndSurvivesRecorderRetuning() throws Exception
+    {
+        String receivingChannel = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+        Path database = directory.resolve("receiving-site.sqlite");
+        SdrTrunkDatabaseStartup.createGlobalDatabase(database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            statement.execute("INSERT INTO configuration_channel(configuration_id,name,system_name,site_name," +
+                "alias_list_id,channel_kind,sort_order,decoder_type,config_json) VALUES" +
+                "('" + CHANNEL_ID + "','Recorder','Metro','Retuned site'," +
+                "(SELECT id FROM alias_list WHERE family='P25' LIMIT 1),'TRUNKED',0,'P25_PHASE1','{}')," +
+                "('" + receivingChannel + "','Receiving channel','Metro','Captured site'," +
+                "(SELECT id FROM alias_list WHERE family='P25' LIMIT 1),'TRUNKED',1,'P25_PHASE1','{}')");
+            statement.execute("INSERT INTO radio_system(id,system_key,protocol_code,p25_wacn,p25_system_id," +
+                "first_seen_ms,last_seen_ms) VALUES(1,'p25:00001:001',1,1,1,1,2)");
+            statement.execute("INSERT INTO receiver_channel(id,configuration_id,radio_system_id," +
+                "radio_system_assigned_at_ms,first_seen_ms,last_seen_ms) VALUES" +
+                "(1,'" + CHANNEL_ID + "',1,1,1,2),(2,'" + receivingChannel + "',1,1,1,2)");
+            statement.execute("INSERT INTO p25_site_snapshot(channel_id,rfss,site,first_seen_ms,last_seen_ms) " +
+                "VALUES(1,3,8,1,2),(2,4,9,1,2)");
+        }
+        var coordinates = Map.<String,Object>of("wacn", 1, "system_id", 1, "rfss_id", 4, "site_id", 9);
+        var call = Map.<String,Object>of("protocol", "APCO25", "channel_id", CHANNEL_ID,
+            "audio_from", coordinates);
+        var labels = new ManagedRecordingLabels(database);
+        var decorated = labels.decorate(List.of(call)).getFirst();
+        assertEquals(WebEntityRef.channel(receivingChannel).toMap(), decorated.get("site_entity_ref"));
+        assertEquals(WebEntityRef.channel(CHANNEL_ID).toMap(), decorated.get("channel_entity_ref"));
+        assertEquals("Captured site", decorated.get("winner_site_name"));
+        assertEquals("Retuned site", decorated.get("site_name"), "The saved channel's label retains its meaning");
+        assertFalse(call.containsKey("site_entity_ref"), "Navigation decorates the response, not captured metadata");
+        assertEquals(WebEntityRef.channel(receivingChannel).toMap(), labels.decorate(List.of(
+            Map.<String,Object>of("protocol", "APCO25_PHASE2", "wacn", 1, "system_id", 1,
+                "rfss_id", 4, "site_id", 9))).getFirst().get("site_entity_ref"),
+            "Legacy top-level receiving coordinates retain an exact destination");
+        for(String field: coordinates.keySet())
+        {
+            var mismatch = new LinkedHashMap<>(coordinates);
+            mismatch.put(field, ((Number)coordinates.get(field)).intValue() + 1);
+            assertFalse(labels.decorate(List.of(Map.<String,Object>of("protocol", "APCO25",
+                "channel_id", CHANNEL_ID, "audio_from", mismatch))).getFirst().containsKey("site_entity_ref"),
+                "A different " + field + " must not inherit the saved recorder's page");
+        }
+        var incomplete = new LinkedHashMap<>(coordinates);
+        incomplete.remove("wacn");
+        assertFalse(labels.decorate(List.of(Map.<String,Object>of("audio_from", incomplete)))
+            .getFirst().containsKey("site_entity_ref"));
+        var fractional = new LinkedHashMap<>(coordinates);
+        fractional.put("site_id", 9.5);
+        assertFalse(labels.decorate(List.of(Map.<String,Object>of("audio_from", fractional)))
+            .getFirst().containsKey("site_entity_ref"));
+        try(Connection connection = StatsPairedTestDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE p25_site_snapshot SET site=10 WHERE channel_id=2");
+        }
+        assertFalse(labels.decorate(List.of(call)).getFirst().containsKey("site_entity_ref"),
+            "A channel that no longer matches the captured site is not a valid destination");
+        try(Connection connection = StatsPairedTestDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE p25_site_snapshot SET site=9 WHERE channel_id=2");
+            statement.executeUpdate("UPDATE receiver_channel SET channel_kind='TRUNKED'," +
+                "name='Retained receiving channel' WHERE id=2");
+            statement.executeUpdate("DELETE FROM configuration.configuration_channel WHERE configuration_id='" +
+                receivingChannel + "'");
+        }
+        assertFalse(labels.decorate(List.of(call)).getFirst().containsKey("site_entity_ref"),
+            "Retained history for a removed channel does not establish a configured site destination");
+    }
+
+    @Test
     void currentNamesAndLatestHomeScopedOtaDecorateOldCallWithoutCopyingLabels() throws Exception
     {
         Path database = directory.resolve("main.sqlite");

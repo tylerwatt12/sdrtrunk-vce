@@ -21,7 +21,7 @@
   padding: 0 var(--space-4) var(--space-4);
 }
 .recordings-search-fields { min-width: 0; display: grid; gap: var(--space-4); align-content: start; }
-.recordings-results-panel { min-width: 0; padding: var(--space-4); }
+.recordings-results-panel { min-width: 0; padding: var(--space-4); container: recordings-results / inline-size; }
 .recordings-results-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
 .recordings-results-scope { margin: 0; font-size: var(--font-size-body); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
 .recordings-results-actions { min-width: 0; max-width: 100%; margin-left: auto; }
@@ -70,38 +70,43 @@
 .recordings-pager { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); min-width: 0; margin-left: auto; }
 .recordings-pager-actions { flex-wrap: nowrap; gap: var(--space-1); }
 .recordings-pager-count { flex-basis: auto; flex-shrink: 0; margin-right: 0; white-space: nowrap; font-size: var(--font-size-meta); }
-.recordings-call-list { display: grid; min-width: 0; gap: var(--space-3); }
-.recordings-call-list-compact { gap: 0; }
+.recordings-call-list {
+  --recordings-row-columns: calc(var(--font-size-body) * 7) calc(var(--font-size-body) * 3.25) minmax(calc(var(--font-size-body) * 13), 1fr) calc(var(--font-size-body) * 7) calc(var(--font-size-body) * 8) var(--control-height-compact);
+  display: grid;
+  min-width: 0;
+  gap: 0;
+}
 .recordings-result-date { font-size: var(--font-size-meta); color: var(--muted); margin: var(--space-2) 0 0; letter-spacing: .045em; text-transform: uppercase; font-weight: var(--font-weight-medium); }
 .recordings-call-gap { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: var(--space-3); min-width: 0; }
 .recordings-call-gap::before, .recordings-call-gap::after { content: ''; height: 1px; background: var(--line); }
 .recordings-call-gap-label { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
-.recordings-call { position: relative; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-3); border: 1px solid transparent; padding: var(--space-3); }
-.recordings-call-selectable { grid-template-columns: auto minmax(0, 1fr) auto; }
-.recordings-call-select { margin: var(--space-1) 0 0; }
-.recordings-call-head { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.recordings-call-time, .recordings-call-protocol, .recordings-call-identity { color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; }
-.recordings-call-time strong { font-weight: var(--font-weight-normal); }
+.recordings-call,
+.recordings-call-columns { min-width: 0; display: grid; grid-template-columns: var(--recordings-row-columns); align-items: center; gap: var(--space-3); padding: 0 var(--space-3); }
+.recordings-call { position: relative; min-height: var(--control-height-touch); border: 0; border-bottom: 1px solid var(--line); }
+.recordings-call-selectable { grid-template-columns: var(--space-5) var(--recordings-row-columns); }
+.recordings-call-select { margin: 0; }
+.recordings-call-columns { padding-top: var(--space-2); padding-bottom: var(--space-2); color: var(--muted); font-size: var(--font-size-label); }
+.recordings-call-context { min-width: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-3); padding: var(--space-3); border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.recordings-call-context > span { color: var(--muted); font-size: var(--font-size-label); }
+.recordings-call-time,
+.recordings-call-duration,
+.recordings-call-frequency { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.recordings-call-time { font-size: var(--font-size-body); }
+.recordings-call-duration,
+.recordings-call-frequency,
+.recordings-call-identity { color: var(--muted); font-size: var(--font-size-label); }
 .recordings-call-actions { --icon-action-size: var(--control-height-compact); display: flex; align-items: center; gap: var(--space-1); }
-.recordings-call-main { min-width: 0; display: grid; gap: var(--space-1); }
 .recordings-call-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
-.recordings-call-title { max-width: 100%; font-size: var(--font-size-body); font-weight: var(--font-weight-heading); overflow-wrap: anywhere; }
-.recordings-call-meta { color: var(--muted); font-size: var(--font-size-meta); margin: 0; overflow-wrap: anywhere; }
-.recordings-call-source { margin-top: var(--space-1); font-size: var(--font-size-meta); overflow-wrap: anywhere; }
-.recordings-call-source > span { color: var(--muted); }
-.recordings-call-compact { padding: var(--space-3) 0; border-bottom-color: var(--line); }
-.recordings-call-compact .recordings-call-source { margin-top: 0; }
-.recordings-call-compact .recordings-transcript-preview,
-.recordings-call-compact .recordings-call-summary { display: none; }
+.recordings-call-heading,
+.recordings-call-source { min-width: 0; overflow-wrap: anywhere; }
+.recordings-call-title { max-width: 100%; font-size: var(--font-size-body); font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+.recordings-call-source { font-size: var(--font-size-body); }
 .recordings-call-status { font-size: var(--font-size-meta); color: var(--accent); }
 .recordings-call-status[hidden] { display: none; }
 .recordings-call-queued { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
 .recordings-call-playing { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); box-shadow: inset 4px 0 0 var(--accent), 0 0 0 1px var(--accent); }
-.recordings-transcript-preview { margin: var(--space-3) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; line-height: var(--line-height-body); }
+.recordings-transcript-preview { grid-column: 1 / -1; margin: 0; padding: var(--space-2) 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; line-height: var(--line-height-body); }
 .recordings-transcript-empty { color: var(--muted); font-size: var(--font-size-meta); }
-.recordings-call-summary { font-size: var(--font-size-meta); color: var(--muted); margin-top: var(--space-2); }
-.recordings-call-summary p { margin: var(--space-2) 0 0; }
-.recordings-call-tone { width: fit-content; }
 .read-only-modal.recordings-filters-modal { width: min(740px, calc(100vw - var(--space-5))); }
 .recordings-filter-editor, .recordings-dialog-content { display: grid; min-width: 0; gap: var(--space-4); }
 .recordings-picker-tabs { display: flex; flex-wrap: wrap; gap: var(--space-2); }
@@ -124,61 +129,27 @@
 .recordings-option-count { min-width: 48px; color: var(--muted); font-size: var(--font-size-meta); font-variant-numeric: tabular-nums; text-align: right; }
 .recordings-option-count small { display: block; }
 .recordings-load-more { margin: var(--space-2) 0 var(--space-2) var(--space-5); }
-.recordings-tone-fields, .recordings-property-fields, .recordings-call-menu-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
-.recordings-call-menu { display: grid; gap: var(--space-4); }
-.recordings-call-action { justify-content: flex-start; text-align: left; min-width: 0; overflow-wrap: anywhere; }
-.recordings-call-menu-grid { align-items: stretch; }
-.recordings-playback-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-.recordings-call-action-section { display: grid; gap: var(--space-3); }
-.recordings-call-action-section + .recordings-call-action-section { border-top: 1px solid var(--line); padding-top: var(--space-5); }
-.recordings-action-copy { display: grid; min-width: 0; gap: var(--space-1); }
-.recordings-action-title { font-weight: var(--font-weight-control); }
-.recordings-action-description { color: var(--muted); font-size: var(--font-size-meta); font-weight: var(--font-weight-normal); line-height: var(--line-height-body); }
+.recordings-tone-fields, .recordings-property-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
+.recordings-call-menu { min-width: 0; display: grid; gap: var(--space-3); }
+.recordings-actions-modal { width: min(var(--modal-size-medium), calc(100vw - var(--modal-viewport-inset))); }
+.recordings-call-action-section,
+.recordings-call-information { min-width: 0; display: grid; gap: var(--space-2); }
+.recordings-call-information-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }
+.recordings-call-entities { min-width: 0; display: grid; }
+.recordings-call-entity { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; border-bottom: 1px solid var(--line); }
+.recordings-call-entity-identity { min-width: 0; display: grid; grid-template-columns: 12ch minmax(0, 1fr); align-items: baseline; gap: var(--space-3); }
+.recordings-call-entity-identity > :first-child { color: var(--muted); font-size: var(--font-size-label); }
+.recordings-call-entity-value { min-width: 0; display: grid; gap: var(--space-1); overflow-wrap: anywhere; }
+.recordings-call-entity-value > small { color: var(--muted); font-size: var(--font-size-label); }
+.recordings-call-entity-actions { min-width: 0; flex-wrap: nowrap; }
+.recordings-call-menu[data-expanded="true"] .recordings-call-entity { padding: var(--space-3) 0; }
+.recordings-call-extra-facts { margin-top: var(--space-2); }
+.recordings-call-context-search { min-width: 0; display: grid; justify-items: start; gap: var(--space-1); padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.recordings-call-playback,
+.recordings-call-tools { min-width: 0; }
 .recordings-checkbox-label { display: flex; align-items: start; gap: var(--space-2); }
 .recordings-exact-filters > div { margin-top: var(--space-3); }
 .recordings-admin-body { display: grid; gap: var(--space-4); padding: var(--space-4); }
-
-.recordings-detail {
-  display: grid;
-  gap: var(--space-4);
-}
-
-.recordings-detail-footer {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-}
-
-.recordings-detail-playback-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.recordings-detail-playback-actions > button {
-  min-width: 0;
-}
-
-.recordings-detail-download {
-  margin-left: auto;
-}
-
-.recordings-detail-heading {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.recordings-detail-heading h3 {
-  margin: 0;
-}
-
-.recordings-detail-heading span {
-  color: var(--muted);
-}
 
 .recordings-detail-facts {
   gap: var(--space-2) var(--space-4);
@@ -197,10 +168,6 @@
 }
 
 .recordings-detail-panel[hidden] {
-  display: none;
-}
-
-.recordings-call-status[hidden] {
   display: none;
 }
 
@@ -225,10 +192,6 @@
 .recordings-transcript-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-
-.read-only-modal.recordings-detail-modal {
-  max-width: min(680px, calc(100vw - 2 * var(--modal-viewport-gap)));
 }
 
 .recordings-mode-choices {
@@ -364,43 +327,70 @@
 @media (max-width: 900px) {
   .recordings-browser { grid-template-columns: minmax(0, 1fr); }
   .recordings-filter-toolbar { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(var(--control-height-touch), auto) auto; align-items: stretch; }
+  .recordings-call-list { --recordings-row-columns: calc(var(--font-size-body) * 7) calc(var(--font-size-body) * 3.25) minmax(calc(var(--font-size-body) * 11), 1fr) calc(var(--font-size-body) * 6) var(--control-height-compact); }
+  .recordings-call,
+  .recordings-call-columns { gap: var(--space-2); }
+  .recordings-call-frequency,
+  .recordings-call-columns > :nth-last-child(2) { display: none; }
+}
+@container recordings-results (max-width: 720px) {
+  .recordings-call-list { --recordings-row-columns: calc(var(--font-size-body) * 7) calc(var(--font-size-body) * 3.25) minmax(calc(var(--font-size-body) * 11), 1fr) calc(var(--font-size-body) * 6) var(--control-height-compact); }
+  .recordings-call,
+  .recordings-call-columns { gap: var(--space-2); }
+  .recordings-call-frequency,
+  .recordings-call-columns > :nth-last-child(2) { display: none; }
+}
+@container recordings-results (max-width: 560px) {
+  .recordings-call-columns { display: none; }
+  .recordings-call { grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-1) var(--space-2); padding: var(--space-2) var(--space-3); }
+  .recordings-call-selectable { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .recordings-call-heading { grid-column: 1; grid-row: 1; }
+  .recordings-call-time,
+  .recordings-call-duration { grid-column: 1; grid-row: 2; font-size: var(--font-size-label); }
+  .recordings-call-duration { justify-self: end; }
+  .recordings-call-source { grid-column: 1; grid-row: 3; font-size: var(--font-size-label); }
+  .recordings-call-actions { grid-column: -2 / -1; grid-row: 1 / span 3; justify-self: end; }
+  .recordings-call-select { grid-column: 1; grid-row: 1 / span 3; }
+  .recordings-call-selectable .recordings-call-heading,
+  .recordings-call-selectable .recordings-call-time,
+  .recordings-call-selectable .recordings-call-duration,
+  .recordings-call-selectable .recordings-call-source { grid-column: 2; }
+  .recordings-call-selectable .recordings-transcript-preview { grid-column: 2 / -1; }
 }
 @media (max-width: 700px) {
-  .read-only-modal.recordings-filters-modal { width: 100vw; }
-  .recordings-detail-footer { display: grid; grid-template-columns: minmax(0, 1fr); }
-  .recordings-detail-playback-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
-  .recordings-detail-playback-actions > :first-child { grid-column: 1 / -1; }
-  .recordings-detail-download { width: 100%; }
+  .read-only-modal.recordings-filters-modal,
+  .recordings-actions-modal { width: 100vw; }
   .recordings-results-panel { padding: var(--space-3); }
-  .recordings-call { grid-template-columns: minmax(0, 1fr); gap: var(--space-2) var(--space-3); }
-  .recordings-call-selectable { grid-template-columns: auto minmax(0, 1fr); }
-  .recordings-call-actions { grid-column: -2 / -1; justify-self: end; }
-  .recordings-call-compact { grid-template-columns: minmax(0, 1fr) auto; }
-  .recordings-call-compact.recordings-call-selectable { grid-template-columns: auto minmax(0, 1fr) auto; }
-  .recordings-call-compact .recordings-call-main { display: contents; }
-  .recordings-call-compact .recordings-call-heading { min-width: 0; grid-column: 1; grid-row: 1; }
-  .recordings-call-compact.recordings-call-selectable .recordings-call-heading { grid-column: 2; }
-  .recordings-call-compact .recordings-call-actions { grid-row: 1; }
-  .recordings-call-compact .recordings-call-head,
-  .recordings-call-compact .recordings-call-meta,
-  .recordings-call-compact .recordings-call-source,
-  .recordings-call-compact .recordings-call-tone { grid-column: 1 / -1; }
-  .recordings-call-compact.recordings-call-selectable .recordings-call-head,
-  .recordings-call-compact.recordings-call-selectable .recordings-call-meta,
-  .recordings-call-compact.recordings-call-selectable .recordings-call-source,
-  .recordings-call-compact.recordings-call-selectable .recordings-call-tone { grid-column: 2 / -1; }
+  .recordings-call-columns { display: none; }
+  .recordings-call { grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: var(--space-1) var(--space-2); padding: var(--space-2) var(--space-3); }
+  .recordings-call-selectable { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .recordings-call-heading { grid-column: 1; grid-row: 1; }
+  .recordings-call-time,
+  .recordings-call-duration { grid-column: 1; grid-row: 2; font-size: var(--font-size-label); }
+  .recordings-call-duration { justify-self: end; }
+  .recordings-call-source { grid-column: 1; grid-row: 3; font-size: var(--font-size-label); }
+  .recordings-call-actions { grid-column: -2 / -1; grid-row: 1 / span 3; justify-self: end; }
+  .recordings-call-select { grid-column: 1; grid-row: 1 / span 3; }
+  .recordings-call-selectable .recordings-call-heading,
+  .recordings-call-selectable .recordings-call-time,
+  .recordings-call-selectable .recordings-call-duration,
+  .recordings-call-selectable .recordings-call-source { grid-column: 2; }
+  .recordings-call-selectable .recordings-transcript-preview { grid-column: 2 / -1; }
+  .recordings-call-entity-identity { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); }
   .recordings-picker-results { max-height: none; overflow: visible; }
   .recordings-picker-choice { padding-left: var(--space-2); }
-  .recordings-tone-fields, .recordings-property-fields, .recordings-call-menu-grid,
+  .recordings-tone-fields, .recordings-property-fields,
   .recordings-mode-choices, .recordings-transcription-fields, .recordings-catalog-summary,
   .recordings-maintenance-row, .recordings-maintenance { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 430px) {
-  .recordings-detail-playback-actions { grid-template-columns: minmax(0, 1fr); }
   .recordings-results-actions { width: 100%; justify-content: flex-start; margin-left: 0; }
   .recordings-results-toolbar { align-items: flex-start; }
   .recordings-picker-tools { grid-template-columns: minmax(0, 1fr); }
   .recordings-picker-tools > select { max-width: none; }
+  .recordings-call-entity { grid-template-columns: minmax(0, 1fr); }
+  .recordings-call-entity-identity { grid-template-columns: 11ch minmax(0, 1fr); gap: var(--space-2); }
+  .recordings-call-entity-actions { justify-self: end; }
 }
 @media (pointer: coarse) {
   .recordings-call-actions { --icon-action-size: var(--control-height-touch); }

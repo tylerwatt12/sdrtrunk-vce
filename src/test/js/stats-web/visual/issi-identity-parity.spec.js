@@ -52,21 +52,24 @@ for (const presentation of [
       await expect(card(204)).toContainText('Supervisor');
       await expect(card(204)).toContainText('County Radio · 9002 (Working ID 501)');
       await expect(card(204)).toContainText('County Radio · 9001 (Working ID 501)');
-      await card(203).getByRole('button', { name: /^Call details/ }).click();
+      await card(203).locator('.recordings-call-info').click();
+      await page.getByRole('dialog', { name: 'Call actions', exact: true })
+        .getByRole('button', { name: 'Show more', exact: true }).click();
       await page.getByRole('tab', { name: 'Identities', exact: true }).click();
       const identities = page.getByRole('tabpanel', { name: 'Identities', exact: true });
       await expect(identities).toContainText('Tactical · County Radio · 7002 (Local TG ID 78)');
       await expect(identities).toContainText('Medic 2 · County Radio · 9003 (Working ID 502)');
-      await page.getByRole('button', { name: 'Close Call details', exact: true }).click();
-      const group = card(203).getByRole('link', { name: 'Dispatch', exact: true });
+      await page.getByRole('tab', { name: 'Overview', exact: true }).click();
+      const group = page.getByRole('dialog', { name: 'Call actions', exact: true })
+        .getByRole('link', { name: 'Open talkgroup page', exact: true });
       const target = new URL(await group.getAttribute('href'), page.url());
       expect(target.searchParams.get('view')).toBe('group-identity');
       expect(target.searchParams.get('identity_key')).toBe(groupKey);
       expect(target.searchParams.get('radio_system_key')).toBe(systemKey);
       expect(target.searchParams.has('talkgroup_id')).toBe(false);
-      await card(203).getByRole('button', { name: /^More actions for/ }).click();
+
       const search = page.getByRole('dialog', { name: 'Call actions', exact: true })
-        .getByRole('link', { name: 'Search this talkgroup', exact: true });
+        .getByRole('link', { name: 'Filter by talkgroup', exact: true });
       const filter = new URL(await search.getAttribute('href'), page.url());
       expect(filter.searchParams.get('talkgroup_identity_key')).toBe(groupKey);
       expect(filter.searchParams.get('system_key')).toBe(systemKey);
@@ -77,7 +80,7 @@ for (const presentation of [
         await expect(page.locator('.recordings-selected-filters')).toBeVisible();
       }
       await expect(page.locator('.recordings-selected-filters')
-        .getByRole('button', { name: 'Remove Talkgroup: Dispatch filter', exact: true })).toContainText('Dispatch');
+        .getByRole('button', { name: /^Remove Talkgroup: Dispatch.*filter$/ })).toContainText('Dispatch');
       await expectNoHorizontalOverflow(page);
       expect(errors).toEqual([]);
     });
