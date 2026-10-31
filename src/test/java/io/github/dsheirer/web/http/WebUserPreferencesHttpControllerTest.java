@@ -85,7 +85,7 @@ class WebUserPreferencesHttpControllerTest
             assertEquals("light", initial.at("/preferences/appearance/theme").textValue());
             assertTrue(initial.at("/preferences/appearance/hue").isNull());
             assertTrue(initial.at("/preferences/playback/selected_scan_list_ids").isArray());
-            assertEquals(14, initial.at("/preferences/version").intValue());
+            assertEquals(15, initial.at("/preferences/version").intValue());
             assertEquals("queue", initial.at("/preferences/playback/recording_click_mode").textValue());
             assertTrue(initial.at("/preferences/guides/automatic_page_guides").booleanValue());
             assertEquals("normal", initial.at("/preferences/presentation/live_row_density").textValue());
@@ -102,6 +102,13 @@ class WebUserPreferencesHttpControllerTest
                 .put("automatic_page_guides", false);
             ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("playback"))
                 .put("recording_click_mode", "once");
+            ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("live_workspace"))
+                .put("details_panel_percent", 44).put("details_visibility", "expanded")
+                .put("active_channel_table_id", "selected-channel-table");
+            ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.at("/p25_visualizer/events/call"))
+                .put("highlight", false).put("auto_zoom", true);
+            ((com.fasterxml.jackson.databind.node.ObjectNode)replacement.path("tuner"))
+                .put("fft_auto_range_on_retune", false);
             String replacementJson = MAPPER.writeValueAsString(replacement);
 
             assertEquals(403, send(client, request(origin)
@@ -155,6 +162,11 @@ class WebUserPreferencesHttpControllerTest
             assertEquals(200, reloaded.statusCode());
             assertEquals("dense", MAPPER.readTree(reloaded.body()).at("/preferences/presentation/live_row_density").textValue());
             assertEquals("once", MAPPER.readTree(reloaded.body()).at("/preferences/playback/recording_click_mode").textValue());
+            assertEquals(44, MAPPER.readTree(reloaded.body()).at("/preferences/live_workspace/details_panel_percent").intValue());
+            assertEquals("selected-channel-table", MAPPER.readTree(reloaded.body())
+                .at("/preferences/live_workspace/active_channel_table_id").textValue());
+            assertTrue(MAPPER.readTree(reloaded.body()).at("/preferences/p25_visualizer/events/call/auto_zoom").booleanValue());
+            assertFalse(MAPPER.readTree(reloaded.body()).at("/preferences/tuner/fft_auto_range_on_retune").booleanValue());
 
             HttpClient anotherBrowser = HttpClient.newHttpClient();
             Login anotherLogin = login(anotherBrowser, origin);
@@ -162,9 +174,11 @@ class WebUserPreferencesHttpControllerTest
             assertEquals(200, shared.statusCode());
             assertFalse(MAPPER.readTree(shared.body()).at("/preferences/guides/automatic_page_guides").booleanValue());
             assertEquals("once", MAPPER.readTree(shared.body()).at("/preferences/playback/recording_click_mode").textValue());
+            assertEquals("expanded", MAPPER.readTree(shared.body()).at("/preferences/live_workspace/details_visibility").textValue());
             var otherAccount = accessService.createUser("listener", "separate-account-password".toCharArray());
             assertTrue(new WebUserPreferencesService(database).get(otherAccount).preferences().guides().automaticPageGuides());
             assertEquals("queue", new WebUserPreferencesService(database).get(otherAccount).preferences().playback().recordingClickMode());
+            assertEquals("automatic", new WebUserPreferencesService(database).get(otherAccount).preferences().liveWorkspace().detailsVisibility());
             for(String invalid: java.util.List.of("null", "1", "\"false\"", "{}"))
             {
                 assertEquals(422, send(client, mutation(origin, login).header("If-Match", "\"2\"")

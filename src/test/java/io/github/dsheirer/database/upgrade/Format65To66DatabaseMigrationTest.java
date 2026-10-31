@@ -50,7 +50,7 @@ class Format65To66DatabaseMigrationTest
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
             assertEquals(ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(66, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(66, DatabaseFormatCatalog.inspect(connection).version());
             connection.rollback();
             assertEquals(65, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(connection));
@@ -60,6 +60,7 @@ class Format65To66DatabaseMigrationTest
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
         }
+        ApplicationDatabaseMigrator.migrateInPlace(database, null);
         ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
@@ -80,7 +81,7 @@ class Format65To66DatabaseMigrationTest
         try(var connection = open(database)) { assertEquals(65, DatabaseFormatCatalog.inspect(connection).version()); }
         assertEquals(before, readPreferences(database));
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
-        assertConverted(before, readPreferences(database));
+        assertConvertedToCurrent(before, readPreferences(database));
         assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
         ConfigurationHistoryDatabase.validatePair(database);
     }
@@ -101,11 +102,12 @@ class Format65To66DatabaseMigrationTest
                     effect.affectedRows() == 1));
                 for(var entry: preferences(connection).entrySet())
                 {
-                    assertEquals("queue", WebUserPreferencesCodec.decode(entry.getValue().json()).playback().recordingClickMode());
+                    Format66WebUserPreferencesCodec.validate(entry.getValue().json());
+                    assertEquals("queue", JSON.readTree(entry.getValue().json()).path("playback").path("recording_click_mode").textValue());
                     assertTrue(entry.getValue().revision() > 0);
                 }
                 assertEquals(retained, retainedRows(connection));
-                assertEquals(66, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(66, DatabaseFormatCatalog.inspect(connection).version());
             }
         }
     }
@@ -179,7 +181,20 @@ class Format65To66DatabaseMigrationTest
             assertEquals(expected, JSON.readTree(actual.json()));
             assertEquals(entry.getValue().revision()+1, actual.revision());
             assertEquals(entry.getValue().updatedAt(), actual.updatedAt());
-            assertEquals("queue", WebUserPreferencesCodec.decode(actual.json()).playback().recordingClickMode());
+            Format66WebUserPreferencesCodec.validate(actual.json());
+            assertEquals("queue", JSON.readTree(actual.json()).path("playback").path("recording_click_mode").textValue());
+        }
+    }
+    private static void assertConvertedToCurrent(Map<Long,Preference> before, Map<Long,Preference> after) throws Exception
+    {
+        for(var entry: before.entrySet())
+        {
+            String next = Format66WebUserPreferencesCodec.migrateFromFormat65(entry.getValue().json()).json();
+            String current = Format67WebUserPreferencesCodec.migrateFromFormat66(next).json();
+            Preference actual = after.get(entry.getKey());
+            assertEquals(JSON.readTree(current), JSON.readTree(actual.json()));
+            assertEquals(entry.getValue().revision()+2, actual.revision());
+            assertEquals(entry.getValue().updatedAt(), actual.updatedAt());
         }
     }
     private static Map<String,List<String>> retainedRows(Connection connection) throws Exception

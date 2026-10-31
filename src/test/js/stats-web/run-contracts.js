@@ -24,6 +24,7 @@ const contracts = [
   ["alert enrollment QR codes", "alerts-qr.test.js", "stats-web/assets/features/alerts-qr.js"],
   ["channel editor composition", "channel-editor.test.js", "stats-web/assets/app.js"],
   ["frontend foundation", "frontend-foundation.test.js", "stats-web/assets/core"],
+  ["workspace preference schema", "preference-workspace-schema.test.js", "stats-web/assets/core/preference-schema.js"],
   ["operational preferences", "operational-preferences.test.js", "stats-web/assets/app.js"],
   ["health alert settings", "health-alert-settings.test.js", "stats-web/assets/app.js"],
   ["Live detail filters", "live-detail-filters.test.js", "stats-web/assets/app.js"],

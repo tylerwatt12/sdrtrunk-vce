@@ -2156,7 +2156,7 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 14,
+    version: 15,
     appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: true },
     guides: { automatic_page_guides: true },
@@ -2175,10 +2175,18 @@ async function main() {
     },
     tuner: {
       floor_db: -140, ceiling_db: 0, waterfall_speed: 1, snap_frequency: true, smooth_fft: true,
-      highlight_waterfall_channels: false, show_idle_channels: false, profile: 'balanced'
+      highlight_waterfall_channels: false, show_idle_channels: false, profile: 'balanced',
+      fft_auto_range_on_retune: true, waterfall_auto_range_on_retune: true
     },
     health_alerts: { disabled_codes: [] },
-    tables: {}
+    tables: {},
+    live_workspace: { details_panel_percent: 25, details_visibility: 'automatic', details_active_tab: 'events',
+      picker_collapsed: false, active_channel_table_id: null,
+      event_filters: { excluded_leaf_keys: [], excluded_timeslots: [], excluded_validity: [], search: '' },
+      message_filters: { excluded_leaf_keys: [], excluded_timeslots: [], excluded_validity: [], search: '' } },
+    p25_visualizer: { events: Object.fromEntries(
+      ['emergency', 'movement', 'denial', 'patch', 'busy', 'queued', 'check', 'page', 'logout', 'call']
+        .map(id => [id, { highlight: true, auto_zoom: ['emergency', 'movement', 'patch', 'busy', 'queued'].includes(id) }])) }
   });
   for (const mode of ['queue', 'once', 'continue']) {
     assert.equal(preferenceSchema.validate({ ...decodedDefaults,

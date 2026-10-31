@@ -271,7 +271,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -999,6 +999,22 @@ format-64, or format-65 contract; an older monolith passing through the full cha
 transaction. The frozen populated format-65 fixture, adjacent conversion, rollback and unchanged-source retry
 checks remain required. Normal startup validates the new preference document without migration or repair.
 
+The adjacent 66-to-67 step upgrades exact version-14 per-user browser preferences to version 15. It adds explicit
+Live workspace layout and filter choices, P25 visualizer event highlighting and zoom choices, and two tuner display
+auto-range choices. The Live layout starts with automatic responsive visibility, a 25-percent details panel, Events
+selected, the picker expanded, no explicitly selected channel table, and clear filters. All P25 categories begin
+highlighted; only Emergency, Affiliation change, Patch change, Busy and Queued begin with automatic zoom enabled.
+Both tuner auto-range choices begin enabled. Earlier account settings are retained. This database conversion does
+not infer account choices from browser-local state.
+
+Every other usable personal choice, account timestamp, credential, receiver setting, retained row and allocator is
+preserved. Each preference revision advances once. Unusable documents are defaulted, invalid or exhausted revisions
+are rebased, and only necessary cached table layouts are trimmed if the added fields exceed the unchanged storage
+bound. All affected counts are reported. Format 67 changes no table or index and leaves an existing paired activity
+file unchanged. Its older admitted role versions remain supported; an older monolith traverses the complete adjacent
+chain before activation. The frozen populated format-66 fixture, exact-signature checks, rollback and unchanged-source
+retry remain required. Normal startup validates without converting or repairing preferences.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -1039,7 +1055,7 @@ adjacent format-10-to-11 step creates an empty relationship table without guessi
 all recording metadata, files, transcripts, tones, identifiers, counters and allocators. Deleting a recording cascades
 to its own source references. Deleting Activity or alert history does not delete a recording or its source references.
 The populated format-10 fixture remains frozen and supported. The main application database is independently at
-format 66; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+format 67; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.

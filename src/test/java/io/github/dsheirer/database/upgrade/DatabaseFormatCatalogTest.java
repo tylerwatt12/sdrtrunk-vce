@@ -132,8 +132,10 @@ class DatabaseFormatCatalogTest
                     DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));
                 assertEquals("0", scalar(connection, """
-                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>14
+                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>15
                         OR json_extract(preferences_json, '$.playback.recording_click_mode') IS NOT 'queue'
+                        OR json_extract(preferences_json, '$.live_workspace.details_visibility') IS NOT 'automatic'
+                        OR json_extract(preferences_json, '$.tuner.fft_auto_range_on_retune') IS NOT 1
                         OR json_extract(preferences_json, '$.presentation.live_row_density') IS NOT 'normal'
                         OR json_extract(preferences_json, '$.guides.automatic_page_guides') IS NOT 1
                     """), "Every registered fixture receives current personal density, automatic-guide and recording-click defaults");

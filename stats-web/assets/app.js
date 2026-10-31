@@ -1,5 +1,5 @@
 import * as routeFoundation from './core/routes.js?v=11';
-import * as preferenceSchema from './core/preference-schema.js?v=10';
+import * as preferenceSchema from './core/preference-schema.js?v=11';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { receiverDisplayName } from './core/receiver-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';

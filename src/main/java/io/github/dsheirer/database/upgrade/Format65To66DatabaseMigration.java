@@ -67,7 +67,8 @@ final class Format65To66DatabaseMigration extends WebUserPreferenceMigration
                 throw new SQLException("Recording click action requires exact format-65 configuration");
             var effects = super.migrateSourceAndReport(configuration, false);
             DatabaseFormatCatalog.stamp(configuration, 66);
-            DatabaseFormatCatalog.requireCurrent(configuration);
+            if(DatabaseFormatCatalog.inspect(configuration).version() != 66)
+                throw new SQLException("Recording click action did not reach exact format-66 configuration");
             configuration.commit();
             return effects;
         }

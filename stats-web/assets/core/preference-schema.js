@@ -1,7 +1,7 @@
 'use strict';
 
   const defaults = Object.freeze({
-    version: 14,
+    version: 15,
     appearance: Object.freeze({ theme: 'light', hue: null }),
     page_titles: Object.freeze({ prepend_playing_call: true }),
     guides: Object.freeze({ automatic_page_guides: true }),
@@ -35,10 +35,24 @@
       smooth_fft: true,
       highlight_waterfall_channels: false,
       show_idle_channels: false,
-      profile: 'balanced'
+      profile: 'balanced',
+      fft_auto_range_on_retune: true,
+      waterfall_auto_range_on_retune: true
     }),
     health_alerts: Object.freeze({ disabled_codes: Object.freeze([]) }),
-    tables: Object.freeze({})
+    tables: Object.freeze({}),
+    live_workspace: Object.freeze({
+      details_panel_percent: 25, details_visibility: 'automatic', details_active_tab: 'events',
+      picker_collapsed: false, active_channel_table_id: null,
+      event_filters: Object.freeze({ excluded_leaf_keys: Object.freeze([]), excluded_timeslots: Object.freeze([]),
+        excluded_validity: Object.freeze([]), search: '' }),
+      message_filters: Object.freeze({ excluded_leaf_keys: Object.freeze([]), excluded_timeslots: Object.freeze([]),
+        excluded_validity: Object.freeze([]), search: '' })
+    }),
+    p25_visualizer: Object.freeze({ events: Object.freeze(Object.fromEntries(
+      ['emergency', 'movement', 'denial', 'patch', 'busy', 'queued', 'check', 'page', 'logout', 'call']
+        .map(id => [id, Object.freeze({ highlight: true,
+          auto_zoom: ['emergency', 'movement', 'patch', 'busy', 'queued'].includes(id) })]))) })
   });
 
   function plain(value, name) {
@@ -127,10 +141,58 @@
       collapsed_groups: collapsedGroups };
   }
 
+  function text(value, maximum, name) {
+    if (typeof value !== 'string' || value.length > maximum) throw invalid(`${name} is invalid.`);
+    return value;
+  }
+
+  function uniqueText(value, count, length, name) {
+    if (!Array.isArray(value) || value.length > count) throw invalid(`${name} is invalid.`);
+    const entries = value.map(entry => text(entry, length, name));
+    if (new Set(entries).size !== entries.length) throw invalid(`${name} contains duplicate values.`);
+    return entries;
+  }
+
+  function detailFilters(value) {
+    exact(value, ['excluded_leaf_keys', 'excluded_timeslots', 'excluded_validity', 'search'], 'Live filters');
+    return {
+      excluded_leaf_keys: uniqueText(value.excluded_leaf_keys, 256, 256, 'excluded_leaf_keys'),
+      excluded_timeslots: uniqueText(value.excluded_timeslots, 256, 64, 'excluded_timeslots'),
+      excluded_validity: uniqueText(value.excluded_validity, 2, 7, 'excluded_validity')
+        .map(entry => oneOf(entry, ['valid', 'invalid'], 'excluded_validity')),
+      search: text(value.search, 256, 'search')
+    };
+  }
+
+  function liveWorkspace(value) {
+    exact(value, ['details_panel_percent', 'details_visibility', 'details_active_tab', 'picker_collapsed',
+      'active_channel_table_id', 'event_filters', 'message_filters'], 'live_workspace');
+    return {
+      details_panel_percent: number(value.details_panel_percent, 15, 65, 'details_panel_percent', true),
+      details_visibility: oneOf(value.details_visibility, ['automatic', 'collapsed', 'expanded'], 'details_visibility'),
+      details_active_tab: oneOf(value.details_active_tab, ['events', 'messages', 'channel'], 'details_active_tab'),
+      picker_collapsed: bool(value.picker_collapsed, 'picker_collapsed'),
+      active_channel_table_id: value.active_channel_table_id === null ? null :
+        text(value.active_channel_table_id, 256, 'active_channel_table_id'),
+      event_filters: detailFilters(value.event_filters), message_filters: detailFilters(value.message_filters)
+    };
+  }
+
+  function p25Visualizer(value) {
+    exact(value, ['events'], 'p25_visualizer');
+    const ids = ['emergency', 'movement', 'denial', 'patch', 'busy', 'queued', 'check', 'page', 'logout', 'call'];
+    exact(value.events, ids, 'p25_visualizer.events');
+    return { events: Object.fromEntries(ids.map(id => {
+      const event = value.events[id];
+      exact(event, ['highlight', 'auto_zoom'], `P25 ${id}`);
+      return [id, { highlight: bool(event.highlight, `${id}.highlight`), auto_zoom: bool(event.auto_zoom, `${id}.auto_zoom`) }];
+    })) };
+  }
+
   function validate(value) {
     exact(value, ['version', 'appearance', 'page_titles', 'guides', 'playback', 'scanner', 'presentation', 'tuner',
-      'health_alerts', 'tables'], 'preferences');
-    if (value.version !== 14) throw invalid('The user preference version is unsupported.');
+      'health_alerts', 'tables', 'live_workspace', 'p25_visualizer'], 'preferences');
+    if (value.version !== 15) throw invalid('The user preference version is unsupported.');
     exact(value.appearance, ['theme', 'hue'], 'appearance');
     exact(value.page_titles, ['prepend_playing_call'], 'page_titles');
     exact(value.guides, ['automatic_page_guides'], 'guides');
@@ -142,7 +204,7 @@
       'show_only_active_trunked_channels', 'live_channel_sort', 'live_row_density', 'retain_last_call_on_idle_rows',
       'clear_voice_quality_when_idle'], 'presentation');
     exact(value.tuner, ['floor_db', 'ceiling_db', 'waterfall_speed', 'snap_frequency', 'smooth_fft',
-      'highlight_waterfall_channels', 'show_idle_channels', 'profile'], 'tuner');
+      'highlight_waterfall_channels', 'show_idle_channels', 'profile', 'fft_auto_range_on_retune', 'waterfall_auto_range_on_retune'], 'tuner');
     exact(value.health_alerts, ['disabled_codes'], 'health_alerts');
     const tables = plain(value.tables, 'tables');
     if (Object.keys(tables).length > 128) throw invalid('Too many table layouts are stored.');
@@ -160,7 +222,7 @@
     const ceiling = number(value.tuner.ceiling_db, -195, 0, 'tuner.ceiling_db', true);
     if (ceiling - floor < 5) throw invalid('The tuner display range is too small.');
     return {
-      version: 14,
+      version: 15,
       appearance: { theme: oneOf(value.appearance.theme, ['light', 'dark'], 'appearance.theme'),
         hue: value.appearance.hue === null ? null : number(value.appearance.hue, 0, 359, 'appearance.hue', true) },
       page_titles: { prepend_playing_call: bool(value.page_titles.prepend_playing_call,
@@ -213,12 +275,16 @@
           'tuner.highlight_waterfall_channels'),
         show_idle_channels: bool(value.tuner.show_idle_channels, 'tuner.show_idle_channels'),
         profile: oneOf(value.tuner.profile,
-          ['efficient', 'balanced', 'high-detail', 'maximum-detail'], 'tuner.profile')
+          ['efficient', 'balanced', 'high-detail', 'maximum-detail'], 'tuner.profile'),
+        fft_auto_range_on_retune: bool(value.tuner.fft_auto_range_on_retune, 'tuner.fft_auto_range_on_retune'),
+        waterfall_auto_range_on_retune: bool(value.tuner.waterfall_auto_range_on_retune, 'tuner.waterfall_auto_range_on_retune')
       },
       health_alerts: {
         disabled_codes: alertCodes(value.health_alerts.disabled_codes, 'health_alerts.disabled_codes')
       },
-      tables: decodedTables
+      tables: decodedTables,
+      live_workspace: liveWorkspace(value.live_workspace),
+      p25_visualizer: p25Visualizer(value.p25_visualizer)
     };
   }
 

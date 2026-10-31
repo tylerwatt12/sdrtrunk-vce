@@ -19,9 +19,10 @@ import java.util.regex.Pattern;
  */
 public record WebUserPreferences(int version, Appearance appearance, PageTitles pageTitles, Playback playback,
                                  Scanner scanner, Presentation presentation, Tuner tuner,
-                                 HealthAlerts healthAlerts, Guides guides, Map<String,TableLayout> tables)
+                                 HealthAlerts healthAlerts, Guides guides, Map<String,TableLayout> tables,
+                                 LiveWorkspace liveWorkspace, P25Visualizer p25Visualizer)
 {
-    public static final int CURRENT_VERSION = 14;
+    public static final int CURRENT_VERSION = 15;
     public static final int MINIMUM_APPEARANCE_HUE = 0;
     public static final int MAXIMUM_APPEARANCE_HUE = 359;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
@@ -56,6 +57,8 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         Objects.requireNonNull(healthAlerts, "health_alerts is required");
         Objects.requireNonNull(guides, "guides is required");
         Objects.requireNonNull(tables, "tables is required");
+        Objects.requireNonNull(liveWorkspace, "live_workspace is required");
+        Objects.requireNonNull(p25Visualizer, "p25_visualizer is required");
 
         if(tables.size() > MAXIMUM_TABLES)
         {
@@ -84,8 +87,8 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT, DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS, "queue"), new Scanner("normal"),
             new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
                 decodeQualityDisplayMode, liveDetailRowLimit, true, false, false, "talker_alias", "order_appeared", "normal"),
-            new Tuner(-140, 0, 1, true, true, false, false, "balanced"), new HealthAlerts(List.of()),
-            new Guides(true), Map.of());
+            new Tuner(-140, 0, 1, true, true, false, false, "balanced", true, true), new HealthAlerts(List.of()),
+            new Guides(true), Map.of(), LiveWorkspace.defaults(), P25Visualizer.defaults());
     }
 
     public record Guides(boolean automaticPageGuides) {}
@@ -189,7 +192,8 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
     }
 
     public record Tuner(int floorDb, int ceilingDb, double waterfallSpeed, boolean snapFrequency,
-                        boolean smoothFft, boolean highlightWaterfallChannels, boolean showIdleChannels, String profile)
+                        boolean smoothFft, boolean highlightWaterfallChannels, boolean showIdleChannels, String profile,
+                        boolean fftAutoRangeOnRetune, boolean waterfallAutoRangeOnRetune)
     {
         public Tuner
         {
@@ -207,6 +211,92 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
             profile = requireOneOf(profile, "tuner.profile",
                 Set.of("efficient", "balanced", "high-detail", "maximum-detail"));
         }
+    }
+
+    public record LiveWorkspace(int detailsPanelPercent, String detailsVisibility, String detailsActiveTab,
+                                boolean pickerCollapsed, String activeChannelTableId,
+                                DetailFilters eventFilters, DetailFilters messageFilters)
+    {
+        public LiveWorkspace
+        {
+            if(detailsPanelPercent < 15 || detailsPanelPercent > 65)
+                throw new IllegalArgumentException("live_workspace.details_panel_percent must be between 15 and 65");
+            requireExactChoice(detailsVisibility, "live_workspace.details_visibility", Set.of("automatic", "collapsed", "expanded"));
+            requireExactChoice(detailsActiveTab, "live_workspace.details_active_tab", Set.of("events", "messages", "channel"));
+            if(activeChannelTableId != null) boundedText(activeChannelTableId, 256, "live_workspace.active_channel_table_id");
+            Objects.requireNonNull(eventFilters, "live_workspace.event_filters is required");
+            Objects.requireNonNull(messageFilters, "live_workspace.message_filters is required");
+        }
+
+        public static LiveWorkspace defaults()
+        {
+            return new LiveWorkspace(25, "automatic", "events", false, null, DetailFilters.defaults(), DetailFilters.defaults());
+        }
+    }
+
+    public record DetailFilters(List<String> excludedLeafKeys, List<String> excludedTimeslots,
+                                List<String> excludedValidity, String search)
+    {
+        public DetailFilters
+        {
+            excludedLeafKeys = boundedUniqueText(excludedLeafKeys, 256, 256, "excluded_leaf_keys");
+            excludedTimeslots = boundedUniqueText(excludedTimeslots, 256, 64, "excluded_timeslots");
+            excludedValidity = boundedUniqueText(excludedValidity, 2, 7, "excluded_validity");
+            excludedValidity.forEach(value -> requireExactChoice(value, "excluded_validity", Set.of("valid", "invalid")));
+            search = boundedText(search, 256, "search");
+        }
+
+        public static DetailFilters defaults() { return new DetailFilters(List.of(), List.of(), List.of(), ""); }
+    }
+
+    public record P25Event(boolean highlight, boolean autoZoom) {}
+
+    public record P25Visualizer(Map<String,P25Event> events)
+    {
+        public static final List<String> EVENT_IDS = List.of("emergency", "movement", "denial", "patch", "busy",
+            "queued", "check", "page", "logout", "call");
+        public P25Visualizer
+        {
+            Objects.requireNonNull(events, "p25_visualizer.events is required");
+            if(!events.keySet().equals(Set.copyOf(EVENT_IDS)))
+                throw new IllegalArgumentException("p25_visualizer.events must contain exactly the supported event categories");
+            Map<String,P25Event> ordered = new LinkedHashMap<>();
+            for(String id: EVENT_IDS) ordered.put(id, Objects.requireNonNull(events.get(id), "P25 event choices are required"));
+            events = java.util.Collections.unmodifiableMap(ordered);
+        }
+
+        public static P25Visualizer defaults()
+        {
+            Set<String> zoom = Set.of("emergency", "movement", "patch", "busy", "queued");
+            Map<String,P25Event> events = new LinkedHashMap<>();
+            EVENT_IDS.forEach(id -> events.put(id, new P25Event(true, zoom.contains(id))));
+            return new P25Visualizer(events);
+        }
+    }
+
+    private static String boundedText(String value, int maximum, String name)
+    {
+        if(value == null || value.length() > maximum)
+            throw new IllegalArgumentException(name + " must be a string of at most " + maximum + " characters");
+        return value;
+    }
+
+    private static List<String> boundedUniqueText(List<String> values, int maximumCount, int maximumLength, String name)
+    {
+        Objects.requireNonNull(values, name + " is required");
+        if(values.size() > maximumCount) throw new IllegalArgumentException(name + " contains too many values");
+        Set<String> unique = new HashSet<>();
+        for(String value: values)
+        {
+            boundedText(value, maximumLength, name);
+            if(!unique.add(value)) throw new IllegalArgumentException(name + " contains duplicate values");
+        }
+        return List.copyOf(values);
+    }
+
+    private static void requireExactChoice(String value, String name, Set<String> choices)
+    {
+        if(value == null || !choices.contains(value)) throw new IllegalArgumentException(name + " is invalid");
     }
 
     public record HealthAlerts(List<String> disabledCodes)
