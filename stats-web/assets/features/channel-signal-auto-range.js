@@ -1,5 +1,6 @@
 const DEFAULT_RANGE = Object.freeze({ floorDb: -120, ceilingDb: 0 });
-const MINIMUM_DISPLAY_SPAN_DB = 32;
+const MINIMUM_DISPLAY_SPAN_DB = 5;
+const NOISE_DISPLAY_MARGIN_DB = 2;
 const EMPTY_STRENGTH_DB = -196;
 
 const validStrength = (value) => Number.isFinite(value) && value >= -200 && value <= 0 &&
@@ -61,17 +62,19 @@ function estimateRange(frames) {
   // fewer bins than the global percentile retains; isolated outliers away from the center remain excluded.
   const centerPeak = Math.max(...profile.slice(Math.floor(size * 0.4), Math.ceil(size * 0.6))
     .filter(validStrength));
-  const upperLevel = Math.max(quantile(finite, 0.99), centerPeak);
+  const strongerLevel = Math.max(quantile(finite, 0.99), centerPeak);
   // Without distinct lower shoulders, a full-band transmission and noise alone cannot be distinguished from
   // these samples. Retain the previous/default range instead of confidently treating the entire signal as noise.
-  if (upperLevel - noiseLevel < 6) return null;
-  let floorDb = Math.max(-200, Math.floor(noiseLevel - 4));
-  const ceilingDb = Math.min(0, Math.ceil(Math.max(upperLevel + 6, floorDb + MINIMUM_DISPLAY_SPAN_DB)));
-  floorDb = Math.min(floorDb, ceilingDb - MINIMUM_DISPLAY_SPAN_DB);
+  if (strongerLevel - noiseLevel < 6) return null;
+  // Raise the display floor above passed noise so the noise shelf and filter rolloff share the background color.
+  // Signal strength never chooses an automatic ceiling; keep the existing fixed upper display limit.
+  const ceilingDb = DEFAULT_RANGE.ceilingDb;
+  const floorDb = Math.max(-200, Math.min(ceilingDb - MINIMUM_DISPLAY_SPAN_DB,
+    Math.ceil(noiseLevel + NOISE_DISPLAY_MARGIN_DB)));
   return { floorDb, ceilingDb };
 }
 
-/** A bounded, one-shot calibration shared by the selected channel's FFT and waterfall. */
+/** A bounded, one-shot floor calibration shared by the selected channel's FFT and waterfall. */
 export function createChannelSignalAutoRange({ sampleFrames = 8 } = {}) {
   const frameLimit = Number.isInteger(sampleFrames) ? Math.max(3, Math.min(32, sampleFrames)) : 8;
   let frames = [];

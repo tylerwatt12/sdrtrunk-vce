@@ -71,6 +71,7 @@ const contracts = [
   ["tuner idle markers", "tuner-idle-markers.test.js", "stats-web/assets/app.js"],
   ["spectrum display preferences", "spectrum-display-preferences.test.js", "stats-web/assets/core/spectrum-display-preferences.js"],
   ["spectrum automatic range", "spectrum-auto-range.test.js", "stats-web/assets/app.js"],
+  ["spectrum FFT smoothing", "spectrum-smoothing.test.js", "stats-web/assets/features/spectrum-smoothing.js"],
   ["spectrum live tuning", "spectrum-live-tune.test.js", "stats-web/assets/features/spectrum-live-tune.js"],
   ["diagnostic strength encoding", "diagnostic-strength.test.js", "stats-web/assets/app.js"],
   ["Direct Listen entrypoints", "direct-listen-entry.test.js", "stats-web/assets/core/direct-listen-entry.js"],

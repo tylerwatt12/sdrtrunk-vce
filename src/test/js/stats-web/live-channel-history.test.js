@@ -9,6 +9,8 @@ const source = fs.readFileSync(process.argv[2] || path.resolve(__dirname,
   '../../../../stats-web/assets/app.js'), 'utf8');
 const rangeSource = fs.readFileSync(path.resolve(__dirname,
   '../../../../stats-web/assets/features/channel-signal-auto-range.js'), 'utf8').replace(/^export /gm, '');
+const smoothingSource = fs.readFileSync(path.resolve(__dirname,
+  '../../../../stats-web/assets/features/spectrum-smoothing.js'), 'utf8').replace(/^export /gm, '');
 
 function functionSource(name) {
   const start = source.indexOf(`function ${name}(`);
@@ -86,6 +88,7 @@ function harness() {
     }
   });
   vm.runInContext(rangeSource, context);
+  context.smoothSpectrumValues = vm.runInContext(`(() => { ${smoothingSource}\nreturn smoothSpectrumValues; })()`, context);
   for (const name of ['liveDetailSelectionDelta', 'liveDetailTransportParameters',
     'liveChannelStateMatchesSelection', 'liveChannelPane']) vm.runInContext(functionSource(name), context);
   const pane = context.liveChannelPane();
@@ -233,9 +236,9 @@ test('channel calibration recolors retained waterfall rows and shares its range 
     assert.equal(h.rangeButton.disabled, true);
     for (let sequence = 2; sequence <= 8; sequence++) h.frame(2, sequence, values);
     const range = displayRange(h);
-    assert.ok(range.floorDb > -115, 'Suppressed outer bins must not determine the display floor');
-    assert.ok(range.ceilingDb < -30, 'The signal should use useful vertical and color range');
-    assert.ok(range.ceilingDb - range.floorDb >= 20, 'Noise needs a conservative dynamic range');
+    assert.ok(range.floorDb >= -85 && range.floorDb <= -83,
+      'Display floor sits about 2 dB above the passed noise instead of following suppressed outer bins');
+    assert.equal(range.ceilingDb, 0, 'Automatic floor calibration keeps the upper display limit fixed');
     assert.equal(h.rangeButton.disabled, false);
     assert.equal(h.readout('Peak'), '-59.0 dB', 'Display scaling does not alter the measured peak');
     const calibrated = h.waterfall.context.rows.get(255);
@@ -244,18 +247,32 @@ test('channel calibration recolors retained waterfall rows and shares its range 
     assert.equal(h.waterfall.context.rows.size, 8);
     const center = values.length / 2;
     assert.deepEqual(calibrated.slice(center * 4, center * 4 + 4), expectedColor(values[center], range));
+    const minimumColor = expectedColor(range.floorDb, range);
+    assert.deepEqual(calibrated.slice(32 * 4, 32 * 4 + 4), minimumColor,
+      'The broad passed noise shelf is painted at the palette minimum');
+    assert.notDeepEqual(calibrated.slice(center * 4, center * 4 + 4), minimumColor,
+      'The wanted signal remains visible above the display floor');
     h.view('fft');
     assert.equal(h.signal.context.trace.length, values.length);
     const expectedY = (range.ceilingDb - values[center]) / (range.ceilingDb - range.floorDb) * 180;
     assert.ok(Math.abs(h.signal.context.trace[center][1] - expectedY) < 1e-8,
       'FFT positions use the same limits as waterfall colors');
+    assert.equal(h.signal.context.trace[32][1], 180, 'FFT noise below the floor is clamped to its baseline');
+    const withRolloff = values.slice();
+    const rolloff = [-150, -130, -115, -101, -95, -89, -86];
+    withRolloff.splice(18, rolloff.length, ...rolloff);
+    h.frame(2, 9, withRolloff);
+    const rolloffRow = h.waterfall.context.rows.get(247);
+    for (let index = 18; index < 18 + rolloff.length; index++)
+      assert.deepEqual(rolloffRow.slice(index * 4, index * 4 + 4), minimumColor,
+        'Channelizer rolloff below the passed noise uses the same minimum color');
     const retainedRange = h.readout('Display range');
     h.state(7, { revision: 2, frequency_correction: { channel_correction_hz: -6 } });
-    h.frame(2, 9, channelSpectrum({ noiseDb: -60, signalDb: -30 }));
+    h.frame(2, 10, channelSpectrum({ noiseDb: -60, signalDb: -30 }));
     assert.equal(h.readout('Display range'), retainedRange, 'Later signal variations do not pump the range');
     assert.deepEqual(h.waterfall.context.rows.get(255), calibrated);
-    h.frame(2, 10, channelSpectrum({ noiseDb: -50, signalDb: -20 }), 6);
-    assert.equal(h.waterfall.context.rows.size, 9, 'A stale producer cannot affect calibrated history');
+    h.frame(2, 11, channelSpectrum({ noiseDb: -50, signalDb: -20 }), 6);
+    assert.equal(h.waterfall.context.rows.size, 10, 'A stale producer cannot affect calibrated history');
     assert.equal(h.readout('Display range'), retainedRange);
   } finally { h.pane.close(); }
 });
@@ -279,6 +296,8 @@ test('manual recalibration keeps the current colors until the new range can repa
     h.frame(2, 16, shifted);
     const afterRange = displayRange(h);
     assert.notDeepEqual(afterRange, beforeRange);
+    assert.equal(beforeRange.ceilingDb, 0);
+    assert.equal(afterRange.ceilingDb, 0, 'Manual recalibration also adjusts only the floor');
     const center = initial.length / 2;
     assert.deepEqual(h.waterfall.context.rows.get(255).slice(center * 4, center * 4 + 4),
       expectedColor(initial[center], afterRange), 'Original dB samples survive a display-range change');
@@ -336,6 +355,93 @@ test('the raw waterfall ring remains bounded while wrapping and repainting', () 
     const center = values.length / 2;
     assert.deepEqual(h.waterfall.context.rows.get(0).slice(center * 4, center * 4 + 4),
       expectedColor(values[center], range), 'Wrapped older rows are repainted from their retained dB values');
+  } finally { h.pane.close(); }
+});
+
+function expectFftValues(h, expected) {
+  assert.equal(h.signal.context.trace.length, expected.length);
+  expected.forEach((value, index) => {
+    const actualDb = -h.signal.context.trace[index][1] / 180 * 120;
+    assert.ok(Math.abs(actualDb - value) < 1e-5,
+      `FFT bin ${index}: expected ${value} dB, got ${actualDb} dB`);
+  });
+}
+
+test('Live FFT smoothing advances while Waterfall is selected without smoothing raw power or history', () => {
+  const h = harness();
+  try {
+    h.state();
+    h.frame(2, 1, [-100, -80, -90, -70]);
+    h.frame(2, 2, [-60, -40, -50, -30]);
+    assert.equal(h.readout('Peak'), '-30.0 dB', 'Peak remains the latest received power');
+    const defaultRange = { floorDb: -120, ceilingDb: 0 };
+    assert.deepEqual(h.waterfall.context.rows.get(254).slice(0, 4), expectedColor(-60, defaultRange),
+      'Waterfall records the current raw frame instead of its smoothed FFT');
+    assert.deepEqual(h.waterfall.context.rows.get(255).slice(0, 4), expectedColor(-100, defaultRange));
+    h.view('fft');
+    expectFftValues(h, [-90, -70, -80, -60]);
+    h.frame(2, 3, [-60, -40, -50, -30]);
+    expectFftValues(h, [-82.5, -62.5, -72.5, -52.5]);
+  } finally { h.pane.close(); }
+});
+
+test('Live smoothing ignores duplicate and stale frames and never advances on redraws', () => {
+  const h = harness();
+  try {
+    h.state();
+    h.view('fft');
+    h.frame(2, 1, [-100, -80]);
+    h.frame(2, 2, [-60, -40]);
+    expectFftValues(h, [-90, -70]);
+    h.frame(2, 2, [-10, -10]);
+    h.frame(2, 3, [-10, -10], 6);
+    h.frame(2, 3, []);
+    expectFftValues(h, [-90, -70]);
+    assert.equal(h.waterfall.context.rows.size, 2);
+    h.view('waterfall');
+    h.view('fft');
+    h.resize(900, 2);
+    h.state(7, { revision: 2, frequency_correction: { channel_correction_hz: -6 } });
+    expectFftValues(h, [-90, -70]);
+    h.frame(2, 4, [-60, -40]);
+    expectFftValues(h, [-82.5, -62.5]);
+    assert.equal(h.waterfall.context.rows.size, 3);
+  } finally { h.pane.close(); }
+});
+
+test('Live smoothing starts fresh after source, bin-count, producer, reconnect and selection changes', () => {
+  const h = harness();
+  try {
+    h.state(7, { sample_rate_hz: 50_000, fft_size: 2 });
+    h.view('fft');
+    const metadata = { sampleRateHz: 50_000, centerFrequencyHz: 851_012_500 };
+    h.frame(2, 1, [-100, -80], 7, metadata);
+    h.frame(2, 2, [-60, -40], 7, metadata);
+    expectFftValues(h, [-90, -70]);
+    h.state(7, { sample_rate_hz: 100_000, fft_size: 2 });
+    const changedRate = { ...metadata, sampleRateHz: 100_000 };
+    h.frame(2, 3, [-50, -30], 7, changedRate);
+    expectFftValues(h, [-50, -30]);
+    h.frame(2, 4, [-90, -70], 7, changedRate);
+    expectFftValues(h, [-60, -40]);
+    h.frame(2, 5, [-110, -90, -70, -50], 7, changedRate);
+    expectFftValues(h, [-110, -90, -70, -50]);
+    h.frame(2, 6, [-80, -60, -40, -20], 7,
+      { ...changedRate, centerFrequencyHz: 851_037_500 });
+    expectFftValues(h, [-80, -60, -40, -20]);
+    h.state(8, { sample_rate_hz: 100_000, fft_size: 4 });
+    h.frame(2, 1, [-40, -20, -80, -60], 8, changedRate);
+    expectFftValues(h, [-40, -20, -80, -60]);
+    h.connection().callbacks.onError(new Error('The live connection ended.'));
+    h.connection().callbacks.onOpen();
+    h.state(8, { sample_rate_hz: 100_000, fft_size: 4 });
+    h.frame(2, 1, [-100, -80, -60, -40], 8, changedRate);
+    expectFftValues(h, [-100, -80, -60, -40]);
+    h.select('b', 852_012_500);
+    h.state(8, { sample_rate_hz: 100_000, fft_size: 4 });
+    h.frame(2, 1, [-70, -50, -30, -10], 8,
+      { ...changedRate, centerFrequencyHz: 852_012_500 });
+    expectFftValues(h, [-70, -50, -30, -10]);
   } finally { h.pane.close(); }
 });
 

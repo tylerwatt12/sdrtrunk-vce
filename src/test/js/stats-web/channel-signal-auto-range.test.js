@@ -24,14 +24,14 @@ function calibrate(range, options, transform = (values) => values) {
   return changed;
 }
 
-test('passed noise, rather than rejected outer bins, sets the channel range', async () => {
+test('passed noise, rather than rejected outer bins, sets the floor while the ceiling stays fixed', async () => {
   const { createChannelSignalAutoRange } = await helper;
   const range = createChannelSignalAutoRange();
   assert.deepEqual(range.range(), { floorDb: -120, ceilingDb: 0 });
   assert.equal(calibrate(range, {}), true);
   const { floorDb, ceilingDb } = range.range();
-  assert.ok(floorDb >= -96 && floorDb <= -92, `${floorDb} follows the -90 dB passed noise`);
-  assert.ok(ceilingDb >= -56 && ceilingDb <= -52, `${ceilingDb} gives the -60 dB signal headroom`);
+  assert.ok(floorDb >= -89 && floorDb <= -87, `${floorDb} sits above the -90 dB passed noise`);
+  assert.equal(ceilingDb, 0);
   assert.equal(range.pending(), false);
 });
 
@@ -40,7 +40,8 @@ test('persistent control channel energy is preserved and the completed range is 
   const range = createChannelSignalAutoRange();
   calibrate(range, { noise: -100, signal: -55 });
   const captured = range.range();
-  assert.ok(captured.floorDb < -100 && captured.ceilingDb > -55);
+  assert.ok(captured.floorDb > -100 && captured.floorDb < -55);
+  assert.equal(captured.ceilingDb, 0);
   for (let frame = 0; frame < 20; frame += 1)
     assert.equal(range.observe(spectrum({ noise: -60, signal: -20 }, frame)), false);
   assert.deepEqual(range.range(), captured);
@@ -49,17 +50,17 @@ test('persistent control channel energy is preserved and the completed range is 
   assert.deepEqual(range.range(), captured, 'callers cannot mutate the held range');
 });
 
-test('weak signals retain a conservative display span without disappearing below the floor', async () => {
+test('a signal six dB above passed noise remains above the floor while the noise is hidden', async () => {
   const { createChannelSignalAutoRange } = await helper;
   const range = createChannelSignalAutoRange();
   calibrate(range, { noise: -90, signal: -84 });
   const { floorDb, ceilingDb } = range.range();
-  assert.ok(ceilingDb - floorDb >= 32);
-  assert.ok((-90 - floorDb) / (ceilingDb - floorDb) < 0.2);
+  assert.equal(ceilingDb, 0);
+  assert.ok(-90 < floorDb, 'passed noise is below the displayed floor');
   assert.ok(-84 > floorDb, 'the weak signal remains in the display range');
 });
 
-test('a short spike and an isolated persistent outlier do not determine the ceiling', async () => {
+test('a short spike and an isolated persistent outlier do not change the noise floor or fixed ceiling', async () => {
   const { createChannelSignalAutoRange } = await helper;
   const range = createChannelSignalAutoRange();
   calibrate(range, {}, (values, frame) => {
@@ -67,11 +68,11 @@ test('a short spike and an isolated persistent outlier do not determine the ceil
     values[100] = -1;
     return values;
   });
-  assert.ok(range.range().ceilingDb <= -52);
-  assert.ok(range.range().floorDb <= -92);
+  assert.equal(range.range().ceilingDb, 0);
+  assert.ok(range.range().floorDb >= -89 && range.range().floorDb <= -87);
 });
 
-test('persistent narrow centered carriers retain peak headroom at one, three and five bins', async () => {
+test('persistent narrow centered carriers stay above the floor at one, three and five bins', async () => {
   const { createChannelSignalAutoRange } = await helper;
   for (const width of [1, 3, 5]) {
     const range = createChannelSignalAutoRange();
@@ -81,8 +82,9 @@ test('persistent narrow centered carriers retain peak headroom at one, three and
       return values;
     });
     const { floorDb, ceilingDb } = range.range();
-    assert.ok(floorDb >= -101 && floorDb <= -97, `${width}-bin carrier preserves the passed-noise floor`);
-    assert.equal(ceilingDb, -39, `${width}-bin persistent carrier receives 6 dB of headroom`);
+    assert.ok(floorDb >= -94 && floorDb <= -92, `${width}-bin carrier preserves the passed-noise floor`);
+    assert.ok(-45 > floorDb);
+    assert.equal(ceilingDb, 0);
   }
 });
 
@@ -98,8 +100,8 @@ test('unfiltered noise and spectra with only one rejected edge still calibrate c
       }
       return values;
     });
-    assert.ok(range.range().floorDb >= -96 && range.range().floorDb <= -92);
-    assert.ok(range.range().ceilingDb - range.range().floorDb >= 32);
+    assert.ok(range.range().floorDb >= -89 && range.range().floorDb <= -87);
+    assert.equal(range.range().ceilingDb, 0);
   }
 });
 
@@ -109,10 +111,42 @@ test('lower noise shoulders stay the floor when the centered signal occupies mos
     const range = createChannelSignalAutoRange();
     calibrate(range, { noise: -90, signal: -60, signalWidth });
     const { floorDb, ceilingDb } = range.range();
-    assert.ok(floorDb >= -97 && floorDb <= -92, `${signalWidth} width keeps the lower supported noise plateau`);
-    assert.ok(ceilingDb >= -56 && ceilingDb <= -52);
-    assert.ok((-60 - floorDb) / (ceilingDb - floorDb) > 0.75, 'the broad signal remains bright');
+    assert.ok(floorDb >= -90 && floorDb <= -87, `${signalWidth} width keeps the lower supported noise plateau`);
+    assert.equal(ceilingDb, 0);
+    assert.ok(-60 - floorDb >= 27, 'the broad signal remains well above the displayed noise floor');
   }
+});
+
+test('different signal strengths never select an automatic upper display limit', async () => {
+  const { createChannelSignalAutoRange } = await helper;
+  for (const signal of [-84, -60, -15, 0]) {
+    const range = createChannelSignalAutoRange();
+    assert.equal(calibrate(range, { noise: -90, signal }), true);
+    assert.equal(range.range().ceilingDb, 0);
+    assert.ok(range.range().floorDb >= -89 && range.range().floorDb <= -87);
+  }
+});
+
+test('the passed-noise shelf and filter ramps sit below the displayed floor without changing raw values', async () => {
+  const { createChannelSignalAutoRange } = await helper;
+  const range = createChannelSignalAutoRange();
+  const raw = Float32Array.from({ length: 512 }, (_value, index) => {
+    const offset = Math.abs(index / 512 - 0.5);
+    if (offset <= 0.08) return -60;
+    if (offset <= 0.28) return -90;
+    return Math.max(-165, -90 - (offset - 0.28) * 750);
+  });
+  const original = raw.slice();
+  for (let frame = 0; frame < 8; frame += 1) range.observe(raw);
+  const { floorDb, ceilingDb } = range.range();
+  assert.equal(floorDb, -88);
+  assert.equal(ceilingDb, 0);
+  raw.forEach((value, index) => {
+    if (Math.abs(index / raw.length - 0.5) > 0.08)
+      assert.ok(value <= floorDb, 'passed noise and the full rolloff map to the background');
+    else assert.ok(value > floorDb, 'the wanted signal remains visible');
+  });
+  assert.deepEqual(raw, original, 'calibration does not subtract background or alter spectrum samples');
 });
 
 test('noise-only and full-passband signals without identifiable shoulders retain the safe range', async () => {

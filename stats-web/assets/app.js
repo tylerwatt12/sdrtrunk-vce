@@ -47,7 +47,8 @@ import { requestChannelAction, requestChannelAdminMutation } from './core/channe
 import { createSpectrumLiveTune } from './features/spectrum-live-tune.js?v=1';
 import { createSpectrumDisplayPreferences } from './core/spectrum-display-preferences.js?v=2';
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
-import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=1';
+import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
+import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
 import { createAudioDock } from './core/audio-dock.js?v=45';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=1';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
@@ -15148,6 +15149,7 @@ function liveChannelPane(options = {}) {
   let signalSequence = 0;
   let symbolSequence = 0;
   let signalValues = new Float32Array(0);
+  let smoothedSignalValues = new Float32Array(0);
   let signalPeak = null;
   let signalLatencyMs = null;
   const latencyClock = { offsetMs: null };
@@ -15305,6 +15307,7 @@ function liveChannelPane(options = {}) {
 
   const resetSignalHistory = () => {
     signalValues = new Float32Array(0);
+    smoothedSignalValues = new Float32Array(0);
     signalPeak = null;
     signalLatencyMs = null;
     signalDomain = null;
@@ -15340,13 +15343,14 @@ function liveChannelPane(options = {}) {
     if (signalValues.length < 2) return;
     const { context, cssWidth, cssHeight } = prepared;
     const { floorDb, ceilingDb } = signalAutoRange.range();
+    const values = smoothedSignalValues.length === signalValues.length ? smoothedSignalValues : signalValues;
     context.strokeStyle = '#55c7ff';
     context.lineWidth = 1.5;
     context.beginPath();
-    for (let index = 0; index < signalValues.length; index += 1) {
-      const raw = signalValues[index];
+    for (let index = 0; index < values.length; index += 1) {
+      const raw = values[index];
       const value = Number.isFinite(raw) && raw !== -196 ? Math.max(floorDb, Math.min(ceilingDb, raw)) : floorDb;
-      const x = index * cssWidth / (signalValues.length - 1);
+      const x = index * cssWidth / (values.length - 1);
       const y = (ceilingDb - value) / (ceilingDb - floorDb) * cssHeight;
       if (index === 0) context.moveTo(x, y);
       else context.lineTo(x, y);
@@ -15545,6 +15549,7 @@ function liveChannelPane(options = {}) {
           if (signalDomain !== null && domain !== signalDomain) resetSignalHistory();
           signalDomain = domain;
           signalValues = incoming;
+          smoothedSignalValues = smoothSpectrumValues(smoothedSignalValues, signalValues);
           signalPeak = null;
           for (let index = 0; index < signalValues.length; index += 1) {
             if (Number.isFinite(signalValues[index]) && signalValues[index] !== -196 &&
@@ -15676,7 +15681,6 @@ const TUNER_SPECTRUM_MAXIMUM_ZOOM = 64;
 const TUNER_SPECTRUM_ZOOM_FACTOR = 1.5;
 const TUNER_SPECTRUM_WHEEL_EVENTS_PER_ZOOM = 10;
 const TUNER_SPECTRUM_VIEWPORT_DEBOUNCE_MS = 160;
-const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25;
 const TUNER_WATERFALL_HISTORY_ROWS = 256;
 const TUNER_SPECTRUM_FLOOR_PREFERENCE = 'floor_db';
 const TUNER_SPECTRUM_CEILING_PREFERENCE = 'ceiling_db';
@@ -18600,12 +18604,7 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
       spectrumSmoothingKey = key;
       return;
     }
-    for (let index = 0; index < values.length; index += 1) {
-      const current = values[index];
-      const previous = smoothedFftValues[index];
-      smoothedFftValues[index] = Number.isFinite(current) && Number.isFinite(previous) ?
-        previous + TUNER_SPECTRUM_SMOOTHING_ALPHA * (current - previous) : current;
-    }
+    smoothedFftValues = smoothSpectrumValues(smoothedFftValues, values);
   }
 
   function acceptTunerFrame(frame) {
