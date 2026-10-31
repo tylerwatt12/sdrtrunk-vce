@@ -1764,6 +1764,7 @@ class StatsWebInteractionUiContractTest
     void opensDemandDrivenTunerSpectrumAndWaterfallOnDedicatedPage() throws Exception
     {
         String source = source();
+        String smoothing = readText(Path.of("stats-web", "assets", "features", "spectrum-smoothing.js"));
         String binary = function(source, "function binaryFrameConnection(topic, parameters = {}, callbacks = {})");
         String diagnostic = function(source, "function decodeDiagnosticFrame(encoded)");
         String activity = function(source, "function synchronizeLiveChannelActivitySource()");
@@ -1988,13 +1989,15 @@ class StatsWebInteractionUiContractTest
         assertTrue(tuner.contains("smoothInput.addEventListener('change'"));
         assertTrue(tuner.contains("function displayedSpectrumValues()"));
         assertTrue(tuner.contains("function updateSpectrumSmoothing(values, frame, domain)"));
-        assertTrue(tuner.contains("previous + TUNER_SPECTRUM_SMOOTHING_ALPHA * (current - previous)"));
+        assertTrue(source.contains("import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v="));
+        assertTrue(tuner.contains("smoothedFftValues = smoothSpectrumValues(smoothedFftValues, values)"));
+        assertTrue(smoothing.contains("before + SPECTRUM_SMOOTHING_ALPHA * (current - before)"));
         assertTrue(tuner.contains("domain.rawBinWidthHz"));
         assertTrue(tuner.contains("domain.sourceBinCount, domain.transmittedBinCount"));
         assertTrue(tuner.contains("const spectrumValues = visibleSpectrumValues()"));
         assertTrue(tuner.contains("const value = displayedSpectrumValues()[index]"));
         assertTrue(tuner.contains("clearSpectrumSmoothing()"));
-        assertTrue(source.contains("const TUNER_SPECTRUM_SMOOTHING_ALPHA = 0.25"));
+        assertTrue(smoothing.contains("const SPECTRUM_SMOOTHING_ALPHA = 0.25"));
         assertFalse(tuner.contains("cursorFrequency.textContent = `Pointer ${"));
         assertFalse(tuner.contains("`Snapped ${(guideHz / 1_000_000).toFixed(6)} MHz"));
         assertTrue(tuner.contains("waterfallObservedAtRows[nextWaterfallRow] = observedAtEpochMs"));
