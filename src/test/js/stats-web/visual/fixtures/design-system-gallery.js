@@ -445,7 +445,7 @@ if (view === 'modal' && parameters.get('confirmation') === 'tuner-setup') {
   const { confirmAction } = await createGalleryModalFoundation();
   void confirmAction('North antenna is in Setup. Some channels have been stopped. Go Live again?', {
     title: 'Leave this page?', cancelLabel: 'Stay here', alternateLabel: 'Leave stopped',
-    confirmLabel: 'Go Live & leave', tone: 'primary'
+    confirmLabel: 'Go Live & leave', tone: 'primary', pending: 'Going Live…', onConfirm: async () => {}
   });
 }
 

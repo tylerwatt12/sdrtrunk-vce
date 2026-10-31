@@ -2744,7 +2744,10 @@ function confirmAction(message, options = {}) {
     if (alternate) alternate.type = 'button';
     footer.append(cancel, ...(alternate ? [alternate] : []), proceed);
     const feedback = options.onConfirm ? node('div', 'ui-feedback') : null;
-    if (feedback) body.append(feedback);
+    if (feedback) {
+      feedback.hidden = true;
+      body.append(feedback);
+    }
     body.append(detail, footer);
     const modal = openReadOnlyModal(options.title || 'Confirm action', body, {
       id: 'confirmation', className: 'ui-confirmation-modal', stack: 'child',

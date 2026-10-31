@@ -1,5 +1,7 @@
 // Gallery specimens execute the production modal functions, so focus, stacking,
 // dismissal and cleanup remain covered by the same foundation as real editors.
+import { createActionWorkflow } from '/assets/core/action-workflows.js';
+
 export async function createGalleryModalFoundation() {
   const response = await fetch('/assets/app.js');
   if (!response.ok) throw new Error('The production modal foundation could not be loaded.');
@@ -25,8 +27,8 @@ export async function createGalleryModalFoundation() {
     control.append(icon);
     return control;
   };
-  return new Function('node', 'valueNode', 'iconButton',
+  return new Function('node', 'valueNode', 'iconButton', 'createActionWorkflow',
     `let activeReadOnlyModal = null; ${source.slice(start, end)}
      return { openReadOnlyModal, closeReadOnlyModal, confirmAction };`)(node,
-    value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton);
+    value => value instanceof Node ? value : document.createTextNode(String(value)), iconButton, createActionWorkflow);
 }
