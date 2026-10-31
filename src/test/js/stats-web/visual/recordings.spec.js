@@ -1427,7 +1427,7 @@ test('desktop filter box follows scrolling separately from results and keeps eve
   expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
 });
 
-test('results group context and selection with the pager before the first call', async ({ page }) => {
+test('results group context and selection with the pager before the first call', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await openRecordings(page, { calls: browsingCalls(3), paginate: true, nextCursor: 'fixture:3',
     query: { system_key: systemKey, talkgroup_identity_key: 'v1-g-00001-001-1201' } });
@@ -1442,19 +1442,24 @@ test('results group context and selection with the pager before the first call',
   await expect(state.getByRole('checkbox', { name: 'Select all calls on this page', exact: true })).toBeVisible();
   await expect(state.locator('.recordings-result-count')).toContainText('3 calls shown · more available');
   await expect(results.locator('.recordings-results-toolbar .recordings-pager-top')).toBeVisible();
+  await expect(results.locator('.recordings-call-context')).toBeVisible();
   const geometry = await results.evaluate(element => {
     const rect = selector => {
       const bounds = element.querySelector(selector).getBoundingClientRect();
       return { x: bounds.x, y: bounds.y, right: bounds.right, bottom: bounds.bottom };
     };
     return { scope: rect('.recordings-results-scope'),
-      toolbar: rect('.recordings-results-toolbar'), date: rect('.recordings-result-date'),
+      toolbar: rect('.recordings-results-toolbar'), context: rect('.recordings-call-context'),
+      date: rect('.recordings-result-date'),
       title: rect('.recordings-call-title'),
       actions: rect('.recordings-call-actions'), selection: rect('.recordings-call-select') };
   });
   expect(geometry.toolbar.y).toBeGreaterThanOrEqual(geometry.scope.bottom);
-  expect(geometry.date.y).toBeGreaterThanOrEqual(geometry.toolbar.bottom);
-  expect(geometry.date.y - geometry.scope.y).toBeLessThan(200);
+  expect(geometry.context.y).toBeGreaterThanOrEqual(geometry.toolbar.bottom);
+  expect(geometry.date.y).toBeGreaterThanOrEqual(geometry.context.bottom);
+  // The common-facts block is new content; retain the existing compactness
+  // budget for the scope, controls and date outside that measured block.
+  expect(geometry.date.y - geometry.scope.y - (geometry.context.bottom - geometry.context.y)).toBeLessThan(200);
   expect(Math.abs(geometry.scope.x - geometry.toolbar.x)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.toolbar.x - geometry.date.x)).toBeLessThanOrEqual(1);
   expect(Math.abs((geometry.actions.y + geometry.actions.bottom) / 2 -
@@ -1462,6 +1467,9 @@ test('results group context and selection with the pager before the first call',
   expect(geometry.selection.x).toBeLessThan(geometry.title.x);
   await expect(results.locator('.recordings-call > .recordings-call-actions')).toHaveCount(3);
   await expect(results.locator('.recordings-call > .recordings-call-select')).toHaveCount(3);
+  await testInfo.attach('compact-header-geometry', { body: Buffer.from(JSON.stringify(geometry, null, 2)),
+    contentType: 'application/json' });
+  await results.screenshot({ ...componentScreenshot, path: testInfo.outputPath('recordings-compact-header-current.png') });
 });
 
 test('page summary shows common facts once across dates and omits facts that vary between calls', async ({ page }) => {
@@ -2181,7 +2189,7 @@ test('High Interest is an explicit toggle and result controls have recognizable 
   await expect(actions).toBeFocused();
 });
 
-test('recordings accents follow every color scheme in day and night themes', async ({ page }) => {
+async function openRecordingAccentExample(page) {
   await stubRecordingAudio(page);
   await page.setViewportSize({ width: 1280, height: 900 });
   await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18, start_ms: call.start_ms - 60_000 }] });
@@ -2191,6 +2199,10 @@ test('recordings accents follow every color scheme in day and night themes', asy
   await expect(page.locator('.recordings-call').first()).toHaveClass(/recordings-call-playing/);
   await expect(page.locator('.recordings-call').nth(1)).toHaveClass(/recordings-call-queued/);
   await page.mouse.move(0, 0);
+}
+
+test('recordings accents follow every color scheme in day and night themes', async ({ page }) => {
+  await openRecordingAccentExample(page);
   const palettes = await page.evaluate(async () => {
     const { APPEARANCE_SCHEMES, applyThemeHue } = await import('/assets/core/theme.js');
     const root = document.documentElement;
@@ -2278,10 +2290,14 @@ test('recordings accents follow every color scheme in day and night themes', asy
   expect(markerSweep.indistinguishable).toBe(0);
   expect(markerSweep.unapplied).toBe(0);
   expect(markerSweep.minimumContrast).toBeGreaterThanOrEqual(3);
-  // The screenshot stylesheet hides timing text; keep its reserved width deterministic too.
-  await page.locator('.recordings-search-timing').evaluate(element => { element.textContent = 'Loaded in 100 ms'; });
-  for (const [scheme, theme, viewport] of [['Ocean', 'light', { width: 1280, height: 900 }],
-    ['Amber', 'dark', { width: 390, height: 844 }], ['Forest', 'light', { width: 390, height: 844 }]]) {
+});
+
+for (const [scheme, theme, viewport] of [['Ocean', 'light', { width: 1280, height: 900 }],
+  ['Amber', 'dark', { width: 390, height: 844 }], ['Forest', 'light', { width: 390, height: 844 }]]) {
+  test(`recordings accent appearance ${scheme} ${theme}`, async ({ page }) => {
+    await openRecordingAccentExample(page);
+    // The screenshot stylesheet hides timing text; keep its reserved width deterministic too.
+    await page.locator('.recordings-search-timing').evaluate(element => { element.textContent = 'Loaded in 100 ms'; });
     await page.setViewportSize(viewport);
     await page.evaluate(async ({ scheme, theme }) => {
       const { APPEARANCE_SCHEMES, applyThemeHue } = await import('/assets/core/theme.js');
@@ -2290,8 +2306,8 @@ test('recordings accents follow every color scheme in day and night themes', asy
     }, { scheme, theme });
     expect(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
     await expect(page.locator('.recordings-browser')).toHaveScreenshot(`recordings-scheme-${scheme.toLowerCase()}-${theme}.png`, componentScreenshot);
-  }
-});
+  });
+}
 
 function browsingCalls(count = 61) {
   return Array.from({ length: count }, (_, index) => ({ ...linkedCall, id: 17 + index,

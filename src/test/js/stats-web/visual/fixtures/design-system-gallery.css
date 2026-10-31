@@ -617,7 +617,7 @@ body:not([data-gallery-view="access-landing"]) .visual-access-landing-example,
 body:not([data-gallery-view="access-login-modal"]) .visual-access-login-modal-example,
 body:not([data-gallery-view="mobile-table"]) .visual-mobile-table-example,
 body:not([data-gallery-view="app-chrome"]) .visual-app-chrome-example,
-body:not([data-gallery-view="gallery"]) .design-system-gallery,
+body:not([data-gallery-view="gallery"]):not([data-gallery-view="loading-indicators"]):not([data-gallery-view="text-links"]) .design-system-gallery,
 body:not([data-gallery-view="workflows"]) .visual-workflows-example,
 body:not([data-gallery-view="qr-code"]) .visual-qr-code-example,
 body:not([data-gallery-view="section-body"]) .visual-section-body-example,
@@ -662,6 +662,11 @@ body:not([data-gallery-view="live-filter"]) .visual-live-filter-example,
 body:not([data-gallery-view="spectrum-discovery"]) .visual-spectrum-discovery-example,
 body:not([data-gallery-view="spectrum-search"]) .visual-spectrum-search-example,
 body:not([data-gallery-view="tuner-frequency-popover"]) .visual-tuner-frequency-popover-example {
+  display: none;
+}
+
+body:is([data-gallery-view="loading-indicators"], [data-gallery-view="text-links"]) .visual-gallery-header,
+body:is([data-gallery-view="loading-indicators"], [data-gallery-view="text-links"]) .visual-grid > :not(.visual-capture-section) {
   display: none;
 }
 

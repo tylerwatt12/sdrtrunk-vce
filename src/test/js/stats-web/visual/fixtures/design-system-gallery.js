@@ -427,7 +427,7 @@ function initializeScanListCatalog() {
 
 const parameters = new URLSearchParams(window.location.search);
 const theme = parameters.get('theme') === 'dark' ? 'dark' : 'light';
-const view = ['awaiting-apply', 'control-states', 'table-overflow', 'mobile-table', 'gallery', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'computer', 'status-primitives', 'p25', 'admin-access',
+const view = ['awaiting-apply', 'control-states', 'table-overflow', 'mobile-table', 'gallery', 'loading-indicators', 'text-links', 'workflows', 'qr-code', 'section-body', 'app-chrome', 'audio-dock', 'access-landing', 'access-login-modal', 'modal', 'modal-long', 'alias-list-create-modal', 'activity-action-tooltip', 'activity-filters', 'health-alert-modal', 'focus', 'settings', 'health', 'computer', 'status-primitives', 'p25', 'admin-access',
   'admin-navigation', 'focused-settings', 'admin-receiver', 'admin-support', 'dashboard-health', 'dashboard-calls', 'dashboard-activity',
   'signal-quality-detail', 'radioreference-results', 'radioreference-connect', 'comparison-table',
   'radio-directory-coverage', 'radio-directory-panel', 'admin-scan-lists',
@@ -439,6 +439,16 @@ document.documentElement.dataset.theme = theme;
 const requestedHue = parameters.get('hue');
 applyThemeHue(requestedHue === null ? null : Number(requestedHue));
 document.body.dataset.galleryView = view;
+
+if (view === 'loading-indicators' || view === 'text-links') {
+  // Keep the actual gallery sample and its inherited styles, but place it before
+  // unrelated content so component captures start on a stable whole-pixel row.
+  const sample = document.querySelector(view === 'loading-indicators' ?
+    '.visual-loading-actions' : '.visual-text-links-example');
+  const section = sample.closest('.visual-section');
+  section.classList.add('visual-capture-section');
+  section.prepend(sample);
+}
 
 if (view === 'modal' && parameters.get('confirmation') === 'tuner-setup') {
   document.querySelector('.visual-modal-example .modal-backdrop')?.remove();

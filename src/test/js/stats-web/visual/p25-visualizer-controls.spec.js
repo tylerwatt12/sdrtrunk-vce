@@ -78,9 +78,11 @@ for (const [theme, width] of [['light', 1280], ['light', 390]]) {
 for (const theme of ['light']) {
   test(`text-colored links inherit normal and muted context in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/design-system.html?theme=${theme}`);
+    await page.goto(`/design-system.html?theme=${theme}&view=text-links`);
     const example = page.locator('.visual-text-links-example');
     await example.scrollIntoViewIfNeeded();
+    const bounds = await example.boundingBox();
+    expect([bounds.x, bounds.y]).toEqual([Math.round(bounds.x), Math.round(bounds.y)]);
     const links = example.getByRole('link', { name: 'Metro Public Safety' });
     for (const link of await links.all()) {
       expect(await link.evaluate((element) => getComputedStyle(element).color ===
