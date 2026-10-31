@@ -63,7 +63,7 @@ for (const presentation of presentations) {
 
 test('listening hangtime saves zero and sixty while a failed save retains its draft', async ({ page }) => {
   const savedPlayback = { volume: 0.45, selected_scan_list_ids: [], target_grouping: false,
-    target_burst_limit: 7, call_display_hangtime_seconds: 5 };
+    target_burst_limit: 7, call_display_hangtime_seconds: 5, recording_click_mode: 'continue' };
   const state = await openSettingsApp(page, { holdSaves: true, preferences: { playback: savedPlayback } });
   await selectSettingsCategory(page, 'listening', 'Listening settings');
   const editor = page.getByRole('form', { name: 'Listening settings', exact: true });

@@ -132,10 +132,11 @@ class DatabaseFormatCatalogTest
                     DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertEquals(DatabaseFormatCatalog.current().fingerprint(),SqliteSchemaValidator.fingerprint(connection));
                 assertEquals("0", scalar(connection, """
-                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>13
+                    SELECT count(*) FROM web_user WHERE json_extract(preferences_json, '$.version')<>14
+                        OR json_extract(preferences_json, '$.playback.recording_click_mode') IS NOT 'queue'
                         OR json_extract(preferences_json, '$.presentation.live_row_density') IS NOT 'normal'
                         OR json_extract(preferences_json, '$.guides.automatic_page_guides') IS NOT 1
-                    """), "Every registered fixture receives current personal density and automatic-guide defaults");
+                    """), "Every registered fixture receives current personal density, automatic-guide and recording-click defaults");
             }
             SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         }

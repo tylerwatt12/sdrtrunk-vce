@@ -50,7 +50,7 @@ class Format64To65DatabaseMigrationTest
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
             assertEquals(ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(65, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(65, DatabaseFormatCatalog.inspect(connection).version());
             connection.rollback();
             assertEquals(64, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(connection));
@@ -60,6 +60,7 @@ class Format64To65DatabaseMigrationTest
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
         }
+        ApplicationDatabaseMigrator.migrateInPlace(database, null);
         ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
@@ -80,7 +81,7 @@ class Format64To65DatabaseMigrationTest
         try(var connection = open(database)) { assertEquals(64, DatabaseFormatCatalog.inspect(connection).version()); }
         assertEquals(before, readPreferences(database));
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
-        assertConverted(before, readPreferences(database));
+        assertConvertedToCurrent(before, readPreferences(database));
         assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
         ConfigurationHistoryDatabase.validatePair(database);
     }
@@ -101,11 +102,12 @@ class Format64To65DatabaseMigrationTest
                     effect.affectedRows() == 1));
                 for(var entry: preferences(connection).entrySet())
                 {
-                    assertEquals(5, WebUserPreferencesCodec.decode(entry.getValue().json()).playback().callDisplayHangtimeSeconds());
+                    Format65WebUserPreferencesCodec.validate(entry.getValue().json());
+                    assertEquals(5, JSON.readTree(entry.getValue().json()).path("playback").path("call_display_hangtime_seconds").intValue());
                     assertTrue(entry.getValue().revision() > 0);
                 }
                 assertEquals(retained, retainedRows(connection));
-                assertEquals(65, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(65, DatabaseFormatCatalog.inspect(connection).version());
             }
         }
     }
@@ -179,7 +181,25 @@ class Format64To65DatabaseMigrationTest
             assertEquals(expected, JSON.readTree(actual.json()));
             assertEquals(entry.getValue().revision()+1, actual.revision());
             assertEquals(entry.getValue().updatedAt(), actual.updatedAt());
-            assertEquals(5, WebUserPreferencesCodec.decode(actual.json()).playback().callDisplayHangtimeSeconds());
+            Format65WebUserPreferencesCodec.validate(actual.json());
+            assertEquals(5, JSON.readTree(actual.json()).path("playback").path("call_display_hangtime_seconds").intValue());
+        }
+    }
+    private static void assertConvertedToCurrent(Map<Long,Preference> before, Map<Long,Preference> after) throws Exception
+    {
+        assertEquals(before.keySet(), after.keySet());
+        for(var entry: before.entrySet())
+        {
+            ObjectNode expected = (ObjectNode)JSON.readTree(entry.getValue().json());
+            expected.put("version", 14);
+            ObjectNode playback = (ObjectNode)expected.get("playback");
+            playback.put("call_display_hangtime_seconds", 5);
+            playback.put("recording_click_mode", "queue");
+            Preference actual = after.get(entry.getKey());
+            assertEquals(expected, JSON.readTree(actual.json()));
+            assertEquals(entry.getValue().revision()+2, actual.revision());
+            assertEquals(entry.getValue().updatedAt(), actual.updatedAt());
+            assertEquals("queue", WebUserPreferencesCodec.decode(actual.json()).playback().recordingClickMode());
         }
     }
     private static Map<String,List<String>> retainedRows(Connection connection) throws Exception

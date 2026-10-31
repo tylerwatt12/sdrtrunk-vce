@@ -2156,13 +2156,13 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 13,
+    version: 14,
     appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: true },
     guides: { automatic_page_guides: true },
     playback: {
       volume: 1, selected_scan_list_ids: [], target_grouping: true, target_burst_limit: 4,
-      call_display_hangtime_seconds: 5
+      call_display_hangtime_seconds: 5, recording_click_mode: 'queue'
     },
     scanner: { detail_mode: 'normal' },
     presentation: {
@@ -2180,6 +2180,16 @@ async function main() {
     health_alerts: { disabled_codes: [] },
     tables: {}
   });
+  for (const mode of ['queue', 'once', 'continue']) {
+    assert.equal(preferenceSchema.validate({ ...decodedDefaults,
+      playback: { ...decodedDefaults.playback, recording_click_mode: mode }
+    }).playback.recording_click_mode, mode);
+  }
+  for (const mode of [null, '', 'play', 1]) {
+    assert.throws(() => preferenceSchema.validate({ ...decodedDefaults,
+      playback: { ...decodedDefaults.playback, recording_click_mode: mode }
+    }), /playback.recording_click_mode/);
+  }
   for (const prependPlayingCall of [true, false]) {
     assert.equal(preferenceSchema.validate({ ...decodedDefaults,
       page_titles: { prepend_playing_call: prependPlayingCall }

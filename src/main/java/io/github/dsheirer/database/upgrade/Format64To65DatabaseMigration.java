@@ -67,7 +67,8 @@ final class Format64To65DatabaseMigration extends WebUserPreferenceMigration
                 throw new SQLException("Personal playback settings require exact format-64 configuration");
             var effects = super.migrateSourceAndReport(configuration, false);
             DatabaseFormatCatalog.stamp(configuration, 65);
-            DatabaseFormatCatalog.requireCurrent(configuration);
+            if(DatabaseFormatCatalog.inspect(configuration).version() != 65)
+                throw new SQLException("Personal playback settings did not reach exact format-65 configuration");
             configuration.commit();
             return effects;
         }

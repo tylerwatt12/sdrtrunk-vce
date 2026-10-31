@@ -93,7 +93,7 @@ public final class WebUserPreferencesCodec
             throws IOException
         {
             JsonNode playback = context.readTree(parser);
-            if(!playback.isObject() || playback.size() != 5 || !playback.has("volume") ||
+            if(!playback.isObject() || playback.size() != 6 || !playback.has("volume") ||
                 !playback.get("volume").isNumber() || !playback.has("selected_scan_list_ids") ||
                 !playback.get("selected_scan_list_ids").isArray() || !playback.has("target_grouping") ||
                 !playback.get("target_grouping").isBoolean() || !playback.has("target_burst_limit") ||
@@ -101,7 +101,8 @@ public final class WebUserPreferencesCodec
                 !playback.get("target_burst_limit").canConvertToInt() ||
                 !playback.has("call_display_hangtime_seconds") ||
                 !playback.get("call_display_hangtime_seconds").isIntegralNumber() ||
-                !playback.get("call_display_hangtime_seconds").canConvertToInt())
+                !playback.get("call_display_hangtime_seconds").canConvertToInt() ||
+                !playback.has("recording_click_mode") || !playback.get("recording_click_mode").isTextual())
             {
                 throw JsonMappingException.from(parser, "playback must contain exactly the typed playback choices");
             }
@@ -114,7 +115,7 @@ public final class WebUserPreferencesCodec
             }
             return new WebUserPreferences.Playback(playback.get("volume").doubleValue(), selected,
                 playback.get("target_grouping").booleanValue(), playback.get("target_burst_limit").intValue(),
-                playback.get("call_display_hangtime_seconds").intValue());
+                playback.get("call_display_hangtime_seconds").intValue(), playback.get("recording_click_mode").textValue());
         }
     }
 
