@@ -88,7 +88,7 @@ async function checkGuideContext(assetsRoot) {
     assert.equal(definition.steps[0].contextTargets, undefined, `${page} keeps its overview free of spotlights.`);
   }
   const recordings = createGuideDefinition('recordings');
-  assert.equal(recordings.version, 5, 'New surface introductions receive their own completed-guide version.');
+  assert.equal(recordings.version, 6, 'New surface introductions receive their own completed-guide version.');
   assert.deepEqual(recordings.steps.slice(1).map(step => step.id), [
     'targets-button', 'targets', 'time-range', 'search', 'transcript-search', 'transcript-submit',
     'call-card', 'actions-button', 'playback', 'details-button', 'details', 'details-close',

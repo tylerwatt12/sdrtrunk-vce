@@ -540,7 +540,7 @@ export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
     captureRenderContext, renderIsCurrent, content, isPrimaryAdmin, canViewRadio,
     entityRefHref, stopLiveAudio, href, anchor, iconButton, iconGlyph, uiToggleField, metrics, browsingWorkflows, modalFooter, closeReadOnlyModal,
-    getSourceNameDisplay = () => 'talker_alias', openCallRelations, recordingDirectListenControl } = deps;
+    getSourceNameDisplay = () => 'talker_alias', recordingDirectListenControl } = deps;
   const search = {
     q: '', transcript: '', from_ms: '', to_ms: '', system_key: '', site: '', talkgroup_id: '', radio_id: '',
     channel_id: '', alias_list_id: '', radio_identity_key: '', talkgroup_identity_key: '', min_duration_ms: '', max_duration_ms: '', frequency_hz: '',
@@ -1599,7 +1599,6 @@ export function createRecordingsFeature(deps) {
     liveActions.append(addGlyph(anchor('Go to Live', href('live', channel ? { channel } : {}), 'ui-button ui-button-secondary'), 'icon-live'));
     const directListen = recordingDirectListenControl?.(row); if (directListen) liveActions.append(directListen);
     tools.append(liveActions);
-    if (openCallRelations) tools.append(addGlyph(button(node, 'Related activity and alerts', () => run(() => openCallRelations('recording', row.id))), 'icon-open-details'));
     for (const item of row.auxiliary_identifiers || []) if (item.kind === 'tone' && item.protocol === 'DCS') {
       tools.append(button(node, `Filter DCS ${item.value}`, () => run(() => {
         applyResultFilters({ dcs_code: String(item.value) });
@@ -1622,12 +1621,22 @@ export function createRecordingsFeature(deps) {
   function callCard(row, sharedContext = []) {
     const card = node('article', 'recordings-call'); card.dataset.recordingId = String(row.id);
     const description = `${label(row)} at ${dateTime(millis(row))}`; card.setAttribute('aria-label', description);
+    const activate = event => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const selectedText = card.ownerDocument.defaultView?.getSelection();
+      if (event.detail && selectedText && !selectedText.isCollapsed && selectedText.containsNode(card, true)) return;
+      playClicked(row);
+    };
+    card.addEventListener('click', event => {
+      if (!event.target.closest('a, button, input, select, textarea, label, [contenteditable]:not([contenteditable="false"])')) activate(event);
+    });
     const info = iconButton ? iconButton('icon-more', `More actions for ${description}`, 'ui-button ui-button-secondary ui-icon-button recordings-call-info') : button(node, '…', null, 'ui-button ui-button-secondary ui-icon-button recordings-call-info');
     info.setAttribute('aria-label', `More actions for ${description}`); info.dataset.uiHint = 'Call actions'; info.addEventListener('click', () => openCallActions(row));
     if (deps.guideMode && Number(row.id) === RECORDINGS_GUIDE_CALL_ID) { card.dataset.guideTarget = 'rec-call-card'; info.dataset.guideTarget = 'rec-actions-button'; }
     const time = node('div', 'recordings-call-time', timeOnly(millis(row))); time.dataset.uiHint = dateTime(millis(row));
     const length = node('span', 'recordings-call-duration', duration(row));
-    const heading = node('div', 'recordings-call-heading'); heading.append(node('strong', 'recordings-call-title', label(row)));
+    const heading = node('div', 'recordings-call-heading');
+    heading.append(button(node, label(row), activate, 'link-button ui-row-action recordings-call-title'));
     const hasGroup = recordingHasTalkgroup(row), targetRadio = value(row, 'destination_radio_id');
     const id = hasGroup ? recordingGroupId(row, 'target', value(row, 'talkgroup_id', 'group_id')) : targetRadio !== null ? recordingRadioId(row, 'target', targetRadio) : null;
     if (id !== null && !label(row).includes(String(id))) heading.append(node('span', 'recordings-call-identity', String(id)));
@@ -1658,13 +1667,23 @@ export function createRecordingsFeature(deps) {
     }
     card.append(time, length, heading, source, frequencyCell, actions);
     if (row.transcript_excerpt) card.append(node('p', 'recordings-transcript-preview', row.transcript_excerpt));
+    updateRowClickAction(card);
     return card;
+  }
+
+  function updateRowClickAction(card) {
+    const control = card.querySelector('button.recordings-call-title');
+    if (!control) return;
+    const action = clickMode === 'once' ? 'Play once' : clickMode === 'continue' ? 'Continue matching calls' : 'Queue call';
+    control.setAttribute('aria-label', `${action}: ${card.getAttribute('aria-label')}`);
+    control.dataset.uiHint = action;
   }
 
   function drawResultPlayback(snapshot = player ? playbackState() : null) {
     if (!resultHost?.isConnected) return;
     const queued = new Set((snapshot?.queue || []).map((row) => String(row.id)));
     resultHost.querySelectorAll('.recordings-call').forEach((card) => {
+      updateRowClickAction(card);
       const active = snapshot?.current && !snapshot.stopped &&
         String(snapshot.current.id) === card.dataset.recordingId;
       const waiting = queued.has(card.dataset.recordingId);
@@ -3234,7 +3253,7 @@ export function createRecordingsFeature(deps) {
     feature = createRecordingsFeature({ ...deps, guideMode: true, content: host,
       requestJson: sample.requestJson, createAudioElement: sample.createAudioElement,
       openReadOnlyModal: sampleModal, closeReadOnlyModal: () => true,
-      stopLiveAudio: async () => {}, openCallRelations: null, recordingDirectListenControl: null,
+      stopLiveAudio: async () => {}, recordingDirectListenControl: null,
       captureRenderContext: () => ({ signal: context.signal }),
       renderIsCurrent: () => !closed && context.isCurrent(),
       beginPage: (_render, header) => {

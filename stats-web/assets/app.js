@@ -19,7 +19,7 @@ import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=3';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=44';
+import { createGuideController } from './guides/controller.js?v=45';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -40,7 +40,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=68';
+import { createRecordingsFeature } from './features/recordings.js?v=69';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -36473,7 +36473,6 @@ applicationRoutes = routeFoundation.createRegistry({
 function recordingsFeatureDependencies(overrides = {}) {
   return {
   node, iconButton, iconGlyph, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
-  openCallRelations,
   recordingDirectListenControl,
   modalFooter: aliasModalFooter,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
@@ -36488,33 +36487,6 @@ function recordingsFeatureDependencies(overrides = {}) {
   };
 }
 const recordingsFeature = createRecordingsFeature(recordingsFeatureDependencies());
-
-async function openCallRelations(kind, id) {
-  const renderContext = captureRenderContext();
-  let relationsModule;
-  try {
-    [relationsModule] = await Promise.all([
-      import('./features/call-relations.js?v=10'), loadActivityMessageTypes()
-    ]);
-  } catch (error) {
-    if (!renderIsCurrent(renderContext)) return;
-    throw error;
-  }
-  if (!renderIsCurrent(renderContext)) return;
-  const showCallRelations = relationsModule.createCallRelations({
-    node, openReadOnlyModal, requestJson, dateTime, anchor, href, iconGlyph, entityRefHref,
-    radioIdentifierText, groupIdentifierText,
-    activitySource: row => activitySourceAlias(row) || activityIdentifier(row, row.source_radio_id, 'radio',
-      row.source_entity_ref, true, 'source'),
-    activityTarget: row => activityTargetAlias(row) || activityTargetIdentifier(row),
-    activityChannel: row => activityChannel(row),
-    activityEventLabel: row => row.event_type ? activityOptionLabel(row.event_type, 'EVENT') : activityOptionLabel(row.action),
-    playback: recordingsFeature.playback,
-    canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),
-    canViewRecordings: () => capabilityAllowed(ACCESS_CAPABILITIES.RECORDINGS)
-  });
-  return showCallRelations(kind, id);
-}
 
 const audioDock = createAudioDock({
   node, iconButton, uiToggleField, recordings: recordingsFeature.playback,

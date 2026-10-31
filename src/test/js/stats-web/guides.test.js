@@ -91,7 +91,7 @@ async function checkGuides(assetsRoot) {
   assert.equal(createGuideDefinition('live').version, 3);
   assert.equal(createGuideDefinition('dashboard').version, 3);
   assert.equal(createGuideDefinition('scanner').version, 6);
-  assert.equal(createGuideDefinition('recordings').version, 5);
+  assert.equal(createGuideDefinition('recordings').version, 6);
   assert.equal(createGuideDefinition('topics').version, 3);
   assert.equal(createGuideDefinition('map').version, 3);
   assert.equal(createGuideDefinition('network-visualizer').version, 4);

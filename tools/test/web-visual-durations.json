@@ -2,8 +2,8 @@
   "version": 1,
   "shards": 4,
   "workers": 2,
-  "caseCount": 1757,
-  "inventorySha256": "8706aa09782731709f210f857ccaddf3d3784b6051e141a051cc40bf7301031f",
+  "caseCount": 1753,
+  "inventorySha256": "022a08a5618fb12791ed363dc03f0c951b31f8d25849316fb3410e2f35046271",
   "files": {
     "access-landing.spec.js": {
       "durationMs": 12822,
@@ -208,11 +208,6 @@
     "call-matching.spec.js": {
       "durationMs": 64921,
       "caseCount": 38,
-      "source": "measured"
-    },
-    "call-relations-lifecycle.spec.js": {
-      "durationMs": 3621,
-      "caseCount": 3,
       "source": "measured"
     },
     "channel-catalog-mobile.spec.js": {

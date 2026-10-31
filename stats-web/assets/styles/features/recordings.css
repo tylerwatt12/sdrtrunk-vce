@@ -81,7 +81,7 @@
 .recordings-call-gap-label { font-variant-numeric: tabular-nums; }
 .recordings-call,
 .recordings-call-columns { min-width: 0; display: grid; grid-template-columns: var(--recordings-row-columns); align-items: center; gap: var(--space-3); padding: 0 var(--space-3); }
-.recordings-call { position: relative; min-height: var(--control-height-touch); border: 0; border-bottom: 1px solid var(--line); }
+.recordings-call { position: relative; min-height: var(--control-height-touch); border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 .recordings-call-selectable { grid-template-columns: var(--space-5) var(--recordings-row-columns); }
 .recordings-call-select { margin: 0; }
 .recordings-call-columns { padding-top: var(--space-2); padding-bottom: var(--space-2); color: var(--muted); font-size: var(--font-size-label); }

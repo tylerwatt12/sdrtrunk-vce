@@ -10,7 +10,7 @@ const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 const guide = page => page.locator('.ui-setup-guide[data-guide-id="recordings"]');
 const steps = ['targets-button', 'targets', 'time-range', 'search', 'transcript-search', 'transcript-submit',
   'call-card', 'actions-button', 'playback', 'details-button', 'details', 'details-close', 'player-overview', 'player-button', 'click-mode'];
-const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:recordings:5';
+const memoryKey = 'sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:recordings:6';
 const evidence = process.env.RECORDINGS_GUIDE_EVIDENCE ||
   path.resolve(__dirname, '../../../../../build/playwright-results/recordings-guide-evidence');
 const nonGuideStorage = page => page.evaluate(() => Object.fromEntries(Object.entries(localStorage)
@@ -39,7 +39,7 @@ async function openRecordings(page, { theme = 'light', replay = true, firstVisit
   const fixture = await installSiteStyleApplication(page, theme, { revision: 1, tables: [] }, { guides: firstVisit });
   await page.addInitScript(({ firstVisit, key }) => {
     localStorage.setItem('sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:welcome:1', '1');
-    for (const version of [1, 2, 3]) localStorage.setItem(
+    for (const version of [1, 2, 3, 4, 5]) localStorage.setItem(
       `sdrtrunk-vce-guide:v1:fixture-admin:account-1-100:recordings:${version}`, '1');
     if (!firstVisit) localStorage.setItem(key, '1');
     window.recordingsGuideAudioEvents = [];

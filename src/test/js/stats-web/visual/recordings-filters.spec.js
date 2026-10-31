@@ -32,10 +32,10 @@ const call = {
 };
 
 async function openRecordings(page, options = {}) {
-  const tourHistory = tourHistoryFixture({ welcome: 1, recordings: 5 });
+  const tourHistory = tourHistoryFixture({ welcome: 1, recordings: 6 });
   // Exercise recording searches without covering their controls with onboarding.
   await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['recordings', 5]]) {
+    for (const [id, version] of [['welcome', 1], ['recordings', 6]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:admin:recordings-fixture-account:${id}:${version}`, '1');
     }
   });

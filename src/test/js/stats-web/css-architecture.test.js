@@ -51,8 +51,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=5") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=9") layer(features);',
   '@import url("./styles/features/activity.css?v=7") layer(features);',
-  '@import url("./styles/features/recordings.css?v=27") layer(features);',
-  '@import url("./styles/features/call-relations.css?v=1") layer(features);',
+  '@import url("./styles/features/recordings.css?v=28") layer(features);',
   '@import url("./styles/utilities/table-measurement.css?v=2") layer(utilities);',
 ];
 

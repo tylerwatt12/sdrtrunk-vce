@@ -21,10 +21,10 @@ export function recordingsSteps(documentValue, preparePlayer, preparePage) {
       paragraphs: ['Enter words or put an exact phrase in quotes. Transcript searches use the past 24 hours by default. Choose Use Time filter to search your selected period.'] },
     { id: 'transcript-submit', title: 'Find matching calls',
       paragraphs: ['Select Search recordings to find calls containing those words.'] },
-    { id: 'call-card', title: 'Read a saved call',
-      paragraphs: ['Each card brings together who spoke, the talkgroup or channel, when it happened, and any saved transcript.'] },
+    { id: 'call-card', title: 'Listen to a saved call',
+      paragraphs: ['Each row shows who spoke, the talkgroup or channel, when it happened, and any saved transcript. Select a call to listen using your current playback choice.'] },
     { id: 'actions-button', title: 'Choose how to follow a call',
-      paragraphs: ['Open Call actions for playback, recording details, and related traffic.'] },
+      paragraphs: ['Open Call actions for playback choices, complete call information, and filters.'] },
     { id: 'playback', title: 'Replay one call or follow the exchange', paragraphs: [], items: [
       { label: 'Play once', text: 'Start a queue containing only this call.' },
       { label: 'Continue from here', text: 'Play this call, then newer calls matching your search in time order.' },
@@ -43,8 +43,8 @@ export function recordingsSteps(documentValue, preparePlayer, preparePage) {
       paragraphs: ['Play saved calls here while you browse. The player shows the current call and how many are waiting.'] },
     { id: 'player-button', title: 'See what’s coming next',
       paragraphs: ['Expand the player to see the current call and the calls waiting to play.'] },
-    { id: 'click-mode', title: 'Choose what the Play buttons do',
-      paragraphs: ['Set whether selecting a call adds it to your queue, plays it alone, or continues through matching calls.'] }
+    { id: 'click-mode', title: 'Choose how selected calls play',
+      paragraphs: ['When a call is clicked controls whether selecting a recording queues it, plays it alone, or continues through matching calls.'] }
   ];
   return steps.map((step, index) => {
     const focus = () => {

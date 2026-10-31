@@ -92,7 +92,7 @@ async function openAudioApp(page, options = {}) {
   // Audio fixtures inspect an existing listener's controls; onboarding would
   // otherwise cover the native source picker on desktop.
   await page.addInitScript(() => {
-    for (const [id, version] of [['welcome', 1], ['channel-setup', 5], ['aliases', 5], ['scan-lists', 8], ['radioreference', 3], ['streaming', 3], ['tuners', 3], ['tuner-spectrum', 5], ['scanner', 6], ['recordings', 5], ['topics', 3], ['map', 3], ['network-visualizer', 3]]) {
+    for (const [id, version] of [['welcome', 1], ['channel-setup', 5], ['aliases', 5], ['scan-lists', 8], ['radioreference', 3], ['streaming', 3], ['tuners', 3], ['tuner-spectrum', 5], ['scanner', 6], ['recordings', 6], ['topics', 3], ['map', 3], ['network-visualizer', 3]]) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:fixture-listener:audio-fixture-account:${id}:${version}`, '1');
     }
   });
@@ -112,7 +112,7 @@ async function openAudioApp(page, options = {}) {
   const state = { requests: [], preferenceWrites: [], preferenceRevision: 1, feedRequests: 0, feedDelivered: false,
     tourDismissals: { version: 1, dismissed: { welcome: 1, 'channel-setup': 5, aliases: 5,
       'scan-lists': 8, radioreference: 3, streaming: 3, tuners: 3, 'tuner-spectrum': 5,
-      dashboard: 3, live: 3, admin: 3, scanner: 6, recordings: 5, topics: 3, map: 3,
+      dashboard: 3, live: 3, admin: 3, scanner: 6, recordings: 6, topics: 3, map: 3,
       'network-visualizer': 3 } },
     feedCallsEnabled: options.feedCallsEnabled !== false, transcript: options.transcript || transcript,
     session: { configured: true, authenticated: options.authenticated !== false,
