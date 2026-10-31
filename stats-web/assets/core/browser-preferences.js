@@ -2,13 +2,56 @@ import { guestDefaults } from './preference-registry.js?v=1';
 
 export const GUEST_PROFILE_STORAGE_KEY = 'sdrtrunk-vce-guest-preferences-v1';
 export const CURRENT_GUEST_PREFERENCE_VERSION = 15;
-export const GUEST_PREFERENCE_MIGRATIONS = Object.freeze([Object.freeze({ from: 14, to: 15 })]);
+export const GUEST_PREFERENCE_MIGRATIONS = Object.freeze([
+  Object.freeze({ from: 14, to: 15, convert: migrateVersion14To15 })
+]);
+const migrationsByVersion = new Map(GUEST_PREFERENCE_MIGRATIONS.map(step => [step.from, step]));
 const LEGACY_TABLES_KEY = 'sdrtrunk-vce-anonymous-table-layouts';
 const LEGACY_SPECTRUM_PREFIX = 'sdrtrunk-vce-spectrum-display-v1:';
 const MAXIMUM_RECORD_LENGTH = 262144;
 const copy = value => JSON.parse(JSON.stringify(value));
 const plain = value => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 const emptyHistory = () => ({ version: 1, dismissed: {} });
+
+// Frozen field/default contract for this adjacent step. Later schema defaults
+// must not add fields to, or change the meaning of, a historical conversion.
+const version14Fields = Object.freeze({
+  root: Object.freeze(['version', 'appearance', 'page_titles', 'guides', 'playback', 'scanner',
+    'presentation', 'tuner', 'health_alerts', 'tables']),
+  appearance: Object.freeze(['theme', 'hue']),
+  page_titles: Object.freeze(['prepend_playing_call']),
+  guides: Object.freeze(['automatic_page_guides']),
+  playback: Object.freeze(['volume', 'selected_scan_list_ids', 'target_grouping', 'target_burst_limit',
+    'call_display_hangtime_seconds', 'recording_click_mode']),
+  scanner: Object.freeze(['detail_mode']),
+  presentation: Object.freeze(['source_name_display', 'show_encryption_details', 'show_control_decode_quality',
+    'show_voice_decode_quality', 'decode_quality_display_mode', 'live_detail_row_limit',
+    'show_only_active_trunked_channels', 'live_channel_sort', 'live_row_density', 'retain_last_call_on_idle_rows',
+    'clear_voice_quality_when_idle']),
+  tuner: Object.freeze(['floor_db', 'ceiling_db', 'waterfall_speed', 'snap_frequency', 'smooth_fft',
+    'highlight_waterfall_channels', 'show_idle_channels', 'profile']),
+  health_alerts: Object.freeze(['disabled_codes'])
+});
+
+function exactFields(value, keys) {
+  return plain(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+}
+
+function migrateVersion14To15(value) {
+  if (value?.version !== 14 || !exactFields(value, version14Fields.root) || !plain(value.tables) ||
+      Object.entries(version14Fields).some(([section, keys]) => section !== 'root' && !exactFields(value[section], keys))) {
+    throw new TypeError('The version-14 browser preference fields are invalid.');
+  }
+  const filters = () => ({ excluded_leaf_keys: [], excluded_timeslots: [], excluded_validity: [], search: '' });
+  const events = Object.fromEntries(['emergency', 'movement', 'denial', 'patch', 'busy', 'queued', 'check', 'page', 'logout', 'call']
+    .map(id => [id, { highlight: true, auto_zoom: ['emergency', 'movement', 'patch', 'busy', 'queued'].includes(id) }]));
+  const prior = copy(value);
+  return { ...prior, version: 15,
+    tuner: { ...prior.tuner, fft_auto_range_on_retune: true, waterfall_auto_range_on_retune: true },
+    live_workspace: { details_panel_percent: 25, details_visibility: 'automatic', details_active_tab: 'events',
+      picker_collapsed: false, active_channel_table_id: null, event_filters: filters(), message_filters: filters() },
+    p25_visualizer: { events } };
+}
 
 function changedValues(before, after, path = []) {
   if (JSON.stringify(before) === JSON.stringify(after)) return [];
@@ -105,15 +148,15 @@ export function createBrowserPreferences({ defaults, validate, storage } = {}) {
     return snapshot();
   }
   function upgradeGuestDocument(value) {
-    if (value?.version === CURRENT_GUEST_PREFERENCE_VERSION) return validate(value);
-    if (value?.version !== 14 ||
-        Object.hasOwn(value, 'live_workspace') || Object.hasOwn(value, 'p25_visualizer') ||
-        !plain(value.tuner) || Object.hasOwn(value.tuner, 'fft_auto_range_on_retune') ||
-        Object.hasOwn(value.tuner, 'waterfall_auto_range_on_retune')) return null;
-    return validate({ ...value, version: 15,
-      tuner: { ...value.tuner, fft_auto_range_on_retune: defaults.tuner.fft_auto_range_on_retune,
-        waterfall_auto_range_on_retune: defaults.tuner.waterfall_auto_range_on_retune },
-      live_workspace: copy(defaults.live_workspace), p25_visualizer: copy(defaults.p25_visualizer) });
+    if (!plain(value) || !Number.isInteger(value.version) || value.version > CURRENT_GUEST_PREFERENCE_VERSION) return null;
+    let converted = copy(value);
+    while (converted.version < CURRENT_GUEST_PREFERENCE_VERSION) {
+      const step = migrationsByVersion.get(converted.version);
+      if (!step || step.to !== step.from + 1) return null;
+      converted = step.convert(converted);
+      if (!plain(converted) || converted.version !== step.to) return null;
+    }
+    return validate(converted);
   }
   function readStoredProfile() {
     let raw;

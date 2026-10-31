@@ -1,4 +1,4 @@
-import { createBrowserPreferences } from './browser-preferences.js?v=1';
+import { createBrowserPreferences } from './browser-preferences.js?v=2';
 import { guestDefaults } from './preference-registry.js?v=1';
 
   const ENDPOINT = '/api/v1/me/preferences';
@@ -60,6 +60,11 @@ import { guestDefaults } from './preference-registry.js?v=1';
       this.readSnapshot = null;
     }
 
+    profileGuard() {
+      const { generation, identity, scope } = this;
+      return () => generation === this.generation && identity === this.identity && scope === this.scope;
+    }
+
     snapshot() {
       return Object.freeze({
         identity: this.identity,
@@ -107,21 +112,22 @@ import { guestDefaults } from './preference-registry.js?v=1';
     }
 
     async activate(identity) {
-      const generation = this.reset(identity);
+      this.reset(identity);
+      const ownsProfile = this.profileGuard();
       if (this.identity === null) return this.snapshot();
       try {
         const response = await this.fetch(ENDPOINT, { method: 'GET', cache: 'no-store' });
         if (!response?.ok) throw requestError(response, 'Unable to load user preferences.');
         const decoded = decodeResponse(await response.json());
         const validated = this.validate(decoded.preferences);
-        if (generation !== this.generation) return { state: 'stale' };
+        if (!ownsProfile()) return { state: 'stale' };
         this.revision = decoded.revision;
         this.preferences = copy(validated);
         this.persistence = 'account';
         this.emit();
         return this.snapshot();
       } catch (error) {
-        if (generation !== this.generation) return { state: 'stale' };
+        if (!ownsProfile()) return { state: 'stale' };
         this.onError(error);
         throw error;
       }
@@ -164,11 +170,10 @@ import { guestDefaults } from './preference-registry.js?v=1';
     }
 
     enqueue(mutator, options) {
-      const generation = this.generation;
-      const identity = this.identity;
+      const ownsProfile = this.profileGuard();
       const scope = this.scope;
       const operation = async () => {
-        if (generation !== this.generation || identity !== this.identity) return { state: 'stale' };
+        if (!ownsProfile()) return { state: 'stale' };
         if (scope === 'guest') {
           const saved = this.browserPreferences.update(mutator, options);
           this.preferences = copy(saved.preferences);
@@ -180,7 +185,7 @@ import { guestDefaults } from './preference-registry.js?v=1';
         const draft = copy(this.preferences);
         const returned = mutator(draft);
         const validated = this.validate(copy(returned === undefined ? draft : returned));
-        if (generation !== this.generation || identity !== this.identity) return { state: 'stale' };
+        if (!ownsProfile()) return { state: 'stale' };
         const revision = this.revision;
         const previous = copy(this.preferences);
         try {
@@ -195,23 +200,25 @@ import { guestDefaults } from './preference-registry.js?v=1';
               'Unable to save user preferences.');
           const decoded = decodeResponse(await response.json());
           const confirmed = this.validate(decoded.preferences);
-          if (generation !== this.generation || identity !== this.identity) return { state: 'stale' };
+          if (!ownsProfile()) return { state: 'stale' };
           this.revision = decoded.revision;
           this.preferences = copy(confirmed);
           this.persistence = 'account';
           this.emit();
           return this.snapshot();
         } catch (error) {
-          if (generation !== this.generation || identity !== this.identity) return { state: 'stale', error };
+          if (!ownsProfile()) return { state: 'stale', error };
           if (error?.code === 'preference_conflict') {
             try {
               const current = await this.fetch(ENDPOINT, { method: 'GET', cache: 'no-store' });
               if (!current?.ok) throw requestError(current, 'Unable to reload user preferences.');
               const decoded = decodeResponse(await current.json());
-              if (generation !== this.generation || identity !== this.identity) return { state: 'stale', error };
+              const confirmed = this.validate(decoded.preferences);
+              if (!ownsProfile()) return { state: 'stale', error };
               this.revision = decoded.revision;
-              this.preferences = copy(this.validate(decoded.preferences));
+              this.preferences = copy(confirmed);
             } catch (reloadError) {
+              if (!ownsProfile()) return { state: 'stale', error };
               this.preferences = previous;
               error.reloadError = reloadError;
             }

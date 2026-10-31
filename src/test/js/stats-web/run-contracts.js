@@ -25,6 +25,7 @@ const contracts = [
   ["channel editor composition", "channel-editor.test.js", "stats-web/assets/app.js"],
   ["frontend foundation", "frontend-foundation.test.js", "stats-web/assets/core"],
   ["personal preference profiles", "user-preferences.test.js", "stats-web/assets/core/user-preferences.js"],
+  ["guest preference migrations", "browser-preference-migrations.test.js", "stats-web/assets/core/browser-preferences.js"],
   ["preference ownership architecture", "preference-architecture.test.js", "stats-web/assets/core"],
   ["workspace preference schema", "preference-workspace-schema.test.js", "stats-web/assets/core/preference-schema.js"],
   ["guest guide history", "guest-guide-history.test.js", "stats-web/assets/guides"],

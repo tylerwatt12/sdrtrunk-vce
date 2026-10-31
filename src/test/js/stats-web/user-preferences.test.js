@@ -10,7 +10,11 @@ const modules = Promise.all(['user-preferences', 'browser-preferences', 'prefere
   .map(name => import(pathToFileURL(path.join(core, `${name}.js`)).href)));
 const copy = value => JSON.parse(JSON.stringify(value));
 const response = (status, value) => ({ ok: status >= 200 && status < 300, status, json: async () => value });
-const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+};
 function browser(records = new Map()) {
   let blocked = false;
   return { records, block(value) { blocked = value; },
@@ -220,6 +224,22 @@ test('account conflicts preserve server authority and obsolete responses cannot 
   assert.equal(controller.read().preferences.playback.recording_click_mode, 'once');
 });
 
+test('an invalid conflict reload cannot advance the revision of the retained account profile', async () => {
+  const [{ Controller }, , schema] = await modules;
+  const queued = [], errors = [];
+  const controller = new Controller({ defaults: schema.defaults, validate: schema.validate, storage: browser(),
+    fetch: async () => queued.shift(), onError: error => errors.push(error) });
+  queued.push(response(200, { revision: 7, preferences: schema.defaults }));
+  await controller.activate('alice');
+  const before = controller.snapshot();
+  const invalid = copy(schema.defaults); invalid.playback.volume = 2;
+  queued.push(response(409, {}), response(200, { revision: 8, preferences: invalid }));
+  await assert.rejects(controller.update(profile => { profile.playback.volume = 0.5; }),
+    error => error.code === 'preference_conflict' && Boolean(error.reloadError));
+  assert.deepEqual(controller.snapshot(), before, 'Revision and values must publish together only after a valid reload');
+  assert.equal(errors.length, 1);
+});
+
 test('independent guest tabs rebase field edits and merge tour history without reviving reset choices', async () => {
   const [{ Controller }, { GUEST_PROFILE_STORAGE_KEY }, schema] = await modules;
   const records = new Map();
@@ -334,3 +354,48 @@ test('unreadable browser storage is preserved while guest changes remain usable 
   assert.equal(controller.read().preferences.scanner.detail_mode, 'advanced');
   assert.equal(controller.read().persistence, 'browser');
 });
+
+for (const destination of [null, 'bob', 'alice']) {
+  for (const outcome of ['request failure', 'JSON failure', 'success']) {
+    test(`obsolete conflict reload ${outcome} cannot change ${destination || 'guest'} after profile activation`, async () => {
+      const [{ Controller }, , schema] = await modules;
+      const storage = browser(), changes = [], errors = [], queued = [];
+      const started = deferred(), reload = deferred();
+      const original = copy(schema.defaults);
+      original.appearance.theme = 'dark'; original.playback.volume = 0.8;
+      const controller = new Controller({ defaults: schema.defaults, validate: schema.validate, storage,
+        onChange: snapshot => changes.push(snapshot), onError: error => errors.push(error),
+        fetch: async () => {
+          const next = queued.shift();
+          if (next === reload) { started.resolve(); return reload.promise; }
+          return next;
+        }
+      });
+      await controller.activate(null);
+      await controller.update(profile => { profile.appearance.hue = 120; profile.playback.volume = 0.3; });
+      queued.push(response(200, { revision: 7, preferences: original }));
+      await controller.activate('alice');
+      queued.push(response(409, {}), outcome === 'request failure' ? reload : {
+        ok: true, status: 200, json: () => { started.resolve(); return reload.promise; }
+      });
+      const pending = controller.update(profile => { profile.playback.volume = 0.5; })
+        .then(result => ({ result }), error => ({ error }));
+      await started.promise;
+      if (destination !== null) {
+        const next = copy(schema.defaults); next.appearance.hue = 240; next.playback.volume = 0.6;
+        queued.push(response(200, { revision: 22, preferences: next }));
+      }
+      await controller.activate(destination);
+      const active = controller.snapshot(), saved = new Map(storage.records);
+      const changeCount = changes.length, errorCount = errors.length;
+      if (outcome === 'success') reload.resolve({ revision: 8, preferences: original });
+      else reload.reject(new Error(`Synthetic ${outcome}`));
+      const completion = await pending;
+      assert.deepEqual(controller.snapshot(), active, 'A late reload must leave the entire active profile unchanged');
+      assert.deepEqual(storage.records, saved, 'Obsolete account work must never write the guest profile');
+      assert.equal(changes.length, changeCount, 'An obsolete reload must not publish a snapshot');
+      assert.equal(errors.length, errorCount, 'An obsolete reload must not publish an error for the new profile');
+      assert.equal(completion.result?.state, 'stale');
+    });
+  }
+}

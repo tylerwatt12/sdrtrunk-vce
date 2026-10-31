@@ -97,5 +97,7 @@ test('browser schema changes require an explicit adjacent guest migration contra
     const steps = browser.GUEST_PREFERENCE_MIGRATIONS.filter(step => step.from === version);
     assert.equal(steps.length, 1, `Guest version ${version} has exactly one migration`);
     assert.equal(steps[0].to, version + 1);
+    assert.equal(typeof steps[0].convert, 'function', 'The registry owns each executable conversion');
+    assert.ok(Object.isFrozen(steps[0]));
   }
 });
