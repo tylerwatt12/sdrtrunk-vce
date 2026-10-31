@@ -795,10 +795,13 @@ export function createRecordingsFeature(deps) {
   });
 
   function applyPlaybackPreferences(preferences = {}) {
+    const mode = ['queue', 'once', 'continue'].includes(preferences.recording_click_mode) ?
+      preferences.recording_click_mode : 'queue';
     const configured = preferences.call_display_hangtime_seconds;
     const seconds = Number.isInteger(configured) && configured >= 0 && configured <= MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS ?
       configured : DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS;
-    if (seconds === callDisplayHangtimeSeconds) return;
+    if (seconds === callDisplayHangtimeSeconds && mode === clickMode) return;
+    clickMode = mode;
     callDisplayHangtimeSeconds = seconds;
     callDisplayRetention.refresh();
     drawQueue();

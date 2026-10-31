@@ -495,6 +495,20 @@ async function main() {
     assert.equal(finished.viewState().current.id, 2, 'A finished queue must start the clicked call instead of replaying retained metadata');
     assert.deepEqual(finished.viewState().queue, []);
 
+    const clickPreferences = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) })).playback;
+    clickPreferences.applyPlaybackPreferences({ recording_click_mode: 'once', call_display_hangtime_seconds: 5 });
+    clickPreferences.playClicked(call(1));
+    await settle();
+    clickPreferences.playClicked(call(2));
+    await settle();
+    assert.equal(clickPreferences.viewState().current.id, 2, 'A loaded Play once preference replaces the playing call');
+    assert.deepEqual(clickPreferences.viewState().queue, []);
+    clickPreferences.applyPlaybackPreferences({ recording_click_mode: 'queue', call_display_hangtime_seconds: 5 });
+    clickPreferences.playClicked(call(3));
+    await settle();
+    assert.equal(clickPreferences.viewState().current.id, 2, 'Switching account preferences restores its queue behavior');
+    assert.deepEqual(clickPreferences.viewState().queue.map(row => row.id), [3]);
+
     const queuedEndClock = displayClock();
     const queuedEnd = make(async (url) => ({ call: call(Number(url.split('/').at(-1))) }),
       { callDisplayRetentionClock: queuedEndClock }).playback;

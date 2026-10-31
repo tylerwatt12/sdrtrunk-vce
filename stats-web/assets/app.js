@@ -40,7 +40,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=70';
+import { createRecordingsFeature } from './features/recordings.js?v=71';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -49,7 +49,7 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
 import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=45';
+import { createAudioDock } from './core/audio-dock.js?v=46';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=1';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
@@ -36475,6 +36475,11 @@ const audioDock = createAudioDock({
   getSourceNameDisplay: sourceNameDisplayMode,
   getTitlePreference: () => activeUserPreferences().page_titles.prepend_playing_call,
   getCallDisplayHangtimeSeconds: () => activeUserPreferences().playback.call_display_hangtime_seconds,
+  setRecordingClickMode: (value) => updateUserPreferences((preferences) => {
+    preferences.playback.recording_click_mode = value;
+  }).then(() => {
+    recordingsFeature.playback.applyPlaybackPreferences(activeUserPreferences().playback);
+  }),
   setCallDisplayHangtimeSeconds: (value) => settleUserPreferenceMutation((preferences) => {
     preferences.playback.call_display_hangtime_seconds = value;
   }).then((preferences) => {

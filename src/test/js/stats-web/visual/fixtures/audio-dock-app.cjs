@@ -103,6 +103,10 @@ async function openAudioApp(page, options = {}) {
   if (Number.isFinite(options.callDisplayHangtimeSeconds)) {
     preferences.playback.call_display_hangtime_seconds = options.callDisplayHangtimeSeconds;
   }
+  // Share only simulated account state when a test opens a fresh browser context.
+  const preferenceStore = options.preferenceStore || {};
+  preferenceStore.preferences ||= preferences;
+  preferenceStore.revision ||= 1;
   const rows = options.calls || Array.from({ length: 30 }, (_, index) => ({ ...recording,
     id: 17 + index, start_ms: started + index * 60_000, end_ms: started + index * 60_000 + 42_000,
     source_id: 30914 + index, source_alias: `Engine ${4 + index}`, source_ota_alias: `ENG ${4 + index}`,
@@ -116,7 +120,7 @@ async function openAudioApp(page, options = {}) {
       'network-visualizer': 3 } },
     feedCallsEnabled: options.feedCallsEnabled !== false, transcript: options.transcript || transcript,
     session: { configured: true, authenticated: options.authenticated !== false,
-      username: options.authenticated === false ? null : 'fixture-listener',
+      username: options.authenticated === false ? null : options.username || 'fixture-listener',
       guide_dismissal_scope: 'audio-fixture-account',
       tier: options.admin === false ? 'user' : 'admin', primary: options.admin !== false,
       csrf_token: 'test-only-csrf', capabilities: { 'web-access': true, dashboard: true, radio: true,
@@ -143,9 +147,11 @@ async function openAudioApp(page, options = {}) {
         const write = route.request().postDataJSON();
         state.preferenceWrites.push(write);
         preferences = write.preferences || write;
-        state.preferenceRevision++;
+        preferenceStore.preferences = preferences;
+        preferenceStore.revision++;
       }
-      return route.fulfill({ json: { revision: state.preferenceRevision, preferences } });
+      state.preferenceRevision = preferenceStore.revision;
+      return route.fulfill({ json: { revision: preferenceStore.revision, preferences: preferenceStore.preferences } });
     }
     if (p === '/api/v1/status') return fulfill(options.serviceStatus || {});
     if (p === '/api/v1/scan-lists') return fulfill({ revision: 1, scan_lists: scanLists });

@@ -5,6 +5,7 @@ import { formatHexDecimal, formatVoiceQuality } from './call-value-format.js?v=1
 import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radio-labels.js?v=7';
 import { callAudioDetailGroups } from './call-audio-details.js?v=7';
 import { createCallDisplayHangtimeField } from './call-display-settings.js?v=2';
+import { createActionWorkflow } from './action-workflows.js?v=1';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
@@ -14,6 +15,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
   entityRefHref, canViewRadio, href, getTitlePreference, setTitlePreference,
   getSourceNameDisplay = () => 'talker_alias',
   getCallDisplayHangtimeSeconds = () => 5, setCallDisplayHangtimeSeconds = async () => {},
+  setRecordingClickMode = mode => recordings.setClickMode(mode),
   radioIdentifier = (_call, value) => value }) {
   const dock = node('section', 'audio-dock ui-audio-surface');
   dock.id = 'audio-dock';
@@ -699,6 +701,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     });
     panelHost.append(choices);
   }
+  // Account preference notices own save failures and retry; lock just these
+  // controls while the shared preference controller confirms the selected mode.
+  const clickModeWorkflow = createActionWorkflow({ surface: dock,
+    controls: () => dock.querySelectorAll('[data-click-mode]'), renderFeedback: () => {} });
   function clickModeField(id) {
     const label = node('label', 'ui-field ui-audio-queue-setting audio-dock-click-mode');
     const frame = node('span', 'ui-select-frame'); const select = node('select', 'ui-select');
@@ -707,8 +713,10 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       const option = node('option', '', text); option.value = value; select.append(option);
     });
     select.addEventListener('change', userAction(() => {
-      recordings.setClickMode(select.value);
-      dock.querySelectorAll('[data-click-mode]').forEach(control => { control.value = recordingState.clickMode; });
+      const mode = select.value;
+      void clickModeWorkflow.run(() => setRecordingClickMode(mode), {
+        onSuccess: () => render(), onError: () => render()
+      }).catch(() => {});
     }));
     frame.append(select); appendIcon(frame, 'chevron-down'); label.append(node('span', 'ui-field-label', 'When a call is clicked'), frame);
     return label;
@@ -1250,6 +1258,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     volumeControl.update(active.volume, isAllowed());
     if (source === 'live' && panel === 'transcript' || source === 'recordings' && ['listening', 'direct', 'avoids'].includes(panel)) { panel = null; panelKey = ''; }
     renderSidebar(); renderPanel(); dock.querySelectorAll('[data-click-mode]').forEach(select => { if (select.value !== recordingState.clickMode) select.value = recordingState.clickMode; });
+    clickModeWorkflow.refreshControls();
     updateProgress(); measure(); synchronizeLoops();
     if (guidePresentation) [dock, volumePopover].forEach(root => root.querySelectorAll('input, select, textarea').forEach(control => {
       if (!guideControlValues.has(control)) guideControlValues.set(control, { value: control.value, checked: control.checked });
