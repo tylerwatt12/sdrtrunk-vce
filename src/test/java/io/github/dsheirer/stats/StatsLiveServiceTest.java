@@ -40,12 +40,12 @@ import org.junit.jupiter.api.Test;
 class StatsLiveServiceTest
 {
     @Test
-    void currentReceiverUsesOpaqueReferenceAndNicknameChangesRefreshWithoutActivity() throws Exception
+    void currentReceiverKeepsOpaqueIdentityAndLabelChangesRefreshWithoutActivity() throws Exception
     {
         String nativeId = "private-hardware-identity";
         String opaqueId = "tuner-0123456789abcdef0123456789abcdef";
         var references = new AtomicReference<>(Map.of(nativeId,
-            new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, "Roof")));
+            new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, "Roof", "Airspy · 1234")));
         var source = new TestChannelActivitySource();
         try(StatsLiveService service = StatsLiveService.withReceivers(source, references::get))
         {
@@ -57,13 +57,15 @@ class StatsLiveServiceTest
                 var row = firstRow(subscription.poll(2, TimeUnit.SECONDS));
                 assertEquals(opaqueId, row.get("receiver_id"));
                 assertEquals("Roof", row.get("receiver_nickname"));
+                assertEquals("Airspy · 1234", row.get("receiver_name"));
                 assertFalse(row.toString().contains(nativeId));
                 var marker = firstRow(markers.poll(2, TimeUnit.SECONDS));
                 assertFalse(marker.containsKey("receiver_id"));
                 assertFalse(marker.containsKey("receiver_nickname"));
+                assertFalse(marker.containsKey("receiver_name"));
 
                 references.set(Map.of(nativeId,
-                    new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, "Desk")));
+                    new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, "Desk", "Airspy · 1234")));
                 var renamed = subscription.poll(2, TimeUnit.SECONDS);
                 assertNotNull(renamed);
                 assertEquals("activity_resync", renamed.name());
@@ -71,17 +73,38 @@ class StatsLiveServiceTest
                     ((Map<?,?>)rows.getFirst()).get("receiver_nickname") : null);
 
                 references.set(Map.of(nativeId,
-                    new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, null)));
+                    new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, null, "Airspy · 1234")));
                 assertNotNull(subscription.poll(2, TimeUnit.SECONDS));
                 @SuppressWarnings("unchecked")
                 var cleared = ((List<Map<String,Object>>)tables(service).getFirst().get("rows")).getFirst();
                 assertEquals(opaqueId, cleared.get("receiver_id"));
                 assertFalse(cleared.containsKey("receiver_nickname"));
+                assertEquals("Airspy · 1234", cleared.get("receiver_name"));
+
+                references.set(Map.of(nativeId,
+                    new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, null, "Airspy HF+ · 5678")));
+                var hardwareRenamed = subscription.poll(2, TimeUnit.SECONDS);
+                assertNotNull(hardwareRenamed);
+                assertEquals("activity_resync", hardwareRenamed.name());
+                @SuppressWarnings("unchecked")
+                var hardware = ((List<Map<String,Object>>)tables(service).getFirst().get("rows")).getFirst();
+                assertEquals(opaqueId, hardware.get("receiver_id"));
+                assertEquals("Airspy HF+ · 5678", hardware.get("receiver_name"));
+                assertFalse(hardware.containsKey("receiver_nickname"));
+
+                references.set(Map.of(nativeId,
+                    new io.github.dsheirer.web.tuner.TunerAdministrationService.ReceiverReference(opaqueId, null)));
+                assertNotNull(subscription.poll(2, TimeUnit.SECONDS));
+                @SuppressWarnings("unchecked")
+                var withoutHardware = ((List<Map<String,Object>>)tables(service).getFirst().get("rows")).getFirst();
+                assertEquals(opaqueId, withoutHardware.get("receiver_id"));
+                assertFalse(withoutHardware.containsKey("receiver_name"));
 
                 source.publish(conventionalActivity("IDLE"));
                 var released = firstRow(subscription.poll(2, TimeUnit.SECONDS));
                 assertFalse(released.containsKey("receiver_id"));
                 assertFalse(released.containsKey("receiver_nickname"));
+                assertFalse(released.containsKey("receiver_name"));
             }
         }
     }

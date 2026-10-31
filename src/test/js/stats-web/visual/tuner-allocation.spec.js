@@ -185,6 +185,53 @@ const centerReadout = (dialog) => dialog.locator('.ui-fact-row:has(dt:text-is("C
 const receivingMarker = (host, titleText) => host.locator(
   '.chart-window-selected, .chart-window-other, .chart-window-unscoped').and(host.getByLabel(titleText, { exact: false }));
 
+for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
+  test(`hardware and serial labels preserve allocation actions in ${theme} ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const primary = 'RSPduo SER:SAMPLE-0123456789 Tuner 1';
+    const candidate = 'RTL2832U R820T Serial SAMPLE-00000123456789';
+    const data = snapshot([decision(701, { tuner_id: 'safe-tuner-1', tuner_name: primary,
+      candidates: [{ tuner_id: 'safe-tuner-2', tuner_name: candidate,
+        reason: 'The center frequency is locked' }] })]);
+    data.tuners[0].name = primary;
+    data.tuners[1].name = candidate;
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await openApp(page, { theme, data });
+    const primaryButton = tunerRow(page, 1).getByRole('button', { name: `Details for ${primary}`, exact: true });
+    await expect(primaryButton).toHaveText(primary);
+    await expect(primaryButton).toHaveAttribute('data-tuner-id', 'safe-tuner-1');
+    await expect(primaryButton).toHaveAttribute('data-allocation-focus', 'tuner-safe-tuner-1');
+    await expect(tunerRow(page, 2).getByRole('button', { name: `Details for ${candidate}`, exact: true }))
+      .toHaveText(candidate);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR,
+      `allocation-hardware-coverage-${theme}-${width}.png`), fullPage: true });
+    await primaryButton.click();
+    const tunerDialog = page.getByRole('dialog', { name: primary, exact: true });
+    await expect(tunerDialog).toBeVisible();
+    await expect(centerReadout(tunerDialog)).toHaveText('855.36250 MHz');
+    await page.keyboard.press('Escape');
+    await expect(tunerDialog).toHaveCount(0);
+    await expect(primaryButton).toBeFocused();
+    await page.getByRole('button', { name: 'Decision history', exact: true }).click();
+    const history = page.locator('table[data-table-type="tuner-allocation-decisions"]');
+    await expect(history).toContainText(primary);
+    await page.getByRole('button', { name: 'Details for tuner decision 701', exact: true }).click();
+    const decisionDialog = page.getByRole('dialog');
+    await expect(decisionDialog.locator('.ui-fact-row:has(dt:text-is("Tuner")) dd')).toHaveText(primary);
+    await decisionDialog.getByText('Other tuners', { exact: true }).click();
+    await expect(decisionDialog.locator('details[data-allocation-disclosure="candidates"] dt')).toHaveText(candidate);
+    await expect(decisionDialog).toContainText('The center frequency is locked');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+    if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR,
+      `allocation-hardware-decision-${theme}-${width}.png`) });
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: 'Details for tuner decision 701', exact: true })).toBeFocused();
+    expect(errors).toEqual([]);
+  });
+}
+
 async function markerAppearance(marker) {
   let appearance;
   await expect.poll(async () => {

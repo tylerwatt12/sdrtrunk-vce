@@ -67,13 +67,19 @@ function expectClean(fixture) {
 }
 
 for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
-  test(`Receiver column starts hidden and updates nickname and assignment on ${theme} ${width}px`, async ({ page }) => {
+  test(`Receiver column starts hidden and updates nickname, hardware name and assignment on ${theme} ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    const app = await openLive(page, theme, { row: { receiver_id: 'receiver-a', receiver_nickname: 'North antenna' } });
+    const app = await openLive(page, theme, { row: { receiver_id: 'receiver-a', receiver_nickname: 'North antenna',
+      receiver_name: 'Airspy · 1234' } });
     await expect(cell(app.row, 'receiver')).toHaveCount(0);
     await page.getByRole('button', { name: 'Choose table columns', exact: true }).first().click();
-    await page.getByRole('checkbox', { name: 'Show Receiver column', exact: true }).check();
+    await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/me/preferences' &&
+        response.request().method() === 'PUT'),
+      page.getByRole('checkbox', { name: 'Show Receiver column', exact: true }).check()
+    ]);
     await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog', { name: 'Table columns', exact: true })).toBeHidden();
     await expect(cell(app.row, 'receiver')).toHaveText('North antenna');
     await expect(cell(app.row, 'receiver')).toHaveAttribute('data-ui-hint', 'receiver-a');
     expect(app.writes.at(-1).tables['live-channels'].hidden_columns).not.toContain('receiver');
@@ -81,12 +87,23 @@ for (const [theme, width] of [['light', 1280], ['dark', 390]]) {
       window.fixtureSendLiveFrame(1, 'activity_batch', { base_revision: revision - 1, revision,
         changes: [{ table_id: tableId, operation: 'upsert', replace: false, rows: [row] }] }),
     { revision, tableId: channelId, row: { ...baseRow, ...receiver } });
-    await update(2, { receiver_id: 'receiver-b', receiver_nickname: 'South antenna' });
+    await update(2, { receiver_id: 'receiver-b', receiver_nickname: 'South antenna', receiver_name: 'RTL-SDR · 5678' });
     await expect(cell(app.row, 'receiver')).toHaveText('South antenna');
     await expect(cell(app.row, 'receiver')).toHaveAttribute('data-ui-hint', 'receiver-b');
-    await update(3, { receiver_id: 'receiver-b' });
+    await update(3, { receiver_id: 'receiver-b', receiver_name: 'RTL-SDR · 5678' });
+    await expect(cell(app.row, 'receiver')).toHaveText('RTL-SDR · 5678');
+    await expect(cell(app.row, 'receiver')).toHaveAttribute('data-ui-hint', 'receiver-b');
+    await update(4, { receiver_id: 'receiver-b', receiver_name: 'RTL-SDR · 9876' });
+    await expect(cell(app.row, 'receiver')).toHaveText('RTL-SDR · 9876');
+    await expect(cell(app.row, 'receiver')).toHaveAttribute('data-ui-hint', 'receiver-b');
+    if (process.env.WEB_REVIEW_DIR) {
+      await cell(app.row, 'receiver').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR,
+        `live-receiver-hardware-${theme}-${width}.png`) });
+    }
+    await update(5, { receiver_id: 'receiver-b' });
     await expect(cell(app.row, 'receiver')).toHaveText('receiver-b');
-    await update(4, {});
+    await update(6, {});
     await expect(cell(app.row, 'receiver')).toHaveText('—');
     await expect(cell(app.row, 'receiver')).not.toHaveAttribute('data-ui-hint');
     await expectNoHorizontalOverflow(page);

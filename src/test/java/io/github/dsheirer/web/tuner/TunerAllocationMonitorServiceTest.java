@@ -25,8 +25,12 @@ class TunerAllocationMonitorServiceTest
     @Test void currentNicknameLabelsTunersDecisionsAndCandidatesAndClearingInvalidatesTheCache() throws Exception
     {
         FakeTuner tuner = new FakeTuner("private-native-receiver", 851_000_000L);
+        tuner.displayName = "Cached RTL-SDR · SAMPLE-001";
+        String hardwareName = "RTL-SDR/R820T · SAMPLE-001";
+        String receiverId = "tuner-" + "a".repeat(32);
         AtomicReference<Map<String,TunerAdministrationService.ReceiverReference>> receivers =
-            new AtomicReference<>(Map.of());
+            new AtomicReference<>(Map.of(tuner.getId(),
+                new TunerAdministrationService.ReceiverReference(receiverId, null, hardwareName)));
         try(TunerAllocationDiagnosticService history = new TunerAllocationDiagnosticService())
         {
             history.offer(new TunerAllocationDecision(900, CONTEXT, tuner.getId(), TunerAllocationDecision.Outcome.MOVED,
@@ -38,8 +42,9 @@ class TunerAllocationMonitorServiceTest
                 List::of, List::of, history, () -> 1_000, receivers::get);
             var original = service.snapshot();
             String fallback = original.tuners().getFirst().name();
+            assertEquals(hardwareName, fallback, "the receiver reference supplies the current hardware label");
             receivers.set(Map.of(tuner.getId(), new TunerAdministrationService.ReceiverReference(
-                "tuner-" + "a".repeat(32), "Roof antenna")));
+                receiverId, "Roof antenna", hardwareName)));
             var named = service.snapshot();
             assertNotSame(original, named, "nickname changes invalidate the view even within the cache interval");
             assertEquals("Roof antenna", named.tuners().getFirst().name());
@@ -51,13 +56,58 @@ class TunerAllocationMonitorServiceTest
             assertSame(named, service.snapshot(), "unchanged labels still reuse the shared projection");
             assertEquals(fallback, original.tuners().getFirst().name(), "previous snapshots remain immutable");
 
-            receivers.set(Map.of());
+            receivers.set(Map.of(tuner.getId(),
+                new TunerAdministrationService.ReceiverReference(receiverId, null, hardwareName)));
             var cleared = service.snapshot();
             assertEquals(fallback, cleared.tuners().getFirst().name());
             assertEquals(fallback, cleared.decisions().getFirst().tunerName());
             assertEquals(fallback, cleared.decisions().getFirst().candidates().getFirst().tunerName());
             assertFalse(ApiHttpResponse.normalizePayload(cleared).toString().contains("private-native-receiver"));
             assertEquals("Roof antenna", named.tuners().getFirst().name());
+
+            String updatedName = "RTL-SDR/R828D · SAMPLE-002";
+            receivers.set(Map.of(tuner.getId(),
+                new TunerAdministrationService.ReceiverReference(receiverId, null, updatedName)));
+            var updated = service.snapshot();
+            assertNotSame(cleared, updated, "hardware name changes invalidate the view within the cache interval");
+            assertEquals(updatedName, updated.tuners().getFirst().name());
+            assertEquals(updatedName, updated.decisions().getFirst().tunerName());
+            assertEquals(updatedName, updated.decisions().getFirst().candidates().getFirst().tunerName());
+            assertEquals(original.tuners().getFirst().id(), updated.tuners().getFirst().id());
+            assertEquals(original.decisions().getFirst().tunerId(), updated.decisions().getFirst().tunerId());
+            assertEquals(original.decisions().getFirst().candidates().getFirst().tunerId(),
+                updated.decisions().getFirst().candidates().getFirst().tunerId());
+            assertEquals(hardwareName, cleared.tuners().getFirst().name(), "published snapshots remain immutable");
+        }
+    }
+
+    @Test void removedReceiverKeepsCachedHardwareNameForDecisionsAndCandidates() throws Exception
+    {
+        FakeTuner tuner = new FakeTuner("private-removed-native-id", 851_000_000L);
+        tuner.displayName = "RTL-SDR/R820T · SAMPLE-003";
+        AtomicReference<List<DiscoveredTuner>> inventory = new AtomicReference<>(List.of(tuner));
+        AtomicLong clock = new AtomicLong(1_000);
+        try(TunerAllocationDiagnosticService history = new TunerAllocationDiagnosticService())
+        {
+            history.offer(new TunerAllocationDecision(900, CONTEXT, tuner.getId(), TunerAllocationDecision.Outcome.MOVED,
+                TunerAllocationDecision.Reason.SPARE_TUNER, 851_100_000L, 12_500L, 850_000_000L,
+                851_000_000L, 851_000_000L, 2_400_000L, 0L, null, null, null,
+                List.of(new TunerAllocationDecision.Candidate(tuner.getId(),
+                    TunerAllocationDecision.Reason.SPARE_TUNER, 100_000L, 2_000_000_000L))));
+            var service = new TunerAllocationMonitorService(inventory::get, List::of, List::of, history, clock::get);
+            var connected = service.snapshot();
+            assertEquals(tuner.displayName, connected.tuners().getFirst().name());
+
+            inventory.set(List.of());
+            clock.addAndGet(300);
+            var removed = service.snapshot();
+            assertTrue(removed.tuners().isEmpty());
+            assertEquals(tuner.displayName, removed.decisions().getFirst().tunerName());
+            assertEquals(tuner.displayName, removed.decisions().getFirst().candidates().getFirst().tunerName());
+            assertEquals(connected.decisions().getFirst().tunerId(), removed.decisions().getFirst().tunerId());
+            assertEquals(connected.decisions().getFirst().candidates().getFirst().tunerId(),
+                removed.decisions().getFirst().candidates().getFirst().tunerId());
+            assertFalse(ApiHttpResponse.normalizePayload(removed).toString().contains(tuner.getId()));
         }
     }
 
@@ -142,7 +192,7 @@ class TunerAllocationMonitorServiceTest
             var service = new TunerAllocationMonitorService(inventory::get, List::of, List::of, history, clock::get);
             assertEquals(100, service.snapshot().decisions().size());
             assertEquals(0, service.snapshot().tuners().size());
-            assertNotNull(service.snapshot().decisions().getFirst().tunerName());
+            assertTrue(service.snapshot().decisions().getFirst().tunerName().matches("Tuner \\d+"));
             assertFalse(ApiHttpResponse.normalizePayload(service.snapshot()).toString().contains("gone-native-serial"));
         }
     }
@@ -172,6 +222,7 @@ class TunerAllocationMonitorServiceTest
     private static final class FakeTuner extends DiscoveredTuner
     {
         private final String identity;
+        private String displayName;
         private FakeTuner(String identity, long frequency) throws Exception
         {
             this(identity, frequency, false);
@@ -186,11 +237,13 @@ class TunerAllocationMonitorServiceTest
                         getTunerController()));
                 }
                 @Override public String getPreferredName() { throw new AssertionError("Observer must not fetch device metadata"); }
+                @Override public String getUniqueID() { throw new AssertionError("Observer must not fetch device serials"); }
             };
             mTuner.getTunerController().setFrequency(frequency);
         }
         @Override public TunerClass getTunerClass() { return TunerClass.RTL2832; }
         @Override public String getId() { return identity; }
+        @Override public String getDisplayName() { return displayName; }
         @Override public void start() { }
     }
 }

@@ -554,7 +554,7 @@ final class StatsLiveService implements AutoCloseable
         return rows;
     }
 
-    private static final Set<String> NON_MARKER_FIELDS = Set.of("receiver_id", "receiver_nickname", "activation_order", "tags_truncated",
+    private static final Set<String> NON_MARKER_FIELDS = Set.of("receiver_id", "receiver_nickname", "receiver_name", "activation_order", "tags_truncated",
         "cc_valid_frames", "cc_invalid_frames", "cc_corrected_bits", "cc_sync_loss_bits", "cc_dropped_bits",
         "cc_last_valid_decode_ms", "quality_observed_at_ms", "vc_decoded_frames", "vc_repeated_frames",
         "vc_concealed_frames", "vc_missing_frames", "vc_fec_errors", "vc_fec_protected_bits",
@@ -1090,6 +1090,7 @@ final class StatsLiveService implements AutoCloseable
         {
             putText(row, "receiver_id", receiver.id(), MAXIMUM_LIVE_TEXT_LENGTH);
             putText(row, "receiver_nickname", receiver.nickname(), MAXIMUM_LIVE_TEXT_LENGTH);
+            putText(row, "receiver_name", receiver.name(), MAXIMUM_LIVE_TEXT_LENGTH);
         }
         putRemoteOrigin(row, remoteOrigins.find(configurationId));
         WebEntityRef.put(row, rowChannel != null ? rowChannel.entityRef() : null);

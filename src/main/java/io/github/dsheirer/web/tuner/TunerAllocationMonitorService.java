@@ -7,7 +7,6 @@ package io.github.dsheirer.web.tuner;
 
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.source.tuner.Tuner;
-import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.diagnostic.TunerAllocationContext;
@@ -199,10 +198,9 @@ public final class TunerAllocationMonitorService
                     reason = reason(entry.decision().reason());
                     break;
                 }
-        String prefix = discovered.getTunerClass() == TunerClass.RTL2832 ? "RTL-SDR" :
-            discovered.getTunerClass().toString();
-        String name = mNames.computeIfAbsent(identity, ignored -> prefix + " " + ++mNextName);
-        return new TunerView(id(identity), nickname(identity, receivers, name), center,
+        String hardwareName = safe(discovered.getDisplayName());
+        if(hardwareName != null) mNames.put(identity, hardwareName);
+        return new TunerView(id(identity), name(identity, receivers), center,
             geometry != null ? (long)geometry.usableBandwidthHz() : null,
             geometry != null ? 2L * geometry.middleUnusableHalfBandwidthHz() : null,
             discovered.getTunerStatus().name().toLowerCase(Locale.ROOT), available,
@@ -236,14 +234,12 @@ public final class TunerAllocationMonitorService
 
     private String name(String identity, Map<String,TunerAdministrationService.ReceiverReference> receivers)
     {
-        return identity == null ? null : nickname(identity, receivers,
-            mNames.computeIfAbsent(identity, ignored -> "Tuner " + ++mNextName));
-    }
-
-    private static String nickname(String identity, Map<String,TunerAdministrationService.ReceiverReference> receivers,
-                                   String fallback)
-    {
+        if(identity == null) return null;
         var receiver = receivers.get(identity);
+        String hardwareName = receiver != null ? safe(receiver.name()) : null;
+        // Retain hardware labels for removed receivers while their captured decisions remain in the bounded history.
+        if(hardwareName != null) mNames.put(identity, hardwareName);
+        String fallback = mNames.computeIfAbsent(identity, ignored -> "Tuner " + ++mNextName);
         return receiver != null && receiver.nickname() != null && !receiver.nickname().isBlank() ?
             receiver.nickname() : fallback;
     }

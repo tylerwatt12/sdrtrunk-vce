@@ -147,13 +147,16 @@ public final class TunerAdministrationService
         List<DiscoveredTuner> inventory = mInventory.get();
         Map<String,String> nicknames = mNicknames != null ? mNicknames.snapshot() : Map.of();
         ReferenceSnapshot cached = includeRecordings ? mDisplayReceiverReferences : mReceiverReferences;
-        if(cached != null && cached.inventory().equals(inventory) && cached.nicknames() == nicknames)
+        List<String> names = inventory.stream().map(DiscoveredTuner::getDisplayName).toList();
+        if(cached != null && cached.inventory().equals(inventory) && cached.nicknames() == nicknames &&
+            cached.names().equals(names))
         {
             return cached.references();
         }
         Map<String,ReceiverReference> references = new LinkedHashMap<>();
-        for(DiscoveredTuner discovered: inventory)
+        for(int index = 0; index < inventory.size(); index++)
         {
+            DiscoveredTuner discovered = inventory.get(index);
             try
             {
                 if(!includeRecordings && (discovered instanceof DiscoveredRecordingTuner ||
@@ -164,7 +167,7 @@ public final class TunerAdministrationService
                 String nativeId = discovered.getId();
                 if(nativeId == null || nativeId.isBlank()) continue;
                 String id = opaqueId(discovered);
-                references.put(nativeId, new ReceiverReference(id, nicknames.get(id)));
+                references.put(nativeId, new ReceiverReference(id, nicknames.get(id), names.get(index)));
             }
             catch(RuntimeException ignored)
             {
@@ -172,16 +175,19 @@ public final class TunerAdministrationService
             }
         }
         Map<String,ReceiverReference> snapshot = Map.copyOf(references);
-        ReferenceSnapshot next = new ReferenceSnapshot(List.copyOf(inventory), nicknames, snapshot);
+        ReferenceSnapshot next = new ReferenceSnapshot(List.copyOf(inventory), nicknames, names, snapshot);
         if(includeRecordings) mDisplayReceiverReferences = next;
         else mReceiverReferences = next;
         return snapshot;
     }
 
-    private record ReferenceSnapshot(List<DiscoveredTuner> inventory, Map<String,String> nicknames,
+    private record ReferenceSnapshot(List<DiscoveredTuner> inventory, Map<String,String> nicknames, List<String> names,
                                      Map<String,ReceiverReference> references) { }
 
-    public record ReceiverReference(String id, String nickname) { }
+    public record ReceiverReference(String id, String nickname, String name)
+    {
+        public ReceiverReference(String id, String nickname) { this(id, nickname, null); }
+    }
     public record Nickname(String nickname) { }
 
     /** Labels for channel-editor choices. Canonical preferred names remain the submitted values. */

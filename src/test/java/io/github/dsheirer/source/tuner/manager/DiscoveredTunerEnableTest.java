@@ -25,6 +25,63 @@ import org.junit.jupiter.api.Test;
 class DiscoveredTunerEnableTest
 {
     @Test
+    void displayIdentityIsCapturedBeforePublicationAndRefreshedOnlyByStartup()
+    {
+        TestDiscoveredTuner discovered = new TestDiscoveredTuner(new TrackingController(false), false);
+        discovered.mName = "Airspy HF+";
+        discovered.mSerial = "SAMPLE-001";
+        AtomicBoolean publishedName = new AtomicBoolean();
+        discovered.addTunerStatusListener((tuner, previous, current) -> {
+            if(current == TunerStatus.ENABLED)
+                publishedName.set("Airspy HF+ · SAMPLE-001".equals(tuner.getDisplayName()));
+        });
+        assertTrue(discovered.startConfigured());
+        assertTrue(publishedName.get());
+        assertEquals(2, discovered.mMetadataReads);
+        discovered.mFailMetadata = true;
+        assertEquals("Airspy HF+ · SAMPLE-001", discovered.getDisplayName());
+        assertEquals("Airspy HF+ · SAMPLE-001", discovered.getDisplayName());
+        assertEquals(2, discovered.mMetadataReads, "observers must only read the published label");
+        discovered.setEnabled(false);
+        assertEquals("Airspy HF+ · SAMPLE-001", discovered.getDisplayName());
+        discovered.setEnabled(true);
+        assertTrue(discovered.isAvailable(), "optional label failure cannot fail startup");
+        assertEquals("Airspy HF+ · SAMPLE-001", discovered.getDisplayName());
+        discovered.mFailMetadata = false;
+        discovered.mSerial = "SAMPLE-002";
+        discovered.setEnabled(false);
+        discovered.setEnabled(true);
+        assertEquals("Airspy HF+ · SAMPLE-002", discovered.getDisplayName());
+        assertEquals("enable-sequence", discovered.getId());
+        discovered.stop();
+    }
+
+    @Test
+    void displayIdentityDoesNotDuplicateSerialsAndPreservesLogicalTunerNames()
+    {
+        assertDisplayName(TunerClass.AIRSPY_HF, "Airspy HF+", "SAMPLE-001", "Airspy HF+ · SAMPLE-001");
+        assertDisplayName(TunerClass.HACKRF, "HackRF One SAMPLE-002", "HackRF SAMPLE-002", "HackRF One SAMPLE-002");
+        assertDisplayName(TunerClass.RTL2832, "RTL-2832/R820T SAMPLE-003", "RTL-2832/R820T SAMPLE-003", "RTL-2832/R820T SAMPLE-003");
+        assertDisplayName(TunerClass.RSP, "RSPduo SER:SAMPLE-004 Tuner 2", "SAMPLE-004", "RSPduo SER:SAMPLE-004 Tuner 2");
+        assertDisplayName(TunerClass.RECORDING_TUNER, "/private/sample.wav", "/private/sample.wav", "Recording");
+    }
+
+    private static void assertDisplayName(TunerClass tunerClass, String name, String serial, String expected)
+    {
+        TestDiscoveredTuner discovered = new TestDiscoveredTuner(new TrackingController(false), false)
+        {
+            @Override public TunerClass getTunerClass() { return tunerClass; }
+        };
+        discovered.mName = name;
+        discovered.mSerial = serial;
+        assertTrue(discovered.startConfigured());
+        assertEquals(expected, discovered.getDisplayName());
+        if(tunerClass == TunerClass.RECORDING_TUNER)
+            assertEquals(0, discovered.mMetadataReads, "recording paths must never become hardware labels");
+        discovered.stop();
+    }
+
+    @Test
     void discoveryIsAnExplicitStartConfigurePublishCommandAndStatusObserversDoNotStartHardware()
     {
         TrackingController controller = new TrackingController(false);
@@ -175,6 +232,10 @@ class DiscoveredTunerEnableTest
     {
         private final TrackingController mController;
         private int mStartCount;
+        private String mName = "Enable Sequence Test Tuner";
+        private String mSerial = "enable-sequence";
+        private boolean mFailMetadata;
+        private int mMetadataReads;
 
         private TestDiscoveredTuner(TrackingController controller)
         {
@@ -205,7 +266,16 @@ class DiscoveredTunerEnableTest
             mStartCount++;
             if(isEnabled() && !hasTuner())
             {
-                mTuner = new TestTuner(mController, this);
+                mTuner = new TestTuner(mController, this)
+                {
+                    @Override public String getPreferredName()
+                    {
+                        mMetadataReads++;
+                        if(mFailMetadata) throw new IllegalStateException("metadata unavailable");
+                        return mName;
+                    }
+                    @Override public String getUniqueID() { mMetadataReads++; return mSerial; }
+                };
 
                 try
                 {

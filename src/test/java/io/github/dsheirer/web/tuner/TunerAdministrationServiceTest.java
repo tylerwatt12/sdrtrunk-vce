@@ -113,10 +113,12 @@ class TunerAdministrationServiceTest
     @Test
     void liveReferencesReadOnlyRegistryIdentityAndExcludeRecordingPaths()
     {
+        AtomicReference<String> hardwareName = new AtomicReference<>("Airspy HF+ · SAMPLE-001");
         DiscoveredTuner physical = new DiscoveredTuner()
         {
             @Override public TunerClass getTunerClass() { return TunerClass.UNKNOWN; }
             @Override public String getId() { return "native-receiver-identity"; }
+            @Override public String getDisplayName() { return hardwareName.get(); }
             @Override public Tuner getTuner() { throw new AssertionError("Live labels must not read hardware"); }
             @Override public void start() { throw new AssertionError("Live labels must not initialize hardware"); }
         };
@@ -130,6 +132,13 @@ class TunerAdministrationServiceTest
         Map<String,TunerAdministrationService.ReceiverReference> references = service.receiverReferences();
         assertEquals(1, references.size());
         assertEquals(TunerAdministrationService.opaqueId(physical), references.get(physical.getId()).id());
+        assertEquals("Airspy HF+ · SAMPLE-001", references.get(physical.getId()).name());
+        assertSame(references, service.receiverReferences());
+        hardwareName.set("Airspy HF+ · SAMPLE-002");
+        var refreshed = service.receiverReferences();
+        assertEquals("Airspy HF+ · SAMPLE-002", refreshed.get(physical.getId()).name());
+        assertEquals(references.get(physical.getId()).id(), refreshed.get(physical.getId()).id());
+        assertEquals("Airspy HF+ · SAMPLE-001", references.get(physical.getId()).name(), "published labels stay immutable");
         String wire = ApiHttpResponse.normalizePayload(references.values()).toString();
         assertFalse(wire.contains("native-receiver-identity"));
         assertFalse(wire.contains("/private/"));
@@ -161,6 +170,7 @@ class TunerAdministrationServiceTest
         var receiver = references.get(recording.getId());
         assertEquals(TunerAdministrationService.opaqueId(recording), receiver.id());
         assertEquals("Training recording", receiver.nickname());
+        assertEquals("Recording", receiver.name());
         String wire = ApiHttpResponse.normalizePayload(references.values()).toString();
         assertFalse(wire.contains("/private/"));
         assertFalse(wire.contains("recording.wav"));

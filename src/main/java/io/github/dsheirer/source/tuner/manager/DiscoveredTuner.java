@@ -26,6 +26,7 @@ import io.github.dsheirer.source.tuner.TunerType;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerController;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.Function;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
@@ -54,6 +55,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     private volatile long mOperatorGeneration;
     private volatile boolean mSpectrumObserved;
     private volatile String mAllocationPreferredName;
+    private volatile String mDisplayName;
     private String mErrorMessage;
     private List<IDiscoveredTunerStatusListener> mListeners = new CopyOnWriteArrayList<>();
     private final ReentrantLock mAllocationLifecycleLock = new ReentrantLock();
@@ -101,6 +103,13 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     public String getAllocationPreferredName() { return mAllocationPreferredName; }
 
     public void setAllocationPreferredName(String name) { mAllocationPreferredName = name; }
+
+    /** Display metadata captured by startup, never by decoder callbacks or Live observers. */
+    public String getDisplayName()
+    {
+        String name = mDisplayName;
+        return name != null ? name : getTunerClass().toString();
+    }
 
     /**
      * Current status of the discovered tuner
@@ -455,6 +464,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
                 getTuner().getTunerController().apply(mTunerConfiguration);
             }
 
+            cacheDisplayName();
             return true;
         }
         catch(Exception e)
@@ -463,6 +473,42 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
             setErrorMessage("Unable to restore tuner configuration [" + getId() + "]");
             return false;
         }
+    }
+
+    /** Optional display metadata must not fail startup or publish recording paths as hardware identity. */
+    private void cacheDisplayName()
+    {
+        if(getTunerClass() == TunerClass.RECORDING_TUNER) return;
+        String name;
+        try
+        {
+            name = getTuner().getPreferredName();
+            name = name != null && !name.isBlank() ? name.trim() : getTunerClass().toString();
+        }
+        catch(RuntimeException ignored)
+        {
+            // Retain a previously captured identity if hardware is retiring during startup.
+            return;
+        }
+        try
+        {
+            String serial = getTuner().getUniqueID();
+            if(serial != null && !serial.isBlank())
+            {
+                serial = serial.trim();
+                // Some devices include their class in the unique ID, e.g. "HackRF <serial>".
+                String prefix = getTunerClass() + " ";
+                if(serial.regionMatches(true, 0, prefix, 0, prefix.length()))
+                    serial = serial.substring(prefix.length()).trim();
+                if(!serial.isBlank() && !name.toLowerCase(Locale.ROOT).contains(serial.toLowerCase(Locale.ROOT)))
+                    name += " · " + serial;
+            }
+        }
+        catch(RuntimeException ignored)
+        {
+            // The preferred name remains useful when a serial is unavailable.
+        }
+        mDisplayName = name;
     }
 
     /**

@@ -18,10 +18,15 @@ assert.equal(nickname('📻'.repeat(80)), '📻'.repeat(80));
 assert.throws(() => nickname('📻'.repeat(81)), /80 characters/);
 assert.throws(() => nickname('North\u0000antenna'), /control characters/);
 assert.equal(receiverLabel({ receiver_id: 'receiver-a', receiver_nickname: 'North antenna' }), 'North antenna');
+assert.equal(receiverLabel({ receiver_id: 'receiver-a', receiver_name: 'Airspy · 1234',
+  receiver_nickname: 'North antenna' }), 'North antenna');
+assert.equal(receiverLabel({ receiver_id: 'receiver-a', receiver_name: 'Airspy · 1234' }), 'Airspy · 1234');
 assert.equal(receiverLabel({ receiver_id: 'receiver-a' }), 'receiver-a');
 assert.equal(receiverLabel({}), '—');
 assert.equal(receiverLabel({ receiver_id: 'receiver-a', receiver_nickname: '<img onerror=alert(1)>' }),
   '<img onerror=alert(1)>', 'The label remains text for the shared table renderer.');
+assert.equal(receiverLabel({ receiver_id: 'receiver-a', receiver_name: '<Airspy> · 1234' }),
+  '<Airspy> · 1234', 'The hardware identity remains text for the shared table renderer.');
 
 async function check() {
   const core = path.join(path.dirname(app), 'core');

@@ -20213,7 +20213,7 @@ function liveChannelValue(row, showRemoteOrigin = true) {
 }
 
 function liveReceiverLabel(row) {
-  return String(row?.receiver_nickname || row?.receiver_id || '—');
+  return String(row?.receiver_nickname || row?.receiver_name || row?.receiver_id || '—');
 }
 
 function liveChannelViewMeta(value, label = '') {
@@ -20558,7 +20558,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       title: (row) => decoderLabel(row.decoder), sortValue: (row) => row.decoder || '' },
     { id: 'receiver', label: 'Receiver', render: liveReceiverLabel,
       title: (row) => row.receiver_id || '',
-      reconcileKey: (row) => JSON.stringify([row.receiver_id, row.receiver_nickname]) }
+      reconcileKey: (row) => JSON.stringify([row.receiver_id, row.receiver_nickname, row.receiver_name]) }
   ];
   const tabBar = node('div', 'channels-live-tabs');
   tabBar.setAttribute('role', 'tablist');
