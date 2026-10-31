@@ -2,8 +2,8 @@
   "version": 1,
   "shards": 4,
   "workers": 2,
-  "caseCount": 1776,
-  "inventorySha256": "30886d2a453408b61578944a54859e0f87cda9ef32d9133b3e4d1455b4116a89",
+  "caseCount": 1807,
+  "inventorySha256": "1e2f9fa1c154d24d9148bea900ddd44650cf50b43c48af3bdf021d96db63e378",
   "files": {
     "access-landing.spec.js": {
       "durationMs": 12822,
@@ -209,6 +209,11 @@
       "durationMs": 64921,
       "caseCount": 38,
       "source": "measured"
+    },
+    "centralized-guest-settings.spec.js": {
+      "durationMs": 19150,
+      "caseCount": 10,
+      "source": "estimated"
     },
     "channel-catalog-mobile.spec.js": {
       "durationMs": 9403,
@@ -515,6 +520,11 @@
       "caseCount": 2,
       "source": "measured"
     },
+    "personal-profile-isolation.spec.js": {
+      "durationMs": 9575,
+      "caseCount": 5,
+      "source": "estimated"
+    },
     "playback-hangtime.spec.js": {
       "durationMs": 4224,
       "caseCount": 4,
@@ -524,6 +534,11 @@
       "durationMs": 3795,
       "caseCount": 3,
       "source": "measured"
+    },
+    "preference-reset.spec.js": {
+      "durationMs": 5745,
+      "caseCount": 3,
+      "source": "estimated"
     },
     "radio-home-identity.spec.js": {
       "durationMs": 4607,

@@ -6,6 +6,7 @@ import { p25IdentityFacts, p25IdentifierText, p25ServingSystemKey } from './radi
 import { callAudioDetailGroups } from './call-audio-details.js?v=7';
 import { createCallDisplayHangtimeField } from './call-display-settings.js?v=2';
 import { createActionWorkflow } from './action-workflows.js?v=1';
+import { createPreferenceNumberInput, createRecordingClickModeSelect, listeningFieldDefinitions } from './preference-controls.js?v=1';
 
 /* Reuse map: global workspace composition; ui-button/ui-button-header/ui-disclosure-button/ui-icon-button, ui-segmented, ui-select,
  * ui-range, ui-pill, ui-notice, ui-feedback, ui-fact-list, ui-select-list-item, ui-toggle-field and ui-section-disclosure. Existing scanner
@@ -712,18 +713,17 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     controls: () => dock.querySelectorAll('[data-click-mode]'), renderFeedback: () => {} });
   function clickModeField(id) {
     const label = node('label', 'ui-field ui-audio-queue-setting audio-dock-click-mode');
-    const frame = node('span', 'ui-select-frame'); const select = node('select', 'ui-select');
-    select.id = id; select.dataset.clickMode = ''; select.setAttribute('aria-label', 'When a call is clicked');
-    [['queue', 'Queue clicked calls'], ['once', 'Play once'], ['continue', 'Continue matching calls']].forEach(([value, text]) => {
-      const option = node('option', '', text); option.value = value; select.append(option);
-    });
+    const frame = node('span', 'ui-select-frame');
+    const select = createRecordingClickModeSelect(node, { id });
+    select.dataset.clickMode = '';
     select.addEventListener('change', userAction(() => {
       const mode = select.value;
       void clickModeWorkflow.run(() => setRecordingClickMode(mode), {
         onSuccess: () => render(), onError: () => render()
       }).catch(() => {});
     }));
-    frame.append(select); appendIcon(frame, 'chevron-down'); label.append(node('span', 'ui-field-label', 'When a call is clicked'), frame);
+    frame.append(select); appendIcon(frame, 'chevron-down');
+    label.append(node('span', 'ui-field-label', listeningFieldDefinitions.recordingClickMode.label), frame);
     return label;
   }
   function patchMembers(call) {
@@ -1034,6 +1034,7 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     panelHost.append(footer);
   }
   function renderSettings() {
+    const { targetGrouping, targetBurstLimit, prependPlayingCall } = listeningFieldDefinitions;
     const settings = node('div', 'audio-dock-settings');
     panelHost.append(settings);
     const { field: hangtimeField, input: hangtime } = createCallDisplayHangtimeField(node, {
@@ -1048,8 +1049,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     }));
     settings.append(hangtimeField);
     if (source !== 'live') return;
-    const groupField = uiToggleField('Group calls by target', liveState.targetGrouping !== false,
-      'Group calls by target', 'Keeps calls for the same group together to preserve conversationality');
+    const groupField = uiToggleField(targetGrouping.label, liveState.targetGrouping !== false,
+      targetGrouping.label, targetGrouping.dockDetail);
     const grouping = groupField.querySelector('input'); grouping.id = 'audio-dock-target-grouping';
     const groupHelp = groupField.querySelector('.ui-toggle-copy small');
     if (groupHelp) { groupHelp.id = 'audio-dock-grouping-help'; grouping.setAttribute('aria-describedby', groupHelp.id); }
@@ -1060,20 +1061,20 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     settings.append(groupField);
     const burstLabel = node('label', 'ui-toggle-field'); burstLabel.htmlFor = 'audio-dock-target-burst';
     const burstCopy = node('span', 'ui-toggle-copy');
-    const burstHelp = node('small', '', 'When grouping is on, switch to another waiting target after this many consecutive calls.');
+    const burstHelp = node('small', '', targetBurstLimit.detail);
     burstHelp.id = 'audio-dock-burst-help';
-    burstCopy.append(node('strong', '', 'Calls per target'), burstHelp);
-    const burst = node('input', 'ui-input ui-input-number'); burst.id = 'audio-dock-target-burst'; burst.type = 'number'; burst.min = '1'; burst.max = '20'; burst.value = liveState.targetBurstLimit || 4;
-    burst.setAttribute('aria-label', 'Calls per target');
-    burst.setAttribute('aria-describedby', burstHelp.id);
+    burstCopy.append(node('strong', '', targetBurstLimit.label), burstHelp);
+    const burst = createPreferenceNumberInput(node, { id: 'audio-dock-target-burst',
+      value: liveState.targetBurstLimit || 4, ...targetBurstLimit.limits,
+      label: targetBurstLimit.label, describedBy: burstHelp.id });
     burst.addEventListener('change', userAction(() => {
       if (!burst.checkValidity()) { burst.reportValidity(); return; }
       const player = getLivePlayer(); if (!player) return;
       player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences({ burst: true });
     }));
     burstLabel.append(burstCopy, burst); settings.append(burstLabel);
-    const titleField = uiToggleField('Playing call in page title', getTitlePreference(),
-      'Playing call in page title', 'Keep the Live call in browser tab titles until its display hangtime ends.');
+    const titleField = uiToggleField(prependPlayingCall.label, getTitlePreference(),
+      prependPlayingCall.label, prependPlayingCall.dockDetail);
     const prepend = titleField.querySelector('input'); prepend.id = 'audio-dock-title-preference';
     const titleHelp = titleField.querySelector('.ui-toggle-copy small');
     if (titleHelp) { titleHelp.id = 'audio-dock-title-help'; prepend.setAttribute('aria-describedby', titleHelp.id); }

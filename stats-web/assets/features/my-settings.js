@@ -1,5 +1,7 @@
 import { createCallDisplayHangtimeField } from '../core/call-display-settings.js?v=2';
 import { preferenceGroups } from '../core/preference-registry.js?v=1';
+import { createPreferenceNumberInput, createRecordingClickModeSelect, createStatusAlertControl,
+  mergeStatusAlertDisabledCodes, listeningFieldDefinitions } from '../core/preference-controls.js?v=1';
 
 // Focused personal settings reuse the settings composition, choice controls,
 // form workflow and confirmation modal on desktops and phones in both themes.
@@ -276,22 +278,15 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
       summary.append(node('strong', '', group.name), count);
       const controls = node('div', 'ui-settings-disclosure-body');
       group.alerts.forEach((alert) => {
-        const row = node('div', 'ui-toggle-field');
-        const copy = node('span', 'ui-toggle-copy');
-        copy.append(node('span', '', alert.name));
-        const toggle = uiToggle(!draft.includes(alert.id), alert.name);
-        toggle.classList.add('ui-toggle-compact');
-        toggle.querySelector('.ui-toggle-state')?.classList.add('visually-hidden');
-        const input = toggle.querySelector('input');
-        input.dataset.alertCode = alert.id;
+        const { control, input } = createStatusAlertControl(node, uiToggle, alert,
+          { checked: !draft.includes(alert.id), compact: true });
         input.addEventListener('change', () => {
           draft = draft.filter((id) => id !== alert.id);
           if (!input.checked) draft.push(alert.id);
           draft.sort();
           updateCount();
         });
-        row.append(copy, toggle);
-        controls.append(row);
+        controls.append(control);
       });
       updateCount();
       details.append(summary, controls);
@@ -301,13 +296,13 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
   }
 
   function listeningControls(body) {
+    const { targetGrouping, targetBurstLimit, prependPlayingCall, recordingClickMode } = listeningFieldDefinitions;
     const numberField = (label, value, minimum, maximum, step, onChange, detail = '') => {
       const { wrapper, heading } = field(label);
-      const input = node('input', 'ui-input ui-input-number');
-      input.type = 'number'; input.min = String(minimum); input.max = String(maximum);
-      input.step = String(step); input.required = true; input.value = String(value);
       heading.id = `my-settings-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-label`;
-      input.setAttribute('aria-labelledby', heading.id);
+      const input = createPreferenceNumberInput(node, {
+        value, minimum, maximum, step, required: true, labelledBy: heading.id
+      });
       input.addEventListener('input', () => onChange(Number(input.value)));
       wrapper.append(input);
       if (detail) {
@@ -326,24 +321,22 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
     };
     numberField('Playback volume (%)', Math.round(draft.volume * 100), 0, 100, 1,
       value => { draft.volume = value / 100; });
-    toggleField('Group calls by target', draft.target_grouping,
+    toggleField(targetGrouping.label, draft.target_grouping,
       value => { draft.target_grouping = value; });
-    numberField('Calls per target', draft.target_burst_limit, 1, 20, 1,
+    numberField(targetBurstLimit.label, draft.target_burst_limit,
+      targetBurstLimit.limits.minimum, targetBurstLimit.limits.maximum, 1,
       value => { draft.target_burst_limit = value; },
-      'When grouping is on, switch to another waiting target after this many consecutive calls.');
+      targetBurstLimit.detail);
     const { field: hangtimeField } = createCallDisplayHangtimeField(node, {
       id: 'my-settings-call-display-hangtime', value: draft.call_display_hangtime_seconds,
       onChange: (value) => { draft.call_display_hangtime_seconds = value; }
     });
     body.append(hangtimeField);
-    const { wrapper, heading } = field('When a call is clicked');
-    const select = node('select', 'ui-select'); select.setAttribute('aria-labelledby', heading.id);
-    [['queue', 'Queue clicked calls'], ['once', 'Play once'], ['continue', 'Continue matching calls']]
-      .forEach(([value, label]) => { const option = node('option', '', label); option.value = value; select.append(option); });
-    select.value = draft.recording_click_mode;
+    const { wrapper, heading } = field(recordingClickMode.label);
+    const select = createRecordingClickModeSelect(node, { value: draft.recording_click_mode, labelledBy: heading.id });
     select.addEventListener('change', () => { draft.recording_click_mode = select.value; });
     wrapper.append(select); body.append(wrapper);
-    toggleField('Playing call in page title', draft.prepend_playing_call,
+    toggleField(prependPlayingCall.label, draft.prepend_playing_call,
       value => { draft.prepend_playing_call = value; });
     if (canView('scanner')) {
       const lists = node('a', 'link-button', 'Open Scanner for Scan Lists');
@@ -441,10 +434,8 @@ export function createMySettingsWorkspace({ node, iconGlyph, uiToggle, createFor
             Object.assign(preferences.playback, playback);
             preferences.page_titles.prepend_playing_call = prepend_playing_call;
           } else if (selectedSection === 'guides') preferences.guides.automatic_page_guides = submitted;
-          else preferences.health_alerts.disabled_codes = [
-            ...preferences.health_alerts.disabled_codes.filter((id) => !knownAlerts.has(id)),
-            ...submitted.filter((id) => knownAlerts.has(id))
-          ];
+          else preferences.health_alerts.disabled_codes = mergeStatusAlertDisabledCodes(
+            preferences.health_alerts.disabled_codes, knownAlerts, submitted);
         });
         if (!current()) throw Object.assign(new Error('The active preference profile changed.'),
           { code: 'preference_session_changed' });

@@ -927,8 +927,12 @@ async function main() {
   const resetSource = functionBinding(appSource, 'openResetUserPreferences');
   assert.match(resetSource, /await userPreferenceController\.resetPreferences\(\)/,
     'Explicit reset authorizes replacing the active guest record using its scope defaults');
-  assert.match(resetSource, /active\.identity !== snapshot\.identity \|\| active\.scope !== snapshot\.scope/,
+  assert.match(resetSource, /const ownsProfile = userPreferenceController\.profileGuard\(\)/);
+  assert.match(resetSource, /if \(!ownsProfile\(\)\)/,
     'Reset must remain bound to the account or guest profile that opened the confirmation');
+  assert.match(resetSource, /createActionWorkflow\(\{ surface: body, feedback: message, modal \}\)/);
+  assert.match(resetSource, /await workflow\.run\(async \(\) =>/);
+  assert.match(resetSource, /pending: 'Resetting personal preferences…'/);
   assert.match(resetSource, /error\?\.code === 'preference_conflict'/);
   assert.match(resetSource, /if \(modal\.close\(\)\) void render\(\)/);
   assert.doesNotMatch(resetSource, /reset\.focus\(\)/);
@@ -957,55 +961,13 @@ async function main() {
   assert.match(preferenceFormSource, /apply\(latest\.preferences\)/);
   assert.match(livePresentationSource, /apply\(preferences\.presentation\)/);
   assert.match(livePresentationSource, /renderAfterSave: !densityOnly/);
-  const scannerPlaybackSource = functionBinding(appSource, 'openScannerSettings');
-  assert.match(scannerPlaybackSource, /const openModal = options\.openReadOnlyModal \|\| openReadOnlyModal/);
-  assert.match(scannerPlaybackSource, /openModal\('Scanner settings'/);
-  assert.match(scannerPlaybackSource, /const saveForm = options\.savePreferenceForm \|\| savePreferenceForm/);
-  assert.match(scannerPlaybackSource, /saveForm\(workflow, modal/);
-  assert.match(scannerPlaybackSource, /preferences\.playback\.target_grouping =/);
-  assert.match(scannerPlaybackSource, /preferences\.playback\.target_burst_limit =/);
-  assert.match(scannerPlaybackSource, /preferences\.page_titles\.prepend_playing_call =/);
-  assert.doesNotMatch(scannerPlaybackSource, /preferences\.presentation/);
+  assert.doesNotMatch(appSource, /function (?:activateScannerSettings|openScannerSettings)\(/,
+    'Scanner preferences must not retain an unused parallel settings dialog.');
   assert.match(appSource, /'scanner-player-menu'/);
   assert.match(appSource, /audioDock\.openPlayerMenu\(invoker\)/,
     'Scanner listening preferences use the shared Player menu.');
-  const scannerSettingsActivationSource = functionBinding(appSource, 'activateScannerSettings');
-  assert.doesNotMatch(scannerSettingsActivationSource, /accessSession\.authenticated|showLoginModal/);
-  assert.match(scannerSettingsActivationSource, /snapshot = await synchronizeUserPreferences\(\)/);
-  assert.match(scannerSettingsActivationSource, /if \(!button\.isConnected\) return/);
-  assert.match(scannerSettingsActivationSource, /openScannerSettings\(returnFocusSelector\)/);
-  let scannerActivationSnapshot = { loaded: true, scope: 'guest', identity: null };
-  let scannerActivationOpenTarget = null;
-  let scannerActivationSyncs = 0;
-  const activateScannerSettings = vm.runInNewContext(
-    `(async function(button) ${scannerSettingsActivationSource})`, {
-      userPreferenceController: { snapshot: () => scannerActivationSnapshot },
-      showLoginModal: () => { throw new Error('Personal guest controls must not request sign-in'); },
-      synchronizeUserPreferences: async () => {
-        scannerActivationSyncs += 1;
-        return { loaded: true };
-      },
-      setIconButton: () => {},
-      openScannerSettings: (target) => { scannerActivationOpenTarget = target; }
-    });
-  const scannerActivationButton = {
-    id: 'scanner-settings', isConnected: true, disabled: false,
-    classList: { add: () => {}, remove: () => {} },
-    replaceChildren: () => {}, setAttribute: () => {}, removeAttribute: () => {}
-  };
-  await activateScannerSettings(scannerActivationButton);
-  assert.equal(scannerActivationSyncs, 0);
-  assert.equal(scannerActivationOpenTarget, '#scanner-settings',
-    'A loaded guest profile can open personal settings without signing in');
-  scannerActivationSnapshot = { loaded: false, scope: 'guest', identity: null };
-  await activateScannerSettings(scannerActivationButton);
-  assert.equal(scannerActivationSyncs, 1);
-  assert.equal(scannerActivationOpenTarget, '#scanner-settings');
-  scannerActivationOpenTarget = null;
-  scannerActivationButton.isConnected = false;
-  await activateScannerSettings(scannerActivationButton);
-  assert.equal(scannerActivationOpenTarget, null,
-    'A delayed Scanner settings load must not open after navigation removes its trigger');
+  assert.match(focusedSettingsSource, /selectedSection === 'listening'/,
+    'My Settings must keep the central personal listening editor.');
   const liveChannelsSource = functionBinding(appSource, 'liveChannelsSection');
   const selectedViewActionSource = functionBinding(appSource, 'liveSelectedViewAction');
   const liveSettingsActivationSource = functionBinding(appSource, 'activateLivePresentationSettings');
@@ -1033,7 +995,11 @@ async function main() {
       setIconButton: () => {},
       openLivePresentationSettings: target => { liveActivationOpenTarget = target; }
     });
-  const liveActivationButton = { ...scannerActivationButton, id: 'live-presentation-settings', isConnected: true };
+  const liveActivationButton = {
+    id: 'live-presentation-settings', isConnected: true, disabled: false,
+    classList: { add: () => {}, remove: () => {} },
+    replaceChildren: () => {}, setAttribute: () => {}, removeAttribute: () => {}
+  };
   await activateLiveSettings(liveActivationButton);
   assert.equal(liveActivationOpenTarget, '#live-presentation-settings');
   assert.equal(liveActivationSyncs, 0, 'Loaded guest presentation must not require an account request');
@@ -1759,6 +1725,11 @@ async function main() {
     scannerCallRenderKey(scannerCall, scannerState, null, 'advanced'),
     'A scoped disclosure mode invalidates the sample display without changing the normal global mode');
   const scannerRenderer = functionBinding(appSource, 'renderScanner');
+  assert.match(scannerRenderer, /!options\.player/);
+  assert.match(scannerRenderer, /typeof options\.channelMetadata !== 'function'/);
+  assert.match(scannerRenderer, /typeof options\.mount !== 'function'/);
+  assert.doesNotMatch(scannerRenderer, /options\.(?:readSnapshot|savePreferenceForm|openReadOnlyModal)/,
+    'Scanner samples must not require obsolete modal dependencies.');
   assert.ok(scannerRenderer.indexOf('currentChannel = null;') <
     scannerRenderer.indexOf('paintCall(display, state, currentChannel);'),
   'A call transition must clear old channel metadata before rendering its navigation handlers');

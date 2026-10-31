@@ -17,7 +17,8 @@ import * as pageLifecycle from './core/page-lifecycle.js';
 import { installIconHints, setIconHintDetails } from './core/icon-hints.js?v=9';
 import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
-import { createMySettingsWorkspace } from './features/my-settings.js?v=4';
+import { createMySettingsWorkspace } from './features/my-settings.js?v=5';
+import { createStatusAlertControl, receiverHealthDisabledCodesForSave } from './core/preference-controls.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
 import { createGuideController } from './guides/controller.js?v=47';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
@@ -49,7 +50,7 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
 import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=47';
+import { createAudioDock } from './core/audio-dock.js?v=48';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=2';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
@@ -8583,12 +8584,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
       const pageRoots = [];
       workspace = await renderScanner({ guideMode: true,
         renderContext: { ...renderContext, signal: context.signal }, player: sample.player,
-        channelMetadata: sample.channelMetadata, readSnapshot: sample.readSnapshot,
-        openReadOnlyModal: openSampleModal,
-        savePreferenceForm: (workflow, modal, mutate, options) => workflow.save(async () => {
-          if (closed || context.signal.aborted) throw new DOMException('The guide example has closed.', 'AbortError');
-          return sample.updatePreferences(mutate);
-        }, { saving: options.saving, onSuccess: () => modal.close() }),
+        channelMetadata: sample.channelMetadata,
         mount: (...nodes) => {
           if (closed || !context.isCurrent()) return;
           const roots = nodes.filter(node => node instanceof Element);
@@ -10735,13 +10731,6 @@ function receiverHealthAccountAlertSummary(snapshot, preferences) {
     critical_count: criticalCount,
     warning_count: warningCount
   };
-}
-
-function receiverHealthDisabledCodesForSave(preferences, controls) {
-  const unknownDisabledCodes = preferences?.health_alerts?.disabled_codes
-    ?.filter((code) => !controls.has(code)) || [];
-  const disabledKnownCodes = receiverHealthAlertIds.filter((id) => !controls.get(id)?.checked);
-  return [...unknownDisabledCodes, ...disabledKnownCodes];
 }
 
 class ReceiverHealthController {
@@ -12986,8 +12975,7 @@ function openPlaybackScanListCoverage(player = webCallPlayer, preferredId = null
 function renderScanner(options = {}) {
   const guideMode = options.guideMode === true;
   if (guideMode && (!options.player || typeof options.channelMetadata !== 'function' ||
-      typeof options.mount !== 'function' || typeof options.openReadOnlyModal !== 'function' ||
-      typeof options.readSnapshot !== 'function' || typeof options.savePreferenceForm !== 'function')) {
+      typeof options.mount !== 'function')) {
     throw new Error('The Scanner tour could not be loaded. Try opening it again.');
   }
   const pageContext = options.renderContext || captureRenderContext();
@@ -31889,8 +31877,7 @@ function openStatusIconSettings(returnFocusSelector = null) {
   };
   const cards = receiverHealthAlertGroups.map((group) => {
     const toggles = group.alerts.map((alert) => {
-      const setting = preferenceCheckbox(`health-alert-${alert.id}`, alert.name, true, alert.description);
-      setting.input.dataset.alertCode = alert.id;
+      const setting = createStatusAlertControl(node, uiToggle, alert);
       controls.set(alert.id, setting.input);
       return setting.control;
     });
@@ -32039,91 +32026,10 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   });
 }
 
-async function activateScannerSettings(button) {
-  const returnFocusSelector = `#${button.id}`;
-  let snapshot = userPreferenceController.snapshot();
-  if (!snapshot.loaded) {
-    button.disabled = true;
-    button.classList.add('is-loading');
-    button.replaceChildren();
-    button.setAttribute('aria-label', 'Loading Scanner settings');
-    button.removeAttribute('data-ui-hint');
-    snapshot = await synchronizeUserPreferences();
-    if (!button.isConnected) return;
-    button.disabled = false;
-    button.classList.remove('is-loading');
-    setIconButton(button, 'icon-live-presentation', snapshot.loaded ?
-      'Scanner settings' : 'Retry Scanner settings');
-  }
-  if (snapshot.loaded) openScannerSettings(returnFocusSelector);
-}
-
-function openScannerSettings(returnFocusSelector = null, options = {}) {
-  const readSnapshot = options.readSnapshot || (() => userPreferenceController.snapshot());
-  const openModal = options.openReadOnlyModal || openReadOnlyModal;
-  const saveForm = options.savePreferenceForm || savePreferenceForm;
-  const snapshot = readSnapshot();
-  if (!snapshot.loaded) return;
-  const current = snapshot.preferences;
-  const form = node('form', 'admin-form scanner-settings-form');
-  const message = node('div', 'admin-form-message');
-  message.setAttribute('role', 'status');
-  const targetGrouping = preferenceCheckbox('target-grouping', 'Group calls by playback target',
-    current.playback.target_grouping,
-    'Keep queued calls on the same talkgroup or channel together.');
-  const prependTitle = preferenceCheckbox('prepend-playing-call', 'Show the playing call in every page title',
-    current.page_titles.prepend_playing_call);
-  const targetBurstLimit = node('input');
-  targetBurstLimit.type = 'number';
-  targetBurstLimit.name = 'target-burst-limit';
-  targetBurstLimit.min = '1';
-  targetBurstLimit.max = '20';
-  targetBurstLimit.required = true;
-  targetBurstLimit.value = String(current.playback.target_burst_limit);
-  const apply = (preferences) => {
-    setUiToggle(targetGrouping.input, preferences.playback.target_grouping);
-    targetBurstLimit.value = String(preferences.playback.target_burst_limit);
-    setUiToggle(prependTitle.input, preferences.page_titles.prepend_playing_call);
-  };
-  const fields = node('div', 'settings-field-grid');
-  fields.append(formField('Calls before switching targets', targetBurstLimit,
-    'Play 1–20 queued calls before switching targets.'));
-  const card = settingsCard('Playback order', '', targetGrouping.control, fields);
-  const titleCard = settingsCard('Page titles', '', prependTitle.control);
-  const save = node('button', 'ui-button ui-button-primary', 'Save Scanner Settings');
-  save.type = 'submit';
-  const actions = node('div', 'admin-form-actions');
-  actions.append(save);
-  const footer = node('div', 'settings-form-footer');
-  footer.append(message, actions);
-  form.append(node('p', 'live-presentation-intro',
-    snapshot.scope === 'guest' ? snapshot.persistence === 'memory' ? 'These choices apply for this page.' :
-      'These choices are saved in this browser.' : 'These choices are saved with your account.'), settingsCardGrid(card, titleCard), footer);
-  const modal = openModal('Scanner settings', form, {
-    id: 'scanner-settings-modal', className: 'scanner-settings-modal modal-size-small',
-    returnFocusSelector, guideTargetPlacement: 'center'
-  });
-  if (!modal) return;
-  const workflow = createFormWorkflow({ form, submit: save, feedback: message, modal });
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    const submitted = {
-      target_grouping: targetGrouping.input.checked,
-      target_burst_limit: Number(targetBurstLimit.value),
-      prepend_playing_call: prependTitle.input.checked
-    };
-    await saveForm(workflow, modal, (preferences) => {
-      preferences.playback.target_grouping = submitted.target_grouping;
-      preferences.playback.target_burst_limit = submitted.target_burst_limit;
-      preferences.page_titles.prepend_playing_call = submitted.prepend_playing_call;
-    }, { identity: snapshot.identity, saving: 'Saving Scanner settings…', apply });
-  });
-  return modal;
-}
-
 function openResetUserPreferences(returnFocusSelector = null) {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) return;
+  const ownsProfile = userPreferenceController.profileGuard();
   const guest = snapshot.scope === 'guest';
   const body = node('div', 'admin-confirmation');
   body.append(node('p', '', guest ? 'Reset the guest preferences saved in this browser?' :
@@ -32143,25 +32049,21 @@ function openResetUserPreferences(returnFocusSelector = null) {
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
+  const workflow = createActionWorkflow({ surface: body, feedback: message, modal });
   reset.addEventListener('click', async () => {
-    if (reset.disabled) return;
-    cancel.disabled = true;
-    reset.disabled = true;
-    modal.setBusy(true);
-    message.textContent = 'Resetting personal preferences…';
+    if (workflow.isBusy()) return;
     try {
-      const active = userPreferenceController.read();
-      if (active.identity !== snapshot.identity || active.scope !== snapshot.scope) {
-        throw Object.assign(new Error('The active preference profile changed.'), { code: 'preference_session_changed' });
-      }
-      const result = await userPreferenceController.resetPreferences();
-      if (result?.state === 'stale') {
-        throw Object.assign(new Error('The active preference profile changed.'), { code: 'preference_session_changed' });
-      }
-      modal.setBusy(false);
+      await workflow.run(async () => {
+        if (!ownsProfile()) {
+          throw Object.assign(new Error('The active preference profile changed.'), { code: 'preference_session_changed' });
+        }
+        const result = await userPreferenceController.resetPreferences();
+        if (result?.state === 'stale') {
+          throw Object.assign(new Error('The active preference profile changed.'), { code: 'preference_session_changed' });
+        }
+      }, { pending: 'Resetting personal preferences…', success: null });
       if (modal.close()) void render();
     } catch (error) {
-      modal.setBusy(false);
       if (error?.code === 'preference_session_changed') {
         if (modal.close()) void render();
         return;
@@ -32170,12 +32072,10 @@ function openResetUserPreferences(returnFocusSelector = null) {
         if (modal.close()) void render();
         return;
       }
-      message.textContent = error?.code === 'preference_conflict' ?
+      workflow.showFeedback('error', error?.code === 'preference_conflict' ?
         'These preferences changed in another session, but the current values could not be reloaded. Close this ' +
           'panel and reload the page before trying again.' :
-        (error.message || 'Personal preferences could not be reset.');
-      cancel.disabled = false;
-      reset.disabled = false;
+        (error.message || 'Personal preferences could not be reset.'));
     }
   });
 }

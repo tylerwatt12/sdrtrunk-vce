@@ -32,9 +32,9 @@ class StatsWebSettingsOwnershipUiContractTest
         String bandplanPage = function(source, "async function renderAdminP25BandplanOverrides(renderContext = captureRenderContext())");
         String personal = function(source, "async function renderSettings()");
         String personalWorkspace = Files.readString(Path.of("stats-web", "assets", "features", "my-settings.js"));
+        String preferenceRegistry = Files.readString(Path.of("stats-web", "assets", "core", "preference-registry.js"));
         String personalReset = function(source, "function openResetUserPreferences(returnFocusSelector = null)");
         String livePresentation = function(source, "function openLivePresentationSettings(returnFocusSelector = null)");
-        String scannerPlayback = function(source, "function openScannerSettings(returnFocusSelector = null, options = {})");
         String preferenceSave = function(source, "async function savePreferenceForm(workflow, modal, mutate, options)");
         String admin = function(source, "async function renderAdmin(options = {})");
         String adminGroups = function(source, "function adminSettingsGroups()");
@@ -85,16 +85,23 @@ class StatsWebSettingsOwnershipUiContractTest
         assertFalse(personal.contains("preferenceCheckbox("));
         assertFalse(personal.contains("updateUserPreferences("));
         assertTrue(personalWorkspace.contains("export function createMySettingsWorkspace"));
-        assertTrue(personalWorkspace.contains("Appearance"));
-        assertTrue(personalWorkspace.contains("Source names"));
-        assertTrue(personalWorkspace.contains("Status icon"));
+        assertTrue(personalWorkspace.contains("preferenceGroups.filter(group => editorGroups.has(group.id)"));
+        assertTrue(preferenceRegistry.contains("id: 'appearance', label: 'Appearance'"));
+        assertTrue(preferenceRegistry.contains("id: 'names', label: 'Source names'"));
+        assertTrue(preferenceRegistry.contains("id: 'status', label: 'Status icon'"));
         assertTrue(personalWorkspace.contains("Page preferences"));
         assertTrue(personalWorkspace.contains("source_name_display"));
         assertTrue(personalWorkspace.contains("disabled_codes"));
         assertFalse(personalWorkspace.contains("preferences.tables"));
         assertFalse(personalWorkspace.contains("selected_scan_list_ids"));
-        assertTrue(personalReset.contains("updateUserPreferences(() => preferenceSchema.defaults, false)"));
-        assertTrue(personalReset.contains("does not change the username, password"));
+        assertTrue(personalReset.contains("await userPreferenceController.resetPreferences()"));
+        assertTrue(personalReset.contains("const ownsProfile = userPreferenceController.profileGuard()"));
+        assertTrue(personalReset.contains("if (!ownsProfile())"));
+        assertTrue(personalReset.contains("createActionWorkflow({ surface: body, feedback: message, modal })"));
+        assertTrue(personalReset.contains("await workflow.run(async () =>"));
+        assertTrue(personalReset.contains("pending: 'Resetting personal preferences…'"));
+        assertTrue(personalReset.contains("Reset the guest preferences saved in this browser?"));
+        assertTrue(personalReset.contains("Reset every personal preference for this account?"));
         assertTrue(personalReset.contains("error?.code === 'preference_conflict'"));
         assertTrue(personalReset.contains("if (modal.close()) void render()"));
         assertFalse(personalReset.contains("reset.focus()"));
@@ -125,28 +132,25 @@ class StatsWebSettingsOwnershipUiContractTest
         assertTrue(preferenceSave.contains("modal.close() && renderAfterSave"));
         assertTrue(preferenceSave.contains("void render()"));
 
-        assertTrue(scannerPlayback.contains("openModal('Scanner settings'"));
-        assertTrue(scannerPlayback.contains("target_grouping"));
-        assertTrue(scannerPlayback.contains("target_burst_limit"));
-        assertTrue(scannerPlayback.contains("page_titles.prepend_playing_call"));
-        assertTrue(scannerPlayback.contains("preferences.playback.target_grouping ="));
-        assertTrue(scannerPlayback.contains("preferences.playback.target_burst_limit ="));
-        assertTrue(scannerPlayback.contains("preferences.page_titles.prepend_playing_call ="));
-        assertTrue(scannerPlayback.contains("saveForm(workflow, modal"));
-        assertTrue(scannerPlayback.contains("identity: snapshot.identity"));
-        assertTrue(scannerPlayback.contains("same talkgroup or channel together"));
-        assertTrue(scannerPlayback.contains("queued calls before switching targets"));
-        assertFalse(scannerPlayback.contains("groupIdentity"));
-        assertFalse(scannerPlayback.contains("same channel or talkgroup"));
-        assertFalse(scannerPlayback.contains("preferences.presentation"));
+        assertFalse(source.contains("function activateScannerSettings("));
+        assertFalse(source.contains("function openScannerSettings("));
+        assertTrue(personalWorkspace.contains("selectedSection === 'listening'"));
+        assertTrue(personalWorkspace.contains("preferences.page_titles.prepend_playing_call = prepend_playing_call"));
+        String scanner = function(source, "function renderScanner(options = {})");
+        assertTrue(scanner.contains("typeof options.channelMetadata !== 'function'"));
+        assertTrue(scanner.contains("typeof options.mount !== 'function'"));
+        assertFalse(scanner.contains("options.readSnapshot"));
+        assertFalse(scanner.contains("options.savePreferenceForm"));
+        assertFalse(scanner.contains("options.openReadOnlyModal"));
+        assertTrue(scanner.contains("if (!guideMode) audioDock.openPlayerMenu(invoker)"));
+        assertTrue(scanner.contains("audioDock.prepareGuide({ sampleLiveState: player.viewState(), guidePanel: panels[section] })"));
         assertTrue(scannerControls.contains("(options.openPlayerMenu || (invoker => audioDock.openPlayerMenu(invoker)))(menu)"));
         assertTrue(scannerControls.contains("menu.id = 'scanner-player-menu'"));
         assertTrue(audioDock.contains("['Listening settings', 'playback-controls', 'settings']"));
-        assertTrue(playerSettings.contains("player.applyPreferences({ target_grouping: grouping.checked }); player.writePreferences()"));
-        assertTrue(playerSettings.contains("player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences()"));
+        assertTrue(playerSettings.contains("player.applyPreferences({ target_grouping: grouping.checked }); player.writePreferences({ grouping: true })"));
+        assertTrue(playerSettings.contains("player.applyPreferences({ target_burst_limit: Number(burst.value) }); player.writePreferences({ burst: true })"));
         assertTrue(playerSettings.contains("setTitlePreference(prepend.checked)"));
         assertFalse(playerSettings.contains("preferences.presentation"));
-        assertTrue(source.contains("if (snapshot.loaded) openScannerSettings(returnFocusSelector)"));
 
         assertFalse(source.contains("/api/v1/admin/web-display"));
         assertFalse(source.contains("/api/v1/live/settings"));
@@ -167,16 +171,23 @@ class StatsWebSettingsOwnershipUiContractTest
     }
 
     @Test
-    void usesThePersonalSettingsCapabilityForThePageAndApi() throws Exception
+    void keepsGuestSettingsAvailableWhileAccountPreferencesRequireAuthentication() throws Exception
     {
         String source = Files.readString(APP_JAVASCRIPT);
         String routes = Files.readString(Path.of("stats-web", "assets", "core", "routes.js"));
         String access = function(source, "function routeDefinitionAllowed(definition)");
+        String controller = Files.readString(Path.of("src", "main", "java", "io", "github", "dsheirer",
+            "web", "http", "WebUserPreferencesHttpController.java"));
 
         assertTrue(routes.contains("id: 'settings', label: 'My Settings', title: 'My Settings', parent: null, " +
-            "capability: 'user-settings'"));
+            "capability: 'web-access'"));
         assertFalse(routes.contains("access: 'authenticated'"));
         assertFalse(access.contains("definition.access === 'authenticated'"));
+        assertTrue(controller.contains("mSecurity.authenticatedAccount(exchange).orElse(null)"));
+        assertTrue(controller.contains("if(account == null)"));
+        assertTrue(controller.contains("ApiHttpResponse.sendError(exchange, 401, \"authentication_required\""));
+        assertTrue(controller.contains("mPreferences.get(account)"));
+        assertTrue(controller.contains("mPreferences.update(account, expectedRevision, preferences)"));
     }
 
     private static String function(String source, String marker)

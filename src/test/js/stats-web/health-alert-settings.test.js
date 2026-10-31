@@ -34,9 +34,7 @@ vm.runInContext(`
   ${functionSource('function receiverHealthSeverity(value)')}
   ${functionSource('function receiverHealthCount(value, fallback = 0)')}
   ${functionSource('function receiverHealthAccountAlertSummary(snapshot, preferences)')}
-  ${functionSource('function receiverHealthDisabledCodesForSave(preferences, controls)')}
   globalThis.summarize = receiverHealthAccountAlertSummary;
-  globalThis.disabledCodesForSave = receiverHealthDisabledCodesForSave;
 `, context);
 
 function plain(value) {
@@ -91,17 +89,10 @@ assert.deepEqual(plain(context.summarize(futureAlert, {
   warning_count: 0
 }, 'A newly introduced alert code must default to on.');
 
-const controls = new Map([
-  ['receiver-iq-drop', { checked: true }],
-  ['usb-delivery-rate-low', { checked: false }]
-]);
-assert.deepEqual(plain(context.disabledCodesForSave({
-  health_alerts: { disabled_codes: ['future-disabled-alert', 'receiver-iq-drop'] }
-}, controls)), ['future-disabled-alert', 'usb-delivery-rate-low'],
-'Saving known switches must preserve an unknown disabled code while replacing known choices.');
-
 const openAlerts = functionSource('function openStatusIconSettings(returnFocusSelector = null)');
 assert.match(openAlerts, /receiverHealthAlertGroups\.map/);
+assert.match(application, /import \{ createStatusAlertControl, receiverHealthDisabledCodesForSave \} from '\.\/core\/preference-controls\.js\?v=\d+'/);
+assert.match(openAlerts, /createStatusAlertControl\(node, uiToggle, alert\)/);
 assert.match(openAlerts, /receiverHealthDisabledCodesForSave\(preferences, controls\)/);
 assert.match(openAlerts, /openReadOnlyModal\('Status icon issues'/);
 assert.match(openAlerts, /className: 'health-alert-settings-modal'/);
