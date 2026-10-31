@@ -149,6 +149,7 @@
   --accent: #0b7168;
   --accent-soft: #d9efec;
   --accent-secondary: var(--info);
+  --recording-queue-marker: var(--info);
   --accent-secondary-soft: var(--info-soft);
   --palette-swatch-lightness: 62%;
   --palette-swatch-chroma: 0.12;
@@ -631,6 +632,7 @@
   --accent: oklch(47% 0.115 var(--theme-hue));
   --accent-soft: oklch(94% 0.027 var(--theme-hue));
   --accent-secondary: oklch(47% 0.07 var(--theme-secondary-hue));
+  --recording-queue-marker: oklch(47% 0.07 calc(var(--theme-hue) + 180));
   --accent-secondary-soft: oklch(95% 0.02 var(--theme-secondary-hue));
   --link: var(--accent);
   --primary-control: var(--accent);
@@ -673,6 +675,7 @@
   --accent: oklch(78% 0.1 var(--theme-hue));
   --accent-soft: oklch(35% 0.045 var(--theme-hue));
   --accent-secondary: oklch(78% 0.065 var(--theme-secondary-hue));
+  --recording-queue-marker: oklch(78% 0.065 calc(var(--theme-hue) + 180));
   --accent-secondary-soft: oklch(33% 0.03 var(--theme-secondary-hue));
   --section-header: oklch(30% 0.013 var(--theme-chrome-hue));
   --table-rule: oklch(39% 0.012 var(--theme-chrome-hue));

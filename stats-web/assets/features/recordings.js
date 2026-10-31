@@ -1640,7 +1640,7 @@ export function createRecordingsFeature(deps) {
     const hasGroup = recordingHasTalkgroup(row), targetRadio = value(row, 'destination_radio_id');
     const id = hasGroup ? recordingGroupId(row, 'target', value(row, 'talkgroup_id', 'group_id')) : targetRadio !== null ? recordingRadioId(row, 'target', targetRadio) : null;
     if (id !== null && !label(row).includes(String(id))) heading.append(node('span', 'recordings-call-identity', String(id)));
-    const status = node('span', 'recordings-call-status'); status.hidden = true; heading.append(status);
+    const status = node('span', 'recordings-call-status'); status.id = `recording-${row.id}-playback-status`; status.hidden = true; heading.append(status);
     const sharedFields = new Set(sharedContext.map(fact => fact.field));
     const context = recordingContextFacts(row).filter(fact => !sharedFields.has(fact.field) && fact.text !== label(row));
     if (context.length) {
@@ -1694,7 +1694,13 @@ export function createRecordingsFeature(deps) {
       card.classList.toggle('recordings-call-queued', waiting);
       if (active) card.setAttribute('aria-current', 'true'); else card.removeAttribute('aria-current');
       card.setAttribute('aria-busy', String(Boolean(active && snapshot.loading)));
-      if (status) { status.textContent = text; status.hidden = !text; }
+      if (status) {
+        status.textContent = text;
+        status.hidden = !text;
+        status.classList.toggle('visually-hidden', Boolean(waiting && !active));
+        const control = card.querySelector('button.recordings-call-title');
+        if (text) control?.setAttribute('aria-describedby', status.id); else control?.removeAttribute('aria-describedby');
+      }
     });
   }
 

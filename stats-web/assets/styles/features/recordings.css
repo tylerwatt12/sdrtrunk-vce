@@ -105,8 +105,8 @@
 .recordings-call-source { font-size: var(--font-size-body); }
 .recordings-call-status { font-size: var(--font-size-meta); color: var(--accent); }
 .recordings-call-status[hidden] { display: none; }
-.recordings-call-queued { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
-.recordings-call-playing { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--surface)); box-shadow: inset 4px 0 0 var(--accent), 0 0 0 1px var(--accent); }
+.recordings-call-queued { box-shadow: inset var(--space-1) 0 0 var(--recording-queue-marker); }
+.recordings-call-playing { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); box-shadow: inset var(--space-1) 0 0 var(--accent); }
 .recordings-transcript-preview { grid-column: 1 / -1; margin: 0; padding: var(--space-2) 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; line-height: var(--line-height-body); }
 .recordings-transcript-empty { color: var(--muted); font-size: var(--font-size-meta); }
 .read-only-modal.recordings-filters-modal { width: min(740px, calc(100vw - var(--space-5))); }

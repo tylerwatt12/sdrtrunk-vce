@@ -1614,6 +1614,36 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     await expect(page.locator('.recordings-call-context').first()).toContainText('Metro Public Safety');
     await expect(rows.first()).toHaveClass(/recordings-call-playing/);
     await expect(rows.nth(1)).toHaveClass(/recordings-call-queued/);
+    const queuedStatus = rows.nth(1).locator('.recordings-call-status');
+    await expect(queuedStatus).toHaveText('Queued');
+    await expect(rows.nth(1).locator('.recordings-call-title')).toHaveAccessibleDescription('Queued');
+    await expect(queuedStatus).toMatchAriaSnapshot('- text: Queued');
+    const rowPaint = await rows.evaluateAll(elements => {
+      const color = token => {
+        const probe = document.createElement('span'); probe.style.color = `var(${token})`;
+        document.body.append(probe); const result = getComputedStyle(probe).color; probe.remove(); return result;
+      };
+      return { accent: color('--accent'), queued: color('--recording-queue-marker'), line: color('--line'),
+        rows: elements.map(element => {
+          const paint = getComputedStyle(element), status = getComputedStyle(element.querySelector('.recordings-call-status'));
+          return { marker: paint.boxShadow, top: paint.borderTopWidth, right: paint.borderRightWidth,
+            left: paint.borderLeftWidth, bottomColor: paint.borderBottomColor, outline: paint.outlineStyle,
+            statusClip: status.clipPath, statusDisplay: status.display, statusWidth: status.width };
+        }) };
+    });
+    expect(rowPaint.rows[0].marker).toContain(rowPaint.accent);
+    expect(rowPaint.rows[1].marker).toContain(rowPaint.queued);
+    expect(rowPaint.queued).not.toBe(rowPaint.accent);
+    for (const paint of rowPaint.rows) {
+      expect(paint.top).toBe('0px'); expect(paint.right).toBe('0px'); expect(paint.left).toBe('0px');
+      expect(paint.bottomColor).toBe(rowPaint.line); expect(paint.outline).toBe('none');
+      expect(paint.marker).toContain('inset');
+      // Strip color syntax before checking that no second, outer shadow encloses the row.
+      expect(paint.marker.replace(/(?:rgba?|oklch|color)\([^)]*\)/g, '')).not.toContain(',');
+    }
+    expect(rowPaint.rows[1].statusClip).toBe('inset(50%)');
+    expect(rowPaint.rows[1].statusWidth).toBe('1px');
+    expect(rowPaint.rows[1].statusDisplay).not.toBe('none');
     await expect(rows.nth(1).locator('.recordings-call-select')).toBeChecked();
     await expect(page.locator('.recordings-selected')).toContainText('1 selected');
     if (width > 700) expect((await rows.nth(1).boundingBox()).height).toBeLessThanOrEqual(64);
@@ -1664,6 +1694,14 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     await expect(rows.nth(1).locator('.recordings-call-select')).toBeChecked();
     expect(state.requestedFilters).toHaveLength(requests);
     expect(await page.evaluate(() => window.recordingPlays)).toHaveLength(1);
+    await recordingAction(page, rows.first(), 'Add to queue');
+    await expect(rows.first()).toHaveClass(/recordings-call-playing/);
+    await expect(rows.first()).toHaveClass(/recordings-call-queued/);
+    await expect(rows.first().locator('.recordings-call-status')).not.toHaveClass(/visually-hidden/);
+    expect(await rows.first().evaluate(element => getComputedStyle(element).boxShadow)).toContain(rowPaint.accent);
+    await recordingAction(page, rows.first(), 'Play once');
+    await expect(rows.locator('.recordings-call-status.visually-hidden')).toHaveCount(0);
+    await expect(page.locator('.recordings-call-queued')).toHaveCount(0);
   });
 }
 
@@ -2146,11 +2184,12 @@ test('High Interest is an explicit toggle and result controls have recognizable 
 test('recordings accents follow every color scheme in day and night themes', async ({ page }) => {
   await stubRecordingAudio(page);
   await page.setViewportSize({ width: 1280, height: 900 });
-  await openRecordings(page, { call: linkedCall });
+  await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18, start_ms: call.start_ms - 60_000 }] });
   await page.getByRole('button', { name: /High Interest/ }).click();
-  await page.locator('.recordings-call-info').click();
-  await page.getByRole('dialog', { name: 'Call actions', exact: true }).getByRole('button', { name: 'Play once', exact: true }).click();
-  await expect(page.locator('.recordings-call')).toHaveClass(/recordings-call-playing/);
+  await recordingAction(page, page.locator('.recordings-call').first(), 'Play once');
+  await recordingAction(page, page.locator('.recordings-call').nth(1), 'Add to queue');
+  await expect(page.locator('.recordings-call').first()).toHaveClass(/recordings-call-playing/);
+  await expect(page.locator('.recordings-call').nth(1)).toHaveClass(/recordings-call-queued/);
   await page.mouse.move(0, 0);
   const palettes = await page.evaluate(async () => {
     const { APPEARANCE_SCHEMES, applyThemeHue } = await import('/assets/core/theme.js');
@@ -2171,10 +2210,13 @@ test('recordings accents follow every color scheme in day and night themes', asy
       const primary = getComputedStyle(document.querySelector('.recordings-search-actions .ui-button-primary'));
       const interest = getComputedStyle(interestControl);
       const card = getComputedStyle(document.querySelector('.recordings-call-playing'));
+      const queued = getComputedStyle(document.querySelector('.recordings-call-queued'));
       const duration = getComputedStyle(document.querySelector('.recordings-call-duration'));
       colors.push({ theme, scheme: scheme.name, accent: color('--accent'), primary: color('--primary-control'),
         primaryInk: color('--primary-control-ink'), buttonBackground: primary.backgroundColor, buttonInk: primary.color,
-        interestBorder: interest.borderTopColor, cardBorder: card.borderTopColor, cardShadow: card.boxShadow,
+        line: color('--line'), queueMarker: color('--recording-queue-marker'),
+        interestBorder: interest.borderTopColor, cardBorder: card.borderBottomColor, cardShadow: card.boxShadow,
+        queueShadow: queued.boxShadow,
         durationWeight: Number(duration.fontWeight) });
     }
     return colors;
@@ -2184,13 +2226,58 @@ test('recordings accents follow every color scheme in day and night themes', asy
     expect(palette.buttonBackground, `${palette.theme} ${palette.scheme} Search`).toBe(palette.primary);
     expect(palette.buttonInk, `${palette.theme} ${palette.scheme} Search label`).toBe(palette.primaryInk);
     expect(palette.interestBorder, `${palette.theme} ${palette.scheme} High Interest`).toBe(palette.accent);
-    expect(palette.cardBorder, `${palette.theme} ${palette.scheme} playing card`).toBe(palette.accent);
-    expect(palette.cardShadow).not.toBe('none');
+    expect(palette.cardBorder, `${palette.theme} ${palette.scheme} row separator`).toBe(palette.line);
+    expect(palette.cardShadow, `${palette.theme} ${palette.scheme} playing marker`).toContain(palette.accent);
+    expect(palette.queueShadow, `${palette.theme} ${palette.scheme} queued marker`).toContain(palette.queueMarker);
+    expect(palette.queueMarker).not.toBe(palette.accent);
+    for (const shadow of [palette.cardShadow, palette.queueShadow]) {
+      expect(shadow).toContain('inset');
+      expect(shadow.replace(/(?:rgba?|oklch|color)\([^)]*\)/g, '')).not.toContain(',');
+    }
     expect(palette.durationWeight).toBeGreaterThanOrEqual(400);
   }
   for (const theme of ['light', 'dark']) {
     expect(new Set(palettes.filter(palette => palette.theme === theme).map(palette => palette.accent)).size).toBe(8);
   }
+  const markerSweep = await page.evaluate(async () => {
+    const { applyThemeHue } = await import('/assets/core/theme.js');
+    const root = document.documentElement, queued = document.querySelector('.recordings-call-queued');
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const probe = document.createElement('span'); document.body.append(probe);
+    const rgba = paint => {
+      context.clearRect(0, 0, 1, 1); context.fillStyle = paint; context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    };
+    const token = name => { probe.style.color = `var(${name})`; return getComputedStyle(probe).color; };
+    const luminance = rgb => rgb.slice(0, 3).map(value => {
+      const channel = value / 255; return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    }).reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    const background = element => {
+      const layers = [];
+      for (let parent = element; parent; parent = parent.parentElement) layers.push(rgba(getComputedStyle(parent).backgroundColor));
+      return layers.reverse().reduce((paint, layer) => layer.slice(0, 3).map((value, index) =>
+        value * layer[3] / 255 + paint[index] * (1 - layer[3] / 255)), [255, 255, 255]);
+    };
+    let minimumContrast = Infinity, indistinguishable = 0, checked = 0, unapplied = 0;
+    for (const theme of ['light', 'dark']) {
+      if (theme === 'dark') root.dataset.theme = 'dark'; else delete root.dataset.theme;
+      for (let hue = 0; hue < 360; hue++) {
+        applyThemeHue(hue, root);
+        const marker = token('--recording-queue-marker'), ink = rgba(marker), playing = rgba(token('--accent'));
+        if (ink.slice(0, 3).every((value, index) => value === playing[index])) indistinguishable++;
+        if (!getComputedStyle(queued).boxShadow.includes(marker)) unapplied++;
+        const light = luminance(ink), dark = luminance(background(queued));
+        minimumContrast = Math.min(minimumContrast, (Math.max(light, dark) + 0.05) / (Math.min(light, dark) + 0.05));
+        checked++;
+      }
+    }
+    probe.remove(); return { checked, minimumContrast, indistinguishable, unapplied };
+  });
+  expect(markerSweep.checked).toBe(720);
+  expect(markerSweep.indistinguishable).toBe(0);
+  expect(markerSweep.unapplied).toBe(0);
+  expect(markerSweep.minimumContrast).toBeGreaterThanOrEqual(3);
   // The screenshot stylesheet hides timing text; keep its reserved width deterministic too.
   await page.locator('.recordings-search-timing').evaluate(element => { element.textContent = 'Loaded in 100 ms'; });
   for (const [scheme, theme, viewport] of [['Ocean', 'light', { width: 1280, height: 900 }],
