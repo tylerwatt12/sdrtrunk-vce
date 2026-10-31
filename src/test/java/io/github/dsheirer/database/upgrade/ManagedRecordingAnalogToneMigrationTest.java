@@ -107,6 +107,7 @@ class ManagedRecordingAnalogToneMigrationTest
                     var row = new ArrayList<String>();
                     for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++)
                     {
+                        if(ManagedRecordingMigrationFacts.isUnmeasuredQualityColumn(table, rows, column)) continue;
                         if(table.equals("catalog_metadata") && column == 2) continue;
                         Object value = rows.getObject(column);
                         row.add(value instanceof byte[] bytes ? HexFormat.of().formatHex(bytes) : String.valueOf(value));

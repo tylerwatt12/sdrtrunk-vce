@@ -689,6 +689,32 @@ statement; earlier completed batches stay committed. The fair cursor advances pa
 passes wait at least five seconds so ingestion and user saves can acquire the writer. These execution budgets
 protect receiver continuity; they do not replace the index-backed lookup paths.
 
+### Recording voice quality (catalog format 12)
+
+The Call quality tab and recording Quality search use the selected recorded audio copy's existing voice-decoder
+measurements. Summary buckets and current control-channel health cannot provide those individual recording facts.
+Six nullable integer columns on the existing `recording_call` row retain decoded, repeated, concealed and estimated
+missing frames plus FEC errors and protected bits. The four frame counters are known together only when an observed
+frame exists. The two FEC counters are known together only when the protected-bit count is positive. Measured zero
+and unavailable remain distinct; the two measurement groups have independent availability.
+
+Voice decode percentage is `100 * decoded / (decoded + repeated + concealed + missing)` and FEC correction percentage
+is `100 * errors / protected_bits`. These are derived from stored counters, not separately persisted scores. They
+describe the recorded winner rather than combined sites or control-channel reception. Existing recording metadata,
+identities, exact links, paths, transcripts and tones retain their meanings. New measurements follow recording
+creation and deletion independently of Activity retention. At R retained recordings per hour for H hours, the fields
+add at most 6RH populated integers and no extra rows. Each integer uses up to eight payload bytes plus record-header
+overhead; actual page allocation and WAL usage vary with values and occupancy. There is no separate quality history,
+duplicated text, new table or additional index.
+
+Numeric quality limits and measurement availability are applied in the shared SQL candidate query before each
+ordered stream's limit. Existing time and owner indexes bound searches and maintain chronological pagination;
+recording files are not opened during filtering or detail lookup. Representative-volume query-plan tests check
+time-index searches without a temporary sort. Numeric limits exclude unavailable measurements. The adjacent catalog
+migration preserves every existing row, index and relationship and leaves historical measurements NULL, without
+reading files or inferring old quality. SQLite may validate existing rows while adding the column constraints.
+Normal startup validates only; existing catalogs are changed exclusively by the bundled Application Migrator.
+
 ### Receiver status alert history
 
 The `receiver_health_incident` table retains the lifecycle of recent Receiver status alerts so a debug report that

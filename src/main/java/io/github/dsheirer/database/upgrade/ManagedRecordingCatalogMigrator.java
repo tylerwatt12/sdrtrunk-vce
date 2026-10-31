@@ -381,6 +381,14 @@ public final class ManagedRecordingCatalogMigrator
                         statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("recording_source"));
                         statement.execute(ManagedRecordingSchema.ddlForFormat(11).get("idx_recording_source_uuid"));
                     }
+                    case 11 ->
+                    {
+                        // Preserve every recording and relationship. No historical quality is inferred or backfilled.
+                        for(String column: ManagedRecordingSchema.VOICE_QUALITY_COLUMNS)
+                        {
+                            statement.execute("ALTER TABLE recording_call ADD COLUMN " + column);
+                        }
+                    }
                     default -> throw new SQLException("No adjacent managed recordings migration from format " + version);
                 }
                 stamp(statement, ++version);

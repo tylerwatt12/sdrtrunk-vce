@@ -321,6 +321,31 @@ class ManagedRecordingMetadataTest
         }
     }
 
+    @Test
+    void retainsRawSelectedCopyQualityInsteadOfCohortNormalizedOrLosingCopyQuality()
+    {
+        var winnerQuality = new VoiceCallQuality(45, 2, 1, 2, 7, 6000);
+        var normalizedQuality = new VoiceCallQuality(45, 2, 1, 52, 7, 6000);
+        var losingQuality = new VoiceCallQuality(80, 5, 5, 10, 19, 12000);
+        for(DecoderType decoder: List.of(DecoderType.P25_PHASE1, DecoderType.P25_PHASE2,
+            DecoderType.DMR, DecoderType.NXDN))
+        {
+            CallLegSource source = source(decoder, TRUNKED, SITE, null);
+            var id = new AudioCallId(1, 1, 0);
+            var snapshot = new AudioCallSnapshot(id, null, null, new IdentifierCollection(), Set.of(),
+                1000, 3000, 1, 1, 1000, 3000, false, true, CallEncryptionState.CLEAR, true, null,
+                normalizedQuality, CallLegId.from(id), source, null);
+            var winner = new CallLegSummary(snapshot.callLegId(), source, 1000, 2000, winnerQuality,
+                8000, false, false, true, null);
+            var loser = new CallLegSummary(new CallLegId(2, 1, 0), source, 1000, 3000, losingQuality,
+                16000, false, false, false, null);
+            var call = new CompletedAudioCall(new LogicalCallId(1, 1), snapshot, List.of(new float[8000]),
+                null, List.of(winner, loser));
+            assertEquals(winnerQuality, ManagedRecordingMetadata.from(call, "winner.mp3", 5).voiceCallQuality(),
+                decoder.name());
+        }
+    }
+
     private static ManagedRecordingMetadata metadata(DecoderType decoder,
                                                      ChannelConfigurationPolicy.ChannelKind kind,
                                                      P25SiteIdentity winnerSite, String existingKey,

@@ -165,6 +165,64 @@ class ManagedRecordingsHttpControllerTest
     }
 
     @Test
+    void qualityDetailsAndFiltersUseStoredCountersAndPreserveUnknownMeasurements() throws Exception
+    {
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + mCatalog.databaseFile());
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE recording_call SET voice_decoded_frames=90,voice_repeated_frames=5," +
+                "voice_concealed_frames=3,voice_missing_frames=2,voice_fec_errors=20," +
+                "voice_fec_protected_bits=10000 WHERE id=1");
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,protocol,call_type,voice_type,voice_decoded_frames,voice_repeated_frames," +
+                "voice_concealed_frames,voice_missing_frames) " +
+                "VALUES(2,2000,3000,1000,'zero.mp3',5,1,1,1,0,5,0,0)");
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,protocol,call_type,voice_type) VALUES(3,3000,4000,1000,'unknown.mp3',5,1,1,1)");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/calls";
+        JsonNode detail = json(send(request(base + "/1"))).path("data");
+        assertEquals(90.0, detail.path("vc_quality_pct").doubleValue());
+        assertEquals(90, detail.path("vc_decoded_frames").intValue());
+        assertEquals(5, detail.path("vc_repeated_frames").intValue());
+        assertEquals(3, detail.path("vc_concealed_frames").intValue());
+        assertEquals(2, detail.path("vc_missing_frames").intValue());
+        assertEquals(20, detail.path("vc_fec_errors").intValue());
+        assertEquals(10000, detail.path("vc_fec_protected_bits").intValue());
+
+        String range = base + "?from_ms=0&to_ms=5000";
+        JsonNode clean = json(send(request(range + "&min_quality_percent=90&max_quality_percent=95")))
+            .at("/data/calls");
+        assertEquals(1, clean.size());
+        assertEquals(1, clean.get(0).path("id").longValue());
+        JsonNode zero = json(send(request(range + "&has_quality=true&max_quality_percent=0")))
+            .at("/data/calls");
+        assertEquals(1, zero.size());
+        assertEquals(2, zero.get(0).path("id").longValue());
+        assertEquals(0.0, zero.get(0).path("vc_quality_pct").doubleValue());
+        assertFalse(zero.get(0).has("vc_fec_errors"));
+        JsonNode unknown = json(send(request(range + "&has_quality=false"))).at("/data/calls");
+        assertEquals(1, unknown.size());
+        assertEquals(3, unknown.get(0).path("id").longValue());
+        assertFalse(unknown.get(0).has("vc_quality_pct"));
+        assertFalse(json(send(request(base + "/3"))).path("data").has("vc_decoded_frames"));
+    }
+
+    @Test
+    void rejectsInvalidQualityFiltersEvenWhenANameSearchHasNoMatches() throws Exception
+    {
+        String base = ManagedRecordingsHttpController.BROWSE_PATH +
+            "/calls?from_ms=0&to_ms=5000&q=no-such-name";
+        for(String filter : List.of("min_quality_percent=-1", "max_quality_percent=101",
+            "min_quality_percent=NaN", "max_quality_percent=Infinity", "has_quality=maybe",
+            "min_quality_percent=95&max_quality_percent=90", "has_quality=false&min_quality_percent=0"))
+        {
+            HttpResponse<String> response = send(request(base + "&" + filter));
+            assertEquals(400, response.statusCode(), filter + ": " + response.body());
+        }
+    }
+
+    @Test
     void blockedRecordingRecountDoesNotHoldStatusBrowsingOrSettings() throws Exception
     {
         assertBlockedRecordingMaintenance("recount");

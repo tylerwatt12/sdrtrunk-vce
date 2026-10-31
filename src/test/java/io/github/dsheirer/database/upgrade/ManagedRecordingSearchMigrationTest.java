@@ -221,7 +221,8 @@ class ManagedRecordingSearchMigrationTest
                 {
                     var row = new ArrayList<String>();
                     for(int column = 1; column <= rows.getMetaData().getColumnCount(); column++)
-                        if(!table.equals("catalog_metadata") || column != 2) row.add(String.valueOf(rows.getObject(column)));
+                        if(!ManagedRecordingMigrationFacts.isUnmeasuredQualityColumn(table, rows, column) &&
+                            (!table.equals("catalog_metadata") || column != 2)) row.add(String.valueOf(rows.getObject(column)));
                     values.add(row.toString());
                 }
             }

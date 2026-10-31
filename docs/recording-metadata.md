@@ -109,6 +109,13 @@ RSSI, SNR, and BER are not currently captured with recorded audio legs, so this 
 It does not borrow live signal displays, control-channel statistics, later database records, or measurements from
 another leg.
 
+Managed Recordings also retains available frame and FEC counters in its catalog for new recordings. Call information
+shows them in **Call quality**, and the **Quality** search filter accepts minimum and maximum voice decode percentages
+or recordings with unavailable measurements. Voice decode percentage is decoded frames divided by the sum of decoded,
+repeated, concealed and estimated missing frames, multiplied by 100. Numeric limits include their endpoints and exclude
+unavailable measurements. Older catalog entries keep unknown quality after an update, even when their audio files
+contain quality tags; the update does not scan recording files to fill historical measurements.
+
 ## Tone Frequencies
 
 When a completed tone sequence is available for the recorded leg, numbered `VCE_PAGING_TONE_n_FREQUENCY_1_HZ`

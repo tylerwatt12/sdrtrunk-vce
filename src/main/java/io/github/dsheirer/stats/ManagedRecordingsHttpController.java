@@ -420,12 +420,21 @@ final class ManagedRecordingsHttpController
     private Map<String,Object> search(URI uri, ManagedRecordingCatalog catalog) throws SQLException, IOException
     {
         StatsRequest request = StatsRequest.from(uri,
-            Map.of("talkgroups", 16384, "radios", 49152, "channel_ids", 32768), 262144, 48);
+            Map.of("talkgroups", 16384, "radios", 49152, "channel_ids", 32768), 262144, 51);
         List<ManagedRecordingCatalog.Selection> talkgroups = selections(request, "talkgroups", false);
         List<ManagedRecordingCatalog.Selection> radios = selections(request, "radios", true);
         List<String> channels = channelSelections(request);
         boolean targetsAny = Boolean.TRUE.equals(optionalFlag(request, "targets_any"));
         Boolean hasTranscript = optionalFlag(request, "has_transcript");
+        Boolean hasQuality = optionalFlag(request, "has_quality");
+        Double minimumQuality = qualityPercent(request, "min_quality_percent");
+        Double maximumQuality = qualityPercent(request, "max_quality_percent");
+        if(minimumQuality != null && maximumQuality != null && minimumQuality > maximumQuality)
+            throw new StatsApiException(400, "invalid_parameter",
+                "Minimum quality must not exceed maximum quality", "min_quality_percent");
+        if(Boolean.FALSE.equals(hasQuality) && (minimumQuality != null || maximumQuality != null))
+            throw new StatsApiException(400, "invalid_parameter",
+                "Choose recordings with quality measurements to use a quality range", "has_quality");
         boolean highInterest = Boolean.TRUE.equals(optionalFlag(request, "high_interest"));
         String transcript = request.text("transcript");
         String textRange = request.text("text_range");
@@ -492,6 +501,9 @@ final class ManagedRecordingsHttpController
             .voiceType(request.text("voice_type"))
             .transcript(transcript)
             .hasTranscript(hasTranscript)
+            .hasQuality(hasQuality)
+            .minQualityPercent(minimumQuality)
+            .maxQualityPercent(maximumQuality)
             .cursor(request.text("cursor"))
             .limit(request.limit(100));
         String sort = request.sort("desc");
@@ -659,6 +671,14 @@ final class ManagedRecordingsHttpController
         {
             throw new StatsApiException(400, "invalid_parameter", field + " must be a finite number", field);
         }
+    }
+
+    private static Double qualityPercent(StatsRequest request, String field)
+    {
+        Double value = optionalDouble(request, field);
+        if(value != null && (value < 0 || value > 100))
+            throw new StatsApiException(400, "invalid_parameter", "Enter a quality percentage from 0 to 100", field);
+        return value;
     }
 
     private static String radioRole(StatsRequest request)

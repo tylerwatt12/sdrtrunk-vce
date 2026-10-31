@@ -234,7 +234,8 @@ class ManagedRecordingToneFormatFiveMigrationTest
                 {
                     List<String> row = new ArrayList<>();
                     for(int index = 1; index <= rows.getMetaData().getColumnCount(); index++)
-                        if(!table.equals("catalog_metadata") || index != 2) row.add(String.valueOf(rows.getObject(index)));
+                        if(!ManagedRecordingMigrationFacts.isUnmeasuredQualityColumn(table, rows, index) &&
+                            (!table.equals("catalog_metadata") || index != 2)) row.add(String.valueOf(rows.getObject(index)));
                     values.add(row.toString());
                 }
             }

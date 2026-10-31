@@ -1054,7 +1054,13 @@ several receiver copies may belong to one saved recording, and a source call may
 adjacent format-10-to-11 step creates an empty relationship table without guessing historical associations, preserving
 all recording metadata, files, transcripts, tones, identifiers, counters and allocators. Deleting a recording cascades
 to its own source references. Deleting Activity or alert history does not delete a recording or its source references.
-The populated format-10 fixture remains frozen and supported. The main application database is independently at
+The populated format-10 fixture remains frozen and supported. Catalog format 12 adds six nullable integer counters
+to each recording: decoded, repeated, concealed and estimated missing voice frames, plus FEC errors and protected
+bits. The counters describe the selected recorded audio copy. Frame measurements and FEC measurements have separate
+availability; measured zero remains distinct from unavailable. The adjacent format-11-to-12 step preserves every
+existing field, row, relationship, transcript, index, counter and allocator. Historical quality remains unknown;
+the update neither reads audio files nor guesses measurements. The populated format-11 fixture remains frozen and
+supported. The main application database is independently at
 format 67; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with

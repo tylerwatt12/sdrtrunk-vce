@@ -127,7 +127,8 @@ class ManagedRecordingTranscriptMigrationTest
             List<String> rows=new ArrayList<>();
             try(var s=c.createStatement();var r=s.executeQuery("SELECT * FROM \""+table+"\""))
             {while(r.next()){List<String> values=new ArrayList<>();for(int i=1;i<=r.getMetaData().getColumnCount();i++)
-                if(!table.equals("catalog_metadata")||i!=2)values.add(String.valueOf(r.getObject(i)));rows.add(values.toString());}}
+                if(!ManagedRecordingMigrationFacts.isUnmeasuredQualityColumn(table,r,i) &&
+                    (!table.equals("catalog_metadata")||i!=2))values.add(String.valueOf(r.getObject(i)));rows.add(values.toString());}}
             Collections.sort(rows);all.put(table,rows);
         }
         all.putIfAbsent("recording_source", List.of());

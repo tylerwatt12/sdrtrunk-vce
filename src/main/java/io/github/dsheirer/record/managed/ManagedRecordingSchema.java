@@ -21,9 +21,24 @@ import java.util.Map;
 public final class ManagedRecordingSchema
 {
     public static final int APPLICATION_ID = 0x56434552; // VCER
-    public static final int CURRENT_FORMAT_VERSION = 11;
+    public static final int CURRENT_FORMAT_VERSION = 12;
     public static final String TRANSCRIPTION_STATUS_COLUMN = "transcription_status TEXT NOT NULL " +
         "DEFAULT 'pending' CHECK(transcription_status IN('pending','complete','failed'))";
+    /** Frozen format-12 additions shared by fresh creation and the adjacent catalog migration. */
+    public static final java.util.List<String> VOICE_QUALITY_COLUMNS = java.util.List.of(
+        "voice_decoded_frames INTEGER CHECK(voice_decoded_frames IS NULL OR voice_decoded_frames>=0)",
+        "voice_repeated_frames INTEGER CHECK(voice_repeated_frames IS NULL OR voice_repeated_frames>=0)",
+        "voice_concealed_frames INTEGER CHECK(voice_concealed_frames IS NULL OR voice_concealed_frames>=0)",
+        "voice_missing_frames INTEGER CHECK(voice_missing_frames IS NULL OR voice_missing_frames>=0) " +
+            "CHECK((voice_decoded_frames IS NULL AND voice_repeated_frames IS NULL AND " +
+                "voice_concealed_frames IS NULL AND voice_missing_frames IS NULL) OR " +
+                "(voice_decoded_frames IS NOT NULL AND voice_repeated_frames IS NOT NULL AND " +
+                "voice_concealed_frames IS NOT NULL AND voice_missing_frames IS NOT NULL AND " +
+                "(voice_decoded_frames>0 OR voice_repeated_frames>0 OR voice_concealed_frames>0)))",
+        "voice_fec_errors INTEGER CHECK(voice_fec_errors IS NULL OR voice_fec_errors>=0)",
+        "voice_fec_protected_bits INTEGER CHECK(voice_fec_protected_bits IS NULL OR voice_fec_protected_bits>=0) " +
+            "CHECK((voice_fec_errors IS NULL AND voice_fec_protected_bits IS NULL) OR " +
+                "(voice_fec_errors IS NOT NULL AND voice_fec_protected_bits IS NOT NULL AND voice_fec_protected_bits>0))");
     private static final Map<String,String> FORMAT_ONE_DDL = formatOneSchema();
     private static final Map<String,String> FORMAT_TWO_DDL = formatTwoSchema();
     private static final Map<String,String> FORMAT_THREE_DDL = formatThreeSchema();
@@ -35,7 +50,8 @@ public final class ManagedRecordingSchema
     private static final Map<String,String> FORMAT_NINE_DDL = formatNineSchema();
     // Frozen format 10 extends nominal tone identities without changing their stored representation.
     private static final Map<String,String> FORMAT_TEN_DDL = FORMAT_NINE_DDL;
-    static final Map<String,String> DDL = formatElevenSchema();
+    private static final Map<String,String> FORMAT_ELEVEN_DDL = formatElevenSchema();
+    static final Map<String,String> DDL = formatTwelveSchema();
 
     private ManagedRecordingSchema() {}
 
@@ -54,7 +70,8 @@ public final class ManagedRecordingSchema
             case 8 -> FORMAT_EIGHT_DDL;
             case 9 -> FORMAT_NINE_DDL;
             case 10 -> FORMAT_TEN_DDL;
-            case 11 -> DDL;
+            case 11 -> FORMAT_ELEVEN_DDL;
+            case 12 -> DDL;
             default -> throw new IllegalArgumentException("Unsupported managed recordings catalog format: " + version);
         };
     }
@@ -114,6 +131,16 @@ public final class ManagedRecordingSchema
             "PRIMARY KEY(call_id,source_call_uuid)) WITHOUT ROWID, STRICT");
         schema.put("idx_recording_source_uuid", "CREATE INDEX idx_recording_source_uuid " +
             "ON recording_source(source_call_uuid,call_id)");
+        return java.util.Collections.unmodifiableMap(schema);
+    }
+
+    /** Optional measured quality belongs to the selected audio leg; historical measurements remain unknown. */
+    private static Map<String,String> formatTwelveSchema()
+    {
+        Map<String,String> schema = new LinkedHashMap<>(FORMAT_ELEVEN_DDL);
+        // Match SQLite's ADD COLUMN placement and spelling so fresh and migrated catalogs are identical.
+        schema.put("recording_call", FORMAT_ELEVEN_DDL.get("recording_call").replace(
+            ",CHECK(start_ms", ", " + String.join(", ", VOICE_QUALITY_COLUMNS) + ",CHECK(start_ms"));
         return java.util.Collections.unmodifiableMap(schema);
     }
 

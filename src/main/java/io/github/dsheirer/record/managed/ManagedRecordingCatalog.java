@@ -11,6 +11,7 @@
 package io.github.dsheirer.record.managed;
 
 import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.P25PagingToneService;
@@ -815,8 +816,26 @@ public final class ManagedRecordingCatalog implements AutoCloseable
                                 Integer targetHomeId, Long frequencyHz, Integer timeslot, Integer nac,
                                 Integer toneKind, String tone, Site winnerSite,
                                 List<Site> alsoReceivedOn, List<Member> patchMembers, String servingSystemKey,
-                                Map<String,Object> pagingToneSummary, List<AuxiliaryIdentifier> auxiliaryIdentifiers)
+                                Map<String,Object> pagingToneSummary, List<AuxiliaryIdentifier> auxiliaryIdentifiers,
+                                VoiceCallQuality voiceCallQuality)
     {
+        public RecordingCall(long id, long startMs, long endMs, long durationMs, String relativePath,
+            long sizeBytes, String systemKey, String channelId, long aliasListId,
+            String protocol, String callType, String voiceType, Integer sourceId,
+            Integer sourceHomeWacn, Integer sourceHomeSystem, Integer sourceHomeId,
+            Integer targetId, Integer targetHomeWacn, Integer targetHomeSystem,
+            Integer targetHomeId, Long frequencyHz, Integer timeslot, Integer nac,
+            Integer toneKind, String tone, Site winnerSite, List<Site> alsoReceivedOn,
+            List<Member> patchMembers, String servingSystemKey, Map<String,Object> pagingToneSummary,
+            List<AuxiliaryIdentifier> auxiliaryIdentifiers)
+        {
+            this(id,startMs,endMs,durationMs,relativePath,sizeBytes,systemKey,channelId,aliasListId,
+                protocol,callType,voiceType,sourceId,sourceHomeWacn,sourceHomeSystem,sourceHomeId,
+                targetId,targetHomeWacn,targetHomeSystem,targetHomeId,frequencyHz,timeslot,nac,
+                toneKind,tone,winnerSite,alsoReceivedOn,patchMembers,servingSystemKey,pagingToneSummary,
+                auxiliaryIdentifiers,null);
+        }
+
         public Map<String,Object> toMap()
         {
             Map<String,Object> value = new LinkedHashMap<>();
@@ -826,6 +845,22 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             value.put("duration_ms", durationMs);
             value.put("size_bytes", sizeBytes);
             value.put("audio_url", "/api/v1/recordings/calls/" + id + "/audio");
+            if(voiceCallQuality != null)
+            {
+                if(voiceCallQuality.hasMeasurements())
+                {
+                    value.put("vc_quality_pct", voiceCallQuality.qualityPercent());
+                    value.put("vc_decoded_frames", voiceCallQuality.decodedFrameCount());
+                    value.put("vc_repeated_frames", voiceCallQuality.repeatedFrameCount());
+                    value.put("vc_concealed_frames", voiceCallQuality.concealedFrameCount());
+                    value.put("vc_missing_frames", voiceCallQuality.missingFrameCount());
+                }
+                if(voiceCallQuality.fecProtectedBitCount() > 0L)
+                {
+                    value.put("vc_fec_errors", voiceCallQuality.fecErrorCount());
+                    value.put("vc_fec_protected_bits", voiceCallQuality.fecProtectedBitCount());
+                }
+            }
             put(value, "paging_tone_summary", pagingToneSummary);
             if(auxiliaryIdentifiers != null && !auxiliaryIdentifiers.isEmpty())
                 value.put("auxiliary_identifiers",auxiliaryIdentifiers.stream().map(AuxiliaryIdentifier::toMap).toList());
@@ -1042,6 +1077,9 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public final Integer siteId;
         public final Long minDurationMs;
         public final Long maxDurationMs;
+        public final Double minQualityPercent;
+        public final Double maxQualityPercent;
+        public final Boolean hasQuality;
         public final Integer talkgroupId;
         public final Integer talkgroupMin;
         public final Integer talkgroupMax;
@@ -1107,6 +1145,15 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             siteId = builder.siteId;
             minDurationMs = builder.minDurationMs;
             maxDurationMs = builder.maxDurationMs;
+            minQualityPercent = builder.minQualityPercent;
+            maxQualityPercent = builder.maxQualityPercent;
+            hasQuality = builder.hasQuality;
+            if(!validQualityPercent(minQualityPercent) || !validQualityPercent(maxQualityPercent) ||
+                minQualityPercent != null && maxQualityPercent != null && minQualityPercent > maxQualityPercent ||
+                Boolean.FALSE.equals(hasQuality) && (minQualityPercent != null || maxQualityPercent != null))
+            {
+                throw new IllegalArgumentException("Invalid recording quality range or availability");
+            }
             talkgroupId = builder.talkgroupId;
             talkgroupMin = builder.talkgroupMin;
             talkgroupMax = builder.talkgroupMax;
@@ -1180,6 +1227,11 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             return value == null || Double.isFinite(value) && value > 0 && value <= 8000;
         }
 
+        private static boolean validQualityPercent(Double value)
+        {
+            return value == null || Double.isFinite(value) && value >= 0 && value <= 100;
+        }
+
         private static List<Selection> selections(List<Selection> values, boolean radio)
         {
             if(values == null) return List.of();
@@ -1209,10 +1261,12 @@ public final class ManagedRecordingCatalog implements AutoCloseable
         public static final class Builder
         {
             private Long fromMs, toMs, minDurationMs, maxDurationMs, frequencyHz, aliasListId;
+            private Double minQualityPercent, maxQualityPercent;
             private String systemKey, channelId, protocol, callType, voiceType, cursor, transcript;
             private List<String> channelIds;
             private boolean targetsAny;
             private Boolean hasTranscript;
+            private Boolean hasQuality;
             private String dcsCode;
             private Integer wacn, systemId, rfss, siteId, talkgroupId, talkgroupMin, talkgroupMax,
                 sourceId, sourceMin, sourceMax, anyIdentityId;
@@ -1240,6 +1294,9 @@ public final class ManagedRecordingCatalog implements AutoCloseable
             public Builder siteId(Integer value) { siteId = value; return this; }
             public Builder minDurationMs(Long value) { minDurationMs = value; return this; }
             public Builder maxDurationMs(Long value) { maxDurationMs = value; return this; }
+            public Builder minQualityPercent(Double value) { minQualityPercent = value; return this; }
+            public Builder maxQualityPercent(Double value) { maxQualityPercent = value; return this; }
+            public Builder hasQuality(Boolean value) { hasQuality = value; return this; }
             public Builder talkgroupId(Integer value) { talkgroupId = value; return this; }
             public Builder talkgroupMin(Integer value) { talkgroupMin = value; return this; }
             public Builder talkgroupMax(Integer value) { talkgroupMax = value; return this; }

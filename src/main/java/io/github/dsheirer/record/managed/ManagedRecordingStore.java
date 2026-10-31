@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.record.managed;
 
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.MaintenanceResult;
 import io.github.dsheirer.record.managed.ManagedRecordingCatalog.IdentityNameMatch;
@@ -182,8 +183,10 @@ final class ManagedRecordingStore implements AutoCloseable
             String sql = "INSERT INTO recording_call(start_ms,end_ms,duration_ms,relative_path,size_bytes," +
                 "system_id,channel_id,alias_list_id,protocol,call_type,voice_type,source_id," +
                 "source_home_wacn,source_home_system,source_home_id,target_id,target_home_wacn," +
-                "target_home_system,target_home_id,frequency_hz,timeslot,nac,tone_kind,tone,winner_site_id) " +
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+                "target_home_system,target_home_id,frequency_hz,timeslot,nac,tone_kind,tone,winner_site_id," +
+                "voice_decoded_frames,voice_repeated_frames,voice_concealed_frames,voice_missing_frames," +
+                "voice_fec_errors,voice_fec_protected_bits) " +
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
             long callId;
             try(PreparedStatement statement = mWriterConnection.prepareStatement(sql))
             {
@@ -212,7 +215,16 @@ final class ManagedRecordingStore implements AutoCloseable
                 set(statement, p++, item.nac());
                 set(statement, p++, item.toneKind());
                 statement.setString(p++, item.tone());
-                set(statement, p, winnerSiteId);
+                set(statement, p++, winnerSiteId);
+                VoiceCallQuality quality = item.voiceCallQuality();
+                boolean measured = quality != null && quality.hasMeasurements();
+                boolean fecMeasured = quality != null && quality.fecProtectedBitCount() > 0L;
+                set(statement, p++, measured ? quality.decodedFrameCount() : null);
+                set(statement, p++, measured ? quality.repeatedFrameCount() : null);
+                set(statement, p++, measured ? quality.concealedFrameCount() : null);
+                set(statement, p++, measured ? quality.missingFrameCount() : null);
+                set(statement, p++, fecMeasured ? quality.fecErrorCount() : null);
+                set(statement, p, fecMeasured ? quality.fecProtectedBitCount() : null);
                 statement.executeUpdate();
             }
             try(Statement statement = mWriterConnection.createStatement();
@@ -407,6 +419,8 @@ final class ManagedRecordingStore implements AutoCloseable
         "c.size_bytes,c.alias_list_id,c.protocol,c.call_type,c.voice_type,c.source_id," +
         "c.source_home_wacn,c.source_home_system,c.source_home_id,c.target_id,c.target_home_wacn," +
         "c.target_home_system,c.target_home_id,c.frequency_hz,c.timeslot,c.nac,c.tone_kind,c.tone," +
+        "c.voice_decoded_frames,c.voice_repeated_frames,c.voice_concealed_frames,c.voice_missing_frames," +
+        "c.voice_fec_errors,c.voice_fec_protected_bits," +
         "sys.system_key,ch.channel_uuid,ws.wacn AS winner_wacn," +
         "ws.system_id AS winner_system_id,ws.rfss AS winner_rfss,ws.site_id AS winner_site_id " +
         "FROM recording_call c LEFT JOIN recording_system sys ON sys.id=c.system_id " +
@@ -1028,6 +1042,22 @@ final class ManagedRecordingStore implements AutoCloseable
             conditions.add("c.duration_ms<=?");
             parameters.add(filter.maxDurationMs);
         }
+        if(filter.hasQuality != null)
+        {
+            conditions.add("c.voice_decoded_frames IS " + (filter.hasQuality ? "NOT NULL" : "NULL"));
+        }
+        String qualityPercent = "(100.0*c.voice_decoded_frames/(1.0*c.voice_decoded_frames+" +
+            "c.voice_repeated_frames+c.voice_concealed_frames+c.voice_missing_frames))";
+        if(filter.minQualityPercent != null)
+        {
+            conditions.add(qualityPercent + ">=?");
+            parameters.add(filter.minQualityPercent);
+        }
+        if(filter.maxQualityPercent != null)
+        {
+            conditions.add(qualityPercent + "<=?");
+            parameters.add(filter.maxQualityPercent);
+        }
         if(filter.frequencyHz != null)
         {
             conditions.add("c.frequency_hz=?");
@@ -1566,7 +1596,20 @@ final class ManagedRecordingStore implements AutoCloseable
             nullableInt(row, "target_home_system"), nullableInt(row, "target_home_id"),
             nullableLong(row, "frequency_hz"), nullableInt(row, "timeslot"), nullableInt(row, "nac"),
             nullableInt(row, "tone_kind"), row.getString("tone"), winner, also,
-            List.copyOf(members), servingSystemKey, tones, List.copyOf(identifiers));
+            List.copyOf(members), servingSystemKey, tones, List.copyOf(identifiers), voiceCallQuality(row));
+    }
+
+    private static VoiceCallQuality voiceCallQuality(ResultSet row) throws SQLException
+    {
+        Long decoded = nullableLong(row, "voice_decoded_frames");
+        Long protectedBits = nullableLong(row, "voice_fec_protected_bits");
+        if(decoded == null && protectedBits == null) return null;
+        return new VoiceCallQuality(decoded != null ? decoded : 0L,
+            decoded != null ? row.getLong("voice_repeated_frames") : 0L,
+            decoded != null ? row.getLong("voice_concealed_frames") : 0L,
+            decoded != null ? row.getLong("voice_missing_frames") : 0L,
+            protectedBits != null ? row.getLong("voice_fec_errors") : 0L,
+            protectedBits != null ? protectedBits : 0L);
     }
 
     private static Site site(ResultSet rows, String prefix) throws SQLException
