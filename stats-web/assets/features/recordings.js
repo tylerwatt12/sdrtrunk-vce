@@ -7,7 +7,7 @@ import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 import { createActionWorkflow } from '../core/action-workflows.js?v=1';
 import { createCallDisplayRetention, DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS,
   MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS } from '../core/call-display-retention.js?v=1';
-import { createRecordingsGuideData, RECORDINGS_GUIDE_CALL_ID } from '../guides/recordings-data.js?v=1';
+import { createRecordingsGuideData, RECORDINGS_GUIDE_CALL_ID } from '../guides/recordings-data.js?v=2';
 
 const CALLS = '/api/v1/recordings/calls';
 const IDENTITIES = '/api/v1/recordings/identities';
@@ -16,6 +16,46 @@ const STATUS = '/api/v1/recordings/status';
 const ADMIN = '/api/v1/admin/recordings';
 const PAGE_SIZE = 25;
 const SUGGESTION_DELAY_MS = 240;
+
+export function recordingQualityGroups(call = {}) {
+  const count = key => typeof call[key] === 'number' && Number.isFinite(call[key]) && call[key] >= 0 ? call[key] : null;
+  const quality = count('vc_quality_pct');
+  const voice = [
+    ['Voice decode quality', quality !== null && quality <= 100 ? `${quality.toFixed(1)}%` : null],
+    ['Decoded frames', count('vc_decoded_frames')], ['Repeated frames', count('vc_repeated_frames')],
+    ['Concealed frames', count('vc_concealed_frames')], ['Missing frames (estimated)', count('vc_missing_frames')]
+  ].filter(([, detail]) => detail !== null);
+  const errors = count('vc_fec_errors'), protectedBits = count('vc_fec_protected_bits');
+  const fec = protectedBits > 0 && errors !== null ? [
+    ['FEC errors', errors], ['FEC protected bits', protectedBits],
+    ['FEC correction rate', `${(100 * errors / protectedBits).toFixed(3)}%`]
+  ] : [];
+  return [['Voice decoding', voice], ['Error correction', fec]].filter(([, facts]) => facts.length);
+}
+
+export function recordingQualityFilterError(filters = {}) {
+  const present = key => filters[key] !== undefined && filters[key] !== null && filters[key] !== '';
+  for (const [key, label] of [['min_quality_percent', 'Minimum quality'], ['max_quality_percent', 'Maximum quality']]) {
+    if (present(key) && (String(filters[key]).trim() === '' || !Number.isFinite(Number(filters[key])) || Number(filters[key]) < 0 || Number(filters[key]) > 100))
+      return `${label} must be between 0 and 100%.`;
+  }
+  if (present('min_quality_percent') && present('max_quality_percent') && Number(filters.max_quality_percent) < Number(filters.min_quality_percent))
+    return 'Maximum quality must be at least the minimum quality.';
+  if (filters.has_quality === 'false' && (present('min_quality_percent') || present('max_quality_percent')))
+    return 'Choose recordings with quality measurements before entering percentage limits.';
+  return null;
+}
+
+export function recordingQualityFilterLabel(filters = {}) {
+  if (filters.has_quality === 'false') return 'Quality unavailable';
+  const min = filters.min_quality_percent, max = filters.max_quality_percent;
+  const hasMin = min !== undefined && min !== null && min !== '';
+  const hasMax = max !== undefined && max !== null && max !== '';
+  if (hasMin && hasMax) return `Voice quality: ${Number(min)}–${Number(max)}%`;
+  if (hasMin) return `Voice quality: at least ${Number(min)}%`;
+  if (hasMax) return `Voice quality: up to ${Number(max)}%`;
+  return filters.has_quality === 'true' ? 'Has quality measurements' : '';
+}
 
 function queryPath(root, values = {}) {
   const query = new URLSearchParams();
@@ -548,6 +588,7 @@ export function createRecordingsFeature(deps) {
     call_type: '', voice_type: '', protocol: '', wacn: '', sysid: '', rfss: '', site_id: '',
     talkgroups: '', channel_ids: '', targets_any: '', radios: '', radio_role: '', paging_tones: '',
     text_range: '', high_interest: '', dcs_code: '', has_transcript: '',
+    min_quality_percent: '', max_quality_percent: '', has_quality: '',
     tone_frequency_hz: '', tone_then_hz: '', tone_tolerance_hz: ''
   };
   const selectedSuggestions = new Map();
@@ -753,6 +794,8 @@ export function createRecordingsFeature(deps) {
     const min = Math.max(Number(values.min_duration_ms) || 0, values.high_interest ? 10_000 : 0);
     if (values.max_duration_ms && Number(values.max_duration_ms) < min)
       return fail(`Maximum duration must be at least ${min / 1000} seconds.`);
+    const qualityError = recordingQualityFilterError(values);
+    if (qualityError) return fail(qualityError);
     for (const [key, title, minimum, maximum] of [['tone_frequency_hz', 'First tone', 1, 8000],
       ['tone_then_hz', 'Following tone', 1, 8000], ['tone_tolerance_hz', 'Tolerance', 0, 1000]]) {
       if (values[key] && (!Number.isFinite(Number(values[key])) || Number(values[key]) < minimum || Number(values[key]) > maximum))
@@ -1520,7 +1563,7 @@ export function createRecordingsFeature(deps) {
     toggle.dataset.guideTarget = 'rec-details-button'; toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-controls', `recording-${row.id}-information`); heading.append(toggle);
     const informationContent = node('div', 'recordings-dialog-content'); informationContent.id = `recording-${row.id}-information`;
     const tabs = node('nav', 'ui-segmented recordings-detail-tabs'); tabs.dataset.guideTarget = 'rec-details'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Call information');
-    const definitions = [['overview', 'Overview'], ['transcript', 'Transcript'], ['identities', 'Identities'], ['technical', 'Technical'], ['recording', 'Recording']];
+    const definitions = [['overview', 'Overview'], ['transcript', 'Transcript'], ['identities', 'Identities'], ['quality', 'Call quality'], ['technical', 'Technical'], ['recording', 'Recording']];
     const panels = new Map(), controls = new Map();
     const activate = id => {
       activeTab = id;
@@ -1586,6 +1629,7 @@ export function createRecordingsFeature(deps) {
           }
           for (const [destination, remaining] of destinations) groups.push([destination, '', remaining]);
         }
+        for (const [title, facts] of recordingQualityGroups(call)) groups.push(['quality', title, facts]);
         for (const [destination, title, remaining] of groups) {
           if (!remaining.length) continue;
           const group = node('section', 'ui-form-section');
@@ -1594,10 +1638,15 @@ export function createRecordingsFeature(deps) {
           remaining.forEach(([name, detail]) => appendFact(node, list, name, detail)); group.append(list);
           panels.get(destination).append(group);
         }
+        if (typeof call.vc_quality_pct === 'number') panels.get('quality').append(node('p', 'recordings-dialog-help',
+          'Voice decode quality is the share of expected frames decoded normally.'));
+        if (call.vc_fec_protected_bits > 0) panels.get('quality').append(node('p', 'recordings-dialog-help',
+          'FEC corrections describe decoder error correction, not raw BER.'));
         renderTranscript(panels.get('transcript'), call, transcription => { call = { ...call, transcription }; });
         const download = addGlyph(anchor('Download recording', audioUrl(call), 'ui-button ui-button-secondary'), 'icon-download');
         download.setAttribute('download', ''); panels.get('recording').append(download);
-        for (const [id, panel] of panels) if (!panel.childNodes.length) panel.append(makeNotice(`No ${id === 'identities' ? 'identity' : id} details were recorded for this call.`));
+        for (const [id, panel] of panels) if (!panel.childNodes.length) panel.append(makeNotice(id === 'quality' ?
+          'Quality measurements are unavailable for this recording.' : `No ${id === 'identities' ? 'identity' : id} details were recorded for this call.`));
       }
       activate(expanded ? activeTab : 'overview');
     }
@@ -1770,6 +1819,8 @@ export function createRecordingsFeature(deps) {
     if (currentFilters.high_interest) chips.push({ key: 'high_interest', keys: ['high_interest'], text: 'High Interest · 10 seconds or longer' });
     if (currentFilters.dcs_code) chips.push({ key: 'dcs_code', keys: ['dcs_code'], text: `DCS ${currentFilters.dcs_code}` });
     if (currentFilters.has_transcript) chips.push({ key: 'has_transcript', keys: ['has_transcript'], text: currentFilters.has_transcript === 'false' ? 'No saved transcript' : 'Has transcript' });
+    const qualityLabel = recordingQualityFilterLabel(currentFilters);
+    if (qualityLabel) chips.push({ key: 'quality', keys: ['min_quality_percent', 'max_quality_percent', 'has_quality'], text: qualityLabel });
     if (currentFilters.paging_tones || currentFilters.tone_frequency_hz) {
       const text = currentFilters.tone_frequency_hz ? `${currentFilters.tone_frequency_hz} Hz` +
         (currentFilters.tone_then_hz ? ` → ${currentFilters.tone_then_hz} Hz` : '') +
@@ -2121,7 +2172,7 @@ export function createRecordingsFeature(deps) {
     let generation = 0;
     let timer;
     const title = { targets: 'Talkgroups & channels', radios: 'Source radios', systems: 'System', sites: 'Site',
-      tones: 'Tones & signaling', more: 'More filters' }[topic];
+      tones: 'Tones & signaling', quality: 'Quality', more: 'More filters' }[topic];
     const stagedLabels = new Map();
     const panels = node('div', 'recordings-dialog-content');
     let commit = () => {};
@@ -2365,6 +2416,32 @@ export function createRecordingsFeature(deps) {
           for (const key of ['talkgroup_id', 'talkgroup_identity_key', 'talkgroup_min', 'talkgroup_max', 'channel_id']) draft[key] = '';
         }
       };
+    } else if (topic === 'quality') {
+      const presence = select(node, [['', 'Any recording'], ['true', 'Has measurements'], ['false', 'Measurements unavailable']], 'Quality measurements');
+      presence.value = draft.has_quality || '';
+      panels.append(field('Quality measurements', presence));
+      const fields = node('div', 'recordings-property-fields');
+      const minimum = addInput(fields, 'min_quality_percent', 'Minimum voice quality (%)', 'No minimum', 'number');
+      const maximum = addInput(fields, 'max_quality_percent', 'Maximum voice quality (%)', 'No maximum', 'number');
+      const sync = () => {
+        const unavailable = presence.value === 'false';
+        for (const control of [minimum, maximum]) control.disabled = unavailable;
+        if (unavailable) {
+          draft.min_quality_percent = draft.max_quality_percent = '';
+          minimum.value = maximum.value = '';
+        }
+      };
+      for (const control of [minimum, maximum]) {
+        control.min = '0'; control.max = '100'; control.step = 'any';
+        control.addEventListener('input', () => {
+          status.replaceChildren();
+          if (control.value !== '') { presence.value = 'true'; draft.has_quality = 'true'; }
+        });
+      }
+      presence.addEventListener('change', () => { status.replaceChildren(); draft.has_quality = presence.value; sync(); });
+      panels.append(fields, node('p', 'recordings-dialog-help',
+        'Voice decode quality is the share of expected frames decoded normally.'));
+      sync(); focus = presence;
     } else if (topic === 'tones') {
       panels.append(node('p', 'recordings-dialog-help', 'Search saved paging tones and DCS codes. A recording without saved detections may still contain audible tones.'));
       const fields = node('div', 'recordings-tone-fields');
@@ -2530,6 +2607,7 @@ export function createRecordingsFeature(deps) {
     const radioCount = recordingIdentitySelections(search.radios, 'radio').length;
     const radios = pickerButton('radios', 'Radios', radioCount ? `${radioCount} selected` : 'Any source · name or radio ID', 'icon-scanner');
     const tones = pickerButton('tones', 'Tones & signaling', search.dcs_code ? `DCS ${search.dcs_code}` : search.tone_frequency_hz ? `${search.tone_frequency_hz}${search.tone_then_hz ? ` → ${search.tone_then_hz}` : ''} Hz` : search.paging_tones ? 'Has detected tones' : 'Tones or DCS', 'icon-audio-quality');
+    const quality = pickerButton('quality', 'Quality', recordingQualityFilterLabel(search) || 'Any voice decode quality', 'icon-health');
     const more = pickerButton('more', 'More filters', [search.protocol ? protocolLabel(search.protocol) : '', search.site ? 'Site' : '', search.min_duration_ms || search.max_duration_ms ? 'Duration' : ''].filter(Boolean).join(' · ') || 'Protocol, site, duration…', 'icon-filter');
     const filterTitle = node('h2', 'recordings-filter-title', 'Filters');
     const filterToggle = button(node, 'Filters', null, 'ui-disclosure-toggle');
@@ -2563,7 +2641,7 @@ export function createRecordingsFeature(deps) {
     const timeField = field('Time range', range);
     timeField.dataset.guideTarget = 'rec-time-range';
     const fields = node('div', 'recordings-search-fields');
-    fields.append(transcriptField, syntax, textRangeField, timeField, override, custom, high, system, targets, paths, radios, tones, more,
+    fields.append(transcriptField, syntax, textRangeField, timeField, override, custom, high, system, targets, paths, radios, tones, quality, more,
       ...(selectedFiltersHost ? [selectedFiltersHost] : []));
     sidebar.append(fields, actions);
     filterToolbar.append(filterTitle, filterToggle, filterSummary);
@@ -2603,6 +2681,7 @@ export function createRecordingsFeature(deps) {
       Object.keys(search).forEach(key => { search[key] = parameters.get(key) || ''; });
       search.high_interest = /^(?:1|true)$/i.test(search.high_interest) ? '1' : '';
       search.has_transcript = /^(?:1|true)$/i.test(search.has_transcript) ? 'true' : /^(?:0|false)$/i.test(search.has_transcript) ? 'false' : '';
+      search.has_quality = /^(?:1|true)$/i.test(search.has_quality) ? 'true' : /^(?:0|false)$/i.test(search.has_quality) ? 'false' : '';
       search.range = search.from_ms && search.to_ms ? 'custom' : '24h';
       appliedRange = search.range;
       selectedSuggestions.clear();

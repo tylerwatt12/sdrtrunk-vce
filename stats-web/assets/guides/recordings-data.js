@@ -22,6 +22,8 @@ export function createRecordingsGuideData({ signal } = {}) {
     const start = now - elapsed;
     return { id, call_id: `guide-recordings-${id}`, start_ms: start, end_ms: start + 14_000,
       duration_ms: 14_000, size_bytes: 112_400, protocol: 'APCO25_PHASE2', call_type: 'GROUP', voice_type: 'CLEAR',
+      vc_quality_pct: 98, vc_decoded_frames: 686, vc_repeated_frames: 7, vc_concealed_frames: 3,
+      vc_missing_frames: 4, vc_fec_errors: 144, vc_fec_protected_bits: 100224,
       system_key: system, system_name: city ? 'City P25' : 'County P25',
       channel_id: city ? CITY_CHANNEL : COUNTY_CHANNEL, channel_name: city ? 'City Site' : 'County Site',
       alias_list_id: city ? 9402 : 9401, alias_list_name: city ? 'City P25' : 'County P25',
@@ -67,6 +69,10 @@ export function createRecordingsGuideData({ signal } = {}) {
     const targets = array(parameters.get('talkgroups')), channels = array(parameters.get('channel_ids'));
     if ((targets.length || channels.length) && !targets.some(target => row.system_key === target.system_key && row.talkgroup_id === Number(target.id)) &&
       !channels.includes(row.channel_id)) return false;
+    const measured = typeof row.vc_quality_pct === 'number';
+    if (parameters.get('has_quality') === 'true' && !measured || parameters.get('has_quality') === 'false' && measured) return false;
+    if (parameters.has('min_quality_percent') && (!measured || row.vc_quality_pct < Number(parameters.get('min_quality_percent')))) return false;
+    if (parameters.has('max_quality_percent') && (!measured || row.vc_quality_pct > Number(parameters.get('max_quality_percent')))) return false;
     const transcript = (parameters.get('transcript') || '').replaceAll('"', '').trim().toLowerCase();
     if (transcript && !row.transcription?.text.toLowerCase().includes(transcript)) return false;
     return true;

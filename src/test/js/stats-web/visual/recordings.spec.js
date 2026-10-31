@@ -845,7 +845,7 @@ test('call detail tabs retain identities, protocol, recording metadata, download
     transcription: { status: 'COMPLETE', text: 'Engine four arriving at staging.', stored_at_ms: call.start_ms + 60_000 } });
   await openCallDetails(page);
   const detail = page.getByRole('dialog', { name: 'Call actions', exact: true });
-  await expect(detail.getByRole('tab')).toHaveText(['Overview', 'Transcript', 'Identities', 'Technical', 'Recording']);
+  await expect(detail.getByRole('tab')).toHaveText(['Overview', 'Transcript', 'Identities', 'Call quality', 'Technical', 'Recording']);
   const overview = detail.getByRole('tab', { name: 'Overview', exact: true });
   await expect(overview).toHaveAttribute('aria-selected', 'true');
   await overview.focus();
@@ -895,7 +895,7 @@ for (const theme of ['light', 'dark']) {
         transcription: { status: 'COMPLETE', text: 'Engine four arriving at staging.', stored_at_ms: call.start_ms + 60_000 } });
       await openCallDetails(page);
       const detail = page.getByRole('dialog', { name: 'Call actions', exact: true });
-      await expect(detail.getByRole('tab')).toHaveCount(5);
+      await expect(detail.getByRole('tab')).toHaveCount(6);
       for (const name of ['Play once', 'Continue from here', 'Add to queue']) {
         await expect(detail.getByRole('button', { name, exact: true })).toBeVisible();
       }
@@ -2089,7 +2089,7 @@ for (const theme of ['light', 'dark']) test(`unified call actions expands in pla
   await expectCallActionDescriptions(actions);
   await actions.getByRole('button', { name: 'Show more', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(1);
-  await expect(actions.getByRole('tab')).toHaveText(['Overview', 'Transcript', 'Identities', 'Technical', 'Recording']);
+  await expect(actions.getByRole('tab')).toHaveText(['Overview', 'Transcript', 'Identities', 'Call quality', 'Technical', 'Recording']);
   for (const width of [1280, 800, 700, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     if (width === 320 || theme === 'light' && [800, 700].includes(width))
@@ -2701,3 +2701,81 @@ for (const theme of ['light']) {
     await expectSearchHalo(searchButton(page), false);
   });
 }
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], ['dark', 320]]) {
+  test(`recording quality details and filters preserve measured zero and staged choices in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await openRecordings(page, { theme, call: linkedCall, callDetail: {
+      ...linkedCall, vc_quality_pct: 0, vc_decoded_frames: 0, vc_repeated_frames: 4,
+      vc_concealed_frames: 2, vc_missing_frames: 1, vc_fec_errors: 0, vc_fec_protected_bits: 800
+    } });
+    await openCallDetails(page);
+    const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+    await selectRecordingDetailTab(actions, 'Call quality');
+    const panel = actions.getByRole('tabpanel', { name: 'Call quality', exact: true });
+    await expect(panel).toContainText('0.0%');
+    await expect(panel.locator('dt', { hasText: 'Decoded frames' }).locator('+ dd')).toHaveText('0');
+    await expect(panel.locator('dt', { hasText: 'Missing frames (estimated)' }).locator('+ dd')).toHaveText('1');
+    await expect(panel.locator('dt', { hasText: 'FEC errors' }).locator('+ dd')).toHaveText('0');
+    await expect(panel.locator('dt', { hasText: 'FEC correction rate' }).locator('+ dd')).toHaveText('0.000%');
+    await expect(actions.getByRole('tab', { name: 'Call quality', exact: true })).toBeVisible();
+    expect(await actions.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+    await actions.getByRole('tab', { name: 'Call quality', exact: true }).press('ArrowRight');
+    await expect(actions.getByRole('tab', { name: 'Technical', exact: true })).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(actions.getByRole('tab', { name: 'Call quality', exact: true })).toBeFocused();
+    await expectContrast(page, { rootSelector: '#recording-17-panel-quality', reportName: `recording-quality-${theme}-${width}` });
+    await actions.screenshot({ path: testInfo.outputPath(`recording-quality-${theme}-${width}.png`) });
+    await page.keyboard.press('Escape');
+
+    let quality = await openPicker(page, 'quality', 'Quality');
+    await quality.getByLabel('Minimum voice quality (%)', { exact: true }).fill('95.5');
+    await quality.getByLabel('Maximum voice quality (%)', { exact: true }).fill('100');
+    await expect(quality.getByRole('combobox', { name: 'Quality measurements', exact: true })).toHaveValue('true');
+    expect(state.requestedFilters).toHaveLength(1);
+    await quality.getByRole('button', { name: 'Cancel', exact: true }).click();
+    quality = await openPicker(page, 'quality', 'Quality');
+    await expect(quality.getByLabel('Minimum voice quality (%)', { exact: true })).toHaveValue('');
+    await quality.getByLabel('Minimum voice quality (%)', { exact: true }).fill('95.5');
+    await quality.getByLabel('Maximum voice quality (%)', { exact: true }).fill('90');
+    await quality.getByRole('button', { name: 'Use filters', exact: true }).click();
+    await expect(quality).toContainText('Maximum quality must be at least the minimum quality.');
+    expect(state.requestedFilters).toHaveLength(1);
+    await quality.getByLabel('Maximum voice quality (%)', { exact: true }).fill('100');
+    await expectContrast(page, { rootSelector: '.recordings-filter-editor', reportName: `recording-quality-filter-${theme}-${width}` });
+    await quality.screenshot({ path: testInfo.outputPath(`recording-quality-filter-${theme}-${width}.png`) });
+    await quality.getByRole('button', { name: 'Use filters', exact: true }).click();
+    expect(state.requestedFilters).toHaveLength(1);
+    await searchNow(page, state);
+    expect(state.requestedFilters.at(-1)).toMatchObject({ has_quality: 'true', min_quality_percent: '95.5', max_quality_percent: '100' });
+    await expect(page.locator('.recordings-filter-summary')).toContainText('Voice quality: 95.5–100%');
+
+    quality = await openPicker(page, 'quality', 'Quality');
+    await quality.getByRole('combobox', { name: 'Quality measurements', exact: true }).selectOption('false');
+    for (const label of ['Minimum voice quality (%)', 'Maximum voice quality (%)']) {
+      await expect(quality.getByLabel(label, { exact: true })).toBeDisabled();
+      await expect(quality.getByLabel(label, { exact: true })).toHaveValue('');
+    }
+    await quality.getByRole('button', { name: 'Use filters', exact: true }).click();
+    await searchNow(page, state);
+    expect(state.requestedFilters.at(-1).has_quality).toBe('false');
+    expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_quality_percent');
+    expect(state.requestedFilters.at(-1)).not.toHaveProperty('max_quality_percent');
+    await expect(page.locator('.recordings-filter-summary')).toContainText('Quality unavailable');
+    await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
+    await expect.poll(() => state.requestedFilters.at(-1).has_quality).toBeUndefined();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+  });
+}
+
+test('recording quality URL filters preserve zero and old recordings show unavailable details', async ({ page }) => {
+  const state = await openRecordings(page, { call: linkedCall, query: { has_quality: 'true', min_quality_percent: '0', max_quality_percent: '0' } });
+  await expect.poll(() => state.requestedFilters.length).toBe(1);
+  expect(state.requestedFilters[0]).toMatchObject({ has_quality: 'true', min_quality_percent: '0', max_quality_percent: '0' });
+  await expect(page.locator('.recordings-filter-summary')).toContainText('Voice quality: 0–0%');
+  await openCallDetails(page);
+  const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
+  await selectRecordingDetailTab(actions, 'Call quality');
+  await expect(actions.getByRole('tabpanel', { name: 'Call quality', exact: true }))
+    .toHaveText('Quality measurements are unavailable for this recording.');
+});

@@ -107,8 +107,33 @@ async function main() {
     .replace(/from '\.\.\/guides\/recordings-data\.js\?v=\d+'/, `from '${guideDataUrl}'`);
   const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter, recordingRefinementFilters,
     recordingIdentitySelections, recordingIdentitySelectionKey, recordingDiscoveryPeriod,
+    recordingQualityGroups, recordingQualityFilterError, recordingQualityFilterLabel,
     recordingGapMilliseconds, recordingPageGaps, recordingGapLabel, recordingSearchTiming } = await import(
     `data:text/javascript;base64,${Buffer.from(executable).toString('base64')}`);
+  assert.deepEqual(recordingQualityGroups({}), [], 'Old recordings must not acquire zero-valued quality measurements');
+  assert.deepEqual(recordingQualityGroups({ vc_quality_pct: null, vc_decoded_frames: null, vc_fec_errors: 0,
+    vc_fec_protected_bits: 0 }), [], 'Unavailable counters and an absent FEC denominator stay unavailable');
+  const qualityGroups = recordingQualityGroups({ vc_quality_pct: 0, vc_decoded_frames: 0, vc_repeated_frames: 4,
+    vc_concealed_frames: 2, vc_missing_frames: 1, vc_fec_errors: 0, vc_fec_protected_bits: 800 });
+  assert.deepEqual(qualityGroups, [['Voice decoding', [
+    ['Voice decode quality', '0.0%'], ['Decoded frames', 0], ['Repeated frames', 4], ['Concealed frames', 2],
+    ['Missing frames (estimated)', 1]]], ['Error correction', [
+    ['FEC errors', 0], ['FEC protected bits', 800], ['FEC correction rate', '0.000%']]]],
+  'Measured zero remains different from missing measurements');
+  assert.equal(recordingQualityGroups({ vc_fec_errors: 2, vc_fec_protected_bits: 800 })[0][1][2][1], '0.250%');
+  for (const invalid of ['NaN', 'Infinity', '-1', '101', ' '])
+    assert.ok(recordingQualityFilterError({ min_quality_percent: invalid }));
+  assert.ok(recordingQualityFilterError({ min_quality_percent: '95', max_quality_percent: '94.9' }));
+  assert.ok(recordingQualityFilterError({ has_quality: 'false', min_quality_percent: '0' }));
+  assert.equal(recordingQualityFilterError({ has_quality: 'false' }), null);
+  assert.equal(recordingQualityFilterError({ min_quality_percent: '0', max_quality_percent: '100' }), null);
+  assert.equal(recordingQualityFilterError({ min_quality_percent: '95.1234', max_quality_percent: '99.9999' }), null);
+  assert.equal(recordingQualityFilterLabel({}), '');
+  assert.equal(recordingQualityFilterLabel({ has_quality: 'false' }), 'Quality unavailable');
+  assert.equal(recordingQualityFilterLabel({ has_quality: 'true' }), 'Has quality measurements');
+  assert.equal(recordingQualityFilterLabel({ min_quality_percent: '0' }), 'Voice quality: at least 0%');
+  assert.equal(recordingQualityFilterLabel({ max_quality_percent: '0' }), 'Voice quality: up to 0%');
+  assert.equal(recordingQualityFilterLabel({ min_quality_percent: '90', max_quality_percent: '99.5' }), 'Voice quality: 90–99.5%');
   const scopedGroup = { id: 1201, system_key: 'p25:00001:001' };
   const selectedTarget = { key: 'talkgroups', filters: { talkgroups: JSON.stringify([scopedGroup]), targets_any: 'true' } };
   const scopedSearch = { channel_ids: JSON.stringify(['north']), from_ms: '1000', transcript: 'dispatch' };

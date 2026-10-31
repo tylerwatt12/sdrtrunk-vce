@@ -63,6 +63,23 @@ const openAliasChannelScope = async (page) => {
   await expect(page.locator('.alias-coverage-channel-grid')).toBeVisible();
 };
 const additionalCases = [
+  ['recordings-quality-details', 'view=recordings', '.recordings-library', 'Fire Dispatch',
+    async page => {
+      await page.locator('.recordings-call-info').first().click();
+      const dialog = page.getByRole('dialog', { name: 'Call actions', exact: true });
+      await dialog.getByRole('button', { name: 'Show more', exact: true }).click();
+      await dialog.getByRole('tab', { name: 'Call quality', exact: true }).click();
+      await expect(dialog.getByRole('tabpanel', { name: 'Call quality', exact: true })).toContainText('98.0%');
+    }],
+  ['recordings-quality-filter', 'view=recordings', '.recordings-library', 'Fire Dispatch',
+    async page => {
+      const toggle = page.locator('#recordings-filters-toggle');
+      if (await toggle.isVisible() && await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+      await page.locator('#recordings-open-quality').click();
+      const dialog = page.getByRole('dialog', { name: 'Quality', exact: true });
+      await dialog.getByLabel('Minimum voice quality (%)', { exact: true }).fill('95');
+      await dialog.getByLabel('Maximum voice quality (%)', { exact: true }).fill('100');
+    }],
   ['settings-listening', 'view=settings&section=listening', '.user-settings-workspace', 'Call display hangtime (seconds)'],
   ['network-visualizer-overview', 'view=network-visualizer', '.network-visualizer-scope-title', systemName,
     async page => {
@@ -278,6 +295,19 @@ for (const { name: presentation, theme, viewport } of [presentations[0], present
 }
 
 for (const { name: presentation, theme, viewport } of presentations) {
+  for (const [name, query, selector, content, open] of additionalCases.filter(([id]) => id.startsWith('recordings-quality-'))) {
+    test(`populated route style ${name} ${presentation}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      const fixture = await installSiteStyleApplication(page, theme);
+      await page.goto(`/app.html?${query}`);
+      await expectSuccessfulPage(page, fixture, name, selector, content);
+      await open(page);
+      await expectSharedTypography(page);
+      await expectNoHorizontalOverflow(page);
+      await auditPageContrast(page, `${name}-${presentation}`);
+      await expect(page.getByRole('dialog')).toHaveScreenshot(`${name}-${presentation}.png`);
+    });
+  }
   test(`populated route style settings-listening ${presentation}`, async ({ page }) => {
     await page.setViewportSize(viewport);
     const fixture = await installSiteStyleApplication(page, theme);

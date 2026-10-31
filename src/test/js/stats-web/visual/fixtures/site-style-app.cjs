@@ -473,7 +473,9 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
     }
     if (p === '/api/v1/recordings/status') return respond({ mode: 'MANAGED', available: true, has_calls: true });
     if (p === '/api/v1/recordings/calls') return respond({ calls: [recording], next_cursor: null, total: 1 });
-    if (p === '/api/v1/recordings/calls/17') return respond({ call: recording, transcription: transcript });
+    if (p === '/api/v1/recordings/calls/17') return respond({ call: { ...recording,
+      vc_quality_pct: 98, vc_decoded_frames: 686, vc_repeated_frames: 7, vc_concealed_frames: 3,
+      vc_missing_frames: 4, vc_fec_errors: 144, vc_fec_protected_bits: 100224 }, transcription: transcript });
     if (p === '/api/v1/recordings/suggestions') return respond({ suggestions: [] });
     if (p === '/api/v1/recordings/calls/17/audio' || p === '/api/v1/calls/dock-live-1/audio') {
       return route.fulfill({ contentType: 'audio/wav', body: Buffer.alloc(44) });
