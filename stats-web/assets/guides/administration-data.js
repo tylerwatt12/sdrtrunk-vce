@@ -15,7 +15,7 @@ const REVISION = 'a'.repeat(64);
 const IDS = ADMINISTRATION_GUIDE_IDS;
 const typeNames = Object.freeze({ site_state: 'Sites & state', frequencies: 'Frequencies',
   band_plans: 'Band plans', foreign_band_plans: 'Foreign band plans', neighbors: 'Neighbors',
-  patches: 'Patch groups', control_quality: 'Quality history', radios: 'Radio IDs', talkgroups: 'Talkgroups',
+  patches: 'Patch groups', control_quality: 'Quality history', radios: 'Radio IDs', talker_aliases: 'OTA Alias', talkgroups: 'Talkgroups',
   relationships: 'Radio relationships', affiliations: 'Affiliations & presence', call_activity: 'Call totals',
   signaling_activity: 'Signaling totals', hourly_history: 'Hourly history', detailed_events: 'Detailed events',
   issi_assignment_history: 'ISSI assignment history', alias_activity: 'Alias Activity', all: 'All retained data' });
@@ -271,8 +271,8 @@ export function createAdministrationGuideData({ signal, now = Date.now() } = {})
     if (parameters.get('site_configuration_id')) Object.assign(base, {
       site_configuration_id: city ? IDS.cityChannel : IDS.countyChannel, expected_site_key: city ? 'guide-city-site' : 'guide-county-site' });
     const target = (record_key, parts) => ({ ...base, ...(record_key ? { record_key } : {}), parts });
-    if (dataType === 'radios' || dataType === 'talkgroups') {
-      const radio = dataType === 'radios';
+    if (['radios', 'talker_aliases', 'talkgroups'].includes(dataType)) {
+      const radio = dataType !== 'talkgroups';
       const identities = city ? radio ? [[3202, 'Engine 2'], [4212, 'City Police 12']] : [[2001, 'City Fire'], [2002, 'Police Department']] :
         radio ? [[2107, 'Engine 7'], [1214, 'Sheriff 214']] : [[1001, 'Regional Fire'], [1002, 'Sheriff']];
       return identities
@@ -280,7 +280,9 @@ export function createAdministrationGuideData({ signal, now = Date.now() } = {})
           return { label: name, alias_name: name, native_id: id, alias_list_id: city ? IDS.cityList : IDS.countyList,
             alias_list_name: city ? 'City P25' : 'County P25', logical_call_count: 128 - index * 24, last_seen_ms: now - index * 5000,
             entity_ref: { kind: radio ? 'radio' : 'talkgroup', radio_system_key: sourceKey, identity_key: key },
-            target: target(key, ['summary', 'buckets', 'events']) }; });
+            ...(dataType === 'talker_aliases' ? { last_talker_alias: `${name} mobile`, last_talker_alias_seen_ms: now,
+              target: { kind: 'talker_alias', radio_system_key: sourceKey, identity_key: key, expected_alias: `${name} mobile` } } :
+              { target: target(key, ['summary', 'buckets', 'events']) }) }; });
     }
     if (dataType === 'frequencies') return (kind === 'saved_channel' ? [154_280_000] :
       city ? [858_162_500, 858_662_500] : [856_162_500, 856_662_500]).map((frequency, index) => ({

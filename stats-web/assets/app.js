@@ -6,7 +6,7 @@ import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=1';
 import * as tableLayouts from './core/table-layout.js?v=6';
-import * as tableDefaults from './core/table-defaults.js?v=32';
+import * as tableDefaults from './core/table-defaults.js?v=33';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=3';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -19,7 +19,7 @@ import { createFormWorkflow } from './core/form-workflows.js?v=6';
 import { createActionWorkflow, actionFailureMessage } from './core/action-workflows.js?v=1';
 import { createMySettingsWorkspace } from './features/my-settings.js?v=3';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=45';
+import { createGuideController } from './guides/controller.js?v=46';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -2103,7 +2103,7 @@ function retainedStatisticsItem(row) {
   const dataType = String(row.target?.data_type || '');
   const kind = row.target?.kind === 'scoped_data' ?
     ({ radios: 'radio', talkgroups: 'talkgroup', frequencies: 'frequency' })[dataType] || '' :
-    String(row.target?.kind || '').replace(/^conventional_/, '');
+    row.target?.kind === 'talker_alias' ? 'radio' : String(row.target?.kind || '').replace(/^conventional_/, '');
   const identity = ['radio', 'talkgroup'].includes(kind);
   const alias = String(row.alias_name || '').trim();
   const talker = String(row.last_talker_alias || '').trim();
@@ -2122,6 +2122,18 @@ function retainedStatisticsItem(row) {
     entityTarget(row.entity_ref, channelTab ? { channel: channelTab } : {}) : '';
   return identitySummaryValue(primary, [...new Set(details)].filter((part) => part !== primary)
     .join(' · '), target);
+}
+
+function retainedStatisticsLinks(value) {
+  const links = [...(value?.querySelectorAll?.('a[href]') || [])];
+  if (value?.matches?.('a[href]')) links.unshift(value);
+  for (const link of links) {
+    const view = new URL(link.href, window.location.href).searchParams.get('view');
+    if (!['radio', 'talkgroup', 'group-identity'].includes(view)) continue;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+  }
+  return value;
 }
 
 function externalAnchor(label, target, className) {
@@ -8272,7 +8284,7 @@ async function prepareAdministrationGuideSample(section, context) {
   if (!allowed) throw new Error('The Administration section is unavailable.');
   const parent = captureRenderContext();
   const { createAdministrationGuideData, ADMINISTRATION_GUIDE_IDS } =
-    await import('./guides/administration-data.js?v=2');
+    await import('./guides/administration-data.js?v=3');
   if (context.signal.aborted || !context.isCurrent() || !renderIsCurrent(parent)) return () => {};
   const controller = new AbortController();
   const resources = createAdministrationGuideResources(controller.signal);
@@ -23080,46 +23092,6 @@ async function renderRadio() {
     }
     const identityDetails = node('div');
     identityDetails.append(keyValues(identityValues));
-    if (normalizedSiteText(radio.last_talker_alias) && capabilityAllowed(ACCESS_CAPABILITIES.ADMIN_SETTINGS)) {
-      const form = node('form');
-      const forget = node('button', 'ui-button ui-button-secondary', 'Forget OTA alias');
-      forget.type = 'submit';
-      const status = node('p', 'ui-section-note');
-      const actions = node('div', 'ui-action-row');
-      actions.append(forget);
-      form.append(status, actions);
-      identityDetails.append(form);
-      const workflow = createFormWorkflow({ form, submit: forget, feedback: status,
-        hideCleanSubmit: false, allowUnchangedSubmit: true });
-      const body = { request_id: crypto.randomUUID(), target: { kind: 'talker_alias',
-        radio_system_key: radioSystem.radio_system_key, identity_key: identityKey,
-        expected_alias: radio.last_talker_alias } };
-      let acceptedJob = null;
-      form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        if (workflow.isBusy()) return;
-        if (!acceptedJob && !await confirmAction(
-          `Forget “${radio.last_talker_alias}” for this radio? Activity history stays. Future traffic can teach this name again.`,
-          { title: 'Forget OTA alias?', confirmLabel: 'Forget alias' })) return;
-        await workflow.save(async () => {
-          const { runRetainedStatisticsJob } = await import('./features/retained-statistics.js?v=14');
-          return runRetainedStatisticsJob(requestJson, { body, initialJob: acceptedJob,
-            signal: renderContext.signal, onProgress: (current) => { acceptedJob = current; } });
-        }, { saving: 'Forgetting OTA alias…', onSuccess: async () => {
-          if (renderIsCurrent(renderContext)) await renderRadio();
-        }, onError: (error) => {
-          const statusExpired = Boolean(acceptedJob) && error.status === 404;
-          if (statusExpired || error.job && ['failed', 'cancelled'].includes(error.job.state)) {
-            acceptedJob = null;
-            body.request_id = crypto.randomUUID();
-          }
-          forget.textContent = acceptedJob ? 'Check alias action' : 'Retry forgetting alias';
-          return { message: statusExpired ?
-            'Action status is no longer available. Refresh this radio to check its current OTA alias, or confirm a new attempt.' :
-            error?.name === 'AbortError' ? '' : error.message };
-        } });
-      }, { signal: renderContext.signal });
-    }
     const blocks = [section('Identity', identityDetails),
       systemCallCounts('Calls involving this radio', radio)];
     if (radioSystemCapability(radio, 'current_affiliations')) {
@@ -36058,7 +36030,7 @@ function adminSettingsGroups() {
       { id: 'activity', label: 'Activity settings', icon: 'activity', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
         description: 'Choose which activity is saved and how long its history is kept.' },
       { id: 'retained-statistics', label: 'Saved data cleanup', icon: 'cleanup', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
-        description: 'Delete saved statistics while keeping aliases and alias lists.' }
+        description: 'Clear saved observations and statistics while keeping configured aliases and Alias Lists.' }
     ] },
     { label: 'Receiver configuration', items: [
       { id: 'remote-links', label: 'Remote Links', icon: 'network-visualizer', capability: ACCESS_CAPABILITIES.ADMIN_SETTINGS,
@@ -36217,14 +36189,15 @@ async function renderAdmin(options = {}) {
   }
   else if (active === 'transcription') await recordingWorkspace.renderAdminTranscription();
   else if (active === 'retained-statistics') {
-    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=14');
+    const { createRetainedStatisticsWorkspace } = await import('./features/retained-statistics.js?v=15');
     if (!renderIsCurrent(renderContext)) return;
     content.append(createRetainedStatisticsWorkspace({
       node, metricCard, metrics, formField, uiSelectFrame, uiSegmentedControl, section, sectionActionHost, browsingWorkflows,
       table, openReadOnlyModal, modalFooter: aliasModalFooter, requestJson,
-      formatNumber: number, formatDateTime: dateTime, renderItem: retainedStatisticsItem,
-      renderSource: (row, label) => channelLink(row, label || row.label),
-      renderAliasList: (row) => aliasListLink(row.alias_list_name, row.alias_list_id),
+      formatNumber: number, formatDateTime: dateTime,
+      renderItem: (row) => retainedStatisticsLinks(retainedStatisticsItem(row)),
+      renderSource: (row, label) => retainedStatisticsLinks(channelLink(row, label || row.label)),
+      renderAliasList: (row) => retainedStatisticsLinks(aliasListLink(row.alias_list_name, row.alias_list_id)),
       renderAlias: (row) => {
         const label = row.label || `Alias ${row.alias_id || ''}`;
         const listId = Number(row.alias_list_id);
@@ -36232,9 +36205,9 @@ async function renderAdmin(options = {}) {
         const target = aliasAdminAllowed() && Number.isInteger(listId) && listId > 0 &&
           Number.isInteger(aliasId) && aliasId > 0 ?
           href('aliases', { list: listId, aliasTab: 'configure', alias: aliasId }) : '';
-        return identitySummaryValue(label, [row.alias_group, row.matcher_type,
+        return retainedStatisticsLinks(identitySummaryValue(label, [row.alias_group, row.matcher_type,
           Number.isInteger(aliasId) && aliasId > 0 ? `Alias ${aliasId}` : '']
-          .filter(Boolean).join(' · '), target);
+          .filter(Boolean).join(' · '), target));
       },
       signal: renderContext.signal, guideMode: Boolean(renderContext.guideData)
     }));

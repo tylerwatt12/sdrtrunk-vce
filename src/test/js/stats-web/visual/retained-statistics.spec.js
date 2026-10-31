@@ -35,6 +35,8 @@ async function openStatistics(page, options = {}) {
   let heldDeletion = false;
   let actionFailed = false;
   let deletionFailed = false;
+  let submittedTarget = null;
+  const forgottenAliases = new Set();
   requests.setJob = (updates) => { currentJob = { ...currentJob, ...updates }; };
   requests.forgetJob = () => { jobMissing = true; };
   requests.releaseFirstPoll = () => firstPollRelease?.();
@@ -85,6 +87,13 @@ async function openStatistics(page, options = {}) {
     target: scoped('alias_activity', 'alias_activity', ['summary'],
       { record_key: String(index + 101) })
   }));
+  const otaAliases = radios.map((row, index) => ({ ...row,
+    last_talker_alias: index === 29 ? 'Portable 12' : `Observed unit ${index}`,
+    last_talker_alias_seen_ms: 1_780_000_000_000,
+    target: { kind: 'talker_alias', radio_system_key: SYSTEM,
+      identity_key: row.entity_ref.identity_key,
+      expected_alias: index === 29 ? 'Portable 12' : `Observed unit ${index}` }
+  }));
   await page.route('**/api/v1/**', async (route) => {
     const url = new URL(route.request().url());
     const pathname = url.pathname;
@@ -93,7 +102,7 @@ async function openStatistics(page, options = {}) {
       const offset = Number(url.searchParams.get('offset') || 0);
       const q = String(url.searchParams.get('q') || '').toLowerCase();
       const matched = q ? rows.filter((row) =>
-        `${row.label} ${row.alias_name || ''} ${row.alias_list_name || ''} ${row.frequency_hz || ''}`
+        `${row.label} ${row.alias_name || ''} ${row.last_talker_alias || ''} ${row.alias_list_name || ''} ${row.frequency_hz || ''}`
           .toLowerCase().includes(q)) : rows;
       return wrap(matched.slice(offset, offset + 25), { limit: 25, offset,
         has_more: offset + 25 < matched.length, next_offset: offset + 25,
@@ -150,8 +159,12 @@ async function openStatistics(page, options = {}) {
             channel_kind: 'CONVENTIONAL', entity_ref: { kind: 'channel', key: CHANNEL },
             target: scoped('saved_channel', 'frequencies', ['summary', 'buckets', 'events'],
               { record_key: '155115000' }) }] :
+            dataType === 'talker_aliases' ? otaAliases.filter((row) =>
+              !forgottenAliases.has(row.target.identity_key)) :
             ['radios', 'talkgroups'].includes(dataType) ? radios.map((row) => ({
-              ...row, target: { ...row.target, source_kind: kind,
+              ...row, entity_ref: { ...row.entity_ref, kind: dataType === 'radios' ? 'radio' : 'talkgroup',
+                identity_key: row.entity_ref.identity_key.replace('v1-r-', dataType === 'radios' ? 'v1-r-' : 'v1-g-') },
+              target: { ...row.target, source_kind: kind,
                 source_key: kind === 'saved_channel' ? CHANNEL : SYSTEM, data_type: dataType }
             })) :
               dataType === 'alias_activity' ? aliases :
@@ -198,6 +211,7 @@ async function openStatistics(page, options = {}) {
       route.request().method() === 'POST') {
       const body = JSON.parse(route.request().postData() || '{}');
       requests.writes.push(body);
+      submittedTarget = body.target;
       if (options.holdDeletion && !heldDeletion) {
         heldDeletion = true;
         await new Promise((resolve) => { deletionRelease = resolve; });
@@ -206,6 +220,13 @@ async function openStatistics(page, options = {}) {
         deletionFailed = true;
         return route.fulfill({ status: 500,
           json: { error: { status: 500, message: 'Cleanup unavailable' } } });
+      }
+      if (options.aliasConflict && body.target.kind === 'talker_alias') return route.fulfill({ status: 409,
+        json: { error: { status: 409, message: 'The request conflicted' } } });
+      if (options.instantAlias && body.target.kind === 'talker_alias') {
+        forgottenAliases.add(body.target.identity_key);
+        return route.fulfill({ status: 202, json: wrap({ job_id: 'job-1', state: 'succeeded',
+          target: body.target, rows_deleted: 1, outcome: 'deleted' }) });
       }
       if (currentJob) currentJob.target = body.target;
       await route.fulfill({ status: 202, json: wrap(currentJob ? { ...currentJob, rows_deleted: 0 } :
@@ -232,9 +253,12 @@ async function openStatistics(page, options = {}) {
       if (jobMissing) return route.fulfill({ status: 404,
         json: { error: { status: 404, code: 'job_not_found', message: 'Job no longer available' } } });
       if (currentJob) return route.fulfill({ json: wrap(currentJob) });
+      const forgetAlias = submittedTarget?.kind === 'talker_alias';
+      if (forgetAlias && !options.aliasChanged) forgottenAliases.add(submittedTarget.identity_key);
       await route.fulfill({ json: wrap({ job_id: 'job-1', state: 'succeeded',
-        rows_deleted: options.jobTooLarge ? 0 : 2,
-        outcome: options.jobTooLarge ? 'too_large' : 'deleted' }) });
+        target: submittedTarget,
+        rows_deleted: options.jobTooLarge || options.aliasChanged ? 0 : forgetAlias ? 1 : 2,
+        outcome: options.aliasChanged ? 'not_found' : options.jobTooLarge ? 'too_large' : 'deleted' }) });
     } else await route.fulfill({ status: 404,
       json: { error: { status: 404, message: 'Unavailable' } } });
   });
@@ -394,6 +418,109 @@ test('radio names and IDs link to details, with server search before pagination'
     .toHaveText('Delete…');
   expect(requests.results).toContainEqual(expect.objectContaining({ dataType: 'radios',
     q: 'Engine 12', offset: 0 }));
+});
+
+for (const theme of ['light', 'dark']) for (const mobile of [false, true]) {
+  test(`OTA Alias cleanup forgets only the observed name ${theme} ${mobile ? 'mobile' : 'desktop'}`,
+    async ({ page }, testInfo) => {
+      await page.setViewportSize({ width: mobile ? 390 : 1440, height: mobile ? 844 : 1000 });
+      const requests = await openStatistics(page, { theme, instantAlias: theme === 'dark' && !mobile });
+      const workspace = page.locator('.retained-statistics-page');
+      await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+      await workspace.getByRole('button', { name: 'OTA Alias', exact: true }).click();
+      await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('30 results');
+      await expect(workspace.getByRole('group', { name: 'Saved parts to delete' })).toBeHidden();
+      await expect(workspace.getByRole('button', { name: /^Delete statistics/ })).toHaveCount(0);
+      await workspace.getByRole('searchbox', { name: 'Search results' }).fill('Portable 12');
+      const results = workspace.locator('.retained-statistics-table');
+      await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('1 result');
+      await expect(results.getByText('Portable 12', { exact: true })).toBeVisible();
+      await expect(results.getByRole('link', { name: 'Engine 12' })).toHaveAttribute('target', '_blank');
+      await expect(results.locator('td[data-label="Last received"]')).toBeVisible();
+      await expect(results.locator('time')).toHaveText('2026-05-28 20:26:40');
+      await results.scrollIntoViewIfNeeded();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(mobile ? 390 : 1440);
+      await page.screenshot({ path: testInfo.outputPath(`ota-alias-list-${theme}-${mobile ? 'phone' : 'desktop'}.png`) });
+      await results.getByRole('button', { name: 'Forget OTA alias for Engine 12 (Radio 1234)' }).click();
+      const dialog = page.getByRole('alertdialog');
+      await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+      await expect(dialog).toContainText('Radio identity, configured aliases and activity history stay.');
+      await expect(dialog).toContainText('Future traffic can teach this name again.');
+      await expect(dialog.getByRole('button', { name: 'Delete statistics', exact: true })).toHaveCount(0);
+      await page.screenshot({ path: testInfo.outputPath(`ota-alias-${theme}-${mobile ? 'phone' : 'desktop'}.png`) });
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      expect(requests.writes).toHaveLength(0);
+      await results.getByRole('button', { name: /^Forget OTA alias for/ }).click();
+      await page.getByRole('alertdialog').getByRole('button', { name: 'Forget alias', exact: true }).click();
+      await expect(workspace.getByText('OTA alias forgotten.', { exact: true })).toBeVisible();
+      await expect(workspace.getByText('No matching results.', { exact: true })).toBeVisible();
+      expect(requests.writes).toHaveLength(1);
+      expect(requests.writes[0].target).toEqual({ kind: 'talker_alias', radio_system_key: SYSTEM,
+        identity_key: 'v1-r-00001-001-1234', expected_alias: 'Portable 12' });
+      expect(requests.previews).toHaveLength(0);
+      expect(requests.results).toContainEqual(expect.objectContaining({ dataType: 'talker_aliases', q: 'Portable 12', offset: 0 }));
+      await workspace.getByRole('button', { name: 'Radio IDs', exact: true }).click();
+      await expect(workspace.locator('.retained-statistics-result-count')).toHaveText('30 results');
+      await expect(results.locator('td[data-label="Calls"]').first()).toBeVisible();
+    });
+}
+
+test('OTA alias failures preserve the target and changed names require a fresh choice', async ({ page }) => {
+  const requests = await openStatistics(page, { deletionFailsOnce: true, aliasChanged: true });
+  const workspace = page.locator('.retained-statistics-page');
+  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  await workspace.getByRole('button', { name: 'OTA Alias', exact: true }).click();
+  await workspace.getByRole('searchbox', { name: 'Search results' }).fill('Portable 12');
+  await workspace.getByRole('button', { name: /^Forget OTA alias for Engine 12/ }).click();
+  const dialog = page.getByRole('alertdialog');
+  await dialog.getByRole('button', { name: 'Forget alias', exact: true }).click();
+  await expect(dialog).toContainText('Cleanup unavailable');
+  await expect(dialog.getByRole('button', { name: 'Forget alias', exact: true })).toBeEnabled();
+  await dialog.getByRole('button', { name: 'Forget alias', exact: true }).click();
+  await expect(workspace).toContainText('The OTA alias changed or was already cleared.');
+  await expect(workspace.getByRole('button', { name: /^Forget OTA alias for Engine 12/ })).toBeVisible();
+  expect(requests.writes).toHaveLength(2);
+  expect(requests.writes[1]).toEqual(requests.writes[0]);
+  expect(requests.previews).toHaveLength(0);
+});
+
+test('OTA alias submission stays locked and an expired job requires a new confirmation', async ({ page }) => {
+  const requests = await openStatistics(page, { holdDeletion: true });
+  const workspace = page.locator('.retained-statistics-page');
+  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  await workspace.getByRole('button', { name: 'OTA Alias', exact: true }).click();
+  await workspace.getByRole('searchbox', { name: 'Search results' }).fill('Portable 12');
+  await workspace.getByRole('button', { name: /^Forget OTA alias for Engine 12/ }).click();
+  const dialog = page.getByRole('alertdialog');
+  await dialog.getByRole('button', { name: 'Forget alias', exact: true }).click();
+  await expect(dialog.getByRole('button', { name: 'Forget alias', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  requests.forgetJob();
+  requests.releaseDeletion();
+  await expect(workspace).toContainText('Action status is no longer available.');
+  expect(requests.writes).toHaveLength(1);
+  await workspace.getByRole('button', { name: /^Forget OTA alias for Engine 12/ }).click();
+  await expect(page.getByRole('alertdialog').getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
+  expect(requests.writes).toHaveLength(1);
+});
+
+test('cleanup radio and talkgroup links open detail pages in a new tab', async ({ page }) => {
+  await openStatistics(page);
+  const workspace = page.locator('.retained-statistics-page');
+  await workspace.getByRole('combobox', { name: 'Radio system' }).selectOption(SYSTEM);
+  for (const [type, view] of [['Radio IDs', 'radio'], ['Talkgroups', 'group-identity']]) {
+    await workspace.getByRole('button', { name: type, exact: true }).click();
+    await workspace.getByRole('searchbox', { name: 'Search results' }).fill('Engine 12');
+    const link = workspace.locator('.retained-statistics-table').getByRole('link', { name: 'Engine 12' });
+    await expect(link).toHaveAttribute('href', new RegExp(`view=${view}(?:&|$)`));
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+    const [popup] = await Promise.all([page.waitForEvent('popup'), link.click()]);
+    await expect(popup).toHaveURL(new RegExp(`view=${view}(?:&|$)`));
+    await popup.close();
+    await expect(page).toHaveURL(/view=admin&tab=retained-statistics/);
+  }
 });
 
 async function openRadioDeletion(page, options = {}, { conventional = false,

@@ -11,7 +11,9 @@
 package io.github.dsheirer.stats;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
@@ -157,6 +159,61 @@ class RetainedStatisticsCatalogPresentationTest
             "Engine 12", 10, 0).totalCount());
         assertEquals(2, mCatalog.results("radio_system", METRO, "radios", null,
             null, 10, 0).totalCount(), "the conventional P25 channel shares a list, not identities");
+    }
+
+    @Test
+    void otaAliasesFilterSavedRadioNamesBeforePagingAndKeepForgetOnlyTargets() throws Exception
+    {
+        try(Connection connection = StatsPairedTestDatabase.open(mDirectory.resolve("retained-presentation.sqlite"));
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("""
+                UPDATE radio_system_identity_summary SET last_talker_alias=CASE id
+                  WHEN 7101 THEN 'North Engine' WHEN 7102 THEN 'North Support'
+                  WHEN 7103 THEN 'Not a radio' WHEN 7201 THEN 'County Engine' END,
+                  last_talker_alias_seen_ms=4000
+                """);
+            statement.executeUpdate("""
+                INSERT INTO radio_system_identity_summary(id,radio_system_id,identity_kind_code,home_wacn,
+                    home_system_id,identity_id,first_seen_ms,last_seen_ms,last_talker_alias,
+                    last_talker_alias_seen_ms) VALUES
+                  (7110,71,2,0xBEE00,0x49F,100,1000,4000,NULL,NULL)
+                """);
+        }
+        RetainedStatisticsCatalog.Page first = mCatalog.results("radio_system", METRO,
+            "talker_aliases", null, null, 1, 0);
+        assertEquals(2, first.totalCount(), "only saved nonblank radio OTA aliases belong in this catalog");
+        assertTrue(first.hasMore());
+        assertEquals(1, first.nextOffset());
+        Map<String,Object> engine = first.rows().getFirst();
+        assertEquals("Engine 12", engine.get("alias_name"));
+        assertEquals("North Engine", engine.get("last_talker_alias"));
+        assertEquals(4000, number(engine, "last_talker_alias_seen_ms"));
+        assertEquals(Map.of("kind", "talker_alias", "radio_system_key", METRO,
+            "identity_key", "v1-r-bee00-49f-202", "expected_alias", "North Engine"), engine.get("target"));
+        assertFalse(engine.containsKey("available_parts"), "forgetting a name has no statistics deletion parts");
+        assertEquals(Map.of("kind", "radio", "radio_system_key", METRO,
+            "identity_key", "v1-r-bee00-49f-202"), engine.get("entity_ref"));
+
+        RetainedStatisticsCatalog.Page second = mCatalog.results("radio_system", METRO,
+            "talker_aliases", null, null, 1, 1);
+        assertEquals("North Support", second.rows().getFirst().get("last_talker_alias"));
+        assertFalse(second.hasMore());
+        for(String search: java.util.List.of("North Support", "Support radios", "303"))
+        {
+            RetainedStatisticsCatalog.Page searched = mCatalog.results("radio_system", METRO,
+                "talker_aliases", null, search, 1, 0);
+            assertEquals(1, searched.totalCount(), "name and ID search must run before LIMIT");
+            assertEquals("North Support", searched.rows().getFirst().get("last_talker_alias"));
+        }
+        assertEquals(0, mCatalog.results("radio_system", METRO, "talker_aliases", null,
+            "County Engine", 10, 0).totalCount());
+        assertEquals("County Engine", mCatalog.results("radio_system", COUNTY, "talker_aliases", null,
+            null, 10, 0).rows().getFirst().get("last_talker_alias"));
+        assertThrows(StatsApiException.class, () -> mCatalog.results("saved_channel", DMR_CONVENTIONAL,
+            "talker_aliases", null, null, 10, 0));
+        assertThrows(StatsApiException.class, () -> mCatalog.results("radio_system", METRO,
+            "talker_aliases", METRO_SITE, null, 10, 0));
     }
 
     @Test

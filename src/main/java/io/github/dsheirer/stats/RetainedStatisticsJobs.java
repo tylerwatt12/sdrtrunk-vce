@@ -114,7 +114,9 @@ final class RetainedStatisticsJobs implements AutoCloseable
             if(failure != null || result == null)
             {
                 job.state = "failed";
-                job.error = request.progress().resumable() ?
+                job.error = request.deletionTarget() instanceof StatsDatabaseMaintenanceRequest.TalkerAlias ?
+                    "The OTA alias could not be forgotten. Refresh the results and try again." :
+                    request.progress().resumable() ?
                     "Cleanup stopped. Resume to delete the remaining records." :
                     "Cleanup failed. Refresh the results and try again.";
             }

@@ -1,84 +1,34 @@
 'use strict';
 
 const { test, expect } = require('@playwright/test');
-const path = require('node:path');
 const { installSiteStyleApplication, systemKey, radioKey } = require('./fixtures/site-style-app.cjs');
 const { presentations } = require('./fixtures/site-style-cases.cjs');
 const { expectNoHorizontalOverflow } = require('./fixtures/metric-geometry.cjs');
 
 for (const presentation of presentations) {
-  test(`forget OTA alias waits for completion ${presentation.name}`, async ({ page }) => {
+  test(`radio details keep the OTA alias read only ${presentation.name}`, async ({ page }) => {
     await page.setViewportSize(presentation.viewport);
     const fixture = await installSiteStyleApplication(page, presentation.theme);
-    let alias = 'Observed unit name', submitted = null, finished = false, failed = false;
-    let statusCode = 200, postCount = 0;
+    const deletions = [];
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.startsWith('/api/v1/admin/retained-statistics/deletions'))
+        deletions.push(request);
+    });
     await page.route('**/api/v1/radio-systems/**/radios/**', route => route.fulfill({ json: { data: {
       protocol: 'P25', radio_system_key: systemKey, identity_key: radioKey, native_id: 30914,
-      alias_name: 'Engine 4', last_talker_alias: alias, system_name: 'Metro Public Safety',
+      alias_name: 'Engine 4', last_talker_alias: 'Observed unit name', system_name: 'Metro Public Safety',
       logical_call_count: 17, groups: 1, capabilities: { talker_aliases: true },
       entity_ref: { kind: 'radio', radio_system_key: systemKey, identity_key: radioKey }
     } } }));
-    await page.route('**/api/v1/admin/retained-statistics/deletions**', route => {
-      if (route.request().method() === 'POST') {
-        submitted = route.request().postDataJSON();
-        postCount += 1;
-      } else if (statusCode !== 200) {
-        return route.fulfill({ status: statusCode, json: { error: { message: 'Job status unavailable.' } } });
-      }
-      const state = failed ? 'failed' : finished ? 'succeeded' : 'running';
-      if (finished) alias = null;
-      return route.fulfill({ json: { data: { job_id: submitted.request_id, state, error: failed ? 'Alias update failed.' : null, outcome: finished ? 'deleted' : null } } });
-    });
     await page.goto(`/app.html?view=radio&radio_system_key=${encodeURIComponent(systemKey)}&identity_key=${radioKey}`);
-    const forget = page.getByRole('button', { name: 'Forget OTA alias', exact: true });
-    await expect(forget).toBeVisible();
-    await forget.click();
-    const confirmation = page.getByRole('alertdialog', { name: 'Forget OTA alias?' });
-    await expect(confirmation).toContainText('Activity history stays.');
-    await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
-    await expectNoHorizontalOverflow(page, '#content');
-    if (process.env.WEB_REVIEW_DIR) await page.screenshot({ path: path.join(process.env.WEB_REVIEW_DIR,
-      `ota-alias-confirm-${presentation.name}.png`), fullPage: true });
-    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
-    expect(submitted).toBeNull();
-    await forget.click();
-    await confirmation.getByRole('button', { name: 'Forget alias', exact: true }).click();
-    await expect(forget).toBeDisabled();
-    await expect(page.getByRole('status').filter({ hasText: 'Forgetting OTA alias' })).toBeVisible();
-    await expect.poll(() => submitted).not.toBeNull();
-    expect(submitted.target).toEqual({ kind: 'talker_alias', radio_system_key: systemKey,
-      identity_key: radioKey, expected_alias: 'Observed unit name' });
-    const firstRequest = submitted.request_id;
-    failed = true;
-    const retry = page.getByRole('button', { name: 'Retry forgetting alias', exact: true });
-    await expect(retry).toBeEnabled();
-    await expect(page.getByRole('alert').filter({ hasText: 'Alias update failed.' })).toBeVisible();
-    failed = false;
-    await retry.click();
-    await confirmation.getByRole('button', { name: 'Forget alias', exact: true }).click();
-    await expect.poll(() => submitted.request_id).not.toBe(firstRequest);
-    await expect(retry).toBeDisabled();
-    const secondRequest = submitted.request_id;
-    statusCode = 503;
-    const check = page.getByRole('button', { name: 'Check alias action', exact: true });
-    await expect(check).toBeEnabled();
-    statusCode = 404;
-    await check.click();
-    await expect(retry).toBeEnabled();
-    await expect(page.getByRole('alert')).toContainText('Action status is no longer available.');
-    expect(postCount).toBe(2);
-    statusCode = 200;
-    await retry.click();
-    await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
-    await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
-    expect(postCount).toBe(2);
-    await retry.click();
-    await confirmation.getByRole('button', { name: 'Forget alias', exact: true }).click();
-    await expect.poll(() => submitted.request_id).not.toBe(secondRequest);
-    expect(postCount).toBe(3);
-    finished = true;
-    await expect(page.getByRole('button', { name: /forgetting alias|Forget OTA alias/ })).toHaveCount(0);
+    await expect(page.getByText('Observed unit name', { exact: true })).toBeVisible();
+    await expect(page.locator('#content')).toContainText('Talker Alias');
+    await expect(page.locator('#content')).toContainText('Engine 4');
     await expect(page.locator('#content')).toContainText('17');
+    await expect(page.getByRole('button', { name: /forget.*alias/i })).toHaveCount(0);
+    await expect(page.getByRole('alertdialog')).toHaveCount(0);
+    await expectNoHorizontalOverflow(page, '#content');
+    expect(deletions).toEqual([]);
     expect(fixture.pageErrors).toEqual([]);
     expect(fixture.unexpected).toEqual([]);
   });

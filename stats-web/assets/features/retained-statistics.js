@@ -45,7 +45,7 @@ const TYPE_GROUPS = Object.freeze({
       ['control_quality', 'Control quality']
     ] },
     { label: 'Identities & summaries', types: [
-      ['radios', 'Radio IDs'], ['talkgroups', 'Talkgroups'],
+      ['radios', 'Radio IDs'], ['talker_aliases', 'OTA Alias'], ['talkgroups', 'Talkgroups'],
       ['relationships', 'Radio relationships'], ['affiliations', 'Affiliations & presence']
     ] },
     { label: 'Activity & history', types: [
@@ -529,6 +529,7 @@ export function createRetainedStatisticsWorkspace(deps) {
   }
 
   function resultsTable() {
+    const otaAliases = state.type === 'talker_aliases';
     const identity = ['radios', 'talkgroups'].includes(state.type);
     const numeric = (...names) => ({ id: names[0], label: names[names.length - 1],
       className: 'numeric', sortable: false, render: (row) => {
@@ -546,7 +547,12 @@ export function createRetainedStatisticsWorkspace(deps) {
           state.type === 'frequencies' ? 'Frequency' : 'Item',
     (row) => state.type === 'alias_activity' ? renderAlias(row) : renderItem(row));
     let columns = [item];
-    if (state.type === 'band_plans' || state.type === 'foreign_band_plans') {
+    if (otaAliases) {
+      columns = [field('ota-alias', 'OTA Alias', (row) => row.last_talker_alias),
+        field('radio', 'Radio', (row) => renderItem({ ...row, last_talker_alias: null })),
+        field('alias-list', 'Alias list', (row) => renderAliasList(row) || '—'),
+        field('alias-seen', 'Last received', (row) => formatDateTime(row.last_talker_alias_seen_ms) || '—')];
+    } else if (state.type === 'band_plans' || state.type === 'foreign_band_plans') {
       columns.push(field('base', 'Base MHz', (row) => mhz(row.base_hz) || '—'),
         field('spacing', 'Space kHz', (row) => row.spacing_hz == null ? '—' :
           formatNumber(Number(row.spacing_hz) / 1000)));
@@ -595,11 +601,12 @@ export function createRetainedStatisticsWorkspace(deps) {
     }
     columns.splice(1, 0, { id: 'action', label: 'Action', render: (row) => {
       const resetActivity = row.target?.source_kind === 'alias_activity';
-      const action = button(resetActivity ? 'Reset…' : 'Delete…', () => reviewRow(row),
+      const action = button(otaAliases ? 'Forget OTA alias' : resetActivity ? 'Reset…' : 'Delete…', () => reviewRow(row),
         'ui-button ui-button-danger');
       action.disabled = busyWithJob() || row.target?.kind === 'scoped_data' &&
         !selectedPartsFor(row).length;
-      action.setAttribute('aria-label', `${resetActivity ? 'Reset activity' : 'Delete statistics'} for ${row.label || 'item'}`);
+      action.setAttribute('aria-label', `${otaAliases ? 'Forget OTA alias' : resetActivity ?
+        'Reset activity' : 'Delete statistics'} for ${row.label || 'item'}`);
       return action;
     }, sortable: false });
     return table(state.resultRows, columns, 'No matching results', {
@@ -692,6 +699,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     }
     resultSearch.placeholder = ({ frequencies: 'Frequency in MHz or Hz',
       radios: 'Radio alias, over-the-air name, or ID', talkgroups: 'Talkgroup alias or ID',
+      talker_aliases: 'OTA alias, configured alias, or radio ID',
       band_plans: 'Band or base MHz', foreign_band_plans: 'Foreign system or band',
       alias_activity: 'Alias name or list' })[state.type] || 'Search results';
     resultSearchForm.hidden = ['all', 'issi_assignment_history'].includes(state.type);
@@ -1011,19 +1019,25 @@ export function createRetainedStatisticsWorkspace(deps) {
 
   function reviewRow(row) {
     if (busyWithJob()) return;
+    if (state.type === 'talker_aliases' && row.target?.kind !== 'talker_alias') {
+      jobNotice.replaceChildren(feedback('The OTA alias could not be read. Refresh the results and try again.', 'error'));
+      return;
+    }
     if (row.target?.kind === 'scoped_data') return reviewScopedRow(row);
+    const forgetAlias = row.target?.kind === 'talker_alias';
     const body = node('div', 'retained-statistics-review editor-workspace');
     const summary = node('div', 'ui-fact retained-statistics-review-target');
     summary.append(node('strong', '', row.label || 'Selected item'));
     if (row.detail) summary.append(node('small', 'muted', row.detail));
     appendSystemIdentityFacts(summary, row);
     const impact = node('p', 'retained-statistics-impact');
-    const reappearance = node('div', 'ui-notice ui-notice-warning',
-      'Receiving continues; deleted rows may return. Alias Activity totals may remain.');
+    const reappearance = node('div', forgetAlias ? 'ui-notice' : 'ui-notice ui-notice-warning',
+      forgetAlias ? 'Future traffic can teach this name again.' :
+        'Receiving continues; deleted rows may return. Alias Activity totals may remain.');
     const errorHost = node('div', 'retained-statistics-review-error');
     errorHost.setAttribute('role', 'alert');
     const cancel = button('Cancel');
-    const confirm = button('Delete statistics', null, 'ui-button ui-button-danger');
+    const confirm = button(forgetAlias ? 'Forget alias' : 'Delete statistics', null, 'ui-button ui-button-danger');
     const footer = modalFooter(cancel, confirm);
     footer.classList.add('retained-statistics-review-actions');
     let includeChannelHistory = false;
@@ -1057,7 +1071,9 @@ export function createRetainedStatisticsWorkspace(deps) {
     body.append(impact, reappearance, errorHost, footer);
 
     function drawReview() {
-      impact.textContent = removalImpact(row, includeChannelHistory);
+      impact.textContent = forgetAlias ?
+        `Forget “${row.last_talker_alias}” for this radio? Radio identity, configured aliases and activity history stay.` :
+        removalImpact(row, includeChannelHistory);
       const old = body.querySelector('.retained-statistics-phrase');
       old?.remove();
       phraseInput = null;
@@ -1085,7 +1101,7 @@ export function createRetainedStatisticsWorkspace(deps) {
       if (confirm.disabled || !modal) return;
       modal.setBusy(true);
       confirm.disabled = true;
-      errorHost.replaceChildren(feedback('Starting deletion…', 'loading'));
+      errorHost.replaceChildren(feedback(forgetAlias ? 'Forgetting OTA alias…' : 'Starting deletion…', 'loading'));
       try {
         if (!submittedTarget) {
           submittedTarget = targetForRemoval(row, includeChannelHistory);
@@ -1108,27 +1124,35 @@ export function createRetainedStatisticsWorkspace(deps) {
           label: [selectedSource()?.label, selectedSite()?.label].filter(Boolean).join(' · ') };
         rememberJob();
         drawJob();
-        void pollJob();
+        if (busyWithJob()) void pollJob();
+        else void loadResults();
       } catch (error) {
         if (state.disposed || error?.name === 'AbortError') return;
         if (error?.status === 409) {
           modal.setBusy(false);
-          errorHost.replaceChildren(feedback('Deletion request conflicted. Close this dialog and choose the item again.',
+          errorHost.replaceChildren(feedback(forgetAlias ?
+            'The request conflicted. Close this dialog and choose the radio again.' :
+            'Deletion request conflicted. Close this dialog and choose the item again.',
             'error'));
           confirm.disabled = true;
           return;
         }
-        errorHost.replaceChildren(feedback(error.message || 'Deletion could not be started.', 'error'));
+        errorHost.replaceChildren(feedback(error.message || (forgetAlias ?
+          'The OTA alias could not be forgotten. Try again.' : 'Deletion could not be started.'), 'error'));
         modal.setBusy(false);
         updateConfirm();
       }
     });
-    modal = openReadOnlyModal(`Delete ${row.label || 'item'}?`, body, {
+    modal = openReadOnlyModal(forgetAlias ? 'Forget OTA alias?' : `Delete ${row.label || 'item'}?`, body, {
       id: 'retained-statistics-review', className: 'retained-statistics-modal',
       returnFocusSelector: '.retained-statistics-result-count'
     });
     if (!modal) return;
     drawReview();
+    if (forgetAlias) {
+      modal.dialog.setAttribute('role', 'alertdialog');
+      modal.focus(cancel);
+    }
   }
 
   function rememberJob() {
@@ -1186,33 +1210,38 @@ export function createRetainedStatisticsWorkspace(deps) {
     if (!state.job) return;
     const stateName = String(state.job.state || '').toLowerCase();
     const resetActivity = state.jobTarget?.source_kind === 'alias_activity';
-    if (state.jobTarget?.data_type) {
+    const forgetAlias = state.jobTarget?.kind === 'talker_alias';
+    if (forgetAlias || state.jobTarget?.data_type) {
       const sourceName = state.jobSource?.label || (state.sourceKind === state.jobTarget.source_kind ?
         state.sourceRows.find((row) => row.source_key === state.jobTarget.source_key)?.label : '');
-      const context = state.job.label || [sourceName, typeLabel(state.jobTarget.source_kind, state.jobTarget.data_type)]
+      const context = state.job.label || [sourceName, forgetAlias ? 'OTA Alias' :
+        typeLabel(state.jobTarget.source_kind, state.jobTarget.data_type)]
         .filter(Boolean).join(' · ');
       jobNotice.append(node('strong', '', context));
     }
     const deleted = Number(state.job.rows_deleted ?? 0);
     const total = Number(state.job.rows_total);
     const hasProgress = Number.isFinite(total) && total > 0;
-    const progress = hasProgress ? `${formatNumber(deleted)}${stateName === 'succeeded' ? '' :
+    const progress = hasProgress && !forgetAlias ? `${formatNumber(deleted)}${stateName === 'succeeded' ? '' :
       ` of ${formatNumber(total)}`} records ${resetActivity ? 'reset' : 'deleted'}` : '';
-    if (stateName === 'queued') jobNotice.append(feedback(resetActivity ? 'Activity reset queued…' :
+    if (stateName === 'queued') jobNotice.append(feedback(forgetAlias ? 'Forgetting OTA alias…' : resetActivity ? 'Activity reset queued…' :
       'Deletion queued…', 'loading'));
-    else if (stateName === 'running') jobNotice.append(feedback(resetActivity ? 'Resetting activity…' :
+    else if (stateName === 'running') jobNotice.append(feedback(forgetAlias ? 'Forgetting OTA alias…' : resetActivity ? 'Resetting activity…' :
       'Deleting statistics…', 'loading'));
     else if (stateName === 'cancelling') jobNotice.append(feedback('Stopping after the current batch…', 'loading'));
-    else if (stateName === 'cancelled') jobNotice.append(feedback('Cleanup stopped. Deleted records stay deleted.'));
+    else if (stateName === 'cancelled') jobNotice.append(feedback(forgetAlias ? 'The OTA alias action was stopped.' :
+      'Cleanup stopped. Deleted records stay deleted.'));
     else if (stateName === 'succeeded') {
       const message = state.job.outcome === 'stale_site' ? 'Site changed. Choose it again.' :
         state.job.outcome === 'too_large' ?
           'This receiver needs an update to clean up large selections.' :
-          state.job.outcome === 'not_found' ? 'The item was already gone.' :
-            resetActivity ? 'Activity reset.' : 'Statistics deleted.';
+          state.job.outcome === 'not_found' ? (forgetAlias ?
+            'The OTA alias changed or was already cleared. Refresh the results before trying again.' :
+            'The item was already gone.') :
+            forgetAlias ? 'OTA alias forgotten.' : resetActivity ? 'Activity reset.' : 'Statistics deleted.';
       jobNotice.append(feedback(message));
     } else if (stateName === 'failed') {
-      jobNotice.append(feedback(state.job.error || (resetActivity ? 'Activity reset failed. Try again.' :
+      jobNotice.append(feedback(state.job.error || (forgetAlias ? 'The OTA alias could not be forgotten. Try again.' : resetActivity ? 'Activity reset failed. Try again.' :
         'Deletion failed. Try again.'), 'error'));
     }
     if (progress) jobNotice.append(node('strong', 'retained-statistics-job-progress', progress));
@@ -1220,7 +1249,7 @@ export function createRetainedStatisticsWorkspace(deps) {
     if (retained > 0) jobNotice.append(node('small', 'muted',
       `${formatNumber(retained)} record${retained === 1 ? '' : 's'} kept because ${
         retained === 1 ? 'it changed' : 'they changed'} during cleanup.`));
-    if (state.job.cutoff_ms && !resetActivity) {
+    if (state.job.cutoff_ms && !resetActivity && !forgetAlias) {
       const cutoff = node('small', 'muted');
       cutoff.append('New observations after ', formatDateTime(state.job.cutoff_ms), ' are kept.');
       jobNotice.append(cutoff);
@@ -1285,15 +1314,18 @@ export function createRetainedStatisticsWorkspace(deps) {
     } catch (error) {
       if (state.disposed || generation !== state.jobRequest || error?.name === 'AbortError') return;
       if (error.status === 404) {
+        const forgetAlias = state.jobTarget?.kind === 'talker_alias';
         state.job = null;
         rememberJob();
         jobNotice.replaceChildren(feedback(
-          'Cleanup status is no longer available. Choose the same data again to delete any remaining records.',
+          forgetAlias ? 'Action status is no longer available. Refresh the results to check the OTA alias before trying again.' :
+            'Cleanup status is no longer available. Choose the same data again to delete any remaining records.',
           'error'));
         drawResults();
         return;
       }
-      jobNotice.replaceChildren(feedback(state.jobTarget?.source_kind === 'alias_activity' ?
+      jobNotice.replaceChildren(feedback(state.jobTarget?.kind === 'talker_alias' ?
+        'OTA alias action status is unavailable.' : state.jobTarget?.source_kind === 'alias_activity' ?
         'Activity reset status is unavailable.' : 'Deletion status is unavailable.', 'error'),
         button('Retry status', () => void pollJob()));
     }

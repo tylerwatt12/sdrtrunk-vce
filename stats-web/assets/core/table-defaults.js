@@ -91,6 +91,10 @@ const TABLE_DEFAULTS = Object.freeze({
     grow: ['home-system', 'observed-on']
   },
   'retained-statistics-v3': RETAINED_DEFAULTS,
+  'retained-statistics-v3.radio_system.talker_aliases': {
+    widths: { 'ota-alias': 240, action: 160, radio: 220, 'alias-list': 210, 'alias-seen': 174 },
+    grow: ['ota-alias', 'radio']
+  },
   'retained-statistics-v3.radio_system.frequencies': RETAINED_FREQUENCIES,
   'retained-statistics-v3.saved_channel.frequencies': RETAINED_FREQUENCIES,
   'retained-statistics-v3.radio_system.band_plans': RETAINED_BANDS,

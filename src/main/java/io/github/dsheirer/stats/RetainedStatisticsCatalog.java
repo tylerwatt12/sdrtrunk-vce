@@ -257,7 +257,7 @@ final class RetainedStatisticsCatalog
         requireSourceKind(sourceKind);
         requireKey(sourceKey, "source_key");
         if(!SCOPED_DATA_TYPES.contains(dataType) &&
-            !List.of("frequencies", "radios", "talkgroups", "sites", "channels", "systems")
+            !List.of("frequencies", "radios", "talkgroups", "talker_aliases", "sites", "channels", "systems")
                 .contains(dataType))
         {
             throw invalid("data_type", "Select a supported data type");
@@ -295,6 +295,7 @@ final class RetainedStatisticsCatalog
                     siteConfigurationId, dataType, search, limit, offset);
                 case "neighbors", "patches" -> siteFacts(connection, sourceKind, sourceKey,
                     siteConfigurationId, dataType, search, limit, offset);
+                case "talker_aliases" -> identities(connection, sourceKey, dataType, search, limit, offset);
                 case "radios", "talkgroups" -> "radio_system".equals(sourceKind) ?
                     identities(connection, sourceKey, dataType, search, limit, offset) :
                     conventionalIdentities(connection, sourceKey, dataType, search, limit, offset);
@@ -942,7 +943,8 @@ final class RetainedStatisticsCatalog
     private static Page identities(Connection connection, String systemKey, String dataType,
                                    String search, int limit, int offset) throws SQLException
     {
-        int kind = "radios".equals(dataType) ? 2 : 1;
+        boolean talkerAliases = "talker_aliases".equals(dataType);
+        int kind = "radios".equals(dataType) || talkerAliases ? 2 : 1;
         StringBuilder sql = new StringBuilder("SELECT summary.id AS identity_summary_id, " +
             "summary.identity_id AS native_id, system.system_key AS radio_system_key, " +
             "system.protocol_code, CASE system.protocol_code WHEN 1 THEN 'P25' " +
@@ -952,13 +954,17 @@ final class RetainedStatisticsCatalog
             "THEN 'nxdn_type_c' END AS address_domain, " +
             SYSTEM_LABEL + " AS radio_system_name, " +
             "summary.home_wacn, " +
-            "summary.home_system_id, summary.last_talker_alias, summary.last_seen_ms, " +
+            "summary.home_system_id, summary.last_talker_alias, summary.last_talker_alias_seen_ms, summary.last_seen_ms, " +
             "summary.logical_call_count, summary.logical_call_count AS observation_count, " +
             IDENTITY_KEY_SQL + " AS identity_key " +
             "FROM radio_system_identity_summary summary JOIN radio_system system " +
             "ON system.id=summary.radio_system_id WHERE system.system_key=? " +
             "AND summary.identity_kind_code=?");
         List<Object> parameters = new ArrayList<>(List.of(systemKey, kind));
+        if(talkerAliases)
+        {
+            sql.append(" AND nullif(trim(summary.last_talker_alias),'') IS NOT NULL");
+        }
         StatsIdentitySearch.append(sql, parameters, systemKey, search, kind == 2 ? "RADIO_ID" : "TALKGROUP",
             kind == 2);
         long total = count(connection, "SELECT COUNT(*) FROM (" + sql + ")", parameters);
@@ -995,10 +1001,18 @@ final class RetainedStatisticsCatalog
             WebEntityRef.put(row, kind == 2 ? WebEntityRef.radio(systemKey,
                 String.valueOf(row.get("identity_key"))) : WebEntityRef.talkgroup(systemKey,
                 String.valueOf(row.get("identity_key"))));
-            List<String> parts = partsFor("radio_system", dataType);
-            row.put("available_parts", parts);
-            row.put("target", scopedTarget("radio_system", systemKey, null, null,
-                dataType, String.valueOf(row.get("identity_key")), parts));
+            if(talkerAliases)
+            {
+                row.put("target", Map.of("kind", "talker_alias", "radio_system_key", systemKey,
+                    "identity_key", row.get("identity_key"), "expected_alias", row.get("last_talker_alias")));
+            }
+            else
+            {
+                List<String> parts = partsFor("radio_system", dataType);
+                row.put("available_parts", parts);
+                row.put("target", scopedTarget("radio_system", systemKey, null, null,
+                    dataType, String.valueOf(row.get("identity_key")), parts));
+            }
         }
         return page(rows, limit, offset, total);
     }

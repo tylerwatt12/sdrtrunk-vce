@@ -151,6 +151,39 @@ class RetainedStatisticsAdminHttpControllerTest
     }
 
     @Test
+    void otaAliasCatalogReturnsAnExactForgetTargetAcceptedByTheExistingJobRoute() throws Exception
+    {
+        try(Connection connection = StatsPairedTestDatabase.open(mDatabase);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE radio_system_identity_summary " +
+                "SET last_talker_alias='Observed Unit',last_talker_alias_seen_ms=4000 WHERE id=7102");
+        }
+        Session admin = login();
+        String base = RetainedStatisticsAdminHttpController.PATH;
+        String path = base + "/results?source_kind=radio_system&source_key=" + SYSTEM +
+            "&data_type=talker_aliases&q=Observed&limit=1&offset=0";
+        assertEquals(401, send(request(path).GET()).statusCode());
+        HttpResponse<String> response = send(request(path).header("Cookie", admin.cookie()).GET());
+        assertEquals(200, response.statusCode(), response.body());
+        JsonNode target = json(response).at("/data/0/target");
+        assertEquals("talker_alias", target.path("kind").textValue());
+        assertEquals("Observed Unit", target.path("expected_alias").textValue());
+        assertEquals(4000, json(response).at("/data/0/last_talker_alias_seen_ms").longValue());
+        assertFalse(target.has("parts"));
+        String requestId = UUID.randomUUID().toString();
+        String body = MAPPER.writeValueAsString(Map.of("request_id", requestId,
+            "target", target));
+        assertEquals(202, send(mutation(base + "/deletions", admin)
+            .POST(HttpRequest.BodyPublishers.ofString(body))).statusCode());
+        assertEquals(new StatsDatabaseMaintenanceRequest.TalkerAlias(SYSTEM,
+            "v1-r-bee00-49f-202", "Observed Unit"), mDispatched.get().deletionTarget());
+        mDispatched.get().result().completeExceptionally(new IllegalStateException("test failure"));
+        assertEquals("The OTA alias could not be forgotten. Refresh the results and try again.",
+            mJobs.snapshot(requestId).get("error"));
+    }
+
+    @Test
     void otaAliasActionUsesExactRadioAndRetryAdmission() throws Exception
     {
         Session admin = login();
