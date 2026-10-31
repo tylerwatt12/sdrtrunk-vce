@@ -1507,6 +1507,147 @@ class StatsWebCallServiceTest
         assertFalse(Character.isHighSurrogate(bounded.charAt(bounded.length() - 1)));
     }
 
+    @Test
+    void scannerAliasContextUsesTheCapturedListAndExistingRangeOwner()
+    {
+        AliasListDefinition first = new AliasListDefinition("County", AliasListFamily.P25);
+        first.setId(10);
+        AliasListDefinition second = new AliasListDefinition("Other County", AliasListFamily.P25);
+        second.setId(20);
+        AliasList firstList = new AliasList(first);
+        firstList.addAlias(alias(101, "Dispatch range",
+            new io.github.dsheirer.alias.id.talkgroup.TalkgroupRange(Protocol.APCO25, 4300, 4500), first));
+        AliasList secondList = new AliasList(second);
+        secondList.addAlias(alias(201, "Different dispatch", new Talkgroup(Protocol.APCO25, 4400), second));
+        var firstCall = scannerCachedCall("call-a", withAliasList(call(), firstList));
+        var secondCall = scannerCachedCall("call-b", withAliasList(call(), secondList));
+        var context = StatsCallAliasHttpController.context(firstCall, "target");
+        assertEquals(true, context.get("available"));
+        assertEquals(10L, context.get("alias_list_id"));
+        assertEquals(101L, context.get("alias_id"), "The pencil edits the existing range, not a new exact override");
+        assertEquals(201L, StatsCallAliasHttpController.context(secondCall, "target").get("alias_id"));
+        firstList.addAlias(alias(102, "Exact dispatch", new Talkgroup(Protocol.APCO25, 4400), first));
+        assertEquals(102L, StatsCallAliasHttpController.context(firstCall, "target").get("alias_id"));
+    }
+
+    @Test
+    void scannerNewAliasContextBindsIdentityWithoutSupplyingUserFields()
+    {
+        AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(10);
+        var cached = scannerCachedCall("call-new", withAliasList(call(), new AliasList(definition)));
+        var context = StatsCallAliasHttpController.context(cached, "source");
+        assertEquals(true, context.get("available"));
+        assertNull(context.get("alias_id"));
+        assertEquals(Map.of("type", "radio", "protocol", "p25", "variant", "phase_1", "value", 9001),
+            context.get("matcher"));
+        assertFalse(context.containsKey("name"));
+        assertFalse(context.containsKey("recordable"));
+        assertFalse(context.containsKey("scan_list_ids"));
+        assertEquals(false, StatsCallAliasHttpController.context(scannerCachedCall("call-unowned", call()),
+            "source").get("available"));
+    }
+
+    @Test
+    void scannerAliasContextAcceptsNxdnGroupZeroWithoutAcceptingRadioZero()
+    {
+        AliasListDefinition definition = new AliasListDefinition("NXDN", AliasListFamily.NXDN);
+        definition.setId(10);
+        AliasList list = new AliasList(definition);
+        var nxdn = withAliasList(call(
+            io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier.createTo(0)), list);
+        var cached = scannerCachedCall("nxdn-zero", nxdn);
+        var context = StatsCallAliasHttpController.context(cached, "target");
+        assertEquals(true, context.get("available"));
+        assertNull(context.get("alias_id"));
+        assertEquals(Map.of("type", "talkgroup", "protocol", "nxdn", "value", 0), context.get("matcher"));
+        list.addAlias(alias(101, "Group zero", new Talkgroup(Protocol.NXDN, 0), definition));
+        assertEquals(101L, StatsCallAliasHttpController.context(cached, "target").get("alias_id"));
+
+        List<Identifier> identifiers = new ArrayList<>(nxdn.snapshot().identifierCollection().getIdentifiers());
+        identifiers.removeIf(identifier -> identifier.getRole() == Role.FROM);
+        identifiers.add(io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier.createFrom(0));
+        var radioZero = withIdentifiers(nxdn, new IdentifierCollection(identifiers), null);
+        assertEquals(false, StatsCallAliasHttpController.context(scannerCachedCall("radio-zero", radioZero),
+            "source").get("available"));
+        assertEquals(false, StatsCallAliasHttpController.context(scannerCachedCall("p25-zero",
+            withAliasList(call(APCO25Talkgroup.create(0)), list)), "target").get("available"));
+    }
+
+    @Test
+    void scannerCanonicalRadioContextKeepsPermanentIdentityAndItsWinningAlias()
+    {
+        AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(10);
+        AliasList list = new AliasList(definition);
+        list.addAlias(alias(101, "Working address", new Radio(Protocol.APCO25, 130001), definition));
+        list.addAlias(alias(102, "Permanent subscriber",
+            new io.github.dsheirer.alias.id.radio.P25Subscriber(0xBEE00, 0x348, 9601699), definition));
+        var context = StatsCallAliasHttpController.context(
+            scannerCachedCall("canonical", withAliasList(canonicalRadioCall(), list)), "source");
+        assertEquals(102L, context.get("alias_id"));
+        assertEquals(Map.of("type", "p25_subscriber_identity", "home_wacn", 0xBEE00,
+            "home_system_id", 0x348, "subscriber_id", 9601699), context.get("matcher"));
+        CompletedAudioCall canonicalOnly = canonicalRadioCall();
+        List<Identifier> identifiers = new ArrayList<>(canonicalOnly.snapshot().identifierCollection().getIdentifiers());
+        identifiers.removeIf(identifier -> identifier.getRole() == Role.FROM);
+        identifiers.add(APCO25FullyQualifiedRadioIdentifier.createFrom(0, 0xBEE00, 0x348, 9601699));
+        var noWorkingAddress = withIdentifiers(canonicalOnly, new IdentifierCollection(identifiers), null);
+        assertEquals(102L, StatsCallAliasHttpController.context(scannerCachedCall("canonical-only",
+            withAliasList(noWorkingAddress, list)), "source").get("alias_id"));
+    }
+
+    @Test
+    void scannerPresentationRefreshClearsNamesWithoutChangingHistoricalCallsOrAudio()
+    {
+        AliasListDefinition definition = new AliasListDefinition("County", AliasListFamily.P25);
+        definition.setId(10);
+        Alias destination = alias(101, "Dispatch", new Talkgroup(Protocol.APCO25, 4400), definition);
+        Alias source = alias(102, "Unit", new Radio(Protocol.APCO25, 9001), definition);
+        AliasList list = new AliasList(definition);
+        list.addAliases(List.of(destination, source));
+        var completed = withAliasList(call(), list);
+        var cached = scannerCachedCall("retained", completed);
+        destination.setName("Renamed dispatch");
+        destination.setDescription("New description");
+        list.removeAlias(source);
+        var refreshed = StatsCallAliasHttpController.presentation(cached);
+        assertEquals("Renamed dispatch", refreshed.get("target_alias"));
+        assertEquals("New description", refreshed.get("target_description"));
+        assertTrue(refreshed.containsKey("source_alias"));
+        assertNull(refreshed.get("source_alias"));
+        assertNull(refreshed.get("source_description"));
+        assertEquals("Renamed dispatch", refreshed.get("playback_target_label"));
+        assertEquals("Dispatch", completed.snapshot().recordingMetadata().destinationAlias());
+        assertEquals(Map.of("serving_system_key", "p25:bee00:4a7"), cached.metadata());
+        assertArrayEquals(new byte[] {1, 2}, cached.wave());
+        assertEquals(1L, cached.cursor());
+        assertEquals(Set.of(10L), cached.scanListIds());
+    }
+
+    @Test
+    void scannerAliasRequestsBoundRetainedIdsAndRefuseAmbiguousParameters()
+    {
+        var cached = scannerCachedCall("retained", call());
+        StatsCallAliasHttpController controller = new StatsCallAliasHttpController(
+            id -> "retained".equals(id) ? cached : null);
+        assertEquals(1, ((List<?>)controller.read(URI.create(StatsCallAliasHttpController.PATH +
+            "/presentation?call_id=retained&call_id=retained&call_id=expired")).get("calls")).size());
+        assertEquals(404, assertThrows(StatsApiException.class, () -> controller.read(URI.create(
+            StatsCallAliasHttpController.PATH + "/expired?side=target"))).status());
+        for(String suffix: List.of("/retained?side=source&side=target", "/retained?side=other",
+            "/retained?side=source&extra=1", "/retained%2fother?side=target",
+            "/presentation?" + "call_id=retained&".repeat(128) + "call_id=retained"))
+            assertThrows(StatsApiException.class, () -> controller.read(URI.create(
+                StatsCallAliasHttpController.PATH + suffix)));
+    }
+
+    private static StatsWebCallService.CachedCall scannerCachedCall(String id, CompletedAudioCall call)
+    {
+        return new StatsWebCallService.CachedCall(1L, id, new byte[] {1, 2},
+            Map.of("serving_system_key", "p25:bee00:4a7"), Set.of(10L), null, 1000L, call.snapshot());
+    }
+
     private static StatsWebCallService started(StatsWebCallService service)
     {
         service.start();

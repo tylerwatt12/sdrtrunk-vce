@@ -14,7 +14,7 @@
 @import url("./styles/compositions/workspaces.css?v=40") layer(compositions);
 @import url("./styles/compositions/tables.css?v=20") layer(compositions);
 @import url("./styles/compositions/browsing.css?v=1") layer(compositions);
-@import url("./styles/compositions/app-chrome.css?v=23") layer(compositions);
+@import url("./styles/compositions/app-chrome.css?v=24") layer(compositions);
 @import url("./styles/compositions/audio-dock.css?v=28") layer(compositions);
 @import url("./styles/compositions/charts.css?v=10") layer(compositions);
 @import url("./styles/compositions/modals.css?v=29") layer(compositions);
@@ -30,7 +30,7 @@
 @import url("./styles/features/tuners.css?v=14") layer(features);
 @import url("./styles/features/listen-map.css?v=6") layer(features);
 @import url("./styles/features/network-visualizer.css?v=20") layer(features);
-@import url("./styles/features/scanner.css?v=16") layer(features);
+@import url("./styles/features/scanner.css?v=17") layer(features);
 @import url("./styles/features/aliases.css?v=25") layer(features);
 @import url("./styles/features/scan-lists.css?v=3") layer(features);
 @import url("./styles/features/dashboard.css?v=8") layer(features);

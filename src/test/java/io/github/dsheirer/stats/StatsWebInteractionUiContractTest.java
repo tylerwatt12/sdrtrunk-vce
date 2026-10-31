@@ -1360,7 +1360,7 @@ class StatsWebInteractionUiContractTest
         String identityInfo = function(source, "function liveIdentityInfo(row, kind)");
         String identityAction = function(source, "function liveIdentityActionLink(row, kind, label)");
         String routedPrefill = function(source, "function routedAliasPrefill(selectedList, options)");
-        String aliasEditor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
+        String aliasEditor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null, caller = null)");
         String scannerNavigate = function(source, "function scannerNavigate(call, channel, destination)");
         String conventional = namedFunction(source, "liveConventionalChannelValue");
         String systems = function(source, "function liveChannelsSection(onSelectionChange, options = {})");

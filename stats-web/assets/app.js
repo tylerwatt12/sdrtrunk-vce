@@ -54,7 +54,7 @@ import { createAudioCommand, createAudioTransport, createAudioTiming, createAudi
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
 import { mountAccessWireframe } from './features/access-wireframe.js?v=2';
-import { WebCallPlayer } from './web-call-player.js?v=26';
+import { WebCallPlayer } from './web-call-player.js?v=27';
 
 let route = new URLSearchParams(window.location.search);
 const content = document.getElementById('content');
@@ -5416,7 +5416,13 @@ async function openAliasConflictModal(aliasId, aliasName = '') {
   }
 }
 
-async function finishAliasMutation(modal, result, routeChanges = {}) {
+async function finishAliasMutation(modal, result, routeChanges = {}, caller = null) {
+  if (caller) {
+    modal?.setDirty(false);
+    closeReadOnlyModal(true);
+    void Promise.resolve().then(() => caller.onSaved?.(result)).catch(() => {});
+    return;
+  }
   const mutationRouteChanges = { ...routeChanges };
   if (aliasEditorContext?.scanListScope) delete mutationRouteChanges.list;
   const currentListId = aliasListId(aliasEditorContext?.selectedList);
@@ -5676,8 +5682,8 @@ function aliasMatcherDescriptor(options, keyOrType, protocol = '', variant = '')
   if (exact) return exact;
   const typed = matchers.find((entry) => {
     if (String(entry.type) !== key) return false;
-    if (!protocol || String(entry.protocol) === String(protocol)) return true;
-    return false;
+    if (protocol && String(entry.protocol) !== String(protocol)) return false;
+    return !variant || String(entry.variant) === String(variant);
   });
   return typed || matchers[0];
 }
@@ -5999,7 +6005,7 @@ function aliasEditorPayloadKey(value) {
   });
 }
 
-async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null) {
+async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null, caller = null) {
   const guide = presentation?.guide === true;
   const editing = mode === 'edit';
   const cloning = mode === 'clone';
@@ -6010,8 +6016,8 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
     (cloning ? 'Clone Alias' : 'Add Alias'), loading, {
       id: `${mode}-alias-${id || 'new'}`, className: 'alias-editor-modal alias-record-modal',
       guideTarget: guide,
-      onClose: () => { if (!guide && modal.dialog.isConnected) clearAliasEditorRoute(); },
-      returnFocusSelector: prefill?.returnFocusSelector ||
+      onClose: () => { if (!guide && !caller && modal.dialog.isConnected) clearAliasEditorRoute(); },
+      returnFocusSelector: caller?.returnFocusSelector || prefill?.returnFocusSelector ||
         (id ? `.alias-detail-link[data-alias-id="${id}"]` : '.alias-add-button')
     });
   if (!modal || (modal.ready && !await modal.ready)) return;
@@ -6029,15 +6035,17 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
       requestJson(`/api/v1/admin/aliases/options?alias_list_id=${effectiveListId}`, { csrf: false });
     const analyticsPromise = guide ? Promise.resolve(presentation.analytics || null) : editing || cloning ?
       api(`/api/v1/aliases/${encodeURIComponent(String(id))}`).catch(() => null) : Promise.resolve(null);
-    const [options, analytics] = await Promise.all([initialOptionsPromise, analyticsPromise]);
+    const catalogPromise = caller ? requestJson('/api/v1/admin/alias-lists', { csrf: false }) : null;
+    const [options, analytics, catalog] = await Promise.all([initialOptionsPromise, analyticsPromise, catalogPromise]);
     if (!modal.isActive()) return;
     if ((editing || cloning) && Number(source.alias_list_id) !== effectiveListId) {
       throw new Error('This alias is no longer in the selected alias list. Reload the list and try again.');
     }
     const editRevision = recordResponse?.edit_revision;
-    const editorLists = guide ? presentation.lists || [] : aliasEditorContext?.lists || [];
+    const editorLists = guide ? presentation.lists || [] : caller ? catalog?.alias_lists || [] :
+      aliasEditorContext?.lists || [];
     const currentList = editorLists.find((row) => aliasListId(row) ===
-      effectiveListId) || (guide ? presentation.selectedList : aliasEditorContext?.selectedList);
+      effectiveListId) || (caller ? options.alias_list : guide ? presentation.selectedList : aliasEditorContext?.selectedList);
     const family = aliasListFamily(currentList);
     const compatibleLists = editorLists.filter((row) => aliasListFamily(row) === family);
     const descriptor = aliasMatcherDescriptor(options, source.matcher?.type, source.matcher?.protocol,
@@ -6183,6 +6191,8 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
     streamAs.min = '1';
     streamAs.max = '16777215';
     streamAs.step = '1';
+    if (unmatchedTalkgroupsSupported(currentList)) audio.append(node('p', 'ui-section-note',
+      'Change the starting settings for new aliases in this Alias List’s Call Handling Defaults → New Aliases.'));
     audio.append(scanLists, recording, streams);
     const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
       'Destinations already saved on this alias remain visible.');
@@ -6215,7 +6225,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
         if (!modal.dialog.isConnected) return;
         modal.setDirty(false);
         closeReadOnlyModal(true);
-        openAliasEditorModal('clone', id);
+        openAliasEditorModal('clone', id, { alias_list_id: effectiveListId }, null, caller);
       });
     }
     if (remove) {
@@ -6228,7 +6238,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
         if (!modal.dialog.isConnected) return;
         modal.setDirty(false);
         closeReadOnlyModal(true);
-        openAliasDeleteModal(id, source.name, editRevision);
+        openAliasDeleteModal(id, source.name, editRevision, caller);
       });
     }
     form.append(tabBar, basics, identifier, audio, usage, errorHost,
@@ -6238,7 +6248,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
     const workflow = aliasFormWorkflow(form, save, errorHost, workflowModal, () => {
       modal.setDirty(false);
       closeReadOnlyModal(true);
-      openAliasEditorModal(mode, id, prefill);
+      openAliasEditorModal(mode, id, prefill, presentation, caller);
     }, editing ? () => {
       try { return aliasEditorPayloadKey(aliasEditorPayload(form, options)) !== savedPayloadKey; }
       catch (_) { return true; }
@@ -6256,7 +6266,7 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
           body: editing ? { edit_revision: editRevision, alias: payload } : { alias: payload }
         });
         savedPayloadKey = aliasEditorPayloadKey(payload);
-        await finishAliasMutation(modal, result, { list: payload.alias_list_id });
+        await finishAliasMutation(modal, result, { list: payload.alias_list_id }, caller);
       });
     });
     modal.dialog.querySelector('.modal-header h2').textContent = editing ? `Edit ${source.name}` :
@@ -6270,13 +6280,13 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
     aliasMutationError(modal.content, error, () => {
       if (guide) return;
   closeReadOnlyModal(true);
-      openAliasEditorModal(mode, id, prefill);
+      openAliasEditorModal(mode, id, prefill, presentation, caller);
     });
     return modal;
   }
 }
 
-function openAliasDeleteModal(id, name, editRevision) {
+function openAliasDeleteModal(id, name, editRevision, caller = null) {
   const body = node('div', 'alias-confirmation');
   body.append(node('p', '', `Delete ${name || `Alias ${id}`} from this alias list?`),
     node('p', 'muted', 'This removes its identifier, scan-list membership, recording, and streaming settings.'));
@@ -6288,7 +6298,8 @@ function openAliasDeleteModal(id, name, editRevision) {
   body.append(errorHost, aliasModalFooter(cancel, remove));
   const modal = openReadOnlyModal(`Delete ${name || 'Alias'}`, body, {
     id: `delete-alias-${id}`, className: 'alias-editor-modal alias-confirm-modal',
-    onClose: () => { if (modal.dialog.isConnected) clearAliasEditorRoute(); }
+    onClose: () => { if (!caller && modal.dialog.isConnected) clearAliasEditorRoute(); },
+    returnFocusSelector: caller?.returnFocusSelector
   });
   if (!modal) return;
   cancel.addEventListener('click', modal.close);
@@ -6298,9 +6309,11 @@ function openAliasDeleteModal(id, name, editRevision) {
     try {
       await workflow.run(() => requestJson(`/api/v1/admin/aliases/${id}`, {
         method: 'DELETE', body: { edit_revision: editRevision }, page: false
-      }), { pending: 'Deleting alias…', onSuccess: (result) => finishAliasMutation(modal, result),
+      }), { pending: 'Deleting alias…', onSuccess: (result) => finishAliasMutation(modal, result, {}, caller),
         onError: (error) => aliasMutationError(errorHost, error, () => {
-          closeReadOnlyModal(true); render();
+          closeReadOnlyModal(true);
+          if (caller) void openAliasEditorModal('edit', id, null, null, caller);
+          else render();
         }) });
     } catch (_) { /* The inline error preserves the current confirmation. */ }
   });
@@ -12669,6 +12682,7 @@ function scannerCallRenderKey(call, state, site, mode = scannerDetailMode) {
   if (!call) return `idle:${mode}:${state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening'}`;
   return JSON.stringify([
     mode, sourceNameDisplayMode(), scannerSourceAlias(call),
+    call.target_alias, call.target_description, call.target_group, call.source_description, call.source_group,
     call.call_id || '', call.started_at_ms || '',
     call.source_id || '', call.source_canonical_identity || '', call.source_observed_working_id || '',
     call.target_id ?? '', call.target_canonical_identity || '', call.target_observed_working_id || '',
@@ -12676,6 +12690,25 @@ function scannerCallRenderKey(call, state, site, mode = scannerDetailMode) {
     site?.modulation || '', site?.configuration_id || '', site?.channel_kind || '',
     site?.entity_ref?.key || ''
   ]);
+}
+
+function scannerAliasEditButton(side, context, onSaved) {
+  if (!accessSession.authenticated || !aliasAdminAllowed() || !context?.available) return null;
+  const editing = Number(context.alias_id) > 0;
+  const subject = side === 'source' || ['radio', 'p25_subscriber_identity'].includes(context.matcher?.type) ?
+    'radio' : 'talkgroup';
+  const button = iconButton(editing ? 'icon-edit' : 'icon-plus',
+    `${editing ? 'Edit' : 'Add'} ${subject} alias`,
+    'ui-button ui-button-secondary ui-icon-button ui-icon-button-compact scanner-alias-edit');
+  button.dataset.aliasSide = side;
+  button.addEventListener('click', () => {
+    if (!accessSession.authenticated || !aliasAdminAllowed()) return;
+    void openAliasEditorModal(editing ? 'edit' : 'create', editing ? Number(context.alias_id) : null,
+      { alias_list_id: context.alias_list_id, ...(!editing ? { matcher: context.matcher } : {}) }, null, {
+        returnFocusSelector: `.scanner-alias-edit[data-alias-side="${side}"]`, onSaved
+      });
+  });
+  return button;
 }
 
 function renderScannerCall(host, state, channelMetadata, options = {}) {
@@ -12687,7 +12720,10 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
   const template = scannerCallTemplates.get(host);
   const call = displayedCall || template?.call || { target_alias: '—', source_alias: '—' };
   if (idle) channelMetadata = template?.channel || null;
+  const aliasContexts = displayedCall && options.aliasContexts?.call_id === String(call.call_id) ?
+    options.aliasContexts : null;
   const renderKey = scannerCallRenderKey(displayedCall, state, channelMetadata, detailMode) +
+    JSON.stringify([aliasAdminAllowed(), aliasContexts]) +
     (idle ? `:${Math.round(host.clientWidth)}` : '');
   const detailLevel = scannerDetailLevel(detailMode);
   host.dataset.scannerMode = detailMode;
@@ -12717,8 +12753,12 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
     titleAction.addEventListener('click', open(analog ? 'channel' : 'target'));
     title.replaceChildren(titleAction);
   }
+  const titleRow = node('div', 'scanner-identity-actions');
+  const targetEdit = !idle && !analog && scannerAliasEditButton('target', aliasContexts?.target, options.onAliasSaved);
+  if (targetEdit) titleRow.append(targetEdit);
+  titleRow.append(title);
   copy.append(node('span', 'ui-label ui-muted scanner-call-kind', `${call.decoder || call.protocol || 'Call'}${call.encrypted ?
-    ' · Encrypted' : ' · Voice'}`), title,
+    ' · Encrypted' : ' · Voice'}`), titleRow,
     node('span', 'ui-muted scanner-call-subtitle', [systemName, call.site].filter(Boolean).join(' · ')));
   intro.append(copy);
   const audioHeading = node('div', 'scanner-audio-heading ui-listening-audio-heading');
@@ -12742,13 +12782,19 @@ function renderScannerCall(host, state, channelMetadata, options = {}) {
     intro.append(wave);
   }
 
-  const source = node('section', 'scanner-source-row ui-listening-source');
+  const source = node('section', 'scanner-source-row ui-listening-source ui-listening-source-emphasized');
   source.setAttribute('aria-label', 'Transmitting radio');
   const sourceFields = node('dl', 'ui-fact-list ui-fact-list-grid scanner-source-fields');
   const sourceAlias = scannerSourceAlias(call);
   const sourceId = radioIdentifierText(call, call.source_id, 'source');
   sourceFields.append(scannerField('Transmitting', sourceAlias || sourceId || '—', 0,
     open(sourceAlias ? 'source-alias' : 'source'), true, detailMode));
+  const sourceEdit = !idle && scannerAliasEditButton('source', aliasContexts?.source, options.onAliasSaved);
+  if (sourceEdit) {
+    const value = sourceFields.querySelector('dd');
+    value.classList.add('scanner-identity-actions');
+    value.prepend(sourceEdit);
+  }
   const groups = node('div', 'scanner-source-groups');
   if (detailLevel >= SCANNER_DETAIL_LEVELS.normal) {
     [['Target group', call.target_group], ['Source group', call.source_group]].forEach(([label, value]) => {
@@ -12961,10 +13007,13 @@ function renderScanner(options = {}) {
     signal: AbortSignal.any([pageContext.signal, controller.signal].filter(Boolean)) } : pageContext;
   const player = options.player || webCallPlayer;
   const metadata = options.channelMetadata || scannerChannelMetadata;
+  let aliasContexts = null;
+  let aliasContextCallId = '';
+  let aliasContextGeneration = 0;
   let detailMode = guideMode ? 'normal' : scannerDetailMode;
   if (!guideMode) setScannerDetailMode(detailMode);
   const paintCall = (host, state, channel) => renderScannerCall(host, state, channel, {
-    detailMode, ...(guideMode ? { navigate: () => {} } : {})
+    detailMode, aliasContexts, onAliasSaved: refreshAliases, ...(guideMode ? { navigate: () => {} } : {})
   });
   let disposed = false;
   let guideSuspended = false;
@@ -13057,6 +13106,29 @@ function renderScanner(options = {}) {
   let currentChannel = null;
   let displayedCallId = '';
   let upNextKey = '';
+  async function loadAliasContexts(callId, force = false) {
+    if (guideMode || !accessSession.authenticated || !aliasAdminAllowed()) return;
+    if (!force && callId === aliasContextCallId) return;
+    aliasContextCallId = callId;
+    aliasContexts = null;
+    const generation = ++aliasContextGeneration;
+    if (!callId) return;
+    const contexts = await Promise.all(['target', 'source'].map(side =>
+      api(`/api/v1/admin/call-aliases/${encodeURIComponent(callId)}`, { side },
+        { page: false, signal: renderContext.signal }).catch(() => null)));
+    if (generation !== aliasContextGeneration || !renderIsCurrent(renderContext) || disposed) return;
+    aliasContexts = { call_id: callId, target: contexts[0], source: contexts[1] };
+    paintCall(display, latestState, currentChannel);
+  }
+  async function refreshAliases() {
+    const ids = player.retainedCallIds();
+    if (ids.length) {
+      const query = ids.map(id => `call_id=${encodeURIComponent(id)}`).join('&');
+      const response = await api(`/api/v1/admin/call-aliases/presentation?${query}`, {}, { page: false });
+      player.applyCallPresentationUpdates(response.calls);
+    }
+    await loadAliasContexts(String((latestState.displayCall || latestState.current)?.call_id || ''), true);
+  }
   const directSelection = state => !guideMode && state.directListen?.allowed && state.directListen.selected &&
     state.directListen.targets.length > 0;
   const queuedTarget = (call, emptyLabel) => {
@@ -13143,6 +13215,7 @@ function renderScanner(options = {}) {
     statusBar.dataset.state = state.stopped ? 'stopped' : state.paused ? 'paused' : 'listening';
     updateAge();
     paintCall(display, state, currentChannel);
+    void loadAliasContexts(nextCallId);
 
     renderUpNext(state);
 

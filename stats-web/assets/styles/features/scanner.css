@@ -90,6 +90,17 @@ body[data-view="scanner"] .content {
   gap: var(--space-2);
 }
 
+.scanner-identity-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.scanner-identity-actions > :last-child {
+  min-width: 0;
+}
+
 .scanner-call-instruments {
   min-width: 0;
   display: flex;

@@ -2,8 +2,8 @@
   "version": 1,
   "shards": 4,
   "workers": 2,
-  "caseCount": 1763,
-  "inventorySha256": "876e5dfac4a242aad106a2781a045d335db44542b06e35b1a3b3fc340e62d6bd",
+  "caseCount": 1776,
+  "inventorySha256": "30886d2a453408b61578944a54859e0f87cda9ef32d9133b3e4d1455b4116a89",
   "files": {
     "access-landing.spec.js": {
       "durationMs": 12822,
@@ -545,6 +545,11 @@
       "caseCount": 62,
       "source": "measured"
     },
+    "recording-click-preference.spec.js": {
+      "durationMs": 13404,
+      "caseCount": 7,
+      "source": "estimated"
+    },
     "recordings-filters.spec.js": {
       "durationMs": 16184,
       "caseCount": 14,
@@ -594,6 +599,11 @@
       "durationMs": 3834,
       "caseCount": 2,
       "source": "measured"
+    },
+    "scanner-alias-edit.spec.js": {
+      "durationMs": 7660,
+      "caseCount": 4,
+      "source": "estimated"
     },
     "scanner-controls.spec.js": {
       "durationMs": 49552,

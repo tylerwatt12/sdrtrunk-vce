@@ -148,7 +148,7 @@ class StatsWebAliasCatalogUiContractTest
     {
         String source = source();
         String renderer = function(source, "async function renderAliases(presentation = null)");
-        String editor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
+        String editor = function(source, "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null, caller = null)");
 
         assertTrue(source.contains("ADMIN_ALIASES: 'admin-aliases'"));
         assertTrue(function(source, "function aliasAdminAllowed()")
@@ -166,7 +166,7 @@ class StatsWebAliasCatalogUiContractTest
         assertFalse(editor.contains("options?.alias_list?.unmatched_talkgroup_policy"));
         assertFalse(editor.contains("requestedScanLists"));
         assertFalse(editor.contains("its scan-list membership could not be saved"));
-        assertTrue(function(source, "function openAliasDeleteModal(id, name, editRevision)")
+        assertTrue(function(source, "function openAliasDeleteModal(id, name, editRevision, caller = null)")
             .contains("method: 'DELETE', body: { edit_revision: editRevision }"));
         assertTrue(source.contains("/api/v1/admin/alias-lists/${id}/delete-impact"));
         assertTrue(source.contains("code === 'stale_revision'"));
@@ -422,7 +422,7 @@ class StatsWebAliasCatalogUiContractTest
         String detail = function(source, "function aliasConflictDetail(response, aliasId, aliasName = '')");
         String columns = function(source, "function aliasEditorColumns(view, rows, onSelectionChange)");
         String editor = function(source,
-            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
+            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null, caller = null)");
 
         assertTrue(button.contains("openAliasConflictModal(id, row.name)"));
         assertTrue(button.contains("detailsHost.replaceChildren(aliasConflictDetail("));
@@ -493,7 +493,7 @@ class StatsWebAliasCatalogUiContractTest
         String create = function(source, "function observedGroupIdentityCreateButton(row, selectedList)");
         String actions = function(source, "function observedGroupIdentityActions(row, selectedList)");
         String editor = function(source,
-            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
+            "async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null, caller = null)");
 
         assertFalse(source.contains("alias_match_kind"));
         assertTrue(tabs.contains("const discover = anchor('Discover', href('aliases',"));

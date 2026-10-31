@@ -1070,7 +1070,7 @@ final class StatsWebCallService implements AutoCloseable
         }
     }
 
-    private static String playbackTargetLabel(CallPlaybackTarget playbackTarget,
+    static String playbackTargetLabel(CallPlaybackTarget playbackTarget,
                                               AudioCallRecordingMetadata recordingMetadata,
                                               Identifier<?> target, String servingSystemKey)
     {

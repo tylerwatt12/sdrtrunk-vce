@@ -88,6 +88,85 @@ async function main() {
     assert.equal(metadataRenders, 2, 'Unknown updates must be ignored without enqueuing or replay.');
     latePlayer.enqueue({ call_id: 'known', audio_metadata_updated: true, transcription: 'unrelated' });
     assert.equal(metadataRenders, 2, 'Only supplied audio-detail fields can change on this event.');
+
+    {
+      const namedCall = (id, system = 'system-a') => ({
+        call_id: id, _callId: id, source_id: 501, target_id: 77, radio_system_key: system,
+        audio_url: `/audio/${id}`, _playbackTargetKey: `${system}:77`, _arrivalSequence: 5,
+        source_alias: 'Old unit', target_alias: 'Old dispatch', talker_alias: 'OTA unit',
+        playback_target: { key: `${system}:77`, kind: 'talkgroup', label: 'Old dispatch', radio_system_key: system }
+      });
+      const namedCurrent = namedCall('current');
+      const namedLast = namedCall('last');
+      const namedIdle = namedCall('idle');
+      const namedHeld = namedCall('held');
+      const namedQueued = namedCall('queued');
+      const otherSystemQueued = namedCall('other', 'system-b');
+      const namedQueue = [namedQueued, otherSystemQueued];
+      const namedBuffer = { duration: 42 };
+      const namedReplayBuffer = { duration: 8 };
+      const namedSource = { stop() { throw new Error('Renaming cannot stop the active audio.'); } };
+      let presentationRenders = 0;
+      const namedPlayer = Object.assign(Object.create(WebCallPlayer.prototype), {
+        current: namedCurrent, lastHeard: namedLast, idleDisplayCall: namedIdle, heldDisplayCall: namedHeld,
+        queuedCalls: namedQueue, queuedCount: 2, currentBuffer: namedBuffer, lastHeardBuffer: namedReplayBuffer,
+        source: namedSource, playbackStartedAt: 12, audioContext: { currentTime: 20 },
+        holdTarget: 'system-a:77', feedCursor: '44', transportToken: 9,
+        render() { presentationRenders++; }, getSourceNameDisplay: () => 'talker_alias',
+        stopCurrent() { throw new Error('Renaming cannot reset the current call.'); }
+      });
+      assert.deepEqual(namedPlayer.retainedCallIds(), ['current', 'last', 'idle', 'held', 'queued', 'other']);
+      const presentation = id => ({ call_id: id, source_alias: 'Unit 501', source_description: null,
+        source_group: 'Units', target_alias: 'Dispatch', target_description: 'County dispatch', target_group: null,
+        playback_target_label: 'Dispatch', audio_url: '/replacement', target_id: 999,
+        _playbackTargetKey: 'replacement', talker_alias: 'Replaced OTA' });
+      assert.equal(namedPlayer.applyCallPresentationUpdates(
+        ['current', 'last', 'idle', 'held', 'queued'].map(presentation)), true);
+      for (const call of [namedCurrent, namedLast, namedIdle, namedHeld, namedQueued]) {
+        assert.equal(call.source_alias, 'Unit 501');
+        assert.equal(call.target_alias, 'Dispatch');
+        assert.equal(call.source_description, null);
+        assert.equal(call.target_group, null);
+        assert.equal(call.playback_target.label, 'Dispatch');
+        assert.equal(call.playback_target.key, 'system-a:77');
+        assert.equal(call.playback_target.kind, 'talkgroup');
+        assert.equal(call._playbackTargetKey, 'system-a:77');
+        assert.equal(call.target_id, 77);
+        assert.equal(call.source_id, 501);
+        assert.equal(call.talker_alias, 'OTA unit', 'Configured Alias updates must leave OTA evidence intact.');
+        assert.equal(call.audio_url, `/audio/${call._callId}`);
+        assert.equal(call._arrivalSequence, 5);
+      }
+      assert.equal(namedPlayer.targetLabel(namedCurrent), 'Dispatch',
+        'The cached playback label must not override the freshly resolved Alias.');
+      assert.match(namedPlayer.callLabel(namedCurrent), /OTA unit/,
+        'Refreshing a configured Alias must preserve the preferred OTA source name.');
+      assert.equal(otherSystemQueued.target_alias, 'Old dispatch',
+        'A repeated numeric ID in another call context must not receive an unrelated update.');
+      assert.equal(namedPlayer.current, namedCurrent);
+      assert.equal(namedPlayer.queuedCalls, namedQueue);
+      assert.equal(namedPlayer.queuedCount, 2);
+      assert.equal(namedPlayer.currentBuffer, namedBuffer);
+      assert.equal(namedPlayer.lastHeardBuffer, namedReplayBuffer);
+      assert.equal(namedPlayer.source, namedSource);
+      assert.equal(namedPlayer.getPlaybackPosition(), 8);
+      assert.equal(namedPlayer.feedCursor, '44');
+      assert.equal(namedPlayer.transportToken, 9);
+      assert.equal(namedPlayer.holdTarget, 'system-a:77');
+      assert.equal(presentationRenders, 1, 'All retained views must refresh through one state render.');
+      assert.equal(namedPlayer.applyCallPresentationUpdates([presentation('not-retained')]), false);
+      assert.equal(namedPlayer.applyCallPresentationUpdates([presentation('current')]), false,
+        'Identical labels should not create redundant renders.');
+      assert.equal(presentationRenders, 1);
+      assert.equal(namedPlayer.applyCallPresentationUpdates([{ call_id: 'current', target_alias: null,
+        playback_target_label: null, source_alias: { invalid: true } }]), true);
+      assert.equal(namedCurrent.target_alias, null);
+      assert.equal(namedCurrent.playback_target.label, null);
+      assert.equal(namedCurrent.source_alias, 'Unit 501');
+      namedPlayer.lastHeard = namedCurrent;
+      assert.equal(namedPlayer.retainedCallIds().filter(id => id === 'current').length, 1,
+        'A replayed call retained in more than one role is requested once.');
+    }
     const volumeAttributes = new Map();
     const volumeStyles = new Map();
     const volumePlayer = Object.assign(Object.create(WebCallPlayer.prototype), {

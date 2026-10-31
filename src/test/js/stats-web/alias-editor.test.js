@@ -302,7 +302,7 @@ const aliasFilterToolbar = functionSource('function aliasEditorFilterToolbar(ali
 const aliasDiscoverToolbar = functionSource('function observedGroupIdentityToolbar(selectedList, route = currentAliasRoute())');
 const aliasExportLink = functionSource('function exportCsvLink(dataset, context = {}, options = {})');
 const aliasDetailLink = functionSource('function aliasDetailLink(row)');
-const aliasMutationFinisher = functionSource('async function finishAliasMutation(modal, result, routeChanges = {})');
+const aliasMutationFinisher = functionSource('async function finishAliasMutation(modal, result, routeChanges = {}, caller = null)');
 assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'configure', active, route\)/);
 assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'activity', active, route\)/);
 assert.match(aliasViewTabs, /href: aliasEditorViewHref\(selectedList, 'custom', active, route\)/);
@@ -972,7 +972,7 @@ async function verifySharedFormWorkflowLifecycle() {
 }
 
 async function verifyAliasSaveLifecycle() {
-  const editor = functionSource("async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null)");
+  const editor = functionSource("async function openAliasEditorModal(mode = 'create', id = null, prefill = null, presentation = null, caller = null)");
   const setup = editor.slice(editor.indexOf('    let savedPayloadKey'),
     editor.indexOf("    modal.dialog.querySelector('.modal-header h2')"));
   const workflowSource = fs.readFileSync(path.resolve(path.dirname(applicationPath), 'core/form-workflows.js'),
@@ -1007,6 +1007,7 @@ async function verifyAliasSaveLifecycle() {
   let refreshes = 0;
   const saveContext = {
     form, save, errorHost: feedback, modal, source, guide: false, editing: true, mode: 'edit', id: 101, prefill: null,
+    caller: null, presentation: null,
     options: {}, document: { createTextNode: (text) => ({ textContent: text }) },
     node: (_tag, _className, text) => ({ textContent: text, append() {}, setAttribute() {} }),
     aliasEditorPayload: () => ({ ...source, name: fields.name.value, recordable: fields.recordable.checked,

@@ -657,14 +657,54 @@ export class WebCallPlayer {
     else this.render();
   }
 
+  retainedCalls() {
+    return [...new Set([this.current, this.lastHeard, this.idleDisplayCall,
+      this.heldDisplayCall, ...(this.queuedCalls || []).slice(0, WebCallPlayer.MAXIMUM_QUEUED_CALLS)])]
+      .filter(call => call && typeof call === 'object');
+  }
+
+  retainedCallIds() {
+    return [...new Set(this.retainedCalls().map(call => call._callId || call.call_id)
+      .filter(id => typeof id === 'string' && id.trim()).map(id => id.trim()))];
+  }
+
+  applyCallPresentationUpdates(updates) {
+    if (!Array.isArray(updates)) return false;
+    const byId = new Map(updates.filter(update => update && typeof update.call_id === 'string' && update.call_id.trim())
+      .map(update => [update.call_id.trim(), update]));
+    const fields = ['source_alias', 'source_description', 'source_group',
+      'target_alias', 'target_description', 'target_group'];
+    // Refresh names on the original call objects without replacing their audio or scheduling state.
+    let changed = false;
+    this.retainedCalls().forEach(call => {
+      const update = byId.get(String(call._callId || call.call_id || '').trim());
+      if (!update) return;
+      fields.forEach(field => {
+        if (!Object.hasOwn(update, field)) return;
+        const value = update[field];
+        if ((value === null || typeof value === 'string') && call[field] !== value) {
+          call[field] = value;
+          changed = true;
+        }
+      });
+      const label = update.playback_target_label;
+      if (Object.hasOwn(update, 'playback_target_label') && (label === null || typeof label === 'string') &&
+          call.playback_target && call.playback_target.label !== label) {
+        call.playback_target = { ...call.playback_target, label };
+        changed = true;
+      }
+    });
+    if (changed) this.render();
+    return changed;
+  }
+
   updateCallAudioMetadata(value) {
     const id = typeof value?.call_id === 'string' ? value.call_id.trim() : '';
     if (!id) return false;
     // These bounded retained objects already own playback position and buffers.
     // A late observation cannot create a call or change its audio/scheduling.
-    const retained = new Set([this.current, this.lastHeard, this.idleDisplayCall,
-      this.heldDisplayCall, ...this.queuedCalls].filter(call => call?._callId === id));
-    if (!retained.size) return false;
+    const retained = this.retainedCalls().filter(call => call._callId === id);
+    if (!retained.length) return false;
     const fields = ['paging_tone_summary', 'detected_paging_tones']
       .filter(field => Object.hasOwn(value, field));
     if (!fields.length) return false;

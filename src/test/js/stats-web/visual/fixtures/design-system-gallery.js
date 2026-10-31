@@ -1590,6 +1590,7 @@ if (view === 'activity-filters' || view === 'scanner') {
     scannerPage.dataset.sharedAudioReady = 'true';
     if (parameters.get('state') === 'idle') {
       const display = scannerPage.querySelector('.scanner-display');
+      display.querySelectorAll('.scanner-alias-edit').forEach(button => button.remove());
       const height = display.getBoundingClientRect().height;
       display.classList.add('is-idle', 'ui-content-idle');
       const values = [...display.querySelectorAll('.scanner-call-kind, .scanner-call-title, .scanner-call-subtitle, ' +

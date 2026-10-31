@@ -603,6 +603,10 @@ public class StatsWebServerService implements AutoCloseable
         server.createContext(AliasAdminHttpController.ALIASES_PATH, protectedAliases);
         server.createContext(AliasAdminHttpController.SCAN_LISTS_PATH, protectedAliases);
 
+        StatsCallAliasHttpController callAliases = new StatsCallAliasHttpController(mServices.mWebCallService);
+        server.createContext(StatsCallAliasHttpController.PATH, mWebRequestSecurity.protectApi(
+            WebCapability.ADMIN_ALIASES, callAliases::handle));
+
 
         StreamingAdminHttpController streamingController = new StreamingAdminHttpController(mServices.mStreamingAdministrationService);
         server.createContext(StreamingAdminHttpController.PATH, mWebRequestSecurity.protectApi(
