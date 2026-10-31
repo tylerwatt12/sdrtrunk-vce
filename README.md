@@ -136,9 +136,9 @@ status and activity available in the website.
 
 **P25 Visualizer** shows systems, talkgroups, and radios in an interactive 3D scene. Each system has its own space,
 with radios arranged around their observed talkgroup affiliations. Noteworthy events, such as affiliation changes,
-emergencies, denials, pages, and radio checks, draw attention as new history arrives.
+emergencies, denials, pages, and radio checks, draw attention as new activity arrives.
 
-Enable detailed P25 activity history to populate the scene. It shows logical relationships rather than geographic locations.
+The scene follows live P25 activity while the page is open. It shows logical relationships rather than geographic locations.
 [See how to read the visualizer](docs/network-visualizer.md).
 
 ![VCE P25 Visualizer showing systems, talkgroups, and radios in a 3D scene](docs/screenshots/readme-visualizer.jpg)
