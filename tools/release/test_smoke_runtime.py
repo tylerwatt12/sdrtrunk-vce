@@ -151,12 +151,15 @@ class SmokeRuntimeTest(unittest.TestCase):
             self.assertEqual(self.root / companion, SMOKE.activity_database(self.root / name))
         SMOKE.check_database(self.database(63), 63)
 
-    def test_configuration_only_format_64_change_accepts_only_its_supported_activity_versions(self):
-        for configuration, history in ((63, 63), (64, 63), (64, 64)):
+    def test_configuration_only_changes_accept_only_their_supported_activity_versions(self):
+        for configuration, history in ((63, 63), (64, 63), (64, 64), (65, 63), (65, 64), (65, 65)):
             with self.subTest(configuration=configuration, history=history):
                 SMOKE.check_database(self.database(configuration, history), configuration)
 
-        for configuration, history in ((63, 64), (64, 62), (64, 65), (64, "063"), (64, "64.0")):
+        for configuration, history in ((63, 64), (63, 65), (64, 62), (64, 65), (65, 62), (65, 66),
+                                       (66, 63), (66, 64), (66, 65), (64, "063"), (64, "64.0"),
+                                       (65, "063"), (65, "064"), (65, "065"), (65, "65.0"),
+                                       (65, "+65"), (65, " 65"), (65, "")):
             with self.subTest(configuration=configuration, history=history), \
                  self.assertRaisesRegex(RuntimeError, "Expected database format"):
                 SMOKE.check_database(self.database(configuration, history), configuration)
@@ -164,17 +167,33 @@ class SmokeRuntimeTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Expected database format 64"):
             SMOKE.check_database(self.database(63), 64)
 
-    def test_format_64_with_retained_format_63_activity_requires_matching_role_and_pair(self):
-        database = self.database(64, 63)
-        history = SMOKE.activity_database(database)
-        for role, pair in (("configuration", self.PAIR_ID),
-                           ("activity", "06f6c9c9-7d6d-42c3-ad3c-19952839a55d")):
-            with closing(sqlite3.connect(history)) as connection, connection:
-                connection.execute("UPDATE database_metadata SET value=? WHERE key='database_role'", (role,))
-                connection.execute("UPDATE database_metadata SET value=? WHERE key='configuration_history_pair_id'", (pair,))
-            with self.subTest(role=role, pair=pair), \
-                 self.assertRaisesRegex(RuntimeError, "identities do not match"):
-                SMOKE.check_database(database, 64)
+    def test_configuration_only_changes_still_require_matching_activity_role_and_pair(self):
+        for configuration, activity in ((64, 63), (65, 63), (65, 64), (65, 65)):
+            database = self.database(configuration, activity)
+            history = SMOKE.activity_database(database)
+            for role, pair in (("configuration", self.PAIR_ID),
+                               ("activity", "06f6c9c9-7d6d-42c3-ad3c-19952839a55d")):
+                with closing(sqlite3.connect(history)) as connection, connection:
+                    connection.execute("UPDATE database_metadata SET value=? WHERE key='database_role'", (role,))
+                    connection.execute("UPDATE database_metadata SET value=? WHERE key='configuration_history_pair_id'", (pair,))
+                with self.subTest(configuration=configuration, activity=activity, role=role, pair=pair), \
+                     self.assertRaisesRegex(RuntimeError, "identities do not match"):
+                    SMOKE.check_database(database, configuration)
+
+    def test_format_65_configuration_and_activity_markers_must_be_present_and_exact(self):
+        database = self.database(65, 63)
+        for path in (database, SMOKE.activity_database(database)):
+            for marker in (None, "065", "65.0", "+65", "65 ", ""):
+                with closing(sqlite3.connect(path)) as connection, connection:
+                    connection.execute("DELETE FROM database_metadata WHERE key='database_format_version'")
+                    if marker is not None:
+                        connection.execute("INSERT INTO database_metadata VALUES('database_format_version',?)", (marker,))
+                with self.subTest(database=path.name, marker=marker), \
+                     self.assertRaisesRegex(RuntimeError, "Expected database format"):
+                    SMOKE.check_database(database, 65)
+            with closing(sqlite3.connect(path)) as connection, connection:
+                connection.execute("UPDATE database_metadata SET value=? WHERE key='database_format_version'",
+                                   ("65" if path == database else "63",))
 
     def test_owned_connections_are_query_only_and_cannot_create_a_missing_file(self):
         database = self.database(63)
@@ -204,20 +223,22 @@ class SmokeRuntimeTest(unittest.TestCase):
         self.assertFalse(history.resolve().exists())
 
     def test_swapped_roles_invalid_configuration_identity_and_mismatched_pair_are_refused(self):
-        database = self.database(63)
-        history = SMOKE.activity_database(database)
-        for config_role, config_pair, history_role, history_pair in (
-                ("activity", self.PAIR_ID, "configuration", self.PAIR_ID),
-                ("configuration", "invalid", "activity", "invalid"),
-                ("configuration", self.PAIR_ID, "configuration", self.PAIR_ID),
-                ("configuration", self.PAIR_ID, "activity", "06f6c9c9-7d6d-42c3-ad3c-19952839a55d")):
-            for path, role, pair in ((database, config_role, config_pair), (history, history_role, history_pair)):
-                with closing(sqlite3.connect(path)) as connection, connection:
-                    connection.execute("UPDATE database_metadata SET value=? WHERE key='database_role'", (role,))
-                    connection.execute("UPDATE database_metadata SET value=? WHERE key='configuration_history_pair_id'", (pair,))
-            with self.subTest(config_role=config_role, history_role=history_role, pair=history_pair), \
-                 self.assertRaisesRegex(RuntimeError, "identity is invalid|identities do not match"):
-                SMOKE.check_database(database, 63)
+        for configuration, activity in ((63, 63), (65, 63), (65, 64), (65, 65)):
+            database = self.database(configuration, activity)
+            history = SMOKE.activity_database(database)
+            for config_role, config_pair, history_role, history_pair in (
+                    ("activity", self.PAIR_ID, "configuration", self.PAIR_ID),
+                    ("configuration", "invalid", "activity", "invalid"),
+                    ("configuration", self.PAIR_ID, "configuration", self.PAIR_ID),
+                    ("configuration", self.PAIR_ID, "activity", "06f6c9c9-7d6d-42c3-ad3c-19952839a55d")):
+                for path, role, pair in ((database, config_role, config_pair), (history, history_role, history_pair)):
+                    with closing(sqlite3.connect(path)) as connection, connection:
+                        connection.execute("UPDATE database_metadata SET value=? WHERE key='database_role'", (role,))
+                        connection.execute("UPDATE database_metadata SET value=? WHERE key='configuration_history_pair_id'", (pair,))
+                with self.subTest(configuration=configuration, activity=activity, config_role=config_role,
+                                  history_role=history_role, pair=history_pair), \
+                     self.assertRaisesRegex(RuntimeError, "identity is invalid|identities do not match"):
+                    SMOKE.check_database(database, configuration)
 
     def test_missing_configuration_role_and_wrong_companion_format_are_refused(self):
         database = self.database(63)
@@ -233,17 +254,19 @@ class SmokeRuntimeTest(unittest.TestCase):
             SMOKE.check_database(database, 63)
 
     def test_corrupt_activity_and_invalid_activity_foreign_keys_fail_the_pair(self):
-        database = self.database(63)
-        history = SMOKE.activity_database(database)
-        with closing(sqlite3.connect(history)) as connection, connection:
-            connection.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY)")
-            connection.execute("CREATE TABLE child(parent_id INTEGER REFERENCES parent(id))")
-            connection.execute("INSERT INTO child VALUES(1)")
-        with self.assertRaisesRegex(RuntimeError, "foreign-key check"):
-            SMOKE.check_database(database, 63)
-        history.write_bytes(b"invalid SQLite history")
-        with self.assertRaises(sqlite3.DatabaseError):
-            SMOKE.check_database(database, 63)
+        for configuration, activity in ((63, 63), (65, 63), (65, 64), (65, 65)):
+            with self.subTest(configuration=configuration, activity=activity):
+                database = self.database(configuration, activity)
+                history = SMOKE.activity_database(database)
+                with closing(sqlite3.connect(history)) as connection, connection:
+                    connection.execute("CREATE TABLE parent(id INTEGER PRIMARY KEY)")
+                    connection.execute("CREATE TABLE child(parent_id INTEGER REFERENCES parent(id))")
+                    connection.execute("INSERT INTO child VALUES(1)")
+                with self.assertRaisesRegex(RuntimeError, "foreign-key check"):
+                    SMOKE.check_database(database, configuration)
+                history.write_bytes(b"invalid SQLite history")
+                with self.assertRaises(sqlite3.DatabaseError):
+                    SMOKE.check_database(database, configuration)
 
     def test_retained_history_counts_read_the_activity_file(self):
         database = self.database(63)

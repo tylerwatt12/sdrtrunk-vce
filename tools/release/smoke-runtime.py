@@ -121,9 +121,9 @@ def check_database(database, expected_format, *, timeout=5):
         if metadata.get("database_role") != "configuration" or not re.fullmatch(
                 r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", pair):
             raise RuntimeError("Profile configuration identity is invalid")
-        # ConfigurationHistoryDatabase admits format-64 configuration with unchanged format-63 Activity,
-        # or format-64 Activity stamped while an older monolith passes through the migration chain.
-        history_formats = (63, 64) if expected_format == 64 else (expected_format,)
+        # Formats 64 and 65 change configuration only. ConfigurationHistoryDatabase explicitly admits
+        # unchanged format-63 Activity, or its supported later marker from an older monolith's migration chain.
+        history_formats = {64: (63, 64), 65: (63, 64, 65)}.get(expected_format, (expected_format,))
         history = check_single_database(activity_database(database), history_formats, timeout=timeout)
         if history.get("database_role") != "activity" or history.get("configuration_history_pair_id") != pair:
             raise RuntimeError("Profile configuration/activity identities do not match")
