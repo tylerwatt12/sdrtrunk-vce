@@ -238,7 +238,7 @@ class ConventionalCallAttributionTest
         identifiers.add(APCO25Talkgroup.create(1201));
         if(source != null) identifiers.add(APCO25RadioIdentifier.createFrom(source));
         return new P25CallStartEvent(null, DecoderType.P25_CONVENTIONAL, DecodeEventType.CALL_GROUP, startedAt,
-            identifiers, FREQUENCY, null, null, null, false, false, null, token);
+            identifiers, FREQUENCY, null, null, null, false, CallEncryptionState.UNKNOWN, false, null, token);
     }
 
     private static AudioCallEvent audio(AudioCallEventType type, AudioCallId id, AudioCallId linked,

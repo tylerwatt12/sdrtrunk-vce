@@ -867,3 +867,22 @@ that marker and removes its observed owner/history without inserting a fabricate
 first-seen time. Fresh reception begins a real owner at its observation time. Scheduled retention expires reset
 markers only when their configuration is gone and their reset time is older than the selected cutoff; active
 configuration keeps its boundary. The cutoff index has one entry per explicit reset marker, with no event copies.
+
+
+### Explicit Activity encryption state (application format 69)
+
+Detailed `receiver_activity_event` rows store one integer `encryption_state`: 0 unknown, 1 clear, or 2 encrypted.
+It replaces the binary `encrypted` field without adding a table, row, retained evidence stream, or per-call registry.
+Absence of encryption evidence never establishes clear status. Algorithm and key fields remain optional,
+independently validated details. Exact-call updates enrich status or details without recounting the call.
+
+The adjacent Application Migrator preserves every event ID, child relationship, allocator, configuration row and
+summary counter. Existing positive flags and explicitly encrypted event subtypes retain encrypted status; other
+historical negative flags become unknown because they do not prove clear reception. The migration reconstructs no
+missing evidence and deletes no Activity. New reception uses the existing shared call-state model.
+
+Three existing partial encryption indexes retain their lookup columns with the `encryption_state = 2` predicate.
+No index is added. Clear and unknown filters use the existing owner/time paths before bounded cursor paging.
+The integer occupies the same compact range as the former boolean, with unchanged history growth and retention. Migration workspace reserves the complete pair twice for
+replacement pages and rollback journals, separately from backups and the free-space margin.
+SQLite work remains on the bounded background writer; callbacks publish detached status without waiting for storage.

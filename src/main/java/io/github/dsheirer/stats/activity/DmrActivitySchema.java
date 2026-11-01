@@ -318,7 +318,7 @@ public final class DmrActivitySchema
             statement.setInt(4, call.talkgroupId());
             statement.setLong(5, call.callStartEpochMilliseconds());
             statement.setLong(6, timestamp);
-            statement.setInt(7, call.encrypted() ? 1 : 0);
+            statement.setInt(7, call.encryptionState().isEncrypted() ? 1 : 0);
             setInteger(statement, 8, positive(call.sourceRadioId()));
             statement.executeUpdate();
         }
@@ -371,7 +371,7 @@ public final class DmrActivitySchema
             statement.setInt(8, target ? 1 : 0);
             statement.setInt(9, group ? 1 : 0);
             statement.setInt(10, privateCall ? 1 : 0);
-            statement.setInt(11, call.encrypted() ? 1 : 0);
+            statement.setInt(11, call.encryptionState().isEncrypted() ? 1 : 0);
             setInteger(statement, 12, lastTalkgroup);
             setInteger(statement, 13, lastPeer);
             statement.executeUpdate();

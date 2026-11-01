@@ -17,7 +17,7 @@ class OwnedMigrationWorkspaceTest
 {
     @TempDir Path temporary;
 
-    @Test void fullSplitWorkspaceDoesNotGrowWithDetailedEventsAndDoesNotChangeTheSource() throws Exception
+    @Test void fullMigrationBudgetsDetailedEventReplacementAndLeavesSourceUnchanged() throws Exception
     {
         Path database = Format62TestDatabase.create(temporary.resolve("legacy.sqlite"));
         byte[] before = Files.readAllBytes(database);
@@ -27,20 +27,21 @@ class OwnedMigrationWorkspaceTest
         long originalBytes = Files.size(database);
         growDetailedEvents(database);
         assertTrue(Files.size(database) > originalBytes);
-        assertEquals(compact,
+        assertTrue(ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL) > compact);
+        assertEquals(2 * Files.size(database),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
-        assertEquals(Files.size(database),
+        assertEquals(2 * Files.size(database),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.CONFIGURATION_ONLY));
     }
 
-    @Test void fullNicknameUpgradeBudgetsConfigurationWithoutGrowingWithUntouchedActivity() throws Exception
+    @Test void fullPairedUpgradeBudgetsBothFilesAndRetainedEventGrowth() throws Exception
     {
         Path database = Format63TestDatabase.create(temporary.resolve("paired.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(database);
         byte[] configuration = Files.readAllBytes(database);
         byte[] activity = Files.readAllBytes(history);
         long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL);
-        assertEquals(Files.size(database), workspace);
+        assertEquals(2 * (Files.size(database) + Files.size(history)), workspace);
         assertTrue(workspace > 0);
         assertArrayEquals(configuration, Files.readAllBytes(database));
         assertArrayEquals(activity, Files.readAllBytes(history));
@@ -48,11 +49,12 @@ class OwnedMigrationWorkspaceTest
         growDetailedEvents(history);
         assertTrue(Files.size(history) > originalHistorySize);
         activity = Files.readAllBytes(history);
-        assertEquals(workspace,
+        assertTrue(ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL) > workspace);
+        assertEquals(2 * (Files.size(database) + Files.size(history)),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
-        assertEquals(Files.size(database) + Files.size(history),
+        assertEquals(2 * (Files.size(database) + Files.size(history)),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.CONFIGURATION_ONLY),
-            "Discarding Activity still needs the conservative paired-file workspace");
+            "Workspace covers replacement pages and rollback journals");
         assertArrayEquals(configuration, Files.readAllBytes(database));
         assertArrayEquals(activity, Files.readAllBytes(history));
         Files.delete(history);
@@ -61,7 +63,7 @@ class OwnedMigrationWorkspaceTest
         assertFalse(Files.exists(history));
     }
 
-    @Test void nicknameUpgradeIncludesCommittedConfigurationWalWithoutChangingEitherDatabase() throws Exception
+    @Test void pairedUpgradeIncludesCommittedWalWithoutChangingEitherDatabase() throws Exception
     {
         Path database = Format63TestDatabase.create(temporary.resolve("paired-wal.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(database);
@@ -76,7 +78,7 @@ class OwnedMigrationWorkspaceTest
             assertTrue(Files.size(wal) > 0);
             byte[] configuration = Files.readAllBytes(database);
             byte[] committedWal = Files.readAllBytes(wal);
-            assertEquals(Files.size(database) + Files.size(wal),
+            assertEquals(2 * (Files.size(database) + Files.size(wal) + Files.size(history)),
                 ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
             assertArrayEquals(configuration, Files.readAllBytes(database));
             assertArrayEquals(committedWal, Files.readAllBytes(wal));
@@ -87,7 +89,7 @@ class OwnedMigrationWorkspaceTest
     @Test void otherFormatsKeepConservativeFootprintAndCurrentPairsRequireTheirCompanion() throws Exception
     {
         Path legacy = Format2TestDatabase.create(temporary.resolve("old.sqlite"));
-        assertEquals(Files.size(legacy),
+        assertEquals(2 * Files.size(legacy),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(legacy, MigrationContent.FULL));
         Path current = temporary.resolve("current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(current);

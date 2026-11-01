@@ -16,6 +16,7 @@ import static io.github.dsheirer.stats.StatsSqlRows.queryRows;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.dsheirer.module.decode.p25.reference.Vendor;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.identifier.Form;
 import io.github.dsheirer.channel.ChannelAdministrationService;
 import io.github.dsheirer.database.SdrTrunkDatabase;
@@ -372,7 +373,7 @@ class StatsWebDatabase
             target_directory.p25_subscriber_identity_id AS target_p25_subscriber_identity_id,
             activity.target_observed_working_id,
             activity.target_kind_code, activity.target_kind,
-            activity.frequency_hz, activity.lcn, activity.timeslot, activity.encrypted,
+            activity.frequency_hz, activity.lcn, activity.timeslot, activity.encryption_state,
             activity.encryption_algorithm_id, activity.encryption_key_id,
             activity.resolved_channel_name AS name,
             nullif(trim(config.system_name), '') AS system_name,
@@ -6071,7 +6072,7 @@ class StatsWebDatabase
 
     private static String activityEncryptedOwnerIndex(ActivityFilters filters)
     {
-        if(filters.afterId() != null || filters.hasTones() || !Integer.valueOf(1).equals(filters.encryption()) ||
+        if(filters.afterId() != null || filters.hasTones() || !Integer.valueOf(CallEncryptionState.ENCRYPTED.code()).equals(filters.encryption()) ||
             filters.groupIdentitySummaryId() != null || filters.radioIdentitySummaryId() != null ||
             filters.sourceIdentitySummaryId() != null || filters.targetIdentitySummaryId() != null ||
             filters.actionCode() != null || filters.actionCodes() != null || filters.eventTypeCode() != null ||
@@ -6132,11 +6133,11 @@ class StatsWebDatabase
         if(activityEncryptedOwnerIndex(filters) != null)
         {
             // SQLite can prove eligibility for the partial index only from the literal predicate.
-            sql.append("\n  AND candidate.encrypted = 1");
+            sql.append("\n  AND candidate.encryption_state = 2");
         }
         else if(filters.encryption() != null)
         {
-            appendActivityPredicate(sql, parameters, "candidate.encrypted = ?", filters.encryption());
+            appendActivityPredicate(sql, parameters, "candidate.encryption_state = ?", filters.encryption());
         }
         if(filters.hideGrants() && filters.actionCode() == null)
         {
@@ -6319,17 +6320,13 @@ class StatsWebDatabase
         {
             return null;
         }
-        if("clear".equalsIgnoreCase(value))
+        for(CallEncryptionState state: CallEncryptionState.values())
         {
-            return 0;
-        }
-        if("encrypted".equalsIgnoreCase(value))
-        {
-            return 1;
+            if(state.name().equalsIgnoreCase(value)) return state.code();
         }
 
         throw new StatsApiException(400, "invalid_parameter",
-            "encryption must be all, clear, or encrypted", "encryption");
+            "encryption must be all, clear, encrypted, or unknown", "encryption");
     }
 
     private static ActivityRadioRole activityRadioRole(String value)
@@ -8194,10 +8191,9 @@ class StatsWebDatabase
     {
         for(Map<String,Object> row: rows)
         {
-            if(number(row.get("encrypted")) == 0)
-            {
-                continue;
-            }
+            CallEncryptionState state = CallEncryptionState.fromCode((int)number(row.get("encryption_state")));
+            row.put("encryption_state", state.name().toLowerCase(Locale.ROOT));
+            if(!state.isEncrypted()) continue;
 
             VoiceEncryptionProtocol protocol =
                 VoiceEncryptionProtocol.fromProtocolName(String.valueOf(row.get("protocol")));

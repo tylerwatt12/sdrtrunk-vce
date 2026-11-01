@@ -1,6 +1,7 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.LogicalCallId;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
@@ -60,12 +61,12 @@ class P25LateEncryptionHistoryTest
             try(Connection connection = connection(database))
             {
                 assertEquals(2, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
-                assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE encrypted=1"),
+                assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE encryption_state=2"),
                     "the encrypted-only history filter must find late confirmation on the original call");
                 assertEquals(ALGORITHM, scalar(connection,
-                    "SELECT encryption_algorithm_id FROM receiver_activity_event WHERE encrypted=1"));
+                    "SELECT encryption_algorithm_id FROM receiver_activity_event WHERE encryption_state=2"));
                 assertEquals(KEY, scalar(connection,
-                    "SELECT encryption_key_id FROM receiver_activity_event WHERE encrypted=1"));
+                    "SELECT encryption_key_id FROM receiver_activity_event WHERE encryption_state=2"));
                 assertEquals(1, scalar(connection,
                     "SELECT sum(encrypted_logical_call_count) FROM trunked_logical_call_bucket"));
                 assertEquals(1, scalar(connection,
@@ -92,7 +93,7 @@ class P25LateEncryptionHistoryTest
         try(Connection connection = connection(database))
         {
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
-            assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE encrypted=1 " +
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE encryption_state=2 " +
                 "OR encryption_algorithm_id IS NOT NULL OR encryption_key_id IS NOT NULL"));
         }
     }
@@ -131,10 +132,10 @@ class P25LateEncryptionHistoryTest
             connection.setAutoCommit(false);
             ReceiverActivitySchema.enrichP25Call(connection, initial, confirmed, credit);
             connection.rollback();
-            assertEquals(0, scalar(connection, "SELECT encrypted FROM receiver_activity_event"));
+            assertEquals(0, scalar(connection, "SELECT encryption_state FROM receiver_activity_event"));
             ReceiverActivitySchema.enrichP25Call(connection, initial, confirmed, credit);
             connection.commit();
-            assertEquals(1, scalar(connection, "SELECT encrypted FROM receiver_activity_event"));
+            assertEquals(2, scalar(connection, "SELECT encryption_state FROM receiver_activity_event"));
         }
     }
 
@@ -174,7 +175,7 @@ class P25LateEncryptionHistoryTest
         {
             var credit = ReceiverActivitySchema.recordP25Call(connection, initial, true);
             assertNull(ReceiverActivitySchema.enrichP25Call(connection, initial, other, credit));
-            assertEquals(0, scalar(connection, "SELECT encrypted FROM receiver_activity_event"));
+            assertEquals(0, scalar(connection, "SELECT encryption_state FROM receiver_activity_event"));
         }
     }
 
@@ -186,7 +187,7 @@ class P25LateEncryptionHistoryTest
         if(includeEncryption)
             identifiers.add(EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(ALGORITHM, KEY)));
         return new P25CallStartEvent(CHANNEL, decoder, DecodeEventType.CALL_GROUP, start, identifiers,
-            460_012_500L, null, null, 1, decoder == DecoderType.P25_PHASE2, confirmed,
+            460_012_500L, null, null, 1, decoder == DecoderType.P25_PHASE2, confirmed ? CallEncryptionState.ENCRYPTED : CallEncryptionState.UNKNOWN, confirmed,
             "p25:bee00:3a9", token);
     }
 

@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.module.decode.p25;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.dsheirer.controller.channel.Channel;
@@ -31,7 +32,7 @@ class P25ObservationEventTest
         assertEquals(2L, channel.advanceSiteEvidenceTuningGeneration());
 
         P25GrantObservationEvent grant = new P25GrantObservationEvent(channel, null, null,
-            DecodeEventType.CALL_GROUP, 1_000L, false, true);
+            DecodeEventType.CALL_GROUP, CallEncryptionState.UNKNOWN, 1_000L, false, true);
         P25TrafficChannelConfirmationEvent confirmation =
             new P25TrafficChannelConfirmationEvent(channel, 851_012_500L, 1, 1_001L);
 

@@ -10,7 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -94,7 +93,6 @@ class Format29To30DatabaseMigrationTest
                 WHERE channel_id=? AND encrypted=?
                 ORDER BY observed_at_ms DESC, id DESC LIMIT ?
                 """, 900001, 0, 201);
-            ReceiverActivitySchema.validate(connection);
         }
         CurrentFormatTestDatabase.validateCurrentPair(database);
     }

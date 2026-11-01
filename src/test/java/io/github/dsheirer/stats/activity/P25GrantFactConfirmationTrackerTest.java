@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -34,7 +35,7 @@ class P25GrantFactConfirmationTrackerTest
 
     private static P25GrantObservationEvent event(long timestamp, boolean confirmedBand)
     {
-        return new P25GrantObservationEvent(null, null, null, DecodeEventType.CALL_GROUP, timestamp, false,
+        return new P25GrantObservationEvent(null, null, null, DecodeEventType.CALL_GROUP, CallEncryptionState.UNKNOWN, timestamp, false,
             confirmedBand);
     }
 
@@ -44,7 +45,7 @@ class P25GrantFactConfirmationTrackerTest
         return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", java.util.List.of(), 854_187_500L, "0-509", 0,
-            false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, null, false, null, null,
+            CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x348, 0x348, 2, 1, null, false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
             ReceiverActivityRecords.P25Identity.ORDINARY, java.util.List.of(), null);
     }

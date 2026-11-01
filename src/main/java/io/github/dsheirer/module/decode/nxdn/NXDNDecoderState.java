@@ -20,6 +20,7 @@
 package io.github.dsheirer.module.decode.nxdn;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 
 import io.github.dsheirer.channel.state.ChangeChannelTimeoutEvent;
 import io.github.dsheirer.channel.state.DecoderState;
@@ -1341,9 +1342,12 @@ public class NXDNDecoderState extends DecoderState
         }
 
         long startTimestamp = call.getTimeStart() > 0 ? call.getTimeStart() : endTimestamp;
-        boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
+        Identifier encryption = identifiers != null ? identifiers.getEncryptionIdentifier() : null;
+        CallEncryptionState encryptionState = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType()) ?
+            CallEncryptionState.ENCRYPTED : encryption instanceof EncryptionKeyIdentifier key && key.getValue() != null ?
+                CallEncryptionState.fromEncrypted(key.isEncrypted()) : CallEncryptionState.UNKNOWN;
         MyEventBus.getGlobalEventBus().post(new NXDNConventionalCallEvent(startTimestamp, endTimestamp,
-            mChannel.getConfigurationId(), frequency, targetKind, talkgroup, sourceRadio, targetRadio, encrypted,
+            mChannel.getConfigurationId(), frequency, targetKind, talkgroup, sourceRadio, targetRadio, encryptionState,
             mIdentityDomain, mCurrentConventionalCallToken));
     }
 

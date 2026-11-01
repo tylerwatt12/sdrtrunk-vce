@@ -113,7 +113,7 @@ class NXDNCallFactRegressionTest
             assertEquals(1, facts.attributions.size());
             assertEquals(101, facts.attributions.getFirst().sourceRadioId());
             assertTrue(facts.attributions.getFirst().sourceBecameKnown());
-            assertTrue(facts.attributions.getFirst().encryptionBecameKnown());
+            assertTrue(facts.attributions.getFirst().encryptionStateChanged());
             assertEquals(1_000L, facts.attributions.getFirst().callStartEpochMilliseconds());
 
             observe(manager, channel, 0, 91, typeD, clear, 1_200L);

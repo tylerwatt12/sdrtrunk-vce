@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.module.decode.traffic;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -42,6 +43,37 @@ import org.junit.jupiter.api.Test;
 
 class TrunkedCallStartTrackerTest
 {
+    @Test
+    void missingTrunkedEncryptionEvidenceIsUnknownAndLateClearAndConflictUpdateTheSameCall()
+    {
+        var tracker = new TrunkedCallStartTracker(5_000);
+        var parent = new Channel("DMR Site", Channel.ChannelType.STANDARD);
+        parent.setDecodeConfiguration(new DecodeConfigDMR());
+        var channel = channel(451_012_500L, 1);
+        var initial = tracker.observeWithAttribution(parent, Protocol.DMR, channel, 1,
+            identifiers(101, 91), DecodeEventType.CALL_GROUP, 1_000L);
+        assertEquals(CallEncryptionState.UNKNOWN, initial.callStart().encryptionState());
+        var clearIdentifiers = identifiers(101, 91);
+        clearIdentifiers.update(EncryptionKeyIdentifier.create(Protocol.DMR, new EncryptionKey(0, 0)
+        {
+            @Override public boolean isEncrypted() { return false; }
+        }));
+        var clear = tracker.observeWithAttribution(parent, Protocol.DMR, channel, 1,
+            clearIdentifiers, DecodeEventType.CALL_GROUP, 1_100L);
+        assertNull(clear.callStart());
+        assertEquals(CallEncryptionState.CLEAR, clear.attribution().encryptionState());
+        assertEquals(CallEncryptionState.UNKNOWN, clear.attribution().previousEncryptionState());
+        var conflict = tracker.observeWithAttribution(parent, Protocol.DMR, channel, 1,
+            identifiers(101, 91), DecodeEventType.CALL_GROUP_ENCRYPTED, 1_200L);
+        assertNull(conflict.callStart());
+        assertEquals(CallEncryptionState.UNKNOWN, conflict.attribution().encryptionState());
+        assertEquals(CallEncryptionState.CLEAR, conflict.attribution().previousEncryptionState());
+        var repeated = tracker.observeWithAttribution(parent, Protocol.DMR, channel, 1,
+            identifiers(101, 91), DecodeEventType.CALL_GROUP_ENCRYPTED, 1_300L);
+        assertNull(repeated.callStart());
+        assertNull(repeated.attribution());
+    }
+
     @Test
     void rejectsUnsupportedP25InputsBecauseP25UsesItsOwnGrantTracker()
     {
@@ -243,12 +275,12 @@ class TrunkedCallStartTrackerTest
         assertEquals(1_000L, target.attribution().callStartEpochMilliseconds());
         assertTrue(target.attribution().destinationBecameKnown());
         assertFalse(target.attribution().sourceBecameKnown());
-        assertFalse(target.attribution().encryptionBecameKnown());
+        assertFalse(target.attribution().encryptionStateChanged());
         assertNull(sourceAndEncryption.callStart());
         assertNotNull(sourceAndEncryption.attribution());
         assertFalse(sourceAndEncryption.attribution().destinationBecameKnown());
         assertTrue(sourceAndEncryption.attribution().sourceBecameKnown());
-        assertTrue(sourceAndEncryption.attribution().encryptionBecameKnown());
+        assertTrue(sourceAndEncryption.attribution().encryptionStateChanged());
         assertEquals(91, sourceAndEncryption.attribution().destinationId());
         assertEquals(101, sourceAndEncryption.attribution().sourceRadioId());
         assertNull(repeated.callStart());
@@ -277,8 +309,8 @@ class TrunkedCallStartTrackerTest
         assertNotNull(initial.callStart());
         assertNotNull(target.attribution());
         assertTrue(target.attribution().destinationBecameKnown());
-        assertTrue(target.attribution().encryptedBeforeObservation());
-        assertFalse(target.attribution().encryptionBecameKnown());
+        assertTrue(target.attribution().previousEncryptionState().isEncrypted());
+        assertFalse(target.attribution().encryptionStateChanged());
     }
 
     @Test
@@ -304,8 +336,8 @@ class TrunkedCallStartTrackerTest
         assertNotNull(detailed.attribution());
         assertFalse(detailed.attribution().destinationBecameKnown());
         assertFalse(detailed.attribution().sourceBecameKnown());
-        assertFalse(detailed.attribution().encryptionBecameKnown());
-        assertTrue(detailed.attribution().encryptedBeforeObservation());
+        assertFalse(detailed.attribution().encryptionStateChanged());
+        assertTrue(detailed.attribution().previousEncryptionState().isEncrypted());
         assertEquals(0x84, detailed.attribution().encryptionAlgorithmId());
         assertEquals(101, detailed.attribution().encryptionKeyId());
         assertNull(repeated.callStart());
@@ -338,7 +370,7 @@ class TrunkedCallStartTrackerTest
         assertNotNull(started.callStart());
         assertNotNull(enriched.attribution());
         assertTrue(enriched.attribution().sourceBecameKnown());
-        assertTrue(enriched.attribution().encryptionBecameKnown());
+        assertTrue(enriched.attribution().encryptionStateChanged());
         assertNull(ended.callStart());
         assertNull(ended.attribution());
         assertNotNull(next);

@@ -1566,9 +1566,9 @@ final class RadioSystemSchema
         Identity sourceIdentity = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
             attribution.sourceRadioId(), ReceiverActivityRecords.P25Identity.UNKNOWN);
         boolean enrichDestination = attribution.destinationBecameKnown() ||
-            attribution.encryptionBecameKnown() || attribution.hasEncryptionDetails();
+            attribution.encryptionStateChanged() || attribution.hasEncryptionDetails();
         boolean enrichSource = attribution.sourceBecameKnown() ||
-            attribution.encryptionBecameKnown() || attribution.hasEncryptionDetails();
+            attribution.encryptionStateChanged() || attribution.hasEncryptionDetails();
         boolean applied = false;
 
         if(enrichDestination)

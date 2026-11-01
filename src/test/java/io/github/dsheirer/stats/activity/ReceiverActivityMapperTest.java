@@ -43,6 +43,8 @@ import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
+import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
@@ -87,6 +89,38 @@ import org.junit.jupiter.api.Test;
 class ReceiverActivityMapperTest
 {
     private static final String CONFIGURATION_ID = "223e4567-e89b-42d3-a456-426614174000";
+
+    @Test
+    void activityUsesEncryptedSignalingWithoutWaitingForKeyDetails()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        var event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED, 1_000,
+            VoiceServiceOptions.createEncrypted()).identifiers(new IdentifierCollection(
+                List.of(APCO25Talkgroup.create(91)))).build();
+        var record = new ReceiverActivityMapper().map(new P25CallStartEvent(channel, event));
+        assertEquals(CallEncryptionState.ENCRYPTED, record.encryptionState());
+        assertNull(record.encryptionAlgorithmId());
+        assertNull(record.encryptionKeyId());
+    }
+
+    @Test
+    void activityDistinguishesExplicitClearSignalingFromMissingEvidence()
+    {
+        Channel channel = new Channel("P25", Channel.ChannelType.STANDARD);
+        channel.setConfigurationId(CONFIGURATION_ID);
+        channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        var identifiers = new IdentifierCollection(List.of(APCO25Talkgroup.create(91)));
+        var clear = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000,
+            VoiceServiceOptions.createUnencrypted()).identifiers(identifiers).build();
+        var unknown = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000, null)
+            .identifiers(identifiers).build();
+        var mapper = new ReceiverActivityMapper();
+        assertEquals(CallEncryptionState.CLEAR, mapper.map(new P25CallStartEvent(channel, clear)).encryptionState());
+        assertEquals(CallEncryptionState.UNKNOWN, mapper.map(new P25CallStartEvent(channel, unknown)).encryptionState());
+        assertEquals(CallEncryptionState.UNKNOWN, mapper.map(channel, unknown).encryptionState());
+    }
 
     @Test
     void p25SummaryCannotResurrectEncryptionFromARetainedIdentifier()
@@ -351,7 +385,7 @@ class ReceiverActivityMapperTest
     void mapsDmrCompletionUsingOnlyTheSavedConfigurationId()
     {
         DMRConventionalCallEvent event = new DMRConventionalCallEvent(1_000, 2_000, CONFIGURATION_ID,
-            461_125_000, 2, DMRConventionalCallEvent.TargetKind.PRIVATE, null, 101, 202, true);
+            461_125_000, 2, DMRConventionalCallEvent.TargetKind.PRIVATE, null, 101, 202, CallEncryptionState.ENCRYPTED);
         ReceiverActivityRecords.DmrConventionalCall record = new ReceiverActivityMapper().map(event);
 
         assertEquals(CONFIGURATION_ID, record.configurationId());
@@ -360,14 +394,14 @@ class ReceiverActivityMapperTest
         assertEquals(ReceiverActivityRecords.DmrTargetKind.PRIVATE, record.targetKind());
         assertEquals(101, record.sourceRadioId());
         assertEquals(202, record.targetRadioId());
-        assertTrue(record.encrypted());
+        assertTrue(record.encryptionState().isEncrypted());
     }
 
     @Test
     void mapsNxdnCompletionUsingOnlyTheSavedConfigurationId()
     {
         NXDNConventionalCallEvent event = new NXDNConventionalCallEvent(1_000, 2_000, CONFIGURATION_ID,
-            461_125_000, NXDNConventionalCallEvent.TargetKind.GROUP, 91, 101, null, true,
+            461_125_000, NXDNConventionalCallEvent.TargetKind.GROUP, 91, 101, null, CallEncryptionState.ENCRYPTED,
             TrunkedIdentityDomain.NXDN_TYPE_C);
         ReceiverActivityRecords.NxdnConventionalCall record = new ReceiverActivityMapper().map(event);
 
@@ -376,14 +410,14 @@ class ReceiverActivityMapperTest
         assertEquals(91, record.talkgroupId());
         assertEquals(101, record.sourceRadioId());
         assertNull(record.targetRadioId());
-        assertTrue(record.encrypted());
+        assertTrue(record.encryptionState().isEncrypted());
     }
 
     @Test
     void preservesNxdnNullGroupForStatistics()
     {
         NXDNConventionalCallEvent event = new NXDNConventionalCallEvent(1_000, 2_000, CONFIGURATION_ID,
-            461_125_000, NXDNConventionalCallEvent.TargetKind.GROUP, 0, 101, null, false,
+            461_125_000, NXDNConventionalCallEvent.TargetKind.GROUP, 0, 101, null, CallEncryptionState.CLEAR,
             TrunkedIdentityDomain.NXDN_TYPE_C);
         ReceiverActivityRecords.NxdnConventionalCall record = new ReceiverActivityMapper().map(event);
 
@@ -411,9 +445,9 @@ class ReceiverActivityMapperTest
     {
         ReceiverActivityMapper mapper = new ReceiverActivityMapper();
         assertNull(mapper.map(new DMRConventionalCallEvent(1_000, 2_000, null, 461_125_000, 1,
-            DMRConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false)));
+            DMRConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, CallEncryptionState.CLEAR)));
         assertNull(mapper.map(new NXDNConventionalCallEvent(1_000, 2_000, "display-name", 461_125_000,
-            NXDNConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, false,
+            NXDNConventionalCallEvent.TargetKind.UNKNOWN, null, null, null, CallEncryptionState.CLEAR,
             TrunkedIdentityDomain.NXDN_TYPE_C)));
     }
 

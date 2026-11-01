@@ -42,7 +42,8 @@ final class Format67To68DatabaseMigration implements DatabaseMigrationStep
                 throw new SQLException("Remote Link destination migration requires exact format-67 configuration");
             long converted = convert(configuration);
             DatabaseFormatCatalog.stamp(configuration, targetVersion());
-            DatabaseFormatCatalog.requireCurrent(configuration);
+            if(DatabaseFormatCatalog.inspect(configuration).version() != targetVersion())
+                throw new SQLException("Remote Link destinations did not reach exact format-68 configuration");
             configuration.commit();
             return effects(converted);
         }

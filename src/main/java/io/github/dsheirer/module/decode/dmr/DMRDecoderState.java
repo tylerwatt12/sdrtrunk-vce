@@ -19,6 +19,7 @@
 package io.github.dsheirer.module.decode.dmr;
 
 import com.google.common.eventbus.Subscribe;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.channel.state.ChangeChannelTimeoutEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent.Event;
@@ -142,7 +143,7 @@ public class DMRDecoderState extends TimeslotDecoderState
     private DecodeEvent mCurrentCallEvent;
     private String mCurrentCallToken;
     private String mPublishedActivityCallToken;
-    private boolean mCurrentCallEncrypted;
+    private CallEncryptionState mCurrentCallEncryptionState = CallEncryptionState.UNKNOWN;
     private String mCapacityMaxAliasBase;
     private String mCapacityMaxAliasContinuation;
     private int mCapacityMaxAliasLength;
@@ -300,6 +301,9 @@ public class DMRDecoderState extends TimeslotDecoderState
     {
         if(decodeEvent != mCurrentCallEvent)
         {
+            mCurrentCallEncryptionState = decodeEvent != null &&
+                DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(decodeEvent.getEventType()) ?
+                    CallEncryptionState.ENCRYPTED : CallEncryptionState.UNKNOWN;
             clearTalkerAliasState();
             IdentifierCollection identifiers = decodeEvent != null ? decodeEvent.getIdentifierCollection() : null;
             Identifier source = identifiers != null ? identifiers.getFromIdentifier() : null;
@@ -977,16 +981,22 @@ public class DMRDecoderState extends TimeslotDecoderState
         {
             if(message.getSyncPattern().isDirect())
             {
-                updateCurrentCall(DecodeEventType.CALL, "DIRECT MODE", message.getTimestamp());
+                updateCurrentCall(DecodeEventType.CALL, "DIRECT MODE", message.getTimestamp(), null);
             }
             else
             {
-                updateCurrentCall(DecodeEventType.CALL, "REPEATER", message.getTimestamp());
+                updateCurrentCall(DecodeEventType.CALL, "REPEATER", message.getTimestamp(), null);
             }
         }
         else
         {
             broadcast(new DecoderStateEvent(this, Event.CONTINUATION, State.CALL, getTimeslot()));
+        }
+
+        if(mCurrentCallEvent != null && message instanceof VoiceEMBMessage voice && voice.getEMB().isValid() &&
+            !mCurrentCallEncryptionState.isEncrypted())
+        {
+            mCurrentCallEncryptionState = CallEncryptionState.fromEncrypted(voice.getEMB().isEncrypted());
         }
 
         if(message.getSyncPattern() == DMRSyncPattern.BS_VOICE_FRAME_F && message instanceof VoiceEMBMessage voiceEmb &&
@@ -1249,7 +1259,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                     if(status.isChannelActive())
                     {
                         getIdentifierCollection().update(status.getIdentifiers());
-                        updateCurrentCall(DecodeEventType.CALL_GROUP, "HYTERA TIER 3 CALL", status.getTimestamp());
+                        updateCurrentCall(DecodeEventType.CALL_GROUP, "HYTERA TIER 3 CALL", status.getTimestamp(), null);
                     }
                     else
                     {
@@ -1660,7 +1670,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                 if(message instanceof io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters ep &&
                     mCurrentCallEvent != null)
                 {
-                    mCurrentCallEncrypted = true;
+                    mCurrentCallEncryptionState = CallEncryptionState.ENCRYPTED;
                     mCurrentCallEvent.setDecodeEventType(encryptedCallType(
                         mCurrentCallEvent.getEventType(), false));
                     mCurrentCallEvent.setDetails(ep.getDetails());
@@ -1686,7 +1696,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         getIdentifierCollection().update(message.getIdentifiers());
                         ServiceOptions serviceOptions = cpgvcu.getServiceOptions();
                         updateCurrentCall(serviceOptions.isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED :
-                                DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp());
+                                DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp(), serviceOptions);
                     }
                 }
                 break;
@@ -1702,7 +1712,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         getIdentifierCollection().update(message.getIdentifiers());
                         ServiceOptions serviceOptions = cpgvcu.getServiceOptions();
                         updateCurrentCall(serviceOptions.isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED :
-                            DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp());
+                            DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp(), serviceOptions);
                     }
                 }
                 break;
@@ -1718,7 +1728,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         getIdentifierCollection().update(message.getIdentifiers());
                         ServiceOptions serviceOptions = cmvcu.getServiceOptions();
                         updateCurrentCall(serviceOptions.isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED :
-                                DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp());
+                                DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp(), serviceOptions);
                     }
                 }
                 break;
@@ -1766,7 +1776,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         getIdentifierCollection().update(message.getIdentifiers());
                         ServiceOptions serviceOptions = cpwavcu.getServiceOptions();
                         updateCurrentCall(serviceOptions.isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED :
-                                DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp());
+                                DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp(), serviceOptions);
                     }
                 }
                 break;
@@ -1783,7 +1793,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         getIdentifierCollection().update(message.getIdentifiers());
                         ServiceOptions serviceOptions = hgvcu.getServiceOptions();
                         updateCurrentCall(serviceOptions.isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED :
-                            DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp());
+                            DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp(), serviceOptions);
 
                     }
                 }
@@ -1804,7 +1814,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         getIdentifierCollection().update(message.getIdentifiers());
                         ServiceOptions serviceOptions = huuvcu.getServiceOptions();
                         updateCurrentCall(serviceOptions.isEncrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED :
-                            DecodeEventType.CALL_UNIT_TO_UNIT, serviceOptions.toString(), message.getTimestamp());
+                            DecodeEventType.CALL_UNIT_TO_UNIT, serviceOptions.toString(), message.getTimestamp(), serviceOptions);
                     }
                 }
                 break;
@@ -1820,7 +1830,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         getIdentifierCollection().update(message.getIdentifiers());
                         ServiceOptions serviceOptions = gvcu.getServiceOptions();
                         updateCurrentCall(serviceOptions.isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED :
-                            DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp());
+                            DecodeEventType.CALL_GROUP, serviceOptions.toString(), message.getTimestamp(), serviceOptions);
                     }
                 }
                 break;
@@ -1837,7 +1847,7 @@ public class DMRDecoderState extends TimeslotDecoderState
                         getIdentifierCollection().update(message.getIdentifiers());
                         ServiceOptions serviceOptions = uuvcu.getServiceOptions();
                         updateCurrentCall(serviceOptions.isEncrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED :
-                            DecodeEventType.CALL_UNIT_TO_UNIT, serviceOptions.toString(), message.getTimestamp());
+                            DecodeEventType.CALL_UNIT_TO_UNIT, serviceOptions.toString(), message.getTimestamp(), serviceOptions);
                     }
                 }
                 break;
@@ -1977,7 +1987,7 @@ public class DMRDecoderState extends TimeslotDecoderState
      */
     private void updateEncryptedCall(EmbeddedEncryptionParameters embeddedEncryptionParameters, boolean isGroup, long timestamp)
     {
-        mCurrentCallEncrypted = true;
+        mCurrentCallEncryptionState = CallEncryptionState.ENCRYPTED;
 
         if(mCurrentCallEvent != null)
         {
@@ -2020,8 +2030,9 @@ public class DMRDecoderState extends TimeslotDecoderState
      * @param type of call that will be used as an event description
      * @param details of the call (optional)
      * @param timestamp of the message indicating a call or continuation
+     * @param serviceOptions explicit encryption signaling, or null for voice-only observations
      */
-    private void updateCurrentCall(DecodeEventType type, String details, long timestamp)
+    private void updateCurrentCall(DecodeEventType type, String details, long timestamp, ServiceOptions serviceOptions)
     {
         long generation = mAliasReceptionGeneration.get();
         if(mCurrentCallEvent != null &&
@@ -2031,7 +2042,10 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
 
         Event event = mCurrentCallEvent == null ? Event.START : Event.CONTINUATION;
-        mCurrentCallEncrypted |= DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type);
+        if(DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type))
+            mCurrentCallEncryptionState = CallEncryptionState.ENCRYPTED;
+        else if(serviceOptions != null && !mCurrentCallEncryptionState.isEncrypted())
+            mCurrentCallEncryptionState = CallEncryptionState.fromEncrypted(serviceOptions.isEncrypted());
 
         //Create a repeater channel descriptor if we don't have one
         if(mCurrentChannel == null && getCurrentFrequency() > 0)
@@ -2126,7 +2140,7 @@ public class DMRDecoderState extends TimeslotDecoderState
         mCurrentCallToken = null;
         publishActivityCallToken(timestamp);
 
-        mCurrentCallEncrypted = false;
+        mCurrentCallEncryptionState = CallEncryptionState.UNKNOWN;
         clearTalkerAliasState();
         getIdentifierCollection().remove(IdentifierClass.USER, Form.TALKER_ALIAS, Role.FROM);
         getIdentifierCollection().remove(IdentifierClass.USER, Form.TONE, Role.FROM);
@@ -2234,11 +2248,9 @@ public class DMRDecoderState extends TimeslotDecoderState
         }
 
         long startTimestamp = call.getTimeStart() > 0 ? call.getTimeStart() : endTimestamp;
-        boolean encrypted = mCurrentCallEncrypted ||
-            DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(call.getEventType());
         MyEventBus.getGlobalEventBus().post(new DMRConventionalCallEvent(startTimestamp, endTimestamp,
             channel.getConfigurationId(), frequency, getTimeslot(), targetKind, talkgroup, sourceRadio, targetRadio,
-            encrypted, mCurrentCallToken));
+            mCurrentCallEncryptionState, mCurrentCallToken));
     }
 
     private void publishActivityCallToken(long timestamp)

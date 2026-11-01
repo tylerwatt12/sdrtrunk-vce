@@ -1,6 +1,7 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.alerts;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.*;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.database.SdrTrunkDatabaseStartup;
@@ -67,7 +68,7 @@ class TopicAlertServiceTest
                     new DecodeEventViewService.AlertFacts(List.of(), List.of(), List.of(), null));
                 service.setCallProjector(call -> view);
                 service.receiveCompletedCall(RecordingReadyAlertDeliveryTest.call(1, "zero",
-                    io.github.dsheirer.audio.call.CallEncryptionState.CLEAR));
+                    CallEncryptionState.CLEAR));
                 service.drain();
                 assertEquals(0, service.history(null, 100, 0).get("total"));
             }
@@ -92,7 +93,7 @@ class TopicAlertServiceTest
                 assertEquals(0, service.history(null, 100, 0).get("total"), "Live voice updates wait for completion");
                 service.setCallProjector(call -> view);
                 service.receiveCompletedCall(RecordingReadyAlertDeliveryTest.call(index, "session:" + index,
-                    io.github.dsheirer.audio.call.CallEncryptionState.CLEAR)); service.drain();
+                    CallEncryptionState.CLEAR)); service.drain();
                 assertEquals(index == 2 ? 1 : 0, service.history(null, 100, 0).get("total"));
             }
             assertTrue(service.pendingDeliveries(1).isEmpty());

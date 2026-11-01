@@ -3595,20 +3595,20 @@ class StatsWebDatabaseTest
             statement.executeUpdate("""
                 INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,
                     action_code,event_type_code,source_identity_summary_id,source_observed_local_id,
-                    target_identity_summary_id,target_observed_local_id,target_kind_code,encrypted) VALUES
-                (990001,71,71,10000,4,7,7102,202,7102,202,2,0),
-                (990002,71,71,10000,4,7,7102,202,7101,101,1,1),
-                (990003,71,71,20000,4,7,7102,202,7101,101,1,1),
-                (990004,72,71,30000,4,7,7102,202,7101,101,1,1),
-                (990005,71,71,40000,4,7,7105,303,7101,101,1,0)
+                    target_identity_summary_id,target_observed_local_id,target_kind_code,encryption_state) VALUES
+                (990001,71,71,10000,4,7,7102,202,7102,202,2, 1),
+                (990002,71,71,10000,4,7,7102,202,7101,101,1, 2),
+                (990003,71,71,20000,4,7,7102,202,7101,101,1, 2),
+                (990004,72,71,30000,4,7,7102,202,7101,101,1, 2),
+                (990005,71,71,40000,4,7,7105,303,7101,101,1, 1)
                 """);
             statement.executeUpdate("""
                 WITH RECURSIVE events(value) AS (
                     VALUES(1) UNION ALL SELECT value+1 FROM events WHERE value<10000
                 )
                 INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,
-                    action_code,event_type_code,encrypted)
-                SELECT 1000000+value,71,71,1000000+value,4,7,1 FROM events
+                    action_code,event_type_code,encryption_state)
+                SELECT 1000000+value,71,71,1000000+value,4,7,2 FROM events
                 """);
             statement.executeUpdate("""
                 INSERT INTO receiver_activity_tone_sequence
@@ -4002,6 +4002,43 @@ class StatsWebDatabaseTest
     }
 
     @Test
+    void activityEncryptionStatesFilterExactlyWithoutRequiringAlgorithmDetails() throws Exception
+    {
+        try(Connection connection = openFixture(); Statement sql = connection.createStatement())
+        {
+            sql.executeUpdate("""
+                INSERT INTO receiver_activity_event(id,channel_id,radio_system_id,observed_at_ms,
+                    action_code,event_type_code,encryption_state)
+                VALUES (997101,71,71,8000000000,4,8,2),
+                       (997102,71,71,8000000001,4,7,1),
+                       (997103,71,71,8000000002,4,7,0)
+                """);
+        }
+        String scope = "/?configuration_id=" + P25_CHANNEL_A +
+            "&action=CALL&from_ms=8000000000&to_ms=8000000003";
+        assertEquals(3, rows(mDatabase.activity(request(scope))).size(),
+            "Every Activity row remains available without an encryption filter");
+        for(String state: List.of("encrypted", "clear", "unknown"))
+        {
+            List<Map<String,Object>> filtered = rows(mDatabase.activity(request(scope + "&encryption=" + state)));
+            assertEquals(1, filtered.size());
+            Map<String,Object> row = filtered.getFirst();
+            assertEquals(state, row.get("encryption_state"));
+            assertFalse(row.containsKey("encrypted"), "Activity has one status rather than two authorities");
+            assertNull(row.get("encryption_algorithm_id"));
+            assertNull(row.get("encryption_key_id"));
+            if(state.equals("encrypted"))
+            {
+                assertEquals("CALL_GROUP_ENCRYPTED", row.get("event_type"));
+                assertEquals("ENC", row.get("encryption_display"));
+            }
+        }
+        List<Map<String,Object>> forward = rows(mDatabase.activity(request(scope +
+            "&encryption=unknown&after_id=0")));
+        assertEquals(List.of(997103L), forward.stream().map(row -> number(row.get("id"))).toList());
+    }
+
+    @Test
     void encryptedOwnerHistoryUsesSparseIndexesWithoutPlannerStatistics() throws Exception
     {
         try(Connection connection = openFixture();
@@ -4028,9 +4065,9 @@ class StatsWebDatabaseTest
                 )
                 INSERT INTO receiver_activity_event (
                     channel_id, radio_system_id, observed_at_ms, action_code,
-                    source_observed_local_id, encrypted)
+                    source_observed_local_id, encryption_state)
                 SELECT 71, 71, 20000 + value, 23, value % 500,
-                       CASE WHEN value % 100 = 0 THEN 1 ELSE 0 END
+                       CASE WHEN value % 100 = 0 THEN 2 ELSE 1 END
                 FROM events
                 """);
         }
@@ -4043,8 +4080,8 @@ class StatsWebDatabaseTest
         assertTrue(channelEncrypted[0].sql().contains(
             "receiver_activity_event AS candidate INDEXED BY " +
                 "idx_receiver_activity_event_channel_encrypted_time"));
-        assertTrue(channelEncrypted[0].sql().contains("candidate.encrypted = 1"));
-        assertFalse(channelEncrypted[0].sql().contains("candidate.encrypted = ?"));
+        assertTrue(channelEncrypted[0].sql().contains("candidate.encryption_state = 2"));
+        assertFalse(channelEncrypted[0].sql().contains("candidate.encryption_state = ?"));
 
         StatsWebDatabase.ActivityQuery[] systemEncrypted = new StatsWebDatabase.ActivityQuery[1];
         mDatabase.activity(request("/?radio_system_key=" + RADIO_SYSTEM_KEY +
@@ -4058,7 +4095,7 @@ class StatsWebDatabaseTest
         mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
             "&encryption=clear&limit=1"), query -> clear[0] = query);
         assertFalse(clear[0].sql().contains("INDEXED BY"));
-        assertTrue(clear[0].sql().contains("candidate.encrypted = ?"));
+        assertTrue(clear[0].sql().contains("candidate.encryption_state = ?"));
 
         StatsWebDatabase.ActivityQuery[] unfiltered = new StatsWebDatabase.ActivityQuery[1];
         mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A + "&limit=1"),
@@ -4069,13 +4106,13 @@ class StatsWebDatabaseTest
         mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
             "&encryption=encrypted&source_id=1&limit=1"), query -> identitySpecific[0] = query);
         assertFalse(identitySpecific[0].sql().contains("INDEXED BY"));
-        assertTrue(identitySpecific[0].sql().contains("candidate.encrypted = ?"));
+        assertTrue(identitySpecific[0].sql().contains("candidate.encryption_state = ?"));
 
         StatsWebDatabase.ActivityQuery[] forward = new StatsWebDatabase.ActivityQuery[1];
         mDatabase.activity(request("/?configuration_id=" + P25_CHANNEL_A +
             "&encryption=encrypted&after_id=0&limit=200"), query -> forward[0] = query);
         assertFalse(forward[0].sql().contains("INDEXED BY"));
-        assertTrue(forward[0].sql().contains("candidate.encrypted = ?"));
+        assertTrue(forward[0].sql().contains("candidate.encryption_state = ?"));
 
         try(Connection connection = openFixture())
         {
@@ -4782,18 +4819,18 @@ class StatsWebDatabaseTest
                     channel_id, radio_system_id, observed_at_ms, action_code, event_type_code,
                     source_observed_local_id, target_observed_local_id, target_kind_code,
                     source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
-                    frequency_hz, lcn_band, lcn_number, timeslot, encrypted)
+                    frequency_hz, lcn_band, lcn_number, timeslot, encryption_state)
                 VALUES
                     (71, 71, 10000, 4, 7, 202, 101, 1, 7102, 2, 7101,
-                        851012500, 1, 2, 1, 0),
+                        851012500, 1, 2, 1, 1),
                     (71, 71, 11000, 12, 7, 303, 900, 3, 7105, 2, 7104,
-                        852012500, 3, 4, 2, 1),
+                        852012500, 3, 4, 2, 2),
                     (71, 71, 12000, 9, 57, 303, 202, 2, 7105, 2, 7102,
-                        853012500, NULL, NULL, 1, 0),
+                        853012500, NULL, NULL, 1, 1),
                     (71, 71, 13000, 4, 19, 202, 303, 2, 7102, 2, 7105,
-                        851012500, NULL, NULL, 2, 1),
+                        851012500, NULL, NULL, 2, 2),
                     (72, 71, 14000, 4, 7, 303, 102, 1, 7105, 2, 7103,
-                        854012500, 5, 6, 1, 0)
+                        854012500, 5, 6, 1, 1)
                 """);
             statement.executeUpdate("""
                 INSERT INTO activity_event_identity_member (

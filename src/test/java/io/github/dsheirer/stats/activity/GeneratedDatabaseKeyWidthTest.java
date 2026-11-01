@@ -1,6 +1,7 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -168,7 +169,7 @@ class GeneratedDatabaseKeyWidthTest
             }
             Long eventId = ReceiverActivitySchema.recordDmrConventionalCall(connection,
                 new ReceiverActivityRecords.DmrConventionalCall(1_000, 2_000, conventional, 451_000_000L, 1,
-                    ReceiverActivityRecords.DmrTargetKind.GROUP, 91, 1001, null, false), true);
+                    ReceiverActivityRecords.DmrTargetKind.GROUP, 91, 1001, null, CallEncryptionState.CLEAR), true);
             assertNotNull(eventId);
             assertTrue(eventId > Integer.MAX_VALUE);
             assertEquals(1, scalar(connection, """
@@ -231,7 +232,7 @@ class GeneratedDatabaseKeyWidthTest
         return new ReceiverActivityRecords.ActivityEvent(observedAt, CHANNEL,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.REGISTER,
             "REGISTER", Integer.toString(WORKING_ID), null, null, List.of(), 851_012_500L, "0-1", 1,
-            false, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, presence,
+            CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, presence,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN, RADIO, List.of(), null,
             WORKING_ID, null, new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, WORKING_ID,
                 SUBSCRIBER, observedAt + 60_000, ReceiverActivityRecords.RadioPresenceEvidence.REGISTRATION));

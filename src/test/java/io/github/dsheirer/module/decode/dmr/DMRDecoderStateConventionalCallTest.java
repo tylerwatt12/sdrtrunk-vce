@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.google.common.eventbus.Subscribe;
 import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.audio.call.AudioActivityCallEvent;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
 import io.github.dsheirer.channel.state.DecoderStateEvent.Event;
@@ -36,6 +37,7 @@ import io.github.dsheirer.module.decode.dmr.message.data.lc.LCMessage;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.EncryptionParameters;
 import io.github.dsheirer.module.decode.dmr.message.data.lc.full.GroupVoiceChannelUser;
 import io.github.dsheirer.module.decode.dmr.message.data.terminator.Terminator;
+import io.github.dsheirer.module.decode.dmr.message.type.ServiceOptions;
 import io.github.dsheirer.module.decode.dmr.message.voice.embedded.EmbeddedEncryptionParameters;
 import io.github.dsheirer.module.decode.dmr.sync.DMRSyncPattern;
 import io.github.dsheirer.module.decode.event.DecodeEvent;
@@ -135,8 +137,42 @@ class DMRDecoderStateConventionalCallTest
         assertEquals(91, event.talkgroupId());
         assertEquals(1_234_567, event.sourceRadioId());
         assertNull(event.targetRadioId());
-        assertTrue(event.encrypted());
+        assertEquals(CallEncryptionState.ENCRYPTED, event.encryptionState());
         assertEquals(channel.getConfigurationId(), event.channelConfigurationId());
+    }
+
+    @Test
+    void callWithoutEncryptionSignalingRemainsUnknown()
+    {
+        DMRConventionalCallEvent event = completedCall(channel(DMRChannelMode.CONVENTIONAL, ChannelType.STANDARD));
+        assertNotNull(event);
+        assertEquals(CallEncryptionState.UNKNOWN, event.encryptionState());
+    }
+
+    @Test
+    void explicitClearServiceOptionsSurviveCompletion() throws ReflectiveOperationException
+    {
+        DMRDecoderState state = new DMRDecoderState(
+            channel(DMRChannelMode.CONVENTIONAL, ChannelType.STANDARD), 1, null);
+        state.receiveDecoderStateEvent(frequencyNotification(461_125_000L));
+        CorrectedBinaryMessage bits = new CorrectedBinaryMessage(72);
+        bits.load(24, 24, 91);
+        bits.load(48, 24, 101);
+        GroupVoiceChannelUser clear = new GroupVoiceChannelUser(bits, 1_000L, 1);
+        assertFalse(clear.getServiceOptions().isEncrypted());
+        ConventionalCallSubscriber subscriber = new ConventionalCallSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+        try
+        {
+            processLinkControl(state, clear);
+            state.reset();
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+        assertEquals(1, subscriber.events.size());
+        assertEquals(CallEncryptionState.CLEAR, subscriber.events.getFirst().encryptionState());
     }
 
     @Test
@@ -205,9 +241,9 @@ class DMRDecoderStateConventionalCallTest
 
         assertEquals(2, subscriber.events.size());
         assertEquals(101, subscriber.events.get(0).sourceRadioId());
-        assertTrue(subscriber.events.get(0).encrypted());
+        assertEquals(CallEncryptionState.ENCRYPTED, subscriber.events.get(0).encryptionState());
         assertEquals(202, subscriber.events.get(1).sourceRadioId());
-        assertFalse(subscriber.events.get(1).encrypted());
+        assertEquals(CallEncryptionState.UNKNOWN, subscriber.events.get(1).encryptionState());
         assertEquals(91, subscriber.events.get(0).talkgroupId());
         assertEquals(91, subscriber.events.get(1).talkgroupId());
     }
@@ -325,9 +361,9 @@ class DMRDecoderStateConventionalCallTest
         throws ReflectiveOperationException
     {
         Method method = DMRDecoderState.class.getDeclaredMethod("updateCurrentCall",
-            DecodeEventType.class, String.class, long.class);
+            DecodeEventType.class, String.class, long.class, ServiceOptions.class);
         method.setAccessible(true);
-        method.invoke(state, type, null, timestamp);
+        method.invoke(state, type, null, timestamp, null);
     }
 
     private static void processTerminator(DMRDecoderState state, Terminator terminator)

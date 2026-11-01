@@ -56,7 +56,7 @@ class TrunkedCallActivityMapper
             eventType.name(), text(callStart.sourceRadioId()), text(callStart.targetId()),
             callStart.targetForm() != null ? callStart.targetForm().name() : null, List.of(),
             callStart.frequencyHertz(), channelDescriptor(callStart.channelDescriptorSnapshot()),
-            callStart.timeslot(), callStart.encrypted(),
+            callStart.timeslot(), callStart.encryptionState(),
             callStart.encryptionAlgorithmId(), callStart.encryptionKeyId(), null, callStart.systemId(), null, null,
             callStart.siteId(), callStart.talkerAlias(), true, null, null, callStart.identityDomain(),
             ReceiverActivityRecords.P25Identity.UNKNOWN,
@@ -80,7 +80,7 @@ class TrunkedCallActivityMapper
         }
 
         if(!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
-            !attribution.encryptionBecameKnown() && attribution.encryptionAlgorithmId() == null &&
+            !attribution.encryptionStateChanged() && attribution.encryptionAlgorithmId() == null &&
             attribution.encryptionKeyId() == null)
         {
             return null;
@@ -94,7 +94,7 @@ class TrunkedCallActivityMapper
             attribution.patchMemberTalkgroupIds(), attribution.sourceRadioId(),
             attribution.encryptionAlgorithmId(), attribution.encryptionKeyId(),
             attribution.destinationBecameKnown(), attribution.sourceBecameKnown(),
-            attribution.encryptionBecameKnown(), attribution.encryptedBeforeObservation(),
+            attribution.encryptionState(), attribution.previousEncryptionState(),
             attribution.identityDomain(), attribution.radioSystemKey());
     }
 

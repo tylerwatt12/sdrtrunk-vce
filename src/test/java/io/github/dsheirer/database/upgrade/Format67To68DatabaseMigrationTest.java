@@ -47,7 +47,7 @@ class Format67To68DatabaseMigrationTest
                 var effects = new Format67To68DatabaseMigration().migrateAndReport(connection);
                 DatabaseFormatCatalog.stamp(connection, 68);
                 assertEquals(1, effects.getFirst().affectedRows());
-                assertEquals(68, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(68, DatabaseFormatCatalog.inspect(connection).version());
                 assertEquals(ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT,
                     SqliteSchemaValidator.fingerprint(connection));
                 assertEquals(expected, settings(connection));
@@ -57,7 +57,6 @@ class Format67To68DatabaseMigrationTest
                 assertEquals(67, DatabaseFormatCatalog.inspect(connection).version());
                 assertEquals(original, json(connection));
             }
-            byte[] activity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
             byte[] before = Files.readAllBytes(database);
             assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
             assertArrayEquals(before, Files.readAllBytes(database));
@@ -72,7 +71,11 @@ class Format67To68DatabaseMigrationTest
             ApplicationDatabaseMigrator.migrateInPlace(database, null);
             assertEquals(expected, new RemoteLinkSettingsStore(database).load());
             ConfigurationHistoryDatabase.validatePair(database);
-            assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+            try(var history = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database)))
+            {
+                assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(history));
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(history).version());
+            }
             byte[] current = Files.readAllBytes(database);
             ApplicationDatabaseMigrator.migrateInPlace(database, null);
             assertArrayEquals(current, Files.readAllBytes(database));

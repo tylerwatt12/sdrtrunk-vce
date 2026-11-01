@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.module.decode.nxdn;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 /**
@@ -20,16 +21,16 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
  */
 public record NXDNConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
                                         long frequencyHertz, TargetKind targetKind, Integer talkgroupId,
-                                        Integer sourceRadioId, Integer targetRadioId, boolean encrypted,
+                                        Integer sourceRadioId, Integer targetRadioId, CallEncryptionState encryptionState,
                                         TrunkedIdentityDomain identityDomain, String callToken)
 {
     public NXDNConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
                                         long frequencyHertz, TargetKind targetKind, Integer talkgroupId,
-                                        Integer sourceRadioId, Integer targetRadioId, boolean encrypted,
+                                        Integer sourceRadioId, Integer targetRadioId, CallEncryptionState encryptionState,
                                         TrunkedIdentityDomain identityDomain)
     {
         this(startTimestamp, endTimestamp, channelConfigurationId, frequencyHertz, targetKind, talkgroupId,
-            sourceRadioId, targetRadioId, encrypted, identityDomain, null);
+            sourceRadioId, targetRadioId, encryptionState, identityDomain, null);
     }
 
 

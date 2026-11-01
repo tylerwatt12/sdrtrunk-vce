@@ -11,7 +11,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.SqliteSchemaValidator;
-import io.github.dsheirer.stats.activity.ReceiverActivitySchema;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -252,7 +251,6 @@ class Format31To32DatabaseMigrationTest
             assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(),
                 SqliteSchemaValidator.fingerprint(connection));
             DatabaseFormatCatalog.inspect(connection);
-            ReceiverActivitySchema.validate(connection);
             assertTrue(report.steps().getFirst().effects().stream()
                 .anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DEFAULT));
         }

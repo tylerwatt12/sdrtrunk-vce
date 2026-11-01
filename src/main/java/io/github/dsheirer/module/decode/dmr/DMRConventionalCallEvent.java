@@ -11,6 +11,8 @@
 
 package io.github.dsheirer.module.decode.dmr;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
+
 /**
  * Immutable, one-time observation of a completed call from an explicitly conventional DMR channel.
  *
@@ -19,14 +21,15 @@ package io.github.dsheirer.module.decode.dmr;
  */
 public record DMRConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
                                        long frequencyHertz, int timeslot, TargetKind targetKind, Integer talkgroupId,
-                                       Integer sourceRadioId, Integer targetRadioId, boolean encrypted, String callToken)
+                                       Integer sourceRadioId, Integer targetRadioId, CallEncryptionState encryptionState,
+                                       String callToken)
 {
     public DMRConventionalCallEvent(long startTimestamp, long endTimestamp, String channelConfigurationId,
                                        long frequencyHertz, int timeslot, TargetKind targetKind, Integer talkgroupId,
-                                       Integer sourceRadioId, Integer targetRadioId, boolean encrypted)
+                                       Integer sourceRadioId, Integer targetRadioId, CallEncryptionState encryptionState)
     {
         this(startTimestamp, endTimestamp, channelConfigurationId, frequencyHertz, timeslot, targetKind,
-            talkgroupId, sourceRadioId, targetRadioId, encrypted, null);
+            talkgroupId, sourceRadioId, targetRadioId, encryptionState, null);
     }
 
 

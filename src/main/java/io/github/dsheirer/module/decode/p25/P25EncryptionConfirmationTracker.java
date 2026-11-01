@@ -71,6 +71,13 @@ public final class P25EncryptionConfirmationTracker
         return evidence != null && evidence.isConfirmed(new AlgorithmKey(algorithm, key));
     }
 
+    /** Distinguishes rejected raw evidence from evidence retired after an accepted call. */
+    public static synchronized boolean isConflicted(P25ChannelGrantEvent event)
+    {
+        CallEvidence evidence = CALL_EVIDENCE.get(event);
+        return evidence != null && evidence.mConflicted;
+    }
+
     /**
      * Discards evidence when the tracked call completes.
      */

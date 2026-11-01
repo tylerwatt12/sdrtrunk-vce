@@ -81,7 +81,7 @@ class TrunkedCallActivityMapperTest
         assertEquals("91", record.targetId());
         assertEquals(1023, record.site());
         assertEquals(" LCN:12 CHANID:26", record.lcn());
-        assertTrue(record.encrypted());
+        assertTrue(record.encryptionState().isEncrypted());
         assertTrue(record.countedCall(), "typed start still identifies a call but completion owns counters");
         assertNull(record.wacn());
     }
@@ -145,6 +145,30 @@ class TrunkedCallActivityMapperTest
         assertEquals(" LCN:12 CHANID:26", projected.lcn());
         assertEquals(0, channel.toStringCalls(),
             "the mapper must format from frozen scalars rather than the live descriptor");
+    }
+
+    @Test
+    void lateEncryptionStateUpdatesTheSameCallWithoutAnyKnownRadioOrGroup() throws Exception
+    {
+        Channel parent = dmrParent();
+        var initial = new TrunkedCallStartTracker(5_000).observeWithAttribution(parent, Protocol.DMR,
+            dmrChannel(451_012_500L, 2), 2, new MutableIdentifierCollection(), DecodeEventType.CALL_GROUP, 1000L);
+        var start = new TrunkedCallActivityMapper().map(initial.callStart());
+        Path database = mTemporaryFolder.resolve("dmr-state-only.sqlite");
+        createDatabase(database, parent);
+        try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            ReceiverActivitySchema.recordActivity(connection, start, true);
+            var unknown = io.github.dsheirer.audio.call.CallEncryptionState.UNKNOWN;
+            var clear = io.github.dsheirer.audio.call.CallEncryptionState.CLEAR;
+            var update = new ReceiverActivityRecords.TrunkedCallAttribution(1000L, parent.getConfigurationId(),
+                "DMR", 451_012_500L, 2, -1, null, java.util.List.of(), null, null, null,
+                false, false, clear, unknown, TrunkedIdentityDomain.STANDARD, start.radioSystemKey());
+            assertTrue(ReceiverActivitySchema.applyTrunkedCallAttribution(connection, update));
+            assertEquals(clear.code(), scalar(connection, "SELECT encryption_state FROM receiver_activity_event"));
+            assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
+            assertEquals(0, scalar(connection, "SELECT count(*) FROM trunked_logical_call_bucket"));
+        }
     }
 
     @Test

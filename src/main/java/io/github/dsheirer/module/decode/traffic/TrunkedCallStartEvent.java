@@ -10,7 +10,7 @@
  */
 package io.github.dsheirer.module.decode.traffic;
 
-import io.github.dsheirer.channel.IChannelDescriptor;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Identifier;
@@ -31,34 +31,21 @@ public record TrunkedCallStartEvent(String configurationId, DecoderType decoderT
                                     long callStartEpochMilliseconds, Integer sourceRadioId, Integer targetId,
                                     Form targetForm, Long frequencyHertz,
                                     TrunkedChannelDescriptorSnapshot channelDescriptorSnapshot,
-                                    Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId,
+                                    Integer timeslot, CallEncryptionState encryptionState, Integer encryptionAlgorithmId,
                                     Integer encryptionKeyId, Integer systemId, Integer siteId, String talkerAlias,
                                     String radioSystemKey, String callToken)
 {
-    public TrunkedCallStartEvent(String configurationId, DecoderType decoderType, Protocol protocol,
-                                    TrunkedIdentityDomain identityDomain, DecodeEventType eventType,
-                                    long callStartEpochMilliseconds, Integer sourceRadioId, Integer targetId,
-                                    Form targetForm, Long frequencyHertz,
-                                    TrunkedChannelDescriptorSnapshot channelDescriptorSnapshot,
-                                    Integer timeslot, boolean encrypted, Integer encryptionAlgorithmId,
-                                    Integer encryptionKeyId, Integer systemId, Integer siteId, String talkerAlias,
-                                    String radioSystemKey)
-    {
-        this(configurationId, decoderType, protocol, identityDomain, eventType, callStartEpochMilliseconds,
-            sourceRadioId, targetId, targetForm, frequencyHertz, channelDescriptorSnapshot, timeslot, encrypted,
-            encryptionAlgorithmId, encryptionKeyId, systemId, siteId, talkerAlias, radioSystemKey, null);
-    }
-
     public TrunkedCallStartEvent
     {
         configurationId = ChannelConfigurationKey.canonical(configurationId);
         identityDomain = identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD;
+        encryptionState = encryptionState != null ? encryptionState : CallEncryptionState.UNKNOWN;
         frequencyHertz = frequencyHertz != null && frequencyHertz > 0 ? frequencyHertz : null;
         timeslot = timeslot != null && timeslot >= 0 ? timeslot :
             channelDescriptorSnapshot != null ? channelDescriptorSnapshot.timeslot() : null;
         talkerAlias = normalized(talkerAlias);
 
-        if(!encrypted)
+        if(!encryptionState.isEncrypted())
         {
             encryptionAlgorithmId = null;
             encryptionKeyId = null;
@@ -66,15 +53,6 @@ public record TrunkedCallStartEvent(String configurationId, DecoderType decoderT
 
         radioSystemKey = RadioSystemKey.validateForReceiver(protocol, identityDomain, configurationId,
             radioSystemKey);
-    }
-
-    /** Captures every value while still on the producing decoder thread. */
-    public TrunkedCallStartEvent(Channel channel, Protocol protocol, IChannelDescriptor channelDescriptor,
-                                 Integer timeslot, IdentifierCollection identifiers, DecodeEventType eventType,
-                                 long callStartEpochMilliseconds, String radioSystemKey)
-    {
-        this(channel, protocol, TrunkedChannelDescriptorSnapshot.capture(channelDescriptor), timeslot,
-            identifiers, eventType, callStartEpochMilliseconds, radioSystemKey, null);
     }
 
     /** Uses the one producer-side descriptor capture already used to correlate this call. */
@@ -89,7 +67,7 @@ public record TrunkedCallStartEvent(String configurationId, DecoderType decoderT
             TrunkedCallSnapshot.targetForm(identifiers),
             channelDescriptorSnapshot != null ? channelDescriptorSnapshot.downlinkFrequencyHertz() : null,
             channelDescriptorSnapshot, timeslot,
-            encrypted(eventType, identifiers), encryptionAlgorithmId(identifiers), encryptionKeyId(identifiers),
+            encryptionState(eventType, identifiers), encryptionAlgorithmId(identifiers), encryptionKeyId(identifiers),
             TrunkedCallSnapshot.integerValue(identifiers, io.github.dsheirer.identifier.Form.SYSTEM),
             TrunkedCallSnapshot.integerValue(identifiers, io.github.dsheirer.identifier.Form.SITE),
             TrunkedCallSnapshot.talkerAlias(identifiers),
@@ -102,11 +80,16 @@ public record TrunkedCallStartEvent(String configurationId, DecoderType decoderT
             channel.getDecodeConfiguration().getDecoderType() : null;
     }
 
-    private static boolean encrypted(DecodeEventType eventType, IdentifierCollection identifiers)
+    static CallEncryptionState encryptionState(DecodeEventType eventType, IdentifierCollection identifiers)
     {
         Identifier identifier = identifiers != null ? identifiers.getEncryptionIdentifier() : null;
-        return eventType != null && DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType) ||
-            identifier instanceof EncryptionKeyIdentifier encryption && encryption.isEncrypted();
+        boolean signaledEncrypted = eventType != null && DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType);
+        if(identifier instanceof EncryptionKeyIdentifier encryption && encryption.getValue() != null)
+        {
+            CallEncryptionState state = CallEncryptionState.fromEncrypted(encryption.isEncrypted());
+            return signaledEncrypted && state.isClear() ? CallEncryptionState.UNKNOWN : state;
+        }
+        return signaledEncrypted ? CallEncryptionState.ENCRYPTED : CallEncryptionState.UNKNOWN;
     }
 
     private static Integer encryptionAlgorithmId(IdentifierCollection identifiers)

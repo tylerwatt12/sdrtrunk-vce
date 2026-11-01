@@ -24,9 +24,32 @@ package io.github.dsheirer.audio.call;
  */
 public enum CallEncryptionState
 {
-    UNKNOWN,
-    CLEAR,
-    ENCRYPTED;
+    UNKNOWN(0),
+    CLEAR(1),
+    ENCRYPTED(2);
+
+    private final int mCode;
+
+    CallEncryptionState(int code)
+    {
+        mCode = code;
+    }
+
+    public int code()
+    {
+        return mCode;
+    }
+
+    public static CallEncryptionState fromCode(int code)
+    {
+        return switch(code)
+        {
+            case 0 -> UNKNOWN;
+            case 1 -> CLEAR;
+            case 2 -> ENCRYPTED;
+            default -> throw new IllegalArgumentException("Unknown call encryption state code: " + code);
+        };
+    }
 
     public boolean isKnown()
     {

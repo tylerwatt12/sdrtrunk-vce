@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.audio.broadcast.radioresolve;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.metadata.site.SiteMetadataEvent;
 import io.github.dsheirer.metadata.site.SiteReceiverContext;
@@ -159,7 +160,7 @@ class RadioResolveP25FrequencyEvidenceTrackerTest
                                                   int channelNumber, int timeslot, boolean tdma, long frequency,
                                                   long incarnation, long tuningGeneration, String systemKey)
     {
-        return new P25GrantObservationEvent(CONFIGURATION_ID, DecoderType.P25_PHASE2, DecodeEventType.CALL_GROUP,
+        return new P25GrantObservationEvent(CONFIGURATION_ID, DecoderType.P25_PHASE2, DecodeEventType.CALL_GROUP, CallEncryptionState.UNKNOWN,
             timestamp, false, confirmedBand, List.of(), frequency, band, channelNumber, timeslot, tdma, systemKey,
             incarnation, tuningGeneration);
     }

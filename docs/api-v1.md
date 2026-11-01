@@ -256,6 +256,12 @@ Forward paging pins insertion IDs; it does not detect later changes to an existi
 `projection=p25_visualizer` for compact, global P25 trunked history with action/time filters before paging. This
 projection supports forward cursors without an owner filter. Its current affiliations and live appends are described below.
 
+Activity rows expose `encryption_state` as `clear`, `encrypted`, or `unknown`, replacing the former Activity
+`encrypted` boolean. `encryption=all|clear|encrypted|unknown` filters that exact state before pagination. Clear
+requires explicit clear evidence; missing encryption confirmation is unknown. Encrypted signaling can establish
+encrypted status without identifying the algorithm or key; those optional details are reported independently.
+Recorded event subtypes retain their original message meaning. Other resources keep their existing encryption fields.
+
 Owner-scoped Activity reads also accept `has_tones=true`, independently of `action` and `event_type`.
 The tone filter applies before cursor paging. A call containing tones keeps its original classification, such as
 `CALL` / `CALL_GROUP`, and includes an optional `paging_tone_summary` with ordered frequencies or DTMF symbols,

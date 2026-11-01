@@ -650,6 +650,7 @@ public final class ApplicationDatabaseMigrator
         throws IOException, SQLException
     {
         MigrationSummary committed = null;
+        prepareActivityUpgrade(connection, expectedSource, database);
         try(Statement statement = connection.createStatement())
         {
             boolean transactionOpen = false;
@@ -823,6 +824,7 @@ public final class ApplicationDatabaseMigrator
                         //configuration snapshot remain strict. Owned-profile upgrades omit full scans of retained
                         //radio identities, affiliations and presence; explicit maintenance checks that derived history.
                         DatabaseFormatCatalog.requireCurrent(connection);
+                        if(hasAttachedActivity(connection)) validateAttachedHistoryContent(connection);
                     }
                     else validateCurrentDatabase(connection);
                     phase.complete();
@@ -1599,7 +1601,7 @@ public final class ApplicationDatabaseMigrator
     {
         String format = io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection,
             DatabaseFormatCatalog.FORMAT_VERSION_KEY);
-        if("63".equals(format) || "64".equals(format) || "65".equals(format) || "66".equals(format) || "67".equals(format) || "68".equals(format))
+        if(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION).equals(format))
         {
             DatabaseFormatCatalog.requireCurrent(connection);
             if(io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE.equals(
@@ -1763,6 +1765,33 @@ public final class ApplicationDatabaseMigrator
         if(!Objects.equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection, pairKey),
             io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection, "activity", pairKey)))
             throw new SQLException("The private activity database pair identity changed during migration");
+    }
+
+    /** Both changed profile files share the owned migration transaction and SQLite rollback super-journal. */
+    private static void prepareActivityUpgrade(Connection connection, DatabaseFormatCatalog.DetectedFormat source,
+        Path database) throws SQLException
+    {
+        if(source.version() < 63 || source.version() >= 69 ||
+            !io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection)) return;
+        if(!hasAttachedActivity(connection))
+        {
+            Path history = io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database);
+            if(Files.isSymbolicLink(history) || !Files.isRegularFile(history))
+                throw new SQLException("The Activity companion required for the upgrade is missing");
+            try(var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
+            {
+                attach.setString(1, history.toUri() + "?mode=rw");
+                attach.execute();
+            }
+        }
+        String fingerprint = io.github.dsheirer.database.SqliteSchemaValidator.fingerprint(connection, "activity");
+        io.github.dsheirer.database.ConfigurationHistoryDatabase.validateAdmittedRole(connection,
+            io.github.dsheirer.database.ConfigurationHistorySchema.HISTORY_ROLE, fingerprint, "activity");
+        String pairKey = io.github.dsheirer.database.ConfigurationHistorySchema.PAIR_ID_KEY;
+        if(!Objects.equals(io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection, pairKey),
+            io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection, "activity", pairKey)))
+            throw new SQLException("The Activity companion belongs to a different profile");
+        finalizeStagedDatabase(connection);
     }
 
     private static boolean hasAttachedActivity(Connection connection) throws SQLException

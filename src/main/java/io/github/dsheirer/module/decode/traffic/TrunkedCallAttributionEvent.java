@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.module.decode.traffic;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
@@ -29,13 +30,20 @@ public record TrunkedCallAttributionEvent(String configurationId, DecoderType de
                                           long callStartEpochMilliseconds, Integer destinationId,
                                           Form destinationForm, List<Integer> patchMemberTalkgroupIds,
                                           Integer sourceRadioId, boolean destinationBecameKnown,
-                                          boolean sourceBecameKnown, boolean encryptionBecameKnown,
+                                          boolean sourceBecameKnown, CallEncryptionState encryptionState,
                                           Integer encryptionAlgorithmId, Integer encryptionKeyId,
-                                          boolean encryptedBeforeObservation, String radioSystemKey)
+                                          CallEncryptionState previousEncryptionState, String radioSystemKey)
 {
     public TrunkedCallAttributionEvent
     {
         configurationId = ChannelConfigurationKey.canonical(configurationId);
+        encryptionState = encryptionState != null ? encryptionState : CallEncryptionState.UNKNOWN;
+        previousEncryptionState = previousEncryptionState != null ? previousEncryptionState : CallEncryptionState.UNKNOWN;
+        if(!encryptionState.isEncrypted())
+        {
+            encryptionAlgorithmId = null;
+            encryptionKeyId = null;
+        }
         identityDomain = identityDomain != null ? identityDomain : TrunkedIdentityDomain.STANDARD;
         frequencyHertz = frequencyHertz != null && frequencyHertz > 0 ? frequencyHertz : null;
         timeslot = timeslot != null && timeslot >= 0 ? timeslot :
@@ -55,13 +63,13 @@ public record TrunkedCallAttributionEvent(String configurationId, DecoderType de
                                        IChannelDescriptor channelDescriptor, Integer timeslot,
                                        long callStartEpochMilliseconds, IdentifierCollection identifiers,
                                        boolean destinationBecameKnown, boolean sourceBecameKnown,
-                                       boolean encryptionBecameKnown, Integer encryptionAlgorithmId,
-                                       Integer encryptionKeyId, boolean encryptedBeforeObservation,
+                                       CallEncryptionState encryptionState, Integer encryptionAlgorithmId,
+                                       Integer encryptionKeyId, CallEncryptionState previousEncryptionState,
                                        String radioSystemKey)
     {
         this(channel, protocol, TrunkedChannelDescriptorSnapshot.capture(channelDescriptor), timeslot,
             callStartEpochMilliseconds, identifiers, destinationBecameKnown, sourceBecameKnown,
-            encryptionBecameKnown, encryptionAlgorithmId, encryptionKeyId, encryptedBeforeObservation,
+            encryptionState, encryptionAlgorithmId, encryptionKeyId, previousEncryptionState,
             radioSystemKey);
     }
 
@@ -70,8 +78,8 @@ public record TrunkedCallAttributionEvent(String configurationId, DecoderType de
                                 TrunkedChannelDescriptorSnapshot channelDescriptorSnapshot, Integer timeslot,
                                 long callStartEpochMilliseconds, IdentifierCollection identifiers,
                                 boolean destinationBecameKnown, boolean sourceBecameKnown,
-                                boolean encryptionBecameKnown, Integer encryptionAlgorithmId,
-                                Integer encryptionKeyId, boolean encryptedBeforeObservation,
+                                CallEncryptionState encryptionState, Integer encryptionAlgorithmId,
+                                Integer encryptionKeyId, CallEncryptionState previousEncryptionState,
                                 String radioSystemKey)
     {
         this(TrunkedCallSnapshot.eligibleConfigurationId(channel, protocol, identifiers), decoderType(channel), protocol,
@@ -81,8 +89,13 @@ public record TrunkedCallAttributionEvent(String configurationId, DecoderType de
             TrunkedCallSnapshot.destinationId(identifiers), TrunkedCallSnapshot.targetForm(identifiers),
             TrunkedCallSnapshot.patchMemberTalkgroupIds(identifiers),
             TrunkedCallSnapshot.sourceRadioIdentity(identifiers), destinationBecameKnown, sourceBecameKnown,
-            encryptionBecameKnown, encryptionAlgorithmId, encryptionKeyId, encryptedBeforeObservation,
+            encryptionState, encryptionAlgorithmId, encryptionKeyId, previousEncryptionState,
             radioSystemKey);
+    }
+
+    public boolean encryptionStateChanged()
+    {
+        return encryptionState != previousEncryptionState;
     }
 
     private static DecoderType decoderType(Channel channel)

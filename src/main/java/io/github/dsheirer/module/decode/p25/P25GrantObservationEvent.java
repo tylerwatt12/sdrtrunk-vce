@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.module.decode.p25;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
 import io.github.dsheirer.identifier.Identifier;
@@ -29,7 +30,7 @@ import java.util.List;
  * descriptor and mutable identifier collection must not cross an asynchronous observer boundary.
  */
 public record P25GrantObservationEvent(String configurationId, DecoderType decoderType,
-                                       DecodeEventType eventType, long timestamp, boolean continuation,
+                                       DecodeEventType eventType, CallEncryptionState encryptionState, long timestamp, boolean continuation,
                                        boolean confirmedBand, List<Identifier> identifiers, Long frequencyHertz,
                                        Integer channelBand, Integer channelNumber, Integer timeslot, boolean tdma,
                                        String radioSystemKey, long processingIncarnation,
@@ -38,6 +39,7 @@ public record P25GrantObservationEvent(String configurationId, DecoderType decod
     public P25GrantObservationEvent
     {
         configurationId = ChannelConfigurationKey.canonical(configurationId);
+        encryptionState = encryptionState != null ? encryptionState : CallEncryptionState.UNKNOWN;
         identifiers = snapshotIdentifiers(identifiers);
         frequencyHertz = frequencyHertz != null && frequencyHertz > 0 ? frequencyHertz : null;
         channelBand = channelBand != null && channelBand >= 0 ? channelBand : null;
@@ -50,34 +52,16 @@ public record P25GrantObservationEvent(String configurationId, DecoderType decod
         siteEvidenceTuningGeneration = Math.max(0L, siteEvidenceTuningGeneration);
     }
 
-    /** Compatibility constructor for callers that do not capture a receiver generation. */
-    public P25GrantObservationEvent(String configurationId, DecoderType decoderType,
-                                    DecodeEventType eventType, long timestamp, boolean continuation,
-                                    boolean confirmedBand, List<Identifier> identifiers, Long frequencyHertz,
-                                    Integer channelBand, Integer channelNumber, Integer timeslot, boolean tdma,
-                                    String radioSystemKey)
-    {
-        this(configurationId, decoderType, eventType, timestamp, continuation, confirmedBand, identifiers,
-            frequencyHertz, channelBand, channelNumber, timeslot, tdma, radioSystemKey, 0L, 0L);
-    }
-
     /** Captures every value used by asynchronous observers before this event is posted. */
     public P25GrantObservationEvent(Channel channel, APCO25Channel channelDescriptor,
-                                    IdentifierCollection identifiers, DecodeEventType eventType, long timestamp,
+                                    IdentifierCollection identifiers, DecodeEventType eventType, CallEncryptionState encryptionState, long timestamp,
                                     boolean continuation, boolean confirmedBand)
     {
-        this(ChannelConfigurationKey.configured(channel), decoderType(channel), eventType, timestamp, continuation,
+        this(ChannelConfigurationKey.configured(channel), decoderType(channel), eventType, encryptionState, timestamp, continuation,
             confirmedBand, identifierList(identifiers), frequency(channelDescriptor), band(channelDescriptor),
             channelNumber(channelDescriptor), timeslot(channelDescriptor, identifiers), isTdma(channelDescriptor),
             RadioSystemKey.p25(channel != null ? channel.getP25SiteIdentity() : null),
             processingIncarnation(channel), siteEvidenceTuningGeneration(channel));
-    }
-
-    public P25GrantObservationEvent(Channel channel, APCO25Channel channelDescriptor,
-                                    IdentifierCollection identifiers, DecodeEventType eventType, long timestamp,
-                                    boolean continuation)
-    {
-        this(channel, channelDescriptor, identifiers, eventType, timestamp, continuation, false);
     }
 
     /** Returns a new wrapper so the captured collection cannot be changed by a consumer. */

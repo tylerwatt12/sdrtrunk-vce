@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.module.decode.traffic;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.Form;
@@ -188,8 +189,9 @@ public class TrunkedCallStartTracker
         TargetIdentity source = TargetIdentity.fromSource(protocol, identityDomain,
             identifiers != null ? identifiers.getFromIdentifier() : null);
         EncryptionDetails observedEncryption = EncryptionDetails.from(identifiers);
-        boolean encrypted = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType) ||
-            observedEncryption.isKnown();
+        CallEncryptionState observedState = TrunkedCallStartEvent.encryptionState(eventType, identifiers);
+        boolean encryptionEvidence = DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType) ||
+            identifiers != null && identifiers.getEncryptionIdentifier() != null;
         boolean targetChanged = previous != null && previous.target().isKnown() && target.isKnown() &&
             !previous.target().sameIdentity(target);
         String observedNativeKey = RadioSystemKey.isChannelScoped(radioSystemKey) ? null : radioSystemKey;
@@ -208,8 +210,9 @@ public class TrunkedCallStartTracker
             String effectiveRadioSystemKey = effectiveRadioSystemKey(parentChannel, protocol, identityDomain,
                 observedNativeKey);
             String callToken = io.github.dsheirer.audio.call.ActivityCallToken.next();
-            putObservation(resourceKey, new ActiveCall(target, source, encrypted,
-                observedEncryption.algorithmId(), observedEncryption.keyId(), timestamp, timestamp,
+            putObservation(resourceKey, new ActiveCall(target, source, observedState, observedState == CallEncryptionState.UNKNOWN && encryptionEvidence,
+                observedState.isEncrypted() ? observedEncryption.algorithmId() : null,
+                observedState.isEncrypted() ? observedEncryption.keyId() : null, timestamp, timestamp,
                 effectiveRadioSystemKey, observedNativeKey, callToken, protocol, identityDomain));
             enforceMaximumSize(mObservations);
             return new ObservationResult(new TrunkedCallStartEvent(parentChannel, protocol, channelSnapshot,
@@ -218,10 +221,16 @@ public class TrunkedCallStartTracker
 
         boolean destinationBecameKnown = !previous.target().isKnown() && target.isKnown();
         boolean sourceBecameKnown = !previous.source().isKnown() && source.isKnown();
-        boolean encryptionBecameKnown = !previous.encrypted() && encrypted;
-        Integer updatedEncryptionAlgorithm = firstKnown(previous.encryptionAlgorithmId(),
-            observedEncryption.algorithmId());
-        Integer updatedEncryptionKey = firstKnown(previous.encryptionKeyId(), observedEncryption.keyId());
+        boolean encryptionConflicted = previous.encryptionConflicted() ||
+            previous.encryptionState().isKnown() && (observedState.isKnown() && observedState != previous.encryptionState() ||
+                observedState == CallEncryptionState.UNKNOWN && encryptionEvidence);
+        CallEncryptionState encryptionState = encryptionConflicted ? CallEncryptionState.UNKNOWN :
+            observedState.isKnown() ? observedState : previous.encryptionState();
+        boolean encryptionStateChanged = encryptionState != previous.encryptionState();
+        Integer updatedEncryptionAlgorithm = encryptionState.isEncrypted() ?
+            firstKnown(previous.encryptionAlgorithmId(), observedEncryption.algorithmId()) : null;
+        Integer updatedEncryptionKey = encryptionState.isEncrypted() ?
+            firstKnown(previous.encryptionKeyId(), observedEncryption.keyId()) : null;
         boolean encryptionDetailsBecameKnown =
             !Objects.equals(previous.encryptionAlgorithmId(), updatedEncryptionAlgorithm) ||
                 !Objects.equals(previous.encryptionKeyId(), updatedEncryptionKey);
@@ -231,13 +240,13 @@ public class TrunkedCallStartTracker
         TargetIdentity updatedSource = previous.source().isKnown() ? previous.source() : source;
         IdentifierCollection mergedIdentifiers = mergedIdentifiers(identifiers, updatedTarget, updatedSource);
         putObservation(resourceKey, new ActiveCall(updatedTarget, updatedSource,
-            previous.encrypted() || encrypted, updatedEncryptionAlgorithm, updatedEncryptionKey,
+            encryptionState, encryptionConflicted, updatedEncryptionAlgorithm, updatedEncryptionKey,
             previous.callStartEpochMilliseconds(), timestamp, previous.radioSystemKey(),
             observedNativeKey != null ? observedNativeKey : previous.lastObservedNativeKey(), previous.callToken(),
             previous.protocol(), previous.identityDomain()));
         enforceMaximumSize(mObservations);
 
-        if(!destinationBecameKnown && !sourceBecameKnown && !encryptionBecameKnown &&
+        if(!destinationBecameKnown && !sourceBecameKnown && !encryptionStateChanged &&
             !encryptionDetailsBecameKnown)
         {
             return ObservationResult.EMPTY;
@@ -245,8 +254,8 @@ public class TrunkedCallStartTracker
 
         return new ObservationResult(null, new TrunkedCallAttributionEvent(parentChannel, protocol,
             channelSnapshot, effectiveTimeslot, previous.callStartEpochMilliseconds(), mergedIdentifiers,
-            destinationBecameKnown, sourceBecameKnown, encryptionBecameKnown,
-            updatedEncryptionAlgorithm, updatedEncryptionKey, previous.encrypted(),
+            destinationBecameKnown, sourceBecameKnown, encryptionState,
+            updatedEncryptionAlgorithm, updatedEncryptionKey, previous.encryptionState(),
             previous.radioSystemKey()));
     }
 
@@ -339,7 +348,7 @@ public class TrunkedCallStartTracker
 
         if(current != null && timestamp >= current.lastObservedAtMilliseconds())
         {
-            putObservation(key, new ActiveCall(current.target(), current.source(), current.encrypted(),
+            putObservation(key, new ActiveCall(current.target(), current.source(), current.encryptionState(), current.encryptionConflicted(),
                 current.encryptionAlgorithmId(), current.encryptionKeyId(),
                 current.callStartEpochMilliseconds(), timestamp, current.radioSystemKey(),
                 current.lastObservedNativeKey(), current.callToken(),
@@ -514,7 +523,8 @@ public class TrunkedCallStartTracker
         private static final ObservationResult EMPTY = new ObservationResult(null, null);
     }
 
-    private record ActiveCall(TargetIdentity target, TargetIdentity source, boolean encrypted,
+    private record ActiveCall(TargetIdentity target, TargetIdentity source, CallEncryptionState encryptionState,
+                              boolean encryptionConflicted,
                               Integer encryptionAlgorithmId, Integer encryptionKeyId,
                               long callStartEpochMilliseconds, long lastObservedAtMilliseconds,
                               String radioSystemKey, String lastObservedNativeKey, String callToken, Protocol protocol,
@@ -525,11 +535,6 @@ public class TrunkedCallStartTracker
     private record EncryptionDetails(Integer algorithmId, Integer keyId)
     {
         private static final EncryptionDetails UNKNOWN = new EncryptionDetails(null, null);
-
-        private boolean isKnown()
-        {
-            return algorithmId != null || keyId != null;
-        }
 
         private static EncryptionDetails from(IdentifierCollection identifiers)
         {

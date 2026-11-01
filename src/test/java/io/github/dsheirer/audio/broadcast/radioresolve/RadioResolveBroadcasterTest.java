@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.audio.broadcast.radioresolve;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -1329,7 +1330,7 @@ class RadioResolveBroadcasterTest
     private static P25GrantObservationEvent p25FrequencyEvidenceGrant(long timestamp)
     {
         return new P25GrantObservationEvent("00000000-0000-0000-0000-000000000401",
-            DecoderType.P25_PHASE2, null, timestamp, false, true, List.of(),
+            DecoderType.P25_PHASE2, null, CallEncryptionState.UNKNOWN, timestamp, false, true, List.of(),
             RadioResolveTestFixtures.FREQUENCY, 10, 700, 1, true, null, 17L, 3L);
     }
 

@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -54,7 +55,7 @@ class AliasActivityProjectionTest
                 AliasActivityProjection.recordActivity(connection, new ReceiverActivityRecords.ActivityEvent(
                     1_000, DMR_CONFIGURATION, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "DMR",
                     action, action.name(), null, "501", "RADIO", List.of(), 451_000_000L, null, 1,
-                    false, null, null, null, 42, null, null, 1, null, false, null, null,
+                    CallEncryptionState.CLEAR, null, null, null, 42, null, null, 1, null, false, null, null,
                     TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
                     ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null));
             }
@@ -82,7 +83,7 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.ActivityEvent callStart = new ReceiverActivityRecords.ActivityEvent(
                 1_000, DMR_CONFIGURATION, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "DMR",
                 ReceiverActivityRecords.Action.CALL, "CALL_GROUP", "501", "91", "TALKGROUP", List.of(),
-                451_000_000L, null, 1, false, null, null, null, 42, null, null, 1, null, true, null, null,
+                451_000_000L, null, 1, CallEncryptionState.CLEAR, null, null, null, 42, null, null, 1, null, true, null, null,
                 TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
                 ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null);
             AliasActivityProjection.recordActivity(connection, callStart);
@@ -98,21 +99,21 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.ActivityEvent join = new ReceiverActivityRecords.ActivityEvent(
                 1_001, DMR_CONFIGURATION, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "DMR",
                 ReceiverActivityRecords.Action.JOIN, "AFFILIATE", "501", "91", "TALKGROUP", List.of(),
-                451_000_000L, null, 1, false, null, null, null, 42, null, null, 1, null, false, null, null,
+                451_000_000L, null, 1, CallEncryptionState.CLEAR, null, null, null, 42, null, null, 1, null, false, null, null,
                 TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
                 ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null);
             AliasActivityProjection.recordActivity(connection, join);
             ReceiverActivityRecords.ActivityEvent continueEvent = new ReceiverActivityRecords.ActivityEvent(
                 2_000, DMR_CONFIGURATION, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "DMR",
                 ReceiverActivityRecords.Action.CONTINUE, "CONTINUE", "501", "91", "TALKGROUP", List.of(),
-                451_000_000L, null, 1, false, null, null, null, 42, null, null, 1, null, false, null, null,
+                451_000_000L, null, 1, CallEncryptionState.CLEAR, null, null, null, 42, null, null, 1, null, false, null, null,
                 TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
                 ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null);
             AliasActivityProjection.recordActivity(connection, continueEvent);
             ReceiverActivityRecords.ActivityEvent unknownEvent = new ReceiverActivityRecords.ActivityEvent(
                 2_500, DMR_CONFIGURATION, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "DMR",
                 ReceiverActivityRecords.Action.UNKNOWN, "UNKNOWN", "501", "91", "TALKGROUP", List.of(),
-                451_000_000L, null, 1, false, null, null, null, 42, null, null, 1, null, false, null, null,
+                451_000_000L, null, 1, CallEncryptionState.CLEAR, null, null, null, 42, null, null, 1, null, false, null, null,
                 TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN,
                 ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null);
             AliasActivityProjection.recordActivity(connection, unknownEvent);
@@ -132,14 +133,14 @@ class AliasActivityProjectionTest
             AliasActivityProjection.recordTrunkedAttribution(connection,
                 new ReceiverActivityRecords.TrunkedCallAttribution(3_000, DMR_CONFIGURATION, "DMR",
                     451_000_000L, 1, 91, "TALKGROUP", List.of(), 501, null, null,
-                    false, true, false, false, TrunkedIdentityDomain.STANDARD, null));
+                    false, true, CallEncryptionState.UNKNOWN, CallEncryptionState.UNKNOWN, TrunkedIdentityDomain.STANDARD, null));
             assertEquals(callsBeforeAttribution, metric(connection, 4, "logical_call_count"),
                 "late identity attribution must not count the call a second time");
             assertEquals(3_000, metric(connection, 4, "last_evidence_ms"));
             AliasActivityProjection.recordTrunkedAttribution(connection,
                 new ReceiverActivityRecords.TrunkedCallAttribution(3_500, DMR_CONFIGURATION, "DMR",
                     451_000_000L, 1, 91, "PATCH_GROUP", List.of(95), null, null, null,
-                    true, false, false, false, TrunkedIdentityDomain.STANDARD, null));
+                    true, false, CallEncryptionState.UNKNOWN, CallEncryptionState.UNKNOWN, TrunkedIdentityDomain.STANDARD, null));
             assertEquals(1, metric(connection, 2, "logical_call_count"));
             assertEquals(1, metric(connection, 3, "logical_call_count"));
             assertEquals(3_500, metric(connection, 3, "last_evidence_ms"),
@@ -331,7 +332,7 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.ActivityEvent accepted = new ReceiverActivityRecords.ActivityEvent(
                 1_000, P25_A, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
                 ReceiverActivityRecords.Action.REGISTER, "REGISTER", "501", null, null, List.of(),
-                851_012_500L, null, null, false, null, null, 0xBEE00, 0x348, null, 1, 1,
+                851_012_500L, null, null, CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x348, null, 1, 1,
                 null, false, null, registration, TrunkedIdentityDomain.STANDARD,
                 ReceiverActivityRecords.P25Identity.UNKNOWN, canonical, List.of(), P25_SYSTEM_KEY);
             ReceiverActivitySchema.recordActivity(connection, accepted, false);
@@ -339,7 +340,7 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.ActivityEvent wuidOnly = new ReceiverActivityRecords.ActivityEvent(
                 2_000, P25_A, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
                 ReceiverActivityRecords.Action.JOIN, "JOIN", "501", "700", "TALKGROUP", List.of(),
-                851_012_500L, null, null, false, null, null, 0xBEE00, 0x348, null, 1, 1,
+                851_012_500L, null, null, CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x348, null, 1, 1,
                 null, false, null, null, TrunkedIdentityDomain.STANDARD,
                 ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.P25Identity.ORDINARY,
                 List.of(), P25_SYSTEM_KEY);
@@ -354,7 +355,7 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.ActivityEvent ordinary = new ReceiverActivityRecords.ActivityEvent(
                 3_000, P25_A, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
                 ReceiverActivityRecords.Action.LOGOUT, "LOGOUT", "501", null, null, List.of(),
-                851_012_500L, null, null, false, null, null, 0xBEE00, 0x348, null, 1, 1,
+                851_012_500L, null, null, CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x348, null, 1, 1,
                 null, false, null, null, TrunkedIdentityDomain.STANDARD,
                 ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.ORDINARY,
                 List.of(), P25_SYSTEM_KEY);
@@ -381,7 +382,7 @@ class AliasActivityProjectionTest
             ReceiverActivityRecords.ActivityEvent incomplete = new ReceiverActivityRecords.ActivityEvent(
                 2_000, P25_A, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
                 ReceiverActivityRecords.Action.JOIN, "JOIN", "500", "100", "TALKGROUP", List.of(),
-                851_012_500L, null, null, false, null, null, null, null, null, 1, 1, null, false, null, null,
+                851_012_500L, null, null, CallEncryptionState.CLEAR, null, null, null, null, null, 1, 1, null, false, null, null,
                 TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
                 ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
 
@@ -415,7 +416,7 @@ class AliasActivityProjectionTest
 
             AliasActivityProjection.recordDmrConventionalCall(connection,
                 new ReceiverActivityRecords.DmrConventionalCall(1_000, 2_000, DMR_CONVENTIONAL,
-                    461_125_000L, 1, ReceiverActivityRecords.DmrTargetKind.GROUP, 91, 501, null, true));
+                    461_125_000L, 1, ReceiverActivityRecords.DmrTargetKind.GROUP, 91, 501, null, CallEncryptionState.ENCRYPTED));
             AliasActivityProjection.recordConventionalCallOutput(connection,
                 new ReceiverActivityRecords.ConventionalCallOutput(1_000, DMR_CONVENTIONAL,
                     ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_DMR, "DMR", 461_125_000L, 1,
@@ -432,7 +433,7 @@ class AliasActivityProjectionTest
 
             AliasActivityProjection.recordDmrConventionalCall(connection,
                 new ReceiverActivityRecords.DmrConventionalCall(1_500, 1_750, DMR_CONVENTIONAL,
-                    461_125_000L, 1, ReceiverActivityRecords.DmrTargetKind.PRIVATE, null, 501, 501, false));
+                    461_125_000L, 1, ReceiverActivityRecords.DmrTargetKind.PRIVATE, null, 501, 501, CallEncryptionState.CLEAR));
             assertEquals(2, metric(connection, 33, "logical_call_count"),
                 "a DMR self/private call is one logical identity contribution");
 
@@ -453,7 +454,7 @@ class AliasActivityProjectionTest
 
             AliasActivityProjection.recordNxdnConventionalCall(connection,
                 new ReceiverActivityRecords.NxdnConventionalCall(3_000, 4_000, NXDN_CONVENTIONAL,
-                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.GROUP, 450, 501, null, false,
+                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.GROUP, 450, 501, null, CallEncryptionState.CLEAR,
                     TrunkedIdentityDomain.NXDN_TYPE_C));
             AliasActivityProjection.recordConventionalCallOutput(connection,
                 new ReceiverActivityRecords.ConventionalCallOutput(3_000, NXDN_CONVENTIONAL,
@@ -467,14 +468,14 @@ class AliasActivityProjectionTest
             assertEquals(1, metric(connection, 42, "stream_submitted_logical_call_count"));
             AliasActivityProjection.recordNxdnConventionalCall(connection,
                 new ReceiverActivityRecords.NxdnConventionalCall(4_500, 4_750, NXDN_CONVENTIONAL,
-                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.PRIVATE, null, 501, 501, false,
+                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.PRIVATE, null, 501, 501, CallEncryptionState.CLEAR,
                     TrunkedIdentityDomain.NXDN_TYPE_C));
             assertEquals(2, metric(connection, 42, "logical_call_count"),
                 "an NXDN self/private call is one logical identity contribution");
 
             Long nullGroupActivity = ReceiverActivitySchema.recordNxdnConventionalCall(connection,
                 new ReceiverActivityRecords.NxdnConventionalCall(5_000, 5_750, NXDN_CONVENTIONAL,
-                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.GROUP, 0, 501, null, false,
+                    460_025_000L, ReceiverActivityRecords.NxdnTargetKind.GROUP, 0, 501, null, CallEncryptionState.CLEAR,
                     TrunkedIdentityDomain.NXDN_TYPE_C), true);
             assertNotNull(nullGroupActivity, "NXDN Null Group calls must retain a distinct destination");
             assertTrue(ReceiverActivitySchema.applyConventionalCallOutput(connection,
@@ -749,7 +750,7 @@ class AliasActivityProjectionTest
         return new ReceiverActivityRecords.ActivityEvent(2_000, P25_A,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", action, action.name(),
             Integer.toString(source), Integer.toString(target), "RADIO", List.of(), 851_012_500L,
-            null, null, false, null, null, 0xBEE00, 0x348, null, 1, 1, null, false, null, null,
+            null, null, CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x348, null, 1, 1, null, false, null, null,
             TrunkedIdentityDomain.STANDARD, targetIdentity, sourceIdentity, List.of(), P25_SYSTEM_KEY,
             sourceWorkingId, targetWorkingId);
     }

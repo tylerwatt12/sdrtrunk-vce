@@ -79,7 +79,7 @@ public final class SdrTrunkDatabaseStartup
             history.setAutoCommit(false);
             ConfigurationHistorySchema.createHistory(history);
             ConfigurationHistorySchema.setIdentity(history, ConfigurationHistorySchema.HISTORY_ROLE, pairId);
-            setMetadata(history, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "63");
+            setMetadata(history, DatabaseFormatCatalog.FORMAT_VERSION_KEY, Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION));
             ConfigurationHistoryDatabase.validateRole(history, ConfigurationHistorySchema.HISTORY_ROLE);
             history.commit();
         }

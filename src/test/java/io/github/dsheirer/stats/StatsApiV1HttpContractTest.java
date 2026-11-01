@@ -533,6 +533,34 @@ class StatsApiV1HttpContractTest
     }
 
     @Test
+    void activityPublishesOneExplicitEncryptionStateAndFiltersIt() throws Exception
+    {
+        Path database = SdrTrunkDatabasePath.getDatabasePath(mTemporaryDirectory.resolve("data"));
+        try(Connection connection = StatsPairedTestDatabase.open(database);
+            Statement sql = connection.createStatement())
+        {
+            sql.executeUpdate("""
+                INSERT INTO receiver_activity_event(channel_id,radio_system_id,observed_at_ms,
+                    action_code,event_type_code,encryption_state)
+                VALUES (2,2,3000,4,8,2),(2,2,3001,4,7,1),(2,2,3002,4,7,0)
+                """);
+        }
+        String scope = StatsApiV1.ACTIVITY + "?radio_system_key=p25%3Abee00%3A49f&action=call";
+        HttpResponse<String> all = get(scope);
+        assertEquals(200, all.statusCode(), all.body());
+        assertEquals(3, OBJECT_MAPPER.readTree(all.body()).path("data").size());
+        for(String state: List.of("clear", "encrypted", "unknown"))
+        {
+            HttpResponse<String> response = get(scope + "&encryption=" + state);
+            assertEquals(200, response.statusCode(), response.body());
+            JsonNode rows = OBJECT_MAPPER.readTree(response.body()).path("data");
+            assertEquals(1, rows.size(), response.body());
+            assertEquals(state, rows.get(0).path("encryption_state").textValue());
+            assertFalse(rows.get(0).has("encrypted"));
+        }
+    }
+
+    @Test
     void staticIndexPublishesItsWebClientRevisionWithoutExpandingTheApi() throws Exception
     {
         HttpResponse<String> response = send(HttpRequest.newBuilder(mOrigin)

@@ -220,6 +220,7 @@ public class ReceiverActivitySchema
         addSourceCallReference(connection);
         addCallDuration(connection);
         upgradeFrom59(connection);
+        createFreshEncryptionState(connection);
     }
 
     /** Adds shared message definitions and prospective command counters without reclassifying retained history. */
@@ -241,7 +242,7 @@ public class ReceiverActivitySchema
                 ActivityMessageSchemaMigration.rebuild(connection, definition.name(), definition.sql());
         }
         ActivityMessageSchemaMigration.relaxEventConstraints(connection, format59ReceiverActivityEventSql(),
-            currentReceiverActivityEventSql());
+            format60ReceiverActivityEventSql());
         List<String> appendedCounters = NEW_ACTION_COUNT_COLUMNS.stream().map(column -> column +
             " INTEGER NOT NULL DEFAULT 0 CHECK(typeof(" + column + ") = 'integer' AND " + column + " >= 0)").toList();
         ActivityMessageSchemaMigration.rebuild(connection, "conventional_activity_summary",
@@ -252,8 +253,111 @@ public class ReceiverActivitySchema
             createConventionalActivityBucketSql(), appendedCounters);
         try(Statement statement = connection.createStatement())
         {
+            statement.executeUpdate(createFormat60ResolvedViewSql());
+        }
+    }
+
+    /** Fresh creation replaces only the still-empty historical event definition with its clean current contract. */
+    private static void createFreshEncryptionState(Connection connection) throws SQLException
+    {
+        try(Statement statement = connection.createStatement();
+            ResultSet rows = statement.executeQuery("SELECT 1 FROM receiver_activity_event LIMIT 1"))
+        {
+            if(rows.next()) throw new SQLException("Fresh Activity schema requires an empty event table");
+        }
+        List<String> indexes = eventIndexSql(connection, "main");
+        try(Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DROP VIEW receiver_activity_event_resolved");
+            statement.executeUpdate("DROP TABLE receiver_activity_event");
+            statement.executeUpdate(currentReceiverActivityEventSql());
+            for(String index: indexes) statement.executeUpdate(encryptionStateSql(index));
             statement.executeUpdate(createCurrentResolvedViewSql());
         }
+    }
+
+    /** Application Migrator only: replace the binary flag without dropping any retained event or child. */
+    public static long migrateFormat68EncryptionState(Connection connection, String schema) throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown Activity migration schema");
+        io.github.dsheirer.database.upgrade.ApplicationMigrationTransaction.requireActive(connection);
+        List<String> columns = new ArrayList<>();
+        List<String> indexes = eventIndexSql(connection, schema);
+        String view;
+        long converted;
+        Long allocator = null;
+        try(Statement statement = connection.createStatement())
+        {
+            try(ResultSet row = statement.executeQuery("PRAGMA foreign_keys"))
+            {
+                if(!row.next() || row.getInt(1) != 0)
+                    throw new SQLException("Activity encryption migration requires disabled foreign-key enforcement");
+            }
+            try(ResultSet rows = statement.executeQuery("PRAGMA " + schema + ".table_info(receiver_activity_event)"))
+            { while(rows.next()) columns.add(rows.getString("name")); }
+            if(!columns.contains("encrypted") || columns.contains("encryption_state"))
+                throw new SQLException("Activity encryption migration requires the format-68 event layout");
+            try(ResultSet row = statement.executeQuery("SELECT sql FROM " + schema +
+                ".sqlite_schema WHERE type='view' AND name='receiver_activity_event_resolved'"))
+            {
+                if(!row.next()) throw new SQLException("Activity event projection is missing");
+                view = row.getString(1);
+            }
+            try(ResultSet row = statement.executeQuery("SELECT seq FROM " + schema +
+                ".sqlite_sequence WHERE name='receiver_activity_event'"))
+            { if(row.next()) allocator = row.getLong(1); }
+            String table = schema + ".receiver_activity_event";
+            String temporary = "receiver_activity_event_format69";
+            statement.executeUpdate(format69ReceiverActivityEventSql().replace(
+                "receiver_activity_event (", schema + "." + temporary + " ("));
+            String fields = columns.stream().map(column -> column.equals("encrypted") ? "encryption_state" : column)
+                .collect(Collectors.joining(","));
+            // These fixed subtype codes are the explicit encrypted signaling retained by format 68. Other zero
+            // flags cannot distinguish clear reception from missing or conflicting evidence and remain unknown.
+            String values = columns.stream().map(column -> column.equals("encrypted") ?
+                "CASE WHEN encrypted=1 OR event_type_code IN (6,8,10,17,20,26) THEN 2 ELSE 0 END" : column)
+                .collect(Collectors.joining(","));
+            statement.executeUpdate("INSERT INTO " + schema + "." + temporary + "(" + fields + ") SELECT " +
+                values + " FROM " + table);
+            try(ResultSet row = statement.executeQuery("SELECT changes()")) { row.next(); converted = row.getLong(1); }
+            statement.executeUpdate("DROP VIEW " + schema + ".receiver_activity_event_resolved");
+            statement.executeUpdate("DROP TABLE " + table);
+            statement.executeUpdate("ALTER TABLE " + schema + "." + temporary + " RENAME TO receiver_activity_event");
+            for(String index: indexes)
+                statement.executeUpdate(qualifySchemaObject(encryptionStateSql(index), schema, "INDEX"));
+            statement.executeUpdate(qualifySchemaObject(encryptionStateSql(view), schema, "VIEW"));
+            if(allocator != null)
+            {
+                int restored = statement.executeUpdate("UPDATE " + schema + ".sqlite_sequence SET seq=max(seq," +
+                    allocator + ") WHERE name='receiver_activity_event'");
+                if(restored == 0) statement.executeUpdate("INSERT INTO " + schema +
+                    ".sqlite_sequence(name,seq) VALUES('receiver_activity_event'," + allocator + ")");
+            }
+            // Rebuilt partial encrypted indexes now include explicit encrypted signaling, so old samples are stale.
+            statement.execute("ANALYZE " + table);
+        }
+        return converted;
+    }
+
+    private static List<String> eventIndexSql(Connection connection, String schema) throws SQLException
+    {
+        List<String> indexes = new ArrayList<>();
+        try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
+            "SELECT sql FROM " + schema + ".sqlite_schema WHERE type='index' AND tbl_name='receiver_activity_event' " +
+                "AND sql IS NOT NULL ORDER BY name"))
+        { while(rows.next()) indexes.add(rows.getString(1)); }
+        return indexes;
+    }
+
+    private static String encryptionStateSql(String sql)
+    {
+        return sql.replaceAll("\\bencrypted\\b", "encryption_state")
+            .replace("encryption_state = 1", "encryption_state = 2");
+    }
+
+    private static String qualifySchemaObject(String sql, String schema, String type)
+    {
+        return sql.replaceFirst("(?i)(CREATE(?: UNIQUE)? " + type + "(?: IF NOT EXISTS)? )", "$1" + schema + ".");
     }
 
     private static final String CALL_DURATION_DEFINITION = "duration_ms INTEGER CHECK(duration_ms IS NULL OR " +
@@ -276,6 +380,12 @@ public class ReceiverActivitySchema
     }
 
     private static String createCurrentResolvedViewSql()
+    {
+        return encryptionStateSql(createFormat60ResolvedViewSql());
+    }
+
+    /** Frozen format-60 through format-68 resolved event projection. */
+    private static String createFormat60ResolvedViewSql()
     {
         return createResolvedViewSql(true, true, "message_event.name")
             .replace(actionCase("a.action_code") + " AS action", "message_action.name AS action")
@@ -936,6 +1046,20 @@ public class ReceiverActivitySchema
 
     private static String currentReceiverActivityEventSql()
     {
+        return format69ReceiverActivityEventSql();
+    }
+
+    /** Frozen format-69 event definition retained by its adjacent migration. */
+    private static String format69ReceiverActivityEventSql()
+    {
+        return format60ReceiverActivityEventSql().replace(
+            "encrypted INTEGER NOT NULL DEFAULT 0\n        CHECK(typeof(encrypted) = 'integer' AND encrypted IN (0, 1))",
+            "encryption_state INTEGER NOT NULL DEFAULT 0\n        CHECK(typeof(encryption_state) = 'integer' AND encryption_state IN (0, 1, 2))");
+    }
+
+    /** Frozen format-60 through format-68 event table. */
+    private static String format60ReceiverActivityEventSql()
+    {
         return format59ReceiverActivityEventSql()
             .replace("action_code IN (" + ACTION_CODES + ",24)", "action_code IN (" +
                 ReceiverActivityCodes.actionCodes().stream().map(action -> Integer.toString(action.code()))
@@ -1101,7 +1225,7 @@ public class ReceiverActivitySchema
                                   ReceiverActivityRecords.P25Identity sourceIdentity,
                                   ReceiverActivityRecords.P25Identity targetIdentity,
                                   Integer sourceWorkingId, Integer targetWorkingId,
-                                  boolean encrypted, Long durationMilliseconds)
+                                  Long durationMilliseconds)
     {
     }
 
@@ -1126,8 +1250,7 @@ public class ReceiverActivitySchema
         return new P25CallCredit(channelId, detailId, positiveInteger(activity.sourceRadioId()),
             p25DestinationId(activity), activity.targetKind(),
             activity.patchMemberTalkgroupIds(), activity.p25SourceIdentity(), activity.p25TargetIdentity(),
-            activity.sourceObservedWorkingId(), activity.targetObservedWorkingId(), activity.encrypted(),
-            activity.durationMilliseconds());
+            activity.sourceObservedWorkingId(), activity.targetObservedWorkingId(), activity.durationMilliseconds());
     }
 
     static P25CallCredit enrichP25Call(Connection connection,
@@ -1160,14 +1283,10 @@ public class ReceiverActivitySchema
             observation.patchMemberTalkgroupIds().stream()
                 .filter(member -> !credit.patchMemberTalkgroupIds().contains(member)).toList() : List.of();
         boolean conventional = original.receiverKind() == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25;
-        //Trunked counters use the completed logical call, but optional detail must retain confirmation learned
-        //after its start. Only this physical receiver call's confirmed facts may enrich its retained row.
-        boolean encryptionBecameKnown = !conventional && observation.encrypted() && !credit.encrypted();
         Long duration = observation.durationMilliseconds() != null ? observation.durationMilliseconds() :
             credit.durationMilliseconds();
-        boolean durationChanged = !java.util.Objects.equals(duration, credit.durationMilliseconds());
         long bucket = bucketStart(original.observedAtEpochMilliseconds());
-        int encrypted = original.encrypted() ? 1 : 0;
+        int encrypted = original.encryptionState().isEncrypted() ? 1 : 0;
         if(conventional && newSource)
         {
             upsertCallIdentityBucket(connection, credit.channelId(), bucket, IDENTITY_ROLE_SOURCE,
@@ -1216,20 +1335,17 @@ public class ReceiverActivitySchema
             newTarget ? observation.p25TargetIdentity() : credit.targetIdentity(),
             newSource ? observation.sourceObservedWorkingId() : credit.sourceWorkingId(),
             newTarget ? observation.targetObservedWorkingId() : credit.targetWorkingId(),
-            credit.encrypted() || encryptionBecameKnown, duration);
-        if(newSource || sourceEvidenceKnown || newTarget || !newMembers.isEmpty() || encryptionBecameKnown ||
-            durationChanged)
+            duration);
+        ReceiverActivityRecords.ActivityEvent effective = observation.withP25Identities(
+            updated.sourceRadioId(), updated.targetId(), updated.targetKind(), updated.patchMemberTalkgroupIds(),
+            updated.sourceIdentity(), updated.targetIdentity(), updated.sourceWorkingId(), updated.targetWorkingId());
+        if(conventional)
         {
-            ReceiverActivityRecords.ActivityEvent effective = observation.withP25Identities(
-                updated.sourceRadioId(), updated.targetId(), updated.targetKind(), updated.patchMemberTalkgroupIds(),
-                updated.sourceIdentity(), updated.targetIdentity(), updated.sourceWorkingId(), updated.targetWorkingId());
-            if(conventional)
-            {
-                AliasActivityProjection.recordConventionalCallAttribution(connection, effective, newSource,
-                    newTarget, newMembers, original.encrypted(), credit.sourceRadioId() != null);
-            }
-            enrichDetailedP25Call(connection, credit, effective, newSource, newTarget, encryptionBecameKnown);
+            AliasActivityProjection.recordConventionalCallAttribution(connection, effective, newSource,
+                newTarget, newMembers, original.encryptionState().isEncrypted(), credit.sourceRadioId() != null);
         }
+        // Each snapshot owns this exact physical call's status and independently validated encryption details.
+        enrichDetailedP25Call(connection, credit, effective, newSource, newTarget);
         return updated;
     }
 
@@ -1243,8 +1359,7 @@ public class ReceiverActivitySchema
     }
 
     private static void enrichDetailedP25Call(Connection connection, P25CallCredit credit,
-        ReceiverActivityRecords.ActivityEvent observation, boolean newSource, boolean newTarget,
-        boolean encryptionBecameKnown) throws SQLException
+        ReceiverActivityRecords.ActivityEvent observation, boolean newSource, boolean newTarget) throws SQLException
     {
         RadioSystemSchema.RadioSystem system = observation.receiverKind() == ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE ?
             RadioSystemSchema.ensureReceiverRadioSystem(connection, credit.channelId(),
@@ -1270,9 +1385,9 @@ public class ReceiverActivitySchema
                 radio_system_id = coalesce(radio_system_id, ?),
                 source_identity_summary_id = coalesce(?, source_identity_summary_id),
                 target_identity_summary_id = coalesce(target_identity_summary_id, ?),
-                encrypted = CASE WHEN ? = 1 THEN 1 ELSE encrypted END,
-                encryption_algorithm_id = coalesce(encryption_algorithm_id, ?),
-                encryption_key_id = coalesce(encryption_key_id, ?),
+                encryption_state = ?,
+                encryption_algorithm_id = ?,
+                encryption_key_id = ?,
                 duration_ms = coalesce(?, duration_ms)
             WHERE id = ? AND channel_id = ? AND observed_at_ms = ?
               AND (radio_system_id IS NULL OR radio_system_id = ?)
@@ -1289,9 +1404,9 @@ public class ReceiverActivitySchema
             setLong(statement, 9, system != null ? system.radioSystemId() : null);
             setLong(statement, 10, source != null ? source.summaryId() : null);
             setLong(statement, 11, target != null ? target.summaryId() : null);
-            statement.setInt(12, encryptionBecameKnown ? 1 : 0);
-            setInteger(statement, 13, encryptionBecameKnown ? observation.encryptionAlgorithmId() : null);
-            setInteger(statement, 14, encryptionBecameKnown ? observation.encryptionKeyId() : null);
+            statement.setInt(12, observation.encryptionState().code());
+            setInteger(statement, 13, observation.encryptionAlgorithmId());
+            setInteger(statement, 14, observation.encryptionKeyId());
             setLong(statement, 15, observation.durationMilliseconds());
             statement.setLong(16, credit.detailedEventId());
             statement.setLong(17, credit.channelId());
@@ -1804,7 +1919,7 @@ public class ReceiverActivitySchema
     {
         if(attribution == null || attribution.callStartEpochMilliseconds() <= 0 ||
             (!attribution.destinationBecameKnown() && !attribution.sourceBecameKnown() &&
-                !attribution.encryptionBecameKnown() && !attribution.hasEncryptionDetails()))
+                !attribution.encryptionStateChanged() && !attribution.hasEncryptionDetails()))
         {
             return false;
         }
@@ -1851,9 +1966,9 @@ public class ReceiverActivitySchema
         RadioSystemSchema.RadioSystem radioSystem = RadioSystemSchema.ensureRadioSystem(connection,
             channel.channelId(), attribution.callStartEpochMilliseconds(), attribution.identityDomain(), null, null,
             attribution.radioSystemKey());
-        boolean applied = RadioSystemSchema.applyAttribution(connection, radioSystem, attribution);
-        if(applied && radioSystem != null)
+        if(radioSystem != null && attribution.callStartEpochMilliseconds() >= radioSystem.firstSeenEpochMilliseconds())
         {
+            RadioSystemSchema.applyAttribution(connection, radioSystem, attribution);
             enrichDetailedTrunkedCall(connection, channel.channelId(), radioSystem, attribution);
             AliasActivityProjection.recordTrunkedAttribution(connection, attribution);
         }
@@ -1886,7 +2001,6 @@ public class ReceiverActivitySchema
         RadioSystemSchema.IdentityReference target = destinations.isEmpty() ? null : destinations.get(0);
         boolean sourceKnown = source != null && attribution.sourceBecameKnown();
         boolean destinationKnown = target != null && attribution.destinationBecameKnown();
-        boolean encryptionKnown = attribution.encryptionBecameKnown() || attribution.hasEncryptionDetails();
 
         try(PreparedStatement statement = connection.prepareStatement("""
             UPDATE receiver_activity_event
@@ -1905,9 +2019,9 @@ public class ReceiverActivitySchema
                 END,
                 source_identity_summary_id = CASE WHEN ? = 1 THEN ? ELSE source_identity_summary_id END,
                 target_identity_summary_id = CASE WHEN ? = 1 THEN ? ELSE target_identity_summary_id END,
-                encrypted = CASE WHEN ? = 1 THEN 1 ELSE encrypted END,
-                encryption_algorithm_id = coalesce(encryption_algorithm_id, ?),
-                encryption_key_id = coalesce(encryption_key_id, ?)
+                encryption_state = ?,
+                encryption_algorithm_id = ?,
+                encryption_key_id = ?
             WHERE id = ? AND (radio_system_id IS NULL OR radio_system_id = ?)
             """))
         {
@@ -1922,7 +2036,7 @@ public class ReceiverActivitySchema
             setLong(statement, 9, sourceKnown ? source.summaryId() : null);
             statement.setInt(10, destinationKnown ? 1 : 0);
             setLong(statement, 11, destinationKnown ? target.summaryId() : null);
-            statement.setInt(12, encryptionKnown ? 1 : 0);
+            statement.setInt(12, attribution.encryptionState().code());
             setInteger(statement, 13, attribution.encryptionAlgorithmId());
             setInteger(statement, 14, attribution.encryptionKeyId());
             statement.setLong(15, activityId);
@@ -2051,16 +2165,16 @@ public class ReceiverActivitySchema
         String targetKind = call.targetKind() == ReceiverActivityRecords.DmrTargetKind.GROUP ? Form.TALKGROUP.name() :
             call.targetKind() == ReceiverActivityRecords.DmrTargetKind.PRIVATE ? Form.RADIO.name() : null;
         String eventType = call.targetKind() == ReceiverActivityRecords.DmrTargetKind.GROUP ?
-            (call.encrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
+            (call.encryptionState().isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
             call.targetKind() == ReceiverActivityRecords.DmrTargetKind.PRIVATE ?
-                (call.encrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
+                (call.encryptionState().isEncrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
                     DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
-                (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
+                (call.encryptionState().isEncrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
         ReceiverActivityRecords.ActivityEvent activity = new ReceiverActivityRecords.ActivityEvent(
             call.callStartEpochMilliseconds(), call.configurationId(),
             ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_DMR, "DMR", ReceiverActivityRecords.Action.CALL,
             eventType, call.sourceRadioId() != null ? call.sourceRadioId().toString() : null, targetId, targetKind,
-            List.of(), call.frequencyHertz(), null, call.timeslot(), call.encrypted(), null, null, null, null, null,
+            List.of(), call.frequencyHertz(), null, call.timeslot(), call.encryptionState(), null, null, null, null, null,
             null, null, null, true, null, null, TrunkedIdentityDomain.STANDARD,
             ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(),
             null, null, null, null, null, call.activityCallToken())
@@ -2102,16 +2216,16 @@ public class ReceiverActivitySchema
         String targetId = groupTarget ? value(call.talkgroupId()) : privateTarget ? value(call.targetRadioId()) : null;
         String targetKind = groupTarget ? Form.TALKGROUP.name() : privateTarget ? Form.RADIO.name() : null;
         String eventType = groupTarget ?
-            (call.encrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
+            (call.encryptionState().isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED.name() : DecodeEventType.CALL_GROUP.name()) :
             privateTarget ?
-                (call.encrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
+                (call.encryptionState().isEncrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED.name() :
                     DecodeEventType.CALL_UNIT_TO_UNIT.name()) :
-                (call.encrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
+                (call.encryptionState().isEncrypted() ? DecodeEventType.CALL_ENCRYPTED.name() : DecodeEventType.CALL.name());
         ReceiverActivityRecords.ActivityEvent activity = new ReceiverActivityRecords.ActivityEvent(
             call.callStartEpochMilliseconds(), call.configurationId(),
             ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_NXDN, "NXDN", ReceiverActivityRecords.Action.CALL,
             eventType, value(call.sourceRadioId()), targetId, targetKind, List.of(), call.frequencyHertz(), null, null,
-            call.encrypted(), null, null, null, null, null, null, null, null, true, null, null,
+            call.encryptionState(), null, null, null, null, null, null, null, null, true, null, null,
             call.identityDomain(), ReceiverActivityRecords.P25Identity.UNKNOWN,
             ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null, null, null, null, null, call.activityCallToken())
                 .withDurationMilliseconds(call.callEndEpochMilliseconds() - call.callStartEpochMilliseconds());
@@ -3710,7 +3824,7 @@ public class ReceiverActivitySchema
         table("receiver_activity_event", "id", "channel_id", "radio_system_id", "observed_at_ms", "action_code",
             "event_type_code", "source_observed_local_id", "target_observed_local_id", "target_kind_code",
             "source_identity_summary_id", "source_identity_kind_code", "target_identity_summary_id", "frequency_hz",
-            "lcn_band", "lcn_number", "timeslot", "encrypted", "encryption_algorithm_id", "encryption_key_id",
+            "lcn_band", "lcn_number", "timeslot", "encryption_state", "encryption_algorithm_id", "encryption_key_id",
             "observed_nac", "observed_rfss", "observed_site", "source_observed_working_id",
             "target_observed_working_id", "source_call_uuid", "duration_ms"),
         table("activity_event_identity_member", "event_id", "radio_system_id", "identity_summary_id",
@@ -3961,7 +4075,7 @@ public class ReceiverActivitySchema
                                                   long channelId) throws SQLException
     {
         long bucket = bucketStart(activity.observedAtEpochMilliseconds());
-        int encrypted = activity.encrypted() ? 1 : 0;
+        int encrypted = activity.encryptionState().isEncrypted() ? 1 : 0;
         int protocol = TrunkedIdentityPolicy.protocolFamilyCode(activity.protocol());
 
         for(CallIdentity destination: destinationIdentities(activity.targetId(), activity.targetKind(),
@@ -4112,7 +4226,7 @@ public class ReceiverActivitySchema
                 channel_id, radio_system_id, observed_at_ms, action_code, event_type_code,
                 source_observed_local_id, target_observed_local_id, target_kind_code,
                 source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
-                frequency_hz, lcn_band, lcn_number, timeslot, encrypted, encryption_algorithm_id, encryption_key_id,
+                frequency_hz, lcn_band, lcn_number, timeslot, encryption_state, encryption_algorithm_id, encryption_key_id,
                 observed_nac, observed_rfss, observed_site, source_observed_working_id,
                 target_observed_working_id, source_call_uuid, duration_ms
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -4134,7 +4248,7 @@ public class ReceiverActivitySchema
             setInteger(statement, 13, lcn.band());
             setInteger(statement, 14, lcn.number());
             setInteger(statement, 15, activity.timeslot());
-            statement.setInt(16, activity.encrypted() ? 1 : 0);
+            statement.setInt(16, activity.encryptionState().code());
             setInteger(statement, 17, activity.encryptionAlgorithmId());
             setInteger(statement, 18, activity.encryptionKeyId());
             setInteger(statement, 19, activity.nac());
@@ -4237,7 +4351,7 @@ public class ReceiverActivitySchema
                 statement.setLong(index++, activity.observedAtEpochMilliseconds());
                 statement.setLong(index++, activity.observedAtEpochMilliseconds());
                 index = setActionCounts(statement, index, activity);
-                statement.setInt(index++, activity.encrypted() ? 1 : 0);
+                statement.setInt(index++, activity.encryptionState().isEncrypted() ? 1 : 0);
                 setInteger(statement, index, eventTypeCode(activity.eventType()));
                 statement.executeUpdate();
             }
@@ -4259,7 +4373,7 @@ public class ReceiverActivitySchema
             statement.setInt(index++, timeslot);
             statement.setLong(index++, bucketStart(activity.observedAtEpochMilliseconds()));
             index = setActionCounts(statement, index, activity);
-            statement.setInt(index, activity.encrypted() ? 1 : 0);
+            statement.setInt(index, activity.encryptionState().isEncrypted() ? 1 : 0);
             statement.executeUpdate();
         }
     }

@@ -6,6 +6,9 @@
 package io.github.dsheirer.module.decode.p25;
 
 import io.github.dsheirer.identifier.IdentityResolutionEvidence;
+import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
+import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -29,6 +32,76 @@ import org.junit.jupiter.api.Test;
 class P25TrafficChannelEventTrackerTest
 {
     private static final long START = 1_000L;
+
+    @Test
+    void encryptionOnlyChangesPublishOnTheSameExactCallAndConflictStaysUnknown()
+    {
+        var event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+            .identifiers(identifiers(1201, null)).build();
+        var tracker = publishedTracker(event);
+        assertNull(tracker.callUpdate());
+        event.setServiceOptions(VoiceServiceOptions.createEncrypted());
+        var encrypted = tracker.callUpdate();
+        assertEquals(CallEncryptionState.ENCRYPTED, encrypted.call().encryptionState());
+        assertEquals(tracker.getActivityCallToken(), encrypted.call().callToken());
+        event.setServiceOptions(null);
+        assertNull(tracker.callUpdate(), "Absent information cannot erase accepted encryption");
+        event.setServiceOptions(VoiceServiceOptions.createUnencrypted());
+        assertEquals(CallEncryptionState.UNKNOWN, tracker.callUpdate().call().encryptionState());
+        event.setServiceOptions(VoiceServiceOptions.createEncrypted());
+        assertNull(tracker.callUpdate(), "Conflicting evidence stays unknown for this physical call");
+    }
+
+    @Test
+    void repeatedKeyConfirmationPublishesEvenWhenIdentifiersDoNotChange()
+    {
+        for(boolean expire: List.of(false, true))
+        {
+            var key = EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 5));
+            var collection = identifiers(1201, null);
+            collection.update(key);
+            var event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED, START,
+                VoiceServiceOptions.createEncrypted()).identifiers(collection).build();
+            var tracker = publishedTracker(event);
+            P25EncryptionConfirmationTracker.observe(event, key, START);
+            assertNull(tracker.callUpdate());
+            P25EncryptionConfirmationTracker.observe(event, key, START + 100);
+            var confirmed = tracker.callUpdate();
+            assertTrue(confirmed.call().encryptionConfirmed());
+            assertEquals(CallEncryptionState.ENCRYPTED, confirmed.call().encryptionState());
+            assertNull(tracker.callUpdate());
+            if(expire)
+            {
+                var later = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED,
+                    START + 61_000, VoiceServiceOptions.createEncrypted()).identifiers(collection).build();
+                P25EncryptionConfirmationTracker.observe(later, key, START + 61_000);
+                P25EncryptionConfirmationTracker.complete(later, START + 61_000);
+            }
+            else P25EncryptionConfirmationTracker.complete(event, START + 100);
+            assertNull(tracker.callUpdate(), "Retiring temporary evidence cannot erase an already confirmed detail");
+        }
+    }
+
+    @Test
+    void conflictingRawKeyEvidenceRevokesPreviouslyConfirmedDetails()
+    {
+        var key = EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 5));
+        var collection = identifiers(1201, null);
+        collection.update(key);
+        var event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP_ENCRYPTED, START,
+            VoiceServiceOptions.createEncrypted()).identifiers(collection).build();
+        var tracker = publishedTracker(event);
+        P25EncryptionConfirmationTracker.observe(event, key, START);
+        P25EncryptionConfirmationTracker.observe(event, key, START + 100);
+        assertTrue(tracker.callUpdate().call().encryptionConfirmed());
+        P25EncryptionConfirmationTracker.observe(event,
+            EncryptionKeyIdentifier.create(APCO25EncryptionKey.create(0x84, 7)), START + 200);
+        var rejected = tracker.callUpdate();
+        assertFalse(rejected.call().encryptionConfirmed());
+        assertEquals(CallEncryptionState.ENCRYPTED, rejected.call().encryptionState());
+        assertNull(tracker.callUpdate());
+        P25EncryptionConfirmationTracker.complete(event, START + 200);
+    }
 
     @Test
     void finalObservedDurationSurvivesLateCallerEnrichmentWithoutDependingOnAudio()

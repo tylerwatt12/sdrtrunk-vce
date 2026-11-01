@@ -1,6 +1,7 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.*;
 import com.google.common.eventbus.Subscribe;
 import io.github.dsheirer.audio.call.SourceCallReference;
@@ -206,7 +207,7 @@ class SourceCallPersistenceTest
                 ReceiverActivityRecords.P25Identity.UNKNOWN,ReceiverActivityRecords.P25Identity.ORDINARY,null,null);
         var second = new ReceiverActivityRecords.ActivityEvent(now,SECOND_CHANNEL,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,"APCO25",ReceiverActivityRecords.Action.CALL,"CALL_GROUP",
-            "5002","101","TALKGROUP",List.of(),460012500L,null,1,false,null,null,0xBEE00,0x3A9,0x293,2,2,null,
+            "5002","101","TALKGROUP",List.of(),460012500L,null,1,CallEncryptionState.CLEAR,null,null,0xBEE00,0x3A9,0x293,2,2,null,
             true,null,null,TrunkedIdentityDomain.STANDARD,ReceiverActivityRecords.P25Identity.ORDINARY,source,List.of(),
             null,5002,null,null,null,"site:2");
         var unrelated = activity(now,ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,
@@ -310,9 +311,9 @@ class SourceCallPersistenceTest
         try
         {
             writer.enqueue(new ReceiverActivityRecords.DmrConventionalCall(now,now + 100,CHANNEL,460012500,1,
-                ReceiverActivityRecords.DmrTargetKind.GROUP,7,202,null,false,"dmr:1"));
+                ReceiverActivityRecords.DmrTargetKind.GROUP,7,202,null,CallEncryptionState.CLEAR,"dmr:1"));
             writer.enqueue(new ReceiverActivityRecords.NxdnConventionalCall(now + 1,now + 101,SECOND_CHANNEL,460012500,
-                ReceiverActivityRecords.NxdnTargetKind.GROUP,7,202,null,false,TrunkedIdentityDomain.NXDN_TYPE_C,"nxdn:1"));
+                ReceiverActivityRecords.NxdnTargetKind.GROUP,7,202,null,CallEncryptionState.CLEAR,TrunkedIdentityDomain.NXDN_TYPE_C,"nxdn:1"));
         }
         finally { writer.close(); }
         assertEquals(2,writer.getWrittenRecords()); assertEquals(0,writer.getDroppedRecords());
@@ -351,7 +352,7 @@ class SourceCallPersistenceTest
         ReceiverActivityRecords.Action action, String token)
     {
         return new ReceiverActivityRecords.ActivityEvent(time,CHANNEL,kind,"APCO25",action,"CALL_GROUP","202","101",
-            "TALKGROUP",List.of(),460012500L,null,1,false,null,null,0xBEE00,0x3A9,0x293,2,1,null,
+            "TALKGROUP",List.of(),460012500L,null,1,CallEncryptionState.CLEAR,null,null,0xBEE00,0x3A9,0x293,2,1,null,
             action == ReceiverActivityRecords.Action.CALL,null,null,TrunkedIdentityDomain.STANDARD,
             ReceiverActivityRecords.P25Identity.ORDINARY,ReceiverActivityRecords.P25Identity.ORDINARY,List.of(),
             null,null,null,null,null,token);

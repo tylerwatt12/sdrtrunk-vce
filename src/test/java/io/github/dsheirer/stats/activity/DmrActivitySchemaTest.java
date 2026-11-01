@@ -6,6 +6,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -125,7 +126,7 @@ class DmrActivitySchemaTest
             insertChannel(connection, "invalid");
             ReceiverActivityRecords.DmrConventionalCall backwards =
                 new ReceiverActivityRecords.DmrConventionalCall(2_000, 1_000, configurationId("invalid"),
-                    461_125_000L, 1, ReceiverActivityRecords.DmrTargetKind.GROUP, 1, 2, null, false);
+                    461_125_000L, 1, ReceiverActivityRecords.DmrTargetKind.GROUP, 1, 2, null, CallEncryptionState.CLEAR);
             assertThrows(SQLException.class,
                 () -> ReceiverActivitySchema.recordDmrConventionalCall(connection, backwards));
             assertThrows(SQLException.class, () -> record(connection,
@@ -270,7 +271,7 @@ class DmrActivitySchemaTest
                                                                         int source, boolean encrypted)
     {
         return new ReceiverActivityRecords.DmrConventionalCall(start, end, configurationId(fixture), frequency,
-            timeslot, ReceiverActivityRecords.DmrTargetKind.GROUP, talkgroup, source, null, encrypted);
+            timeslot, ReceiverActivityRecords.DmrTargetKind.GROUP, talkgroup, source, null, CallEncryptionState.fromEncrypted(encrypted));
     }
 
     private static ReceiverActivityRecords.DmrConventionalCall privateCall(long start, long end, String fixture,
@@ -278,7 +279,7 @@ class DmrActivitySchemaTest
                                                                           int target, boolean encrypted)
     {
         return new ReceiverActivityRecords.DmrConventionalCall(start, end, configurationId(fixture), frequency,
-            timeslot, ReceiverActivityRecords.DmrTargetKind.PRIVATE, null, source, target, encrypted);
+            timeslot, ReceiverActivityRecords.DmrTargetKind.PRIVATE, null, source, target, CallEncryptionState.fromEncrypted(encrypted));
     }
 
     private static String configurationId(String fixture)

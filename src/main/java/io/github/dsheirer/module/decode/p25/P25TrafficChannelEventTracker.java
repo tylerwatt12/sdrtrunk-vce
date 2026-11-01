@@ -29,6 +29,7 @@ import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.audio.call.CallAttribution;
 import io.github.dsheirer.audio.call.CallEncryptionEvidence;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.AudioActivityCallEvent;
 import io.github.dsheirer.audio.codec.mbe.IEncryptionSyncParameters;
 import io.github.dsheirer.identifier.encryption.EncryptionKeyIdentifier;
@@ -72,6 +73,7 @@ public class P25TrafficChannelEventTracker
     private P25CallStartEvent mCallStart;
     private List<Identifier> mActivityIdentifiers;
     private boolean mCompletionPublished;
+    private boolean mActivityEncryptionConflicted;
 
     /**
      * Constructs an instance
@@ -148,15 +150,21 @@ public class P25TrafficChannelEventTracker
     /** No database state or acknowledgement is consulted on the decoding thread. */
     P25CallUpdateEvent callUpdate()
     {
-        if(mCallStart == null ||
-            (sameIdentifiers() &&
-                (!isComplete() || mCompletionPublished)))
+        if(mCallStart == null) return null;
+        CallEncryptionState state = mCallStart.currentEncryptionState(getEvent());
+        if(mCallStart.encryptionState().isKnown() && state != mCallStart.encryptionState())
+            mActivityEncryptionConflicted = true;
+        if(mActivityEncryptionConflicted) state = CallEncryptionState.UNKNOWN;
+        boolean confirmed = mCallStart.currentEncryptionConfirmed(getEvent());
+        if(sameIdentifiers() && mCallStart.encryptionState() == state &&
+            mCallStart.encryptionConfirmed() == confirmed && (!isComplete() || mCompletionPublished))
         {
             return null;
         }
 
-        P25CallStartEvent snapshot = mCallStart.withIdentifiers(getEvent());
+        P25CallStartEvent snapshot = mCallStart.withIdentifiers(getEvent(), state);
         mActivityIdentifiers = snapshot.identifiers();
+        mCallStart = snapshot;
         mCompletionPublished |= isComplete();
         // A grant builder defaults its end to its start; that zero does not establish an observed call span.
         Long duration = mObservedEnd && isStarted() && getEvent().getTimeStart() > 0 &&

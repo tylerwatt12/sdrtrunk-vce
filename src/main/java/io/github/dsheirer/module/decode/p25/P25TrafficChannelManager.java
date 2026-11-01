@@ -1106,7 +1106,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                     P25TrafficChannelEventTracker tracker = getControlContinuationTracker(channel, timestamp);
                     boolean sameCall = tracker != null &&
                         tracker.isSameControlContinuationCheckingToOnly(ic, timestamp);
-                    notifyActivityGrant(channel, ic, getEventType(macOpcode, serviceOptions, null), timestamp,
+                    notifyActivityGrant(channel, ic, getEventType(macOpcode, serviceOptions, null), serviceOptions, timestamp,
                         sameCall);
 
                     if(sameCall && tracker.updateDurationControl(timestamp))
@@ -1954,7 +1954,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //If we have a tracked event, update it.  Otherwise, make sure we have the traffic channel allocated
             if(tracker != null && tracker.isSameControlContinuationCheckingToOnly(ic, timestamp))
             {
-                notifyActivityGrant(channel, ic, getEventType(opcode, serviceOptions, null), timestamp, true);
+                notifyActivityGrant(channel, ic, getEventType(opcode, serviceOptions, null), serviceOptions, timestamp, true);
 
                 //Only rebroadcast the tracked event if the timestamp was updated from this control channel timestamp
                 //Once the traffic channel takes over updating the tracked event time/duration, further control channel
@@ -2010,12 +2010,13 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     }
 
     private void notifyActivityGrant(APCO25Channel channel, IdentifierCollection identifiers, DecodeEventType eventType,
-                                     long timestamp, boolean continuation)
+                                     ServiceOptions serviceOptions, long timestamp, boolean continuation)
     {
         if(channel != null)
         {
             MyEventBus.getGlobalEventBus().post(new P25GrantObservationEvent(mParentChannel, channel, identifiers,
-                eventType, timestamp, continuation, isConfirmedBand(channel)));
+                eventType, P25CallStartEvent.encryptionState(eventType, serviceOptions, identifiers),
+                timestamp, continuation, isConfirmedBand(channel)));
         }
 
         if(mChannelActivityModel != null && channel != null)
@@ -2402,7 +2403,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             tracker.isSameControlContinuationCheckingToOnly(ic, timestamp) :
             tracker.isSameCallCheckingToOnly(ic, timestamp));
         boolean differentTalker = sameCall && from != null && tracker.isDifferentTalker(from);
-        notifyActivityGrant(apco25Channel, ic, decodeEventType, timestamp, sameCall && !differentTalker);
+        notifyActivityGrant(apco25Channel, ic, decodeEventType, serviceOptions, timestamp, sameCall && !differentTalker);
 
         if(sameCall)
         {
@@ -2547,7 +2548,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             tracker.isSameControlContinuationCheckingToOnly(ic, timestamp) :
             tracker.isSameCallCheckingToOnly(ic, timestamp));
         boolean differentTalker = sameCall && from != null && tracker.isDifferentTalker(from);
-        notifyActivityGrant(apco25Channel, ic, decodeEventType, timestamp, sameCall && !differentTalker);
+        notifyActivityGrant(apco25Channel, ic, decodeEventType, serviceOptions, timestamp, sameCall && !differentTalker);
 
         if(sameCall)
         {

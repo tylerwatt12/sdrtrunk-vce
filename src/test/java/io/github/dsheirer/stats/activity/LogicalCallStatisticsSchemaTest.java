@@ -6,6 +6,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -185,7 +186,7 @@ class LogicalCallStatisticsSchemaTest
                 new ReceiverActivityRecords.ActivityEvent(CALL_START + 6, conventional,
                     ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25, Protocol.APCO25_PHASE2.name(),
                     ReceiverActivityRecords.Action.CALL, "CALL_GROUP", "700001", "1201",
-                    Form.TALKGROUP.name(), List.of(), 851_012_500L, null, null, false, null, null,
+                    Form.TALKGROUP.name(), List.of(), 851_012_500L, null, null, CallEncryptionState.CLEAR, null, null,
                     null, null, null, null, null, null, true, null, null, TrunkedIdentityDomain.STANDARD,
                     ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.P25Identity.ORDINARY,
                     List.of(), null), true),
@@ -373,7 +374,7 @@ class LogicalCallStatisticsSchemaTest
         return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, protocol.name(),
             ReceiverActivityRecords.Action.GRANT, "CALL_GROUP", "700001", "1201",
-            Form.TALKGROUP.name(), List.of(), 851_012_500L, "0-1", 1, false, null, null,
+            Form.TALKGROUP.name(), List.of(), 851_012_500L, "0-1", 1, CallEncryptionState.CLEAR, null, null,
             0xBEE00, 0x3A9, null, null, null, null, false, null, null, TrunkedIdentityDomain.STANDARD,
             ReceiverActivityRecords.P25Identity.ORDINARY, ReceiverActivityRecords.P25Identity.ORDINARY,
             List.of(), null);

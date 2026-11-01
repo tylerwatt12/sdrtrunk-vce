@@ -271,7 +271,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -359,6 +359,15 @@ user and counted. This is a semantic-only version change with unchanged DDL and 
 The format 12-to-13 step adds the one bounded `setup_wizard` progress record described below. It preserves every
 existing setting and marks an upgraded profile as previously configured. Current startup checks required
 administrator and web readiness independently of optional setup choices.
+
+The format 68-to-69 step replaces the detailed Activity encryption flag with explicit Unknown, Clear and Encrypted
+states. It preserves every Activity message, event ID, exact call connection, attached tone and identity relationship,
+existing counter, configuration choice and allocator. Previously confirmed encryption and retained encrypted-call
+subtypes become Encrypted; other historical flags become Unknown because they cannot distinguish clear reception
+from absent confirmation. No historical call is guessed to be Clear. Recording files and the separate Managed
+Recordings catalog are unchanged. The existing event table and indexes are rebuilt once, so retained-history update
+work and workspace scale with Activity history. Existing paired configuration and history files change in one SQLite
+rollback-journal transaction. Fresh creation uses the same exact target definition; normal startup only validates it.
 
 ## Shared Upgrade And Import Boundary
 

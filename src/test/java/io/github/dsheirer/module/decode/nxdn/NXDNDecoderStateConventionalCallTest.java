@@ -15,6 +15,7 @@ import com.google.common.eventbus.Subscribe;
 import com.google.common.eventbus.EventBus;
 import io.github.dsheirer.alias.AliasList;
 import io.github.dsheirer.audio.call.AudioActivityCallEvent;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallPlaybackTarget;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.channel.state.DecoderStateEvent;
@@ -23,6 +24,8 @@ import io.github.dsheirer.channel.state.State;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.Channel.ChannelType;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.module.decode.event.DecodeEvent;
+import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.nxdn.layer2.LICH;
 import io.github.dsheirer.module.decode.nxdn.layer3.NXDNMessageType;
 import io.github.dsheirer.module.decode.nxdn.layer3.call.TransmissionRelease;
@@ -47,6 +50,7 @@ class NXDNDecoderStateConventionalCallTest
             assertEquals(1_000L, audio.getDuration());
             assertEquals(NXDNConventionalCallEvent.TargetKind.GROUP, decoded.completion().targetKind());
             assertEquals(group, decoded.completion().talkgroupId());
+            assertEquals(CallEncryptionState.CLEAR, decoded.completion().encryptionState());
             assertEquals(101, decoded.completion().sourceRadioId());
             assertEquals(decoded.completion().callToken(), audio.snapshot().activityCallToken());
             assertEquals(CallPlaybackTarget.Kind.CHANNEL,
@@ -110,8 +114,33 @@ class NXDNDecoderStateConventionalCallTest
         assertEquals(91, event.talkgroupId());
         assertEquals(101, event.sourceRadioId());
         assertNull(event.targetRadioId());
-        assertTrue(event.encrypted());
+        assertEquals(CallEncryptionState.ENCRYPTED, event.encryptionState());
         assertEquals(channel.getConfigurationId(), event.channelConfigurationId());
+    }
+
+    @Test
+    void completionWithoutEncryptionSignalingRemainsUnknown() throws ReflectiveOperationException
+    {
+        NXDNDecoderState state = new NXDNDecoderState(
+            channel(NXDNChannelMode.CONVENTIONAL, ChannelType.STANDARD), null);
+        state.receiveDecoderStateEvent(frequencyNotification(461_125_000L));
+        var call = NXDNDecodeEvent.builder(
+            DecodeEventType.CALL_GROUP, 1_000L).build();
+        ConventionalCallSubscriber subscriber = new ConventionalCallSubscriber();
+        MyEventBus.getGlobalEventBus().register(subscriber);
+        try
+        {
+            var publish = NXDNDecoderState.class.getDeclaredMethod("publishConventionalCall",
+                DecodeEvent.class, long.class);
+            publish.setAccessible(true);
+            publish.invoke(state, call, 2_000L);
+        }
+        finally
+        {
+            MyEventBus.getGlobalEventBus().unregister(subscriber);
+        }
+        assertEquals(1, subscriber.events.size());
+        assertEquals(CallEncryptionState.UNKNOWN, subscriber.events.getFirst().encryptionState());
     }
 
     @Test
@@ -136,9 +165,9 @@ class NXDNDecoderStateConventionalCallTest
 
         assertEquals(2, subscriber.events.size());
         assertEquals(101, subscriber.events.get(0).sourceRadioId());
-        assertTrue(subscriber.events.get(0).encrypted());
+        assertEquals(CallEncryptionState.ENCRYPTED, subscriber.events.get(0).encryptionState());
         assertEquals(202, subscriber.events.get(1).sourceRadioId());
-        assertFalse(subscriber.events.get(1).encrypted());
+        assertEquals(CallEncryptionState.CLEAR, subscriber.events.get(1).encryptionState());
         assertEquals(91, subscriber.events.get(0).talkgroupId());
         assertEquals(91, subscriber.events.get(1).talkgroupId());
     }

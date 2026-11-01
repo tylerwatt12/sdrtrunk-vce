@@ -373,7 +373,7 @@ class ToneActivitySchemaTest
         var a = observation.activity();
         return new ReceiverActivityRecords.ActivityEvent(a.observedAtEpochMilliseconds(), a.configurationId(), a.receiverKind(),
             a.protocol(), ReceiverActivityRecords.Action.CALL, eventType, a.sourceRadioId(), a.targetId(), a.targetKind(),
-            a.patchMemberTalkgroupIds(), a.frequencyHertz(), a.lcn(), a.timeslot(), a.encrypted(), a.encryptionAlgorithmId(),
+            a.patchMemberTalkgroupIds(), a.frequencyHertz(), a.lcn(), a.timeslot(), a.encryptionState(), a.encryptionAlgorithmId(),
             a.encryptionKeyId(), a.wacn(), a.systemId(), a.nac(), a.rfss(), a.site(), a.talkerAlias(), false, null, null,
             a.identityDomain(), a.p25TargetIdentity(), a.p25SourceIdentity(), a.p25PatchMemberIdentities(), a.radioSystemKey(),
             a.sourceObservedWorkingId(), a.targetObservedWorkingId(), null, null, observation.sequence().snapshot().activityCallToken());

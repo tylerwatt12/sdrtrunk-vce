@@ -99,7 +99,7 @@ final class AliasActivityProjection
         }
         else if(activity.countedCall())
         {
-            Delta call = Delta.call(activity.encrypted(), false, false);
+            Delta call = Delta.call(activity.encryptionState().isEncrypted(), false, false);
             int targetKind = "RADIO".equals(activity.targetKind()) ? RADIO : TALKGROUP;
             addResolved(deltas, resolver.resolve(activity.configurationId(), targetKind,
                 positive(activity.targetId()), activity.p25TargetIdentity(),
@@ -228,7 +228,7 @@ final class AliasActivityProjection
         int protocol = 3;
         Resolver resolver = new Resolver(connection, protocol, call.callStartEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
-        Delta delta = Delta.call(call.encrypted(), false, false);
+        Delta delta = Delta.call(call.encryptionState().isEncrypted(), false, false);
         if(call.targetKind() != ReceiverActivityRecords.DmrTargetKind.PRIVATE || call.sourceRadioId() == null ||
             !call.sourceRadioId().equals(call.targetRadioId()))
         {
@@ -251,7 +251,7 @@ final class AliasActivityProjection
         int protocol = 4;
         Resolver resolver = new Resolver(connection, protocol, call.callStartEpochMilliseconds());
         Map<Long,Delta> deltas = new LinkedHashMap<>();
-        Delta delta = Delta.call(call.encrypted(), false, false);
+        Delta delta = Delta.call(call.encryptionState().isEncrypted(), false, false);
         if(call.targetKind() != ReceiverActivityRecords.NxdnTargetKind.PRIVATE || call.sourceRadioId() == null ||
             !call.sourceRadioId().equals(call.targetRadioId()))
         {

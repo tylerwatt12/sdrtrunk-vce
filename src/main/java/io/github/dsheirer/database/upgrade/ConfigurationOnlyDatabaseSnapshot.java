@@ -146,7 +146,7 @@ public final class ConfigurationOnlyDatabaseSnapshot
                     if(!SqliteSchemaValidator.fingerprint(original).equals(SqliteSchemaValidator.fingerprint(target)))
                         throw new SQLException("Extracted settings did not retain the exact source schema.");
                     if(paired)
-                        createEmptyActivity(extractedActivity, target);
+                        createEmptyActivity(ActivityDatabasePath.forConfiguration(normalizedSource), extractedActivity);
                     target.commit();
                 }
                 original.rollback();
@@ -364,8 +364,9 @@ public final class ConfigurationOnlyDatabaseSnapshot
             if(!Objects.equals(ConfigurationHistorySchema.metadata(configuration, ConfigurationHistorySchema.PAIR_ID_KEY),
                 ConfigurationHistorySchema.metadata(activity, ConfigurationHistorySchema.PAIR_ID_KEY)))
                 throw new SQLException("The configuration and activity databases belong to different profiles.");
-            if(version < Integer.parseInt(ConfigurationHistorySchema.metadata(activity,
-                DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
+            int historyVersion = Integer.parseInt(ConfigurationHistorySchema.metadata(activity,
+                DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            if(version < historyVersion || version >= 69 && historyVersion < 69)
                 throw new SQLException("The configuration and activity database versions are incompatible.");
             activity.rollback();
         }
@@ -442,14 +443,21 @@ public final class ConfigurationOnlyDatabaseSnapshot
         }
     }
 
-    private static void createEmptyActivity(Path path, Connection configuration) throws SQLException
+    private static void createEmptyActivity(Path source, Path path) throws IOException, SQLException
     {
-        String pairId = ConfigurationHistorySchema.metadata(configuration, ConfigurationHistorySchema.PAIR_ID_KEY);
-        try(Connection activity = openTarget(path))
+        // Retain the admitted source role until the ordinary adjacent chain upgrades both files. Reading schema
+        // and these bounded definitions never scans or copies the receiver history that the operator discarded.
+        try(Connection original = openSource(source); Connection activity = openTarget(path))
         {
-            ConfigurationHistorySchema.createHistory(activity);
-            ConfigurationHistorySchema.setIdentity(activity, ConfigurationHistorySchema.HISTORY_ROLE, pairId);
-            SdrTrunkDatabaseStartup.setMetadata(activity, DatabaseFormatCatalog.FORMAT_VERSION_KEY, "63");
+            ConfigurationHistoryDatabase.validateRole(original, ConfigurationHistorySchema.HISTORY_ROLE);
+            List<SchemaObject> objects = schema(original);
+            createObjects(activity, objects, true);
+            Set<String> boundedTables = Set.of("database_metadata", "activity_message_type");
+            for(String table: boundedTables) copyTable(original, activity, table, boundedTables);
+            createObjects(activity, objects, false);
+            for(String key: List.of("conventional_call_output_metrics_started_at_ms",
+                "trunked_logical_call_metrics_started_at_ms", "radio_system_metrics_started_at_ms"))
+                SdrTrunkDatabaseStartup.setMetadata(activity, key, Long.toString(System.currentTimeMillis()));
             ConfigurationHistoryDatabase.validateRole(activity, ConfigurationHistorySchema.HISTORY_ROLE);
             activity.commit();
         }

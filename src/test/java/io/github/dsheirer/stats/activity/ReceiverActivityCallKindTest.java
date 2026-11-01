@@ -101,7 +101,7 @@ class ReceiverActivityCallKindTest
                 var initial = new ReceiverActivityRecords.ActivityEvent(mapped.callStartEpochMilliseconds(),
                     CONFIGURATION_ID, ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, mapped.protocol(),
                     ReceiverActivityRecords.Action.CALL, "CALL_GROUP", null, "91", "TALKGROUP", List.of(),
-                    451_012_500L, null, 1, false, null, null, null, null, null, null, null, null,
+                    451_012_500L, null, 1, CallEncryptionState.CLEAR, null, null, null, null, null, null, null, null,
                     true, null, null, domain, ReceiverActivityRecords.P25Identity.UNKNOWN,
                     ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null, null, null, null, null, token);
                 assertNotNull(ReceiverActivitySchema.recordActivity(connection, initial, true));

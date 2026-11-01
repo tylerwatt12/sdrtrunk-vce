@@ -10,6 +10,7 @@
  */
 package io.github.dsheirer.module.decode.p25;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.channel.IChannelDescriptor;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelConfigurationKey;
@@ -25,6 +26,7 @@ import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import java.util.List;
 
 /**
@@ -35,11 +37,12 @@ import java.util.List;
 public record P25CallStartEvent(String configurationId, DecoderType decoderType, DecodeEventType eventType,
                                 long startedAtEpochMilliseconds, List<Identifier> identifiers,
                                 Long frequencyHertz, Integer channelBand, Integer channelNumber, Integer timeslot,
-                                boolean tdma, boolean encryptionConfirmed, String radioSystemKey, String callToken)
+                                boolean tdma, CallEncryptionState encryptionState, boolean encryptionConfirmed, String radioSystemKey, String callToken)
 {
     public P25CallStartEvent
     {
         configurationId = ChannelConfigurationKey.canonical(configurationId);
+        encryptionState = encryptionState != null ? encryptionState : CallEncryptionState.UNKNOWN;
         identifiers = snapshotIdentifiers(identifiers);
         frequencyHertz = frequencyHertz != null && frequencyHertz > 0 ? frequencyHertz : null;
         channelBand = channelBand != null && channelBand >= 0 ? channelBand : null;
@@ -60,25 +63,48 @@ public record P25CallStartEvent(String configurationId, DecoderType decoderType,
     {
         this(ChannelConfigurationKey.configured(channel), decoderType(channel), eventType(event), start(event),
             identifiers(event), frequency(event), band(event), channelNumber(event), timeslot(event), isTdma(event),
-            encryptionConfirmed(event), radioSystemKey, callToken);
+            encryptionState(event), encryptionConfirmed(event), radioSystemKey, callToken);
     }
 
-    /** Compatibility for producers that do not publish subsequent conventional call snapshots. */
+    /** Captures conventional producers without an exact call token. */
     public P25CallStartEvent(String configurationId, DecoderType decoderType, DecodeEventType eventType,
                              long startedAtEpochMilliseconds, List<Identifier> identifiers,
                              Long frequencyHertz, Integer channelBand, Integer channelNumber, Integer timeslot,
-                             boolean tdma, boolean encryptionConfirmed, String radioSystemKey)
+                             boolean tdma, CallEncryptionState encryptionState, boolean encryptionConfirmed, String radioSystemKey)
     {
         this(configurationId, decoderType, eventType, startedAtEpochMilliseconds, identifiers, frequencyHertz,
-            channelBand, channelNumber, timeslot, tdma, encryptionConfirmed, radioSystemKey, null);
+            channelBand, channelNumber, timeslot, tdma, encryptionState, encryptionConfirmed, radioSystemKey, null);
     }
 
     /** Updates identifiers while retaining the original call's configured ownership, time, frequency and slot. */
-    public P25CallStartEvent withIdentifiers(P25ChannelGrantEvent event)
+    public P25CallStartEvent withIdentifiers(P25ChannelGrantEvent event, CallEncryptionState encryptionState)
     {
         return new P25CallStartEvent(configurationId, decoderType, eventType, startedAtEpochMilliseconds,
             identifiers(event), frequencyHertz, channelBand, channelNumber, timeslot, tdma,
-            encryptionConfirmed(event), radioSystemKey, callToken);
+            encryptionState,
+            currentEncryptionConfirmed(event), radioSystemKey, callToken);
+    }
+
+    CallEncryptionState currentEncryptionState(P25ChannelGrantEvent event)
+    {
+        return hasEncryptionEvidence(event) ? encryptionState(event) : encryptionState;
+    }
+
+    boolean currentEncryptionConfirmed(P25ChannelGrantEvent event)
+    {
+        if(encryptionConfirmed(event)) return true;
+        if(P25EncryptionConfirmationTracker.isConflicted(event)) return false;
+        if(!encryptionConfirmed || !encryptionState.isEncrypted() || event == null ||
+            event.getIdentifierCollection() == null) return false;
+        Identifier current = event.getIdentifierCollection().getEncryptionIdentifier();
+        if(!(current instanceof EncryptionKeyIdentifier key) || key.getValue() == null) return false;
+        for(Identifier identifier: identifiers)
+        {
+            if(identifier instanceof EncryptionKeyIdentifier previous && previous.getValue() != null)
+                return previous.getValue().getAlgorithm() == key.getValue().getAlgorithm() &&
+                    previous.getValue().getKey() == key.getValue().getKey();
+        }
+        return false;
     }
 
     public P25CallStartEvent(Channel channel, P25ChannelGrantEvent event)
@@ -201,7 +227,38 @@ public record P25CallStartEvent(String configurationId, DecoderType decoderType,
         return descriptor != null && descriptor.isTDMAChannel();
     }
 
-    private static boolean encryptionConfirmed(P25ChannelGrantEvent event)
+    /** Captures call encryption independently of whether algorithm/key details have repeated confirmation. */
+    public static CallEncryptionState encryptionState(P25ChannelGrantEvent event)
+    {
+        return event != null ? encryptionState(event.getEventType(), event.getServiceOptions(),
+            event.getIdentifierCollection()) : CallEncryptionState.UNKNOWN;
+    }
+
+    private static boolean hasEncryptionEvidence(P25ChannelGrantEvent event)
+    {
+        return event != null && (event.hasServiceOptions() ||
+            event.getIdentifierCollection() != null && event.getIdentifierCollection().getEncryptionIdentifier() != null ||
+            event.getEventType() != null && (DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(event.getEventType()) ||
+                event.getEventType() == DecodeEventType.DATA_CALL_ENCRYPTED));
+    }
+
+    static CallEncryptionState encryptionState(DecodeEventType eventType, ServiceOptions serviceOptions,
+        IdentifierCollection identifiers)
+    {
+        Identifier identifier = identifiers != null ? identifiers.getEncryptionIdentifier() : null;
+        CallEncryptionState keyState = identifier instanceof EncryptionKeyIdentifier key && key.getValue() != null ?
+            CallEncryptionState.fromEncrypted(key.isEncrypted()) : CallEncryptionState.UNKNOWN;
+        CallEncryptionState signaledState = serviceOptions != null ?
+            CallEncryptionState.fromEncrypted(serviceOptions.isEncrypted()) :
+            eventType != null && (DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(eventType) ||
+                eventType == DecodeEventType.DATA_CALL_ENCRYPTED) ?
+                CallEncryptionState.ENCRYPTED : CallEncryptionState.UNKNOWN;
+        if(keyState.isKnown() && signaledState.isKnown() && keyState != signaledState)
+            return CallEncryptionState.UNKNOWN;
+        return keyState.isKnown() ? keyState : signaledState;
+    }
+
+    static boolean encryptionConfirmed(P25ChannelGrantEvent event)
     {
         IdentifierCollection identifiers = event != null ? event.getIdentifierCollection() : null;
         Identifier identifier = identifiers != null ? identifiers.getEncryptionIdentifier() : null;

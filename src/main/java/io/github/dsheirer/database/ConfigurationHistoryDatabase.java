@@ -14,9 +14,23 @@ import org.sqlite.SQLiteConfig;
 /** Exact admission of the two files which make one portable receiver profile. Never creates or repairs a file. */
 public final class ConfigurationHistoryDatabase
 {
-    // Both fingerprints are frozen by format 63. A role cannot substitute for its exact schema.
+    // Exact role signatures; supported historical history layouts remain explicit migration inputs.
     public static final String CONFIGURATION_FINGERPRINT = "fb1754c8bf00abc163ad8955f6452151d88477768f7848fd8e71f25fdc6d93d1";
-    public static final String HISTORY_FINGERPRINT = "a359803e101642d77f5ce5591ea2e493bde753696c8ee9e6c0180f5995717d3d";
+    public static final String FORMAT_63_HISTORY_FINGERPRINT = "a359803e101642d77f5ce5591ea2e493bde753696c8ee9e6c0180f5995717d3d";
+    public static final String HISTORY_FINGERPRINT = "c2443a47e0a9fc529e887076cc5086c75ead2118d52e521027306cc009222ac9";
+
+    /** The versioned signature is checked before any historical role is admitted. */
+    public static String historyFingerprint(int version) throws SQLException
+    {
+        if(version >= 63 && version <= 68) return FORMAT_63_HISTORY_FINGERPRINT;
+        if(version == 69) return HISTORY_FINGERPRINT;
+        throw new SQLException("Unsupported activity database format");
+    }
+
+    public static boolean isHistoryFingerprint(String fingerprint)
+    {
+        return HISTORY_FINGERPRINT.equals(fingerprint) || FORMAT_63_HISTORY_FINGERPRINT.equals(fingerprint);
+    }
     private ConfigurationHistoryDatabase()
     {
     }
@@ -99,19 +113,22 @@ public final class ConfigurationHistoryDatabase
         {
             throw new SQLException("The configuration/activity database identity is missing or invalid");
         }
-        String expected = role.equals(ConfigurationHistorySchema.CONFIGURATION_ROLE) ?
-            CONFIGURATION_FINGERPRINT : HISTORY_FINGERPRINT;
-        if(!expected.equals(fingerprint))
+        String versionText = ConfigurationHistorySchema.metadata(connection, schema, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+        int version;
+        try
         {
-            throw new SQLException("The " + role + " database does not have the exact format-63 schema");
+            version = Integer.parseInt(versionText);
+            if(version < 63 || version > DatabaseFormatCatalog.CURRENT_VERSION || !Integer.toString(version).equals(versionText))
+                throw new NumberFormatException();
         }
-        String version = ConfigurationHistorySchema.metadata(connection, schema, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
-        // Formats 64 through 68 change configuration semantics only. The activity role keeps the exact format-63
-        // contract; an older monolith passing through the split may advance in that same chain transaction.
-        if(version == null || !java.util.Set.of("63", "64", "65", "66", "67", "68").contains(version))
+        catch(NumberFormatException invalid)
         {
             throw new SQLException("The " + role + " database format marker is missing or incompatible");
         }
+        String expected = role.equals(ConfigurationHistorySchema.CONFIGURATION_ROLE) ?
+            CONFIGURATION_FINGERPRINT : historyFingerprint(version);
+        if(!expected.equals(fingerprint))
+            throw new SQLException("The " + role + " database does not have the exact format-" + version + " schema");
     }
 
     public static void validatePair(Path configuration) throws IOException, SQLException
@@ -144,6 +161,7 @@ public final class ConfigurationHistoryDatabase
             {
                 validateRole(activity, ConfigurationHistorySchema.HISTORY_ROLE);
                 DatabaseFormatCatalog.requireCurrent(config);
+                DatabaseFormatCatalog.requireCurrent(activity);
             }
             else
             {
@@ -157,11 +175,12 @@ public final class ConfigurationHistoryDatabase
             {
                 throw new SQLException("The configuration and activity databases belong to different profiles");
             }
-            if(Integer.parseInt(ConfigurationHistorySchema.metadata(config, DatabaseFormatCatalog.FORMAT_VERSION_KEY)) <
-                Integer.parseInt(ConfigurationHistorySchema.metadata(activity, DatabaseFormatCatalog.FORMAT_VERSION_KEY)))
-            {
+            int configurationVersion = Integer.parseInt(ConfigurationHistorySchema.metadata(config,
+                DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            int activityVersion = Integer.parseInt(ConfigurationHistorySchema.metadata(activity,
+                DatabaseFormatCatalog.FORMAT_VERSION_KEY));
+            if(configurationVersion < activityVersion || configurationVersion >= 69 && activityVersion < 69)
                 throw new SQLException("The configuration and activity database versions are incompatible");
-            }
         }
     }
 

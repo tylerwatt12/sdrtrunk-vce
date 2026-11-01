@@ -14,6 +14,7 @@ package io.github.dsheirer.stats.activity;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 
 import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CallLegSummary;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
@@ -113,7 +114,7 @@ class ReceiverActivityMapper
 
         return new ReceiverActivityRecords.DmrConventionalCall(event.startTimestamp(), event.endTimestamp(),
             configurationId, event.frequencyHertz(),
-            event.timeslot(), targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted(), event.callToken());
+            event.timeslot(), targetKind, talkgroup, sourceRadio, targetRadio, event.encryptionState(), event.callToken());
     }
 
     ReceiverActivityRecords.NxdnConventionalCall map(NXDNConventionalCallEvent event)
@@ -152,7 +153,7 @@ class ReceiverActivityMapper
 
         return new ReceiverActivityRecords.NxdnConventionalCall(event.startTimestamp(), event.endTimestamp(),
             configurationId, event.frequencyHertz(),
-            targetKind, talkgroup, sourceRadio, targetRadio, event.encrypted(),
+            targetKind, talkgroup, sourceRadio, targetRadio, event.encryptionState(),
             event.identityDomain(), event.callToken());
     }
 
@@ -227,16 +228,16 @@ class ReceiverActivityMapper
         Integer timeslot = callStart.timeslot() != null ? callStart.timeslot() : facts.timeslot();
         Identifier targetIdentifier = identifiers.getToIdentifier();
         Identifier sourceIdentifier = identifiers.getFromIdentifier();
-        boolean encrypted = facts.encrypted() && callStart.encryptionConfirmed();
-        Integer encryptionAlgorithmId = encrypted ? facts.encryptionAlgorithmId() : null;
-        Integer encryptionKeyId = encrypted ? facts.encryptionKeyId() : null;
+        boolean detailsConfirmed = callStart.encryptionState().isEncrypted() && callStart.encryptionConfirmed();
+        Integer encryptionAlgorithmId = detailsConfirmed ? facts.encryptionAlgorithmId() : null;
+        Integer encryptionKeyId = detailsConfirmed ? facts.encryptionKeyId() : null;
         long observedAt = callStart.startedAtEpochMilliseconds() > 0 ?
             callStart.startedAtEpochMilliseconds() : System.currentTimeMillis();
 
         return new ReceiverActivityRecords.ActivityEvent(observedAt, callStart.configurationId(), receiverKind,
             protocolName(callStart.protocol(), facts, decoderType), ReceiverActivityRecords.Action.CALL,
             callStart.eventType() != null ? callStart.eventType().name() : null, facts.sourceId(), facts.targetId(),
-            facts.targetForm(), facts.patchMemberTalkgroupIds(), frequency, channelDescriptor, timeslot, encrypted,
+            facts.targetForm(), facts.patchMemberTalkgroupIds(), frequency, channelDescriptor, timeslot, callStart.encryptionState(),
             encryptionAlgorithmId, encryptionKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(),
             facts.site(), facts.talkerAlias(), true, null, null, TrunkedIdentityDomain.STANDARD,
             p25TargetIdentity(targetIdentifier, true), p25Identity(sourceIdentifier, true),
@@ -294,7 +295,7 @@ class ReceiverActivityMapper
         return new ReceiverActivityRecords.ActivityEvent(observedAt, observation.configurationId(), receiverKind,
             protocolName(observation.protocol(), facts, decoderType), action,
             observation.eventType() != null ? observation.eventType().name() : null, facts.sourceId(), facts.targetId(),
-            facts.targetForm(), facts.patchMemberTalkgroupIds(), frequency, descriptor, timeslot, false, null, null,
+            facts.targetForm(), facts.patchMemberTalkgroupIds(), frequency, descriptor, timeslot, observation.encryptionState(), null, null,
             facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(), facts.talkerAlias(), false, null,
             null, TrunkedIdentityDomain.STANDARD, p25TargetIdentity(target, true), p25Identity(source, true),
             facts.p25PatchMemberIdentities(), observation.radioSystemKey(),
@@ -545,7 +546,7 @@ class ReceiverActivityMapper
         ReceiverActivityRecords.ActivityEvent event = new ReceiverActivityRecords.ActivityEvent(observed, configuration, kind,
             sequence.protocol().name(), ReceiverActivityRecords.Action.TONE, "TONE", facts.sourceId(), facts.targetId(), facts.targetForm(),
             facts.patchMemberTalkgroupIds(), facts.frequencyHertz(), firstNonBlank(facts.channelDescriptor(), facts.logicalChannelName()),
-            snapshot.timeslot() > 0 ? Integer.valueOf(snapshot.timeslot()) : facts.timeslot(), snapshot.isEncrypted(), facts.encryptionAlgorithmId(), facts.encryptionKeyId(),
+            snapshot.timeslot() > 0 ? Integer.valueOf(snapshot.timeslot()) : facts.timeslot(), snapshot.encryptionState(), facts.encryptionAlgorithmId(), facts.encryptionKeyId(),
             site != null ? Integer.valueOf(site.wacn()) : facts.wacn(), site != null ? Integer.valueOf(site.system()) : facts.systemId(), facts.nac(),
             site != null ? Integer.valueOf(site.rfss()) : facts.rfss(), site != null ? Integer.valueOf(site.site()) : facts.site(), facts.talkerAlias(), false, null, null,
             source.identityDomain(), p25TargetIdentity(target, p25), p25Identity(from, p25), facts.p25PatchMemberIdentities(),
@@ -748,11 +749,12 @@ class ReceiverActivityMapper
 
         ReceiverActivityRecords.RadioPresenceUpdate radioPresenceUpdate = radioPresenceUpdate(affiliationEvent);
         ReceiverActivityRecords.P25WuidObservation p25WuidObservation = p25WuidObservation(affiliationEvent);
-        boolean metricsEncrypted = facts.encrypted() && event instanceof P25ChannelGrantEvent grantEvent &&
+        boolean detailsConfirmed = facts.encrypted() && event instanceof P25ChannelGrantEvent grantEvent &&
             P25EncryptionConfirmationTracker.isConfirmed(grantEvent, facts.encryptionAlgorithmId(),
                 facts.encryptionKeyId());
-        Integer metricsAlgorithmId = metricsEncrypted ? facts.encryptionAlgorithmId() : null;
-        Integer metricsKeyId = metricsEncrypted ? facts.encryptionKeyId() : null;
+        CallEncryptionState encryptionState = activityEncryptionState(event, receiverKind);
+        Integer encryptionAlgorithmId = detailsConfirmed ? facts.encryptionAlgorithmId() : null;
+        Integer encryptionKeyId = detailsConfirmed ? facts.encryptionKeyId() : null;
 
         String dedupeKey = null;
         if(actionOverride == null && (decoderType == DecoderType.DMR || decoderType == DecoderType.NXDN) &&
@@ -781,8 +783,9 @@ class ReceiverActivityMapper
                 safe(facts.systemId()),
                 safe(facts.patchMemberTalkgroupIds()),
                 safe(facts.p25PatchMemberIdentities()),
-                safe(metricsAlgorithmId),
-                safe(metricsKeyId),
+                safe(encryptionState),
+                safe(encryptionAlgorithmId),
+                safe(encryptionKeyId),
                 receiverKind == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG &&
                     event.getEventType() != null && event.getEventType().isVoiceCallEvent() ?
                     Long.toString(event.getTimeStart()) : "");
@@ -791,8 +794,8 @@ class ReceiverActivityMapper
         return new ReceiverActivityRecords.ActivityEvent(observedAt, configurationId, receiverKind,
             protocol, action,
             event.getEventType() != null ? event.getEventType().name() : null, sourceRadioId, targetId,
-            targetKind, facts.patchMemberTalkgroupIds(), frequency, lcn, timeslot, metricsEncrypted, metricsAlgorithmId,
-            metricsKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(), facts.talkerAlias(),
+            targetKind, facts.patchMemberTalkgroupIds(), frequency, lcn, timeslot, encryptionState, encryptionAlgorithmId,
+            encryptionKeyId, facts.wacn(), facts.systemId(), facts.nac(), facts.rfss(), facts.site(), facts.talkerAlias(),
             action == ReceiverActivityRecords.Action.CALL &&
                 (receiverKind != ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE || actionOverride != null), dedupeKey,
             radioPresenceUpdate, configuredIdentityDomain, p25TargetIdentity,
@@ -800,6 +803,27 @@ class ReceiverActivityMapper
             facts.p25PatchMemberIdentities(), radioSystemKey, sourceObservedWorkingId,
             targetObservedWorkingId, p25WuidObservation,
             analogAttribution);
+    }
+
+    private static CallEncryptionState activityEncryptionState(IDecodeEvent event,
+        ReceiverActivityRecords.ReceiverKind receiverKind)
+    {
+        if(event instanceof P25ChannelGrantEvent grant) return P25CallStartEvent.encryptionState(grant);
+        DecodeEventType type = event.getEventType();
+        if(type == null) return CallEncryptionState.UNKNOWN;
+        if(DecodeEventType.VOICE_CALLS_ENCRYPTED.contains(type) || type == DecodeEventType.DATA_CALL_ENCRYPTED)
+            return CallEncryptionState.ENCRYPTED;
+        if(!type.isVoiceCallEvent()) return CallEncryptionState.UNKNOWN;
+        if(receiverKind == ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG)
+            return CallEncryptionState.CLEAR;
+        // Plain generic P25 call labels do not prove that a clear/encrypted indicator was received.
+        if(event.getProtocol() == Protocol.DMR || event.getProtocol() == Protocol.NXDN)
+        {
+            EncryptionKeyIdentifier key = IdentifierFacts.encryptionIdentifier(event.getIdentifierCollection());
+            return key != null && key.getValue() != null ? CallEncryptionState.fromEncrypted(key.isEncrypted()) :
+                CallEncryptionState.UNKNOWN;
+        }
+        return CallEncryptionState.UNKNOWN;
     }
 
     /** Identity enrichment is a meaningful observation even when the displayed radio number is unchanged. */

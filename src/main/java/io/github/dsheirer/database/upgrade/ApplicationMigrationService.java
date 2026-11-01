@@ -598,7 +598,7 @@ public final class ApplicationMigrationService
         }
         if(ownedPlan.requiresMigration() || !recovery.isEmpty())
         {
-            long workspace = requiredOwnedMigrationWorkspace(database, content, ownedPlan);
+            long workspace = safeMultiply(sqliteFootprint(database), 2);
             ensureFreeSpace(database.getParent(), safeAdd(safeAdd(workspace,
                 createBackup ? sqliteFootprint(database) : 0), 5L * 1024 * 1024 * 1024));
         }
@@ -663,52 +663,17 @@ public final class ApplicationMigrationService
 
     /**
      * Additional workspace for migrating an application-owned database, after exact source admission. This excludes
-     * any profile copy, selected backup and free-space reserve, which the caller must budget separately. Format 62's
-     * full migration keeps detailed history pages in place and budgets only the compact structures it changes.
-     * The exact full-content format-63/64/65/66/67-to-68 plans change configuration only and leave paired activity untouched.
+     * any profile copy, selected backup and free-space reserve, which the caller must budget separately. The old
+     * split step kept history pages in place. Format 69 rebuilds the event table and existing indexes, so
+     * full-content upgrades reserve a complete matching pair for replacement pages and another for rollback journals.
      */
     public static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content)
         throws IOException, SQLException
     {
         Objects.requireNonNull(content, "Migration contents cannot be null");
         Path normalized = Objects.requireNonNull(database, "Database cannot be null").toAbsolutePath().normalize();
-        return requiredOwnedMigrationWorkspace(normalized, content, readStartupPlan(normalized));
-    }
-
-    private static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content,
-        DatabaseMigrationChain.PreflightReport plan) throws IOException, SQLException
-    {
-        if(content == MigrationContent.FULL)
-        {
-            if(plan.source().version() == 62) return splitWorkspace(database);
-            if((plan.source().version() == 63 || plan.source().version() == 64 || plan.source().version() == 65 || plan.source().version() == 66 || plan.source().version() == 67) &&
-                plan.target().version() == 68)
-                return sqliteFileFootprint(database);
-        }
-        return sqliteFootprint(database);
-    }
-
-    /** Format 62 keeps detailed event pages in their original file; only compact owners and indexes change. */
-    private static long splitWorkspace(Path database) throws IOException,SQLException
-    {
-        try(Connection connection=openLiveReadOnly(database);Statement query=connection.createStatement();
-            ResultSet rows=query.executeQuery("""
-                SELECT coalesce(sum(pgsize),0) FROM dbstat WHERE name IN (
-                    SELECT name FROM sqlite_master WHERE tbl_name IN (
-                        'receiver_channel','radio_system','alias','alias_activity_summary',
-                        'alias_list_analog_activity_summary','trunked_radio_affiliation',
-                        'trunked_radio_channel_presence_clear','p25_wuid_assignment_observation_summary',
-                        'alias_list','alias_p25_subscriber_identity','scan_list','alias_scan_list_membership',
-                        'alias_list_unmatched_talkgroup_scan_list_membership','alias_list_new_alias_scan_list_membership',
-                        'alias_broadcast_channel','alias_list_unmatched_talkgroup_stream','alias_list_new_alias_stream',
-                        'configuration_channel','configuration_broadcast_stream','application_settings','application_icons',
-                        'web_user','web_user_tour_dismissal','web_access_policy','p25_subscriber_identity',
-                        'topic_alert_topic','topic_alert_rule','topic_alert_device','topic_alert_membership',
-                        'topic_alert_enrollment','topic_alert_enrollment_topic','topic_alert_message','topic_alert_delivery'))
-                """))
-        {
-            return safeMultiply(rows.next() ? rows.getLong(1) : 0,4);
-        }
+        readStartupPlan(normalized);
+        return safeMultiply(sqliteFootprint(normalized), 2);
     }
 
     private static MigrationResult withCleanupWarning(MigrationResult result)

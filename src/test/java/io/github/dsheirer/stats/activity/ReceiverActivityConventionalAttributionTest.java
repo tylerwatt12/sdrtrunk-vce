@@ -5,6 +5,7 @@
  */
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
@@ -144,7 +145,7 @@ class ReceiverActivityConventionalAttributionTest
         writer.enqueue(new ReceiverActivityRecords.ActivityEvent(start + 1, CONFIGURATION,
             ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_P25, "APCO25", ReceiverActivityRecords.Action.CALL,
             "CALL_GROUP", null, Integer.toString(TARGET), "TALKGROUP", List.of(), FREQUENCY, null, 1,
-            true, -1, 1, null, null, null, null, null, null, false, null, null,
+            CallEncryptionState.ENCRYPTED, -1, 1, null, null, null, null, null, null, false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(), null));
         writer.enqueue(observation("rollback", start, SOURCE, TARGET, false, true));
@@ -298,7 +299,7 @@ class ReceiverActivityConventionalAttributionTest
         if(target != null) identifiers.add(APCO25RadioIdentifier.createTo(target));
         P25CallStartEvent call = new P25CallStartEvent(CONFIGURATION, DecoderType.P25_CONVENTIONAL,
             DecodeEventType.CALL_UNIT_TO_UNIT, start, identifiers, FREQUENCY, null, null, 1,
-            false, false, null, token);
+            false, CallEncryptionState.UNKNOWN, false, null, token);
         return assertInstanceOf(ReceiverActivityRecords.P25CallObservation.class,
             initial ? mMapper.mapCallStart(call) : mMapper.map(new P25CallUpdateEvent(call, true)));
     }
@@ -310,7 +311,7 @@ class ReceiverActivityConventionalAttributionTest
         if(source != null) identifiers.add(APCO25RadioIdentifier.createFrom(source));
         if(target != null) identifiers.add(APCO25Talkgroup.create(target));
         P25CallStartEvent call = new P25CallStartEvent(CONFIGURATION, DecoderType.P25_CONVENTIONAL,
-            DecodeEventType.CALL_GROUP, start, identifiers, FREQUENCY, null, null, 1, false, false, null, token);
+            DecodeEventType.CALL_GROUP, start, identifiers, FREQUENCY, null, null, 1, false, CallEncryptionState.UNKNOWN, false, null, token);
         ReceiverActivityRecord record = initial ? mMapper.mapCallStart(call) :
             mMapper.map(new P25CallUpdateEvent(call, complete));
         return assertInstanceOf(ReceiverActivityRecords.P25CallObservation.class, record);

@@ -6,6 +6,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -637,7 +638,7 @@ class ReceiverActivityWriterTest
         if(source != null) identifiers.add(APCO25RadioIdentifier.createFrom(source));
         return (ReceiverActivityRecords.P25CallObservation)new ReceiverActivityMapper().mapCallStart(
             new P25CallStartEvent(CONFIGURATION_ID, DecoderType.P25_PHASE1, DecodeEventType.CALL_GROUP,
-                timestamp, identifiers, 854_187_500L, 0, 509, 1, false, false, "p25:bee00:3a9", token));
+                timestamp, identifiers, 854_187_500L, 0, 509, 1, false, CallEncryptionState.UNKNOWN, false, "p25:bee00:3a9", token));
     }
 
     private static void writeBatch(ReceiverActivityWriter writer, Connection connection,
@@ -1518,7 +1519,7 @@ class ReceiverActivityWriterTest
     {
         return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", action, "CALL_GROUP", "1811524",
-            "56138", "TALKGROUP", List.of(), frequencyHertz, "00-0509", 1, false, null, null,
+            "56138", "TALKGROUP", List.of(), frequencyHertz, "00-0509", 1, CallEncryptionState.CLEAR, null, null,
             0xBEE00, 0x3A9, 0x293, 2, 1, null, action == ReceiverActivityRecords.Action.CALL, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
@@ -1530,7 +1531,7 @@ class ReceiverActivityWriterTest
         return new ReceiverActivityRecords.ActivityEvent(timestamp, CONFIGURATION_ID,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
-            true, algorithm, 1, 0xBEE00, 0x3A9, 0x293, 2, 1, null, false, null, null,
+            CallEncryptionState.ENCRYPTED, algorithm, 1, 0xBEE00, 0x3A9, 0x293, 2, 1, null, false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
     }

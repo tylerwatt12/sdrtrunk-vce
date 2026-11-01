@@ -1,5 +1,6 @@
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -103,7 +104,7 @@ class ConfigurationHistoryRetentionTest
         return new ReceiverActivityRecords.ActivityEvent(observedAt,ACTIVE,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE,"DMR",ReceiverActivityRecords.Action.JOIN,
             "JOIN",null,Integer.toString(target),"TALKGROUP",java.util.List.of(),451_000_000L,null,1,
-            false,null,null,null,42,null,null,1,null,false,null,null,
+            CallEncryptionState.CLEAR,null,null,null,42,null,null,1,null,false,null,null,
             io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain.STANDARD,
             ReceiverActivityRecords.P25Identity.UNKNOWN,ReceiverActivityRecords.P25Identity.UNKNOWN,
             java.util.List.of(),null);

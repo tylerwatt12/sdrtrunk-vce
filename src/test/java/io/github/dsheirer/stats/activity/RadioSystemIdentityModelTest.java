@@ -6,6 +6,7 @@
 
 package io.github.dsheirer.stats.activity;
 
+import io.github.dsheirer.audio.call.CallEncryptionState;
 import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -984,7 +985,7 @@ class RadioSystemIdentityModelTest
             record(connection, new ReceiverActivityRecords.ActivityEvent(1_300, P25_A,
                 ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25",
                 ReceiverActivityRecords.Action.CALL, "CALL_GROUP", "1002", "93", "TALKGROUP", List.of(),
-                851_012_500L, "0-1", 1, false, null, null, 0xBEE00, 0x3A9, null, null, null, null,
+                851_012_500L, "0-1", 1, CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x3A9, null, null, null, null,
                 false, null, null, TrunkedIdentityDomain.STANDARD,
                 ReceiverActivityRecords.P25Identity.ORDINARY,
                 ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null));
@@ -1819,7 +1820,7 @@ class RadioSystemIdentityModelTest
         return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, protocol, ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1001", Integer.toString(talkgroup), "TALKGROUP", List.of(), 851_012_500L,
-            "0-1", 1, false, null, null, wacn, systemId, null, null, null, null, false, null, null,
+            "0-1", 1, CallEncryptionState.CLEAR, null, null, wacn, systemId, null, null, null, null, false, null, null,
             domain, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY,
             List.of(), null);
@@ -1836,7 +1837,7 @@ class RadioSystemIdentityModelTest
         return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.CALL,
             "CALL_GROUP", presence != null ? Integer.toString(presence.radioId()) : "1001", targetId, targetKind,
-            patchMembers, 851_012_500L, "0-1", 1, false, null, null, 0xBEE00, 0x3A9, null, null, null, null,
+            patchMembers, 851_012_500L, "0-1", 1, CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x3A9, null, null, null, null,
             false, null, presence, TrunkedIdentityDomain.STANDARD, target,
             presence != null ? presence.radioIdentity() : ReceiverActivityRecords.P25Identity.ORDINARY,
             memberIdentities, null);
@@ -1878,7 +1879,7 @@ class RadioSystemIdentityModelTest
         return new ReceiverActivityRecords.ActivityEvent(observedAt, configurationId,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.REGISTER,
             "REGISTER", Integer.toString(workingId), null, null, List.of(), 851_012_500L, "0-1", 1,
-            false, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, presence,
+            CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, presence,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN, identity, List.of(), null,
             workingId, null, new ReceiverActivityRecords.P25WuidObservation(0xBEE00, 0x3A9, workingId,
                 subscriber, observedAt + 270L * 60_000L, evidence));
@@ -1890,7 +1891,7 @@ class RadioSystemIdentityModelTest
         return new ReceiverActivityRecords.ActivityEvent(timestamp, P25_A,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.REGISTER,
             "REGISTER", "10900077", null, null, List.of(), 851_012_500L, "0-1", 1,
-            false, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, null,
+            CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x3A9, null, null, null, null, false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.UNKNOWN, identity, List.of(), null);
     }
 
@@ -1899,7 +1900,7 @@ class RadioSystemIdentityModelTest
     {
         return new ReceiverActivityRecords.ActivityEvent(timestamp, configurationId,
             ReceiverActivityRecords.ReceiverKind.CONVENTIONAL_ANALOG, "NBFM", ReceiverActivityRecords.Action.CALL,
-            "CALL", null, null, null, List.of(), frequency, null, null, false, null, null, null, null, null,
+            "CALL", null, null, null, List.of(), frequency, null, null, CallEncryptionState.CLEAR, null, null, null, null, null,
             null, null, null, true, null, null, TrunkedIdentityDomain.STANDARD,
             ReceiverActivityRecords.P25Identity.UNKNOWN, ReceiverActivityRecords.P25Identity.UNKNOWN, List.of(),
             null);
@@ -1948,7 +1949,7 @@ class RadioSystemIdentityModelTest
     {
         return new ReceiverActivityRecords.TrunkedCallAttribution(callStart, configurationId, "DMR",
             451_012_500L, 1, 91, "TALKGROUP", List.of(), sourceRadio, null, null,
-            false, true, false, false, TrunkedIdentityDomain.STANDARD, radioSystemKey);
+            false, true, CallEncryptionState.UNKNOWN, CallEncryptionState.UNKNOWN, TrunkedIdentityDomain.STANDARD, radioSystemKey);
     }
 
     private static ReceiverActivityRecords.SiteSnapshot p25Site(String configurationId, long timestamp,

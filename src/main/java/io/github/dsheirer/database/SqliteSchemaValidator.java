@@ -92,6 +92,13 @@ public final class SqliteSchemaValidator
      */
     public static String fingerprint(Connection connection) throws SQLException
     {
+        return fingerprint(connection, "main");
+    }
+
+    /** The migrator fingerprints its admitted writable companion in the same transaction. */
+    public static String fingerprint(Connection connection, String schema) throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown validation schema");
         MessageDigest digest;
         try
         {
@@ -105,10 +112,10 @@ public final class SqliteSchemaValidator
         try(Statement statement = connection.createStatement();
             ResultSet resultSet = statement.executeQuery("""
                 SELECT type, name, sql
-                FROM sqlite_master
+                FROM %s.sqlite_master
                 WHERE name NOT GLOB 'sqlite_*'
                 ORDER BY type, name
-                """))
+                """.formatted(schema)))
         {
             while(resultSet.next())
             {

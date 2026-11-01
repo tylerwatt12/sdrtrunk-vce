@@ -37,7 +37,7 @@ class ReceiverActivityCallTimingTest
     {
         var call = new P25CallStartEvent(CONFIGURATION, DecoderType.P25_PHASE1, DecodeEventType.CALL_GROUP,
             1_000L, List.of(APCO25Talkgroup.create(91), APCO25RadioIdentifier.createFrom(101)),
-            851_000_000L, 1, 10, 1, false, false, "p25:bee00:123", "exact-p25-call");
+            851_000_000L, 1, 10, 1, false, CallEncryptionState.UNKNOWN, false, "p25:bee00:123", "exact-p25-call");
 
         assertNull(mMapper.map(new P25CallUpdateEvent(call, false, 900L)).activity().durationMilliseconds());
         var completed = mMapper.map(new P25CallUpdateEvent(call, true, 900L)).activity();

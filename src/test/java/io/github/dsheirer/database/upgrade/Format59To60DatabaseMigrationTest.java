@@ -70,7 +70,7 @@ class Format59To60DatabaseMigrationTest
             CurrentFormatTestDatabase.migrateToVersion(connection, 62); connection.commit();
             assertEquals(before, snapshot(connection, columns));
             assertEquals(62, DatabaseFormatCatalog.inspect(connection).version());
-            ReceiverActivitySchema.validate(connection);
+            assertEquals(DatabaseFormatCatalog.requireVersion(62).fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertTrue(CurrentFormatTestDatabase.migrateToVersion(connection, 62).steps().isEmpty());
             integrity(connection);
         }
@@ -149,7 +149,6 @@ class Format59To60DatabaseMigrationTest
         try(var connection = open(database))
         {
             DatabaseFormatCatalog.inspect(connection);
-            ReceiverActivitySchema.validate(connection);
             assertEquals(1, scalar(connection, "SELECT count(*) FROM receiver_activity_event WHERE action_code=25 AND event_type_code=63"));
             assertEquals(9000000002L, scalar(connection, "SELECT max(id) FROM receiver_activity_event"));
             integrity(connection);
@@ -174,7 +173,7 @@ class Format59To60DatabaseMigrationTest
         {
             statement.executeUpdate("UPDATE activity_message_type SET label='Radio disabled temporarily'," +
                 "meaning='A temporary disable command was observed.' WHERE definition_kind='EVENT' AND name='STUN'");
-            assertEquals(60, DatabaseFormatCatalog.inspect(connection).version()); ReceiverActivitySchema.validate(connection);
+            assertEquals(60, DatabaseFormatCatalog.inspect(connection).version()); ActivityMessageCatalog.validate(connection);
             assertEquals("Radio disabled temporarily", ActivityMessageCatalog.read(connection).stream()
                 .filter(row -> row.get("definition_kind").equals("EVENT") && row.get("name").equals("STUN"))
                 .findFirst().orElseThrow().get("label"));

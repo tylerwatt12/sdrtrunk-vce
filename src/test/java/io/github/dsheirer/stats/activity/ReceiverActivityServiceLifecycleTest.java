@@ -380,7 +380,7 @@ class ReceiverActivityServiceLifecycleTest
         P25CallUpdateEvent conventional = new P25CallUpdateEvent(new P25CallStartEvent(
             "00000000-0000-0000-0000-000000000730", DecoderType.P25_CONVENTIONAL,
             DecodeEventType.CALL_GROUP, System.currentTimeMillis(), List.of(APCO25Talkgroup.create(1201)),
-            154_875_000L, null, null, 1, false, false, null, "bounded-handoff"), true);
+            154_875_000L, null, null, 1, false, CallEncryptionState.UNKNOWN, false, null, "bounded-handoff"), true);
         Thread decoderThread = Thread.currentThread();
 
         try
@@ -431,7 +431,7 @@ class ReceiverActivityServiceLifecycleTest
         P25CallStartEvent initial = new P25CallStartEvent(channel.getPersistedConfigurationId(),
             DecoderType.P25_CONVENTIONAL, DecodeEventType.CALL_GROUP, start,
             List.of(APCO25Talkgroup.create(1201)), 154_875_000L, null, null, 1,
-            false, false, null, "before-resume");
+            false, CallEncryptionState.UNKNOWN, false, null, "before-resume");
         try
         {
             service.receiveCallStart(initial);
@@ -447,10 +447,10 @@ class ReceiverActivityServiceLifecycleTest
                 APCO25RadioIdentifier.createFrom(700_001));
             service.receiveP25CallUpdate(new P25CallUpdateEvent(new P25CallStartEvent(
                 initial.configurationId(), initial.decoderType(), initial.eventType(), start, identified,
-                initial.frequencyHertz(), null, null, 1, false, false, null, initial.callToken()), true));
+                initial.frequencyHertz(), null, null, 1, false, CallEncryptionState.UNKNOWN, false, null, initial.callToken()), true));
             P25CallStartEvent fresh = new P25CallStartEvent(initial.configurationId(), initial.decoderType(),
                 initial.eventType(), System.currentTimeMillis() + 1, identified, initial.frequencyHertz(),
-                null, null, 1, false, false, null, "after-resume");
+                null, null, 1, false, CallEncryptionState.UNKNOWN, false, null, "after-resume");
             service.receiveCallStart(fresh);
             service.receiveP25CallUpdate(new P25CallUpdateEvent(fresh, true));
             assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
@@ -492,7 +492,7 @@ class ReceiverActivityServiceLifecycleTest
         P25CallStartEvent initial = new P25CallStartEvent(channel.getPersistedConfigurationId(),
             DecoderType.P25_CONVENTIONAL, DecodeEventType.CALL_GROUP, start,
             List.of(APCO25Talkgroup.create(1201)), 154_875_000L, null, null, 1,
-            false, false, null, "before-reset-barrier");
+            false, CallEncryptionState.UNKNOWN, false, null, "before-reset-barrier");
         try
         {
             service.getDecodeEventListener().accept(blocker, blockingDecodeEvent(start - 1, entered, release));
@@ -511,11 +511,11 @@ class ReceiverActivityServiceLifecycleTest
             P25CallStartEvent identified = new P25CallStartEvent(initial.configurationId(), initial.decoderType(),
                 initial.eventType(), start, List.of(APCO25Talkgroup.create(1201),
                     APCO25RadioIdentifier.createFrom(700_001)), initial.frequencyHertz(), null, null, 1,
-                false, false, null, initial.callToken());
+                false, CallEncryptionState.UNKNOWN, false, null, initial.callToken());
             service.receiveP25CallUpdate(new P25CallUpdateEvent(identified, true));
             P25CallStartEvent fresh = new P25CallStartEvent(initial.configurationId(), initial.decoderType(),
                 initial.eventType(), System.currentTimeMillis() + 1, identified.identifiers(), initial.frequencyHertz(),
-                null, null, 1, false, false, null, "after-reset-barrier");
+                null, null, 1, false, CallEncryptionState.UNKNOWN, false, null, "after-reset-barrier");
             service.receiveCallStart(fresh);
             assertTrue(service.awaitObservationDrain(5, TimeUnit.SECONDS));
             awaitScalar(database, "SELECT sum(call_count) FROM conventional_activity_summary", 1);
@@ -781,7 +781,7 @@ class ReceiverActivityServiceLifecycleTest
         identifiers.update(descriptor);
         identifiers.setTimeslot(2);
         P25GrantObservationEvent grant = new P25GrantObservationEvent(p25Channel, descriptor, identifiers,
-            DecodeEventType.CALL_GROUP, start, false, true);
+            DecodeEventType.CALL_GROUP, CallEncryptionState.UNKNOWN, start, false, true);
         P25TrafficChannelConfirmationEvent confirmation = new P25TrafficChannelConfirmationEvent(p25Channel,
             grantFrequency, 2, start + 1L);
 
@@ -2593,7 +2593,7 @@ class ReceiverActivityServiceLifecycleTest
         return new ReceiverActivityRecords.ActivityEvent(timestamp, ACTIVITY_CONFIGURATION_ID,
             ReceiverActivityRecords.ReceiverKind.TRUNKED_SITE, "APCO25", ReceiverActivityRecords.Action.GRANT,
             "CALL_GROUP", "1811524", "56138", "TALKGROUP", List.of(), 854_187_500L, "00-0509", 1,
-            false, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", false, null, null,
+            CallEncryptionState.CLEAR, null, null, 0xBEE00, 0x348, 0x348, 2, 1, "Example Site", false, null, null,
             TrunkedIdentityDomain.STANDARD, ReceiverActivityRecords.P25Identity.ORDINARY,
             ReceiverActivityRecords.P25Identity.ORDINARY, List.of(), null);
     }

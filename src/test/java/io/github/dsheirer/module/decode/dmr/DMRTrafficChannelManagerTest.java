@@ -919,7 +919,7 @@ class DMRTrafficChannelManagerTest
         assertEquals(2, attributionSubscriber.events.size());
         assertTrue(attributionSubscriber.events.get(0).sourceBecameKnown());
         assertEquals(101, attributionSubscriber.events.get(0).sourceRadioId());
-        assertTrue(attributionSubscriber.events.get(1).encryptionBecameKnown());
+        assertTrue(attributionSubscriber.events.get(1).encryptionStateChanged());
     }
 
     @Test
@@ -972,7 +972,7 @@ class DMRTrafficChannelManagerTest
         assertNull(starts.events.getFirst().sourceRadioId());
         assertEquals(2, attributions.events.size());
         assertEquals(101, attributions.events.getFirst().sourceRadioId());
-        assertTrue(attributions.events.getLast().encryptionBecameKnown());
+        assertTrue(attributions.events.getLast().encryptionStateChanged());
         assertEquals(List.of(), allocations.requests);
     }
 
