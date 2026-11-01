@@ -5,6 +5,7 @@ import { formatHexDecimal } from '../core/call-value-format.js?v=1';
 import { callAudioDetailGroups } from '../core/call-audio-details.js?v=7';
 import { createFormWorkflow } from '../core/form-workflows.js?v=6';
 import { createActionWorkflow } from '../core/action-workflows.js?v=1';
+import { createRecordingPlayHistory } from '../core/recording-play-history.js?v=1';
 import { createCallDisplayRetention, DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS,
   MAXIMUM_CALL_DISPLAY_HANGTIME_SECONDS } from '../core/call-display-retention.js?v=1';
 import { createRecordingsGuideData, RECORDINGS_GUIDE_CALL_ID } from '../guides/recordings-data.js?v=2';
@@ -829,6 +830,9 @@ export function createRecordingsFeature(deps) {
   let playbackIntentRevision = 0;
   let clickMode = 'queue';
   let preferenceIdentity;
+  const playedHistory = createRecordingPlayHistory({
+    storage: deps.guideMode ? null : deps.recordingHistoryStorage
+  });
   let confirmedVolume = 1;
   let volumeEditRevision = 0;
   let volumeEditPending = false;
@@ -844,6 +848,7 @@ export function createRecordingsFeature(deps) {
   function applyPlaybackPreferences(preferences = {}, options = {}) {
     if (Object.hasOwn(options, 'identity') && options.identity !== preferenceIdentity) {
       preferenceIdentity = options.identity;
+      playedHistory.activate(options.identity);
       volumeEditRevision++;
       volumeEditPending = false;
     }
@@ -1041,7 +1046,8 @@ export function createRecordingsFeature(deps) {
 
   async function advance({ remember = true, failed = false, completed = false } = {}) {
     const state = recordedPlayer();
-    if (state.loading) return;
+    if (state.loading || (completed && state.stopped)) return;
+    if (completed) state.rememberPlayed?.();
     const token = state.token;
     state.loading = true;
     state.pendingStart = true;
@@ -1075,6 +1081,7 @@ export function createRecordingsFeature(deps) {
         if (state.history.length > maximumSharedCalls) state.history.shift();
       }
       state.current = next;
+      state.rememberPlayed = playedHistory.onCompletion(callKey(next));
       state.pendingStart = false;
       state.stopped = false;
       callDisplayRetention.clear();
@@ -1697,6 +1704,7 @@ export function createRecordingsFeature(deps) {
 
   function callCard(row, sharedContext = []) {
     const card = node('article', 'recordings-call'); card.dataset.recordingId = String(row.id);
+    card.dataset.recordingKey = callKey(row);
     const description = `${label(row)} at ${dateTime(millis(row))}`; card.setAttribute('aria-label', description);
     const activate = event => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -1764,9 +1772,11 @@ export function createRecordingsFeature(deps) {
       const active = snapshot?.current && !snapshot.stopped &&
         String(snapshot.current.id) === card.dataset.recordingId;
       const waiting = queued.has(card.dataset.recordingId);
+      const played = playedHistory.has(card.dataset.recordingKey);
       const status = card.querySelector('.recordings-call-status');
       const text = active ? snapshot.loading ? 'Loading' : snapshot.paused ? 'Paused' :
-        '' : waiting ? 'Queued' : '';
+        '' : waiting ? 'Queued' : played ? 'Played' : '';
+      card.classList.toggle('recordings-call-played', Boolean(played && !active && !waiting));
       card.classList.toggle('recordings-call-playing', Boolean(active));
       card.classList.toggle('recordings-call-queued', waiting);
       if (active) card.setAttribute('aria-current', 'true'); else card.removeAttribute('aria-current');

@@ -103,6 +103,7 @@ async function main() {
     .replace(/from '\.\.\/core\/call-value-format\.js\?v=\d+'/, `from '${callValueFormatUrl}'`)
     .replace(/from '\.\.\/core\/call-audio-details\.js\?v=\d+'/, `from '${callAudioDetailsUrl}'`)
     .replace(/from '\.\.\/core\/form-workflows\.js\?v=\d+'/, `from '${formWorkflowsUrl}'`)
+    .replace(/from '\.\.\/core\/recording-play-history\.js\?v=\d+'/, `from '${pathToFileURL(path.resolve(path.dirname(modulePath), '../core/recording-play-history.js')).href}'`)
     .replace(/from '\.\.\/core\/call-display-retention\.js\?v=\d+'/, `from '${callDisplayRetentionUrl}'`)
     .replace(/from '\.\.\/guides\/recordings-data\.js\?v=\d+'/, `from '${guideDataUrl}'`);
   const { createRecordingsFeature, recordingSuggestionFilters, recordingResultFilter, recordingRefinementFilters,

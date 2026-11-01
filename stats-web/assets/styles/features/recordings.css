@@ -106,6 +106,8 @@
 .recordings-call-status { font-size: var(--font-size-meta); color: var(--accent); }
 .recordings-call-status[hidden] { display: none; }
 .recordings-call-queued { box-shadow: inset var(--space-1) 0 0 var(--recording-queue-marker); }
+.recordings-call-played { box-shadow: inset var(--space-1) 0 0 var(--muted); }
+.recordings-call-played .recordings-call-status { color: var(--muted); }
 .recordings-call-playing { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); box-shadow: inset var(--space-1) 0 0 var(--accent); }
 .recordings-transcript-preview { grid-column: 1 / -1; margin: 0; padding: var(--space-2) 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; line-height: var(--line-height-body); }
 .recordings-transcript-empty { color: var(--muted); font-size: var(--font-size-meta); }

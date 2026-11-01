@@ -2,8 +2,8 @@
   "version": 1,
   "shards": 4,
   "workers": 2,
-  "caseCount": 1807,
-  "inventorySha256": "1e2f9fa1c154d24d9148bea900ddd44650cf50b43c48af3bdf021d96db63e378",
+  "caseCount": 1816,
+  "inventorySha256": "99aa3d4b5df8410a8dfd6c057c17e44ac16e2dd26f6ebdcd0a2f9034a273a40f",
   "files": {
     "access-landing.spec.js": {
       "durationMs": 12822,
@@ -563,6 +563,11 @@
     "recording-click-preference.spec.js": {
       "durationMs": 13404,
       "caseCount": 7,
+      "source": "estimated"
+    },
+    "recording-played-marker.spec.js": {
+      "durationMs": 9575,
+      "caseCount": 5,
       "source": "estimated"
     },
     "recordings-filters.spec.js": {
