@@ -65,6 +65,8 @@ export const browserStateRegistry = Object.freeze([
     records: ['sdrtrunk-vce-radioreference-localities-v1'] },
   { file: 'core/direct-listen.js', owner: 'listening-session', lifetime: 'tab', apis: ['sessionStorage'],
     records: ['sdrtrunk.direct-listen.v1'] },
+  { file: 'core/recording-play-history.js', owner: 'playback-history', lifetime: 'tab', apis: ['sessionStorage'],
+    records: ['sdrtrunk-vce-recording-play-history-v1'] },
   { file: 'features/retained-statistics.js', owner: 'workflow', lifetime: 'tab', apis: ['sessionStorage'],
     records: ['retained-statistics-job'] },
   { file: 'features/alerts-worker-storage.js', owner: 'device-credential', lifetime: 'device', apis: ['indexedDB'],
