@@ -22,8 +22,8 @@ are not accepted.
 Before a VCE upgrade begins large operations, close the previous VCE application, make a complete manual backup,
 and confirm **I have backed up my existing VCE installation, and it is currently not running.** in the wizard.
 The backup must include its data folder. Choose
-**Keep activity and statistics** at the same time. It starts unchecked: channels, aliases, accounts, and settings are
-kept while Activity, statistics, learned observations, and alert history start fresh. Select it to carry forward usable
+**Keep learned radio information, activity and statistics** at the same time. It starts unchecked: channels, aliases,
+accounts, and settings are kept while Activity, statistics, learned observations, and alert history start fresh. Select it to carry forward usable
 history through the supported updates. Both choices preserve recording audio and its separate catalog.
 
 Choose **Review upgrade** for a bounded format and configuration check. This step does not copy the database or scan

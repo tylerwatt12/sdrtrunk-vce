@@ -50,7 +50,7 @@ retain their separately documented backup behavior.
    can also identify its portable profile.
 2. Before large operations for a VCE upgrade, close the previous application and confirm **I have backed up my
    existing VCE installation, and it is currently not running.** The backup must include its data folder.
-   Choose **Keep activity and statistics** now. It starts
+   Choose **Keep learned radio information, activity and statistics** now. It starts
    unchecked for settings-only migration; select it to carry forward usable history. XML import and Start fresh
    do not need these VCE upgrade choices.
 3. For a folder transfer, choose **Review upgrade**. VCE checks the supported format and bounded configuration
@@ -72,7 +72,7 @@ move, not the internal source-preserving copy-import operation. Settings are rev
 
 ### Choose how much to migrate
 
-**Keep activity and statistics** starts unchecked in the graphical VCE upgrade. This keeps
+**Keep learned radio information, activity and statistics** starts unchecked in the graphical VCE upgrade. This keeps
 channels, aliases, lists, accounts, credentials, and settings while starting receiver
 Activity, statistics, learned observations, and alert history fresh. Old pending alert deliveries are discarded;
 notification topics, rules, and subscriptions remain. Account preferences, including dismissed guides, are kept.
@@ -1140,8 +1140,8 @@ The graphical workflow follows this order:
 1. Resolve the selected profile using basic folder checks. Inspect only the registered format, exact schema, and
    bounded configuration needed to identify the supported operation. Refuse unknown, mixed, newer, or unsupported
    formats without guessing. No whole-source snapshot, digest, physical scan, or history count runs before the choices.
-2. Collect the explicit manual-backup acknowledgement and **Keep activity and statistics** choice. Full retained
-   history is opt-in. A selected folder first offers **Review upgrade**: inspect only its supported schema and bounded
+2. Collect the explicit manual-backup acknowledgement and **Keep learned radio information, activity and statistics**
+   choice. Full retained history is opt-in. A selected folder first offers **Review upgrade**: inspect only its supported schema and bounded
    configuration under the source lock, then show source, destination, selected scope, and declared resets or drops
    before **Begin upgrade**. The review retains the choices and allows them to change. There is no whole-database
    review-copy phase, history scan, or throwaway conversion. The independent backup remains for manual recovery;

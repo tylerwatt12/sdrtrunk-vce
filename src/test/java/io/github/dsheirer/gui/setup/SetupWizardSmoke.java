@@ -261,7 +261,7 @@ public final class SetupWizardSmoke
         assertTransferChoices(wizard,false);
         javax.swing.SwingUtilities.invokeAndWait(() -> descendants(wizard).stream()
             .filter(component -> component instanceof javax.swing.JCheckBox box && box.isShowing() &&
-                "Keep activity and statistics".equals(box.getText()))
+                "Keep learned radio information, activity and statistics".equals(box.getText()))
             .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow().doClick());
         confirmBackup(wizard);
         assertTransferChoices(wizard,true);
@@ -434,9 +434,6 @@ public final class SetupWizardSmoke
             chooseSource(target,Path.of(source)); await(target,SetupStep.SOURCE);
             if(mode.equals("import-only") && Files.isDirectory(Path.of(source)))
             {
-                Path historyDatabase=io.github.dsheirer.database.upgrade.PreviousBuildLocator.resolveSelection(Path.of(source))
-                    .orElseThrow().database();
-                String estimate=io.github.dsheirer.database.upgrade.ApplicationMigrationEstimate.fullMigrationWarning(historyDatabase);
                 javax.swing.SwingUtilities.invokeAndWait(() -> descendants(target).stream()
                     .filter(MigrationContentChoices.class::isInstance).map(MigrationContentChoices.class::cast).findFirst().ifPresent(choices -> {
                         if(choices.selectedContent()!=io.github.dsheirer.database.upgrade.MigrationContent.CONFIGURATION_ONLY)
@@ -444,7 +441,8 @@ public final class SetupWizardSmoke
                         var keep=descendants(choices).stream().filter(javax.swing.JCheckBox.class::isInstance)
                             .map(javax.swing.JCheckBox.class::cast).findFirst().orElseThrow();
                         keep.doClick();
-                        if(!hasVisibleText(target,estimate)) throw new AssertionError("Folder estimate did not use its database file");
+                        if(!hasVisibleText(target,"Keeps usable learned radio information, Activity history and statistics."))
+                            throw new AssertionError("Folder history choice did not explain what is kept");
                         keep.doClick();
                     }));
             }

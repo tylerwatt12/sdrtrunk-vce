@@ -1,6 +1,5 @@
 package io.github.dsheirer.gui.setup;
 
-import io.github.dsheirer.database.upgrade.ApplicationMigrationEstimate;
 import io.github.dsheirer.database.upgrade.DatabaseMigrationChain;
 import io.github.dsheirer.database.upgrade.MigrationContent;
 import java.awt.Component;
@@ -16,7 +15,8 @@ import javax.swing.JTextArea;
 /** The same explicit history choice for startup updates and selected-database imports. */
 public final class MigrationContentChoices extends JPanel
 {
-    private final JCheckBox keepHistory = WizardStyles.checkBox("Keep activity and statistics", false);
+    private final JCheckBox keepHistory = WizardStyles.checkBox(
+        "Keep learned radio information, activity and statistics", false);
 
     public MigrationContentChoices(Path database, MigrationContent selected,
                                    Consumer<MigrationContent> selectionChanged)
@@ -27,15 +27,18 @@ public final class MigrationContentChoices extends JPanel
         setOpaque(false);
         setAlignmentX(Component.LEFT_ALIGNMENT);
         keepHistory.setSelected(selected == MigrationContent.FULL);
-        String estimate = ApplicationMigrationEstimate.fullMigrationWarning(database);
-        String loss = "Past activity, statistics, and alert history will start fresh. " +
-            "Your channels, aliases, accounts, and settings are kept.";
-        JTextArea help = WizardStyles.prose(keepHistory.isSelected() ? estimate : loss);
+        String retained = "Keeps usable learned radio information, Activity history and statistics.";
+        String loss = "Leaving this unchecked discards learned talker aliases (radio names) and discovered radio, " +
+            "system and site information, including learned frequencies, bandplans and neighbors.\n\n" +
+            "It also clears Activity events, traffic statistics, signal-quality history, receiver-health history, " +
+            "alert history and unsent notifications.\n\n" +
+            "Your configured channels, aliases and Alias Lists, accounts, settings and recordings are kept.";
+        JTextArea help = WizardStyles.prose(keepHistory.isSelected() ? retained : loss);
         add(keepHistory);
         add(Box.createVerticalStrut(8));
         add(help);
         keepHistory.addItemListener(event -> {
-            help.setText(keepHistory.isSelected() ? estimate : loss);
+            help.setText(keepHistory.isSelected() ? retained : loss);
             selectionChanged.accept(selectedContent());
             revalidate();
         });
