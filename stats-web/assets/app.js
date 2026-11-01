@@ -6161,8 +6161,8 @@ async function openAliasEditorModal(mode = 'create', id = null, prefill = null, 
     streamAs.min = '1';
     streamAs.max = '16777215';
     streamAs.step = '1';
-    if (unmatchedTalkgroupsSupported(currentList)) audio.append(node('p', 'ui-section-note',
-      'Change the starting settings for new aliases in this Alias List’s Call Handling Defaults → New Aliases.'));
+    if (unmatchedTalkgroupsSupported(currentList)) audio.append(node('p', 'ui-notice ui-notice-caution',
+      'To change the default settings for new aliases, open Call Handling Defaults → New Aliases in this Alias List.'));
     audio.append(scanLists, recording, streams);
     const streamLimitNotice = aliasOptionLimitNotice(options, 'streams', 'stream destinations',
       'Destinations already saved on this alias remain visible.');

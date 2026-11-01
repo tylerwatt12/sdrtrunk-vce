@@ -239,7 +239,7 @@ async function inspectContrast(page, { rootSelector = 'body', reviewedPaintOwner
       const unsupported = unresolvedPaint(element) || unresolvedPaint(element.parentElement || element);
       if (unsupported) { skip('surface', element, unsupported.reason, { status: 'needs-review', paintOwner: unsupported.owner }); continue; }
       if (flatDataRow(element)) { skip('surface', element, 'flat-data-row-with-structural-separators'); continue; }
-      if (element.matches('.ui-notice-warning, .ui-notice-danger, .ui-feedback-error') &&
+      if (element.matches('.ui-notice-warning, .ui-notice-caution, .ui-notice-danger, .ui-feedback-error') &&
           parseFloat(style(element).borderTopWidth) > 0 && (color(style(element).borderTopColor)?.[3] || 0) > 0) {
         // A permitted semantic state border supplies an additional grouping
         // cue. Its text still passes through the ordinary contrast audit.

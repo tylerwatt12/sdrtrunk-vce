@@ -1519,7 +1519,8 @@ a.ui-link-tile {
   line-height: 1.45;
 }
 
-.ui-notice-warning {
+.ui-notice-warning,
+.ui-notice-caution {
   color: var(--warning-ink);
   background: var(--warning-soft);
   border-color: color-mix(in srgb, var(--warning) 40%, var(--line));
