@@ -106,8 +106,10 @@
 .recordings-call-status { font-size: var(--font-size-meta); color: var(--accent); }
 .recordings-call-status[hidden] { display: none; }
 .recordings-call-queued { box-shadow: inset var(--space-1) 0 0 var(--recording-queue-marker); }
-.recordings-call-played { box-shadow: inset var(--space-1) 0 0 var(--recording-played-marker); }
-.recordings-call-played .recordings-call-status { color: var(--muted); }
+.recordings-call-played { color: var(--recording-played-ink); box-shadow: inset var(--recording-played-marker-width) 0 0 var(--recording-played-marker); }
+.recordings-call-played :is(.recordings-call-title, .recordings-call-time, .recordings-call-duration,
+  .recordings-call-source, .recordings-call-frequency, .recordings-call-identity,
+  .recordings-call-reception, .recordings-call-status, .recordings-transcript-preview) { color: var(--recording-played-ink); }
 .recordings-call-playing { background: var(--recording-active-fill); box-shadow: inset var(--space-1) 0 0 var(--recording-active-marker); }
 .recordings-transcript-preview { grid-column: 1 / -1; margin: 0; padding: var(--space-2) 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; line-height: var(--line-height-body); }
 .recordings-transcript-empty { color: var(--muted); font-size: var(--font-size-meta); }

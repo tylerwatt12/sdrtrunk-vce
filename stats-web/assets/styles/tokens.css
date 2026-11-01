@@ -152,7 +152,9 @@
   /* Playback states share a quiet hue; lightness carries their priority in either theme. */
   --recording-active-marker: oklch(24% 0.015 var(--theme-hue, 180));
   --recording-queue-marker: oklch(45% 0.025 var(--theme-hue, 180));
-  --recording-played-marker: oklch(65% 0.015 var(--theme-hue, 180));
+  --recording-played-marker: oklch(66% 0.015 var(--theme-hue, 180));
+  --recording-played-ink: oklch(52% 0.008 var(--theme-hue, 180));
+  --recording-played-marker-width: 2px;
   --recording-active-fill: color-mix(in srgb, var(--accent) 12%, var(--surface));
   --accent-secondary-soft: var(--info-soft);
   --palette-swatch-lightness: 62%;
@@ -512,7 +514,8 @@
 :root[data-theme="dark"] {
   --recording-active-marker: oklch(96% 0.015 var(--theme-hue, 180));
   --recording-queue-marker: oklch(76% 0.025 var(--theme-hue, 180));
-  --recording-played-marker: oklch(56% 0.015 var(--theme-hue, 180));
+  --recording-played-marker: oklch(55% 0.015 var(--theme-hue, 180));
+  --recording-played-ink: oklch(72% 0.008 var(--theme-hue, 180));
   --settings-focused-swatch-lightness: 74%;
   --settings-focused-swatch-chroma: .11;
   color-scheme: dark;

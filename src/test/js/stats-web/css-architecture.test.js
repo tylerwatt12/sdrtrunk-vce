@@ -11,7 +11,7 @@ const entryStylesheet = path.resolve(process.argv[2]
 const EXPECTED_ENTRY_MANIFEST = [
   '@layer reset, tokens, components, compositions, features, utilities;',
   '@import url("./styles/base.css?v=2") layer(reset);',
-  '@import url("./styles/tokens.css?v=61") layer(tokens);',
+  '@import url("./styles/tokens.css?v=62") layer(tokens);',
   '@import url("./styles/components/semantic-text.css?v=7") layer(components);',
   '@import url("./styles/components/controls.css?v=54") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=15") layer(components);',
@@ -51,7 +51,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=5") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=9") layer(features);',
   '@import url("./styles/features/activity.css?v=7") layer(features);',
-  '@import url("./styles/features/recordings.css?v=31") layer(features);',
+  '@import url("./styles/features/recordings.css?v=32") layer(features);',
   '@import url("./styles/utilities/table-measurement.css?v=2") layer(utilities);',
 ];
 

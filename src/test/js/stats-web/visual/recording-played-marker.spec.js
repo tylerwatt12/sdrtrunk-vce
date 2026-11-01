@@ -125,8 +125,8 @@ for (const theme of ['light', 'dark']) {
         return luminance();
       };
       const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-      let minimumSeparation = Infinity, minimumBoundary = Infinity;
-      const violations = [];
+      let minimumSeparation = Infinity, minimumBoundary = Infinity, minimumPlayedTextContrast = Infinity;
+      const violations = [], inconsistentPlayedText = [];
       for (let hue = -1; hue < 360; hue++) {
         if (hue >= 0) { root.setAttribute('data-custom-hue', 'true'); root.style.setProperty('--theme-hue', hue); }
         const style = getComputedStyle(root);
@@ -137,14 +137,24 @@ for (const theme of ['light', 'dark']) {
         for (const [index, state] of ['playing', 'queued', 'played'].entries()) {
           minimumBoundary = Math.min(minimumBoundary, ratio(values[index], backgroundY(document.querySelector(`.recordings-call-${state}`))));
         }
+        const played = document.querySelector('.recordings-call-played');
+        const textNodes = played.querySelectorAll('.recordings-call-title, .recordings-call-time, .recordings-call-duration, .recordings-call-source, .recordings-call-frequency, .recordings-call-identity, .recordings-transcript-preview, .recordings-call-status');
+        const playedInk = colorY(style.getPropertyValue('--recording-played-ink'));
+        for (const node of textNodes) {
+          const textInk = colorY(getComputedStyle(node).color);
+          if (Math.abs(textInk - playedInk) > 0.003) inconsistentPlayedText.push(hue);
+          minimumPlayedTextContrast = Math.min(minimumPlayedTextContrast, ratio(textInk, backgroundY(node)));
+        }
       }
       if (originalHue) root.style.setProperty('--theme-hue', originalHue); else root.style.removeProperty('--theme-hue');
       if (originalCustom === null) root.removeAttribute('data-custom-hue'); else root.setAttribute('data-custom-hue', originalCustom);
-      return { violations, minimumSeparation, minimumBoundary };
+      return { violations, inconsistentPlayedText, minimumSeparation, minimumBoundary, minimumPlayedTextContrast };
     }, theme);
     expect(result.violations).toEqual([]);
+    expect(result.inconsistentPlayedText).toEqual([]);
     expect(result.minimumSeparation).toBeGreaterThanOrEqual(1.5);
     expect(result.minimumBoundary).toBeGreaterThanOrEqual(3);
+    expect(result.minimumPlayedTextContrast).toBeGreaterThanOrEqual(4.5);
     await expectContrast(page, { reportName: `recording-state-shades-${theme}` });
     await expect(page.locator('.recordings-call-list')).toHaveScreenshot(`recording-state-shades-${theme}.png`);
     if (process.env.PLAYED_MARKER_EVIDENCE) await page.locator('.recordings-call-list').screenshot({
