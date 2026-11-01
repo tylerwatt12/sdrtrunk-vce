@@ -1,6 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const path = require('node:path');
-const { openAudioApp } = require('./fixtures/audio-dock-app.cjs');
+const { openAudioApp, recording } = require('./fixtures/audio-dock-app.cjs');
 const { expectContrast } = require('./fixtures/contrast-audit.cjs');
 
 async function captureAudio(page) {
@@ -92,3 +92,62 @@ test('guest and signed-in played markers stay separate through sign-in, sign-out
   await expect(cards.nth(1)).not.toHaveClass(/recordings-call-played/);
   await expect(cards.nth(2)).not.toHaveClass(/recordings-call-played/);
 });
+
+for (const theme of ['light', 'dark']) {
+  test(`queued, active and played markers have distinct shades across the entire ${theme} palette`, async ({ page }) => {
+    await page.setViewportSize({ width: theme === 'dark' ? 390 : 1280, height: 900 });
+    await openAudioApp(page, { admin: false, theme, feedCallsEnabled: false,
+      calls: [0, 1, 2].map(index => ({ ...recording, id: 17 + index, start_ms: recording.start_ms - index * 60_000 })) });
+    await captureAudio(page);
+    await play(page, 2); await finish(page);
+    await expect(page.locator('.recordings-call').nth(2)).toHaveClass(/recordings-call-played/);
+    await play(page, 1);
+    await page.locator('.recordings-call-info').nth(0).click();
+    await page.getByRole('dialog', { name: 'Call actions', exact: true })
+      .getByRole('button', { name: /Add to queue/ }).click();
+    const result = await page.evaluate(theme => {
+      const root = document.documentElement;
+      const originalHue = root.style.getPropertyValue('--theme-hue');
+      const originalCustom = root.getAttribute('data-custom-hue');
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const luminance = () => {
+        const rgb = [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3).map(value => {
+          const s = value / 255; return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        });
+        return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+      };
+      const colorY = color => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return luminance(); };
+      const backgroundY = element => {
+        const chain = []; for (let current = element; current; current = current.parentElement) chain.unshift(current);
+        ctx.clearRect(0, 0, 1, 1);
+        for (const node of chain) { ctx.fillStyle = getComputedStyle(node).backgroundColor; ctx.fillRect(0, 0, 1, 1); }
+        return luminance();
+      };
+      const ratio = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      let minimumSeparation = Infinity, minimumBoundary = Infinity;
+      const violations = [];
+      for (let hue = -1; hue < 360; hue++) {
+        if (hue >= 0) { root.setAttribute('data-custom-hue', 'true'); root.style.setProperty('--theme-hue', hue); }
+        const style = getComputedStyle(root);
+        const values = ['active', 'queue', 'played'].map(state => colorY(style.getPropertyValue(`--recording-${state}-marker`)));
+        const ordered = theme === 'dark' ? values[0] > values[1] && values[1] > values[2] : values[0] < values[1] && values[1] < values[2];
+        if (!ordered) violations.push(hue);
+        minimumSeparation = Math.min(minimumSeparation, ratio(values[0], values[1]), ratio(values[1], values[2]));
+        for (const [index, state] of ['playing', 'queued', 'played'].entries()) {
+          minimumBoundary = Math.min(minimumBoundary, ratio(values[index], backgroundY(document.querySelector(`.recordings-call-${state}`))));
+        }
+      }
+      if (originalHue) root.style.setProperty('--theme-hue', originalHue); else root.style.removeProperty('--theme-hue');
+      if (originalCustom === null) root.removeAttribute('data-custom-hue'); else root.setAttribute('data-custom-hue', originalCustom);
+      return { violations, minimumSeparation, minimumBoundary };
+    }, theme);
+    expect(result.violations).toEqual([]);
+    expect(result.minimumSeparation).toBeGreaterThanOrEqual(1.5);
+    expect(result.minimumBoundary).toBeGreaterThanOrEqual(3);
+    await expectContrast(page, { reportName: `recording-state-shades-${theme}` });
+    await expect(page.locator('.recordings-call-list')).toHaveScreenshot(`recording-state-shades-${theme}.png`);
+    if (process.env.PLAYED_MARKER_EVIDENCE) await page.locator('.recordings-call-list').screenshot({
+      path: path.join(process.env.PLAYED_MARKER_EVIDENCE, `state-shades-${theme}.png`) });
+  });
+}

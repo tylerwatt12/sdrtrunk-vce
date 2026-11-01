@@ -2,8 +2,8 @@
   "version": 1,
   "shards": 4,
   "workers": 2,
-  "caseCount": 1816,
-  "inventorySha256": "99aa3d4b5df8410a8dfd6c057c17e44ac16e2dd26f6ebdcd0a2f9034a273a40f",
+  "caseCount": 1818,
+  "inventorySha256": "ac9e7ff140338a6e72d76d26774b55af32d1b38dec72380625bb48bb1ac25fe2",
   "files": {
     "access-landing.spec.js": {
       "durationMs": 12822,
