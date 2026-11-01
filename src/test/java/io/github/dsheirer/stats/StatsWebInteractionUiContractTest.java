@@ -474,6 +474,8 @@ class StatsWebInteractionUiContractTest
     {
         String source = source();
         String activityValue = function(source, "function encryptionActivityValue(row)");
+        assertTrue(activityValue.contains("row.encryption_state === 'encrypted'"));
+        assertTrue(activityValue.contains("row.encryption_state === 'clear' ? 'Clear' : 'Unknown'"));
         assertTrue(activityValue.contains("row.encryption_display || 'ENC'"));
         assertTrue(activityValue.contains("row.encryption_full_display"));
         assertTrue(source.contains("groupIdentity.last_encryption_algorithm_name"));

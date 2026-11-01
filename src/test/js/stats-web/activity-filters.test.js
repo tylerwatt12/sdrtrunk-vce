@@ -135,6 +135,15 @@ assert.equal(rollingApi.from_ms, 50_000_000 - 6 * 60 * 60 * 1000);
 assert.equal(rollingApi.hide_grants, false);
 assert.equal(rollingApi.action, 'GRANT');
 assert.equal(rollingApi.event_type, 'CALL_GROUP');
+assert.equal(rollingApi.encryption, 'encrypted');
+for (const state of ['clear', 'encrypted', 'unknown']) {
+  const filters = context.activityRouteFilters(parameters({ activity_encryption: state }), systemContext);
+  assert.equal(filters.encryption, state);
+  assert.equal(context.activityApiFilterParameters(filters).encryption, state);
+  assert.equal(context.activityFilterRouteOverrides(filters).activity_encryption, state);
+}
+assert.equal(context.activityRouteFilters(parameters({ activity_encryption: 'unrecognized' }),
+  systemContext).encryption, 'all');
 assert.equal(rollingApi.configuration_id, 'channel-1');
 assert.equal(rollingApi.source_identity_key, 'v1-r-bee00-49f-202');
 assert.equal(rollingApi.target_identity_key, 'v1-g-bee00-49f-101');
@@ -288,7 +297,7 @@ function routeParameters(overrides) {
 const activityRow = {
   action: 'active',
   event_type: 'radio_inhibit',
-  encrypted: true,
+  encryption_state: 'encrypted',
   configuration_id: 'channel-1',
   source_radio_id: 202,
   source_identity_key: 'v1-r-bee00-49f-202',
@@ -303,8 +312,14 @@ assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRo
   { eventType: 'RADIO_INHIBIT' });
 assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRow, 'encryption')),
   { encryption: 'encrypted' });
-assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, { encrypted: 1 }, 'encryption')),
+assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, { encryption_state: 'encrypted' }, 'encryption')),
   { encryption: 'encrypted' });
+for (const state of ['clear', 'unknown']) {
+  assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, { encryption_state: state }, 'encryption')),
+    { encryption: state }, 'Each explicit state filters only the same state.');
+}
+assert.equal(context.activityCellFilterPatch(systemContext, { encrypted: false }, 'encryption'), null,
+  'Missing classification must not become a Clear filter.');
 assert.deepEqual(plain(context.activityCellFilterPatch(systemContext, activityRow, 'channel')),
   { configurationId: 'channel-1' });
 for (const column of ['source', 'source-alias', 'source-ota-alias']) {

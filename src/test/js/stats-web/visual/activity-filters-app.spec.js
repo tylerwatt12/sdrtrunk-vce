@@ -72,6 +72,7 @@ async function openActivity(page, options = {}) {
     } else if (pathname === '/api/v1/activity/message-types') {
       await respond([
         ['ACTION', 4, 'CALL', 'Call'], ['EVENT', 7, 'CALL_GROUP', 'Group call'],
+        ['EVENT', 8, 'CALL_GROUP_ENCRYPTED', 'Encrypted group call'],
         ['ACTION', 24, 'TONE', 'Tone'], ['EVENT', 62, 'TONE', 'Tone']
       ].map(([definition_kind, code, name, label]) => ({ definition_kind, code, name, label,
         p25: true, dmr: true, nxdn: true, sort_order: code })));
@@ -101,9 +102,11 @@ async function openActivity(page, options = {}) {
         source_talker_alias: 'E12 Portable', target_id: 56131,
         target_identity_key: talkgroupIdentityKey, target_kind: 'talkgroup',
         target_alias_name: 'CPD D3 DISP', name: 'GCRCN', frequency_hz: 855_737_500,
-        lcn: '0-757', encrypted: false,
+        lcn: '0-757', encryption_state: 'clear',
         configuration_id: '11111111-1111-4111-8111-111111111111' }];
-      await respond({ rows: rows.filter(row => !url.searchParams.has('event_type') || String(row.event_type).toUpperCase() === url.searchParams.get('event_type')),
+      await respond({ rows: rows.filter(row =>
+        (!url.searchParams.has('event_type') || String(row.event_type).toUpperCase() === url.searchParams.get('event_type')) &&
+        (!url.searchParams.has('encryption') || row.encryption_state === url.searchParams.get('encryption'))),
       has_more: false, next_before_id: null });
     } else {
       await route.fulfill({ status: 404, json: { error: { status: 404, message: 'Unavailable' } } });
@@ -173,7 +176,7 @@ function toneActivityRow(id, summary, overrides = {}) {
   return { id, observed_at_ms: 1_790_720_001_000, action: 'TONE', event_type: 'TONE', protocol: 'P25',
     source_radio_id: 2808137, source_identity_key: sourceIdentityKey, source_alias_name: 'Engine 12',
     target_id: 56131, target_identity_key: talkgroupIdentityKey, target_kind: 'talkgroup', target_alias_name: 'CPD D3 DISP',
-    name: 'North Simulcast Control', frequency_hz: 855_737_500, lcn: '0-757', encrypted: false,
+    name: 'North Simulcast Control', frequency_hz: 855_737_500, lcn: '0-757', encryption_state: 'clear',
     configuration_id: '11111111-1111-4111-8111-111111111111',
     source_entity_ref: { kind: 'radio', radio_system_key: radioSystemKey, identity_key: sourceIdentityKey },
     target_entity_ref: { kind: 'talkgroup', radio_system_key: radioSystemKey, identity_key: talkgroupIdentityKey },
@@ -189,7 +192,7 @@ for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
     await openActivity(page, { theme, rows: [
       toneActivityRow(17, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: 1250 }),
       toneActivityRow(18, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: null }),
-      toneActivityRow(19, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: 30_000, encrypted: true }),
+      toneActivityRow(19, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: 30_000, encryption_state: 'encrypted' }),
       toneActivityRow(20, undefined, { action: 'RESPONSE', event_type: 'RESPONSE', duration_ms: 1000 }),
       toneActivityRow(21, undefined, { action: 'CALL', event_type: 'CALL_GROUP', duration_ms: 0 })
     ], activityLayout: { schema, column_order: ['time', 'event', 'action', ...schema.slice(3)],
@@ -217,7 +220,7 @@ for (const [recordings, theme, width] of [[true, 'light', 1440], [false, 'dark',
     const tones = { source: 'encoded', method: 'ambe_tone_v1',
       tones: [{ frequencies_hz: [600], code: 'TONE_600', duration_milliseconds: 120 }] };
     await openActivity(page, { recordings, theme, rows: [
-      toneActivityRow(40, tones, { ...call, duration_ms: 2_000, has_recording: false, encrypted: true }),
+      toneActivityRow(40, tones, { ...call, duration_ms: 2_000, has_recording: false, encryption_state: 'encrypted' }),
       toneActivityRow(41, undefined, { ...call, duration_ms: null, has_recording: true }),
       toneActivityRow(42, undefined, { ...call, duration_ms: 2_000 }),
       toneActivityRow(43, undefined, { ...call, duration_ms: 2_000, has_recording: null }),
@@ -436,6 +439,55 @@ test('Stop in the audio dock cancels an Activity play lookup still in flight', a
   await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
+for (const [theme, width] of [['light', 1440], ['dark', 390]]) {
+  test(`Activity encryption uses one explicit status on ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const requests = await openActivity(page, { theme, rows: [
+      toneActivityRow(51, undefined, { action: 'CALL', event_type: 'CALL_GROUP_ENCRYPTED',
+        encryption_state: 'encrypted' }),
+      toneActivityRow(52, undefined, { action: 'CALL', event_type: 'CALL_GROUP', encryption_state: 'clear' }),
+      toneActivityRow(53, undefined, { action: 'CALL', event_type: 'CALL_GROUP_ENCRYPTED',
+        encryption_state: 'unknown' })
+    ] });
+    const table = page.locator('table[data-table-type="activity"]');
+    const encrypted = table.locator('tr[data-id="51"]');
+    await expect(encrypted.getByRole('img', { name: 'Encrypted', exact: true })).toBeVisible();
+    await expect(encrypted.getByRole('img', { name: 'Encrypted', exact: true }))
+      .toHaveAccessibleDescription('Encrypted');
+    await expect(table.locator('tr[data-id="52"]').getByRole('img', { name: 'Encrypted', exact: true })).toHaveCount(0);
+    const unknown = table.locator('tr[data-id="53"]');
+    await expect(unknown.getByRole('img', { name: 'Encrypted', exact: true })).toHaveCount(0);
+    await expect(unknown.getByRole('img', { name: 'Encryption unknown', exact: true })).toBeVisible();
+    await expect(unknown.getByRole('img', { name: 'Encryption unknown', exact: true }))
+      .toHaveAccessibleDescription('Encryption unknown');
+    await unknown.getByRole('img', { name: 'Encryption unknown', exact: true }).scrollIntoViewIfNeeded();
+    await toneScreenshot(page, `activity-encryption-icons-${theme}-${width}`, false);
+    await showActivityColumns(page, ['encryption']);
+    await expect(table.locator('tbody [data-column="encryption"]')).toHaveText(['ENC', 'Clear', 'Unknown']);
+    await expect(unknown.locator('[data-column="event"]')).toHaveText('Encrypted group call');
+    await expect(unknown.locator('[data-column="encryption"] .encrypted')).toHaveCount(0);
+    await expect.poll(() => requests.preferenceWrites.at(-1)?.tables.activity?.hidden_columns
+      .includes('encryption')).toBe(false);
+    await page.reload();
+    await expect(table.locator('tbody [data-column="encryption"]')).toHaveText(['ENC', 'Clear', 'Unknown']);
+    await toneScreenshot(page, `activity-encryption-statuses-${theme}-${width}`, false);
+
+    for (const [state, id] of [['clear', '52'], ['encrypted', '51'], ['unknown', '53']]) {
+      const toolbar = page.locator('.activity-filter-toolbar');
+      await toolbar.locator('.activity-filter-more-trigger').click();
+      const panel = width < 600 ? page.getByRole('dialog', { name: 'Filters' }) : toolbar;
+      await panel.locator('label.activity-filter-field:has(> .ui-field-label:text-is("Encryption")) select')
+        .selectOption(state);
+      await panel.getByRole('button', { name: 'Apply filters', exact: true }).click();
+      await expect.poll(() => requests.activity.at(-1)?.encryption).toBe(state);
+      await expect(table.locator('tbody tr')).toHaveCount(1);
+      await expect(table.locator('tbody tr')).toHaveAttribute('data-id', id);
+      await expect(page.locator('.activity-filter-chips')).toContainText(`${state[0].toUpperCase()}${state.slice(1)} only`);
+    }
+    await toneScreenshot(page, `activity-encryption-${theme}-${width}`, false);
+  });
+}
+
 for (const [recordings, theme, width] of [[true, 'light', 1440], [false, 'dark', 390], [true, 'light', 320]]) {
   test(`Activity indicators keep tone and encryption detail with recording permission ${recordings} on ${theme} ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -444,7 +496,7 @@ for (const [recordings, theme, width] of [[true, 'light', 1440], [false, 'dark',
       tones: [{ frequencies_hz: [593.75], duration_milliseconds: 1020, offset_milliseconds: 80 }] };
     const requests = await openActivity(page, { recordings, theme, rows: [
       toneActivityRow(18, summary, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: true, has_recording: true,
-        encrypted: true, encryption_display: 'AES-256', encryption_full_display: 'AES-256 · Key ID 0042' }),
+        encryption_state: 'encrypted', encryption_display: 'AES-256', encryption_full_display: 'AES-256 · Key ID 0042' }),
       toneActivityRow(19, undefined, { action: 'CALL', event_type: 'CALL_GROUP', has_call_source: false })
     ] });
     const table = page.locator('table[data-table-type="activity"]');
@@ -741,15 +793,15 @@ test('Destination selections filter requested activity and rendered rows by iden
     { id: 101, observed_at_ms: 1_790_720_000_101, action: 'CALL', event_type: 'CALL_GROUP',
       protocol: 'P25', source_radio_id: 1001, target_id: 56131,
       target_identity_key: talkgroupKey, target_kind: 'talkgroup', target_alias_name: 'Alpha Dispatch',
-      name: 'GCRCN', frequency_hz: 855_737_500, lcn: '0-757', encrypted: false },
+      name: 'GCRCN', frequency_hz: 855_737_500, lcn: '0-757', encryption_state: 'clear' },
     { id: 102, observed_at_ms: 1_790_720_000_102, action: 'CALL', event_type: 'CALL_GROUP',
       protocol: 'P25', source_radio_id: 1002, target_id: 59001,
       target_identity_key: patchKey, target_kind: 'patch_group', target_alias_name: 'Bravo Patch',
-      name: 'GCRCN', frequency_hz: 855_737_500, lcn: '0-757', encrypted: false },
+      name: 'GCRCN', frequency_hz: 855_737_500, lcn: '0-757', encryption_state: 'clear' },
     { id: 103, observed_at_ms: 1_790_720_000_103, action: 'CALL', event_type: 'CALL_UNIT_TO_UNIT',
       protocol: 'P25', source_radio_id: 1003, target_id: 2808137,
       target_identity_key: radioKey, target_kind: 'radio', target_alias_name: 'Charlie Portable',
-      name: 'GCRCN', frequency_hz: 855_737_500, lcn: '0-757', encrypted: false }
+      name: 'GCRCN', frequency_hz: 855_737_500, lcn: '0-757', encryption_state: 'clear' }
   ];
   const paged = (rows) => ({ data: rows, meta: { limit: 25, offset: 0,
     has_more: false, total_count: rows.length } });

@@ -1362,9 +1362,11 @@ function encryptionAlgorithmInfoValue(display, rawValue) {
 }
 
 function encryptionActivityValue(row) {
-  if (!row.encrypted) return '';
-  const value = node('span', '', row.encryption_display || 'ENC');
-  if (row.encryption_full_display && row.encryption_full_display !== row.encryption_display) {
+  const encrypted = row.encryption_state === 'encrypted';
+  const label = encrypted ? row.encryption_display || 'ENC' :
+    row.encryption_state === 'clear' ? 'Clear' : 'Unknown';
+  const value = node('span', encrypted ? 'encrypted' : '', label);
+  if (encrypted && row.encryption_full_display && row.encryption_full_display !== row.encryption_display) {
     value.dataset.uiHint = row.encryption_full_display;
   }
   return value;
@@ -23980,7 +23982,7 @@ function activityRouteFilters(parameters, context, now = Date.now()) {
   const eventValue = value('activity_event_type').toUpperCase();
   const eventType = activityMessageTypes.has('EVENT', eventValue) ? eventValue : '';
   const encryptionValue = value('activity_encryption').toLowerCase();
-  const encryption = capabilities.encryption && ['clear', 'encrypted'].includes(encryptionValue) ?
+  const encryption = capabilities.encryption && ['clear', 'encrypted', 'unknown'].includes(encryptionValue) ?
     encryptionValue : 'all';
   const roleValue = value('activity_radio_role').toLowerCase();
   let radioRole = capabilities.radioRole && ['source', 'target'].includes(roleValue) ? roleValue : 'any';
@@ -24124,10 +24126,10 @@ function activityCellFilterPatch(context, row, columnId) {
     return activityMessageTypes.has('EVENT', eventType) ? { eventType } : null;
   }
   if (columnId === 'tones' && row?.paging_tone_summary?.tones?.length) return { hasTones: true };
-  const encryptionValue = row?.encrypted;
+  const encryptionValue = row?.encryption_state;
   if (columnId === 'encryption' && capabilities.encryption &&
-      (typeof encryptionValue === 'boolean' || encryptionValue === 0 || encryptionValue === 1)) {
-    return { encryption: encryptionValue === true || encryptionValue === 1 ? 'encrypted' : 'clear' };
+      ['clear', 'encrypted', 'unknown'].includes(encryptionValue)) {
+    return { encryption: encryptionValue };
   }
   if (columnId === 'channel') {
     const configurationId = String(row?.configuration_id || '').trim();
@@ -24727,7 +24729,8 @@ function activityFilterChipDefinitions(filters, capabilities) {
   }
   if (capabilities.encryption && filters.encryption !== 'all') {
     chips.push({ id: 'encryption', value: filters.encryption === 'encrypted' ?
-      'Encrypted only' : 'Clear only', keys: ['activity_encryption'] });
+      'Encrypted only' : filters.encryption === 'clear' ? 'Clear only' : 'Unknown only',
+      keys: ['activity_encryption'] });
   }
   if (filters.eventType) {
     chips.push({ id: 'event', prefix: 'Event subtype:', value: activityOptionLabel(filters.eventType, 'EVENT'),
@@ -24904,7 +24907,7 @@ function activityFilterToolbar(context, initialFilters) {
   if (capabilities.encryption) {
     encryptionControl = activityFilterSelect('Encryption', [
       { value: 'all', label: 'All' }, { value: 'clear', label: 'Clear' },
-      { value: 'encrypted', label: 'Encrypted' }
+      { value: 'encrypted', label: 'Encrypted' }, { value: 'unknown', label: 'Unknown' }
     ], initialFilters.encryption);
   }
 
@@ -25372,8 +25375,11 @@ function activityCallIcons(row, context) {
   if (tones) indicator('icon-tones', 'Tones', `Tones · ${tones.source} · ${tones.tones.join('; ')}`, {
     heading: `Tones · ${tones.source}`, columns: ['Tone', 'Duration', 'Start'], rows: tones.rows
   });
-  if (row.encrypted === true || row.encrypted === 1) indicator('icon-lock', 'Encrypted',
+  if (row.encryption_state === 'encrypted') indicator('icon-lock', 'Encrypted',
     row.encryption_full_display || row.encryption_display || 'Encrypted');
+  if (row.encryption_state === 'unknown' && row.action === 'CALL') {
+    indicator('icon-help-circle', 'Encryption unknown', 'Encryption unknown');
+  }
   if (controls) icons.append(controls.feedback);
   return icons;
 }
@@ -25405,7 +25411,7 @@ function activityColumns(context, filters) {
       Number(row.frequency_hz || 0) },
     { id: 'encryption', label: 'Enc', fullLabel: 'Encryption', render: (row) =>
       activityCellValue(encryptionActivityValue(row), row, 'encryption', context, filters),
-      className: 'encrypted', sortValue: (row) => row.encryption_display || (row.encrypted ? 'ENC' : '') },
+      sortValue: (row) => `${row.encryption_state} ${row.encryption_display || ''}` },
     { id: 'related', label: 'Related', render: row => activityCallIcons(row, context) }
   ];
 }
