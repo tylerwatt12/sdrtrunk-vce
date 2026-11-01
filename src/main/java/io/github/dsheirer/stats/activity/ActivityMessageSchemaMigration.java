@@ -44,51 +44,72 @@ final class ActivityMessageSchemaMigration
             rebuild(connection, table, current);
             return;
         }
+        replaceEventDefinition(connection, "main", previous, current);
+    }
+
+    /** Widens an admitted event CHECK without rewriting its unchanged physical record layout or indexes. */
+    static void replaceEventDefinition(Connection connection, String schema, String previous, String current)
+        throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown Activity migration schema");
+        ApplicationMigrationTransaction.requireActive(connection);
+        String table = "receiver_activity_event";
+        String prefix = schema.equals("main") ? "" : schema + ".";
+        SqliteSchemaValidator.validateDefinitions(connection,
+            List.of(new SqliteSchemaValidator.Definition("table", table, previous)), schema);
+        try(var statement = connection.createStatement(); var row = statement.executeQuery("PRAGMA foreign_keys"))
+        {
+            if(!row.next() || row.getInt(1) != 0)
+                throw new SQLException("Activity constraint update requires disabled foreign-key enforcement");
+        }
         // Parse the authoritative target independently and prove identical physical column layout before
         // using SQLite's documented schema-only procedure for relaxing CHECK constraints.
         try(Connection validation = DriverManager.getConnection("jdbc:sqlite::memory:");
             var statement = validation.createStatement())
         {
             statement.executeUpdate(current);
-            if(!physicalColumns(connection, table).equals(physicalColumns(validation, table)))
-                throw new SQLException("Message-category update cannot change the event record layout");
+            if(!physicalColumns(connection, prefix, table).equals(physicalColumns(validation, "", table)))
+                throw new SQLException("Activity constraint update cannot change the event record layout");
         }
         try(var statement = connection.createStatement())
         {
             int version;
-            try(var row = statement.executeQuery("PRAGMA schema_version")) { row.next(); version = row.getInt(1); }
+            try(var row = statement.executeQuery("PRAGMA " + prefix + "schema_version"))
+            { row.next(); version = row.getInt(1); }
             if(version < 0 || version == Integer.MAX_VALUE)
-                throw new SQLException("Message-category update cannot advance the SQLite schema version");
+                throw new SQLException("Activity constraint update cannot advance the SQLite schema version");
             try(var row = statement.executeQuery("PRAGMA writable_schema"))
             {
                 row.next();
-                if(row.getInt(1) != 0) throw new SQLException("Message-category update requires schema writing disabled");
+                if(row.getInt(1) != 0) throw new SQLException("Activity constraint update requires schema writing disabled");
             }
             try
             {
                 statement.execute("PRAGMA writable_schema=ON");
-                try(var update = connection.prepareStatement("UPDATE sqlite_schema SET sql=? WHERE type='table' AND name=?"))
+                try(var update = connection.prepareStatement("UPDATE " + prefix +
+                    "sqlite_schema SET sql=? WHERE type='table' AND name=?"))
                 {
                     update.setString(1, current);
                     update.setString(2, table);
-                    if(update.executeUpdate() != 1) throw new SQLException("Message-category event definition was not updated");
+                    if(update.executeUpdate() != 1) throw new SQLException("Activity event definition was not updated");
                 }
-                statement.execute("PRAGMA schema_version=" + (version + 1));
+                statement.execute("PRAGMA " + prefix + "schema_version=" + (version + 1));
             }
             finally
             {
-                statement.execute("PRAGMA writable_schema=OFF");
-                statement.execute("PRAGMA writable_schema=RESET");
+                try { statement.execute("PRAGMA writable_schema=OFF"); }
+                finally { statement.execute("PRAGMA writable_schema=RESET"); }
             }
         }
         SqliteSchemaValidator.validateDefinitions(connection,
-            List.of(new SqliteSchemaValidator.Definition("table", table, current)));
+            List.of(new SqliteSchemaValidator.Definition("table", table, current)), schema);
     }
 
-    private static List<String> physicalColumns(Connection connection, String table) throws SQLException
+    private static List<String> physicalColumns(Connection connection, String prefix, String table) throws SQLException
     {
         List<String> columns = new ArrayList<>();
-        try(var statement = connection.createStatement(); var rows = statement.executeQuery("PRAGMA table_xinfo(" + table + ")"))
+        try(var statement = connection.createStatement(); var rows = statement.executeQuery(
+            "PRAGMA " + prefix + "table_xinfo(" + table + ")"))
         {
             while(rows.next()) columns.add(rows.getInt("cid") + "|" + rows.getString("name") + "|" +
                 rows.getString("type") + "|" + rows.getInt("notnull") + "|" + rows.getString("dflt_value") +

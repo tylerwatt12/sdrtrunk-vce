@@ -28,6 +28,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -218,16 +219,22 @@ class ApplicationDatabaseMigratorOwnedProfileTest
     }
 
     @Test
-    void fullPairedNicknameUpgradeLeavesPrivateActivityAndOriginalPairUnchanged() throws Exception
+    void fullPairedUpgradeConvertsActivityWithoutChangingOriginalPairOrRetainedFacts() throws Exception
     {
         Profile profile = profile("paired-nicknames", 63);
         Path sourceActivity = ActivityDatabasePath.forConfiguration(profile.sourceDatabase());
         Path stagedActivity = ActivityDatabasePath.forConfiguration(profile.stage());
+        try(Connection connection = open(sourceActivity); var statement = connection.createStatement())
+        {
+            statement.executeUpdate("UPDATE sqlite_sequence SET seq=seq+1000 WHERE name='receiver_activity_event'");
+        }
+        List<List<Object>> eventFacts = eventFacts(sourceActivity);
+        String eventSequence = scalar(sourceActivity, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'");
         Files.copy(profile.sourceDatabase(), profile.stage());
         Files.copy(sourceActivity, stagedActivity);
         byte[] configuration = Files.readAllBytes(profile.sourceDatabase());
         byte[] activity = Files.readAllBytes(sourceActivity);
-        assertEquals(Files.size(profile.stage()),
+        assertEquals(2 * (Files.size(profile.stage()) + Files.size(stagedActivity)),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(profile.stage(), MigrationContent.FULL));
 
         Result result = run(profile.stage().toString(), profile.source().toString(), profile.target().toString(), OWNED);
@@ -235,10 +242,41 @@ class ApplicationDatabaseMigratorOwnedProfileTest
         ConfigurationHistoryDatabase.validatePair(profile.stage());
         assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
             scalar(profile.stage(), "SELECT value FROM database_metadata WHERE key='database_format_version'"));
-        assertEquals("63", scalar(stagedActivity, "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+        assertEquals(Integer.toString(DatabaseFormatCatalog.CURRENT_VERSION),
+            scalar(stagedActivity, "SELECT value FROM database_metadata WHERE key='database_format_version'"));
+        assertEquals(eventFacts, eventFacts(stagedActivity), "Every event field except encryption classification survives");
+        assertEquals(eventSequence,
+            scalar(stagedActivity, "SELECT seq FROM sqlite_sequence WHERE name='receiver_activity_event'"));
         assertArrayEquals(configuration, Files.readAllBytes(profile.sourceDatabase()));
         assertArrayEquals(activity, Files.readAllBytes(sourceActivity));
-        assertArrayEquals(activity, Files.readAllBytes(stagedActivity));
+    }
+
+    private static List<List<Object>> eventFacts(Path database) throws SQLException
+    {
+        try(Connection connection = open(database); var statement = connection.createStatement())
+        {
+            List<String> fields = new ArrayList<>();
+            try(var columns = statement.executeQuery("PRAGMA table_info(receiver_activity_event)"))
+            {
+                while(columns.next())
+                {
+                    String name = columns.getString("name");
+                    if(!name.equals("encrypted") && !name.equals("encryption_state")) fields.add(name);
+                }
+            }
+            List<List<Object>> facts = new ArrayList<>();
+            try(var rows = statement.executeQuery("SELECT " + String.join(",", fields) +
+                " FROM receiver_activity_event ORDER BY id"))
+            {
+                while(rows.next())
+                {
+                    List<Object> values = new ArrayList<>();
+                    for(int column = 1; column <= fields.size(); column++) values.add(rows.getObject(column));
+                    facts.add(values);
+                }
+            }
+            return facts;
+        }
     }
 
     private Profile profile(String name, int version) throws Exception

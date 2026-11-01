@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -17,7 +18,7 @@ class OwnedMigrationWorkspaceTest
 {
     @TempDir Path temporary;
 
-    @Test void fullMigrationBudgetsDetailedEventReplacementAndLeavesSourceUnchanged() throws Exception
+    @Test void legacyPlansKeepConservativeJournalAndIndexAllowanceWithoutChangingSource() throws Exception
     {
         Path database = Format62TestDatabase.create(temporary.resolve("legacy.sqlite"));
         byte[] before = Files.readAllBytes(database);
@@ -31,7 +32,8 @@ class OwnedMigrationWorkspaceTest
         assertEquals(2 * Files.size(database),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
         assertEquals(2 * Files.size(database),
-            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.CONFIGURATION_ONLY));
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.CONFIGURATION_ONLY),
+            "Legacy in-place history discard still needs rollback space");
     }
 
     @Test void fullPairedUpgradeBudgetsBothFilesAndRetainedEventGrowth() throws Exception
@@ -52,15 +54,78 @@ class OwnedMigrationWorkspaceTest
         assertTrue(ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL) > workspace);
         assertEquals(2 * (Files.size(database) + Files.size(history)),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
-        assertEquals(2 * (Files.size(database) + Files.size(history)),
-            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.CONFIGURATION_ONLY),
-            "Workspace covers replacement pages and rollback journals");
+        assertThrows(IllegalArgumentException.class,
+            () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.CONFIGURATION_ONLY),
+            "Paired settings-only conversion must first use the supported settings-extraction workflow");
         assertArrayEquals(configuration, Files.readAllBytes(database));
         assertArrayEquals(activity, Files.readAllBytes(history));
         Files.delete(history);
         assertThrows(java.io.IOException.class,
             () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
         assertFalse(Files.exists(history));
+    }
+
+    @Test void admittedConfigurationStepsDoNotBudgetUntouchedActivity() throws Exception
+    {
+        Path database = Format63TestDatabase.create(temporary.resolve("configuration-steps.sqlite"));
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        var full = ApplicationMigrationService.readStartupPlan(database);
+        var configurationTarget = DatabaseFormatCatalog.formats().stream()
+            .filter(format -> format.version() == 68).findFirst().orElseThrow();
+        var configurationPlan = new DatabaseMigrationChain.PreflightReport(full.source(), configurationTarget,
+            full.steps().stream().filter(step -> step.targetVersion() <= 68).toList());
+        long configurationWorkspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(database,
+            MigrationContent.FULL, configurationPlan);
+        assertTrue(configurationWorkspace >= Files.size(database),
+            "The configuration owner still requires its own transaction and settings-growth allowance");
+        byte[] configuration = Files.readAllBytes(database);
+        byte[] activity = Files.readAllBytes(history);
+        assertEquals(configurationWorkspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(database,
+            MigrationContent.FULL, configurationPlan));
+        assertArrayEquals(configuration, Files.readAllBytes(database));
+        assertArrayEquals(activity, Files.readAllBytes(history));
+        growDetailedEvents(history);
+        activity = Files.readAllBytes(history);
+        assertEquals(configurationWorkspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(database,
+            MigrationContent.FULL, configurationPlan), "Unchanged Activity growth cannot increase this plan's workspace");
+        assertEquals(2 * (Files.size(database) + Files.size(history)),
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL),
+            "The actual plan also contains format 69 and still budgets its history transaction and index work");
+        var unknownStep = new DatabaseMigrationChain.StepPreflight("future-configuration-looking-step", "Future step",
+            68, 69, List.of());
+        var unknown = new DatabaseMigrationChain.PreflightReport(full.source(), full.target(), List.of(unknownStep));
+        assertEquals(2 * (Files.size(database) + Files.size(history)),
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, unknown),
+            "An unclassified plan must retain the conservative allowance");
+        assertThrows(IllegalArgumentException.class, () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(
+            database, MigrationContent.CONFIGURATION_ONLY, configurationPlan));
+        assertArrayEquals(configuration, Files.readAllBytes(database));
+        assertArrayEquals(activity, Files.readAllBytes(history));
+    }
+
+    @Test void boundedCurrentPreferenceRepairUsesConfigurationButNoOpNeedsNoMigrationWorkspace() throws Exception
+    {
+        Path database = Format69TestDatabase.create(temporary.resolve("preference-repair.sqlite"));
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        assertEquals(0, ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA ignore_check_constraints=ON");
+            statement.executeUpdate("INSERT OR REPLACE INTO application_settings(key,settings_json,updated_at_ms) " +
+                "VALUES('portable_java_preferences_v1','{invalid',1)");
+        }
+        var plan = ApplicationMigrationService.readStartupPlan(database);
+        assertEquals(List.of("repair-portable-preferences"), plan.steps().stream().map(
+            DatabaseMigrationChain.StepPreflight::id).toList());
+        byte[] configuration = Files.readAllBytes(database);
+        long workspace = ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL);
+        assertTrue(workspace > 0);
+        growDetailedEvents(history);
+        byte[] activity = Files.readAllBytes(history);
+        assertEquals(workspace, ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
+        assertArrayEquals(configuration, Files.readAllBytes(database));
+        assertArrayEquals(activity, Files.readAllBytes(history));
     }
 
     @Test void pairedUpgradeIncludesCommittedWalWithoutChangingEitherDatabase() throws Exception
@@ -94,8 +159,9 @@ class OwnedMigrationWorkspaceTest
         Path current = temporary.resolve("current.sqlite");
         SdrTrunkDatabaseStartup.createGlobalDatabase(current);
         Path history = ActivityDatabasePath.forConfiguration(current);
-        assertTrue(ApplicationMigrationService.requiredOwnedMigrationWorkspace(current, MigrationContent.FULL) >=
-            Files.size(current) + Files.size(history));
+        assertEquals(0, ApplicationMigrationService.requiredOwnedMigrationWorkspace(current, MigrationContent.FULL));
+        assertThrows(IllegalArgumentException.class,
+            () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(current, MigrationContent.CONFIGURATION_ONLY));
         Files.delete(history);
         assertThrows(java.io.IOException.class,
             () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(current, MigrationContent.FULL));

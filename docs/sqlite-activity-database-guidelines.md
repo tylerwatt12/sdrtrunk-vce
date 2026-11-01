@@ -883,6 +883,9 @@ missing evidence and deletes no Activity. New reception uses the existing shared
 
 Three existing partial encryption indexes retain their lookup columns with the `encryption_state = 2` predicate.
 No index is added. Clear and unknown filters use the existing owner/time paths before bounded cursor paging.
-The integer occupies the same compact range as the former boolean, with unchanged history growth and retention. Migration workspace reserves the complete pair twice for
-replacement pages and rollback journals, separately from backups and the free-space margin.
+The integer remains compact, with unchanged history growth and retention. Migration reuses the format-59-to-60
+guarded constraint-update procedure and a native column rename, preserving the event table and unaffected indexes.
+It updates only encryption values needing conversion and replaces the three encryption indexes and resolved view.
+Planner statistics sample only those indexes. Rollback journals, index growth and index-build sorting still require
+temporary workspace; capacity planning budgets that separately from recovery copies and the free-space margin.
 SQLite work remains on the bounded background writer; callbacks publish detached status without waiting for storage.

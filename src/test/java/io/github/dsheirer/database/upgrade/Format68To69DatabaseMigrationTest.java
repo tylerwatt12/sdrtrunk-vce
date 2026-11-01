@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -95,6 +96,28 @@ class Format68To69DatabaseMigrationTest
         assertThrows(Exception.class, () -> ConfigurationHistoryDatabase.validatePairIdentity(configuration));
         assertThrows(Exception.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(configuration));
         assertArrayEquals(original, Files.readAllBytes(history));
+    }
+
+    @Test void refusesUnmanagedOrForeignKeyEnabledLegacyCallsBeforeChangingTheExtractedConfiguration() throws Exception
+    {
+        Path configuration = Format68TestDatabase.create(directory.resolve("legacy-guards.sqlite"));
+        Path history = ActivityDatabasePath.forConfiguration(configuration);
+        Path stage = ActivityDatabasePath.configurationStage(history);
+        Files.copy(configuration, stage);
+        byte[] originalStage = Files.readAllBytes(stage);
+        byte[] originalHistory = Files.readAllBytes(history);
+        try(var connection = open(history); var statement = connection.createStatement())
+        {
+            statement.execute("PRAGMA foreign_keys=OFF");
+            assertThrows(SQLException.class, () -> new Format68To69DatabaseMigration().migrateSource(connection));
+            assertArrayEquals(originalStage, Files.readAllBytes(stage));
+            statement.execute("PRAGMA foreign_keys=ON");
+            connection.setAutoCommit(false);
+            assertThrows(SQLException.class, () -> new Format68To69DatabaseMigration().migrateSource(connection));
+            connection.rollback(); connection.setAutoCommit(true);
+        }
+        assertArrayEquals(originalStage, Files.readAllBytes(stage));
+        assertArrayEquals(originalHistory, Files.readAllBytes(history));
     }
 
     @Test void freshAndMigratedHistoryUseTheSameExactDefinition() throws Exception

@@ -25,9 +25,9 @@ final class Format68To69DatabaseMigration implements DatabaseMigrationStep
     private static List<DatabaseMigrationEffect> effects(long count)
     {
         return List.of(new DatabaseMigrationEffect(DatabaseMigrationEffect.Kind.TRANSFORM,
-            "Activity encryption classification", count,
+            "Changed Activity encryption values", count,
             "Preserve every event and link; retain confirmed or explicitly signaled encryption, leave ambiguous " +
-                "historical calls unknown, and rebuild the existing event indexes without changing counters or recordings"));
+                "historical calls unknown, and rebuild only the three encrypted event indexes without changing counters or recordings"));
     }
     public List<DatabaseMigrationEffect> inspectSource(Connection connection) { return declaredEffects(); }
     public void migrateSource(Connection connection) throws SQLException { convert(connection); }
@@ -38,6 +38,12 @@ final class Format68To69DatabaseMigration implements DatabaseMigrationStep
     }
     private long convert(Connection connection) throws SQLException
     {
+        ApplicationMigrationTransaction.requireActive(connection);
+        try(var statement = connection.createStatement(); var row = statement.executeQuery("PRAGMA foreign_keys"))
+        {
+            if(!row.next() || row.getInt(1) != 0)
+                throw new SQLException("Activity encryption migration requires disabled foreign-key enforcement");
+        }
         if(ConfigurationHistoryDatabase.isPairedConfiguration(connection))
         {
             requireAttachedHistory(connection);
@@ -48,9 +54,9 @@ final class Format68To69DatabaseMigration implements DatabaseMigrationStep
         if(!ConfigurationHistorySchema.HISTORY_ROLE.equals(
             ConfigurationHistorySchema.metadata(connection, ConfigurationHistorySchema.ROLE_KEY)))
             throw new SQLException("Activity encryption migration requires a recognized database role");
-        long converted = ReceiverActivitySchema.migrateFormat68EncryptionState(connection, "main");
         // An older monolith is still owned by the split receipt. Its durable extracted configuration advances
         // alongside the source transaction and is activated only after the complete chain commits successfully.
+        // Advance it before native ALTER reads its attached read-only schema and holds a shared transaction lock.
         var stage = ActivityDatabasePath.configurationStage(Format62To63DatabaseMigration.databasePath(connection));
         if(!java.nio.file.Files.isRegularFile(stage) || java.nio.file.Files.isSymbolicLink(stage))
             throw new SQLException("The configuration extraction for Activity encryption is missing");
@@ -63,7 +69,7 @@ final class Format68To69DatabaseMigration implements DatabaseMigrationStep
             DatabaseFormatCatalog.requireCurrent(configuration);
             configuration.commit();
         }
-        return converted;
+        return ReceiverActivitySchema.migrateFormat68EncryptionState(connection, "main");
     }
 
     private static void requireAttachedHistory(Connection connection) throws SQLException

@@ -190,7 +190,7 @@ public final class VceUpgradeService
                 {
                     long workspace = sourcePlan.source().version() == sourcePlan.target().version() ?
                         Math.multiplyExact(Files.size(SdrTrunkDatabasePath.getDatabasePath(source)), 4) :
-                        ApplicationMigrationService.requiredOwnedMigrationWorkspace(SdrTrunkDatabasePath.getDatabasePath(source), content);
+                        ApplicationMigrationService.requiredOwnedMigrationWorkspace(SdrTrunkDatabasePath.getDatabasePath(source), content, sourcePlan);
                     requireSpace(target.getParent(), Math.addExact(workspace, 5L * 1024 * 1024 * 1024));
                 }
                 if(content == MigrationContent.CONFIGURATION_ONLY)

@@ -365,8 +365,11 @@ states. It preserves every Activity message, event ID, exact call connection, at
 existing counter, configuration choice and allocator. Previously confirmed encryption and retained encrypted-call
 subtypes become Encrypted; other historical flags become Unknown because they cannot distinguish clear reception
 from absent confirmation. No historical call is guessed to be Clear. Recording files and the separate Managed
-Recordings catalog are unchanged. The existing event table and indexes are rebuilt once, so retained-history update
-work and workspace scale with Activity history. Existing paired configuration and history files change in one SQLite
+Recordings catalog are unchanged. A native column rename and the guarded constraint-update helper used by format
+59-to-60 retain the existing event table and unaffected index b-trees. Only encryption values needing conversion
+are updated; the three encryption indexes and resolved view are replaced. Planner analysis samples those three indexes
+without reanalyzing the remaining history indexes. History reads, affected-page rollback journals and index builds
+still scale with retained Activity. Existing paired configuration and history files change in one SQLite
 rollback-journal transaction. Fresh creation uses the same exact target definition; normal startup only validates it.
 
 ## Shared Upgrade And Import Boundary
@@ -1099,6 +1102,15 @@ change without the matching version, step, fixture, and migration assertions.
 Prefer small, explicit transformations. Rebuilding a table into its clean target DDL is acceptable when it is simpler
 and safer than a long series of compatibility edits. A failed step must be safely repeatable from the unchanged source
 database; the migrator does not resume by trusting a partially changed working copy.
+
+Before choosing a migration algorithm, compare similar earlier steps and reuse their proven helpers. Record the
+affected stores, rows and indexes, necessary copies and history passes, expected time, and peak additional space.
+Separate recovery copies, migration workspace and free-space headroom. Prefer compatible native DDL and targeted
+updates when they preserve the exact target contract; retain unaffected b-trees and planner statistics. A full rebuild
+or conservative space allowance needs a reason tied to the work performed. Capacity checks must follow the actual
+plan and selected contents without scanning history merely to estimate cost; review workspace classification when
+adding a step. Extend existing fixtures to check preservation, rollback/retry and avoidable rewrites; use
+representative measurements for large-history work without adding wall-clock assertions to correctness tests.
 
 ## Data Policy
 

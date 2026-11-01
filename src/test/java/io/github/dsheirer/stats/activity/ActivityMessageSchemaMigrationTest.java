@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import io.github.dsheirer.database.SqliteSchemaValidator;
 import io.github.dsheirer.database.SdrTrunkDatabaseSchema;
 import io.github.dsheirer.database.upgrade.Format59TestDatabase;
+import io.github.dsheirer.database.upgrade.Format60TestDatabase;
 import java.nio.file.Path;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
@@ -48,11 +49,11 @@ class ActivityMessageSchemaMigrationTest
     @Test void eventConstraintRelaxationHasBoundedWorkAndFailsClosedBeforeChangingMetadata() throws Exception
     {
         Path database = Format59TestDatabase.create(directory.resolve("event-guards.sqlite"));
+        Path targetDatabase = Format60TestDatabase.create(directory.resolve("event-target.sqlite"));
         try(Connection connection = DriverManager.getConnection("jdbc:sqlite:" + database);
-            var target = DriverManager.getConnection("jdbc:sqlite::memory:");
+            var target = DriverManager.getConnection("jdbc:sqlite:" + targetDatabase);
             var statement = connection.createStatement())
         {
-            SdrTrunkDatabaseSchema.create(target); ReceiverActivitySchema.create(target);
             String previous = eventDefinition(connection), current = eventDefinition(target);
             String fingerprint = SqliteSchemaValidator.fingerprint(connection);
             // A populated update must refuse unmanaged autocommit and an enabled FK boundary.

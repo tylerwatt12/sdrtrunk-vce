@@ -276,16 +276,19 @@ public class ReceiverActivitySchema
         }
     }
 
-    /** Application Migrator only: replace the binary flag without dropping any retained event or child. */
+    /** Application Migrator only: preserve event and unaffected index b-trees while converting the binary flag. */
     public static long migrateFormat68EncryptionState(Connection connection, String schema) throws SQLException
     {
         if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown Activity migration schema");
         io.github.dsheirer.database.upgrade.ApplicationMigrationTransaction.requireActive(connection);
-        List<String> columns = new ArrayList<>();
-        List<String> indexes = eventIndexSql(connection, schema);
+        io.github.dsheirer.database.SqliteSchemaValidator.validateDefinitions(connection, List.of(
+            new io.github.dsheirer.database.SqliteSchemaValidator.Definition("table", "receiver_activity_event",
+                format60ReceiverActivityEventSql())), schema);
+        List<String> encryptedIndexes = List.of("idx_receiver_activity_event_encryption",
+            "idx_receiver_activity_event_system_encrypted_time", "idx_receiver_activity_event_channel_encrypted_time");
+        Map<String,String> indexes = new LinkedHashMap<>();
         String view;
         long converted;
-        Long allocator = null;
         try(Statement statement = connection.createStatement())
         {
             try(ResultSet row = statement.executeQuery("PRAGMA foreign_keys"))
@@ -293,48 +296,46 @@ public class ReceiverActivitySchema
                 if(!row.next() || row.getInt(1) != 0)
                     throw new SQLException("Activity encryption migration requires disabled foreign-key enforcement");
             }
-            try(ResultSet rows = statement.executeQuery("PRAGMA " + schema + ".table_info(receiver_activity_event)"))
-            { while(rows.next()) columns.add(rows.getString("name")); }
-            if(!columns.contains("encrypted") || columns.contains("encryption_state"))
-                throw new SQLException("Activity encryption migration requires the format-68 event layout");
+            try(ResultSet rows = statement.executeQuery("SELECT name,sql FROM " + schema +
+                ".sqlite_schema WHERE type='index' AND tbl_name='receiver_activity_event' AND sql IS NOT NULL"))
+            {
+                while(rows.next()) if(encryptedIndexes.contains(rows.getString("name")))
+                    indexes.put(rows.getString("name"), rows.getString("sql"));
+            }
+            if(indexes.size() != encryptedIndexes.size())
+                throw new SQLException("Activity encryption migration requires its three existing encrypted indexes");
             try(ResultSet row = statement.executeQuery("SELECT sql FROM " + schema +
                 ".sqlite_schema WHERE type='view' AND name='receiver_activity_event_resolved'"))
             {
                 if(!row.next()) throw new SQLException("Activity event projection is missing");
                 view = row.getString(1);
             }
-            try(ResultSet row = statement.executeQuery("SELECT seq FROM " + schema +
-                ".sqlite_sequence WHERE name='receiver_activity_event'"))
-            { if(row.next()) allocator = row.getLong(1); }
             String table = schema + ".receiver_activity_event";
-            String temporary = "receiver_activity_event_format69";
-            statement.executeUpdate(format69ReceiverActivityEventSql().replace(
-                "receiver_activity_event (", schema + "." + temporary + " ("));
-            String fields = columns.stream().map(column -> column.equals("encrypted") ? "encryption_state" : column)
-                .collect(Collectors.joining(","));
+            statement.executeUpdate("ALTER TABLE " + table + " RENAME COLUMN encrypted TO encryption_state");
+            ActivityMessageSchemaMigration.replaceEventDefinition(connection, schema,
+                format60ReceiverActivityEventSql().replaceAll("\\bencrypted\\b", "encryption_state"),
+                format69ReceiverActivityEventSql());
+            for(String index: encryptedIndexes) statement.executeUpdate("DROP INDEX " + schema + "." + index);
             // These fixed subtype codes are the explicit encrypted signaling retained by format 68. Other zero
             // flags cannot distinguish clear reception from missing or conflicting evidence and remain unknown.
-            String values = columns.stream().map(column -> column.equals("encrypted") ?
-                "CASE WHEN encrypted=1 OR event_type_code IN (6,8,10,17,20,26) THEN 2 ELSE 0 END" : column)
-                .collect(Collectors.joining(","));
-            statement.executeUpdate("INSERT INTO " + schema + "." + temporary + "(" + fields + ") SELECT " +
-                values + " FROM " + table);
+            String value = "CASE WHEN encryption_state=1 OR event_type_code IN (6,8,10,17,20,26) THEN 2 ELSE 0 END";
+            statement.executeUpdate("UPDATE " + table + " SET encryption_state=" + value +
+                " WHERE encryption_state IS NOT (" + value + ") OR typeof(encryption_state)<>'integer'");
             try(ResultSet row = statement.executeQuery("SELECT changes()")) { row.next(); converted = row.getLong(1); }
             statement.executeUpdate("DROP VIEW " + schema + ".receiver_activity_event_resolved");
-            statement.executeUpdate("DROP TABLE " + table);
-            statement.executeUpdate("ALTER TABLE " + schema + "." + temporary + " RENAME TO receiver_activity_event");
-            for(String index: indexes)
+            for(String index: indexes.values())
                 statement.executeUpdate(qualifySchemaObject(encryptionStateSql(index), schema, "INDEX"));
             statement.executeUpdate(qualifySchemaObject(encryptionStateSql(view), schema, "VIEW"));
-            if(allocator != null)
+            long analysisLimit;
+            try(ResultSet row = statement.executeQuery("PRAGMA analysis_limit"))
+            { row.next(); analysisLimit = row.getLong(1); }
+            try
             {
-                int restored = statement.executeUpdate("UPDATE " + schema + ".sqlite_sequence SET seq=max(seq," +
-                    allocator + ") WHERE name='receiver_activity_event'");
-                if(restored == 0) statement.executeUpdate("INSERT INTO " + schema +
-                    ".sqlite_sequence(name,seq) VALUES('receiver_activity_event'," + allocator + ")");
+                statement.execute("PRAGMA analysis_limit=" +
+                    (analysisLimit > 0 ? Math.min(analysisLimit, 1000) : 1000));
+                for(String index: encryptedIndexes) statement.execute("ANALYZE " + schema + "." + index);
             }
-            // Rebuilt partial encrypted indexes now include explicit encrypted signaling, so old samples are stale.
-            statement.execute("ANALYZE " + table);
+            finally { statement.execute("PRAGMA analysis_limit=" + analysisLimit); }
         }
         return converted;
     }

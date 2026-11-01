@@ -598,7 +598,7 @@ public final class ApplicationMigrationService
         }
         if(ownedPlan.requiresMigration() || !recovery.isEmpty())
         {
-            long workspace = safeMultiply(sqliteFootprint(database), 2);
+            long workspace = requiredOwnedMigrationWorkspace(database, content, ownedPlan, !recovery.isEmpty());
             ensureFreeSpace(database.getParent(), safeAdd(safeAdd(workspace,
                 createBackup ? sqliteFootprint(database) : 0), 5L * 1024 * 1024 * 1024));
         }
@@ -663,17 +663,61 @@ public final class ApplicationMigrationService
 
     /**
      * Additional workspace for migrating an application-owned database, after exact source admission. This excludes
-     * any profile copy, selected backup and free-space reserve, which the caller must budget separately. The old
-     * split step kept history pages in place. Format 69 rebuilds the event table and existing indexes, so
-     * full-content upgrades reserve a complete matching pair for replacement pages and another for rollback journals.
+     * any profile copy, selected backup and free-space reserve, which the caller must budget separately. Known
+     * configuration-only steps leave a paired Activity file untouched. Other plans retain the conservative pair
+     * allowance: even format 69's in-place conversion can dirty event pages, grow its three partial indexes and
+     * spill index sorting to disk while SQLite retains rollback journals.
      */
     public static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content)
         throws IOException, SQLException
     {
         Objects.requireNonNull(content, "Migration contents cannot be null");
         Path normalized = Objects.requireNonNull(database, "Database cannot be null").toAbsolutePath().normalize();
-        readStartupPlan(normalized);
+        return requiredOwnedMigrationWorkspace(normalized, content, readStartupPlan(normalized));
+    }
+
+    /** Reuses an admitted plan while its caller still owns the same stopped profile. */
+    static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content,
+        DatabaseMigrationChain.PreflightReport plan) throws IOException
+    {
+        return requiredOwnedMigrationWorkspace(database, content, plan, false);
+    }
+
+    private static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content,
+        DatabaseMigrationChain.PreflightReport plan, boolean recoverSettings) throws IOException
+    {
+        Objects.requireNonNull(content, "Migration contents cannot be null");
+        Objects.requireNonNull(plan, "An admitted migration plan is required");
+        Path normalized = Objects.requireNonNull(database).toAbsolutePath().normalize();
+        if(content == MigrationContent.CONFIGURATION_ONLY && plan.source().version() >= 63)
+            throw new IllegalArgumentException("Configuration-only conversion of a paired profile requires " +
+                "the VCE upgrade settings-extraction workflow.");
+        if(content == MigrationContent.FULL && !plan.requiresMigration() && !recoverSettings) return 0;
+        if(content == MigrationContent.FULL && plan.source().version() >= 63 &&
+            plan.steps().stream().allMatch(ApplicationMigrationService::changesOnlyConfiguration))
+        {
+            // Cover the small owner's rollback pages and converted preference/settings growth. The existing
+            // 64-MiB slack is working space for bounded settings growth, not the separately budgeted 5-GiB headroom.
+            // Activity is not copied, reset or written by these exact steps.
+            return safeAdd(safeMultiply(sqliteFileFootprint(normalized), 2), FREE_SPACE_MARGIN_BYTES);
+        }
+        // Legacy configuration-only in-place conversion still deletes history in a transaction. Unknown steps
+        // must not inherit a cheaper estimate from their names or from a currently sparse partial index.
         return safeMultiply(sqliteFootprint(normalized), 2);
+    }
+
+    private static boolean changesOnlyConfiguration(DatabaseMigrationChain.StepPreflight step)
+    {
+        if(step.sourceVersion() == step.targetVersion()) return "repair-portable-preferences".equals(step.id());
+        return step.targetVersion() == step.sourceVersion() + 1 && switch(step.sourceVersion())
+        {
+            case 63 -> "receiver-nicknames-v1".equals(step.id());
+            case 64 -> "format-64-to-65".equals(step.id());
+            case 65 -> "format-65-to-66".equals(step.id());
+            case 66 -> "format-66-to-67".equals(step.id());
+            case 67 -> "remote-link-destinations-v1".equals(step.id());
+            default -> false;
+        };
     }
 
     private static MigrationResult withCleanupWarning(MigrationResult result)
