@@ -28,13 +28,33 @@ for (const authenticated of [false, true]) for (const theme of ['light', 'dark']
     const cards = page.locator('.recordings-call');
     await play(page, 0);
     await expect(cards.nth(0)).not.toHaveClass(/recordings-call-played/);
+    await page.evaluate(() => {
+      const play = Audio.prototype.play;
+      window.audioTest.resumePlay = play;
+      Audio.prototype.play = function (...args) {
+        const result = play.apply(this, args);
+        return new Promise(resolve => { window.audioTest.finishLoading = () => resolve(result); });
+      };
+    });
     await play(page, 1);
+    const status = cards.nth(1).locator('.recordings-call-status');
+    await expect(status).toHaveText('Loading');
+    await expect(status).toHaveClass(/visually-hidden/);
+    await expect(status).toHaveCSS('clip-path', 'inset(50%)');
+    await page.evaluate(() => window.audioTest.finishLoading());
+    await expect(status).toHaveText('');
+    await page.evaluate(() => window.audioTest.recordingPlayer.pause());
+    await expect(status).toHaveText('Paused');
+    await expect(status).toHaveCSS('clip-path', 'inset(50%)');
+    await page.evaluate(() => { Audio.prototype.play = window.audioTest.resumePlay; });
     await expect(cards.nth(0)).not.toHaveClass(/recordings-call-played/);
     await finish(page, 'error');
     await expect(cards.nth(1)).not.toHaveClass(/recordings-call-played/);
     await play(page, 0); await finish(page);
     await expect(cards.nth(0)).toHaveClass(/recordings-call-played/);
     await expect(cards.nth(0).locator('.recordings-call-status')).toHaveText('Played');
+    await expect(cards.nth(0).locator('.recordings-call-status')).toHaveClass(/visually-hidden/);
+    await expect(cards.nth(0).locator('.recordings-call-status')).toHaveCSS('clip-path', 'inset(50%)');
     await expect(cards.nth(0).locator('.recordings-call-title')).toHaveAttribute('aria-describedby', /playback-status/);
     if (authenticated) await expectContrast(page, { reportName: `recording-played-${theme}` });
     if (process.env.PLAYED_MARKER_EVIDENCE) await cards.nth(0).screenshot({ path: path.join(process.env.PLAYED_MARKER_EVIDENCE,
