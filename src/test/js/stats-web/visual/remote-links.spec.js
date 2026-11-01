@@ -40,14 +40,14 @@ test.beforeAll(async () => {
 });
 
 const senderId = '11111111-1111-4111-8111-111111111111';
+const destinationId = '33333333-3333-4333-8333-333333333333';
 const fixtureSecret = 'fixture-shared-secret-not-for-use';
 
 function snapshot() {
   return {
     revision: 'fixture-revision',
     listener: { enabled: false, bind_address: '0.0.0.0', port: 53800, state: 'DISABLED', dependencies: [] },
-    sender_connection: { enabled: false, state: 'DISABLED', credential_configured: false,
-      exported_channel_configuration_ids: [] },
+    sender_connections: [],
     senders: [{ sender_id: senderId, display_name: 'Field receiver', state: 'CONNECTED',
       last_seen_at_ms: Date.now() + 60_000, default_alias_list_id: 1,
       feeds: [{ feed_id: 'north-control', display_name: 'Metro North', protocol: 'P25_PHASE1',
@@ -63,9 +63,14 @@ async function openApp(page, theme = 'light', options = {}) {
   const preferences = structuredClone(defaultPreferences);
   preferences.appearance.theme = theme;
   let current = snapshot();
-  if (options.senderConnection) current.sender_connection = {
-    ...current.sender_connection, ...options.senderConnection
-  };
+  if (options.senderConnection) current.sender_connections = [{ destination_id: destinationId,
+    display_name: 'Demo receiver', enabled: false, state: 'DISABLED', credential_configured: false,
+    exported_channel_configuration_ids: [], ...options.senderConnection }];
+  if (options.destinations) current.sender_connections = options.destinations;
+  if (options.fourSites) current.export_channel_options = Array.from({ length: 4 }, (_, index) => ({
+    channel_configuration_id: `local-channel-${index + 1}`, name: `Metro Site ${index + 1}`,
+    system_name: 'Metro', site_name: `Site ${index + 1}`, protocol: 'P25_PHASE1'
+  }));
   if (options.senderState) current.senders[0].state = options.senderState;
   if (options.multipleFeeds) current.senders[0].feeds.push({ ...current.senders[0].feeds[0],
     feed_id: 'south-control', display_name: 'Metro South', channel_configuration_id: 'local-channel-2' });
@@ -97,7 +102,7 @@ async function openApp(page, theme = 'light', options = {}) {
       reads += 1;
       if (readBlock) await readBlock;
       await route.fulfill({ json: { data: current } });
-    } else if (pathname === '/api/v1/admin/remote-links/sender-connection' && route.request().method() === 'DELETE') {
+    } else if (pathname.startsWith('/api/v1/admin/remote-links/destinations/') && route.request().method() === 'DELETE') {
       sendingDeletionRequests.push(route.request().postDataJSON());
       if (sendingDeletionBlock) {
         const error = await sendingDeletionBlock;
@@ -107,9 +112,20 @@ async function openApp(page, theme = 'light', options = {}) {
           return;
         }
       }
-      current = { ...current, sender_connection: { enabled: false, state: 'DISABLED',
-        destination_host: '', destination_port: 53800, sender_id: null, credential_configured: false,
-        last_connected_at_ms: 0, exported_channel_configuration_ids: [] } };
+      const id = pathname.split('/').at(-1);
+      current = { ...current, sender_connections: current.sender_connections.filter(item => item.destination_id !== id) };
+      await route.fulfill({ json: { data: current } });
+    } else if ((pathname === '/api/v1/admin/remote-links/destinations' && route.request().method() === 'POST') ||
+      (pathname.startsWith('/api/v1/admin/remote-links/destinations/') && route.request().method() === 'PUT')) {
+      const body = route.request().postDataJSON();
+      const creating = route.request().method() === 'POST';
+      const id = creating ? `destination-${current.sender_connections.length + 1}` : pathname.split('/').at(-1);
+      const next = { ...body, destination_id: id, credential_configured: Boolean(body.secret) ||
+        Boolean(current.sender_connections.find(item => item.destination_id === id)?.credential_configured),
+        state: body.enabled ? 'CONNECTED' : 'DISABLED' };
+      delete next.secret;
+      current = { ...current, sender_connections: creating ? [...current.sender_connections, next] :
+        current.sender_connections.map(item => item.destination_id === id ? next : item) };
       await route.fulfill({ json: { data: current } });
     } else if (pathname === '/api/v1/admin/remote-links/senders' && route.request().method() === 'POST') {
       await route.fulfill({ json: { data: { sender_id: senderId, secret: fixtureSecret } } });
@@ -167,7 +183,9 @@ async function openApp(page, theme = 'light', options = {}) {
     },
     updateListener: (changes) => { current = { ...current, listener: { ...current.listener, ...changes } }; },
     updateSenderConnection: (changes) => {
-      current = { ...current, sender_connection: { ...current.sender_connection, ...changes } };
+      const previous = current.sender_connections[0] || { destination_id: destinationId,
+        display_name: 'Demo receiver', exported_channel_configuration_ids: [] };
+      current = { ...current, sender_connections: [{ ...previous, ...changes }, ...current.sender_connections.slice(1)] };
     },
     updateFeed: (changes) => { current = { ...current, senders: [{ ...current.senders[0],
       feeds: [{ ...current.senders[0].feeds[0], ...changes }] }] }; }
@@ -182,22 +200,23 @@ for (const [theme, viewport] of [
     await page.setViewportSize(viewport);
     await openApp(page, theme);
     const message = 'Cannot send feeds to this receiver. Choose a different destination receiver.';
-    await page.route('**/api/v1/admin/remote-links/sender-connection', route =>
+    await page.route('**/api/v1/admin/remote-links/destinations', route =>
       route.fulfill({ status: 422, json: { error: { code: 'invalid_remote_link', message } } }));
     await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
-    await page.getByRole('button', { name: 'Set up sending', exact: true }).click();
-    const editor = page.getByRole('dialog', { name: 'Sending settings', exact: true });
+    await page.getByRole('button', { name: 'Add destination', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: /^(Add destination|Destination settings)$/, exact: true });
+    await editor.getByLabel('Destination name', { exact: true }).fill('Debug receiver');
     await editor.getByLabel('Enable sending', { exact: true }).press('Space');
     await editor.getByLabel('Destination host', { exact: true }).fill('localhost');
     await editor.getByRole('textbox', { name: /^Sender ID/ }).fill(senderId);
     await editor.getByLabel(/^Shared secret/).fill(fixtureSecret);
-    await editor.getByRole('button', { name: 'Save sender', exact: true }).click();
+    await editor.getByRole('button', { name: 'Save destination', exact: true }).click();
 
     await expect(editor.getByRole('alert')).toHaveText(message);
     await expect(editor.getByLabel('Destination host', { exact: true })).toHaveValue('localhost');
     await expect(editor.getByRole('textbox', { name: /^Sender ID/ })).toHaveValue(senderId);
     await expect(editor.getByLabel(/^Shared secret/)).toHaveValue(fixtureSecret);
-    await expect(editor.getByRole('button', { name: 'Save sender', exact: true })).toBeEnabled();
+    await expect(editor.getByRole('button', { name: 'Save destination', exact: true })).toBeEnabled();
     await expectRemoteWorkflowGeometry(editor);
     await captureFormWorkflowEvidence(editor.locator('form'), `remote-self-link-${theme}`);
   });
@@ -228,7 +247,7 @@ for (const [theme, viewport] of [
     await expect(card).toContainText('P25 Phase 1');
     await expect(incoming).not.toContainText('No optional dependency status reported.');
     await expect(outbound.locator('.ui-fact-list')).toHaveCount(0);
-    await expect(outbound).toContainText('Create a trusted sender on the destination receiver');
+    await expect(outbound).toContainText('Create a trusted sender on each destination receiver');
     await expect(incoming.locator('svg use[href="#icon-download"]')).toHaveCount(1);
     await expect(outbound.locator('svg use[href="#icon-upload"]')).toHaveCount(1);
     await expect(incoming.locator('svg use[href="#icon-arrow-right"]')).toHaveCount(1);
@@ -252,7 +271,7 @@ for (const [theme, viewport] of [
     await expect(receiveTab).toHaveAttribute('aria-selected', 'false');
     await expect(incoming).toBeHidden();
     await expect(outbound).toBeVisible();
-    const setup = outbound.getByRole('button', { name: 'Set up sending', exact: true });
+    const setup = outbound.getByRole('button', { name: 'Add destination', exact: true });
     await expect(setup).toBeVisible();
     const outboundBox = await outbound.boundingBox();
     const setupBox = await setup.boundingBox();
@@ -321,11 +340,67 @@ test('the sender preference and local feed stay editable without adoption fields
   await expect(page.locator('.remote-links-feed-card')).toContainText('disabled');
 });
 
+for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
+  ['dark', { width: 390, height: 844 }]]) {
+test(`four sites can be sent to two named destinations and deleting one preserves the other in ${theme}`, async ({ page }) => {
+  await page.setViewportSize(viewport);
+  const sites = Array.from({ length: 4 }, (_, index) => `local-channel-${index + 1}`);
+  const app = await openApp(page, theme, { fourSites: true,
+    senderConnection: { ...configuredSending, exported_channel_configuration_ids: sites } });
+  const writes = [];
+  page.on('request', request => {
+    if (['POST', 'PUT'].includes(request.method()) && request.url().includes('/remote-links/destinations')) {
+      writes.push({ method: request.method(), body: request.postDataJSON() });
+    }
+  });
+  await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
+  await page.getByRole('button', { name: 'Add destination', exact: true }).click();
+  const add = page.getByRole('dialog', { name: 'Add destination', exact: true });
+  await add.getByLabel('Destination name', { exact: true }).fill('Debug receiver');
+  await add.getByLabel('Enable sending', { exact: true }).press('Space');
+  await add.getByLabel('Destination host', { exact: true }).fill('debug.example.test');
+  await add.getByRole('textbox', { name: /^Sender ID/ }).fill(senderId);
+  await add.getByLabel(/^Shared secret/).fill(fixtureSecret);
+  for (let index = 1; index <= 4; index++) await add.getByRole('checkbox', { name: `Metro Site ${index} Metro · Site ${index} · P25_PHASE1`, exact: true }).check();
+  await add.getByRole('button', { name: 'Save destination', exact: true }).click();
+  await expect(add).toHaveCount(0);
+  const demo = page.locator('.remote-links-destination-card').filter({ hasText: 'Demo receiver' });
+  const debug = page.locator('.remote-links-destination-card').filter({ hasText: 'Debug receiver' });
+  await expect(demo).toContainText('Connected');
+  await expect(debug).toContainText('Connected');
+  await expect(demo.locator('dd').nth(1)).toHaveText('4');
+  await expect(debug.locator('dd').nth(1)).toHaveText('4');
+  expect(writes[0].body.exported_channel_configuration_ids).toEqual(sites);
+  if (process.env.FORM_WORKFLOW_AUDIT_DIR) await page.locator('.remote-links-page').screenshot({
+    path: path.join(process.env.FORM_WORKFLOW_AUDIT_DIR, `remote-destinations-${theme}.png`), animations: 'disabled'
+  });
+
+  await debug.getByRole('button', { name: 'Settings for Debug receiver' }).click();
+  const edit = page.getByRole('dialog', { name: 'Destination settings', exact: true });
+  await edit.getByLabel('Enable sending', { exact: true }).press('Space');
+  await edit.getByRole('button', { name: 'Save destination', exact: true }).click();
+  await expect(edit).toHaveCount(0);
+  await expect(debug).toContainText('Disabled');
+  await expect(demo).toContainText('Connected');
+  expect(writes[1].body.secret).toBe('');
+  expect(writes[1].body.exported_channel_configuration_ids).toEqual(sites);
+
+  await debug.getByRole('button', { name: 'Settings for Debug receiver' }).click();
+  await edit.getByRole('button', { name: 'Delete destination', exact: true }).click();
+  await page.getByRole('alertdialog', { name: 'Delete destination', exact: true })
+    .getByRole('button', { name: 'Delete destination', exact: true }).click();
+  await expect(debug).toHaveCount(0);
+  await expect(demo).toContainText('Connected');
+  await expect(demo.locator('dd').nth(1)).toHaveText('4');
+  expect(app.sendingDeletionRequests).toHaveLength(1);
+});
+}
+
 test('outbound system selection uses the themed checkbox', async ({ page }) => {
   await openApp(page);
   await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
-  await page.getByRole('button', { name: 'Set up sending' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Sending settings' });
+  await page.getByRole('button', { name: 'Add destination' }).click();
+  const dialog = page.getByRole('dialog', { name: /^(Add destination|Destination settings)$/ });
   const system = dialog.getByRole('checkbox', { name: /Metro North/ });
   await expect(system).toHaveClass('ui-selection-check');
   await expect(system).toHaveCSS('appearance', 'none');
@@ -347,19 +422,19 @@ for (const [theme, viewport] of [
     await page.setViewportSize(viewport);
     const app = await openApp(page, theme, { senderConnection: configuredSending });
     await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
-    await page.getByRole('button', { name: 'Sending settings', exact: true }).click();
-    const editor = page.getByRole('dialog', { name: 'Sending settings', exact: true });
+    await page.getByRole('button', { name: 'Settings for Demo receiver', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: /^(Add destination|Destination settings)$/, exact: true });
     const destination = editor.getByLabel('Destination host', { exact: true });
     await destination.fill('unfinished.example.test');
-    const remove = editor.getByRole('button', { name: 'Delete configuration', exact: true });
+    const remove = editor.getByRole('button', { name: 'Delete destination', exact: true });
     await expect(remove).toHaveClass(/ui-button-danger/);
     await expectRemoteWorkflowGeometry(editor);
     await captureFormWorkflowEvidence(editor.locator('form'), `delete-sending-${theme}-${viewport.width}`);
     await remove.click();
-    const confirmation = page.getByRole('alertdialog', { name: 'Delete sending configuration', exact: true });
-    await expect(confirmation).toContainText('This stops sending and clears the destination, saved credentials, and selected feeds.');
+    const confirmation = page.getByRole('alertdialog', { name: 'Delete destination', exact: true });
+    await expect(confirmation).toContainText('This stops sending to it and clears its saved credentials and selected feeds.');
     await expect(confirmation.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
-    await expect(confirmation.getByRole('button', { name: 'Delete configuration', exact: true })).toHaveClass(/ui-button-danger/);
+    await expect(confirmation.getByRole('button', { name: 'Delete destination', exact: true })).toHaveClass(/ui-button-danger/);
     await expect(editor.locator('.ui-feedback-loading')).toHaveCount(0);
     if (process.env.FORM_WORKFLOW_AUDIT_DIR) await confirmation.screenshot({
       path: path.join(process.env.FORM_WORKFLOW_AUDIT_DIR, `delete-sending-confirm-${theme}-${viewport.width}.png`),
@@ -374,23 +449,23 @@ for (const [theme, viewport] of [
 
     const releaseReads = app.deferReads();
     await remove.click();
-    await confirmation.getByRole('button', { name: 'Delete configuration', exact: true }).click();
+    await confirmation.getByRole('button', { name: 'Delete destination', exact: true }).click();
     await expect(editor).toHaveCount(0);
     await expect(page.getByRole('alertdialog')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Set up sending', exact: true })).toBeVisible();
-    await expect(page.locator('[data-remote-direction="send"]')).toContainText('Disabled');
+    await expect(page.getByRole('button', { name: 'Add destination', exact: true })).toBeVisible();
+    await expect(page.locator('[data-remote-direction="send"]')).toContainText('0 of 8 destinations');
     await expect(page.locator('[data-remote-direction="send"] .ui-fact-list')).toHaveCount(0);
     await expect(page.locator('.remote-links-sender-card')).toHaveCount(1);
     expect(app.sendingDeletionRequests).toEqual([{ revision: 'fixture-revision' }]);
     releaseReads();
 
-    await page.getByRole('button', { name: 'Set up sending', exact: true }).click();
+    await page.getByRole('button', { name: 'Add destination', exact: true }).click();
     await expect(editor.getByLabel('Destination host', { exact: true })).toHaveValue('');
     await expect(editor.getByRole('textbox', { name: /^Sender ID/ })).toHaveValue('');
     await expect(editor.getByLabel('Enable sending', { exact: true })).not.toBeChecked();
     await expect(editor.getByRole('checkbox', { name: /Metro North/ })).not.toBeChecked();
     await expect(editor.getByLabel(/^Shared secret/)).toHaveAttribute('placeholder', 'Paste host-issued secret');
-    await expect(editor.getByRole('button', { name: 'Delete configuration', exact: true })).toHaveCount(0);
+    await expect(editor.getByRole('button', { name: 'Delete destination', exact: true })).toHaveCount(0);
   });
 }
 
@@ -398,23 +473,23 @@ test('sending configuration deletion locks duplicate actions and dismissal, pres
   const app = await openApp(page, 'light', { senderConnection: { ...configuredSending, enabled: false, state: 'DISABLED' } });
   const writes = [];
   page.on('request', request => {
-    if (request.method() === 'PUT' && request.url().includes('/remote-links/sender-connection')) writes.push(request);
+    if (request.method() === 'PUT' && request.url().includes('/remote-links/destinations/')) writes.push(request);
   });
   await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
-  await page.getByRole('button', { name: 'Sending settings', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: 'Sending settings', exact: true });
+  await page.getByRole('button', { name: 'Settings for Demo receiver', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: /^(Add destination|Destination settings)$/, exact: true });
   const destination = editor.getByLabel('Destination host', { exact: true });
   await destination.fill('');
   const release = app.deferSendingDeletion('Sending configuration could not be deleted. Try again.');
-  const remove = editor.getByRole('button', { name: 'Delete configuration', exact: true });
+  const remove = editor.getByRole('button', { name: 'Delete destination', exact: true });
   await remove.click();
-  const confirmation = page.getByRole('alertdialog', { name: 'Delete sending configuration', exact: true });
-  await confirmation.getByRole('button', { name: 'Delete configuration', exact: true }).click();
+  const confirmation = page.getByRole('alertdialog', { name: 'Delete destination', exact: true });
+  await confirmation.getByRole('button', { name: 'Delete destination', exact: true }).click();
   await expect.poll(() => app.sendingDeletionRequests.length).toBe(1);
   await expect(editor).toHaveAttribute('aria-busy', 'true');
   await expect(remove).toBeDisabled();
   await expect(destination).toBeDisabled();
-  await expect(editor.getByRole('button', { name: 'Save sender', exact: true })).toBeDisabled();
+  await expect(editor.getByRole('button', { name: 'Save destination', exact: true })).toBeDisabled();
   await expect(editor.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
   await editor.locator('form').evaluate(form => {
     form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
@@ -432,9 +507,9 @@ test('sending configuration deletion locks duplicate actions and dismissal, pres
   await expect(destination).toHaveValue('');
   await expect(editor.locator('form')).toHaveClass(/is-dirty/);
   await remove.click();
-  await confirmation.getByRole('button', { name: 'Delete configuration', exact: true }).click();
+  await confirmation.getByRole('button', { name: 'Delete destination', exact: true }).click();
   await expect(editor).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Set up sending', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Add destination', exact: true })).toBeVisible();
   expect(app.sendingDeletionRequests).toEqual(Array(2).fill({ revision: 'fixture-revision' }));
   expect(writes).toHaveLength(0);
 });
@@ -442,15 +517,15 @@ test('sending configuration deletion locks duplicate actions and dismissal, pres
 test('fresh sending settings omit deletion while retained credentials remain deletable', async ({ page }) => {
   const app = await openApp(page);
   await page.getByRole('tab', { name: 'Send from here', exact: true }).click();
-  await page.getByRole('button', { name: 'Set up sending', exact: true }).click();
-  const editor = page.getByRole('dialog', { name: 'Sending settings', exact: true });
-  await expect(editor.getByRole('button', { name: 'Delete configuration', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Add destination', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: /^(Add destination|Destination settings)$/, exact: true });
+  await expect(editor.getByRole('button', { name: 'Delete destination', exact: true })).toHaveCount(0);
   await editor.getByRole('button', { name: 'Cancel', exact: true }).click();
   app.updateSenderConnection({ credential_configured: true });
   const previousReads = app.reads();
   await expect.poll(() => app.reads(), { timeout: 7000 }).toBeGreaterThan(previousReads);
-  await page.getByRole('button', { name: 'Set up sending', exact: true }).click();
-  await expect(editor.getByRole('button', { name: 'Delete configuration', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Settings for Demo receiver', exact: true }).click();
+  await expect(editor.getByRole('button', { name: 'Delete destination', exact: true })).toBeVisible();
 });
 
 test('new credential is announced and guarded until its secret is copied', async ({ page }) => {
@@ -644,14 +719,14 @@ test('polling refreshes status and restores a focused remote action', async ({ p
     'Destination', 'Selected feeds', 'Authentication', 'Last connected'
   ]);
   await expect(outbound.locator('.ui-fact-list dd').first()).toHaveText('remote.example.test:53800');
-  await expect(outbound.locator('[data-remote-action="sender-connection"]')).toHaveText('Sending settings');
+  await expect(outbound.locator(`[data-remote-action="destination:${destinationId}"]`)).toHaveText('Settings');
   await expect(outbound.locator('.ui-fact-list dd').nth(1)).toContainText(/\b2\b/);
   await expect(outbound.locator('.ui-fact-list dd').nth(2)).toHaveText('Credential saved');
   await expect(outbound.locator('.ui-fact-list dd').nth(3)).toHaveText('Never');
   expect(await handle.evaluate((element) => element.isConnected)).toBe(false);
   await expect(action).toBeFocused();
   await sendTab.click();
-  await expect(outbound.getByRole('button', { name: 'Sending settings', exact: true })).toBeVisible();
+  await expect(outbound.getByRole('button', { name: 'Settings for Demo receiver', exact: true })).toBeVisible();
   await expect(incoming).toBeHidden();
   const sendTabHandle = await sendTab.elementHandle();
   await sendTab.focus();
@@ -828,8 +903,8 @@ test('one-time credential transition cannot submit a second creation request', a
 const editorSpacingCases = [
   { key: 'listener', open: 'Receive settings', title: 'Receive settings', field: 'Bind address',
     value: '127.0.0.1', action: 'Save listener', endpoint: '/listener' },
-  { key: 'outbound', open: 'Set up sending', title: 'Sending settings', field: 'Destination host',
-    value: 'remote.example.test', action: 'Save sender', endpoint: '/sender-connection' },
+  { key: 'outbound', open: 'Add destination', title: 'Add destination', field: 'Destination name',
+    value: 'Debug receiver', action: 'Save destination', endpoint: '/destinations' },
   { key: 'create', open: 'Add sender', title: 'Add sender', field: 'Sender name',
     value: 'Synthetic dispatch', action: 'Create credential', endpoint: '/senders' },
   { key: 'sender', open: 'Settings for Field receiver', title: 'Sender settings', field: 'Sender name',

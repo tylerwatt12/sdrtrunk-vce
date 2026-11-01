@@ -141,7 +141,10 @@ export function createRemoteLinksWorkspace(deps) {
   function facts(items) {
     const list = node('dl', 'ui-fact-list remote-links-facts');
     items.forEach(([label, value]) => {
-      list.append(node('dt', '', label), node('dd', '', value == null || value === '' ? '—' : String(value)));
+      const detail = node('dd');
+      if (value?.nodeType) detail.append(value);
+      else detail.textContent = value == null || value === '' ? '—' : String(value);
+      list.append(node('dt', '', label), detail);
     });
     return list;
   }
@@ -171,7 +174,7 @@ export function createRemoteLinksWorkspace(deps) {
     flow.append(receive ? endpoint('Other installations', 'Send their P25 feeds', 'icon-network-visualizer') :
       endpoint('This receiver', 'Your local P25 feeds', 'icon-radio-tower', true), arrow,
     receive ? endpoint('This receiver', 'Receives remote feeds', 'icon-radio-tower', true) :
-      endpoint('Destination receiver', 'One other installation', 'icon-server'));
+      endpoint('Destination receivers', 'Selected installations', 'icon-server'));
     return flow;
   }
 
@@ -212,32 +215,62 @@ export function createRemoteLinksWorkspace(deps) {
     return card;
   }
 
+  function senderConnections() {
+    if (Array.isArray(snapshot.sender_connections)) return snapshot.sender_connections;
+    const legacy = snapshot.sender_connection || {};
+    return legacy.destination_host || legacy.sender_id || legacy.credential_configured ?
+      [{ destination_id: '00000000-0000-4000-8000-000000000001', display_name: 'Destination', ...legacy }] : [];
+  }
+
   function drawSenderConnection(connection) {
     const selected = Array.isArray(connection.exported_channel_configuration_ids) ?
       connection.exported_channel_configuration_ids.length : 0;
+    const name = connection.display_name || connection.destination_host || 'Destination';
+    const card = node('article', 'remote-links-destination-card ui-record-section');
+    const header = node('header', 'remote-links-sender-header ui-record-card-header');
+    const settings = button('Settings', () => openSenderConnection(connection), false,
+      `destination:${connection.destination_id}`);
+    settings.setAttribute('aria-label', `Settings for ${name}`);
+    header.append(node('strong', 'remote-links-sender-name', name), status(connection.state), settings);
+    const body = node('div', 'ui-record-card-body');
+    const destination = node('span');
+    if (connection.destination_host && connection.destination_port) {
+      destination.append(connection.destination_host, node('wbr'), `:${connection.destination_port}`);
+    } else destination.textContent = 'Not configured';
+    body.append(facts([
+      ['Destination', destination], ['Selected feeds', selected],
+      ['Authentication', connection.credential_configured ? 'Credential saved' : 'Not configured'],
+      ['Last connected', age(connection.last_connected_at_ms)]
+    ]));
+    if (connection.status_message) body.append(notice(connection.status_message,
+      ['ERROR', 'AUTHENTICATION_FAILED'].includes(stateKey(connection.state)) ? 'danger' : 'warning'));
+    card.append(header, body);
+    return card;
+  }
+
+  function drawSenderConnections() {
+    const connections = senderConnections();
     const card = node('section', 'remote-links-card ui-surface');
     card.dataset.remoteDirection = 'send';
     card.setAttribute('aria-label', 'Send from here');
-    const destination = connection.destination_host && connection.destination_port ?
-      `${connection.destination_host}:${connection.destination_port}` : 'Not configured';
-    const details = facts([
-      ['Destination', destination],
-      ['Selected feeds', selected],
-      ['Authentication', connection.credential_configured ? 'Credential saved' : 'Not configured'],
-      ['Last connected', age(connection.last_connected_at_ms)]
-    ]);
-    card.append(heading('Send from here', 'icon-upload', connection.state));
+    card.append(heading('Send from here', 'icon-upload'));
     const body = node('div', 'ui-section-body');
     body.append(directionFlow(false));
-    if (!connection.destination_host) body.append(node('p', 'ui-section-note',
-      'Create a trusted sender on the destination receiver, then enter its credentials here and choose the local P25 feeds to send.'));
-    else body.append(details);
-    if (connection.status_message) body.append(notice(connection.status_message,
-      ['ERROR', 'AUTHENTICATION_FAILED'].includes(stateKey(connection.state)) ? 'danger' : 'warning'));
-    const actions = node('footer', 'remote-links-card-actions ui-action-row');
-    actions.append(button(connection.destination_host ? 'Sending settings' : 'Set up sending',
-      openSenderConnection, !connection.destination_host, 'sender-connection'));
-    body.append(actions);
+    const header = node('div', 'remote-links-section-header');
+    const connected = connections.filter(connection => stateKey(connection.state) === 'CONNECTED').length;
+    const copy = node('div', 'ui-heading-group');
+    copy.append(node('h3', '', 'Destination receivers'),
+      node('p', 'muted', `${connected} connected · ${connections.length} of 8 destinations`));
+    const add = button('Add destination', () => openSenderConnection(), true, 'add-destination');
+    add.prepend(iconGlyph('icon-plus'));
+    add.disabled = connections.length >= 8;
+    header.append(copy, add);
+    body.append(header);
+    if (connections.length) {
+      const list = node('div', 'ui-record-card');
+      list.append(...connections.map(drawSenderConnection));
+      body.append(list);
+    } else body.append(notice('Create a trusted sender on each destination receiver, then add its credentials and choose the local P25 feeds to send.'));
     card.append(body);
     return card;
   }
@@ -325,7 +358,7 @@ export function createRemoteLinksWorkspace(deps) {
       senderHost.replaceChildren(empty);
     }
     directionPanels.get('receive').replaceChildren(restartNotice, drawListener(snapshot.listener || {}));
-    directionPanels.get('send').replaceChildren(drawSenderConnection(snapshot.sender_connection || {}));
+    directionPanels.get('send').replaceChildren(drawSenderConnections());
     freshness.textContent = 'Status updated just now';
   }
 
@@ -497,10 +530,12 @@ export function createRemoteLinksWorkspace(deps) {
     { modalSize: 'compact', fieldLayout: 'network' });
   }
 
-  function openSenderConnection() {
-    const current = snapshot.sender_connection || {};
+  function openSenderConnection(current = {}) {
+    const existing = Boolean(current.destination_id);
+    const name = input('text', current.display_name || '');
+    name.required = true; name.maxLength = 120;
     const enabled = uiToggleField('Enable sending', Boolean(current.enabled),
-      'Enable sending', 'Send selected local P25 feeds to one destination receiver.');
+      'Enable sending', 'Send selected local P25 feeds to this destination.');
     const destination = input('text', current.destination_host || '');
     destination.maxLength = 255;
     const port = input('number', current.destination_port || 53800);
@@ -513,7 +548,10 @@ export function createRemoteLinksWorkspace(deps) {
     const choices = node('fieldset', 'remote-links-export-list ui-form-section');
     choices.append(node('legend', '', 'Local P25 feeds to send'));
     const selected = new Set(current.exported_channel_configuration_ids || []);
-    const options = snapshot.export_channel_options || [];
+    const options = [...(snapshot.export_channel_options || [])];
+    for (const id of selected) if (!options.some(option => option.channel_configuration_id === id)) {
+      options.push({ channel_configuration_id: id, name: `Unavailable feed (${id})` });
+    }
     if (!options.length) choices.append(node('p', 'muted', 'No saved P25 trunked channels are eligible for export.'));
     options.forEach((option) => {
       const label = node('label', 'remote-links-export-choice');
@@ -532,27 +570,25 @@ export function createRemoteLinksWorkspace(deps) {
     };
     senderEnabled.addEventListener('change', syncRequired);
     syncRequired();
-    const configured = current.enabled || current.destination_host || current.sender_id ||
-      current.credential_configured || selected.size > 0 ||
-      (Number(current.destination_port) > 0 && Number(current.destination_port) !== 53800);
-    const remove = configured ? button('Delete configuration') : null;
+    const remove = existing ? button('Delete destination') : null;
     if (remove) remove.className = 'ui-button ui-button-danger';
-    const editor = submitModal('Sending settings', [notice('On the destination receiver, open Remote Links → Receive here → Add sender. Enter the credentials it provides below.'),
-      enabled, formField('Destination host', destination),
-      formField('Destination port', port), formField('Sender ID', senderId,
-        'Generated by the destination host.'), formField('Shared secret', secret,
-        current.credential_configured ? 'A credential is already saved. Enter a new one only to replace it.' :
-          'The destination host shows this secret once.'), choices], 'Save sender', () =>
-      write('/sender-connection', 'PUT', { revision: snapshot.revision,
+    const path = existing ? `/destinations/${pathPart(current.destination_id)}` : '/destinations';
+    const editor = submitModal(existing ? 'Destination settings' : 'Add destination',
+      [notice('On the destination receiver, open Remote Links → Receive here → Add sender. Enter the credentials it provides below.'),
+        formField('Destination name', name), enabled, formField('Destination host', destination),
+        formField('Destination port', port), formField('Sender ID', senderId,
+          'Generated by the destination host.'), formField('Shared secret', secret,
+          current.credential_configured ? 'A credential is already saved. Enter a new one only to replace it.' :
+            'The destination host shows this secret once.'), choices], 'Save destination', () =>
+      write(path, existing ? 'PUT' : 'POST', { revision: snapshot.revision, display_name: name.value.trim(),
         enabled: enabled.querySelector('input').checked, destination_host: destination.value.trim(),
         destination_port: Number(port.value), sender_id: senderId.value.trim(), secret: secret.value,
         exported_channel_configuration_ids: [...choices.querySelectorAll('input:checked')].map((item) => item.value) }),
       { danger: remove });
     if (editor && remove) bindRemovalAction(editor, remove, {
-      path: '/sender-connection',
-      question: 'Delete the sending configuration? This stops sending and clears the destination, saved credentials, and selected feeds.',
-      title: 'Delete sending configuration', confirmLabel: 'Delete configuration',
-      progress: 'Deleting sending configuration…'
+      path,
+      question: `Delete ${current.display_name || 'this destination'}? This stops sending to it and clears its saved credentials and selected feeds.`,
+      title: 'Delete destination', confirmLabel: 'Delete destination', progress: 'Deleting destination…'
     });
   }
 
