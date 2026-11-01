@@ -202,15 +202,25 @@
 }
 
 .tuners-detail-name {
-  display: flex;
+  display: grid;
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-1) var(--space-2);
   min-width: 0;
 }
 
 .tuners-detail-name > span {
+  grid-column: 1;
   overflow-wrap: anywhere;
+}
+
+.tuners-detail-name > button {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.tuners-detail-name:has(> span) > button {
+  grid-row: 1 / span 2;
 }
 
 .tuners-header-actions {
