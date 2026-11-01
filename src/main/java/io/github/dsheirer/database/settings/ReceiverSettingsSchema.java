@@ -16,7 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
-/** Active format-56 receiver settings stored as distinct typed application_settings rows. */
+/** Active format-68 receiver settings stored as distinct typed application_settings rows. */
 public final class ReceiverSettingsSchema
 {
     public static final String REMOTE_LINKS_KEY = "remote.links";
@@ -98,7 +98,7 @@ public final class ReceiverSettingsSchema
             JsonNode value = JSON.readTree(json);
             if(REMOTE_LINKS_KEY.equals(key))
             {
-                fields(value, "revision", "listenerEnabled", "bindAddress", "listenPort", "trustedSenders", "outbound");
+                fields(value, "revision", "listenerEnabled", "bindAddress", "listenPort", "trustedSenders", "destinations");
                 integer(value, "revision");
                 bool(value, "listenerEnabled");
                 text(value, "bindAddress", false);
@@ -115,17 +115,24 @@ public final class ReceiverSettingsSchema
                     integer(sender, "pairedAtMs");
                     bool(sender, "revoked");
                 }
-                JsonNode outbound = value.path("outbound");
-                fields(outbound, "enabled", "host", "port", "senderId", "secret", "exportedChannelIds");
-                bool(outbound, "enabled");
-                text(outbound, "host", false);
-                integer(outbound, "port");
-                text(outbound, "senderId", true);
-                text(outbound, "secret", true);
-                if(!outbound.path("exportedChannelIds").isArray()) throw invalid(key);
-                for(JsonNode channel: outbound.path("exportedChannelIds"))
+                if(!value.path("destinations").isArray()) throw invalid(key);
+                for(JsonNode destination: value.path("destinations"))
                 {
-                    if(!channel.isTextual()) throw invalid(key);
+                    fields(destination, "id", "name", "connection");
+                    text(destination, "id", false);
+                    text(destination, "name", false);
+                    JsonNode outbound = destination.path("connection");
+                    fields(outbound, "enabled", "host", "port", "senderId", "secret", "exportedChannelIds");
+                    bool(outbound, "enabled");
+                    text(outbound, "host", false);
+                    integer(outbound, "port");
+                    text(outbound, "senderId", true);
+                    text(outbound, "secret", true);
+                    if(!outbound.path("exportedChannelIds").isArray()) throw invalid(key);
+                    for(JsonNode channel: outbound.path("exportedChannelIds"))
+                    {
+                        if(!channel.isTextual()) throw invalid(key);
+                    }
                 }
                 RemoteLinkSettingsStore.validate(JSON.treeToValue(value, RemoteLinkSettingsStore.Settings.class));
             }

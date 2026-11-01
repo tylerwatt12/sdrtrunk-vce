@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.sql.SQLException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -31,6 +32,8 @@ public final class RemoteLinkSettingsStore
 {
     public static final String DEFAULT_BIND_ADDRESS = "0.0.0.0";
     public static final String SETTINGS_KEY = ReceiverSettingsSchema.REMOTE_LINKS_KEY;
+    public static final int MAXIMUM_DESTINATIONS = 8;
+    public static final String LEGACY_DESTINATION_ID = "00000000-0000-4000-8000-000000000001";
     private static final int MAXIMUM_SETTINGS_BYTES = 256_000;
     private static final ObjectMapper JSON = new ObjectMapper();
     private final ApplicationSettingsStore mSettings;
@@ -98,7 +101,7 @@ public final class RemoteLinkSettingsStore
             List<TrustedSender> remaining = current.trustedSenders().stream()
                 .filter(sender -> !sender.senderId().equals(senderId)).toList();
             Settings expected = new Settings(current.revision() + 1, current.listenerEnabled(),
-                current.bindAddress(), current.listenPort(), remaining, current.outbound());
+                current.bindAddress(), current.listenPort(), remaining, current.destinations());
             if(remaining.size() == current.trustedSenders().size() || !expected.equals(next))
                 throw new IOException("Remote-link settings changed before sender removal");
             String json = JSON.writeValueAsString(next);
@@ -140,7 +143,27 @@ public final class RemoteLinkSettingsStore
                 throw new IOException("Remote-link settings are invalid");
             }
         }
-        Outbound outbound = settings.outbound();
+        if(settings.destinations().size() > MAXIMUM_DESTINATIONS)
+            throw new IOException("Too many Remote Link destinations");
+        Set<String> destinationIds = new HashSet<>();
+        List<Outbound> routes = new ArrayList<>();
+        for(Destination destination: settings.destinations())
+        {
+            if(destination == null || !validUuid(destination.id()) || !destinationIds.add(destination.id()) ||
+                destination.name() == null || destination.name().isBlank() || destination.name().length() > 120)
+                throw new IOException("Remote-link destination is invalid");
+            Outbound outbound = destination.connection();
+            validateOutbound(outbound);
+            if(outbound.senderId() != null && routes.stream().anyMatch(prior ->
+                outbound.senderId().equals(prior.senderId()) && outbound.host().equalsIgnoreCase(prior.host()) &&
+                    outbound.port() == prior.port()))
+                throw new IOException("Remote-link destination and sender ID are already configured");
+            routes.add(outbound);
+        }
+    }
+
+    private static void validateOutbound(Outbound outbound) throws IOException
+    {
         if(outbound == null || !validPort(outbound.port()) || outbound.host() == null ||
             outbound.host().length() > 255 ||
             outbound.exportedChannelIds().size() > RemoteWireMessages.MAXIMUM_FEEDS ||
@@ -207,24 +230,44 @@ public final class RemoteLinkSettingsStore
         }
     }
 
+    /** Stable administrator-owned destination identity, separate from its host-issued sender credential. */
+    public record Destination(String id, String name, Outbound connection)
+    {
+        @Override public String toString()
+        {
+            return "Destination[id=" + id + ", connection=REDACTED]";
+        }
+    }
+
     public record Settings(long revision, boolean listenerEnabled, String bindAddress, int listenPort,
-                           List<TrustedSender> trustedSenders, Outbound outbound)
+                           List<TrustedSender> trustedSenders, List<Destination> destinations)
     {
         public Settings
         {
             trustedSenders = trustedSenders != null ? List.copyOf(trustedSenders) : List.of();
-            outbound = outbound != null ? outbound : Outbound.disabled();
+            destinations = destinations != null ? List.copyOf(destinations) : List.of();
+        }
+
+        /** Source compatibility for single-destination callers; persisted legacy input is converted by the migrator. */
+        public Settings(long revision, boolean listenerEnabled, String bindAddress, int listenPort,
+                        List<TrustedSender> trustedSenders, Outbound outbound)
+        {
+            this(revision, listenerEnabled, bindAddress, listenPort, trustedSenders,
+                outbound == null || outbound.equals(Outbound.disabled()) ? List.of() :
+                    List.of(new Destination(LEGACY_DESTINATION_ID, "Destination", outbound)));
+        }
+
+        /** Source compatibility only. New destination operations address destinations by their stable ID. */
+        public Outbound outbound()
+        {
+            return destinations.isEmpty() ? Outbound.disabled() : destinations.getFirst().connection();
         }
 
         public static Settings defaults()
         {
-            return new Settings(1, false, DEFAULT_BIND_ADDRESS, 53_800, List.of(), Outbound.disabled());
+            return new Settings(1, false, DEFAULT_BIND_ADDRESS, 53_800, List.of(), List.of());
         }
 
-        @Override
-        public String toString()
-        {
-            return "Settings[revision=" + revision + ", credentials=REDACTED]";
-        }
+        @Override public String toString() { return "Remote Link settings[credentials redacted]"; }
     }
 }

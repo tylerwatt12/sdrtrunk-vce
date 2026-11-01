@@ -50,7 +50,7 @@ class Format66To67DatabaseMigrationTest
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
             assertEquals(ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
-            assertEquals(67, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(67, DatabaseFormatCatalog.inspect(connection).version());
             connection.rollback();
             assertEquals(66, DatabaseFormatCatalog.inspect(connection).version());
             assertEquals(before, preferences(connection));
@@ -60,6 +60,7 @@ class Format66To67DatabaseMigrationTest
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
         }
+        ApplicationDatabaseMigrator.migrateInPlace(database, null);
         ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
         assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
@@ -105,7 +106,7 @@ class Format66To67DatabaseMigrationTest
                     assertTrue(entry.getValue().revision() > 0);
                 }
                 assertEquals(retained, retainedRows(connection));
-                assertEquals(67, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(67, DatabaseFormatCatalog.inspect(connection).version());
             }
         }
     }

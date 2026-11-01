@@ -295,6 +295,14 @@ public final class CurrentFormatTestDatabase
     /** Frozen single-file comparisons stop at 62; full-current comparisons include later declared upgrades. */
     static Object retainedValue(String table, ResultSet rows, int column, int targetFormat) throws Exception
     {
+        if(targetFormat >= 68 && table.equals("application_settings") &&
+            rows.getString(1).equals("remote.links") && rows.getMetaData().getColumnName(column).equals("settings_json"))
+        {
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            String source = rows.getString(column);
+            return mapper.readTree(source).has("outbound") ?
+                mapper.writeValueAsString(Format67ReceiverSettingsSchema.readRemote(source)) : source;
+        }
         if(table.equals("web_user"))
         {
             String name = rows.getMetaData().getColumnName(column);

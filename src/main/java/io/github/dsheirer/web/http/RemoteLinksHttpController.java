@@ -35,6 +35,7 @@ import java.util.regex.Pattern;
 public final class RemoteLinksHttpController
 {
     public static final String PATH = "/api/v1/admin/remote-links";
+    private static final Pattern DESTINATION_PATH = Pattern.compile("^" + PATH + "/destinations/([^/]+)$");
     private static final Pattern SENDER_PATH = Pattern.compile("^" + PATH + "/senders/([^/]+)$");
     private static final Pattern FEED_PATH = Pattern.compile("^" + PATH + "/senders/([^/]+)/feeds/([^/]+)$");
     private static final int MAXIMUM_ID_CHARACTERS = 36;
@@ -137,6 +138,39 @@ public final class RemoteLinksHttpController
             return;
         }
 
+        if((PATH + "/destinations").equals(path))
+        {
+            requireMethod(exchange, method, "POST");
+            JsonNode body = destinationBody(exchange);
+            RemoteLinkSnapshot result = mService.createSenderConnection(revision(body), destinationUpdate(body, true));
+            WebHttpSupport.sendData(exchange, 201, snapshotDocument(result));
+            return;
+        }
+
+        Matcher destination = DESTINATION_PATH.matcher(path);
+        if(destination.matches())
+        {
+            String destinationId = decodedId(destination.group(1));
+            RemoteLinkSnapshot result;
+            if("PUT".equals(method))
+            {
+                JsonNode body = destinationBody(exchange);
+                result = mService.updateSenderConnection(revision(body), destinationId, destinationUpdate(body, true));
+            }
+            else if("DELETE".equals(method))
+            {
+                JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("revision"));
+                result = mService.removeSenderConnection(revision(body), destinationId);
+            }
+            else
+            {
+                WebHttpSupport.methodNotAllowed(exchange, "PUT, DELETE");
+                return;
+            }
+            WebHttpSupport.sendData(exchange, 200, snapshotDocument(result));
+            return;
+        }
+
         if((PATH + "/sender-connection").equals(path))
         {
             if("DELETE".equals(method))
@@ -151,19 +185,8 @@ public final class RemoteLinksHttpController
                 WebHttpSupport.methodNotAllowed(exchange, "PUT, DELETE");
                 return;
             }
-            JsonNode body = WebHttpSupport.readJsonObject(exchange, Set.of("revision", "enabled",
-                "destination_host", "destination_port", "sender_id", "secret",
-                "exported_channel_configuration_ids"));
-            boolean enabled = requiredBoolean(body, "enabled");
-            String secret = optionalText(body, "secret", MAXIMUM_SECRET_CHARACTERS);
-            RemoteLinkSnapshot result = mService.updateSenderConnection(revision(body),
-                new SenderConnectionUpdate(enabled,
-                    enabled ? requiredText(body, "destination_host", MAXIMUM_HOST_CHARACTERS) :
-                        optionalText(body, "destination_host", MAXIMUM_HOST_CHARACTERS),
-                    port(body, "destination_port"), enabled ? requiredText(body, "sender_id", MAXIMUM_ID_CHARACTERS) :
-                        optionalText(body, "sender_id", MAXIMUM_ID_CHARACTERS),
-                    secret, textList(body, "exported_channel_configuration_ids", MAXIMUM_EXPORT_CHANNELS,
-                    MAXIMUM_ID_CHARACTERS)));
+            JsonNode body = destinationBody(exchange);
+            RemoteLinkSnapshot result = mService.updateSenderConnection(revision(body), destinationUpdate(body, false));
             WebHttpSupport.sendData(exchange, 200, snapshotDocument(result));
             return;
         }
@@ -223,6 +246,26 @@ public final class RemoteLinksHttpController
         }
 
         WebHttpSupport.notFound(exchange);
+    }
+
+    private static JsonNode destinationBody(HttpExchange exchange) throws IOException, WebHttpSupport.RequestException
+    {
+        return WebHttpSupport.readJsonObject(exchange, Set.of("revision", "display_name", "enabled",
+            "destination_host", "destination_port", "sender_id", "secret", "exported_channel_configuration_ids"));
+    }
+
+    private static SenderConnectionUpdate destinationUpdate(JsonNode body, boolean requireName)
+        throws WebHttpSupport.RequestException
+    {
+        boolean enabled = requiredBoolean(body, "enabled");
+        return new SenderConnectionUpdate(requireName ? requiredText(body, "display_name", MAXIMUM_NAME_CHARACTERS) :
+            optionalText(body, "display_name", MAXIMUM_NAME_CHARACTERS), enabled,
+            enabled ? requiredText(body, "destination_host", MAXIMUM_HOST_CHARACTERS) :
+                optionalText(body, "destination_host", MAXIMUM_HOST_CHARACTERS),
+            port(body, "destination_port"), enabled ? requiredText(body, "sender_id", MAXIMUM_ID_CHARACTERS) :
+                optionalText(body, "sender_id", MAXIMUM_ID_CHARACTERS),
+            optionalText(body, "secret", MAXIMUM_SECRET_CHARACTERS),
+            textList(body, "exported_channel_configuration_ids", MAXIMUM_EXPORT_CHANNELS, MAXIMUM_ID_CHARACTERS));
     }
 
     private static void requireMethod(HttpExchange exchange, String actual, String required) throws IOException
@@ -359,6 +402,8 @@ public final class RemoteLinksHttpController
         value.put("restart_required", snapshot.restartRequired());
         value.put("listener", listenerDocument(snapshot.listener()));
         value.put("sender_connection", senderConnectionDocument(snapshot.senderConnection()));
+        value.put("sender_connections", snapshot.senderConnections().stream()
+            .map(RemoteLinksHttpController::senderConnectionDocument).toList());
         value.put("export_channel_options", snapshot.exportChannelOptions().stream().map(option -> Map.of(
             "channel_configuration_id", safe(option.channelConfigurationId()),
             "name", safe(option.name()), "system_name", safe(option.systemName()),
@@ -392,6 +437,8 @@ public final class RemoteLinksHttpController
         RemoteLinkAdministrationService.SenderConnectionSnapshot connection)
     {
         LinkedHashMap<String,Object> value = new LinkedHashMap<>();
+        put(value, "destination_id", connection.destinationId());
+        put(value, "display_name", connection.displayName());
         value.put("enabled", connection.enabled());
         put(value, "destination_host", connection.destinationHost());
         value.put("destination_port", connection.destinationPort());

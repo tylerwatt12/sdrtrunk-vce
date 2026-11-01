@@ -9,6 +9,7 @@ import io.github.dsheirer.database.SdrTrunkDatabase;
 import io.github.dsheirer.database.SdrTrunkTestDatabase;
 import io.github.dsheirer.database.settings.ApplicationSettingsStore;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.Outbound;
+import io.github.dsheirer.remote.RemoteLinkSettingsStore.Destination;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.Settings;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.TrustedSender;
 import java.io.IOException;
@@ -94,9 +95,10 @@ class RemoteLinkSettingsStoreTest
         {
             statement.setString(1, "{\"revision\":2,\"listenerEnabled\":false," +
                 "\"bindAddress\":\"127.0.0.1\",\"listenPort\":53800," +
-                "\"trustedSenders\":[],\"outbound\":{\"enabled\":false," +
+                "\"trustedSenders\":[],\"destinations\":[{\"id\":\"00000000-0000-4000-8000-000000000001\"," +
+                "\"name\":\"Destination\",\"connection\":{\"enabled\":false," +
                 "\"host\":\"\",\"port\":53800,\"senderId\":null," +
-                "\"secret\":{\"sensitive-sentinel\":1},\"exportedChannelIds\":[]}}");
+                "\"secret\":{\"sensitive-sentinel\":1},\"exportedChannelIds\":[]}}]}");
             statement.setString(2, RemoteLinkSettingsStore.SETTINGS_KEY);
             assertEquals(1, statement.executeUpdate());
         }
@@ -185,6 +187,55 @@ class RemoteLinkSettingsStoreTest
         assertNull(error.getCause());
         assertEquals(0, error.getSuppressed().length);
         assertEquals(original, new RemoteLinkSettingsStore(database).load());
+    }
+
+    @Test
+    void preservesIndependentNamedDestinationsAndRejectsDuplicateIdsOrOverflow() throws Exception
+    {
+        Path database = database();
+        var store = new RemoteLinkSettingsStore(database);
+        String sender = UUID.randomUUID().toString();
+        Destination first = new Destination(UUID.randomUUID().toString(), "Demo",
+            new Outbound(true, "demo.invalid", 53800, sender, "synthetic-demo-key", List.of(UUID.randomUUID().toString())));
+        Destination second = new Destination(UUID.randomUUID().toString(), "Debug",
+            new Outbound(false, "debug.invalid", 53801, UUID.randomUUID().toString(), "synthetic-debug-key",
+                first.connection().exportedChannelIds()));
+        Settings expected = new Settings(5, false, "0.0.0.0", 53800, List.of(), List.of(first, second));
+        store.save(expected);
+        assertEquals(expected, store.load());
+        assertFalse(first.toString().contains("synthetic-demo-key"));
+        assertThrows(IOException.class, () -> store.save(new Settings(6, false, "0.0.0.0", 53800,
+            List.of(), List.of(first, new Destination(first.id(), second.name(), second.connection())))));
+        var overflow = IntStream.range(0, RemoteLinkSettingsStore.MAXIMUM_DESTINATIONS + 1)
+            .mapToObj(index -> new Destination(UUID.randomUUID().toString(), "Destination " + index, first.connection())).toList();
+        assertThrows(IOException.class, () -> store.save(new Settings(6, false, "0.0.0.0", 53800, List.of(), overflow)));
+        assertEquals(expected, store.load());
+    }
+
+    @Test
+    void rejectsDuplicateDestinationSessionsAndAllowsIndependentPairingsOrUnconfiguredDestinations() throws Exception
+    {
+        var store = new RemoteLinkSettingsStore(database());
+        String sender = UUID.randomUUID().toString();
+        Destination first = new Destination(UUID.randomUUID().toString(), "First",
+            new Outbound(true, "example.invalid", 53800, sender, "synthetic-first-key", List.of()));
+        Settings original = new Settings(2, false, "0.0.0.0", 53800, List.of(), List.of(first));
+        store.save(original);
+        Destination duplicate = new Destination(UUID.randomUUID().toString(), "Duplicate",
+            new Outbound(false, "EXAMPLE.invalid", 53800, sender, "synthetic-duplicate-key", List.of()));
+        assertThrows(IOException.class, () -> store.save(new Settings(3, false, "0.0.0.0", 53800,
+            List.of(), List.of(first, duplicate))));
+        assertEquals(original, store.load());
+        Destination otherPairing = new Destination(duplicate.id(), "Other pairing",
+            new Outbound(true, "EXAMPLE.invalid", 53800, UUID.randomUUID().toString(), "synthetic-second-key", List.of()));
+        Settings distinct = new Settings(3, false, "0.0.0.0", 53800, List.of(), List.of(first, otherPairing));
+        store.save(distinct);
+        assertEquals(distinct, store.load());
+        Settings unconfigured = new Settings(4, false, "0.0.0.0", 53800, List.of(), List.of(
+            new Destination(first.id(), "First", Outbound.disabled()),
+            new Destination(otherPairing.id(), "Second", Outbound.disabled())));
+        store.save(unconfigured);
+        assertEquals(unconfigured, store.load());
     }
 
     private Path database() throws Exception

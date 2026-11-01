@@ -71,7 +71,7 @@ final class LegacyReceiverSettingsMigration
                     current = JSON.createObjectNode().put("enabled", legacy.path("enabled").booleanValue());
                 }
                 String value = JSON.writeValueAsString(current);
-                ReceiverSettingsSchema.validateJson(key, value);
+                Format67ReceiverSettingsSchema.validateJson(key, value);
                 values.put(key, value);
             }
             catch(IOException | SQLException | RuntimeException failure)
@@ -110,8 +110,8 @@ final class LegacyReceiverSettingsMigration
                 {
                     if(!row.next()) continue;
                     String current = row.getString(1);
-                    ReceiverSettingsSchema.validateJson(key, current);
-                    if(JSON.readTree(current).equals(JSON.readTree(ReceiverSettingsSchema.defaultJson(key))))
+                    String normalized = currentJson(key, current);
+                    if(JSON.readTree(normalized).equals(JSON.readTree(ReceiverSettingsSchema.defaultJson(key))))
                         defaults.add(key);
                 }
             }
@@ -157,7 +157,7 @@ final class LegacyReceiverSettingsMigration
             try
             {
                 String json = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-                ReceiverSettingsSchema.validateJson(key, json);
+                Format67ReceiverSettingsSchema.validateJson(key, json);
                 values.put(key, json);
             }
             catch(SQLException | RuntimeException failure) { throw invalid(artifact.label()); }
@@ -197,6 +197,18 @@ final class LegacyReceiverSettingsMigration
             return bytes;
         }
         catch(IOException | RuntimeException failure) { throw invalid(label); }
+    }
+
+    /** Compatibility normalization is confined to the explicit migrator recovery boundary. */
+    private static String currentJson(String key, String value) throws SQLException, IOException
+    {
+        if(ReceiverSettingsSchema.REMOTE_LINKS_KEY.equals(key) && JSON.readTree(value).has("outbound"))
+        {
+            Format67ReceiverSettingsSchema.validateJson(key, value);
+            return JSON.writeValueAsString(Format67ReceiverSettingsSchema.readRemote(value));
+        }
+        ReceiverSettingsSchema.validateJson(key, value);
+        return value;
     }
 
     private static Artifact artifact(String key) throws IOException
@@ -259,14 +271,16 @@ final class LegacyReceiverSettingsMigration
                 Artifact artifact = artifact(expected.getKey());
                 String imported = values.get(expected.getKey());
                 if(imported == null) throw invalid(artifact.label());
+                int version = DatabaseFormatCatalog.inspectForMigration(connection).version();
                 try(var query = connection.prepareStatement("SELECT settings_json FROM application_settings WHERE key=?"))
                 {
                     query.setString(1, expected.getKey());
                     try(var row = query.executeQuery())
                     {
-                        if(!row.next() || !JSON.readTree(expected.getValue()).equals(JSON.readTree(
+                        if(!row.next() || !JSON.readTree(currentJson(expected.getKey(), expected.getValue())).equals(JSON.readTree(
                             ReceiverSettingsSchema.defaultJson(expected.getKey()))) ||
-                            !JSON.readTree(expected.getValue()).equals(JSON.readTree(row.getString(1))))
+                            !JSON.readTree(currentJson(expected.getKey(), expected.getValue())).equals(
+                                JSON.readTree(currentJson(expected.getKey(), row.getString(1)))))
                             throw new IOException(artifact.label() + " database settings changed; review recovery before trying again");
                     }
                 }
@@ -277,7 +291,7 @@ final class LegacyReceiverSettingsMigration
                 try(var update = connection.prepareStatement(
                     "UPDATE application_settings SET settings_json=?,updated_at_ms=? WHERE key=?"))
                 {
-                    update.setString(1, imported);
+                    update.setString(1, version >= 68 ? currentJson(expected.getKey(), imported) : imported);
                     update.setLong(2, System.currentTimeMillis());
                     update.setString(3, expected.getKey());
                     recovered += update.executeUpdate();

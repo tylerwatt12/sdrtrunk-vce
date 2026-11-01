@@ -25,6 +25,7 @@ import io.github.dsheirer.module.decode.p25.phase1.P25P1NACPreloadDataContent;
 import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.phase2.enumeration.ScrambleParameters;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.Outbound;
+import io.github.dsheirer.remote.RemoteLinkSettingsStore.Destination;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.Settings;
 import io.github.dsheirer.remote.RemoteLinkSettingsStore.TrustedSender;
 import io.github.dsheirer.remote.RemoteWireProtocol.Frame;
@@ -49,7 +50,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -58,6 +58,8 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.LockSupport;
+import io.github.dsheirer.util.concurrent.BoundedMpscReferenceQueue;
 import java.util.function.UnaryOperator;
 import java.util.function.Consumer;
 
@@ -82,8 +84,9 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private final ChannelAdministrationService mChannels;
     private final ChannelProcessingManager mProcessing;
     private final RemoteLinkSettingsStore mStore;
-    private final ArrayBlockingQueue<OutboundEvent> mOutboundPackets =
-        new ArrayBlockingQueue<>(OUTBOUND_PACKET_CAPACITY);
+    private final BoundedMpscReferenceQueue<OutboundEvent> mOutboundPackets =
+        new BoundedMpscReferenceQueue<>(OUTBOUND_PACKET_CAPACITY);
+    private final AtomicLong mOutboundEpoch = new AtomicLong();
     private final Map<String,PeerState> mPeers = new ConcurrentHashMap<>();
     private final Set<String> mRemovingSenders = ConcurrentHashMap.newKeySet();
     private final Map<Channel,ActiveChain> mActiveChains = new ConcurrentHashMap<>();
@@ -92,7 +95,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private final Map<StreamKey,RemoteP25BitstreamSource> mOpeningSources = new ConcurrentHashMap<>();
     private final Map<StreamKey,BoundStream> mOpenSources = new ConcurrentHashMap<>();
     private final Object mPeerAdmissionLock = new Object();
-    private final Object mOutboundLifecycleLock = new Object();
+    private final Map<String,DestinationRuntime> mDestinations = new ConcurrentHashMap<>();
     private final Set<String> mCatalogSetupDirty = ConcurrentHashMap.newKeySet();
     private final Set<String> mCatalogSetupRunning = ConcurrentHashMap.newKeySet();
     private final Object mChannelIndexLock = new Object();
@@ -106,20 +109,17 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     };
     private volatile Map<String,SavedChannel> mSavedChannels = Map.of();
     private final AtomicBoolean mClosed = new AtomicBoolean();
+    private final AtomicBoolean mStarted = new AtomicBoolean();
     private final AtomicBoolean mCatalogDirty = new AtomicBoolean();
+    private final AtomicBoolean mOutboundLifecycleLost = new AtomicBoolean();
     private volatile Settings mSettings;
     private volatile boolean mRemovalInProgress;
     private volatile boolean mRemovalRestartRequired;
     private volatile RemoteLinkTransport.Server mServer;
-    private volatile RemoteLinkTransport.Connection mOutbound;
     private volatile ListenerState mListenerState = ListenerState.STOPPED;
-    private volatile SenderConnectionState mOutboundState = SenderConnectionState.DISABLED;
     private volatile String mListenerStatus;
-    private volatile String mOutboundStatus;
-    private volatile long mLastOutboundConnectionMs;
     private volatile OriginSnapshot mOriginSnapshot = OriginSnapshot.EMPTY;
     private final Thread mPublisher;
-    private final Thread mConnector;
 
     public RemoteConnectivityService(ConfigurationManager configuration)
         throws IOException
@@ -139,16 +139,16 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         mConfiguration.getChannelModel().addListener(mSavedChannelListener);
         mConfiguration.getAliasModel().addChangeListener(mAliasListListener);
         mPublisher = Thread.ofPlatform().daemon().name("remote-p25-publisher").unstarted(this::publishLoop);
-        mConnector = Thread.ofPlatform().daemon().name("remote-p25-connector").unstarted(this::connectLoop);
+        reconcileDestinations();
     }
 
     /** Start after saved channels are loaded, before auto-start processing begins. */
     public void start()
     {
-        if(mClosed.get()) return;
+        if(mClosed.get() || !mStarted.compareAndSet(false, true)) return;
         refreshListener();
         mPublisher.start();
-        mConnector.start();
+        mDestinations.values().forEach(DestinationRuntime::start);
         publishOriginSnapshot();
     }
 
@@ -280,31 +280,32 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         }
     }
 
+    private boolean wantsExport(String channelId)
+    {
+        return !mClosed.get() && mDestinations.values().stream().anyMatch(destination ->
+        {
+            OutboundSession session = destination.session;
+            return session != null && session.connection.isOpen() &&
+                destination.configuration.connection().exportedChannelIds().contains(channelId);
+        });
+    }
+
     private void refreshExports()
     {
         synchronized(mExports)
         {
-            Settings settings = mSettings;
-            RemoteLinkTransport.Connection connection = mOutbound;
-            Set<String> selected = Set.copyOf(settings.outbound().exportedChannelIds());
             for(Map.Entry<Channel,ExportStream> entry: Map.copyOf(mExports).entrySet())
             {
                 ActiveChain active = mActiveChains.get(entry.getKey());
-                if(connection == null || !connection.isOpen() ||
-                    !connection.sessionId().equals(entry.getValue().sessionId) ||
-                    !selected.contains(entry.getKey().getConfigurationId()) ||
-                    active == null || active.chain() != entry.getValue().chain)
+                if(!wantsExport(entry.getKey().getConfigurationId()) || active == null ||
+                    active.chain() != entry.getValue().chain)
                 {
                     if(mExports.remove(entry.getKey(), entry.getValue())) entry.getValue().close();
                 }
             }
-            if(connection != null)
-            {
-                mActiveChains.values().stream()
-                    .sorted(Comparator.comparing((ActiveChain active) -> active.channel().isStandardChannel())
-                        .reversed())
-                    .forEach(this::startExportIfEligible);
-            }
+            mActiveChains.values().stream()
+                .sorted(Comparator.comparing((ActiveChain active) -> active.channel().isStandardChannel()).reversed())
+                .forEach(this::startExportIfEligibleLocked);
         }
     }
 
@@ -319,25 +320,13 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     private void startExportIfEligibleLocked(ActiveChain active)
     {
         Channel channel = active.channel();
-        if(mActiveChains.get(channel) != active || mOutbound == null ||
-            !mSettings.outbound().exportedChannelIds().contains(channel.getConfigurationId()) ||
+        if(mActiveChains.get(channel) != active || !wantsExport(channel.getConfigurationId()) ||
             channel.getSourceConfiguration() instanceof SourceConfigRemote ||
             !(channel.getDecodeConfiguration().getDecoderType() == DecoderType.P25_PHASE1 ||
                 channel.getDecodeConfiguration().getDecoderType() == DecoderType.P25_PHASE2) ||
-            mExports.containsKey(channel))
-        {
-            return;
-        }
-        RemoteLinkTransport.Connection connection = mOutbound;
-        if(connection == null) return;
-        ExportStream export = new ExportStream(channel, active.chain(), connection.sessionId());
-        if(mExports.putIfAbsent(channel, export) != null) return;
+            mExports.containsKey(channel)) return;
         long frequency = active.chain().getSource() != null ? active.chain().getSource().getFrequency() : 0L;
-        if(frequency <= 0)
-        {
-            mExports.remove(channel, export);
-            return;
-        }
+        if(frequency <= 0) return;
         Integer nac = null;
         if(active.request() != null)
         {
@@ -364,21 +353,17 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                 channel.getDecodeConfiguration().getDecoderType() == DecoderType.P25_PHASE2 &&
                     (nac == null || wacn == null || systemId == null)))
         {
-            mExports.remove(channel, export);
             return;
         }
-        RemoteWireMessages.Open open = new RemoteWireMessages.Open(export.streamId,
-            channel.getConfigurationId(), channel.isStandardChannel(),
-            channel.getDecodeConfiguration().getDecoderType() == DecoderType.P25_PHASE2 ? "PHASE_2" : "PHASE_1",
-            frequency, export.generation, System.currentTimeMillis(), nac, wacn, systemId);
-        if(!mOutboundPackets.offer(new OutboundOpen(export.sessionId, open)))
+        ExportStream export = new ExportStream(channel, active.chain(), nac, wacn, systemId);
+        if(mExports.putIfAbsent(channel, export) != null) return;
+        if(!offerOutbound(new OutboundOpen(export, mOutboundEpoch.get())))
         {
             mExports.remove(channel, export);
-            if(connection != null) connection.close();
             return;
         }
         active.chain().addDemodulatedBitstreamListener(export.listener);
-        if(mActiveChains.get(channel) != active || mOutbound != connection || !connection.isOpen())
+        if(mActiveChains.get(channel) != active || !wantsExport(channel.getConfigurationId()))
         {
             mExports.remove(channel, export);
             export.close();
@@ -398,13 +383,20 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
                 channel.name(), channel.system(), channel.site(), channel.decoderDisplay())).toList();
         List<SenderSnapshot> senders = settings.trustedSenders().stream()
             .map(sender -> senderSnapshot(sender, aliases)).toList();
-        Outbound outbound = settings.outbound();
+        List<SenderConnectionSnapshot> connections = settings.destinations().stream().map(destination ->
+        {
+            DestinationRuntime runtime = mDestinations.get(destination.id());
+            Outbound outbound = destination.connection();
+            return new SenderConnectionSnapshot(destination.id(), destination.name(), outbound.enabled(),
+                outbound.host(), outbound.port(), outbound.senderId(),
+                outbound.secret() != null && !outbound.secret().isBlank(),
+                runtime != null ? runtime.state : SenderConnectionState.DISABLED,
+                runtime != null ? runtime.lastConnectedAtMs : 0L, runtime != null ? runtime.status : null,
+                outbound.exportedChannelIds());
+        }).toList();
         return new RemoteLinkSnapshot(settings.revision(), new ListenerSnapshot(settings.listenerEnabled(),
             settings.bindAddress(), settings.listenPort(), mListenerState, mListenerStatus, List.of()),
-            new SenderConnectionSnapshot(outbound.enabled(), outbound.host(), outbound.port(), outbound.senderId(),
-                outbound.secret() != null && !outbound.secret().isBlank(), mOutboundState,
-                mLastOutboundConnectionMs, mOutboundStatus, outbound.exportedChannelIds()),
-            exports, aliases, senders, mRemovalRestartRequired);
+            connections, exports, aliases, senders, mRemovalRestartRequired);
     }
 
     @Override
@@ -422,7 +414,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         requirePort(request.port());
         Settings old = mSettings;
         replaceSettings(new Settings(old.revision() + 1, request.enabled(), bind, request.port(),
-            old.trustedSenders(), old.outbound()));
+            old.trustedSenders(), old.destinations()));
         mListenerState = request.enabled() ? ListenerState.STARTING : ListenerState.STOPPED;
         mListenerStatus = null;
         Thread.ofVirtual().start(this::refreshListener);
@@ -430,11 +422,45 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     }
 
     @Override
-    public synchronized RemoteLinkSnapshot updateSenderConnection(long expectedRevision,
-                                                                     SenderConnectionUpdate request)
+    public synchronized RemoteLinkSnapshot updateSenderConnection(long expectedRevision, SenderConnectionUpdate request)
     {
         requireRevision(expectedRevision);
+        if(mSettings.destinations().isEmpty()) return createSenderConnection(expectedRevision, request);
+        return updateSenderConnection(expectedRevision, mSettings.destinations().getFirst().id(), request);
+    }
+
+    @Override
+    public synchronized RemoteLinkSnapshot createSenderConnection(long expectedRevision, SenderConnectionUpdate request)
+    {
+        requireRevision(expectedRevision);
+        if(mSettings.destinations().size() >= RemoteLinkSettingsStore.MAXIMUM_DESTINATIONS)
+            throw new IllegalArgumentException("The destination limit was reached");
+        Destination destination = destination(UUID.randomUUID().toString(), request, null);
+        List<Destination> next = new ArrayList<>(mSettings.destinations());
+        next.add(destination);
+        replaceDestinations(next);
+        return snapshot();
+    }
+
+    @Override
+    public synchronized RemoteLinkSnapshot updateSenderConnection(long expectedRevision, String destinationId,
+                                                                  SenderConnectionUpdate request)
+    {
+        requireRevision(expectedRevision);
+        String id = canonicalUuid(destinationId);
+        Destination prior = mSettings.destinations().stream().filter(value -> value.id().equals(id))
+            .findFirst().orElseThrow(NotFoundException::new);
+        Destination replacement = destination(id, request, prior);
+        replaceDestinations(mSettings.destinations().stream().map(value -> value.id().equals(id) ? replacement : value)
+            .toList());
+        return snapshot();
+    }
+
+    private Destination destination(String id, SenderConnectionUpdate request, Destination prior)
+    {
         Objects.requireNonNull(request);
+        String name = boundedText(request.displayName(), 120, "Destination name");
+        if(name.isBlank()) name = prior != null ? prior.name() : "Destination";
         String host = boundedText(request.destinationHost(), 255, "Destination host");
         requirePort(request.destinationPort());
         String senderId = canonicalUuid(request.senderId());
@@ -442,55 +468,70 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         Set<String> exported = new HashSet<>();
         for(String channelId: request.exportedChannelConfigurationIds())
         {
-            String id = canonicalUuid(channelId);
-            if(!exported.add(id) || !isExportableChannel(id))
-            {
+            String channel = canonicalUuid(channelId);
+            if(!exported.add(channel) || !isExportableChannel(channel))
                 throw new IllegalArgumentException("Select distinct saved P25 trunked channels to export");
-            }
         }
         if(exported.size() > RemoteWireMessages.MAXIMUM_FEEDS)
-        {
             throw new IllegalArgumentException("Too many exported channels");
-        }
         String secret = request.secret() != null && !request.secret().isBlank() ?
-            boundedText(request.secret(), 256, "Sender key") : mSettings.outbound().secret();
+            boundedText(request.secret(), 256, "Sender key") : prior != null ? prior.connection().secret() : null;
         if(request.enabled() && (host.isBlank() || senderId == null || secret == null || secret.isBlank()))
-        {
             throw new IllegalArgumentException("Host, sender ID, and key are required to connect");
-        }
-        replaceOutbound(new Outbound(request.enabled(), host, request.destinationPort(), senderId, secret,
-            List.copyOf(exported)), false);
-        return snapshot();
+        if(senderId != null && mSettings.destinations().stream().anyMatch(value -> !value.id().equals(id) &&
+            senderId.equals(value.connection().senderId()) && host.equalsIgnoreCase(value.connection().host()) &&
+            request.destinationPort() == value.connection().port()))
+            throw new IllegalArgumentException("This destination and sender ID are already configured");
+        return new Destination(id, name, new Outbound(request.enabled(), host, request.destinationPort(), senderId,
+            secret, List.copyOf(exported)));
     }
 
     @Override
     public synchronized RemoteLinkSnapshot removeSenderConnection(long expectedRevision)
     {
         requireRevision(expectedRevision);
-        replaceOutbound(Outbound.disabled(), true);
+        if(mSettings.destinations().isEmpty()) return snapshot();
+        return removeSenderConnection(expectedRevision, mSettings.destinations().getFirst().id());
+    }
+
+    @Override
+    public synchronized RemoteLinkSnapshot removeSenderConnection(long expectedRevision, String destinationId)
+    {
+        requireRevision(expectedRevision);
+        String id = canonicalUuid(destinationId);
+        List<Destination> next = mSettings.destinations().stream().filter(value -> !value.id().equals(id)).toList();
+        if(next.size() == mSettings.destinations().size()) throw new NotFoundException();
+        replaceDestinations(next);
         return snapshot();
     }
 
-    private void replaceOutbound(Outbound outbound, boolean clearLastConnection)
+    private void replaceDestinations(List<Destination> destinations)
     {
         Settings old = mSettings;
-        Settings next = new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(), old.listenPort(),
-            old.trustedSenders(), outbound);
-        saveSettings(next);
-        RemoteLinkTransport.Connection prior;
-        synchronized(mOutboundLifecycleLock)
-        {
-            // Fence authenticated candidates before detaching the session; persistence never holds this runtime lock.
-            mSettings = next;
-            prior = mOutbound;
-            mOutbound = null;
-            mOutboundState = outbound.enabled() ? SenderConnectionState.CONNECTING : SenderConnectionState.DISABLED;
-            mOutboundStatus = null;
-            if(clearLastConnection) mLastOutboundConnectionMs = 0L;
-        }
-        mCatalogDirty.set(true);
-        if(prior != null) prior.close();
+        replaceSettings(new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(), old.listenPort(),
+            old.trustedSenders(), destinations));
+        reconcileDestinations();
         refreshExports();
+    }
+
+    /** Only a changed destination is replaced; unrelated sockets and retry loops keep their identities. */
+    private void reconcileDestinations()
+    {
+        Map<String,Destination> saved = new HashMap<>();
+        for(Destination destination: mSettings.destinations()) saved.put(destination.id(), destination);
+        for(var entry: List.copyOf(mDestinations.entrySet()))
+        {
+            Destination next = saved.get(entry.getKey());
+            DestinationRuntime runtime = entry.getValue();
+            if(next == null)
+            {
+                if(mDestinations.remove(entry.getKey(), runtime)) runtime.close();
+            }
+            else if(!runtime.configuration.equals(next)) runtime.update(next);
+        }
+        for(Destination destination: saved.values())
+            mDestinations.computeIfAbsent(destination.id(), ignored -> new DestinationRuntime(destination));
+        if(mStarted.get() && !mClosed.get()) mDestinations.values().forEach(DestinationRuntime::start);
     }
 
     @Override
@@ -512,7 +553,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         List<TrustedSender> senders = new ArrayList<>(old.trustedSenders());
         senders.add(new TrustedSender(id, name, secret, false, null, System.currentTimeMillis(), false));
         replaceSettings(new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(), old.listenPort(),
-            senders, old.outbound()));
+            senders, old.destinations()));
         return new CreateSenderResult(mSettings.revision(), id, name, secret);
     }
 
@@ -544,7 +585,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             if(id == null || trusted(id) == null) throw new NotFoundException();
             Settings old = mSettings;
             next = new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(), old.listenPort(),
-                old.trustedSenders().stream().filter(sender -> !id.equals(sender.senderId())).toList(), old.outbound());
+                old.trustedSenders().stream().filter(sender -> !id.equals(sender.senderId())).toList(), old.destinations());
             mRemovalInProgress = true;
             mRemovingSenders.add(id);
             peer = mPeers.get(id);
@@ -678,7 +719,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             {
                 senders.set(index, update.apply(senders.get(index)));
                 replaceSettings(new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(),
-                    old.listenPort(), senders, old.outbound()));
+                    old.listenPort(), senders, old.destinations()));
                 return;
             }
         }
@@ -713,7 +754,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     {
         Settings old = mSettings;
         replaceSettings(new Settings(old.revision() + 1, old.listenerEnabled(), old.bindAddress(),
-            old.listenPort(), old.trustedSenders(), old.outbound()));
+            old.listenPort(), old.trustedSenders(), old.destinations()));
     }
 
     private static String boundedText(String value, int maximumLength, String label)
@@ -1056,152 +1097,181 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         };
     }
 
-    private RemoteLinkTransport.Listener outboundListener()
+    private final class DestinationRuntime
     {
-        return new RemoteLinkTransport.Listener()
+        private volatile Destination configuration;
+        private volatile OutboundSession session;
+        private volatile SenderConnectionState state;
+        private volatile String status;
+        private volatile long lastConnectedAtMs;
+        private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicBoolean started = new AtomicBoolean();
+        private final Thread connector;
+
+        private DestinationRuntime(Destination destination)
         {
-            @Override
-            public void connected(String senderId, RemoteLinkTransport.Connection connection)
-            {
-                // The connector assigns the connection after authentication returns.
-            }
+            configuration = destination;
+            state = destination.connection().enabled() ? SenderConnectionState.CONNECTING : SenderConnectionState.DISABLED;
+            connector = Thread.ofPlatform().daemon().name("remote-p25-connector").unstarted(this::connectLoop);
+        }
 
-            @Override
-            public void frame(String senderId, RemoteLinkTransport.Connection connection, Frame frame)
-            {
-                if(frame.type() == Type.REJECT)
-                {
-                    synchronized(mOutboundLifecycleLock)
-                    {
-                        if(mOutbound == connection) mOutboundStatus = "Host rejected this remote feed";
-                    }
-                }
-            }
-
-            @Override
-            public void disconnected(String senderId, RemoteLinkTransport.Connection connection)
-            {
-                boolean wasCurrent;
-                synchronized(mOutboundLifecycleLock)
-                {
-                    wasCurrent = mOutbound == connection;
-                    if(wasCurrent)
-                    {
-                        mOutbound = null;
-                        mOutboundState = SenderConnectionState.DISCONNECTED;
-                    }
-                }
-                if(wasCurrent)
-                {
-                    refreshExports();
-                    // A replacement session may already be queuing its OPEN frames. Retire only this session.
-                    mOutboundPackets.removeIf(event -> connection.sessionId().equals(event.sessionId()));
-                }
-            }
-        };
-    }
-
-    private void connectLoop()
-    {
-        while(!mClosed.get())
+        private void start()
         {
-            Settings settings = mSettings;
-            Outbound outbound = settings.outbound();
-            if(!outbound.enabled())
+            if(started.compareAndSet(false, true)) connector.start();
+        }
+
+        private boolean current()
+        {
+            return !closed.get() && !mClosed.get() && mDestinations.get(configuration.id()) == this;
+        }
+
+        private void update(Destination next)
+        {
+            OutboundSession prior = null;
+            synchronized(this)
             {
-                synchronized(mOutboundLifecycleLock)
+                if(!configuration.connection().equals(next.connection()))
                 {
-                    if(outbound.equals(mSettings.outbound())) mOutboundState = SenderConnectionState.DISABLED;
+                    prior = session;
+                    session = null;
+                    state = next.connection().enabled() ? SenderConnectionState.CONNECTING : SenderConnectionState.DISABLED;
+                    status = null;
                 }
+                configuration = next;
             }
-            else if(isSelfLink(settings, outbound.senderId()))
+            if(prior != null) prior.connection.close();
+            connector.interrupt();
+        }
+
+        private RemoteLinkTransport.Listener listener()
+        {
+            return new RemoteLinkTransport.Listener()
             {
-                // Also fence configurations saved before self-link validation was introduced.
-                outboundFailed(outbound, SELF_LINK_STATUS);
-            }
-            else if(mOutbound == null)
-            {
-                RemoteLinkTransport.Connection connection = null;
-                try
+                @Override
+                public void connected(String senderId, RemoteLinkTransport.Connection connection) { }
+
+                @Override
+                public void frame(String senderId, RemoteLinkTransport.Connection connection, Frame frame)
                 {
-                    synchronized(mOutboundLifecycleLock)
+                    synchronized(DestinationRuntime.this)
                     {
-                        if(!outbound.equals(mSettings.outbound())) continue;
-                        mOutboundState = SenderConnectionState.CONNECTING;
+                        if(session != null && session.connection == connection && frame.type() == Type.REJECT)
+                            status = "Host rejected this remote feed";
                     }
-                    connection = RemoteLinkTransport.connect(outbound.host(),
-                        outbound.port(), outbound.senderId(), outbound.secret(), outboundListener());
-                    if(mClosed.get() || !outbound.equals(mSettings.outbound()) || !connection.isOpen())
+                }
+
+                @Override
+                public void disconnected(String senderId, RemoteLinkTransport.Connection connection)
+                {
+                    boolean detached = false;
+                    synchronized(DestinationRuntime.this)
                     {
-                        connection.close();
+                        if(session != null && session.connection == connection)
+                        {
+                            session = null;
+                            state = SenderConnectionState.DISCONNECTED;
+                            detached = true;
+                        }
                     }
-                    else
+                    if(detached) refreshExports();
+                }
+            };
+        }
+
+        private void connectLoop()
+        {
+            while(current())
+            {
+                Outbound attempted = configuration.connection();
+                if(!attempted.enabled()) state = SenderConnectionState.DISABLED;
+                else if(isSelfLink(mSettings, attempted.senderId())) failed(attempted, SELF_LINK_STATUS);
+                else if(session == null)
+                {
+                    RemoteLinkTransport.Connection connection = null;
+                    try
                     {
-                        mCatalogDirty.set(false);
-                        sendCatalog(connection);
-                        if(!connection.isOpen() || !outbound.equals(mSettings.outbound()))
+                        state = SenderConnectionState.CONNECTING;
+                        connection = RemoteLinkTransport.connect(attempted.host(), attempted.port(),
+                            attempted.senderId(), attempted.secret(), listener());
+                        if(!current() || !attempted.equals(configuration.connection()) || !connection.isOpen())
                         {
                             connection.close();
-                            outboundFailed(outbound, null);
                         }
                         else
                         {
-                            // CATALOG is queued before exposing this connection to any OPEN/DATA producer.
+                            // Each host sees its selected catalog before any OPEN/DATA frames.
+                            sendCatalog(connection, attempted);
                             boolean installed;
-                            synchronized(mOutboundLifecycleLock)
+                            synchronized(this)
                             {
-                                installed = !mClosed.get() && outbound.equals(mSettings.outbound()) &&
-                                    connection.isOpen();
+                                installed = current() && attempted.equals(configuration.connection()) && connection.isOpen();
                                 if(installed)
                                 {
-                                    mOutbound = connection;
-                                    mOutboundState = SenderConnectionState.CONNECTED;
-                                    mOutboundStatus = null;
-                                    mLastOutboundConnectionMs = System.currentTimeMillis();
+                                    session = new OutboundSession(connection);
+                                    state = SenderConnectionState.CONNECTED;
+                                    status = null;
+                                    lastConnectedAtMs = System.currentTimeMillis();
                                 }
                             }
-                            if(installed)
-                            {
-                                refreshExports();
-                            }
+                            if(installed) refreshExports();
                             else connection.close();
                         }
                     }
+                    catch(IOException | RuntimeException exception)
+                    {
+                        if(connection != null) connection.close();
+                        failed(attempted, "Cannot connect or authenticate with the host");
+                    }
                 }
-                catch(IOException | RuntimeException exception)
-                {
-                    if(connection != null) connection.close();
-                    outboundFailed(outbound, "Cannot connect or authenticate with the host");
-                }
-            }
-            try
-            {
-                Thread.sleep(2_000L);
-            }
-            catch(InterruptedException exception)
-            {
-                if(mClosed.get()) break;
+                try { Thread.sleep(2_000L); }
+                catch(InterruptedException exception) { if(!current()) break; }
             }
         }
-    }
 
-    private void outboundFailed(Outbound attempted, String status)
-    {
-        synchronized(mOutboundLifecycleLock)
+        private void failed(Outbound attempted, String message)
         {
-            if(attempted.equals(mSettings.outbound()) && mOutbound == null)
+            synchronized(this)
             {
-                mOutboundState = SenderConnectionState.DISCONNECTED;
-                mOutboundStatus = status;
+                if(current() && attempted.equals(configuration.connection()) && session == null)
+                {
+                    state = SenderConnectionState.DISCONNECTED;
+                    status = message;
+                }
             }
+        }
+
+        private void close()
+        {
+            closed.set(true);
+            OutboundSession prior;
+            synchronized(this)
+            {
+                prior = session;
+                session = null;
+            }
+            connector.interrupt();
+            if(prior != null) prior.connection.close();
         }
     }
 
-    private void sendCatalog(RemoteLinkTransport.Connection connection)
+    /** Stream admission belongs to the single publisher, while transport queues/writers belong to each host. */
+    private static final class OutboundSession
+    {
+        private final RemoteLinkTransport.Connection connection;
+        private final Map<String,ExportStream> streams = new HashMap<>();
+        private boolean initialized;
+
+        private OutboundSession(RemoteLinkTransport.Connection connection)
+        {
+            this.connection = connection;
+        }
+    }
+
+    private void sendCatalog(RemoteLinkTransport.Connection connection, Outbound outbound)
     {
         try
         {
-            Set<String> selected = Set.copyOf(mSettings.outbound().exportedChannelIds());
+            Set<String> selected = Set.copyOf(outbound.exportedChannelIds());
             List<RemoteWireMessages.Feed> feeds = new ArrayList<>();
             for(SavedChannel channel: mSavedChannels.values())
             {
@@ -1273,42 +1343,119 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
 
     private void publishLoop()
     {
+        long nextMaintenance = 0L;
+        // Follow queued lifecycle order rather than a live map that may already describe a later retune.
+        Map<String,ExportStream> sources = new HashMap<>();
         while(!mClosed.get())
         {
             try
             {
-                OutboundEvent event = mOutboundPackets.poll(1, TimeUnit.SECONDS);
-                publishOriginSnapshot();
-                RemoteLinkTransport.Connection connection = mOutbound;
-                if(connection == null) continue;
-                if(mCatalogDirty.compareAndSet(true, false)) sendCatalog(connection);
-                refreshExportFrequencies();
-                if(event == null) continue;
-                if(!connection.sessionId().equals(event.sessionId())) continue;
-                if(event instanceof OutboundData data &&
-                    System.nanoTime() - data.queuedAtNanos() > MAXIMUM_OUTBOUND_QUEUE_AGE_NANOS)
+                OutboundEvent event = mOutboundPackets.poll();
+                if(System.nanoTime() >= nextMaintenance)
                 {
-                    connection.close();
-                    continue;
+                    publishOriginSnapshot();
+                    refreshExportFrequencies();
+                    refreshExports();
+                    nextMaintenance = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(100);
                 }
-                Frame frame = switch(event)
+                boolean catalogDirty = mCatalogDirty.getAndSet(false);
+                boolean lifecycleLost = mOutboundLifecycleLost.getAndSet(false);
+                if(lifecycleLost)
                 {
-                    case OutboundOpen open -> new Frame(Type.OPEN, RemoteWireMessages.json(open.open()));
-                    case OutboundData data -> new Frame(Type.DATA, RemoteWireMessages.encodeData(data.data()));
-                    case OutboundClose close -> new Frame(Type.CLOSE, RemoteWireMessages.json(close.close()));
-                };
-                if(!connection.offer(frame)) connection.close();
-            }
-            catch(InterruptedException exception)
-            {
-                if(mClosed.get()) break;
+                    synchronized(mExports)
+                    {
+                        // Fence all older lifecycle events before rebuilding the active source registry.
+                        mOutboundEpoch.incrementAndGet();
+                        mOutboundPackets.clear();
+                        sources.clear();
+                        for(ExportStream stream: mExports.values()) sources.put(stream.streamId, stream);
+                    }
+                    event = null;
+                }
+                if(event != null && event.epoch() != mOutboundEpoch.get()) event = null;
+                if(event instanceof OutboundOpen open) sources.put(open.stream().streamId, open.stream());
+                // All projection, serialization and host fan-out run here, never on the bitstream callback.
+                Frame frame = event instanceof OutboundData data ?
+                    new Frame(Type.DATA, RemoteWireMessages.encodeData(data.data())) : null;
+                for(DestinationRuntime destination: mDestinations.values())
+                {
+                    OutboundSession session = destination.session;
+                    if(session == null) continue;
+                    try
+                    {
+                        if(lifecycleLost) { session.connection.close(); continue; }
+                        if(catalogDirty) sendCatalog(session.connection, destination.configuration.connection());
+                        // A newly connected host must receive existing control streams before traffic streams.
+                        if(!session.initialized)
+                        {
+                            sources.values().stream()
+                                .sorted(Comparator.comparing((ExportStream stream) -> stream.open.control()).reversed())
+                                .forEach(stream -> publishOpen(destination, session, stream));
+                            session.initialized = true;
+                        }
+                        if(event == null) continue;
+                        ExportStream stream = event.stream();
+                        if(event instanceof OutboundOpen) publishOpen(destination, session, stream);
+                        else if(event instanceof OutboundClose)
+                        {
+                            if(session.streams.remove(stream.streamId) != null)
+                                offer(session, new Frame(Type.CLOSE, RemoteWireMessages.json(
+                                    new RemoteWireMessages.Close(stream.streamId, stream.generation))));
+                        }
+                        else if(event instanceof OutboundData data)
+                        {
+                            if(!session.streams.containsKey(stream.streamId) && sources.containsKey(stream.streamId))
+                                publishOpen(destination, session, stream);
+                            if(!session.streams.containsKey(stream.streamId)) continue;
+                            if(System.nanoTime() - data.queuedAtNanos() > MAXIMUM_OUTBOUND_QUEUE_AGE_NANOS)
+                            {
+                                session.connection.close();
+                                continue;
+                            }
+                            offer(session, frame);
+                        }
+                    }
+                    catch(IOException | RuntimeException exception)
+                    {
+                        // A bad or saturated destination never retires another host's connection.
+                        session.connection.close();
+                    }
+                }
+                if(event instanceof OutboundClose close) sources.remove(close.stream().streamId);
+                if(event == null) LockSupport.parkNanos(this, TimeUnit.MILLISECONDS.toNanos(100));
             }
             catch(IOException | RuntimeException exception)
             {
-                RemoteLinkTransport.Connection connection = mOutbound;
-                if(connection != null) connection.close();
+                // Invalid source data is discarded; individual transport failures are handled above.
             }
         }
+    }
+
+    private void publishOpen(DestinationRuntime destination, OutboundSession session, ExportStream stream)
+    {
+        if(destination.session != session || !destination.configuration.connection().exportedChannelIds()
+            .contains(stream.open.feedId()) || session.streams.containsKey(stream.streamId)) return;
+        try
+        {
+            if(offer(session, new Frame(Type.OPEN, RemoteWireMessages.json(stream.open))))
+                session.streams.put(stream.streamId, stream);
+        }
+        catch(IOException | RuntimeException exception) { session.connection.close(); }
+    }
+
+    /** A fixed-attempt queue keeps even contended observer handoffs from waiting on decoder threads. */
+    private boolean offerOutbound(OutboundEvent event)
+    {
+        if(!mOutboundPackets.offer(event)) return false;
+        LockSupport.unpark(mPublisher);
+        return true;
+    }
+
+    private boolean offer(OutboundSession session, Frame frame)
+    {
+        if(session.connection.offer(frame)) return true;
+        session.connection.close();
+        return false;
     }
 
     private void receiveInbound(String senderId, RemoteLinkTransport.Connection connection, Frame frame)
@@ -1733,18 +1880,12 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         {
             RemoteLinkTransport.Server server = mServer;
             if(server != null) server.close();
-            RemoteLinkTransport.Connection outbound;
-            synchronized(mOutboundLifecycleLock)
-            {
-                outbound = mOutbound;
-                mOutbound = null;
-            }
-            if(outbound != null) outbound.close();
+            mDestinations.values().forEach(DestinationRuntime::close);
+            mDestinations.clear();
             for(PeerState peer: mPeers.values()) if(peer.connection != null) peer.connection.close();
             mConfiguration.getChannelModel().removeListener(mSavedChannelListener);
             mConfiguration.getAliasModel().removeChangeListener(mAliasListListener);
             refreshExports();
-            mConnector.interrupt();
             mPublisher.interrupt();
         }
     }
@@ -1868,19 +2009,20 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
 
     private sealed interface OutboundEvent permits OutboundOpen, OutboundData, OutboundClose
     {
-        String sessionId();
+        ExportStream stream();
+        long epoch();
     }
 
-    private record OutboundOpen(String sessionId, RemoteWireMessages.Open open) implements OutboundEvent
+    private record OutboundOpen(ExportStream stream, long epoch) implements OutboundEvent
     {
     }
 
-    private record OutboundData(String sessionId, long queuedAtNanos, RemoteWireMessages.Data data)
+    private record OutboundData(ExportStream stream, long epoch, long queuedAtNanos, RemoteWireMessages.Data data)
         implements OutboundEvent
     {
     }
 
-    private record OutboundClose(String sessionId, RemoteWireMessages.Close close) implements OutboundEvent
+    private record OutboundClose(ExportStream stream, long epoch) implements OutboundEvent
     {
     }
 
@@ -1888,7 +2030,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
     {
         private final Channel channel;
         private final ProcessingChain chain;
-        private final String sessionId;
+        private final RemoteWireMessages.Open open;
         private final String streamId = UUID.randomUUID().toString();
         private final long generation = System.nanoTime() & Long.MAX_VALUE;
         private final long frequency;
@@ -1896,12 +2038,14 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         private final Listener<ByteBuffer> listener = this::receive;
         private volatile boolean closed;
 
-        private ExportStream(Channel channel, ProcessingChain chain, String sessionId)
+        private ExportStream(Channel channel, ProcessingChain chain, Integer nac, Integer wacn, Integer systemId)
         {
             this.channel = channel;
             this.chain = chain;
-            this.sessionId = sessionId;
             this.frequency = chain.getSource() != null ? chain.getSource().getFrequency() : 0L;
+            this.open = new RemoteWireMessages.Open(streamId, channel.getConfigurationId(), channel.isStandardChannel(),
+                channel.getDecodeConfiguration().getDecoderType() == DecoderType.P25_PHASE2 ? "PHASE_2" : "PHASE_1",
+                frequency, generation, System.currentTimeMillis(), nac, wacn, systemId);
         }
 
         private void receive(ByteBuffer original)
@@ -1920,7 +2064,7 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
             int symbolRate = channel.getDecodeConfiguration().getDecoderType() == DecoderType.P25_PHASE2 ?
                 6_000 : 4_800;
             long timestamp = System.currentTimeMillis() - length * 4_000L / symbolRate;
-            if(!mOutboundPackets.offer(new OutboundData(sessionId, System.nanoTime(),
+            if(!offerOutbound(new OutboundData(this, mOutboundEpoch.get(), System.nanoTime(),
                 new RemoteWireMessages.Data(streamId, generation,
                 number, timestamp, bytes))))
             {
@@ -1932,11 +2076,11 @@ public final class RemoteConnectivityService implements RemoteLinkAdministration
         {
             closed = true;
             chain.removeDemodulatedBitstreamListener(listener);
-            if(!mOutboundPackets.offer(new OutboundClose(sessionId,
-                new RemoteWireMessages.Close(streamId, generation))))
+            if(!offerOutbound(new OutboundClose(this, mOutboundEpoch.get())))
             {
-                RemoteLinkTransport.Connection connection = mOutbound;
-                if(connection != null && sessionId.equals(connection.sessionId())) connection.close();
+                // The worker retires sessions if lifecycle framing was lost; never close sockets on this callback.
+                mOutboundLifecycleLost.set(true);
+                LockSupport.unpark(mPublisher);
             }
         }
     }

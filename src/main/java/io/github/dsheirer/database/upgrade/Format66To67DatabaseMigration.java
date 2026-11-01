@@ -67,7 +67,8 @@ final class Format66To67DatabaseMigration extends WebUserPreferenceMigration
                 throw new SQLException("Workspace display choices requires exact format-66 configuration");
             var effects = super.migrateSourceAndReport(configuration, false);
             DatabaseFormatCatalog.stamp(configuration, 67);
-            DatabaseFormatCatalog.requireCurrent(configuration);
+            if(DatabaseFormatCatalog.inspect(configuration).version() != 67)
+                throw new SQLException("Workspace display choices did not reach exact format-67 configuration");
             configuration.commit();
             return effects;
         }

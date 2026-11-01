@@ -150,7 +150,7 @@ class RemoteConnectivityServiceTest
             var original = sender.remote.snapshot();
             var store = new RemoteLinkSettingsStore(sender.configuration.getDatabasePath());
             var saved = store.load();
-            Object connection = privateField(sender.remote, "mOutbound");
+            Object connection = firstOutboundConnection(sender.remote);
 
             for(String host: List.of("127.0.0.1", "::1", "localhost", "192.0.2.22", "receiver.example.invalid"))
             {
@@ -162,7 +162,7 @@ class RemoteConnectivityServiceTest
                     error.getMessage());
                 assertEquals(original, sender.remote.snapshot());
                 assertEquals(saved, store.load());
-                assertSame(connection, privateField(sender.remote, "mOutbound"));
+                assertSame(connection, firstOutboundConnection(sender.remote));
                 assertTrue(((RemoteLinkTransport.Connection)connection).isOpen());
             }
 
@@ -175,7 +175,7 @@ class RemoteConnectivityServiceTest
                             ownCredentials.senderId(), key, List.of())));
                 assertEquals(original, sender.remote.snapshot());
                 assertEquals(saved, store.load());
-                assertSame(connection, privateField(sender.remote, "mOutbound"));
+                assertSame(connection, firstOutboundConnection(sender.remote));
             }
         }
     }
@@ -222,7 +222,7 @@ class RemoteConnectivityServiceTest
                     assertTrue(snapshot.senders().getFirst().feeds().isEmpty());
                     assertTrue(privateMap(reloaded, "mPeers").isEmpty());
                     assertTrue(privateMap(reloaded, "mExports").isEmpty());
-                    assertNull(privateField(reloaded, "mOutbound"));
+                    assertNull(firstOutboundConnection(reloaded));
                     assertEquals(saved, store.load());
                     assertEquals(List.of(local), host.configuration.getChannelModel().getChannels());
 
@@ -292,7 +292,7 @@ class RemoteConnectivityServiceTest
             assertEquals(revision + 1, result.revision());
             assertFalse(result.senderConnection().enabled());
             assertFalse(result.senderConnection().credentialConfigured());
-            assertEquals("", result.senderConnection().destinationHost());
+            assertTrue(result.senderConnections().isEmpty());
             assertNull(result.senderConnection().senderId());
             assertTrue(result.senderConnection().exportedChannelConfigurationIds().isEmpty());
             assertEquals(0L, result.senderConnection().lastConnectedAtMs());
@@ -362,6 +362,7 @@ class RemoteConnectivityServiceTest
                     RemoteWireProtocol.write(output, new Frame(Type.CHALLENGE, challenge));
                     output.flush();
                     assertEquals(Type.AUTH, RemoteWireProtocol.read(input).type());
+                    Thread connector = (Thread)privateField(firstDestinationRuntime(sender.remote), "connector");
                     sender.remote.removeSenderConnection(sender.remote.snapshot().revision());
                     if(accept)
                     {
@@ -379,9 +380,8 @@ class RemoteConnectivityServiceTest
                     }
                     else socket.shutdownOutput();
                     assertEquals(-1, input.read(), "Deleted credentials must not install the authenticated session");
-                    Thread connector = (Thread)privateField(sender.remote, "mConnector");
-                    await(() -> connector.getState() == Thread.State.TIMED_WAITING);
-                    assertNull(privateField(sender.remote, "mOutbound"));
+                    await(() -> !connector.isAlive());
+                    assertNull(firstOutboundConnection(sender.remote));
                     assertEquals(RemoteLinkAdministrationService.SenderConnectionState.DISABLED,
                         sender.remote.snapshot().senderConnection().state());
                     assertNull(sender.remote.snapshot().senderConnection().statusMessage());
@@ -1129,6 +1129,21 @@ class RemoteConnectivityServiceTest
     private static Set<?> catalogWork(RemoteConnectivityService remote, String name) throws Exception
     {
         return (Set<?>)privateField(remote, name);
+    }
+
+    private static Object firstDestinationRuntime(RemoteConnectivityService remote) throws Exception
+    {
+        var destinations = remote.snapshot().senderConnections();
+        return destinations.isEmpty() ? null : privateMap(remote, "mDestinations")
+            .get(destinations.getFirst().destinationId());
+    }
+
+    private static RemoteLinkTransport.Connection firstOutboundConnection(RemoteConnectivityService remote)
+        throws Exception
+    {
+        Object runtime = firstDestinationRuntime(remote);
+        Object session = runtime != null ? privateField(runtime, "session") : null;
+        return session == null ? null : (RemoteLinkTransport.Connection)privateField(session, "connection");
     }
 
     private static Map<?,?> privateMap(RemoteConnectivityService remote, String name) throws Exception

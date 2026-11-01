@@ -58,6 +58,47 @@ class RemoteLinksHttpControllerTest
     }
 
     @Test
+    void namedDestinationsRouteIndependentlyAndNeverReturnCredentials() throws Exception
+    {
+        FakeService service = new FakeService();
+        try(TestServer server = new TestServer(service))
+        {
+            String body = """
+                {"revision":7,"display_name":"Debug receiver","enabled":true,"destination_host":"debug-host",
+                 "destination_port":53800,"sender_id":"sender-debug","secret":"private-destination-secret",
+                 "exported_channel_configuration_ids":["channel-a"]}
+                """;
+            HttpResponse<String> created = server.send(server.jsonRequest("/destinations")
+                .POST(HttpRequest.BodyPublishers.ofString(body)));
+            assertEquals(201, created.statusCode(), created.body());
+            assertTrue(service.mDestinationCreated);
+            assertEquals("Debug receiver", service.mSenderUpdate.displayName());
+            assertEquals("private-destination-secret", service.mSenderUpdate.secret());
+            assertFalse(created.body().contains("private-destination-secret"));
+            assertEquals("Destination", data(created).at("/sender_connections/0/display_name").textValue());
+            assertEquals("00000000-0000-4000-8000-000000000001",
+                data(created).at("/sender_connections/0/destination_id").textValue());
+
+            assertEquals(200, server.send(server.jsonRequest("/destinations/debug-destination")
+                .PUT(HttpRequest.BodyPublishers.ofString(body.replace("private-destination-secret", ""))))
+                .statusCode());
+            assertEquals("debug-destination", service.mDestinationId);
+            assertEquals(null, service.mSenderUpdate.secret());
+
+            assertEquals(400, server.send(server.jsonRequest("/destinations")
+                .POST(HttpRequest.BodyPublishers.ofString(body.replace("\"display_name\":\"Debug receiver\",", ""))))
+                .statusCode());
+            assertEquals(400, server.send(server.jsonRequest("/destinations/debug-destination")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":7,\"enabled\":false}")))
+                .statusCode());
+            assertEquals(200, server.send(server.jsonRequest("/destinations/debug-destination")
+                .method("DELETE", HttpRequest.BodyPublishers.ofString("{\"revision\":7}"))).statusCode());
+            assertEquals("debug-destination", service.mDestinationId);
+            assertTrue(service.mSenderConnectionRemoved);
+        }
+    }
+
+    @Test
     void secretBearingWebDtosRedactTheirStringRepresentations()
     {
         RemoteLinkAdministrationService.SenderConnectionUpdate update =
@@ -328,6 +369,8 @@ class RemoteLinksHttpControllerTest
         private String mRemovedSenderId;
         private boolean mSenderConnectionRemoved;
         private boolean mRestartRequired;
+        private boolean mDestinationCreated;
+        private String mDestinationId;
 
         @Override
         public RemoteLinkSnapshot snapshot()
@@ -360,6 +403,30 @@ class RemoteLinksHttpControllerTest
         {
             mSenderUpdate = request;
             return snapshot();
+        }
+
+        @Override
+        public RemoteLinkSnapshot createSenderConnection(long expectedRevision, SenderConnectionUpdate request)
+        {
+            mDestinationCreated = true;
+            mSenderUpdate = request;
+            return snapshot();
+        }
+
+        @Override
+        public RemoteLinkSnapshot updateSenderConnection(long expectedRevision, String destinationId,
+                                                         SenderConnectionUpdate request)
+        {
+            mDestinationId = destinationId;
+            mSenderUpdate = request;
+            return snapshot();
+        }
+
+        @Override
+        public RemoteLinkSnapshot removeSenderConnection(long expectedRevision, String destinationId)
+        {
+            mDestinationId = destinationId;
+            return removeSenderConnection(expectedRevision);
         }
 
         @Override

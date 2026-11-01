@@ -29,6 +29,22 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
 
     RemoteLinkSnapshot removeSenderConnection(long expectedRevision);
 
+    default RemoteLinkSnapshot createSenderConnection(long expectedRevision, SenderConnectionUpdate request)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    default RemoteLinkSnapshot updateSenderConnection(long expectedRevision, String destinationId,
+                                                       SenderConnectionUpdate request)
+    {
+        throw new UnsupportedOperationException();
+    }
+
+    default RemoteLinkSnapshot removeSenderConnection(long expectedRevision, String destinationId)
+    {
+        throw new UnsupportedOperationException();
+    }
+
     CreateSenderResult createSender(long expectedRevision, CreateSenderRequest request);
 
     RemoteLinkSnapshot updateSender(long expectedRevision, String senderId, UpdateSenderRequest request);
@@ -82,7 +98,7 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     }
 
     record RemoteLinkSnapshot(long revision, ListenerSnapshot listener,
-                              SenderConnectionSnapshot senderConnection,
+                              List<SenderConnectionSnapshot> senderConnections,
                               List<ExportChannelOption> exportChannelOptions,
                               List<AliasListOption> aliasLists, List<SenderSnapshot> senders, boolean restartRequired)
     {
@@ -94,10 +110,24 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
             }
 
             listener = listener != null ? listener : ListenerSnapshot.STOPPED;
-            senderConnection = senderConnection != null ? senderConnection : SenderConnectionSnapshot.DISABLED;
+            senderConnections = senderConnections != null ? List.copyOf(senderConnections) : List.of();
             exportChannelOptions = exportChannelOptions != null ? List.copyOf(exportChannelOptions) : List.of();
             aliasLists = aliasLists != null ? List.copyOf(aliasLists) : List.of();
             senders = senders != null ? List.copyOf(senders) : List.of();
+        }
+
+        public RemoteLinkSnapshot(long revision, ListenerSnapshot listener, SenderConnectionSnapshot senderConnection,
+                                  List<ExportChannelOption> exportChannelOptions, List<AliasListOption> aliasLists,
+                                  List<SenderSnapshot> senders, boolean restartRequired)
+        {
+            this(revision, listener, senderConnection != null && senderConnection != SenderConnectionSnapshot.DISABLED ?
+                List.of(senderConnection) : List.of(), exportChannelOptions, aliasLists, senders, restartRequired);
+        }
+
+        /** Compatibility view for clients configured before multiple destinations were supported. */
+        public SenderConnectionSnapshot senderConnection()
+        {
+            return senderConnections.isEmpty() ? SenderConnectionSnapshot.DISABLED : senderConnections.getFirst();
         }
     }
 
@@ -127,14 +157,23 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     {
     }
 
-    /** This installation's one outbound destination. The shared secret is deliberately absent. */
-    record SenderConnectionSnapshot(boolean enabled, String destinationHost, int destinationPort, String senderId,
+    /** One independently managed outbound destination. The shared secret is deliberately absent. */
+    record SenderConnectionSnapshot(String destinationId, String displayName, boolean enabled, String destinationHost, int destinationPort, String senderId,
                                     boolean credentialConfigured, SenderConnectionState state,
                                     long lastConnectedAtMs, String statusMessage,
                                     List<String> exportedChannelConfigurationIds)
     {
-        public static final SenderConnectionSnapshot DISABLED = new SenderConnectionSnapshot(false, null, 0, null,
+        public static final SenderConnectionSnapshot DISABLED = new SenderConnectionSnapshot(null, null, false, null, 0, null,
             false, SenderConnectionState.DISABLED, 0L, null, List.of());
+
+        public SenderConnectionSnapshot(boolean enabled, String destinationHost, int destinationPort, String senderId,
+                                        boolean credentialConfigured, SenderConnectionState state,
+                                        long lastConnectedAtMs, String statusMessage,
+                                        List<String> exportedChannelConfigurationIds)
+        {
+            this("00000000-0000-4000-8000-000000000001", "Destination", enabled, destinationHost, destinationPort,
+                senderId, credentialConfigured, state, lastConnectedAtMs, statusMessage, exportedChannelConfigurationIds);
+        }
 
         public SenderConnectionSnapshot
         {
@@ -182,9 +221,15 @@ public interface RemoteLinkAdministrationService extends RemoteOriginLookup
     }
 
     /** A null or blank secret keeps the configured credential when one already exists. */
-    record SenderConnectionUpdate(boolean enabled, String destinationHost, int destinationPort, String senderId,
+    record SenderConnectionUpdate(String displayName, boolean enabled, String destinationHost, int destinationPort, String senderId,
                                   String secret, List<String> exportedChannelConfigurationIds)
     {
+        public SenderConnectionUpdate(boolean enabled, String destinationHost, int destinationPort, String senderId,
+                                      String secret, List<String> exportedChannelConfigurationIds)
+        {
+            this(null, enabled, destinationHost, destinationPort, senderId, secret, exportedChannelConfigurationIds);
+        }
+
         public SenderConnectionUpdate
         {
             exportedChannelConfigurationIds = exportedChannelConfigurationIds != null ?

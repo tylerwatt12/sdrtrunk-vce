@@ -106,9 +106,9 @@ public final class ConfigurationHistoryDatabase
             throw new SQLException("The " + role + " database does not have the exact format-63 schema");
         }
         String version = ConfigurationHistorySchema.metadata(connection, schema, DatabaseFormatCatalog.FORMAT_VERSION_KEY);
-        // Formats 64 through 67 change configuration semantics only. The activity role keeps the exact format-63
+        // Formats 64 through 68 change configuration semantics only. The activity role keeps the exact format-63
         // contract; an older monolith passing through the split may advance in that same chain transaction.
-        if(version == null || !java.util.Set.of("63", "64", "65", "66", "67").contains(version))
+        if(version == null || !java.util.Set.of("63", "64", "65", "66", "67", "68").contains(version))
         {
             throw new SQLException("The " + role + " database format marker is missing or incompatible");
         }

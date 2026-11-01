@@ -107,7 +107,7 @@ class LegacyReceiverSettingsMigrationTest
         legacyFiles(root, 2);
         Settings newer = new Settings(42, false, "127.0.0.1", 53_802, List.of(), Outbound.disabled());
         ApplicationSettingsStore store = new ApplicationSettingsStore(database(root));
-        store.save(ReceiverSettingsSchema.REMOTE_LINKS_KEY, newer);
+        store.save(ReceiverSettingsSchema.REMOTE_LINKS_KEY, JSON.readTree(Format67TestDatabase.remoteSettingsJson(newer)));
         store.save(ReceiverSettingsSchema.PAGING_TONES_KEY, Map.of("enabled", true));
         store.save(Format53ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.of("enabled", false));
         Map<Path,byte[]> originals = originalFiles(root);
@@ -318,7 +318,7 @@ class LegacyReceiverSettingsMigrationTest
             List.of(new TrustedSender(sender, "Synthetic legacy receiver", SYNTHETIC_SECRET, false, null,
                 123, false)),
             new Outbound(true, "127.0.0.1", 53_801, sender, SYNTHETIC_SECRET, List.of()));
-        write(root.resolve(REMOTE_FILE), settings);
+        write(root.resolve(REMOTE_FILE), JSON.readTree(Format67TestDatabase.remoteSettingsJson(settings)));
         write(root.resolve(PAGING_FILE), Map.of("version", 1, "enabled", false));
         write(root.resolve(VOICE_FILE), voiceVersion == 1 ?
             Map.of("version", 1, "enabled", true, "bundle_sha256", "a".repeat(64)) :

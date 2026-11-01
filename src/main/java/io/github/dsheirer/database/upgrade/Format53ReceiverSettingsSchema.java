@@ -79,7 +79,7 @@ public final class Format53ReceiverSettingsSchema
         {
             return switch(key)
             {
-                case REMOTE_LINKS_KEY -> JSON.writeValueAsString(RemoteLinkSettingsStore.Settings.defaults());
+                case REMOTE_LINKS_KEY -> Format67ReceiverSettingsSchema.defaultRemoteJson();
                 case PAGING_TONES_KEY -> "{\"enabled\":true}";
                 case VOICE_ENHANCEMENT_KEY -> "{\"enabled\":false}";
                 default -> throw new IllegalArgumentException("Unknown receiver settings key");
@@ -129,7 +129,7 @@ public final class Format53ReceiverSettingsSchema
                 {
                     if(!channel.isTextual()) throw invalid(key);
                 }
-                RemoteLinkSettingsStore.validate(JSON.treeToValue(value, RemoteLinkSettingsStore.Settings.class));
+                RemoteLinkSettingsStore.validate(Format67ReceiverSettingsSchema.readRemote(json));
             }
             else if(PAGING_TONES_KEY.equals(key) || VOICE_ENHANCEMENT_KEY.equals(key))
             {

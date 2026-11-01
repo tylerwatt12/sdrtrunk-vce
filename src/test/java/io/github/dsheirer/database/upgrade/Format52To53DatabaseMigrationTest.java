@@ -74,7 +74,7 @@ class Format52To53DatabaseMigrationTest
         Settings remote = new Settings(7, true, "127.0.0.1", 53_800,
             List.of(new TrustedSender(sender, "Synthetic receiver", "synthetic-credential", true, null, 123, false)),
             new Outbound(true, "127.0.0.1", 53_801, sender, "synthetic-credential", List.of(UUID.randomUUID().toString())));
-        store.save(Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY, remote);
+        store.save(Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY, new com.fasterxml.jackson.databind.ObjectMapper().readTree(Format67TestDatabase.remoteSettingsJson(remote)));
         store.save(Format53ReceiverSettingsSchema.PAGING_TONES_KEY, Map.of("enabled", false));
         store.save(Format53ReceiverSettingsSchema.VOICE_ENHANCEMENT_KEY, Map.of("enabled", true));
         try(Connection connection = open(database))
@@ -88,7 +88,7 @@ class Format52To53DatabaseMigrationTest
             assertEquals(before, allContents(connection));
             Format53ReceiverSettingsSchema.validate(connection);
         }
-        assertEquals(remote, store.load(Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY, Settings.class).orElseThrow());
+        assertEquals(remote, Format67ReceiverSettingsSchema.readRemote(store.loadJson(Format53ReceiverSettingsSchema.REMOTE_LINKS_KEY, 256_000).orElseThrow()));
     }
 
     @Test void invalidExistingChoicesRefuseWithoutCredentialDisclosureOrChanges() throws Exception
@@ -229,7 +229,8 @@ class Format52To53DatabaseMigrationTest
 
     private static void assertDefaults(Connection connection) throws SQLException
     {
-        ReceiverSettingsSchema.validate(connection);
+        boolean current = DatabaseFormatCatalog.inspect(connection).version() >= 68;
+        if(current) ReceiverSettingsSchema.validate(connection); else Format67ReceiverSettingsSchema.validate(connection);
         try(var query = connection.prepareStatement("SELECT settings_json FROM application_settings WHERE key=?"))
         {
             for(String key: ReceiverSettingsSchema.KEYS)
@@ -238,7 +239,7 @@ class Format52To53DatabaseMigrationTest
                 try(var row = query.executeQuery())
                 {
                     assertTrue(row.next());
-                    assertEquals(ReceiverSettingsSchema.defaultJson(key), row.getString(1));
+                    assertEquals(current ? ReceiverSettingsSchema.defaultJson(key) : Format67ReceiverSettingsSchema.defaultJson(key), row.getString(1));
                 }
             }
         }

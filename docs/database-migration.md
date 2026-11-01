@@ -271,7 +271,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -1015,6 +1015,15 @@ file unchanged. Its older admitted role versions remain supported; an older mono
 chain before activation. The frozen populated format-66 fixture, exact-signature checks, rollback and unchanged-source
 retry remain required. Normal startup validates without converting or repairing preferences.
 
+The adjacent 67-to-68 step replaces the single Remote Links outbound connection with a bounded list of independent
+named destinations. A configured existing connection becomes one destination with a stable identity; its host, port,
+sender credential, enabled state and selected feeds are preserved exactly, including disabled saved configuration.
+An untouched empty default becomes an empty destination list. Pairings, receiver settings, account preferences,
+credentials, retained observations, relationships and allocators are otherwise unchanged. Format 68 changes no table
+or index and leaves an existing paired activity file unchanged. The frozen populated format-67 fixture, exact-signature
+checks, rollback and unchanged-source retry remain required. Only the bundled Application Migrator converts older
+settings; normal runtime startup validates the current destination list without rewriting old data.
+
 ## Schema-Change Rule
 
 The optional Managed Recordings catalog is a separate SQLite file with its own adjacent format chain. Its format 2
@@ -1061,7 +1070,7 @@ availability; measured zero remains distinct from unavailable. The adjacent form
 existing field, row, relationship, transcript, index, counter and allocator. Historical quality remains unknown;
 the update neither reads audio files nor guesses measurements. The populated format-11 fixture remains frozen and
 supported. The main application database is independently at
-format 67; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+format 68; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
 before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
