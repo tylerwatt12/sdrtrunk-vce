@@ -13,6 +13,7 @@ package io.github.dsheirer.stats;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,6 +74,7 @@ class ManagedRecordingsHttpControllerTest
     private volatile ManagedRecordingCatalog mCatalog;
     private ManagedRecordingMaintenance mMaintenance;
     private WebRequestSecurity mSecurity;
+    private ManagedRecordingsHttpController mController;
     private HttpServer mServer;
     private ExecutorService mExecutor;
     private HttpClient mClient;
@@ -134,8 +136,8 @@ class ManagedRecordingsHttpControllerTest
         ManagedRecordingsHttpController controller = new ManagedRecordingsHttpController(() -> mCatalog,
             mPreferences, mSecurity, mMaintenance, new ManagedRecordingLabels(mainDatabase), () -> null,
             new StatsBrowseReadCache(4, mBrowseClock::get));
-        mServer.createContext(ManagedRecordingsHttpController.BROWSE_PATH,
-            mSecurity.protectApi(WebCapability.RECORDINGS_VIEW, controller::handleBrowse));
+        mController = controller;
+        controller.registerBrowse(mServer);
         mServer.createContext(ManagedRecordingsHttpController.ADMIN_PATH,
             mSecurity.protectApi(WebCapability.ADMIN_RECORDINGS, controller::handleAdmin));
         mServer.start();
@@ -147,6 +149,7 @@ class ManagedRecordingsHttpControllerTest
     void tearDown()
     {
         if(mServer != null) mServer.stop(0);
+        if(mController != null) mController.close();
         if(mSecurity != null) mSecurity.close();
         if(mMaintenance != null) mMaintenance.close();
         if(mCatalog != null) mCatalog.close();
@@ -1423,6 +1426,97 @@ class ManagedRecordingsHttpControllerTest
         for(String invalid:List.of("channel_ids=%5B1%5D","targets_any=maybe","has_transcript=maybe",
             "text_range=all","dcs_code=N999","transcript=%22unterminated"))
             assertEquals(400,send(request(base+"?"+invalid).GET()).statusCode(),invalid);
+    }
+
+    @Test
+    void selectionAndExportsSupportListenersWithChronologicalValidationAndOwnership() throws Exception
+    {
+        Path root = mDirectory.resolve("recordings-managed");
+        RecordingMp3ExporterTest.writeTone(root.resolve("one.mp3"), 22050, 900);
+        RecordingMp3ExporterTest.writeTone(root.resolve("earlier.mp3"), 8000, 300);
+        byte[] original = Files.readAllBytes(root.resolve("one.mp3"));
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + mCatalog.databaseFile());
+            var statement = connection.createStatement())
+        {
+            statement.executeUpdate("INSERT INTO recording_call(id,start_ms,end_ms,duration_ms,relative_path," +
+                "size_bytes,protocol,call_type,voice_type) VALUES(2,100,1100,1000,'earlier.mp3',100,1,1,1)");
+        }
+        String base = ManagedRecordingsHttpController.BROWSE_PATH;
+        var selection = send(request(base + "/selection").header("Content-Type", "application/json").header("Origin", mOrigin.toString())
+            .POST(HttpRequest.BodyPublishers.ofString("{\"ids\":[1,2,1]}")));
+        assertEquals(200, selection.statusCode(), selection.body());
+        assertEquals(2, json(selection).at("/data/calls").size());
+        assertEquals(2, json(selection).at("/data/calls/0/id").intValue());
+        assertEquals(1, json(selection).at("/data/calls/1/id").intValue());
+        assertEquals(403, send(request(base + "/exports").header("Origin", "https://example.invalid")
+            .POST(HttpRequest.BodyPublishers.ofString("{\"ids\":[1]}"))).statusCode());
+        for(String invalid : List.of("[]", "[1.5]", "[0]", "[\"1\"]"))
+            assertEquals(400, send(request(base + "/selection").header("Content-Type", "application/json").header("Origin", mOrigin.toString())
+                .POST(HttpRequest.BodyPublishers.ofString("{\"ids\":" + invalid + "}"))).statusCode());
+        assertEquals(404, send(request(base + "/selection").header("Content-Type", "application/json").header("Origin", mOrigin.toString())
+            .POST(HttpRequest.BodyPublishers.ofString("{\"ids\":[999]}"))).statusCode());
+        Session admin = login();
+        var started = send(mutation(base + "/exports", admin)
+            .POST(HttpRequest.BodyPublishers.ofString("{\"ids\":[1,2]}")));
+        assertEquals(202, started.statusCode(), started.body());
+        String job = base + "/exports/" + json(started).at("/data/id").textValue();
+        assertEquals(404, send(request(job).GET()).statusCode(), "A guest cannot read a signed-in user's export");
+        JsonNode status;
+        long deadline = System.nanoTime() + Duration.ofSeconds(5).toNanos();
+        do
+        {
+            status = json(send(request(job).header("Cookie", admin.cookie()).GET())).path("data");
+            if(!"running".equals(status.path("state").textValue())) break;
+            Thread.sleep(10);
+        } while(System.nanoTime() < deadline);
+        assertEquals("ready", status.path("state").textValue(), status.toString());
+        var audio = mClient.send(request(job + "/audio").header("Cookie", admin.cookie()).GET().build(),
+            HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, audio.statusCode());
+        assertTrue(audio.headers().firstValue("Content-Disposition").orElseThrow().contains(".mp3"));
+        Path output = mDirectory.resolve("download.mp3"); Files.write(output, audio.body());
+        var samples = RecordingMp3ExporterTest.decode(output);
+        assertTrue(RecordingMp3ExporterTest.crossings(samples, 11025, 8820) < 160);
+        assertTrue(RecordingMp3ExporterTest.crossings(samples, 55125, 8820) > 280);
+        assertArrayEquals(original, Files.readAllBytes(root.resolve("one.mp3")));
+        assertEquals(200, send(mutation(job, admin).DELETE()).statusCode());
+        assertEquals(404, send(request(job).header("Cookie", admin.cookie()).GET()).statusCode());
+        try(var paths = Files.list(mDirectory))
+        {
+            assertFalse(paths.anyMatch(path -> path.getFileName().toString().startsWith("recording-export-")));
+        }
+        var guest = send(request(base + "/exports").header("Content-Type", "application/json").header("Origin", mOrigin.toString())
+            .POST(HttpRequest.BodyPublishers.ofString("{\"ids\":[1]}")));
+        assertEquals(202, guest.statusCode(), "Same-origin anonymous listeners can create an export");
+        String guestJob = base + "/exports/" + json(guest).at("/data/id").textValue();
+        assertEquals(200, send(request(guestJob).header("Content-Type", "application/json").header("Origin", mOrigin.toString()).DELETE()).statusCode());
+    }
+
+    @Test
+    void failedExportsRemovePartialAudioAndPreserveOriginals() throws Exception
+    {
+        String base = ManagedRecordingsHttpController.BROWSE_PATH + "/exports";
+        var started = send(request(base).header("Content-Type", "application/json").header("Origin", mOrigin.toString())
+            .POST(HttpRequest.BodyPublishers.ofString("{\"ids\":[1]}")));
+        assertEquals(202, started.statusCode());
+        String job = base + "/" + json(started).at("/data/id").textValue();
+        JsonNode status;
+        long deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+        do
+        {
+            status = json(send(request(job).GET())).path("data");
+            if(!"running".equals(status.path("state").textValue())) break;
+            Thread.sleep(10);
+        } while(System.nanoTime() < deadline);
+        assertEquals("failed", status.path("state").textValue(), status.toString());
+        assertTrue(Files.exists(mDirectory.resolve("recordings-managed/one.mp3")));
+        // Reading status runs cleanup once the worker has published its terminal state.
+        send(request(job).GET());
+        try(var paths = Files.list(mDirectory))
+        {
+            assertFalse(paths.anyMatch(path -> path.getFileName().toString().startsWith("recording-export-")));
+        }
+        assertEquals(200, send(request(job).header("Origin", mOrigin.toString()).DELETE()).statusCode());
     }
 
     private Session login() throws Exception

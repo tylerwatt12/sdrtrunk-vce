@@ -206,6 +206,22 @@ async function openRecordings(page, options = {}) {
         calls.slice(offset, offset + limit),
         next_cursor: options.nextCursor || (state.paginate && offset + limit < calls.length ? `fixture:${offset + limit}` : null),
         total: null } } });
+    } else if (pathname === '/api/v1/recordings/selection') {
+      const ids = route.request().postDataJSON().ids;
+      const rows = (state.allCalls || state.calls || [state.call]).filter(row => ids.includes(row.id))
+        .sort((a, b) => a.start_ms - b.start_ms || a.id - b.id);
+      state.reviewIds = ids;
+      await route.fulfill({ json: { data: { calls: rows } } });
+    } else if (pathname === '/api/v1/recordings/exports') {
+      state.exportIds = route.request().postDataJSON().ids;
+      await route.fulfill({ json: { data: { id: 'sample-export', state: 'running' } } });
+    } else if (pathname === '/api/v1/recordings/exports/sample-export/audio') {
+      await route.fulfill({ contentType: 'audio/mpeg', headers: { 'Content-Disposition': 'attachment; filename="incident.mp3"' }, body: Buffer.from([255, 251, 0, 0]) });
+    } else if (pathname === '/api/v1/recordings/exports/sample-export') {
+      if (route.request().method() === 'DELETE') state.exportCancelled = true;
+      await route.fulfill({ json: { data: { id: 'sample-export', state: state.exportState || 'ready',
+        completed: state.exportIds.length, total: state.exportIds.length,
+        error: state.exportError } } });
     } else if (pathname === '/api/v1/admin/recordings/calls' && route.request().method() === 'DELETE') {
       const update = route.request().postDataJSON();
       state.deletionWrites.push(update);
@@ -1136,7 +1152,7 @@ test('page selection selects and deselects displayed calls and reflects partial 
   await expect(toolbar.locator('.recordings-result-count')).toBeVisible();
   await expect(toolbar.locator('.recordings-selected')).toBeHidden();
   await pageCheck.check();
-  await expect(toolbar.locator('.recordings-result-count > span').first()).toBeHidden();
+  await expect(toolbar.locator('.recordings-result-count > span').first()).toBeVisible();
   await expect(toolbar.locator('.recordings-selected')).toBeVisible();
   await expect(page.locator('.recordings-call-select:checked')).toHaveCount(25);
   await expect(page.locator('.recordings-selected')).toContainText('25 selected');
@@ -1189,7 +1205,7 @@ test('page selection preserves other pages and Clear selection resets every page
   await expect(pageCheck).not.toBeChecked();
 });
 
-test('page selection resets when a new call search is applied', async ({ page }) => {
+test('page selection survives a new call search', async ({ page }) => {
   const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
   const pageCheck = page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true });
   await expect(page.locator('.recordings-call')).toHaveCount(25);
@@ -1197,19 +1213,21 @@ test('page selection resets when a new call search is applied', async ({ page })
   await page.getByRole('searchbox', { name: 'Full text' }).fill('Fire Dispatch');
   await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
   await expect.poll(() => state.requestedFilters.at(-1).transcript).toBe('Fire Dispatch');
-  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
-  await expect(page.locator('.recordings-selected')).toBeHidden();
-  await expect(pageCheck).not.toBeChecked();
+  await expect(page.locator('.recordings-call-select:checked')).toHaveCount(25);
+  await expect(page.locator('.recordings-selected')).toContainText('25 selected');
+  await expect(pageCheck).toBeChecked();
   await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(false);
 });
 
 for (const account of [{ name: 'secondary administrator', admin: true, primary: false },
   { name: 'guest', admin: false }]) {
-  test(`page selection is unavailable to a ${account.name}`, async ({ page }) => {
+  test(`page selection supports playback and export for a ${account.name}`, async ({ page }) => {
     await openRecordings(page, { ...account, calls: mixedRecordingCalls(), paginate: true });
     await expect(page.locator('.recordings-call')).toHaveCount(25);
-    await expect(page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true })).toHaveCount(0);
-    await expect(page.locator('.recordings-call-select')).toHaveCount(0);
+    await expect(page.locator('.recordings-call-select')).toHaveCount(25);
+    await page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true }).check();
+    await expect(page.getByRole('button', { name: 'Review in playlist', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Download MP3', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Review delete', exact: true })).toHaveCount(0);
     await expect(page.locator('.recordings-results-state .recordings-result-count')).toContainText('25 calls shown');
     await expect(page.locator('.recordings-results-toolbar .recordings-pager-top')).toBeVisible();
@@ -1236,7 +1254,8 @@ test('page selection cannot select an empty cursor batch or a zero-match search'
   await expect(page.locator('.recordings-call')).toHaveCount(0);
   await expect(page.locator('.recordings-results')).toContainText('No matching calls.');
   await expect(pageCheck).toBeDisabled();
-  await expect(page.locator('.recordings-selected')).toBeHidden();
+  await expect(page.locator('.recordings-selected')).toContainText('5 selected');
+  await expect(page.locator('.recordings-selected')).toContainText('0 on this page');
   await expect.poll(() => pageCheck.evaluate((input) => input.indeterminate)).toBe(false);
 });
 
@@ -1589,7 +1608,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     await expect(results).toHaveScreenshot(`recordings-compact-long-filter-${theme}-${width}.png`, componentScreenshot);
     await page.locator('.recordings-call-select').check();
     await expect(results.locator('.recordings-results-toolbar .recordings-selected')).toContainText('1 selected');
-    await expect(results.locator('.recordings-result-count > span').first()).toBeHidden();
+    await expect(results.locator('.recordings-result-count > span').first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await expect(results).toHaveScreenshot(`recordings-compact-selected-${theme}-${width}.png`, componentScreenshot);
   });
@@ -2778,4 +2797,146 @@ test('recording quality URL filters preserve zero and old recordings show unavai
   await selectRecordingDetailTab(actions, 'Call quality');
   await expect(actions.getByRole('tabpanel', { name: 'Call quality', exact: true }))
     .toHaveText('Quality measurements are unavailable for this recording.');
+});
+
+for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
+  test(`incident selection crosses searches, previews and downloads ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await stubRecordingAudio(page);
+    const all = mixedRecordingCalls();
+    const state = await openRecordings(page, { theme, admin: false, calls: all.slice(0, 2) });
+    state.allCalls = all;
+    if (theme === 'dark') {
+      await page.getByRole('button', { name: 'Use dark theme', exact: true }).click();
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    }
+    await page.locator('.recordings-page-select').check();
+    await page.locator('.recordings-call').first().locator('.recordings-call-time').click();
+    await expect.poll(() => page.evaluate(() => window.recordingPlays.length)).toBe(1);
+    state.calls = all.slice(2, 4);
+    await ensureSearchOpen(page);
+    await page.getByRole('searchbox', { name: 'Full text' }).fill('second incident search');
+    await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
+    await expect(page.locator('.recordings-selected')).toContainText('2 selected');
+    await expect(page.locator('.recordings-selected')).toContainText('0 on this page');
+    expect(await page.evaluate(() => window.recordingPlays.length)).toBe(1);
+    await page.locator('.recordings-page-select').check();
+    await expect(page.locator('.recordings-selected')).toContainText('4 selected');
+    await expect(page.locator('.recordings-call-select:checked')).toHaveCount(2);
+    const bar = page.locator('.recordings-results-toolbar');
+    await expect(bar).toHaveClass(/ui-selection-bar/);
+    expect(await bar.evaluate(element => getComputedStyle(element).position)).toBe('sticky');
+    await expectContrast(page, { rootSelector: '.recordings-results-toolbar', reportName: `incident-selection-${theme}-${width}` });
+    await page.screenshot({ path: test.info().outputPath('selection.png') });
+    await expect(page.getByRole('button', { name: 'Review delete', exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Review in playlist', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.recordingPlays.at(-1))).toContain('/20/audio');
+    expect(state.reviewIds).toEqual([17, 18, 19, 20]);
+    await expect(page.locator('.audio-dock')).toBeVisible();
+    const next = page.getByRole('button', { name: 'Next call', exact: true }).filter({ visible: true });
+    for (const id of [19, 18, 17]) {
+      await next.click();
+      await expect.poll(() => page.evaluate(() => window.recordingPlays.at(-1))).toContain(`/${id}/audio`);
+    }
+    await expect(next).toBeDisabled();
+    await page.getByRole('button', { name: 'Back to player', exact: true }).focus();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: 'Review in playlist', exact: true })).toBeFocused();
+    // Search while reviewing does not clear playback or selection.
+    if (width < 640) await page.getByRole('button', { name: 'Make player compact', exact: true }).click();
+    await ensureSearchOpen(page);
+    await page.getByRole('searchbox', { name: 'Full text' }).fill('third incident search');
+    await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
+    await expect(page.locator('.recordings-selected')).toContainText('4 selected');
+    await page.getByRole('button', { name: 'Download MP3', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Download selected recordings', exact: true });
+    await expect(dialog).toContainText('without gaps between calls');
+    await expect(dialog).toContainText('Your MP3 is ready');
+    expect(state.exportIds).toEqual([17, 18, 19, 20]);
+    await expect(dialog.getByRole('link', { name: 'Download MP3', exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect.poll(() => state.exportCancelled).toBe(true);
+    await expect(page.locator('.recordings-selected')).toContainText('4 selected');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+test('incident export cancellation and failures preserve selection for retry', async ({ page }) => {
+  const state = await openRecordings(page);
+  await page.locator('.recordings-page-select').check();
+  state.exportState = 'running';
+  await page.getByRole('button', { name: 'Download MP3', exact: true }).click();
+  let dialog = page.getByRole('dialog', { name: 'Download selected recordings', exact: true });
+  await expect(dialog).toContainText('Joining recordings');
+  await dialog.getByRole('button', { name: 'Cancel export', exact: true }).click();
+  await expect.poll(() => state.exportCancelled).toBe(true);
+  await expect(page.locator('.recordings-selected')).toContainText('1 selected');
+  state.exportCancelled = false; state.exportState = 'failed'; state.exportError = 'Selected recording unavailable. Try again.';
+  await page.getByRole('button', { name: 'Download MP3', exact: true }).click();
+  dialog = page.getByRole('dialog', { name: 'Download selected recordings', exact: true });
+  await expect(dialog.getByRole('alert')).toContainText('Selected recording unavailable');
+  state.exportState = 'ready';
+  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(dialog).toContainText('Your MP3 is ready');
+  await expect(page.locator('.recordings-selected')).toContainText('1 selected');
+});
+
+for (const theme of ['light', 'dark']) for (const width of [1280, 320]) {
+  test(`recording selection bar follows scrolling ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await openRecordings(page, { theme, calls: mixedRecordingCalls(), paginate: true });
+    await page.locator('.recordings-page-select').check();
+    await page.locator('.recordings-call').last().scrollIntoViewIfNeeded();
+    const bar = page.locator('.recordings-results-toolbar');
+    const box = await bar.boundingBox();
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    const stickyTop = await bar.evaluate(element => parseFloat(getComputedStyle(element).top));
+    expect(box.y).toBeCloseTo(stickyTop, 0);
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    await expectContrast(page, { rootSelector: '.recordings-results-toolbar', reportName: `incident-sticky-${theme}-${width}` });
+    await page.screenshot({ path: test.info().outputPath('sticky.png') });
+  });
+}
+
+test('recording selection text stays readable across every custom hue in both themes', async ({ page }) => {
+  await openRecordings(page);
+  await page.locator('.recordings-page-select').check();
+  const results = await page.evaluate(async () => {
+    const { applyThemeHue } = await import('/assets/core/theme.js');
+    const root = document.documentElement;
+    const settle = document.createElement('style');
+    settle.textContent = '*, *::before, *::after { transition: none !important; }'; document.head.append(settle);
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const color = paint => {
+      context.clearRect(0, 0, 1, 1); context.fillStyle = paint; context.fillRect(0, 0, 1, 1);
+      return [...context.getImageData(0, 0, 1, 1).data];
+    };
+    const background = element => {
+      const layers = [];
+      for (let parent = element; parent; parent = parent.parentElement) layers.push(color(getComputedStyle(parent).backgroundColor));
+      return layers.reverse().reduce((paint, layer) => layer.slice(0, 3).map((value, index) =>
+        value * layer[3] / 255 + paint[index] * (1 - layer[3] / 255)), [255, 255, 255]);
+    };
+    const luminance = rgb => rgb.slice(0, 3).map(value => {
+      const channel = value / 255; return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+    }).reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+    let minimum = Infinity, checked = 0;
+    const elements = [...document.querySelectorAll('.recordings-selected strong, .recordings-selected span, .recordings-selected button')];
+    for (const theme of ['light', 'dark']) {
+      if (theme === 'dark') root.dataset.theme = 'dark'; else delete root.dataset.theme;
+      for (let hue = 0; hue < 360; hue++) {
+        applyThemeHue(hue, root);
+        for (const element of elements) {
+          const ink = luminance(color(getComputedStyle(element).color)), paint = luminance(background(element));
+          minimum = Math.min(minimum, (Math.max(ink, paint) + 0.05) / (Math.min(ink, paint) + 0.05));
+        }
+        checked++;
+      }
+    }
+    return { minimum, checked };
+  });
+  expect(results.checked).toBe(720);
+  expect(results.minimum).toBeGreaterThanOrEqual(4.5);
 });

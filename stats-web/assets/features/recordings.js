@@ -595,6 +595,9 @@ export function createRecordingsFeature(deps) {
   const selectedSuggestions = new Map();
   const identityLabels = new Map();
   const selection = new Set();
+  const maximumSelectedCalls = 1000;
+  let selectionToolbar = null;
+  let selectionWorkflow = null;
   let currentResults = [];
   let currentFilters = {};
   let appliedSuggestions = new Map();
@@ -847,6 +850,8 @@ export function createRecordingsFeature(deps) {
 
   function applyPlaybackPreferences(preferences = {}, options = {}) {
     if (Object.hasOwn(options, 'identity') && options.identity !== preferenceIdentity) {
+      selection.clear();
+      drawSelection();
       preferenceIdentity = options.identity;
       playedHistory.activate(options.identity);
       volumeEditRevision++;
@@ -1161,6 +1166,30 @@ export function createRecordingsFeature(deps) {
     }).finally(() => {
       if (queueResume === resume) queueResume = null;
     });
+  }
+
+  async function replacePlaylist(rows) {
+    if (!rows.length) return;
+    playbackIntentRevision++;
+    sharedQueueRequest++;
+    const state = recordedPlayer();
+    state.token++;
+    state.detailsToken++;
+    state.audio.pause();
+    state.current = null;
+    state.stopped = true;
+    callDisplayRetention.clear();
+    state.queue = rows.map(queueEntry);
+    state.history = [];
+    state.continuation = null;
+    state.mode = 'queue';
+    state.loading = false;
+    state.pendingStart = false;
+    state.detailsLoading = false;
+    state.detailsError = '';
+    state.status = '';
+    drawQueue();
+    await advance();
   }
 
   function seekAudio(seconds) {
@@ -1744,10 +1773,14 @@ export function createRecordingsFeature(deps) {
     source.setAttribute('aria-label', sourceText ? `Source ${sourceText}` : 'Source radio not recorded');
     const frequencyCell = node('div', 'recordings-call-frequency', frequency(row) || '—');
     const actions = node('div', 'recordings-call-actions'); actions.setAttribute('role', 'group'); actions.setAttribute('aria-label', `Actions for ${description}`); actions.append(info);
-    if (isPrimaryAdmin()) {
+    {
       const checkbox = node('input', 'recordings-call-select ui-selection-check'); checkbox.type = 'checkbox'; checkbox.checked = selection.has(String(row.id));
       checkbox.setAttribute('aria-label', `Select ${label(row)} at ${dateTime(millis(row))}`);
-      checkbox.addEventListener('change', () => { if (checkbox.checked) selection.add(String(row.id)); else selection.delete(String(row.id)); drawSelection(); });
+      checkbox.addEventListener('change', () => {
+        changeSelection([String(row.id)], checkbox.checked);
+        checkbox.checked = selection.has(String(row.id));
+        drawSelection();
+      });
       card.classList.add('recordings-call-selectable'); card.append(checkbox);
     }
     card.append(time, length, heading, source, frequencyCell, actions);
@@ -1927,29 +1960,126 @@ export function createRecordingsFeature(deps) {
     }
   }
 
+  function changeSelection(ids, checked) {
+    const added = ids.filter(id => !selection.has(id));
+    if (checked && selection.size + added.length > maximumSelectedCalls) {
+      selectionWorkflow?.showFeedback('error', 'You can select up to 1,000 recordings. Clear some calls and try again.');
+      return;
+    }
+    ids.forEach(id => checked ? selection.add(id) : selection.delete(id));
+    if (!selectionWorkflow?.isBusy()) selectionWorkflow?.showFeedback('status', '');
+  }
+
+  async function reviewSelection(invoker) {
+    const ids = [...selection].map(Number);
+    if (!ids.length) return;
+    const identity = preferenceIdentity, intent = playbackIntentRevision;
+    try {
+      await selectionWorkflow.run(async () => {
+        const result = await requestJson('/api/v1/recordings/selection', {
+          method: 'POST', body: { ids }, page: false });
+        if (identity !== preferenceIdentity || intent !== playbackIntentRevision)
+          throw new Error('Playback or recording access changed. Review the selected calls again.');
+        const rows = result?.calls;
+        if (!Array.isArray(rows) || rows.length !== ids.length)
+          throw new Error('Some selected recordings are unavailable. Review your selection and try again.');
+        await replacePlaylist(rows);
+        deps.openRecordingPlaylist?.(invoker);
+      }, { pending: 'Loading selected recordings…', success: 'Selected recordings are in the playlist, oldest first.' });
+    } catch (_) { /* The shared workflow keeps the failure visible and selection intact. */ }
+  }
+
+  async function exportSelection() {
+    const ids = [...selection].map(Number);
+    if (!ids.length) return;
+    const body = node('div', 'recordings-export');
+    body.append(node('p', '', `${ids.length.toLocaleString()} selected recordings will be joined oldest first, without gaps between calls.`));
+    const progress = node('progress', 'recordings-export-progress');
+    progress.max = ids.length; progress.value = 0;
+    progress.setAttribute('aria-label', 'Recordings joined');
+    const feedback = node('div');
+    const download = anchor('Download MP3', '#', 'ui-button ui-button-primary');
+    download.hidden = true; download.setAttribute('download', '');
+    let closed = false, job = null, timer = null, finishWait = null;
+    const abort = new AbortController();
+    const dismiss = button(node, 'Cancel export', () => modal.close());
+    const retry = button(node, 'Try again', () => void start(), 'ui-button ui-button-secondary'); retry.hidden = true;
+    body.append(progress, feedback, modalFooter(dismiss, retry, download));
+    const workflow = createActionWorkflow({ surface: body, feedback, controls: () => [retry] });
+    const discard = async () => {
+      if (!job) return;
+      const id = job.id; job = null;
+      try { await requestJson(`/api/v1/recordings/exports/${encodeURIComponent(id)}`, {
+        method: 'DELETE', page: false }); } catch (_) { /* Server expiry also removes abandoned exports. */ }
+    };
+    const modal = openReadOnlyModal('Download selected recordings', body, { id: 'recording-mp3-export',
+      className: 'modal-size-medium', onClose: () => {
+        closed = true; abort.abort(); clearTimeout(timer); finishWait?.(); void discard();
+      } });
+    if (!modal || modal.ready && !await modal.ready || closed) return;
+    modal.focus(dismiss);
+    async function start() {
+      if (closed || workflow.isBusy()) return;
+      retry.hidden = true; progress.hidden = false; progress.value = 0;
+      dismiss.textContent = 'Cancel export';
+      try {
+        await workflow.run(async () => {
+          await discard();
+          job = await requestJson('/api/v1/recordings/exports', { method: 'POST', body: { ids }, page: false });
+          if (closed) { await discard(); return; }
+          while (!closed) {
+            const status = await requestJson(`/api/v1/recordings/exports/${encodeURIComponent(job.id)}`, {
+              page: false, signal: abort.signal });
+            if (closed) return;
+            progress.value = status.completed;
+            workflow.showFeedback('loading', `Joining recordings… ${status.completed} of ${status.total}`);
+            if (status.state === 'ready') {
+              download.href = `/api/v1/recordings/exports/${encodeURIComponent(job.id)}/audio`;
+              download.hidden = false; dismiss.textContent = 'Close'; download.click(); return;
+            }
+            if (status.state === 'failed') throw new Error(status.error || 'The MP3 could not be created. Try again.');
+            if (status.state !== 'running') throw new Error('The MP3 export ended before completion. Try a smaller selection.');
+            await new Promise(resolve => { finishWait = resolve; timer = setTimeout(resolve, 500); });
+            finishWait = null;
+          }
+        }, { pending: 'Preparing selected recordings…', success: 'Your MP3 is ready. Use Download MP3 to download it again.' });
+      } catch (_) {
+        if (!closed) { retry.hidden = false; dismiss.textContent = 'Close'; progress.hidden = true; }
+      }
+    }
+    void start();
+  }
+
   function drawSelection() {
+    const onPage = currentResults.filter((row) => selection.has(String(row.id))).length;
     if (pageSelect) {
       const selected = currentResults.filter((row) => selection.has(String(row.id))).length;
       pageSelect.checked = currentResults.length > 0 && selected === currentResults.length;
       pageSelect.indeterminate = selected > 0 && selected < currentResults.length;
       pageSelect.disabled = currentResults.length === 0;
     }
-    const showSelection = selection.size > 0 && isPrimaryAdmin();
-    if (countText) countText.hidden = showSelection || !(currentResults.length || nextCursor);
+    selectionToolbar?.classList.toggle('ui-selection-bar', selection.size > 0);
+    if (countText) countText.hidden = !(currentResults.length || nextCursor);
     if (!selectedHost) return;
     selectedHost.replaceChildren();
-    selectedHost.hidden = !selection.size || !isPrimaryAdmin();
+    selectedHost.hidden = !selection.size;
     if (selectedHost.hidden) return;
-    selectedHost.append(node('strong', '', `${selection.size} selected`),
-      button(node, 'Review delete', () => confirmDelete(), 'ui-button ui-button-danger-quiet'),
+    selectedHost.append(node('strong', '', `${selection.size.toLocaleString()} selected`),
+      node('span', 'ui-muted', `${onPage} on this page`),
+      button(node, 'Review in playlist', event => void reviewSelection(event.currentTarget), 'ui-button ui-button-secondary'),
+      button(node, 'Download MP3', () => void exportSelection(), 'ui-button ui-button-secondary'));
+    if (isPrimaryAdmin()) selectedHost.append(button(node, 'Review delete', () => confirmDelete(), 'ui-button ui-button-danger-quiet'));
+    selectedHost.append(
       button(node, 'Clear selection', () => {
         selection.clear();
+        selectionWorkflow?.showFeedback('status', '');
         resultHost.querySelectorAll('input.recordings-call-select').forEach((input) => {
           input.checked = false;
         });
         drawSelection();
         resultHost.querySelector('input.recordings-call-select')?.focus();
-      }, 'ui-button ui-button-link'));
+      }, 'ui-button ui-button-secondary recordings-selection-clear'));
+    selectionWorkflow?.refreshControls();
   }
 
   function confirmDelete() {
@@ -1957,7 +2087,7 @@ export function createRecordingsFeature(deps) {
     const ids = [...selection];
     const body = node('div', 'recordings-delete-confirm');
     body.append(node('p', '', `Delete ${ids.length} selected managed ${ids.length === 1 ? 'recording' : 'recordings'}? ` +
-      'Their audio files and call entries will be removed.'));
+      'This includes selected calls outside the current page and search. Their audio files and call entries will be removed.'));
     const status = node('div', 'recordings-form-status');
     status.setAttribute('role', 'status');
     const cancel = button(node, 'Cancel', () => modal.close());
@@ -2014,7 +2144,8 @@ export function createRecordingsFeature(deps) {
     const actions = pager.querySelector('.ui-browse-pager-actions');
     actions.classList.add('recordings-pager-actions'); actions.prepend(first);
     const count = pager.querySelector('.ui-browse-pager-count');
-    count.classList.add('recordings-pager-count');
+    count.classList.remove('muted');
+    count.classList.add('ui-muted', 'recordings-pager-count');
     actions.insertBefore(count, actions.querySelector('[data-page-action="next"]'));
     actions.querySelectorAll('button').forEach(control => control.classList.add('ui-button-compact'));
     pagerHosts.push(pager);
@@ -2043,9 +2174,9 @@ export function createRecordingsFeature(deps) {
         }
         resultHost.append(context);
       }
-      const columns = node('div', `recordings-call-columns${isPrimaryAdmin() ? ' recordings-call-selectable' : ''}`);
+      const columns = node('div', 'recordings-call-columns recordings-call-selectable');
       columns.setAttribute('aria-hidden', 'true');
-      for (const title of [...(isPrimaryAdmin() ? [''] : []), 'Time', 'Length', 'Talkgroup / channel', 'Source radio', 'Frequency', '']) columns.append(node('span', '', title));
+      for (const title of ['', 'Time', 'Length', 'Talkgroup / channel', 'Source radio', 'Frequency', '']) columns.append(node('span', '', title));
       resultHost.append(columns);
       let lastDate = '';
       const gaps = recordingPageGaps(currentResults);
@@ -2120,7 +2251,7 @@ export function createRecordingsFeature(deps) {
         for (const key of ['from_ms', 'to_ms']) if (Number.isFinite(Number(result?.[key])) && result?.[key] != null) anchors[key] = String(result[key]);
         if (JSON.stringify(search) === JSON.stringify(submission.search)) Object.assign(search, anchors);
         currentFilters = { ...submission.filters, ...anchors }; appliedSearch = { ...submission.search, ...anchors }; appliedRange = submission.search.transcript && submission.search.text_range !== 'time' ? '24h' : submission.search.range || '24h';
-        appliedSuggestions = submission.suggestions; selection.clear(); resetAudio();
+        appliedSuggestions = submission.suggestions;
         updateDraftFeedback();
       }
       currentResults = Array.isArray(result?.calls) ? result.calls : [];
@@ -2787,19 +2918,22 @@ export function createRecordingsFeature(deps) {
     searchTiming = node('span', 'recordings-search-timing');
     countHost.append(countText, searchTiming);
     const toolbar = node('div', 'recordings-results-toolbar');
+    selectionToolbar = toolbar;
+    const selectionFeedback = node('div'); selectionFeedback.hidden = true;
+    selectionWorkflow = createActionWorkflow({ surface: toolbar, feedback: selectionFeedback,
+      controls: () => selectedHost.querySelectorAll('button') });
     const resultState = node('div', 'recordings-results-state');
     pageSelect = null;
-    if (isPrimaryAdmin()) {
+    {
       const pageSelection = node('label', 'recordings-page-selection');
       pageSelect = node('input', 'recordings-page-select ui-selection-check');
       pageSelect.type = 'checkbox';
       pageSelect.setAttribute('aria-label', 'Select all calls on this page');
       pageSelect.disabled = true;
       pageSelect.addEventListener('change', () => {
-        currentResults.forEach((row) => pageSelect.checked ? selection.add(String(row.id)) :
-          selection.delete(String(row.id)));
+        changeSelection(currentResults.map(row => String(row.id)), pageSelect.checked);
         resultHost.querySelectorAll('input.recordings-call-select').forEach((input) => {
-          input.checked = pageSelect.checked;
+          input.checked = selection.has(input.closest('[data-recording-id]').dataset.recordingId);
         });
         drawSelection();
       });
@@ -2812,8 +2946,8 @@ export function createRecordingsFeature(deps) {
     pagerHosts = [];
     const topPager = makePager('top');
     const bottomPager = makePager('bottom');
-    resultState.append(countHost, selectedHost); toolbar.append(resultState, topPager);
-    body.append(toolbar, resultStatus, resultHost, bottomPager);
+    resultState.append(countHost, topPager, selectedHost); toolbar.append(resultState);
+    body.append(toolbar, selectionFeedback, resultStatus, resultHost, bottomPager);
     resultSection.append(titleBar, body);
     browser.append(resultSection);
     host.append(form);

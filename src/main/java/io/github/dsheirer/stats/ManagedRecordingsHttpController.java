@@ -7,6 +7,7 @@ package io.github.dsheirer.stats;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.module.decode.traffic.RadioSystemIdentityKey;
 import io.github.dsheirer.module.decode.traffic.RadioSystemKey;
 import io.github.dsheirer.preference.UserPreferences;
@@ -17,6 +18,7 @@ import io.github.dsheirer.record.managed.ManagedRecordingTranscriptionService;
 import io.github.dsheirer.web.http.ApiHttpResponse;
 import io.github.dsheirer.web.http.ApiRequestDecoder;
 import io.github.dsheirer.web.http.WebRequestSecurity;
+import io.github.dsheirer.web.auth.WebCapability;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -38,16 +40,17 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /** Bounded HTTP surface for the separate Managed Recordings catalog. */
-final class ManagedRecordingsHttpController
+final class ManagedRecordingsHttpController implements AutoCloseable
 {
     static final String BROWSE_PATH = "/api/v1/recordings";
     static final String ADMIN_PATH = "/api/v1/admin/recordings";
     private static final Logger mLog = LoggerFactory.getLogger(ManagedRecordingsHttpController.class);
-    private static final int MAXIMUM_DELETE_IDS = 100;
-    private static final int MAXIMUM_JSON_BYTES = 8 * 1024;
+    private static final int MAXIMUM_DELETE_IDS = ManagedRecordingExports.MAXIMUM_CALLS;
+    private static final int MAXIMUM_JSON_BYTES = 32 * 1024;
     private static final int MAXIMUM_SEARCH_IDENTITIES = 200;
     private static final Semaphore AUDIO_RESPONSES = new Semaphore(16);
     private final StatsBrowseReadCache mBrowseReads;
+    private final ManagedRecordingExports mExports = new ManagedRecordingExports();
     private final Supplier<ManagedRecordingCatalog> mCatalog;
     private final UserPreferences mPreferences;
     private final WebRequestSecurity mSecurity;
@@ -99,6 +102,17 @@ final class ManagedRecordingsHttpController
         mBrowseReads = java.util.Objects.requireNonNull(browseReads);
     }
 
+    /** Browse POST/DELETE operations control temporary viewer exports and never mutate recordings. */
+    void registerBrowse(HttpServer server)
+    {
+        var read = mSecurity.protectApi(WebCapability.RECORDINGS_VIEW, this::handleBrowse);
+        var control = mSecurity.protectAnyViewerControl(Set.of(WebCapability.RECORDINGS_VIEW), this::handleBrowse);
+        server.createContext(BROWSE_PATH, exchange -> {
+            if(Set.of("GET", "HEAD", "OPTIONS").contains(exchange.getRequestMethod())) read.handle(exchange);
+            else control.handle(exchange);
+        });
+    }
+
     void handleBrowse(HttpExchange exchange) throws IOException
     {
         try
@@ -117,6 +131,26 @@ final class ManagedRecordingsHttpController
                 return;
             }
             ManagedRecordingCatalog catalog = available();
+            if((BROWSE_PATH + "/selection").equals(path))
+            {
+                requireMethod(exchange, "POST");
+                var calls = ManagedRecordingExports.selection(catalog, selectedIds(exchange));
+                ApiHttpResponse.sendData(exchange, 200, Map.of("calls",
+                    mLabels.decorate(calls.stream().map(ManagedRecordingCatalog.RecordingCall::toMap).toList())));
+                return;
+            }
+            if((BROWSE_PATH + "/exports").equals(path))
+            {
+                requireMethod(exchange, "POST");
+                ApiHttpResponse.sendData(exchange, 202,
+                    mExports.start(catalog, selectedIds(exchange), exportOwner(exchange)).status());
+                return;
+            }
+            if(path.startsWith(BROWSE_PATH + "/exports/"))
+            {
+                export(exchange, path.substring((BROWSE_PATH + "/exports/").length()));
+                return;
+            }
             if((BROWSE_PATH + "/calls").equals(path))
             {
                 requireMethod(exchange, "GET");
@@ -214,6 +248,80 @@ final class ManagedRecordingsHttpController
                 "Recording maintenance is already running");
         }
     }
+
+    private String exportOwner(HttpExchange exchange)
+    {
+        return mSecurity.authenticatedAccount(exchange)
+            .map(account -> account.id() + ":" + account.authRevision()).orElse("guest");
+    }
+
+    private List<Long> selectedIds(HttpExchange exchange) throws IOException
+    {
+        if(exchange.getRequestURI().getRawQuery() != null)
+            throw new StatsApiException(400, "unknown_parameter", "Query is not supported");
+        JsonNode body = json(exchange);
+        rejectUnknownFields(body, Set.of("ids"));
+        JsonNode ids = body.get("ids");
+        if(ids == null || !ids.isArray() || ids.isEmpty() || ids.size() > ManagedRecordingExports.MAXIMUM_CALLS)
+            throw new StatsApiException(400, "invalid_ids", "Select 1 to 1,000 recordings.");
+        Set<Long> unique = new LinkedHashSet<>();
+        for(JsonNode id: ids)
+        {
+            if(!id.isIntegralNumber() || !id.canConvertToLong() || id.longValue() <= 0)
+                throw new StatsApiException(400, "invalid_ids", "Recording IDs must be positive integers");
+            unique.add(id.longValue());
+        }
+        return List.copyOf(unique);
+    }
+
+    private void export(HttpExchange exchange, String remaining) throws IOException
+    {
+        if(exchange.getRequestURI().getRawQuery() != null)
+            throw new StatsApiException(400, "unknown_parameter", "Query is not supported");
+        boolean audio = remaining.endsWith("/audio");
+        String id = audio ? remaining.substring(0, remaining.length() - 6) : remaining;
+        if(!id.matches("[a-f0-9-]{36}"))
+            throw new StatsApiException(404, "export_not_found", "This MP3 export has expired. Create it again.");
+        var job = mExports.find(id, exportOwner(exchange));
+        if(audio)
+        {
+            requireMethod(exchange, "GET");
+            if(!AUDIO_RESPONSES.tryAcquire())
+                throw new StatsApiException(429, "too_many_audio_responses", "Too many audio downloads are active. Try again shortly.");
+            try(InputStream input = mExports.open(job))
+            {
+                exchange.getResponseHeaders().set("Content-Type", "audio/mpeg");
+                exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"recordings-" +
+                    java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")
+                        .withZone(java.time.ZoneOffset.UTC).format(java.time.Instant.ofEpochMilli(job.created)) + ".mp3\"");
+                exchange.getResponseHeaders().set("Cache-Control", "private, no-store, no-transform");
+                exchange.sendResponseHeaders(200, Files.size(job.output));
+                try(OutputStream output = exchange.getResponseBody())
+                {
+                    byte[] buffer = new byte[16384];
+                    int count, chunks = 0;
+                    while((count = input.read(buffer)) != -1)
+                    {
+                        if(chunks++ % 64 == 0 && !mSecurity.isRequestStillAuthorized(exchange)) break;
+                        output.write(buffer, 0, count);
+                    }
+                }
+            }
+            finally { AUDIO_RESPONSES.release(); }
+        }
+        else if("DELETE".equals(exchange.getRequestMethod()))
+        {
+            mExports.cancel(job);
+            ApiHttpResponse.sendData(exchange, 200, Map.of("state", "cancelled"));
+        }
+        else
+        {
+            requireMethod(exchange, "GET");
+            ApiHttpResponse.sendData(exchange, 200, job.status());
+        }
+    }
+
+    @Override public void close() { mExports.close(); }
 
     void handleAdmin(HttpExchange exchange) throws IOException
     {
@@ -1200,12 +1308,12 @@ final class ManagedRecordingsHttpController
         JsonNode ids = body.get("ids");
         if(ids == null || !ids.isArray() || ids.isEmpty() || ids.size() > MAXIMUM_DELETE_IDS)
         {
-            throw new StatsApiException(400, "invalid_ids", "Select 1 to 100 recordings");
+            throw new StatsApiException(400, "invalid_ids", "Select 1 to 1,000 recordings");
         }
         Set<Long> unique = new LinkedHashSet<>();
         for(JsonNode id: ids)
         {
-            if(!id.canConvertToLong() || id.longValue() <= 0)
+            if(!id.isIntegralNumber() || !id.canConvertToLong() || id.longValue() <= 0)
             {
                 throw new StatsApiException(400, "invalid_ids", "Recording IDs must be positive integers");
             }

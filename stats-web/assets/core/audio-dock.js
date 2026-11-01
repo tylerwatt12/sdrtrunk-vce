@@ -1420,7 +1420,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       }
     };
   }
-  return { synchronize, prepareGuide, openPlayerMenu(invoker) {
+  return { synchronize, prepareGuide, openRecordingPlaylist(invoker) {
+    if (guidePresentation || !access().recordings) return;
+    source = 'recordings'; superCollapsed = false; externalManagement = false; managementSource = null;
+    openPanel('queue', invoker);
+  }, openPlayerMenu(invoker) {
     if (guidePresentation || document.body.dataset.view === 'scanner' && !access().live) return;
     if (document.body.dataset.view === 'scanner' && source !== 'live') { managementSource = source; source = 'live'; }
     openPlayerMenu(invoker);

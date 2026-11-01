@@ -41,7 +41,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=75';
+import { createRecordingsFeature } from './features/recordings.js?v=76';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -50,7 +50,7 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
 import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=48';
+import { createAudioDock } from './core/audio-dock.js?v=49';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=2';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';
@@ -36421,6 +36421,7 @@ function recordingsFeatureDependencies(overrides = {}) {
   return {
   node, iconButton, iconGlyph, requestJson, openReadOnlyModal, closeReadOnlyModal, section, pageHeader, beginPage, uiToggleField, metrics, browsingWorkflows,
   recordingDirectListenControl,
+  openRecordingPlaylist: invoker => audioDock.openRecordingPlaylist(invoker),
   modalFooter: aliasModalFooter,
   captureRenderContext, renderIsCurrent, content, href, anchor, entityRefHref,
   canViewRadio: () => capabilityAllowed(ACCESS_CAPABILITIES.RADIO),

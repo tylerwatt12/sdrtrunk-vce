@@ -169,6 +169,7 @@ public class StatsWebServerService implements AutoCloseable
     private final WebTlsMaterialService mTlsMaterialService;
     private final ScheduledExecutorService mTlsMaintenanceExecutor;
     private volatile WebListener mListener;
+    private final Map<HttpServer,ManagedRecordingsHttpController> mRecordingControllers = new ConcurrentHashMap<>();
     private volatile WebServerRuntimeState mRuntimeState = stoppedState("Web server is disabled.");
     private WebAccessService mWebAccessService;
     private WebAuthenticationService mWebAuthenticationService;
@@ -731,8 +732,8 @@ public class StatsWebServerService implements AutoCloseable
         ManagedRecordingsHttpController managedRecordings = new ManagedRecordingsHttpController(
             () -> mServices.mManagedRecordingCatalog, mUserPreferences, mWebRequestSecurity,
             mServices.mManagedRecordingMaintenance, () -> mServices.mManagedRecordingTranscriptionService);
-        server.createContext(ManagedRecordingsHttpController.BROWSE_PATH, mWebRequestSecurity.protectApi(
-            WebCapability.RECORDINGS_VIEW, managedRecordings::handleBrowse));
+        mRecordingControllers.put(server, managedRecordings);
+        managedRecordings.registerBrowse(server);
         server.createContext(ManagedRecordingsHttpController.ADMIN_PATH, mWebRequestSecurity.protectApi(
             WebCapability.ADMIN_RECORDINGS, managedRecordings::handleAdmin));
 
@@ -892,6 +893,8 @@ public class StatsWebServerService implements AutoCloseable
     private void stopListener(WebListener listener)
     {
         listener.close();
+        ManagedRecordingsHttpController recordings = mRecordingControllers.remove(listener.server());
+        if(recordings != null) recordings.close();
         mWebDiagnosticLogService.event("listener_stopped", Map.of());
     }
 
@@ -2367,6 +2370,8 @@ public class StatsWebServerService implements AutoCloseable
         mTlsMaintenanceExecutor.shutdownNow();
         if(mStarted) MyEventBus.getGlobalEventBus().unregister(this);
         stopActiveListener();
+        mRecordingControllers.values().forEach(ManagedRecordingsHttpController::close);
+        mRecordingControllers.clear();
         mWebDiagnosticLogService.close();
         mDecodeEventHub.close();
         setRuntimeState(stoppedState("Web server is stopped."));
