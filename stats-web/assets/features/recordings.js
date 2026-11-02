@@ -570,7 +570,8 @@ function select(node, options, labelText) {
 
 // Reuse map: the shared filter disclosure owns inline expansion, with focused
 // pickers on the shared modal foundation. Compact call rows reuse call identities,
-// one action dialog, the browsing pager and global audio player.
+// one action dialog, the browsing pager and global audio player. The grouped
+// shared selection bar keeps selected-call actions separate from browsing.
 // Administration keeps its established shared controls and compositions.
 export function createRecordingsFeature(deps) {
   const { node, requestJson, openReadOnlyModal, section, pageHeader, beginPage,
@@ -591,7 +592,6 @@ export function createRecordingsFeature(deps) {
   const identityLabels = new Map();
   const selection = new Set();
   const maximumSelectedCalls = 1000;
-  let selectionToolbar = null;
   let selectionWorkflow = null;
   let currentResults = [];
   let currentFilters = {};
@@ -2053,27 +2053,38 @@ export function createRecordingsFeature(deps) {
       pageSelect.indeterminate = selected > 0 && selected < currentResults.length;
       pageSelect.disabled = currentResults.length === 0;
     }
-    selectionToolbar?.classList.toggle('ui-selection-bar', selection.size > 0);
     if (countText) countText.hidden = !(currentResults.length || nextCursor);
     if (!selectedHost) return;
     selectedHost.replaceChildren();
     selectedHost.hidden = !selection.size;
     if (selectedHost.hidden) return;
-    selectedHost.append(node('strong', '', `${selection.size.toLocaleString()} selected`),
-      node('span', 'ui-muted', `${onPage} on this page`),
-      button(node, 'Review in playlist', event => void reviewSelection(event.currentTarget), 'ui-button ui-button-secondary'),
-      button(node, 'Download MP3', () => void exportSelection(), 'ui-button ui-button-secondary'));
-    if (isPrimaryAdmin()) selectedHost.append(button(node, 'Review delete', () => confirmDelete(), 'ui-button ui-button-danger-quiet'));
-    selectedHost.append(
-      button(node, 'Clear selection', () => {
-        selection.clear();
-        selectionWorkflow?.showFeedback('status', '');
-        resultHost.querySelectorAll('input.recordings-call-select').forEach((input) => {
-          input.checked = false;
-        });
-        drawSelection();
-        resultHost.querySelector('input.recordings-call-select')?.focus();
-      }, 'ui-button ui-button-secondary recordings-selection-clear'));
+    const summary = node('div', 'ui-selection-bar-summary');
+    const copy = node('div', 'ui-selection-bar-copy');
+    copy.append(node('strong', '', `${selection.size.toLocaleString()} selected`),
+      node('span', 'ui-selection-bar-detail', `${onPage} on this page`));
+    if (iconGlyph) summary.append(iconGlyph('icon-scan-lists'));
+    summary.append(copy);
+    const actions = node('div', 'ui-selection-bar-actions');
+    actions.append(
+      addGlyph(button(node, 'Review in playlist', event => void reviewSelection(event.currentTarget), 'ui-button ui-button-primary'), 'icon-play'),
+      addGlyph(button(node, 'Download MP3', () => void exportSelection()), 'icon-download'));
+    if (isPrimaryAdmin()) {
+      const admin = node('div', 'ui-selection-bar-secondary');
+      admin.append(addGlyph(button(node, 'Delete…', () => confirmDelete(), 'ui-button ui-button-danger-quiet'), 'icon-trash'));
+      actions.append(admin);
+    }
+    const clear = iconButton ? iconButton('icon-close', 'Clear selection', 'ui-button ui-button-quiet ui-icon-button ui-selection-bar-clear') :
+      button(node, 'Clear selection', null, 'ui-button ui-button-quiet ui-selection-bar-clear');
+    clear.addEventListener('click', () => {
+      selection.clear();
+      selectionWorkflow?.showFeedback('status', '');
+      resultHost.querySelectorAll('input.recordings-call-select').forEach((input) => {
+        input.checked = false;
+      });
+      drawSelection();
+      (resultHost.querySelector('input.recordings-call-select') || pageSelect)?.focus();
+    });
+    selectedHost.append(summary, actions, clear);
     selectionWorkflow?.refreshControls();
   }
 
@@ -2906,16 +2917,17 @@ export function createRecordingsFeature(deps) {
     titleActions.append(sortControl, pageSizeField);
     titleBar.append(titleActions);
     const body = node('div', 'recordings-results-body');
-    selectedHost = node('div', 'recordings-selected ui-action-row');
+    selectedHost = node('div', 'recordings-selected ui-selection-bar ui-selection-bar-grouped');
+    selectedHost.setAttribute('role', 'group');
+    selectedHost.setAttribute('aria-label', 'Selected recording actions');
     selectedHost.hidden = true;
     countHost = node('div', 'recordings-result-count');
     countText = node('span');
     searchTiming = node('span', 'recordings-search-timing');
     countHost.append(countText, searchTiming);
     const toolbar = node('div', 'recordings-results-toolbar');
-    selectionToolbar = toolbar;
     const selectionFeedback = node('div'); selectionFeedback.hidden = true;
-    selectionWorkflow = createActionWorkflow({ surface: toolbar, feedback: selectionFeedback,
+    selectionWorkflow = createActionWorkflow({ surface: selectedHost, feedback: selectionFeedback,
       controls: () => selectedHost.querySelectorAll('button') });
     const resultState = node('div', 'recordings-results-state');
     pageSelect = null;
@@ -2941,8 +2953,8 @@ export function createRecordingsFeature(deps) {
     pagerHosts = [];
     const topPager = makePager('top');
     const bottomPager = makePager('bottom');
-    resultState.append(countHost, topPager, selectedHost); toolbar.append(resultState);
-    body.append(toolbar, selectionFeedback, resultStatus, resultHost, bottomPager);
+    resultState.append(countHost, topPager); toolbar.append(resultState);
+    body.append(selectedHost, selectionFeedback, toolbar, resultStatus, resultHost, bottomPager);
     resultSection.append(titleBar, body);
     browser.append(resultSection);
     host.append(form);

@@ -10,6 +10,15 @@ const galleryCases = [
   ['components-dark-mobile', 'dark', { width: 390, height: 844 }],
 ];
 
+for (const [name, theme, viewport] of galleryCases) {
+  test(`grouped selection strip ${name}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
+    const bar = page.locator('.ui-selection-bar-grouped');
+    await expect(bar).toHaveScreenshot(`selection-strip-${name}.png`);
+  });
+}
+
 test('equal dual range handles remain ordered and each can move by keyboard or pointer', async ({ page }) => {
   await page.goto('/design-system.html?theme=light&view=gallery');
   const range = page.locator('.visual-duration-range').first();

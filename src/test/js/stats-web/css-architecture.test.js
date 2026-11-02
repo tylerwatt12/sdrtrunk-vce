@@ -15,7 +15,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/components/semantic-text.css?v=7") layer(components);',
   '@import url("./styles/components/controls.css?v=54") layer(components);',
   '@import url("./styles/components/audio-controls.css?v=15") layer(components);',
-  '@import url("./styles/compositions/workspaces.css?v=40") layer(compositions);',
+  '@import url("./styles/compositions/workspaces.css?v=41") layer(compositions);',
   '@import url("./styles/compositions/tables.css?v=20") layer(compositions);',
   '@import url("./styles/compositions/browsing.css?v=1") layer(compositions);',
   '@import url("./styles/compositions/app-chrome.css?v=24") layer(compositions);',
@@ -51,7 +51,7 @@ const EXPECTED_ENTRY_MANIFEST = [
   '@import url("./styles/features/p25-settings.css?v=5") layer(features);',
   '@import url("./styles/features/receiver-health.css?v=9") layer(features);',
   '@import url("./styles/features/activity.css?v=7") layer(features);',
-  '@import url("./styles/features/recordings.css?v=34") layer(features);',
+  '@import url("./styles/features/recordings.css?v=35") layer(features);',
   '@import url("./styles/utilities/table-measurement.css?v=2") layer(utilities);',
 ];
 

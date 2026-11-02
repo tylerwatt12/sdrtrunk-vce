@@ -39,6 +39,7 @@
     </symbol>
     <symbol id="visual-icon-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4ZM13.5 6.5l4 4"></path></symbol>
     <symbol id="visual-icon-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"></rect><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"></path></symbol>
+    <symbol id="visual-icon-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 19h16"></path></symbol>
     <symbol id="visual-icon-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"></path></symbol>
     <symbol id="visual-icon-close" viewBox="0 0 24 24"><path d="M5 5l14 14M19 5 5 19"></path></symbol>
     <symbol id="visual-icon-alert" viewBox="0 0 24 24">
@@ -269,6 +270,15 @@
           <span class="ui-record-card-icon" data-tone-hint tabindex="0" role="img" aria-label="Tones">
             <svg aria-hidden="true"><use href="#visual-icon-tones"></use></svg>
           </span>
+        </div>
+        <div class="ui-selection-bar ui-selection-bar-grouped" role="group" aria-label="Selected recording actions">
+          <div class="ui-selection-bar-summary"><svg aria-hidden="true"><use href="#visual-icon-scan-lists"></use></svg><div class="ui-selection-bar-copy"><strong>12 selected</strong><span class="ui-selection-bar-detail">4 on this page</span></div></div>
+          <div class="ui-selection-bar-actions">
+            <button class="ui-button ui-button-primary" type="button"><svg aria-hidden="true"><use href="#visual-icon-play"></use></svg>Review in playlist</button>
+            <button class="ui-button ui-button-secondary" type="button"><svg aria-hidden="true"><use href="#visual-icon-download"></use></svg>Download MP3</button>
+            <div class="ui-selection-bar-secondary"><button class="ui-button ui-button-danger-quiet" type="button"><svg aria-hidden="true"><use href="#visual-icon-trash"></use></svg>Delete…</button></div>
+          </div>
+          <button class="ui-button ui-button-quiet ui-icon-button ui-selection-bar-clear" type="button" aria-label="Clear selection" data-ui-hint="Clear selection"><svg aria-hidden="true"><use href="#visual-icon-close"></use></svg></button>
         </div>
         <button class="ui-link-tile recordings-picker-button" type="button" aria-haspopup="dialog">
           <svg aria-hidden="true"><use href="#visual-icon-columns"></use></svg>

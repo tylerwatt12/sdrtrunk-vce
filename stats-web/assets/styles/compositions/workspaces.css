@@ -1025,6 +1025,91 @@
   font-size: var(--font-size-label);
 }
 
+/* Optional grouped layout: summary, selected-item actions and a clear control.
+   Size against the bar so narrow catalog columns reflow like phone layouts. */
+.ui-selection-bar-grouped {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  container-type: inline-size;
+}
+
+.ui-selection-bar-summary {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.ui-selection-bar-summary > svg {
+  width: var(--icon-glyph-size);
+  height: var(--icon-glyph-size);
+  flex: 0 0 auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.ui-selection-bar-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.ui-selection-bar-detail {
+  color: var(--muted);
+  font-size: var(--font-size-meta);
+}
+
+.ui-selection-bar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.ui-selection-bar-secondary {
+  display: flex;
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--line);
+}
+
+.ui-selection-bar-clear {
+  justify-self: end;
+}
+
+@container (max-width: 640px) {
+  .ui-selection-bar-summary {
+    grid-column: 1 / 3;
+  }
+
+  .ui-selection-bar-clear {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .ui-selection-bar-actions {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
+  .ui-selection-bar-secondary {
+    border-left: 0;
+    padding-left: 0;
+    margin-left: auto;
+  }
+}
+
+@container (max-width: 430px) {
+  .ui-selection-bar-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ui-selection-bar-secondary {
+    justify-content: flex-end;
+  }
+}
+
 @media (max-width: 640px) {
   .ui-selection-bar {
     align-items: stretch;

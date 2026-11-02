@@ -1150,10 +1150,10 @@ test('page selection selects and deselects displayed calls and reflects partial 
   await expect(pageCheck).toBeEnabled();
   const toolbar = page.locator('.recordings-results-toolbar');
   await expect(toolbar.locator('.recordings-result-count')).toBeVisible();
-  await expect(toolbar.locator('.recordings-selected')).toBeHidden();
+  await expect(page.locator('.recordings-selected')).toBeHidden();
   await pageCheck.check();
   await expect(toolbar.locator('.recordings-result-count > span').first()).toBeVisible();
-  await expect(toolbar.locator('.recordings-selected')).toBeVisible();
+  await expect(page.locator('.recordings-selected')).toBeVisible();
   await expect(page.locator('.recordings-call-select:checked')).toHaveCount(25);
   await expect(page.locator('.recordings-selected')).toContainText('25 selected');
   await expect(pageCheck).toBeChecked();
@@ -1228,7 +1228,7 @@ for (const account of [{ name: 'secondary administrator', admin: true, primary: 
     await page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true }).check();
     await expect(page.getByRole('button', { name: 'Review in playlist', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Download MP3', exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Review delete', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Delete…', exact: true })).toHaveCount(0);
     await expect(page.locator('.recordings-results-state .recordings-result-count')).toContainText('25 calls shown');
     await expect(page.locator('.recordings-results-toolbar .recordings-pager-top')).toBeVisible();
   });
@@ -1266,7 +1266,7 @@ test('page selection deletes only the selected page calls after confirmation', a
   await page.locator('.recordings-pager').last().getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.locator('.recordings-call')).toHaveCount(5);
   await page.getByRole('checkbox', { name: 'Select all calls on this page', exact: true }).check();
-  await page.getByRole('button', { name: 'Review delete', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete…', exact: true }).click();
   const dialog = page.getByRole('alertdialog', { name: 'Delete recordings', exact: true });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText('Delete 5 selected managed recordings?');
@@ -1277,8 +1277,8 @@ test('page selection deletes only the selected page calls after confirmation', a
   await expect(dialog).toBeHidden();
   expect(state.deletionWrites).toEqual([]);
   await expect(page.locator('.recordings-call-select:checked')).toHaveCount(5);
-  await expect(page.getByRole('button', { name: 'Review delete', exact: true })).toBeFocused();
-  await page.getByRole('button', { name: 'Review delete', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Delete…', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Delete…', exact: true }).click();
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused();
   await dialog.getByRole('button', { name: 'Delete recordings', exact: true }).click();
@@ -1608,7 +1608,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     if (width <= 900) await page.locator('#recordings-filters-toggle').click();
     await expect(results).toHaveScreenshot(`recordings-compact-long-filter-${theme}-${width}.png`, componentScreenshot);
     await page.locator('.recordings-call-select').check();
-    await expect(results.locator('.recordings-results-toolbar .recordings-selected')).toContainText('1 selected');
+    await expect(results.locator('.recordings-selected')).toContainText('1 selected');
     await expect(results.locator('.recordings-result-count > span').first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
     await expect(results).toHaveScreenshot(`recordings-compact-selected-${theme}-${width}.png`, componentScreenshot);
@@ -2127,7 +2127,7 @@ for (const theme of ['light', 'dark']) test(`unified call actions expands in pla
   }
 });
 
-test('successful searches reset playback and queue while failed searches and cursor paging preserve them', async ({ page }) => {
+test('successful and failed searches and cursor paging preserve playback and queue', async ({ page }) => {
   await page.addInitScript(() => { HTMLMediaElement.prototype.play = function() { return Promise.resolve(); }; HTMLMediaElement.prototype.pause = function() {}; });
   const state = await openRecordings(page, { calls: mixedRecordingCalls(), paginate: true });
   await page.locator('.recordings-call-info').first().click();
@@ -2142,8 +2142,8 @@ test('successful searches reset playback and queue while failed searches and cur
   await page.getByRole('button', { name: 'Search recordings', exact: true }).click();
   await expect(page.locator('.recordings-result-status')).toContainText('Previous results'); await expect(queue).toContainText('1 queued');
   await searchNow(page, state);
-  await expect(page.locator('.recordings-call-playing,.recordings-call-queued')).toHaveCount(0);
-  await expect(queue).not.toContainText('1 queued');
+  await expect(page.locator('.recordings-call-queued')).toHaveCount(1);
+  await expect(queue).toContainText('1 queued');
 });
 
 test('pending searches lock sort and pager and group Load more retains its exact period snapshot', async ({ page }) => {
@@ -2824,12 +2824,20 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
     await page.locator('.recordings-page-select').check();
     await expect(page.locator('.recordings-selected')).toContainText('4 selected');
     await expect(page.locator('.recordings-call-select:checked')).toHaveCount(2);
-    const bar = page.locator('.recordings-results-toolbar');
+    const bar = page.locator('.recordings-selected');
     await expect(bar).toHaveClass(/ui-selection-bar/);
+    await expect(bar.getByRole('button', { name: 'Review in playlist', exact: true })).toHaveClass(/ui-button-primary/);
+    await expect(bar.locator('.recordings-pager, .recordings-page-selection, .recordings-result-count')).toHaveCount(0);
+    const bounds = await page.locator('.recordings-results-panel').evaluate(element => {
+      const strip = element.querySelector('.recordings-selected').getBoundingClientRect();
+      const pager = element.querySelector('.recordings-results-toolbar').getBoundingClientRect();
+      return { stripBottom: strip.bottom, pagerTop: pager.top };
+    });
+    expect(bounds.pagerTop).toBeGreaterThanOrEqual(bounds.stripBottom);
     expect(await bar.evaluate(element => getComputedStyle(element).position)).toBe('sticky');
-    await expectContrast(page, { rootSelector: '.recordings-results-toolbar', reportName: `incident-selection-${theme}-${width}` });
+    await expectContrast(page, { rootSelector: '.recordings-selected', reportName: `incident-selection-${theme}-${width}` });
     await page.screenshot({ path: test.info().outputPath('selection.png') });
-    await expect(page.getByRole('button', { name: 'Review delete', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Delete…', exact: true })).toHaveCount(0);
     await page.getByRole('button', { name: 'Review in playlist', exact: true }).click();
     await expect.poll(() => page.evaluate(() => window.recordingPlays.at(-1))).toContain('/20/audio');
     expect(state.reviewIds).toEqual([17, 18, 19, 20]);
@@ -2888,14 +2896,14 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 320]) {
     await openRecordings(page, { theme, calls: mixedRecordingCalls(), paginate: true });
     await page.locator('.recordings-page-select').check();
     await page.locator('.recordings-call').last().scrollIntoViewIfNeeded();
-    const bar = page.locator('.recordings-results-toolbar');
+    const bar = page.locator('.recordings-selected');
     const box = await bar.boundingBox();
     expect(box.y).toBeGreaterThanOrEqual(0);
     const stickyTop = await bar.evaluate(element => parseFloat(getComputedStyle(element).top));
     expect(box.y).toBeCloseTo(stickyTop, 0);
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(width);
-    await expectContrast(page, { rootSelector: '.recordings-results-toolbar', reportName: `incident-sticky-${theme}-${width}` });
+    await expectContrast(page, { rootSelector: '.recordings-selected', reportName: `incident-sticky-${theme}-${width}` });
     await page.screenshot({ path: test.info().outputPath('sticky.png') });
   });
 }
