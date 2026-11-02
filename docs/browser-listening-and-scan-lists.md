@@ -183,8 +183,8 @@ on August 28, 2026. Later mainline releases may differ.
 | Unmatched destination | Default playback priority applies unless another matching alias changes it. | Unmatched-call defaults choose recording, external streaming, and Scan Lists. |
 | Alias List protocols | A list can contain identifiers from multiple protocols. | A list uses the P25, DMR, NXDN, or analog family. |
 
-Recording and external streaming are separate from playback in both projects. VCE also retains receiver-local audio
-playback; the completed-call queue in this guide describes browser listening.
+Recording and external streaming are separate from playback in both projects. Desktop listening in VCE uses the
+browser, where Scanner and Recordings play through the browser's normal audio output.
 
 </details>
 

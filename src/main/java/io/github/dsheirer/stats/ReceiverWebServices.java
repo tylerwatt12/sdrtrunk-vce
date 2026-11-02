@@ -380,7 +380,7 @@ public final class ReceiverWebServices implements AutoCloseable
     }
 
     /**
-     * Receives completed calls independently from local Java playback.
+     * Receives completed calls for playback in listeners' browsers.
      */
     public void receive(CompletedAudioCall call)
     {
