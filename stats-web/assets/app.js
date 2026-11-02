@@ -7518,11 +7518,11 @@ function openAliasTransferModal(selectedList, action = 'Import') {
   setStep(1);
 }
 
-function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null) {
+function aliasDefaultBehaviorPanel(options, kind, policy, description, warning = null) {
   const panel = node('section', 'alias-defaults-tab-panel ui-editor-sections');
   panel.dataset.behavior = kind;
   panel.append(node('p', 'muted', description));
-  const recordField = uiToggleField('Record calls', Boolean(policy?.recordable), 'Record calls', recordCopy);
+  const recordField = uiToggleField('Record calls', Boolean(policy?.recordable), 'Record calls');
   recordField.classList.add('alias-record-toggle');
   const record = recordField.querySelector('input');
   record.name = `${kind}Recordable`;
@@ -7534,11 +7534,10 @@ function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCop
   scanLists.dataset.guideTarget = 'aliases-defaults-scan-lists';
   const scanListLegend = scanLists.querySelector('legend');
   if (scanListLegend) scanListLegend.textContent = 'Scan List';
-  scanListLegend?.after(node('p', 'muted', scanCopy));
 
   const streams = node('fieldset', 'alias-stream-options ui-form-section ui-form-section-filled');
   streams.dataset.guideTarget = 'aliases-defaults-streaming';
-  streams.append(node('legend', '', 'Streaming'), node('p', 'muted', streamCopy));
+  streams.append(node('legend', '', 'Streaming'));
   const selectedStreams = new Set(policy?.broadcast_configuration_ids || []);
   const configuredStreams = new Map((options.streams || []).map((entry) =>
     [entry.configuration_id, entry.name || entry.configuration_id]));
@@ -7572,21 +7571,14 @@ function openUnmatchedTalkgroupPolicyModal(selectedList, presentation = null) {
 
   const unknown = aliasDefaultBehaviorPanel(options, 'unknown', defaults.unknown_alias_behavior ||
     defaults.unmatched_talkgroup_policy || {},
-    'Applies when a destination talkgroup or patch group has no exact Alias or covering talkgroup range in this list.',
-    'Records completed calls whose talkgroup identity is not covered by an Alias.',
-    'Routes unmatched calls to the selected Scan Lists for browser playback.',
-    'Sends unknown calls to the selected external streaming destinations.',
+    'Calls that do not match an alias in this Alias List use these settings.',
     node('div', 'ui-notice ui-notice-danger ui-notice-spaced',
       'Warning: These settings act as a catch-all and can play, record, or stream traffic that has not been ' +
       'individually reviewed, including sensitive traffic. If a selected streaming destination sends to ' +
       'Broadcastify or another third-party provider, leave catch-all Streaming disabled and configure approved ' +
       'talkgroups individually.'));
   const newAliases = aliasDefaultBehaviorPanel(options, 'newAlias', defaults.new_alias_behavior || {},
-    'Applies only when a new Alias is manually created or imported from RadioReference. Changes here do not alter ' +
-    'existing Aliases, and RadioReference updates preserve each existing Alias\'s local handling settings.',
-    'New Aliases begin with recording enabled or disabled as selected here.',
-    'New Aliases begin in the selected scan lists.',
-    'New Aliases begin with the selected external streaming destinations.');
+    'New created or imported aliases use these settings as default.');
 
   const tabs = node('nav', 'alias-modal-tabs alias-defaults-tabs ui-segmented');
   tabs.dataset.guideTarget = 'aliases-defaults-tabs';

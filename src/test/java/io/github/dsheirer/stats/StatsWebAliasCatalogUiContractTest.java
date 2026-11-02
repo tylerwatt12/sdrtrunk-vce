@@ -481,7 +481,7 @@ class StatsWebAliasCatalogUiContractTest
         String discoverySupport = function(source, "function observedGroupIdentityDiscoverySupported(selectedList)");
         String unmatchedSupport = function(source, "function unmatchedTalkgroupsSupported(selectedList)");
         String policy = function(source, "function openUnmatchedTalkgroupPolicyModal(selectedList, presentation = null)");
-        String policyPanel = function(source, "function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null)");
+        String policyPanel = function(source, "function aliasDefaultBehaviorPanel(options, kind, policy, description, warning = null)");
         String checkbox = function(source, "function aliasCheckOption(labelText, control)");
         String observed = function(source,
             "function renderObservedGroupIdentities(main, page, selectedList, renderContext, updateSummary, presentation = null)");
@@ -516,7 +516,7 @@ class StatsWebAliasCatalogUiContractTest
         assertTrue(observed.contains("analog ? 'Unmatched assignments' : 'Observed Groups'"));
         assertTrue(unmatchedSupport.contains("['P25', 'DMR', 'NXDN', 'NBFM']"));
         assertTrue(checkbox.contains("'alias-check-option ui-choice-card'"));
-        assertTrue(function(source, "function aliasDefaultBehaviorPanel(options, kind, policy, description, recordCopy, scanCopy, streamCopy, warning = null)")
+        assertTrue(function(source, "function aliasDefaultBehaviorPanel(options, kind, policy, description, warning = null)")
             .contains("uiToggleField('Record calls'"));
         assertTrue(editor.contains("uiToggleField('Record calls'"));
         assertTrue(editor.contains("setUiToggle(record, Boolean(defaults.recordable))"));
