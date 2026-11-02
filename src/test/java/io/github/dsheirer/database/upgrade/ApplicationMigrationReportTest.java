@@ -83,7 +83,7 @@ class ApplicationMigrationReportTest
 
         String report = savedReport(root);
         assertTrue(report.contains("Outcome: Completed"));
-        assertTrue(report.contains("recovery backup skipped"));
+        assertTrue(report.contains("manual installation backup"));
         assertTrue(report.contains("Total operation (excluding earlier source review)"));
         assertTrue(report.contains("TIMING: Database format 61 -> 62:"));
         assertFalse(report.contains("Source physical integrity check"));

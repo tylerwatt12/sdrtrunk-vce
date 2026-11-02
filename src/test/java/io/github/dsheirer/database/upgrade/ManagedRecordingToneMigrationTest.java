@@ -31,7 +31,7 @@ class ManagedRecordingToneMigrationTest
         assertArrayEquals(original, Files.readAllBytes(prior), "Startup inspection cannot migrate the catalog");
         try(Connection connection = open(prior))
         { assertThrows(SQLException.class, () -> ManagedRecordingSchema.validate(connection,4)); }
-        var migrated = ManagedRecordingCatalogMigrator.migrate(prior);
+        var migrated = ManagedRecordingCatalogMigrator.migrate(prior, true);
         assertTrue(migrated.migrated()); assertNotNull(migrated.backup());
         try(Connection connection = open(prior))
         {

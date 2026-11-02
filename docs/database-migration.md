@@ -31,8 +31,9 @@ are unsupported. The selected database's structure determines compatibility; its
 Stop VCE and copy the complete existing installation, including its `data` folder, to a separate backup location.
 For a legacy macOS `.app`, also copy its sibling `<app-name>-data` folder; copying the application bundle alone does
 not include that profile. Also back up recording or output folders placed outside the installation. Keep the matching
-application files if you may need to return to the older version. The graphical wizard asks you to confirm this manual backup before
-large operations; it does not make or verify a backup for you, and it does not add an automatic database backup.
+application files if you may need to return to the older version. The graphical wizard asks you to confirm this manual
+backup before large operations; headless current-profile and Managed Recordings updates require `--backup-confirmed`.
+VCE does not find or verify your backup, create an additional automatic upgrade backup, or restore it for you.
 
 A VCE folder upgrade transfers ownership of the portable data: the old `data` folder moves into the new
 installation. The old application folder left behind is not a complete backup and must not be started as though
@@ -41,8 +42,9 @@ its recording and streaming settings are checked.
 
 The fast folder transfer requires source and destination to be on the same filesystem. That lets VCE move the folder
 without copying every audio file. It refuses a cross-filesystem transfer before moving anything, instead of silently
-falling back to a long copy. The new destination must be empty; existing profiles are not merged. Headless commands
-retain their separately documented backup behavior.
+falling back to a long copy. The new destination must be empty; existing profiles are not merged. Headless
+current-profile updates use the same manual-backup policy. External-source imports retain their separate
+source-preserving safeguards.
 
 ## Review, update, and check the result
 
@@ -384,7 +386,8 @@ unchanged import source after that transfer. Full-history updates reuse the adja
 prepare a configuration-only working database with empty history, retaining supported configuration semantics and
 the same applicable adjacent conversions without first copying or scanning the discarded history.
 
-Headless current-profile upgrades retain their existing backup default and in-place transaction. Headless
+Headless current-profile upgrades require manual-backup acknowledgement and retain their in-place transaction;
+they create no additional automatic upgrade backup. Headless
 `--upgrade-data` and retained internal copy-import/replacement operations retain source approval, private snapshots,
 child-process isolation, staged validation, and atomic promotion. These ownership boundaries share one format
 catalog and adjacent migration chain; they are not separate Alpha and Nightly conversion engines.
@@ -957,7 +960,7 @@ all detailed history into another database. It commits and checks a small extrac
 converts the original file in its existing migration transaction. Only after both roles are complete does the migrator
 activate their final filenames. A private activation receipt lets the Application Migrator finish an interrupted
 activation; normal startup refuses an incomplete transition and never creates an empty replacement history file.
-The optional recovery snapshot retains its previous behavior. Earlier formats continue through every adjacent step.
+Earlier formats continue through every adjacent step under the same manual-installation-backup policy.
 
 Canonical P25 subscriber identities have independent dictionaries in the two stores. A cross-store match uses the
 complete home WACN, home system ID, and subscriber ID tuple; an integer key from one dictionary never identifies a
@@ -1082,9 +1085,9 @@ availability; measured zero remains distinct from unavailable. The adjacent form
 existing field, row, relationship, transcript, index, counter and allocator. Historical quality remains unknown;
 the update neither reads audio files nor guesses measurements. The populated format-11 fixture remains frozen and
 supported. The main application database is independently at
-format 68; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
-at the pre-receiver setup boundary, with an optional SQLite-aware recovery snapshot
-before changes. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
+format 69; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+at the pre-receiver setup boundary under the same manual-backup policy, without an additional automatic upgrade
+backup. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
 
 Every change to persisted DDL or persisted meaning must land with all of the following:
@@ -1186,9 +1189,12 @@ and reports actual effects. Ordinary startup and owned-profile upgrades do not p
 or derived-history scans. Damage detectable only through such scans can surface later; explicit inspection and the
 strict copy-import engine retain their fuller checks.
 
-Headless `--upgrade-current` retains full content and a SQLite-aware recovery snapshot by default. Its
-`--no-upgrade-backup` flag omits only that snapshot. These headless choices do not change the graphical manual-backup
-contract, and the same backup default applies to headless Managed Recordings updates.
+Headless `--upgrade-current --backup-confirmed` retains full content and acknowledges the operator's complete
+manual installation backup. `--upgrade-managed-recordings --backup-confirmed` uses the same policy for a catalog
+update. Neither creates an additional automatic upgrade backup; recovery after a committed update requires the
+operator to restore the manual backup. The legacy `--no-upgrade-backup` flag remains accepted but has no effect and
+does not replace `--backup-confirmed`. These flags do not alter the separate external-source import/replacement
+safeguards below.
 
 A conversion or final-validation failure before a database transaction commits rolls it back. A committed
 configuration/history split interrupted during filename activation is completed only by the Application Migrator

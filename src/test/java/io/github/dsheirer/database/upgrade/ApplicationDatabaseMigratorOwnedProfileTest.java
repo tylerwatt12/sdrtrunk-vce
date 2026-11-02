@@ -184,7 +184,7 @@ class ApplicationDatabaseMigratorOwnedProfileTest
         assertEquals(ApplicationDatabaseMigrator.EXIT_INPUT, rejected.code(), rejected::error);
         assertTrue(rejected.error().contains("The owned profile stage must be a separate file from the source database."),
             rejected::error);
-        assertFalse(rejected.output().contains("Checking the owned complete-profile copy"), rejected::output);
+        assertFalse(rejected.output().contains("Checking the owned complete profile"), rejected::output);
         assertArrayEquals(before, Files.readAllBytes(profile.sourceDatabase()));
         assertArrayEquals(before, Files.readAllBytes(profile.stage()));
     }

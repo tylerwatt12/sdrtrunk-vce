@@ -39,7 +39,7 @@ class ManagedRecordingSearchMigrationTest
         assertThrows(SQLException.class, () -> new ManagedRecordingCatalog(catalog, directory));
         assertArrayEquals(original, Files.readAllBytes(catalog), "Runtime validates but never upgrades the catalog");
 
-        var migrated = ManagedRecordingCatalogMigrator.migrate(catalog);
+        var migrated = ManagedRecordingCatalogMigrator.migrate(catalog, true);
         assertTrue(migrated.migrated());
         assertNotNull(migrated.backup());
         Map<String,String> signature;

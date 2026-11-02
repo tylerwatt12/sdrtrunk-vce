@@ -319,8 +319,11 @@ public final class ApplicationDatabaseMigrator
         }
     }
 
-    /** In-process transfer entry point: the same live OS lock must cover the entire database activation. */
-    static String migrateTransferred(Path database, Path source, Path target,
+    /**
+     * Activates a stopped profile after its acknowledged ownership transfer. The same live OS lock and durable
+     * transfer receipt must cover the entire database activation. This does not create a recovery backup or reset setup.
+     */
+    public static String migrateTransferred(Path database, Path source, Path target,
                                      io.github.dsheirer.portable.PortableDataRootLock lock) throws IOException, SQLException
     {
         if(lock == null || !lock.getDataRoot().equals(target))
@@ -372,16 +375,16 @@ public final class ApplicationDatabaseMigrator
         }
         requireOwnedCompleteProfileStage(database, relocation, transferred);
         requireSingleFilesystemLinkWhenSupported(database);
-        output.println("Checking the owned complete-profile copy's schema and configuration.");
+        output.println("Checking the owned complete profile's schema and configuration.");
         output.println("Whole-file physical-integrity, derived-history, and foreign-key sweeps are not run " +
-            "for this owned copy; use explicit maintenance for those checks.");
+            "for this owned profile; use explicit maintenance for those checks.");
         MigrationTimings timings = new MigrationTimings(output::println);
 
         try(Connection connection = open(database))
         {
             DatabaseFormatCatalog.DetectedFormat source;
             DatabaseMigrationChain.PreflightReport plan;
-            try(var phase = timings.phase("Inspect owned-copy source schema and configuration"))
+            try(var phase = timings.phase("Inspect owned-profile source schema and configuration"))
             {
                 SdrTrunkDatabaseStartup.requireMainTrackDatabase(connection);
                 source = requireSupportedFormat(connection);
@@ -399,7 +402,7 @@ public final class ApplicationDatabaseMigrator
                 output::println, null, legacy, Map.of(), content, timings);
             //The transaction has checked the exact final schema, required settings and configuration before COMMIT.
             //Finalize this private stage for atomic promotion without scanning retained history again.
-            try(var phase = timings.phase("Finalize owned-copy journals and database pair activation"))
+            try(var phase = timings.phase("Finalize owned-profile journals and database pair activation"))
             {
                 finalizeStagedDatabase(connection);
                 connection.close();
@@ -1377,8 +1380,8 @@ public final class ApplicationDatabaseMigrator
         }
         else if(relocation.completeProfileCopy())
         {
-            scope = "complete portable profile already copied by the caller; supported stored paths, including " +
-                "Managed Recordings and recording tuner files, may be remapped within that copy.";
+            scope = "complete owned portable profile; supported stored paths, including " +
+                "Managed Recordings and recording tuner files, may be remapped within that profile.";
         }
         else
         {

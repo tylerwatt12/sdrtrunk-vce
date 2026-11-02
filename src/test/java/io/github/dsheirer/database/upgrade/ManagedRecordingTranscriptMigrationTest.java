@@ -32,7 +32,7 @@ class ManagedRecordingTranscriptMigrationTest
         assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,ManagedRecordingCatalogMigrator.inspectForStartup(db).state());
         assertThrows(SQLException.class,()->new ManagedRecordingCatalog(db,temporary));
         assertArrayEquals(original,Files.readAllBytes(db));
-        var result=ManagedRecordingCatalogMigrator.migrate(db);
+        var result=ManagedRecordingCatalogMigrator.migrate(db,true);
         assertTrue(result.migrated()); assertNotNull(result.backup());
         try(var c=open(db))
         {

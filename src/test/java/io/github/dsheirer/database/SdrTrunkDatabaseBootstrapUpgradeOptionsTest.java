@@ -10,20 +10,26 @@ import org.junit.jupiter.api.Test;
 class SdrTrunkDatabaseBootstrapUpgradeOptionsTest
 {
     @Test
-    void upgradesKeepARecoveryBackupByDefault()
+    void upgradesUseTheOperatorsManualBackupByDefault()
     {
-        assertTrue(SdrTrunkDatabaseBootstrap.Options.parse(new String[]{"--upgrade-current"})
+        assertFalse(SdrTrunkDatabaseBootstrap.Options.parse(new String[]{"--upgrade-current"})
             .createUpgradeBackup());
-        assertTrue(SdrTrunkDatabaseBootstrap.Options.parse(new String[]{"--upgrade-managed-recordings"})
+        assertFalse(SdrTrunkDatabaseBootstrap.Options.parse(new String[]{"--upgrade-managed-recordings"})
             .createUpgradeBackup());
     }
 
     @Test
-    void eitherExplicitUpgradeCanDisableItsBackup()
+    void legacyBackupOptOutIsANoOpAndDoesNotConfirmAManualBackup()
     {
         for(String flag: new String[]{"--upgrade-current", "--upgrade-managed-recordings"})
-            assertFalse(SdrTrunkDatabaseBootstrap.Options.parse(new String[]{flag, "--no-upgrade-backup"})
-                .createUpgradeBackup());
+        {
+            var options = SdrTrunkDatabaseBootstrap.Options.parse(new String[]{flag, "--no-upgrade-backup"});
+            assertFalse(options.createUpgradeBackup());
+            assertFalse(options.backupConfirmed());
+            var confirmed = SdrTrunkDatabaseBootstrap.Options.parse(new String[]{flag, "--backup-confirmed"});
+            assertTrue(confirmed.backupConfirmed());
+            assertFalse(confirmed.createUpgradeBackup());
+        }
     }
 
     @Test
@@ -47,5 +53,9 @@ class SdrTrunkDatabaseBootstrapUpgradeOptionsTest
             () -> SdrTrunkDatabaseBootstrap.Options.parse(new String[]{"--fresh", "--no-upgrade-backup"}));
         assertThrows(IllegalArgumentException.class,
             () -> SdrTrunkDatabaseBootstrap.Options.parse(new String[]{"--upgrade-data", "previous", "--no-upgrade-backup"}));
+        assertThrows(IllegalArgumentException.class,
+            () -> SdrTrunkDatabaseBootstrap.Options.parse(new String[]{"--backup-confirmed"}));
+        assertThrows(IllegalArgumentException.class,
+            () -> SdrTrunkDatabaseBootstrap.Options.parse(new String[]{"--upgrade-data", "previous", "--backup-confirmed"}));
     }
 }

@@ -50,11 +50,19 @@ public final class SdrTrunkDatabaseBootstrap
         if(io.github.dsheirer.database.upgrade.VceUpgradeService.isPending(normalized))
             throw new IOException("Finish the pending installation upgrade in the Setup Wizard before starting VCE " +
                 "without a desktop. The transferred settings and recordings have been preserved.");
+        if(options.upgradeCurrent() || options.upgradeManagedRecordings())
+        {
+            if(!options.backupConfirmed())
+                throw new IOException("Back up your complete VCE installation, then retry with --backup-confirmed. " +
+                    "Recovery requires restoring your manual backup.");
+            System.out.println("Upgrade recovery: restore your manual installation backup if needed. " +
+                "VCE will not create an additional upgrade backup.");
+        }
         if(Files.exists(ActivityDatabasePath.splitReceipt(database)))
         {
             if(!options.upgradeCurrent())
             {
-                throw new IOException("The portable data update was interrupted. Start once with --upgrade-current " +
+                throw new IOException("The portable data update was interrupted. Start once with --upgrade-current --backup-confirmed " +
                     "to finish the Application Migrator update before receiving starts.");
             }
             migrationService.migrateCurrent(normalized, options.createUpgradeBackup(), System.out::println);
@@ -72,10 +80,10 @@ public final class SdrTrunkDatabaseBootstrap
         if(catalogNeedsUpgrade && !options.upgradeCurrent() && !options.upgradeManagedRecordings())
         {
             String approval = Files.isRegularFile(database) ?
-                "--upgrade-current or --upgrade-managed-recordings" :
-                "--upgrade-managed-recordings alongside the chosen new-profile setup option";
+                "--upgrade-current --backup-confirmed or --upgrade-managed-recordings --backup-confirmed" :
+                "--upgrade-managed-recordings --backup-confirmed alongside the chosen new-profile setup option";
             throw new IOException("The managed recordings catalog requires an update. Start once with " +
-                approval + " to create a safety backup and migrate it before receiving starts.");
+                approval + " after backing up the complete installation. Recovery uses your manual backup.");
         }
         boolean freshPreferences = false;
         if(Files.isRegularFile(database))
@@ -86,7 +94,7 @@ public final class SdrTrunkDatabaseBootstrap
             {
                 if(!options.upgradeCurrent()) throw new IOException("The portable database requires these changes: " +
                     ApplicationMigrationService.describePlan(plan) +
-                    ". Start once with --upgrade-current to create a safety backup and migrate it.");
+                    ". Back up the complete installation, then start once with --upgrade-current --backup-confirmed.");
                 var result = migrationService.migrateCurrent(normalized, options.createUpgradeBackup(),
                     System.out::println);
                 if(!result.helperOutput().isBlank()) System.out.println(result.helperOutput());
@@ -225,7 +233,7 @@ public final class SdrTrunkDatabaseBootstrap
 
     public record Options(boolean fresh, Path importXml, Path upgradeData, boolean upgradeCurrent,
                           boolean upgradeManagedRecordings,
-                          Path adminPasswordFile, boolean createUpgradeBackup)
+                          Path adminPasswordFile, boolean createUpgradeBackup, boolean backupConfirmed)
     {
         public static Options parse(String[] args)
         {
@@ -235,7 +243,8 @@ public final class SdrTrunkDatabaseBootstrap
             boolean upgradeCurrent = false;
             boolean upgradeManagedRecordings = false;
             Path adminPasswordFile = null;
-            boolean createUpgradeBackup = true;
+            boolean noUpgradeBackup = false;
+            boolean backupConfirmed = false;
 
             for(int x = 0; x < args.length; x++)
             {
@@ -247,7 +256,8 @@ public final class SdrTrunkDatabaseBootstrap
                             "previous installation folder or XML playlist.");
                     case "--upgrade-current" -> upgradeCurrent = true;
                     case "--upgrade-managed-recordings" -> upgradeManagedRecordings = true;
-                    case "--no-upgrade-backup" -> createUpgradeBackup = false;
+                    case "--no-upgrade-backup" -> noUpgradeBackup = true; // Accepted for older launch scripts.
+                    case "--backup-confirmed" -> backupConfirmed = true;
                     case "--admin-password-file" ->
                     {
                         if(++x >= args.length)
@@ -288,13 +298,14 @@ public final class SdrTrunkDatabaseBootstrap
                     "--upgrade-data, or --upgrade-current");
             }
 
-            if(!createUpgradeBackup && !upgradeCurrent && !upgradeManagedRecordings)
+            if((noUpgradeBackup || backupConfirmed) && !upgradeCurrent && !upgradeManagedRecordings)
             {
-                throw new IllegalArgumentException("--no-upgrade-backup requires --upgrade-current or --upgrade-managed-recordings");
+                throw new IllegalArgumentException((backupConfirmed ? "--backup-confirmed" : "--no-upgrade-backup") +
+                    " requires --upgrade-current or --upgrade-managed-recordings");
             }
 
             return new Options(fresh, importXml, upgradeData, upgradeCurrent, upgradeManagedRecordings,
-                adminPasswordFile, createUpgradeBackup);
+                adminPasswordFile, false, backupConfirmed);
         }
     }
 }

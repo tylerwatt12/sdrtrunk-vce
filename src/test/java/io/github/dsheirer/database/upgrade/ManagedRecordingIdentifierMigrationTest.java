@@ -35,7 +35,7 @@ class ManagedRecordingIdentifierMigrationTest
         assertThrows(SQLException.class, () -> new ManagedRecordingCatalog(catalog, directory));
         assertArrayEquals(original, Files.readAllBytes(catalog));
 
-        var migrated = ManagedRecordingCatalogMigrator.migrate(catalog);
+        var migrated = ManagedRecordingCatalogMigrator.migrate(catalog, true);
         assertTrue(migrated.migrated());
         Map<String,String> signature;
         try(Connection connection = open(catalog))

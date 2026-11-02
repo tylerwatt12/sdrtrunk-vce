@@ -53,7 +53,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         Path receipt = dataRoot.resolveSibling(".data.vce-upgrade").resolve("intent.properties");
         Files.createDirectories(receipt.getParent());
         Files.writeString(receipt, "pending installation upgrade");
-        for(String[] arguments: List.of(new String[0], new String[]{"--upgrade-current"}, new String[]{"--fresh"}))
+        for(String[] arguments: List.of(new String[0], new String[]{"--upgrade-current", "--backup-confirmed"}, new String[]{"--fresh"}))
         {
             IOException failure = assertThrows(IOException.class,
                 () -> SdrTrunkDatabaseBootstrap.run(arguments, dataRoot, true));
@@ -78,14 +78,11 @@ class SdrTrunkDatabaseBootstrapMigrationTest
                 "(SELECT MIN(rowid) FROM configuration_channel)");
         }
         assertFalse(ApplicationMigrationService.readStartupPlan(database).requiresMigration());
-        SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current"}, dataRoot, true);
+        SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--backup-confirmed"}, dataRoot, true);
         assertEquals("0", scalar(database,
             "SELECT COUNT(*) FROM configuration_channel WHERE config_json='{invalid'"));
         assertEquals(aliasesBefore, scalar(database, "SELECT COUNT(*) FROM alias"));
-        List<Path> backups = regularFiles(database.getParent().resolve("backups"));
-        assertEquals(2, backups.size());
-        ConfigurationHistoryDatabase.validatePair(backups.stream()
-            .filter(path -> !path.getFileName().toString().endsWith(".activity.sqlite")).findFirst().orElseThrow());
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
     }
 
@@ -107,26 +104,44 @@ class SdrTrunkDatabaseBootstrapMigrationTest
     }
 
     @Test
-    void headlessUpgradeCurrentMigratesFormat2AndRetainsItsSafetyBackup() throws Exception
+    void ownedHeadlessUpgradesRequireManualBackupConfirmationBeforeChangingEitherDatabase() throws Exception
+    {
+        Path dataRoot = mTemporaryFolder.resolve("manual-backup-required");
+        Path database = Format30TestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
+        Path catalog = createFormat1Catalog(database.resolveSibling("managed-recordings.sqlite"));
+        byte[] databaseBefore = sha256(database), catalogBefore = sha256(catalog);
+        for(String flag: List.of("--upgrade-current", "--upgrade-managed-recordings"))
+        {
+            for(String[] arguments: List.of(new String[]{flag}, new String[]{flag, "--no-upgrade-backup"}))
+            {
+                IOException refusal = assertThrows(IOException.class,
+                    () -> SdrTrunkDatabaseBootstrap.run(arguments, dataRoot, true));
+                assertTrue(refusal.getMessage().contains("--backup-confirmed"));
+                assertArrayEquals(databaseBefore, sha256(database));
+                assertArrayEquals(catalogBefore, sha256(catalog));
+                assertFalse(Files.exists(database.getParent().resolve("backups")));
+            }
+        }
+        assertNoPrivateMigrationArtifacts(mTemporaryFolder);
+    }
+
+    @Test
+    void headlessUpgradeCurrentMigratesFormat2WithoutAnotherBackup() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("upgrade-current");
         Path database = createFormat2Database(dataRoot, "Migrated In Place");
         Path passwordFile = passwordFile("upgrade-current-password.txt");
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result =
-            SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--admin-password-file",
+            SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--backup-confirmed", "--admin-password-file",
                 passwordFile.toString()}, dataRoot, true);
 
         assertTrue(result.startApplication());
         assertFalse(result.initializeNewPreferences());
         assertCurrentDatabase(database);
         assertEquals("Migrated In Place", scalar(database, "SELECT name FROM alias WHERE id=1"));
-        List<Path> backups = regularFiles(database.getParent().resolve("backups"));
-        assertEquals(1, backups.size());
-        assertFormat(backups.getFirst(), 2, "scan-lists-p25-v26", false);
-        assertEquals("Migrated In Place", scalar(backups.getFirst(), "SELECT name FROM alias WHERE id=1"));
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
-        assertNoSqliteSidecars(backups.getFirst());
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
@@ -139,7 +154,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         Path passwordFile = passwordFile("upgrade-format-3-password.txt");
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result =
-            SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--admin-password-file",
+            SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--backup-confirmed", "--admin-password-file",
                 passwordFile.toString()}, dataRoot, true,
                 ApplicationMigrationServiceTestSupport.createInProcess());
 
@@ -152,9 +167,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM conventional_call_identity_bucket"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM trunked_signaling_activity_bucket"));
         assertEquals("0", scalar(database, "SELECT COUNT(*) FROM radio_system"));
-        List<Path> backups = regularFiles(database.getParent().resolve("backups"));
-        assertEquals(1, backups.size());
-        assertFormat(backups.getFirst(), 3, "p25-site-projection-v27", true);
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
         assertTrue(Files.isRegularFile(EncryptionKeyVaultPath.getVaultPath(dataRoot)));
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
@@ -263,7 +276,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertTrue(refusal.getMessage().contains("--upgrade-current"));
 
         Path password = passwordFile("resume-activation-password.txt");
-        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--no-upgrade-backup",
+        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--backup-confirmed", "--no-upgrade-backup",
             "--admin-password-file", password.toString()}, dataRoot, true).startApplication());
 
         ConfigurationHistoryDatabase.validatePair(database);
@@ -295,7 +308,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
             Path passwordFile = passwordFile((markerPresent ? "present" : "absent") + "-new-password.txt");
 
             SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
-                new String[]{"--upgrade-current", "--admin-password-file", passwordFile.toString()},
+                new String[]{"--upgrade-current", "--backup-confirmed", "--admin-password-file", passwordFile.toString()},
                 dataRoot, true, ApplicationMigrationServiceTestSupport.createInProcess());
 
             assertTrue(result.startApplication());
@@ -329,17 +342,17 @@ class SdrTrunkDatabaseBootstrapMigrationTest
     }
 
     @Test
-    void headlessCurrentUpgradeUsesOneFlowWithAnOptionalRecoveryBackup() throws Exception
+    void headlessCurrentUpgradeUsesManualBackupWithOrWithoutTheLegacyFlag() throws Exception
     {
-        for(boolean backup: new boolean[]{true, false})
+        for(boolean legacyFlag: new boolean[]{true, false})
         {
-            Path dataRoot = mTemporaryFolder.resolve(backup ? "upgrade-with-backup" : "upgrade-without-backup");
+            Path dataRoot = mTemporaryFolder.resolve(legacyFlag ? "upgrade-with-legacy-flag" : "upgrade-without-legacy-flag");
             Path database = Format30TestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
             String aliases = scalar(database, "SELECT COUNT(*) FROM alias");
             String channels = scalar(database, "SELECT COUNT(*) FROM configuration_channel");
             String passwordVerifier = scalar(database, "SELECT hex(password_hash) FROM web_user WHERE primary_admin=1");
-            String[] args = backup ? new String[]{"--upgrade-current"} :
-                new String[]{"--upgrade-current", "--no-upgrade-backup"};
+            String[] args = legacyFlag ? new String[]{"--upgrade-current", "--backup-confirmed", "--no-upgrade-backup"} :
+                new String[]{"--upgrade-current", "--backup-confirmed"};
 
             assertTrue(SdrTrunkDatabaseBootstrap.run(args, dataRoot, true).startApplication());
 
@@ -347,20 +360,12 @@ class SdrTrunkDatabaseBootstrapMigrationTest
             assertEquals(aliases, scalar(database, "SELECT COUNT(*) FROM alias"));
             assertEquals(channels, scalar(database, "SELECT COUNT(*) FROM configuration_channel"));
             assertEquals(passwordVerifier, scalar(database, "SELECT hex(password_hash) FROM web_user WHERE primary_admin=1"));
-            Path backups = database.getParent().resolve("backups");
-            if(backup)
-            {
-                try(var files = Files.list(backups))
-                {
-                    assertEquals(1, files.filter(Files::isRegularFile).count());
-                }
-            }
-            else assertFalse(Files.exists(backups));
+            assertFalse(Files.exists(database.getParent().resolve("backups")));
         }
     }
 
     @Test
-    void failedOptionalCatalogUpgradeDoesNotBlockReceivingOrReplaceItsSource() throws Exception
+    void catalogUpgradeUsesManualBackupWithoutAccessingAnUnrelatedBackupPath() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("catalog-backup-failure");
         Path database = SdrTrunkTestDatabase.create(SdrTrunkDatabasePath.getDatabasePath(dataRoot));
@@ -370,13 +375,13 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         Files.writeString(backupBlocker, "existing unrelated file");
 
         Path password = passwordFile("catalog-failure-admin-password.txt");
-        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-managed-recordings",
+        assertTrue(SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-managed-recordings", "--backup-confirmed",
             "--admin-password-file", password.toString()}, dataRoot, true)
             .startApplication());
 
-        assertArrayEquals(before, sha256(catalog));
+        assertFalse(java.util.Arrays.equals(before, sha256(catalog)));
         assertEquals("existing unrelated file", Files.readString(backupBlocker));
-        assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,
+        assertEquals(ManagedRecordingCatalogMigrator.State.CURRENT,
             ManagedRecordingCatalogMigrator.inspectForStartup(catalog).state());
         assertCurrentDatabase(database);
     }
@@ -398,7 +403,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertArrayEquals(catalogBefore, sha256(catalog));
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
-            new String[]{"--fresh", "--upgrade-managed-recordings", "--admin-password-file",
+            new String[]{"--fresh", "--upgrade-managed-recordings", "--backup-confirmed", "--admin-password-file",
                 passwordFile.toString()}, dataRoot, true);
 
         assertTrue(result.startApplication());
@@ -407,13 +412,11 @@ class SdrTrunkDatabaseBootstrapMigrationTest
             ManagedRecordingCatalogMigrator.inspect(catalog).state());
         assertEquals("1", scalar(catalog, "SELECT COUNT(*) FROM recording_call"));
         assertEquals("0", scalar(catalog, "SELECT COUNT(*) FROM recording_transcript"));
-        List<Path> backups = catalogBackups(catalog);
-        assertEquals(1, backups.size());
-        assertEquals("1", scalar(backups.getFirst(), "PRAGMA user_version"));
+        assertTrue(catalogBackups(catalog).isEmpty());
     }
 
     @Test
-    void headlessCatalogUpgradeRetainsCallsAndRecoveryCopy() throws Exception
+    void headlessCatalogUpgradeRetainsCallsWithoutAnotherRecoveryCopy() throws Exception
     {
         Path dataRoot = mTemporaryFolder.resolve("catalog-upgrade");
         Path database = SdrTrunkDatabasePath.getDatabasePath(dataRoot);
@@ -422,7 +425,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         Path catalog = createFormat1Catalog(database.resolveSibling("managed-recordings.sqlite"));
 
         SdrTrunkDatabaseBootstrap.BootstrapResult result = SdrTrunkDatabaseBootstrap.run(
-            new String[]{"--upgrade-current"}, dataRoot, true);
+            new String[]{"--upgrade-current", "--backup-confirmed"}, dataRoot, true);
 
         assertTrue(result.startApplication());
         assertEquals(ManagedRecordingCatalogMigrator.State.CURRENT,
@@ -434,10 +437,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         assertEquals("1", scalar(catalog, "SELECT COUNT(*) FROM recording_call"));
         assertEquals("5", scalar(catalog, "SELECT total_bytes FROM catalog_metadata WHERE id=1"));
         assertEquals("0", scalar(catalog, "SELECT COUNT(*) FROM recording_transcript"));
-        List<Path> backups = catalogBackups(catalog);
-        assertEquals(1, backups.size());
-        assertEquals("1", scalar(backups.getFirst(), "PRAGMA user_version"));
-        assertEquals("1", scalar(backups.getFirst(), "SELECT COUNT(*) FROM recording_call"));
+        assertTrue(catalogBackups(catalog).isEmpty());
         assertNoPrivateMigrationArtifacts(mTemporaryFolder);
     }
 
@@ -467,7 +467,7 @@ class SdrTrunkDatabaseBootstrapMigrationTest
         byte[] before = sha256(database);
 
         SQLException exception = assertThrows(SQLException.class,
-            () -> SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current"}, dataRoot, true));
+            () -> SdrTrunkDatabaseBootstrap.run(new String[]{"--upgrade-current", "--backup-confirmed"}, dataRoot, true));
 
         assertTrue(exception.getMessage().contains("Unrecognized SQLite database schema fingerprint"));
         assertArrayEquals(before, sha256(database));

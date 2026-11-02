@@ -82,10 +82,10 @@ public final class ManagedRecordingCatalogMigrator
         }
     }
 
-    /** Defaults to retaining one SQLite-aware source-format backup. Catalog users must already be stopped. */
+    /** The caller owns its manual installation backup and recovery. Catalog users must already be stopped. */
     public static MigrationResult migrate(Path database) throws IOException, SQLException
     {
-        return migrate(database, true);
+        return migrate(database, false);
     }
 
     /**
@@ -107,7 +107,8 @@ public final class ManagedRecordingCatalogMigrator
             "database".equals(parent.getFileName().toString()) ? parent.getParent() : parent;
         if(dataRoot == null) throw new IOException("The managed recordings catalog has no containing folder.");
         MigrationReportSession report = new MigrationReportSession(dataRoot, source,
-            "Update Managed Recordings catalog; recovery backup " + (createBackup ? "selected" : "skipped"),
+            "Update Managed Recordings catalog; " +
+                (createBackup ? "recovery backup selected" : "manual installation backup"),
             "Recording catalog entries and metadata", "");
         StringBuilder details = new StringBuilder();
         ApplicationMigrationService.ProgressListener reportProgress = report.progress(null);
@@ -122,8 +123,8 @@ public final class ManagedRecordingCatalogMigrator
                 timings, details);
             if(!result.migrated()) return result;
             String completion = "Managed Recordings catalog update completed. Recording entries and audio are kept.\n" +
-                "Recovery backup: " + (result.backup() == null ? "skipped by operator choice" : "retained") +
-                (result.backup() == null ? "" : "\nBackup: " + result.backup()) +
+                (result.backup() == null ? "Recovery: restore your manual installation backup if needed. " +
+                    "No automatic upgrade backup was created." : "Recovery backup retained: " + result.backup()) +
                 "\n" + details;
             return new MigrationResult(true, result.backup(), report.completedText(completion));
         }

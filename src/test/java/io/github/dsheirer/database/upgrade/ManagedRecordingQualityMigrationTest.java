@@ -45,7 +45,7 @@ class ManagedRecordingQualityMigrationTest
         assertThrows(SQLException.class, () -> new ManagedRecordingCatalog(catalog, directory));
         assertArrayEquals(original, Files.readAllBytes(catalog), "Runtime startup must not upgrade the catalog");
 
-        var result = ManagedRecordingCatalogMigrator.migrate(catalog);
+        var result = ManagedRecordingCatalogMigrator.migrate(catalog, true);
         assertTrue(result.migrated());
         assertNotNull(result.backup());
         try(Connection connection = open(catalog))

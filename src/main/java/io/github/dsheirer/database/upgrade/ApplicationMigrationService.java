@@ -514,11 +514,11 @@ public final class ApplicationMigrationService
         return Objects.requireNonNull(completedResult, "Database replacement did not complete");
     }
 
-    /** Updates the inactive current profile, retaining one recovery backup by default. */
+    /** Updates the inactive current profile; the caller owns its manual installation backup and recovery. */
     public MigrationResult migrateCurrent(Path dataRoot, ProgressListener progress)
         throws IOException, SQLException, InterruptedException
     {
-        return migrateCurrent(dataRoot, true, progress);
+        return migrateCurrent(dataRoot, false, progress);
     }
 
     /**
@@ -559,7 +559,7 @@ public final class ApplicationMigrationService
     {
         MigrationReportSession report = new MigrationReportSession(dataRoot,
             SdrTrunkDatabasePath.getDatabasePath(dataRoot.toAbsolutePath().normalize()),
-            "Update current profile; recovery backup " + (createBackup ? "selected" : "skipped"), content, "");
+            "Update current profile; " + (createBackup ? "recovery backup selected" : "manual installation backup"), content, "");
         try
         {
             return report.completed(migrateCurrentInternal(dataRoot, createBackup, expectedLegacyDefaults,
@@ -625,7 +625,7 @@ public final class ApplicationMigrationService
                 } : null, recovery, content);
             String backupReport = backedUp.get() ? "Recovery backup retained: " + backup :
                 createBackup ? "No recovery backup was needed; the database was already current." :
-                    "WARNING: Recovery backup skipped by operator choice.";
+                    "Recovery: restore your manual installation backup if needed. No automatic upgrade backup was created.";
             completedResult = new MigrationResult(false, backedUp.get() ? backup : null, result.sourcePlan(),
                 result.helperOutput() + System.lineSeparator() + backupReport,
                 PreviousBuildLocator.InputScope.DATABASE_FILE);

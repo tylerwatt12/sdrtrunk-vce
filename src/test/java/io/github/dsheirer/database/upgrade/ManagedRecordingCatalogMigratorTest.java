@@ -48,7 +48,7 @@ class ManagedRecordingCatalogMigratorTest
             ManagedRecordingCatalogMigrator.inspect(catalog).state());
 
         ManagedRecordingCatalogMigrator.MigrationResult result =
-            ManagedRecordingCatalogMigrator.migrate(catalog);
+            ManagedRecordingCatalogMigrator.migrate(catalog, true);
         assertTrue(result.migrated());
         assertNotNull(result.backup());
         assertTrue(Files.isRegularFile(result.backup()));
@@ -128,7 +128,7 @@ class ManagedRecordingCatalogMigratorTest
         assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,
             ManagedRecordingCatalogMigrator.inspect(offline).state());
         ManagedRecordingCatalogMigrator.MigrationResult result =
-            ManagedRecordingCatalogMigrator.migrate(offline);
+            ManagedRecordingCatalogMigrator.migrate(offline, true);
         assertTrue(result.migrated());
         assertFalse(Files.exists(Path.of(offline + "-wal")));
         assertFalse(Files.exists(Path.of(offline + "-shm")));
@@ -173,7 +173,7 @@ class ManagedRecordingCatalogMigratorTest
         assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,
             ManagedRecordingCatalogMigrator.inspect(catalog).state());
         ManagedRecordingCatalogMigrator.MigrationResult result =
-            ManagedRecordingCatalogMigrator.migrate(catalog);
+            ManagedRecordingCatalogMigrator.migrate(catalog, true);
         assertTrue(result.migrated());
         assertEquals(ManagedRecordingCatalogMigrator.State.CURRENT,
             ManagedRecordingCatalogMigrator.inspect(catalog).state());
@@ -325,7 +325,7 @@ class ManagedRecordingCatalogMigratorTest
         Path catalog = temporary.resolve("journal-update.sqlite");
         createFormatOne(catalog);
         leaveHotJournal(catalog);
-        var result = ManagedRecordingCatalogMigrator.migrate(catalog);
+        var result = ManagedRecordingCatalogMigrator.migrate(catalog, true);
         assertTrue(result.migrated());
         assertEquals(ManagedRecordingSchema.CURRENT_FORMAT_VERSION, scalar(catalog, "PRAGMA user_version"));
         assertEquals(1, scalar(catalog, "SELECT count(*) FROM recording_call"));
@@ -342,7 +342,7 @@ class ManagedRecordingCatalogMigratorTest
         createFormatOne(catalog);
         Object originalFileKey = Files.readAttributes(catalog,
             java.nio.file.attribute.BasicFileAttributes.class).fileKey();
-        var result = ManagedRecordingCatalogMigrator.migrate(catalog, false);
+        var result = ManagedRecordingCatalogMigrator.migrate(catalog);
         assertTrue(result.migrated());
         assertEquals(null, result.backup());
         assertEquals(ManagedRecordingSchema.CURRENT_FORMAT_VERSION, scalar(catalog, "PRAGMA user_version"));
@@ -481,7 +481,7 @@ class ManagedRecordingCatalogMigratorTest
         createFormatOne(catalog);
         Path blocker = temporary.resolve("backups");
         Files.writeString(blocker, "keep-existing-file");
-        assertThrows(IOException.class, () -> ManagedRecordingCatalogMigrator.migrate(catalog));
+        assertThrows(IOException.class, () -> ManagedRecordingCatalogMigrator.migrate(catalog, true));
         assertEquals(1, scalar(catalog, "PRAGMA user_version"));
         assertEquals("keep-existing-file", Files.readString(blocker));
         assertTrue(ManagedRecordingCatalogMigrator.migrate(catalog, false).migrated());

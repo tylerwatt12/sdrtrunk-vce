@@ -222,15 +222,21 @@ The protected UTF-8 file should contain only the password, which must be 7–256
 file afterward. VCE stores a salted password verifier. Numbered Alpha builds may predate this setup requirement;
 follow the documentation bundled with that build.
 
-For an existing active database, `--upgrade-current` authorizes the in-place update and any recoverable bounded
-configuration repairs. It retains a recovery snapshot by default. Add `--no-upgrade-backup` only if you intend to
-omit that snapshot; this does not change the conversion or final checks.
+For an existing active database, first make a complete manual installation backup, then use
+`--upgrade-current --backup-confirmed`. This acknowledges your backup and authorizes the in-place update and any
+recoverable bounded configuration repairs. VCE does not find or verify the backup and creates no additional
+automatic upgrade backup. Conversion and final checks still share one transaction; a failure before commit rolls
+back. Recovery after a committed update requires restoring your manual backup.
 
-`--upgrade-current` also authorizes a required Managed Recordings catalog update. To update only that catalog, use
-`--upgrade-managed-recordings`. If the main database is absent but an older catalog remains, combine
-`--upgrade-managed-recordings` with the chosen `--fresh`, `--import-xml`, or `--upgrade-data` option. The main profile
-and administrator are prepared first. `--no-upgrade-backup` applies to these catalog updates too. A failed optional
-catalog update is reported and receiving can continue with Managed Recordings unavailable.
+`--upgrade-current --backup-confirmed` also authorizes a required Managed Recordings catalog update. To update only
+that catalog, use `--upgrade-managed-recordings --backup-confirmed`. If the main database is absent but an older
+catalog remains, combine those catalog flags with the chosen `--fresh`, `--import-xml`, or `--upgrade-data` option.
+The main profile and administrator are prepared first. A failed optional catalog update is reported and receiving
+can continue with Managed Recordings unavailable.
+
+The legacy `--no-upgrade-backup` flag remains accepted with either owned-profile upgrade flag, but has no effect
+and does not replace `--backup-confirmed`. This manual-backup policy does not change the strict source-preserving
+behavior of `--upgrade-data`.
 
 Use `--server` to run without the local window, even when a desktop is available. Graphical startup opens setup only
 when the profile needs it; `--setup-wizard` does not force a healthy completed profile back through optional pages

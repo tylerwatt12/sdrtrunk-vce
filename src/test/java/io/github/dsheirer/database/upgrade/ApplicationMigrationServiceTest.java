@@ -143,7 +143,7 @@ class ApplicationMigrationServiceTest
         insertAlias(database, "Retained Format 2 Alias");
 
         ApplicationMigrationService.MigrationResult result =
-            inProcessMigrationService().migrateCurrent(dataRoot, null);
+            inProcessMigrationService().migrateCurrent(dataRoot, true, null);
 
         assertFalse(result.importedPreviousProfile());
         assertFormat(result.sourceFormat(), 2, "scan-lists-p25-v26", false);
@@ -959,8 +959,8 @@ class ApplicationMigrationServiceTest
         assertTrue(result.importedPreviousProfile());
         assertTrue(result.completedWithRepairsOrSkippedItems());
         assertCurrentFormat(targetDatabase);
-        // Rebased revision plus the later preference upgrades, including personal call display hangtime.
-        assertEquals("8", scalar(targetDatabase,
+        // Rebased revision plus the later preference upgrades, including hangtime, recording clicks and workspace.
+        assertEquals("10", scalar(targetDatabase,
             "SELECT preferences_revision FROM web_user WHERE primary_admin=1"));
         assertEquals("1", scalar(targetDatabase, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
@@ -1301,7 +1301,7 @@ class ApplicationMigrationServiceTest
         List<String> progress = new ArrayList<>();
 
         ApplicationMigrationService.MigrationResult result =
-            new ApplicationMigrationService().migrateCurrent(dataRoot, false, progress::add);
+            new ApplicationMigrationService().migrateCurrent(dataRoot, progress::add);
 
         assertFalse(result.importedPreviousProfile());
         assertEquals(24, result.sourceFormat().version());
@@ -1311,7 +1311,7 @@ class ApplicationMigrationServiceTest
             "SELECT COUNT(*) FROM alias WHERE name='Retained by fast migration'"));
         assertCurrentFormat(database);
         assertTrue(result.helperOutput().contains(
-            "Recovery backup skipped by operator choice"));
+            "restore your manual installation backup"));
         assertTrue(result.helperOutput().contains("repair-portable-preferences"));
         int stepCount = DatabaseFormatCatalog.CURRENT_VERSION - 24;
         assertTrue(progress.contains(
@@ -1357,11 +1357,14 @@ class ApplicationMigrationServiceTest
             SELECT hex(password_salt) || ':' || hex(password_hash)
             FROM web_user WHERE username='operator'
             """));
-        assertEquals(Format65WebUserPreferencesCodec.migrateFromFormat64(
+        String expectedPreferences = Format65WebUserPreferencesCodec.migrateFromFormat64(
             Format62WebUserPreferencesCodec.migrateFromFormat61(Format43WebUserPreferencesCodec.migrateFromFormat42(
             Format36WebUserPreferencesCodec.migrateFromFormat35(
                 Format35WebUserPreferencesCodec.migrateFromFormat34(
-                    Format23WebUserPreferencesCodec.migrateToFormat31(preferencesBefore))))).json()).json(), scalar(database,
+                    Format23WebUserPreferencesCodec.migrateToFormat31(preferencesBefore))))).json()).json();
+        expectedPreferences = Format66WebUserPreferencesCodec.migrateFromFormat65(expectedPreferences).json();
+        expectedPreferences = Format67WebUserPreferencesCodec.migrateFromFormat66(expectedPreferences).json();
+        assertEquals(expectedPreferences, scalar(database,
             "SELECT preferences_json FROM web_user WHERE username='operator'"));
         assertCurrentFormat(database);
         int stepCount = DatabaseFormatCatalog.CURRENT_VERSION - 26;
@@ -1406,7 +1409,7 @@ class ApplicationMigrationServiceTest
         PosixFileAttributes before = view.readAttributes();
 
         ApplicationMigrationService.MigrationResult result =
-            inProcessMigrationService().migrateCurrent(dataRoot, null);
+            inProcessMigrationService().migrateCurrent(dataRoot, true, null);
 
         PosixFileAttributes after = Files.readAttributes(database, PosixFileAttributes.class);
         assertEquals(before.permissions(), after.permissions());
@@ -1446,12 +1449,16 @@ class ApplicationMigrationServiceTest
         SdrTrunkTestDatabase.create(database);
         removeDmrActivitySchema(database);
         byte[] before = sha256(database);
+        Path history = io.github.dsheirer.database.ActivityDatabasePath.forConfiguration(database);
+        byte[] historyBefore = sha256(history);
 
         SQLException exception = assertThrows(SQLException.class,
             () -> inProcessMigrationService().migrateCurrent(dataRoot, null));
 
-        assertTrue(exception.getMessage().contains("exact format-63 schema"),exception::getMessage);
+        assertTrue(exception.getMessage().contains("exact format-" + DatabaseFormatCatalog.CURRENT_VERSION +
+            " schema"),exception::getMessage);
         assertArrayEquals(before, sha256(database));
+        assertArrayEquals(historyBefore, sha256(history));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
     }
 
@@ -1491,7 +1498,7 @@ class ApplicationMigrationServiceTest
         insertAlias(database, "Do Not Lose");
         int aliasesBefore = count(database, "alias");
         RuntimeException failure = assertThrows(RuntimeException.class,
-            () -> inProcessMigrationService().migrateCurrent(dataRoot, phase ->
+            () -> inProcessMigrationService().migrateCurrent(dataRoot, true, phase ->
             {
                 if(phase.equals("Committing the database update"))
                     throw new RuntimeException("forced failure before commit");
@@ -1507,7 +1514,7 @@ class ApplicationMigrationServiceTest
             assertEquals(aliasesBefore, count(backups.getFirst(), "alias"));
         }
         ApplicationMigrationService.MigrationResult retry =
-            inProcessMigrationService().migrateCurrent(dataRoot, null);
+            inProcessMigrationService().migrateCurrent(dataRoot, true, null);
         assertNotNull(retry.safetyBackup());
         assertCurrentFormat(database);
         assertEquals(aliasesBefore, count(database, "alias"));
@@ -1522,7 +1529,7 @@ class ApplicationMigrationServiceTest
         Format30TestDatabase.create(database);
         insertAlias(database, "Preserved after completion warning");
         ApplicationMigrationService.MigrationResult result =
-            inProcessMigrationService().migrateCurrent(dataRoot, phase ->
+            inProcessMigrationService().migrateCurrent(dataRoot, true, phase ->
             {
                 if(phase.equals("Database update committed"))
                     throw new RuntimeException("forced observer failure after commit");
@@ -1653,7 +1660,7 @@ class ApplicationMigrationServiceTest
             },
             (staged, source, target, content) -> "must not run");
 
-        IOException exception = assertThrows(IOException.class, () -> service.migrateCurrent(dataRoot, null));
+        IOException exception = assertThrows(IOException.class, () -> service.migrateCurrent(dataRoot, true, null));
 
         assertTrue(exception.getMessage().contains("forced snapshot failure"));
         assertArrayEquals(before, sha256(database));

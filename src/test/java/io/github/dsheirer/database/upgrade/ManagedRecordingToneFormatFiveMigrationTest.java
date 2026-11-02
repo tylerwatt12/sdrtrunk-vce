@@ -43,7 +43,7 @@ class ManagedRecordingToneFormatFiveMigrationTest
         assertEquals(ManagedRecordingCatalogMigrator.State.UPGRADE_REQUIRED,
             ManagedRecordingCatalogMigrator.inspectForStartup(catalog).state());
         assertArrayEquals(original, Files.readAllBytes(catalog), "Inspection leaves the frozen format4 file unchanged");
-        var result = ManagedRecordingCatalogMigrator.migrate(catalog);
+        var result = ManagedRecordingCatalogMigrator.migrate(catalog, true);
         assertTrue(result.migrated());
         assertNotNull(result.backup());
         Map<String,String> migratedSignature;
