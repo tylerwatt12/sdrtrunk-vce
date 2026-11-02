@@ -117,7 +117,9 @@ for (const theme of ['light', 'dark']) {
   test(`queued, active and played markers have distinct shades across the entire ${theme} palette`, async ({ page }) => {
     await page.setViewportSize({ width: theme === 'dark' ? 390 : 1280, height: 900 });
     await openAudioApp(page, { admin: false, theme, feedCallsEnabled: false,
-      calls: [0, 1, 2].map(index => ({ ...recording, id: 17 + index, start_ms: recording.start_ms - index * 60_000 })) });
+      calls: [0, 1, 2].map(index => ({ ...recording, id: 17 + index, start_ms: recording.start_ms - index * 60_000,
+        channel_name: `Ridge Channel ${index + 1}`, channel_id: `00000000-0000-4000-8000-0000000000${17 + index}`,
+        channel_entity_ref: { kind: 'channel', key: `00000000-0000-4000-8000-0000000000${17 + index}` } })) });
     await captureAudio(page);
     await play(page, 2); await finish(page);
     await expect(page.locator('.recordings-call').nth(2)).toHaveClass(/recordings-call-played/);
@@ -125,6 +127,8 @@ for (const theme of ['light', 'dark']) {
     await page.locator('.recordings-call-info').nth(0).click();
     await page.getByRole('dialog', { name: 'Call actions', exact: true })
       .getByRole('button', { name: /Add to queue/ }).click();
+    await page.evaluate(() => document.activeElement?.blur());
+    await page.mouse.move(0, 0);
     const result = await page.evaluate(theme => {
       const root = document.documentElement;
       const originalHue = root.style.getPropertyValue('--theme-hue');
@@ -177,6 +181,27 @@ for (const theme of ['light', 'dark']) {
     expect(result.minimumPlayedTextContrast).toBeGreaterThanOrEqual(4.5);
     await expectContrast(page, { reportName: `recording-state-shades-${theme}` });
     await expect(page.locator('.recordings-call-list')).toHaveScreenshot(`recording-state-shades-${theme}.png`);
+    for (const state of ['queued', 'playing', 'played']) {
+      await page.mouse.move(0, 0);
+      const row = page.locator(`.recordings-call-${state}`);
+      const before = await row.evaluate(element => ({ fill: getComputedStyle(element).backgroundColor,
+        classes: element.className, marker: getComputedStyle(element).boxShadow }));
+      await row.hover();
+      const after = await row.evaluate(element => ({ fill: getComputedStyle(element).backgroundColor,
+        classes: element.className, marker: getComputedStyle(element).boxShadow }));
+      expect(after.fill).not.toBe(before.fill);
+      expect(after.classes).toBe(before.classes);
+      if (state !== 'played') expect(after.marker).toBe(before.marker);
+      await expectContrast(page, { rootSelector: '.recordings-call-list', reportName: `recording-hover-${state}-${theme}` });
+    }
+    const played = page.locator('.recordings-call-played');
+    const title = await played.locator('.recordings-call-title').boundingBox();
+    const context = await played.locator('.recordings-call-reception').boundingBox();
+    expect(context.y - (title.y + title.height)).toBeLessThanOrEqual(4);
+    await expect(page.locator('.recordings-call-list')).toHaveScreenshot(`recording-row-hover-${theme}.png`);
+    await page.mouse.move(0, 0);
+    await played.locator('.recordings-call-title').focus();
+    await expectContrast(page, { rootSelector: '.recordings-call-list', reportName: `recording-focus-${theme}` });
     if (process.env.PLAYED_MARKER_EVIDENCE) await page.locator('.recordings-call-list').screenshot({
       path: path.join(process.env.PLAYED_MARKER_EVIDENCE, `state-shades-${theme}.png`) });
   });

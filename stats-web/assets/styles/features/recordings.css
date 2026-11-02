@@ -80,6 +80,7 @@
 .recordings-call-gap-label { font-variant-numeric: tabular-nums; }
 .recordings-call,
 .recordings-call-columns { min-width: 0; display: grid; grid-template-columns: var(--recordings-row-columns); align-items: center; gap: var(--space-3); padding: 0 var(--space-3); }
+.recordings-call:is(:hover, :focus-within) { background: var(--table-hover); }
 .recordings-call { position: relative; min-height: var(--control-height-touch); border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 .recordings-call-selectable { grid-template-columns: var(--space-5) var(--recordings-row-columns); }
 .recordings-call-select { margin: 0; }
@@ -96,7 +97,7 @@
 .recordings-call-frequency,
 .recordings-call-identity { color: var(--muted); font-size: var(--font-size-label); }
 .recordings-call-actions { --icon-action-size: var(--control-height-compact); display: flex; align-items: center; gap: var(--space-1); }
-.recordings-call-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+.recordings-call-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-2); }
 .recordings-call-reception { flex-basis: 100%; min-width: 0; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); color: var(--muted); font-size: var(--font-size-label); }
 .recordings-call-heading,
 .recordings-call-source { min-width: 0; overflow-wrap: anywhere; }
@@ -110,6 +111,9 @@
   .recordings-call-source, .recordings-call-frequency, .recordings-call-identity,
   .recordings-call-reception, .recordings-call-status, .recordings-transcript-preview) { color: var(--recording-played-ink); }
 .recordings-call-playing { background: var(--recording-active-fill); box-shadow: inset var(--space-1) 0 0 var(--recording-active-marker); }
+.recordings-call-playing:is(:hover, :focus-within) { background: color-mix(in srgb, var(--recording-active-fill) 65%, var(--table-hover)); }
+.recordings-call-played:is(:hover, :focus-within) { box-shadow: inset var(--recording-played-marker-width) 0 0 color-mix(in srgb, var(--recording-played-marker) 80%, var(--ink)); }
+.recordings-call:is(:hover, :focus-within) .recordings-call-select:not(:checked):not(:indeterminate),
 .recordings-call-playing .recordings-call-select:not(:checked):not(:indeterminate) { border-color: var(--muted); }
 .recordings-transcript-preview { grid-column: 1 / -1; margin: 0; padding: var(--space-2) 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; line-height: var(--line-height-body); }
 .recordings-transcript-empty { color: var(--muted); font-size: var(--font-size-meta); }
