@@ -123,6 +123,26 @@ final class AliasActivityProjection
         apply(connection, deltas, activity.observedAtEpochMilliseconds(), protocol);
     }
 
+    /** Refresh accepted call evidence without synthesizing a signaling or another logical-call credit. */
+    static void recordP25CallMetadata(Connection connection, ReceiverActivityRecords.ActivityEvent activity,
+        long observedAt) throws SQLException
+    {
+        int protocol = protocolCode(activity.protocol());
+        Resolver resolver = new Resolver(connection, protocol, observedAt);
+        Map<Long,Delta> deltas = new LinkedHashMap<>();
+        Delta metadata = Delta.touch(true, true);
+        int targetKind = "RADIO".equals(activity.targetKind()) ? RADIO : TALKGROUP;
+        addResolved(deltas, resolver.resolve(activity.configurationId(), targetKind, positive(activity.targetId()),
+            activity.p25TargetIdentity(), activity.targetObservedWorkingId()), metadata);
+        if("PATCH_GROUP".equals(activity.targetKind()))
+            for(Integer member: activity.patchMemberTalkgroupIds())
+                addResolved(deltas, resolver.resolve(activity.configurationId(), TALKGROUP, positive(member)), metadata);
+        if(!sameCanonicalRadioIdentity(activity, protocol))
+            addResolved(deltas, resolver.resolve(activity.configurationId(), RADIO, positive(activity.sourceRadioId()),
+                activity.p25SourceIdentity(), activity.sourceObservedWorkingId()), metadata);
+        apply(connection, deltas, observedAt, protocol);
+    }
+
     static void recordResolvedLogicalCall(Connection connection, ReceiverActivityRecords.ResolvedLogicalCall call)
         throws SQLException
     {

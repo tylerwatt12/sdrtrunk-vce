@@ -68,11 +68,11 @@ public final class SqliteSchemaValidator
         validateDefinitions(connection, definitions, "main");
     }
 
-    /** Checks an already attached private history schema without opening another connection. */
+    /** Checks an already attached private companion without opening another connection. */
     public static void validateDefinitions(Connection connection, Collection<Definition> definitions, String schema)
         throws SQLException
     {
-        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown validation schema");
+        if(!List.of("main", "activity", "configuration").contains(schema)) throw new SQLException("Unknown validation schema");
         for(Definition definition: definitions)
         {
             String actual = objectSql(connection, definition.type(), definition.name(), schema);
@@ -98,7 +98,7 @@ public final class SqliteSchemaValidator
     /** The migrator fingerprints its admitted writable companion in the same transaction. */
     public static String fingerprint(Connection connection, String schema) throws SQLException
     {
-        if(!List.of("main", "activity").contains(schema)) throw new SQLException("Unknown validation schema");
+        if(!List.of("main", "activity", "configuration").contains(schema)) throw new SQLException("Unknown validation schema");
         MessageDigest digest;
         try
         {

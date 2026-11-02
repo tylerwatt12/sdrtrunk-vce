@@ -1337,11 +1337,11 @@ class ReceiverActivityWriter implements AutoCloseable
                 return null;
             }
             ReceiverActivitySchema.P25CallCredit credit = ReceiverActivitySchema.recordP25Call(
-                connection, activity, mDetailedEventHistoryEnabled);
+                connection, activity, mDetailedEventHistoryEnabled, observation.factsObservedAtEpochMilliseconds());
             return credit != null ? new P25CallState(activity, credit, 0) : null;
         }
         ReceiverActivitySchema.P25CallCredit credit = ReceiverActivitySchema.enrichP25Call(
-            connection, previous.original(), activity, previous.credit());
+            connection, previous.original(), activity, previous.credit(), observation.factsObservedAtEpochMilliseconds());
         return credit != null ? new P25CallState(previous.original(), credit, 0) : null;
     }
 

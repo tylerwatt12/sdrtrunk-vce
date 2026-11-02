@@ -23,7 +23,7 @@ public final class ConfigurationHistoryDatabase
     public static String historyFingerprint(int version) throws SQLException
     {
         if(version >= 63 && version <= 68) return FORMAT_63_HISTORY_FINGERPRINT;
-        if(version == 69) return HISTORY_FINGERPRINT;
+        if(version == 69 || version == 70) return HISTORY_FINGERPRINT;
         throw new SQLException("Unsupported activity database format");
     }
 
@@ -179,7 +179,8 @@ public final class ConfigurationHistoryDatabase
                 DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             int activityVersion = Integer.parseInt(ConfigurationHistorySchema.metadata(activity,
                 DatabaseFormatCatalog.FORMAT_VERSION_KEY));
-            if(configurationVersion < activityVersion || configurationVersion >= 69 && activityVersion < 69)
+            if(configurationVersion < activityVersion || configurationVersion >= 69 && activityVersion < 69 ||
+                configurationVersion >= 70 && activityVersion < 70)
                 throw new SQLException("The configuration and activity database versions are incompatible");
         }
     }

@@ -2789,6 +2789,29 @@ final class RadioSystemSchema
                 null,IdentityCounts.NONE,null,null,null,null,null);
     }
 
+    /** Same-call facts refresh metadata without creating action, call, recording or streaming credits. */
+    static void enrichP25CallMetadata(Connection connection, RadioSystem radioSystem,
+        ReceiverActivityRecords.ActivityEvent activity, long observedAt) throws SQLException
+    {
+        if(radioSystem == null) return;
+        Identity source = identity(radioSystem, TrunkedIdentityPolicy.IDENTITY_KIND_RADIO,
+            integer(activity.sourceRadioId()), activity.p25SourceIdentity());
+        List<Identity> destinations = destinationIdentities(connection, radioSystem, activity.targetId(),
+            activity.targetKind(), activity.patchMemberTalkgroupIds(), activity.p25TargetIdentity(),
+            activity.p25PatchMemberIdentities(), observedAt);
+        for(Identity destination: destinations)
+            upsertIdentity(connection, radioSystem, destination, observedAt, null, IdentityCounts.NONE,
+                activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null, null);
+        if(source != null)
+        {
+            upsertIdentity(connection, radioSystem, source, observedAt, null, IdentityCounts.NONE,
+                activity.encryptionAlgorithmId(), activity.encryptionKeyId(), null, null, null);
+            for(Identity destination: groupDestinations(destinations))
+                upsertRelationship(connection, radioSystem.radioSystemId(), source, destination, observedAt,
+                    null, false, 0, 0, 0, activity.encryptionAlgorithmId(), activity.encryptionKeyId());
+        }
+    }
+
     static IdentityReference identityReference(Connection connection, RadioSystem radioSystem, int kindCode,
                                                Integer observedLocalId,
                                                ReceiverActivityRecords.P25Identity p25Identity,

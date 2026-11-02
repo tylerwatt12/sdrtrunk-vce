@@ -462,7 +462,7 @@ class P25TrafficChannelManagerTest
             MyEventBus.getGlobalEventBus().unregister(subscriber);
         }
         assertEquals(1, subscriber.events.size());
-        assertEquals(2, subscriber.updates.size());
+        assertEquals(3, subscriber.updates.size());
         P25CallStartEvent initial = subscriber.events.getFirst();
         assertNotNull(initial.callToken());
         assertNull(initial.identifierCollection().getFromIdentifier());
@@ -472,9 +472,10 @@ class P25TrafficChannelManagerTest
             assertEquals(initial.configurationId(), update.call().configurationId());
             assertEquals(initial.startedAtEpochMilliseconds(), update.call().startedAtEpochMilliseconds());
             assertEquals(frequency, update.call().frequencyHertz());
-            assertEquals(APCO25RadioIdentifier.createFrom(700_001),
-                update.call().identifierCollection().getFromIdentifier());
         }
+        assertNull(subscriber.updates.getFirst().call().identifierCollection().getFromIdentifier());
+        for(P25CallUpdateEvent update: subscriber.updates.subList(1, subscriber.updates.size()))
+            assertEquals(APCO25RadioIdentifier.createFrom(700_001), update.call().identifierCollection().getFromIdentifier());
         assertFalse(subscriber.updates.getFirst().complete());
         assertNull(subscriber.updates.getFirst().durationMilliseconds());
         assertTrue(subscriber.updates.getLast().complete());
@@ -508,9 +509,10 @@ class P25TrafficChannelManagerTest
                     MyEventBus.getGlobalEventBus().unregister(subscriber);
                 }
                 assertEquals(1, subscriber.events.size());
-                assertEquals(1, subscriber.updates.size());
-                assertTrue(subscriber.updates.getFirst().complete());
-                assertEquals(observedEnd ? 450L : null, subscriber.updates.getFirst().durationMilliseconds(),
+                assertEquals(2, subscriber.updates.size());
+                assertFalse(subscriber.updates.getFirst().complete());
+                assertTrue(subscriber.updates.getLast().complete());
+                assertEquals(observedEnd ? 450L : null, subscriber.updates.getLast().durationMilliseconds(),
                     "Only the accepted RF interval is known; the manager has no audio module or codec");
             }
         }
@@ -600,7 +602,7 @@ class P25TrafficChannelManagerTest
             manager.broadcast(tracker);
             manager.broadcast(tracker);
             assertEquals(1, subscriber.events.size());
-            assertEquals(0, subscriber.updates.size());
+            assertEquals(1, subscriber.updates.size(), "Only the first full snapshot is published");
         }
         finally
         {
@@ -1412,6 +1414,10 @@ class P25TrafficChannelManagerTest
             P25TrafficChannelEventTracker initial = trafficTrackers(manager, timeslot).get(frequency);
             assertNotNull(initial);
             assertEquals(1, subscriber.events.size());
+            assertEquals(1, subscriber.updates.size(), "The first unchanged tracker broadcast offers a full snapshot");
+            assertEquals(subscriber.events.getFirst(), subscriber.updates.getFirst().call());
+            assertEquals(initial.getActivityCallToken(), subscriber.updates.getFirst().call().callToken());
+            assertEquals(1_000L, subscriber.updates.getFirst().observedAtEpochMilliseconds());
 
             if(phaseTwo)
             {

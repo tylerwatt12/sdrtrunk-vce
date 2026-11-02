@@ -45,6 +45,8 @@ import io.github.dsheirer.module.decode.event.DecodeEventType;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.module.decode.p25.reference.VoiceServiceOptions;
 import io.github.dsheirer.module.decode.p25.P25CallStartEvent;
+import io.github.dsheirer.module.decode.p25.P25CallUpdateEvent;
+import io.github.dsheirer.module.decode.p25.P25GrantObservationEvent;
 import io.github.dsheirer.module.decode.dmr.DMRConventionalCallEvent;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRRadio;
 import io.github.dsheirer.module.decode.dmr.identifier.DMRTalkgroup;
@@ -74,6 +76,8 @@ import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifi
 import io.github.dsheirer.module.decode.p25.identifier.encryption.APCO25EncryptionKey;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Conventional;
+import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.module.decode.p25.telemetry.P25NetworkConfigurationSnapshot;
 import io.github.dsheirer.module.decode.traffic.P25SubscriberIdentity;
 import io.github.dsheirer.module.decode.traffic.CallSystemIdentity;
@@ -119,7 +123,52 @@ class ReceiverActivityMapperTest
         var mapper = new ReceiverActivityMapper();
         assertEquals(CallEncryptionState.CLEAR, mapper.map(new P25CallStartEvent(channel, clear)).encryptionState());
         assertEquals(CallEncryptionState.UNKNOWN, mapper.map(new P25CallStartEvent(channel, unknown)).encryptionState());
-        assertEquals(CallEncryptionState.UNKNOWN, mapper.map(channel, unknown).encryptionState());
+        assertNull(mapper.map(channel, unknown), "Mutable voice trackers are owned by their immutable lifecycle");
+    }
+
+    @Test
+    void p25VoiceTrackersCannotCreateActivityOrSignalingCopiesButDataAndGrantsRemain()
+    {
+        var mapper = new ReceiverActivityMapper();
+        for(var configuration: List.of(new DecodeConfigP25Phase1(), new DecodeConfigP25Phase2(),
+            new DecodeConfigP25Conventional()))
+        {
+            var owner = new Channel("P25", Channel.ChannelType.STANDARD);
+            owner.setConfigurationId(CONFIGURATION_ID);
+            owner.setDecodeConfiguration(configuration);
+            for(DecodeEventType type: DecodeEventType.VOICE_CALL_EVENTS)
+            {
+                var tracker = P25ChannelGrantEvent.builder(type, 1_000, null)
+                    .identifiers(new IdentifierCollection(List.of(APCO25Talkgroup.create(91)))).build();
+                assertNull(mapper.map(owner, tracker), configuration.getDecoderType() + " " + type);
+                assertEquals(ReceiverActivityRecords.Action.CALL,
+                    mapper.map(new P25CallStartEvent(owner, tracker)).action());
+            }
+            var data = P25ChannelGrantEvent.builder(DecodeEventType.DATA_CALL, 1_000, null)
+                .identifiers(new IdentifierCollection(List.of(APCO25Talkgroup.create(91)))).build();
+            assertEquals(ReceiverActivityRecords.Action.ACTIVE, mapper.map(owner, data).action());
+            var grant = new P25GrantObservationEvent(owner, null, data.getIdentifierCollection(),
+                DecodeEventType.CALL_GROUP, CallEncryptionState.UNKNOWN, 1_100, false, false);
+            assertEquals(ReceiverActivityRecords.Action.GRANT, mapper.map(grant).action());
+        }
+    }
+
+    @Test
+    void sameCallUpdateRetainsTheOriginalStartAndSeparatesTheLaterFactsObservationTime()
+    {
+        var owner = new Channel("P25", Channel.ChannelType.STANDARD);
+        owner.setConfigurationId(CONFIGURATION_ID);
+        owner.setDecodeConfiguration(new DecodeConfigP25Phase1());
+        var tracker = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000, null)
+            .identifiers(new IdentifierCollection(List.of(APCO25Talkgroup.create(91)))).build();
+        var call = new P25CallStartEvent(owner, tracker, "p25:bee00:123", "exact-call");
+        var mapper = new ReceiverActivityMapper();
+        var later = mapper.map(new P25CallUpdateEvent(call, true, 500L, 1_500L));
+        assertEquals("exact-call", later.callToken());
+        assertEquals(1_000L, later.activity().observedAtEpochMilliseconds());
+        assertEquals(1_500L, later.factsObservedAtEpochMilliseconds());
+        assertEquals(500L, later.activity().durationMilliseconds());
+        assertEquals(1_000L, mapper.map(new P25CallUpdateEvent(call, false)).factsObservedAtEpochMilliseconds());
     }
 
     @Test
@@ -612,9 +661,10 @@ class ReceiverActivityMapperTest
         P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, 1_000L, null)
             .identifiers(new MutableIdentifierCollection(List.of(APCO25RadioIdentifier.createFrom(10_900_077),
                 APCO25Talkgroup.create(10_003)))).build();
-        new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+        var tracker = new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+        var captured = new P25CallStartEvent(channel, event, tracker.getRadioSystemKey(), tracker.getActivityCallToken());
         channel.setP25SiteIdentity(new P25SiteIdentity(0xABCDE, 0x321, 3, 4));
-        var record = new ReceiverActivityMapper().map(channel, event);
+        var record = new ReceiverActivityMapper().map(captured);
         assertEquals("p25:bee00:123", record.radioSystemKey());
         assertEquals("10900077", record.sourceRadioId());
         assertEquals(ReceiverActivityRecords.P25IdentityState.ORDINARY, record.p25SourceIdentity().state());

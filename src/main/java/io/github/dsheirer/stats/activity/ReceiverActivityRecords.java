@@ -108,17 +108,26 @@ final class ReceiverActivityRecords
 
     /** Full same-call facts. Only the writer decides which call and identity credits have committed. */
     record P25CallObservation(String callToken, ActivityEvent activity, boolean initial, boolean complete,
-                                       long collectionEpoch, long collectionStartedAtEpochMilliseconds)
+                                       long collectionEpoch, long collectionStartedAtEpochMilliseconds,
+                                       long factsObservedAtEpochMilliseconds)
         implements ReceiverActivityRecord
     {
         P25CallObservation(String callToken, ActivityEvent activity, boolean initial, boolean complete)
         {
-            this(callToken, activity, initial, complete, 0, 0);
+            this(callToken, activity, initial, complete, 0, 0,
+                activity != null ? activity.observedAtEpochMilliseconds() : 0);
         }
 
         P25CallObservation inCollection(long epoch, long startedAt)
         {
-            return new P25CallObservation(callToken, activity, initial, complete, epoch, startedAt);
+            return new P25CallObservation(callToken, activity, initial, complete, epoch, startedAt,
+                factsObservedAtEpochMilliseconds);
+        }
+
+        P25CallObservation withFactsObservedAt(long observedAt)
+        {
+            return new P25CallObservation(callToken, activity, initial, complete, collectionEpoch,
+                collectionStartedAtEpochMilliseconds, observedAt);
         }
 
         P25CallObservation
@@ -129,6 +138,8 @@ final class ReceiverActivityRecords
             {
                 throw new IllegalArgumentException("P25 observation requires a call token and facts");
             }
+            factsObservedAtEpochMilliseconds = Math.max(activity.observedAtEpochMilliseconds(),
+                factsObservedAtEpochMilliseconds);
         }
 
         @Override

@@ -889,3 +889,24 @@ It updates only encryption values needing conversion and replaces the three encr
 Planner statistics sample only those indexes. Rollback journals, index growth and index-build sorting still require
 temporary workspace; capacity planning budgets that separately from recovery copies and the free-space margin.
 SQLite work remains on the bounded background writer; callbacks publish detached status without waiting for storage.
+
+### Call-owned P25 voice updates (application format 70)
+
+New P25 voice tracker observations enrich one accepted `CALL` through its existing exact process-local token.
+The first tracker broadcast supplies a full immutable snapshot even when the start facts are unchanged; later
+material changes and completion supply updates. The original event ID, start time and source-call UUID remain
+stable. Source and target qualification, observed working addresses, patch members, compatible missing RF/site
+context, encryption and final duration belong to that existing call. Conflicting owners, resources or qualified
+participants cannot reattribute it. Newer full snapshots own current facts; delayed final timing can fill a missing
+duration without restoring stale metadata.
+
+The existing bounded writer receipts retain accepted facts and a separate observation clock for directory,
+relationship and Alias freshness. These metadata updates create no additional call or signaling credit. Raw
+voice `ACTIVE` observations no longer enter statistics; data channel activity, grants and independent signaling
+keep their existing paths. Recording, streaming, notification and live diagnostic observers remain independent.
+
+The adjacent semantic migration preserves every historical row, child, reference, counter, allocator, index b-tree
+and planner statistic. It changes only the format metadata, without scanning or rewriting retained history. It
+does not infer old call associations, subtract old Active counts or compact the file. Existing retention frees
+expired pages for reuse. No table, column, index or persisted call registry is added, and runtime startup remains
+validation-only.

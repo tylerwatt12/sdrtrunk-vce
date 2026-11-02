@@ -72,6 +72,7 @@ public class P25TrafficChannelEventTracker
     private CallEncryptionEvidence mPushToTalkEncryption;
     private P25CallStartEvent mCallStart;
     private List<Identifier> mActivityIdentifiers;
+    private boolean mFirstSnapshotPublished;
     private boolean mCompletionPublished;
     private boolean mActivityEncryptionConflicted;
 
@@ -145,6 +146,7 @@ public class P25TrafficChannelEventTracker
     {
         mCallStart = callStart;
         mActivityIdentifiers = callStart.identifiers();
+        mFirstSnapshotPublished = false;
     }
 
     /** No database state or acknowledgement is consulted on the decoding thread. */
@@ -156,8 +158,8 @@ public class P25TrafficChannelEventTracker
             mActivityEncryptionConflicted = true;
         if(mActivityEncryptionConflicted) state = CallEncryptionState.UNKNOWN;
         boolean confirmed = mCallStart.currentEncryptionConfirmed(getEvent());
-        if(sameIdentifiers() && mCallStart.encryptionState() == state &&
-            mCallStart.encryptionConfirmed() == confirmed && (!isComplete() || mCompletionPublished))
+        if(mFirstSnapshotPublished && sameIdentifiers() && mCallStart.sameMetadata(getEvent(), state, confirmed) &&
+            (!isComplete() || mCompletionPublished))
         {
             return null;
         }
@@ -165,11 +167,13 @@ public class P25TrafficChannelEventTracker
         P25CallStartEvent snapshot = mCallStart.withIdentifiers(getEvent(), state);
         mActivityIdentifiers = snapshot.identifiers();
         mCallStart = snapshot;
+        mFirstSnapshotPublished = true;
         mCompletionPublished |= isComplete();
         // A grant builder defaults its end to its start; that zero does not establish an observed call span.
         Long duration = mObservedEnd && isStarted() && getEvent().getTimeStart() > 0 &&
             getEvent().getTimeEnd() > getEvent().getTimeStart() ? getEvent().getDuration() : null;
-        return new P25CallUpdateEvent(snapshot, isComplete(), duration);
+        return new P25CallUpdateEvent(snapshot, isComplete(), duration,
+            Math.max(mLastObservationTimestamp, Math.max(getEvent().getTimeStart(), getEvent().getTimeEnd())));
     }
 
     private boolean sameIdentifiers()

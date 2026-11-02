@@ -1852,7 +1852,7 @@ public final class ApplicationDatabaseMigrator
     private static void prepareActivityUpgrade(Connection connection, DatabaseFormatCatalog.DetectedFormat source,
         Path database) throws SQLException
     {
-        if(source.version() < 63 || source.version() >= 69 ||
+        if(source.version() < 63 || source.version() >= DatabaseFormatCatalog.CURRENT_VERSION ||
             !io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection)) return;
         if(!hasAttachedActivity(connection))
         {

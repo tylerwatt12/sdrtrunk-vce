@@ -65,7 +65,7 @@ class Format68To69DatabaseMigrationTest
         ConfigurationHistoryDatabase.validatePair(configuration);
         try(var connection = open(history))
         {
-            assertEquals(69, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertEquals(count, scalar(connection, "SELECT count(*) FROM receiver_activity_event"));
             assertEquals(2, scalar(connection, "SELECT encryption_state FROM receiver_activity_event WHERE id=900000000001"));
@@ -132,7 +132,7 @@ class Format68To69DatabaseMigrationTest
             assertEquals(ConfigurationHistoryDatabase.HISTORY_FINGERPRINT, SqliteSchemaValidator.fingerprint(first));
         }
         ConfigurationHistoryDatabase.validatePair(fresh);
-        ConfigurationHistoryDatabase.validatePair(migrated);
+        ConfigurationHistoryDatabase.validatePairIdentity(migrated);
     }
 
     /** Compare retained data independently of the deliberately replaced encryption field and format metadata. */

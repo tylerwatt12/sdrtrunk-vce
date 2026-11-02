@@ -678,7 +678,8 @@ class SdrTrunkDatabaseStartupTest
         java.sql.SQLException failure = assertThrows(java.sql.SQLException.class,
             () -> SdrTrunkDatabaseStartup.validateGlobalDatabase(database));
         String expected = changedRole.equals("configuration") ? "Unrecognized SQLite database schema fingerprint" :
-            "The activity database does not have the exact format-63 schema";
+            "The activity database does not have the exact format-" +
+                io.github.dsheirer.database.upgrade.DatabaseFormatCatalog.CURRENT_VERSION + " schema";
         assertTrue(failure.getMessage().contains(expected), failure::getMessage);
         for(int index = 0; index < files.size(); index++)
         {

@@ -133,11 +133,11 @@ final class Format62To63DatabaseMigration implements DatabaseMigrationStep
             ConfigurationHistorySchema.separateHistoryOwners(connection);
             ConfigurationHistorySchema.removeConfiguration(connection);
             ConfigurationHistorySchema.setIdentity(connection, ConfigurationHistorySchema.HISTORY_ROLE, pairId);
-            // Migration validation uses the already durable extracted configuration. Runtime never attaches a
-            // writable configuration file to an activity writer.
+            // Later migration steps may advance this durable extraction's metadata in the same transaction.
+            // This writable attachment exists only in the migrator, never in a runtime activity writer.
             try(PreparedStatement attach = connection.prepareStatement("ATTACH DATABASE ? AS configuration"))
             {
-                attach.setString(1, stage.toUri() + "?mode=ro");
+                attach.setString(1, stage.toUri() + "?mode=rw");
                 attach.execute();
             }
             io.github.dsheirer.stats.StatsHistoryContext.installSubscriberContext(connection);

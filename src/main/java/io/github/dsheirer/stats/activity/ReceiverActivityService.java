@@ -920,6 +920,9 @@ public class ReceiverActivityService implements SiteMetadataListener, ProtocolSi
 
     private void receiveDecodeEvent(Channel channel, IDecodeEvent event)
     {
+        // Immutable same-call snapshots own voice statistics. Do not let redundant desktop tracker broadcasts
+        // consume observer capacity needed by a start, its recovery snapshot, data or independent signaling.
+        if(ReceiverActivityMapper.isP25VoiceTracker(channel, event)) return;
         BoundedMpscPairQueue<Object,Object> ingress = mObservationIngress;
         mObservationAdmissions.incrementAndGet();
         try

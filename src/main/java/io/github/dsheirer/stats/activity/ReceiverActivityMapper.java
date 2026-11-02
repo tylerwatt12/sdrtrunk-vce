@@ -259,7 +259,7 @@ class ReceiverActivityMapper
         if(activity != null && update.complete())
             activity = activity.withDurationMilliseconds(update.durationMilliseconds());
         return activity != null && call.callToken() != null ? new ReceiverActivityRecords.P25CallObservation(call.callToken(),
-                activity, false, update.complete()) : null;
+                activity, false, update.complete()).withFactsObservedAt(update.observedAtEpochMilliseconds()) : null;
     }
 
     ReceiverActivityRecords.ActivityEvent map(P25GrantObservationEvent observation)
@@ -673,11 +673,9 @@ class ReceiverActivityMapper
             timeslot = null;
         }
 
-        //The conventional traffic manager rebroadcasts its mutable tracker for desktop/event-log consumers. Statistics
-        //use the one-time P25CallStartEvent instead, so tracker updates cannot create duplicate activity rows or counts.
-        if(actionOverride == null && decoderType == DecoderType.P25_CONVENTIONAL &&
-            event instanceof P25ChannelGrantEvent && event.getEventType() != null &&
-            event.getEventType().isVoiceCallEvent())
+        //P25 managers rebroadcast mutable voice trackers for desktop/event-log consumers. Statistics use their exact
+        //immutable call lifecycle instead, so these copies cannot create another activity row or signaling credit.
+        if(actionOverride == null && isP25VoiceTracker(channel, event))
         {
             return null;
         }
@@ -832,6 +830,14 @@ class ReceiverActivityMapper
         return identity.isStableFullyQualified() ?
             identity.homeWacn() + "." + identity.homeSystemId() + "." + identity.homeIdentityId() :
             identity.state().name();
+    }
+
+    /** Only constant-cost type/configuration reads; safe before the bounded observer handoff. */
+    static boolean isP25VoiceTracker(Channel channel, IDecodeEvent event)
+    {
+        return event instanceof P25ChannelGrantEvent && channel != null && channel.getDecodeConfiguration() != null &&
+            isP25Decoder(channel.getDecodeConfiguration().getDecoderType()) && event.getEventType() != null &&
+            event.getEventType().isVoiceCallEvent();
     }
 
     static boolean isTypedCallOwnedObservation(Channel channel, IDecodeEvent event)

@@ -13,13 +13,20 @@ import io.github.dsheirer.audio.call.CallEncryptionState;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.identifier.Identifier;
+import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.module.decode.event.DecodeEventType;
+import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
+import io.github.dsheirer.module.decode.p25.identifier.channel.APCO25Channel;
+import io.github.dsheirer.module.decode.p25.identifier.channel.StandardChannel;
+import io.github.dsheirer.module.decode.p25.phase1.message.P25FrequencyBand;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25RadioIdentifier;
@@ -32,6 +39,105 @@ import org.junit.jupiter.api.Test;
 class P25TrafficChannelEventTrackerTest
 {
     private static final long START = 1_000L;
+    private static final String OWNER = "223e4567-e89b-42d3-a456-426614174000";
+
+    @Test
+    void firstUnchangedBroadcastOffersOneFullSnapshotForEitherPhaseWithoutFormattingLiveObjects()
+    {
+        for(boolean phaseTwo: List.of(false, true))
+        {
+            var owner = new Channel("P25");
+            owner.setConfigurationId(OWNER);
+            owner.setDecodeConfiguration(phaseTwo ? new DecodeConfigP25Phase2() : new DecodeConfigP25Phase1());
+            var event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START,
+                VoiceServiceOptions.createUnencrypted()).identifiers(identifiers(1201, null))
+                .channelDescriptor(new StandardChannel(851_012_500L)
+                {
+                    @Override public String toString() { throw new AssertionError("Producer must not format RF facts"); }
+                }).timeslot(phaseTwo ? 2 : 1).build();
+            var tracker = new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+            var initial = new P25CallStartEvent(owner, event, tracker.getRadioSystemKey(), tracker.getActivityCallToken());
+            tracker.setCallStart(initial);
+
+            var first = tracker.callUpdate();
+            assertNotNull(first, "The first broadcast gives a dropped start one independent full handoff");
+            assertEquals(initial, first.call());
+            assertEquals(tracker.getActivityCallToken(), first.call().callToken());
+            assertEquals(START, first.call().startedAtEpochMilliseconds());
+            assertEquals(START, first.observedAtEpochMilliseconds());
+            assertFalse(first.complete());
+            assertNull(first.durationMilliseconds());
+            tracker.updateDurationControl(START + 50);
+            assertNull(tracker.callUpdate(), "Unchanged later broadcasts do not create observer traffic");
+        }
+    }
+
+    @Test
+    void lateDescriptorAndCanonicalIdentityReachTheSameImmutableCallWithoutMovingItsStart()
+    {
+        for(boolean phaseTwo: List.of(false, true))
+        {
+            long frequency = 851_012_500L;
+            var owner = new Channel("P25");
+            owner.setConfigurationId(OWNER);
+            owner.setDecodeConfiguration(phaseTwo ? new DecodeConfigP25Phase2() : new DecodeConfigP25Phase1());
+            var event = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP, START, null)
+                .identifiers(identifiers(1201, null)).channelDescriptor(new StandardChannel(frequency))
+                .timeslot(phaseTwo ? 2 : 1).build();
+            var tracker = new P25TrafficChannelEventTracker(event, "p25:bee00:123");
+            tracker.setCallStart(new P25CallStartEvent(owner, event, tracker.getRadioSystemKey(), tracker.getActivityCallToken()));
+            var first = tracker.callUpdate();
+            var channel = APCO25Channel.create(0, phaseTwo ? 1 : 0);
+            channel.setFrequencyBand(new P25FrequencyBand(0, frequency, -45_000_000L, 12_500L, 12_500,
+                phaseTwo ? 2 : 1));
+            event.setChannelDescriptor(channel);
+            tracker.updateDurationControl(START + 100);
+            var descriptor = tracker.callUpdate();
+            assertNotNull(descriptor, "A newly learned LCN is material without an identifier change");
+            assertEquals(0, descriptor.call().channelBand());
+            assertEquals(0, descriptor.call().channelNumber());
+            assertEquals(frequency, descriptor.call().frequencyHertz());
+            assertEquals(phaseTwo, descriptor.call().tdma());
+            assertEquals(START + 100, descriptor.observedAtEpochMilliseconds());
+            assertNull(first.call().channelBand(), "The already published start remains immutable");
+
+            var source = APCO25FullyQualifiedRadioIdentifier.createFromWithWorkingAddress(501, 0xBEE00, 0x123, 700_001);
+            var target = APCO25FullyQualifiedTalkgroupIdentifier.createToWithLocalAddress(1201, 0xBEE00, 0x123, 2201);
+            tracker.addIdentifierIfMissing(source);
+            tracker.addIdentifierIfMissing(target);
+            tracker.updateDurationTraffic(START + 200);
+            var learned = tracker.callUpdate();
+            assertEquals(OWNER, learned.call().configurationId());
+            assertEquals("p25:bee00:123", learned.call().radioSystemKey());
+            assertEquals(START, learned.call().startedAtEpochMilliseconds());
+            assertEquals(first.call().callToken(), learned.call().callToken());
+            assertEquals(START + 200, learned.observedAtEpochMilliseconds());
+            assertSame(source, learned.call().identifierCollection().getFromIdentifier());
+            assertSame(target, learned.call().identifierCollection().getToIdentifier());
+            assertNull(descriptor.call().identifierCollection().getFromIdentifier());
+            assertNull(tracker.callUpdate());
+
+            var incompatible = APCO25Channel.create(1, phaseTwo ? 3 : 1);
+            incompatible.setFrequencyBand(new P25FrequencyBand(1, frequency + 100_000L, -45_000_000L,
+                12_500L, 12_500, phaseTwo ? 2 : 1));
+            event.setChannelDescriptor(incompatible);
+            assertNull(tracker.callUpdate(), "An incompatible descriptor cannot move an accepted call");
+        }
+    }
+
+    @Test
+    void genericCallSubtypeCanGainAcceptedDestinationAndEncryptionFacts()
+    {
+        var event = P25ChannelGrantEvent.builder(DecodeEventType.CALL, START, null)
+            .identifiers(new MutableIdentifierCollection()).build();
+        var tracker = publishedTracker(event);
+        tracker.addIdentifierIfMissing(APCO25RadioIdentifier.createTo(502));
+        event.setServiceOptions(VoiceServiceOptions.createEncrypted());
+        var privateCall = tracker.callUpdate();
+        assertEquals(DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED, privateCall.call().eventType());
+        assertEquals(START, privateCall.call().startedAtEpochMilliseconds());
+        assertNull(tracker.callUpdate());
+    }
 
     @Test
     void encryptionOnlyChangesPublishOnTheSameExactCallAndConflictStaysUnknown()
@@ -451,6 +557,7 @@ class P25TrafficChannelEventTrackerTest
     {
         var tracker = new P25TrafficChannelEventTracker(event);
         tracker.setCallStart(new P25CallStartEvent(null, event, null, tracker.getActivityCallToken()));
+        assertNotNull(tracker.callUpdate(), "Publish the first unchanged full snapshot");
         return tracker;
     }
 

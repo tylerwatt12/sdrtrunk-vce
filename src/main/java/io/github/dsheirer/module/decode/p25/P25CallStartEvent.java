@@ -28,6 +28,7 @@ import io.github.dsheirer.module.decode.traffic.TrunkedIdentityDomain;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.module.decode.p25.reference.ServiceOptions;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Immutable producer-side facts for the instant a P25 call tracker is created. The traffic tracker and its parent
@@ -76,13 +77,85 @@ public record P25CallStartEvent(String configurationId, DecoderType decoderType,
             channelBand, channelNumber, timeslot, tdma, encryptionState, encryptionConfirmed, radioSystemKey, null);
     }
 
-    /** Updates identifiers while retaining the original call's configured ownership, time, frequency and slot. */
+    /** Fills compatible call facts without moving the original owner, start or established physical resource. */
     public P25CallStartEvent withIdentifiers(P25ChannelGrantEvent event, CallEncryptionState encryptionState)
     {
-        return new P25CallStartEvent(configurationId, decoderType, eventType, startedAtEpochMilliseconds,
-            identifiers(event), frequencyHertz, channelBand, channelNumber, timeslot, tdma,
+        boolean compatible = compatibleDescriptor(event);
+        return new P25CallStartEvent(configurationId, decoderType, currentEventType(event, encryptionState),
+            startedAtEpochMilliseconds, identifiers(event),
+            compatible && frequencyHertz == null ? frequency(event) : frequencyHertz,
+            compatible && channelBand == null ? band(event) : channelBand,
+            compatible && channelNumber == null ? channelNumber(event) : channelNumber,
+            compatible && timeslot == null ? timeslot(event) : timeslot,
+            tdma || compatible && channelBand == null && channelNumber == null && isTdma(event),
             encryptionState,
             currentEncryptionConfirmed(event), radioSystemKey, callToken);
+    }
+
+    /** Cheap comparison before copying identifiers for a changed immutable snapshot. */
+    boolean sameMetadata(P25ChannelGrantEvent event, CallEncryptionState state, boolean confirmed)
+    {
+        if(eventType != currentEventType(event, state) || encryptionState != state ||
+            encryptionConfirmed != confirmed) return false;
+        return !compatibleDescriptor(event) ||
+            (frequencyHertz != null || frequency(event) == null) &&
+            (channelBand != null || band(event) == null) &&
+            (channelNumber != null || channelNumber(event) == null) &&
+            (timeslot != null || timeslot(event) == null) &&
+            (tdma || channelBand != null || channelNumber != null || !isTdma(event));
+    }
+
+    private boolean compatibleDescriptor(P25ChannelGrantEvent event)
+    {
+        return compatible(frequencyHertz, frequency(event)) && compatible(channelBand, band(event)) &&
+            compatible(channelNumber, channelNumber(event)) && compatible(timeslot, timeslot(event));
+    }
+
+    private static boolean compatible(Object retained, Object current)
+    {
+        return retained == null || current == null || Objects.equals(retained, current);
+    }
+
+    private DecodeEventType currentEventType(P25ChannelGrantEvent event, CallEncryptionState state)
+    {
+        DecodeEventType candidate = eventType(event);
+        DecodeEventType type = eventType;
+        if(candidate != null && candidate.isVoiceCallEvent() &&
+            (type == null || voiceFamily(type) == 0 || voiceFamily(type) == voiceFamily(candidate))) type = candidate;
+        Identifier target = event != null && event.getIdentifierCollection() != null ?
+            event.getIdentifierCollection().getToIdentifier() : null;
+        if(type != null && type.isVoiceCallEvent() && voiceFamily(type) == 0 && target != null)
+        {
+            type = switch(target.getForm())
+            {
+                case TALKGROUP -> DecodeEventType.CALL_GROUP;
+                case PATCH_GROUP -> DecodeEventType.CALL_PATCH_GROUP;
+                case RADIO -> DecodeEventType.CALL_UNIT_TO_UNIT;
+                case TELEPHONE_NUMBER -> DecodeEventType.CALL_INTERCONNECT;
+                default -> type;
+            };
+        }
+        if(type == null || !type.isVoiceCallEvent() || !state.isKnown()) return type;
+        return switch(voiceFamily(type))
+        {
+            case 1 -> state.isEncrypted() ? DecodeEventType.CALL_GROUP_ENCRYPTED : DecodeEventType.CALL_GROUP;
+            case 2 -> state.isEncrypted() ? DecodeEventType.CALL_PATCH_GROUP_ENCRYPTED : DecodeEventType.CALL_PATCH_GROUP;
+            case 3 -> state.isEncrypted() ? DecodeEventType.CALL_UNIT_TO_UNIT_ENCRYPTED : DecodeEventType.CALL_UNIT_TO_UNIT;
+            case 4 -> state.isEncrypted() ? DecodeEventType.CALL_INTERCONNECT_ENCRYPTED : DecodeEventType.CALL_INTERCONNECT;
+            default -> state.isEncrypted() ? DecodeEventType.CALL_ENCRYPTED : DecodeEventType.CALL;
+        };
+    }
+
+    private static int voiceFamily(DecodeEventType type)
+    {
+        return switch(type)
+        {
+            case CALL_GROUP, CALL_GROUP_ENCRYPTED -> 1;
+            case CALL_PATCH_GROUP, CALL_PATCH_GROUP_ENCRYPTED -> 2;
+            case CALL_UNIT_TO_UNIT, CALL_UNIT_TO_UNIT_ENCRYPTED -> 3;
+            case CALL_INTERCONNECT, CALL_INTERCONNECT_ENCRYPTED -> 4;
+            default -> 0;
+        };
     }
 
     CallEncryptionState currentEncryptionState(P25ChannelGrantEvent event)

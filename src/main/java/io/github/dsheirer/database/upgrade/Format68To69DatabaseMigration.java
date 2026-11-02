@@ -66,7 +66,8 @@ final class Format68To69DatabaseMigration implements DatabaseMigrationStep
             if(DatabaseFormatCatalog.inspect(configuration).version() != sourceVersion())
                 throw new SQLException("Activity encryption migration requires exact format-68 configuration");
             DatabaseFormatCatalog.stamp(configuration, targetVersion());
-            DatabaseFormatCatalog.requireCurrent(configuration);
+            if(DatabaseFormatCatalog.inspect(configuration).version() != targetVersion())
+                throw new SQLException("Activity encryption migration did not reach exact format-69 configuration");
             configuration.commit();
         }
         return ReceiverActivitySchema.migrateFormat68EncryptionState(connection, "main");

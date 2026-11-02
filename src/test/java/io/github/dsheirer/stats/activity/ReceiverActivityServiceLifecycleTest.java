@@ -387,6 +387,15 @@ class ReceiverActivityServiceLifecycleTest
         {
             service.getDecodeEventListener().accept(channel, blocked);
             assertTrue(projectionEntered.await(2, TimeUnit.SECONDS));
+            Channel voiceChannel = p25TrunkedChannel("00000000-0000-0000-0000-000000000731");
+            P25ChannelGrantEvent voiceTracker = P25ChannelGrantEvent.builder(DecodeEventType.CALL_GROUP,
+                    System.currentTimeMillis(), VoiceServiceOptions.createUnencrypted())
+                .identifiers(new MutableIdentifierCollection()).build();
+            for(int x = 0; x < ReceiverActivityService.OBSERVATION_QUEUE_SIZE + 16; x++)
+                service.getDecodeEventListener().accept(voiceChannel, voiceTracker);
+            assertEquals(0, service.getPendingObservationCount(),
+                "Redundant voice trackers cannot consume the blocked observer's capacity");
+            assertEquals(0, service.getObservationDropCount());
             long started = System.nanoTime();
 
             for(int x = 0; x < ReceiverActivityService.OBSERVATION_QUEUE_SIZE + 16; x++)

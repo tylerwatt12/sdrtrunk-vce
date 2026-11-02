@@ -664,7 +664,7 @@ public final class ApplicationMigrationService
     /**
      * Additional workspace for migrating an application-owned database, after exact source admission. This excludes
      * any profile copy, selected backup and free-space reserve, which the caller must budget separately. Known
-     * configuration-only steps leave a paired Activity file untouched. Other plans retain the conservative pair
+     * bounded configuration/format-marker steps do not rewrite retained Activity. Other plans retain the conservative pair
      * allowance: even format 69's in-place conversion can dirty event pages, grow its three partial indexes and
      * spill index sorting to disk while SQLite retains rollback journals.
      */
@@ -723,11 +723,11 @@ public final class ApplicationMigrationService
                 "the VCE upgrade settings-extraction workflow.");
         if(content == MigrationContent.FULL && !plan.requiresMigration() && !recoverSettings) return 0;
         if(content == MigrationContent.FULL && plan.source().version() >= 63 &&
-            plan.steps().stream().allMatch(ApplicationMigrationService::changesOnlyConfiguration))
+            plan.steps().stream().allMatch(ApplicationMigrationService::changesOnlyBoundedProfileData))
         {
             // Cover the small owner's rollback pages and converted preference/settings growth. The existing
             // 64-MiB slack is working space for bounded settings growth, not the separately budgeted 5-GiB headroom.
-            // Activity is not copied, reset or written by these exact steps.
+            // Format 70 updates only Activity's small metadata row; retained event/index pages are untouched.
             return safeAdd(safeMultiply(sqliteFileFootprint(normalized), 2), FREE_SPACE_MARGIN_BYTES);
         }
         // Legacy configuration-only in-place conversion still deletes history in a transaction. Unknown steps
@@ -735,7 +735,7 @@ public final class ApplicationMigrationService
         return safeMultiply(sqliteFootprint(normalized), 2);
     }
 
-    private static boolean changesOnlyConfiguration(DatabaseMigrationChain.StepPreflight step)
+    private static boolean changesOnlyBoundedProfileData(DatabaseMigrationChain.StepPreflight step)
     {
         if(step.sourceVersion() == step.targetVersion()) return "repair-portable-preferences".equals(step.id());
         return step.targetVersion() == step.sourceVersion() + 1 && switch(step.sourceVersion())
@@ -745,6 +745,7 @@ public final class ApplicationMigrationService
             case 65 -> "format-65-to-66".equals(step.id());
             case 66 -> "format-66-to-67".equals(step.id());
             case 67 -> "remote-link-destinations-v1".equals(step.id());
+            case 69 -> "call-owned-voice-activity-v1".equals(step.id());
             default -> false;
         };
     }

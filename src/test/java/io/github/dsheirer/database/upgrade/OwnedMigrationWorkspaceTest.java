@@ -105,7 +105,7 @@ class OwnedMigrationWorkspaceTest
 
     @Test void boundedCurrentPreferenceRepairUsesConfigurationButNoOpNeedsNoMigrationWorkspace() throws Exception
     {
-        Path database = Format69TestDatabase.create(temporary.resolve("preference-repair.sqlite"));
+        Path database = Format70TestDatabase.create(temporary.resolve("preference-repair.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(database);
         assertEquals(0, ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);
@@ -180,30 +180,15 @@ class OwnedMigrationWorkspaceTest
         assertArrayEquals(before, Files.readAllBytes(unknown));
     }
 
-    @Test void explicitNoActivityJournalRetainsIndexAndConfigurationAllowanceWithoutChangingSource() throws Exception
+    @Test void explicitNoActivityJournalDoesNotExtendThe68To69ExceptionToTheNewTarget() throws Exception
     {
         Path database = Format68TestDatabase.create(temporary.resolve("no-activity-journal.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(database);
-        long configurationBytes = Files.size(database), historyBytes = Files.size(history);
-        long expected = historyBytes + 2 * configurationBytes + 64L * 1024 * 1024;
         byte[] configuration = Files.readAllBytes(database), activity = Files.readAllBytes(history);
-        assertEquals(2 * (configurationBytes + historyBytes),
+        assertEquals(2 * (Files.size(database) + Files.size(history)),
             ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, false));
-        assertEquals(expected,
-            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
-        assertArrayEquals(configuration, Files.readAllBytes(database));
-        assertArrayEquals(activity, Files.readAllBytes(history));
-
-        growDetailedEvents(history);
-        activity = Files.readAllBytes(history);
-        long grown = ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true);
-        assertEquals(expected + Files.size(history) - historyBytes, grown,
-            "The explicit mode removes Activity undo space, not all Activity working space");
-        Path journal = Path.of(history + "-journal");
-        Files.write(journal, new byte[512]); // A cold, zero-header journal requires no SQLite recovery.
-        assertEquals(grown + 512,
-            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
-        assertArrayEquals(new byte[512], Files.readAllBytes(journal));
+        assertThrows(IllegalArgumentException.class,
+            () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
         assertArrayEquals(configuration, Files.readAllBytes(database));
         assertArrayEquals(activity, Files.readAllBytes(history));
         assertFalse(Files.exists(database.getParent().resolve("backups")));
@@ -229,10 +214,8 @@ class OwnedMigrationWorkspaceTest
             var files = List.of(database, history, configWal, activityWal);
             var before = new ArrayList<byte[]>();
             for(Path file: files) before.add(Files.readAllBytes(file));
-            long expected = Files.size(history) + Files.size(activityWal) +
-                2 * (Files.size(database) + Files.size(configWal)) + 64L * 1024 * 1024;
-            assertEquals(expected,
-                ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
+            assertThrows(IllegalArgumentException.class,
+                () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
             for(int index = 0; index < files.size(); index++)
                 assertArrayEquals(before.get(index), Files.readAllBytes(files.get(index)));
             for(var statement: List.of(configStatement, activityStatement))
