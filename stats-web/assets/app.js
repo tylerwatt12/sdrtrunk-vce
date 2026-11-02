@@ -20,7 +20,7 @@ import { createActionWorkflow, actionFailureMessage } from './core/action-workfl
 import { createMySettingsWorkspace } from './features/my-settings.js?v=5';
 import { createStatusAlertControl, receiverHealthDisabledCodesForSave } from './core/preference-controls.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=47';
+import { createGuideController } from './guides/controller.js?v=48';
 import { adminSectionForStep } from './guides/pages/admin.js?v=2';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
@@ -17713,12 +17713,13 @@ function tunerSpectrumPanel(snapPresetDocument, panelOptions = {}) {
   legendLabel.hidden = !liveActivityAllowed;
   displayControls.append(refiningBadge, legendLabel, flagLegend);
 
+  const tuningInstructions = typeof panelOptions.retune === 'function' ? 'In Setup, drag at full view to tune. ' : '';
   const instructions = node('p', 'visually-hidden', basicOperator ?
     `Move over the FFT or waterfall to read frequency. Use ${wheelZoom ?
       'the mouse wheel or plus and minus keys' : 'plus and minus keys'} to zoom. ` +
-      'Drag or use the arrow keys to pan while zoomed. Press R to reset zoom.' :
+      tuningInstructions + 'Drag or use the arrow keys to pan while zoomed. Press R to reset zoom.' :
     'Click a frequency for actions. Use the mouse wheel or plus and minus keys to zoom. ' +
-      'Drag or use the arrow keys to pan. Press R to reset zoom.');
+      tuningInstructions + 'Drag or use the arrow keys to pan while zoomed. Press R to reset zoom.');
   instructions.id = 'tuner-spectrum-instructions';
 
   const plot = (ariaLabel, extraClass = '') => {
@@ -21500,11 +21501,11 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       (Array.isArray(browse?.stopped_channels) ? browse.stopped_channels.length : 0);
     return tunerOperatorState(browse?.tuner) === 'setup' ? (stoppedCount ?
       `${stoppedCount} channel${stoppedCount === 1 ? '' : 's'} stopped · Go Live to resume` :
-        canTune() ? 'Tuning enabled' : 'Unlock center in Tuners to tune') : browse?.takeover ? (stoppedCount ?
+        canTune() ? 'Tuning enabled' : 'Tuning temporarily unavailable') : browse?.takeover ? (stoppedCount ?
       `${stoppedCount} channel${stoppedCount === 1 ? '' : 's'} stopped · Go Live to resume` :
       'Tuning enabled') : tunerIsRecording(browse?.tuner) ? 'Monitoring recording playback' :
         canTune() ? 'Drag to tune · Zoom to pan' :
-        canEditCenter() ? 'Unlock center in Tuners to tune' : 'Monitoring active channels';
+        canEditCenter() ? 'Tuning temporarily unavailable' : 'Monitoring active channels';
   };
   const leasePath = (id) => `/api/v1/admin/tuners/${encodeURIComponent(id)}/browse`;
   const leaseOwnershipLost = (error) => [404, 409, 410].includes(Number(error?.status)) ||
@@ -21690,7 +21691,6 @@ async function renderTunerSpectrum(workspaceOptions = {}) {
       { enabled: false, reason: tuning ? 'Saving center frequency settings' :
         probeActive ? 'Finish or close channel discovery to tune' :
         'Active channels keep the center frequency fixed. Switch to Setup mode to retune' };
-    if (usability.reason === 'Unlock center to tune') usability.reason = 'Turn off Lock center on Tuners to tune.';
     centerControl = tunerCenterFrequencyControl(selectedTuner, setting, usability, {
       unavailableHint: true,
       save: async (_tuner, _setting, value) => tune(Math.round(value * 1_000_000))
@@ -32667,9 +32667,13 @@ async function renderTuners(options = {}) {
   const requestTunerJson = options.requestJson || requestJson;
   const tunerApi = options.api || api;
   const ownedModals = new Set(), connections = new Set();
-  let disposed = false, pendingAction = Promise.resolve(), activeModal = null;
+  let disposed = false, pendingAction = Promise.resolve(), activeModal = null, activeActions = 0;
   const isCurrent = () => !disposed && !renderContext.signal.aborted && renderIsCurrent(renderContext);
-  const perform = operation => { pendingAction = Promise.resolve(operation()); return pendingAction; };
+  const perform = operation => {
+    activeActions += 1;
+    pendingAction = Promise.resolve().then(operation).finally(() => { activeActions -= 1; });
+    return pendingAction;
+  };
   const registerConnection = connection => {
     connections.add(connection);
     if (options.registerConnection) options.registerConnection(connection);
@@ -32772,12 +32776,72 @@ async function renderTuners(options = {}) {
   let analyzing = false;
   let promptedSetupId = '';
   let centerKeydownCleanup = null;
+  let centerControl = null;
+  let settingSaves = 0;
+  let tuningEpoch = 0;
+  let tuningOwner = null;
   const settingDrafts = new Map();
+  const canTuneSelected = (finishing = false) => {
+    const tuner = selectedTuner();
+    const settings = tuner?.settings || [];
+    const frequency = settings.find((setting) => setting.id === 'frequency_mhz');
+    return isCurrent() && !guideMode && tunerOperatorState(tuner) === 'setup' && !tunerIsRecording(tuner) &&
+      !tuner?.transition && (finishing || !activeActions) && !settingSaves && Number(tuner?.channel_count || 0) === 0 &&
+      !settingDrafts.has(`${tuner?.id}:frequency_mhz`) && frequency &&
+      tunerSettingUsability(frequency, tuner, settings).enabled;
+  };
+  const liveTune = createSpectrumLiveTune({
+    apply: async (frequencyHz) => {
+      if (!canTuneSelected(true)) throw new Error('This tuner is no longer available to tune. Review its current mode.');
+      const tuner = selectedTuner();
+      const owner = tuningOwner;
+      if (!owner || owner.id !== tuner.id) throw new Error('This tuner selection changed. Start a new tuning gesture.');
+      const epoch = owner.epoch;
+      await requestTunerJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/frequency_mhz`, {
+        method: 'PUT', body: { value: frequencyHz / 1_000_000, ...(owner.generation != null ?
+          { operator_generation: owner.generation } : {}) }, page: false
+      });
+      if (!isCurrent() || epoch !== tuningEpoch || selectedId !== tuner.id) return null;
+      const inventory = await tunerApi('/api/v1/admin/tuners', {}, { signal: renderContext.signal });
+      if (!isCurrent() || epoch !== tuningEpoch || selectedId !== tuner.id) return null;
+      return inventory;
+    },
+    preview: (frequencyHz) => {
+      if (!isCurrent()) return;
+      centerControl?.previewFrequency(frequencyHz / 1_000_000);
+      centerHost.inert = true;
+      detailsBody.querySelectorAll('.tuners-mode button').forEach((button) => button.setAttribute('aria-disabled', 'true'));
+    },
+    applied: (inventory) => {
+      if (!isCurrent() || !inventory) return;
+      rows = tunerInventoryRows(inventory);
+      if (!guideMode) rows.forEach(recordTunerSetup);
+      operationNotice = '';
+    },
+    failed: (error) => {
+      if (!isCurrent()) return;
+      operationNotice = error.message || 'Could not tune this receiver. Drag again to retry.';
+    },
+    idle: () => {
+      tuningOwner = null;
+      if (!isCurrent() || settingSaves > 0) return;
+      centerHost.inert = false;
+      void refresh();
+    }
+  });
+  const settleTuning = async () => {
+    const deadline = Date.now() + 30_000;
+    while (isCurrent() && (liveTune.busy || settingSaves > 0)) {
+      if (Date.now() >= deadline) throw new Error('The tuner is still tuning. Wait a moment and try again.');
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+  };
   const setupController = {
     element: workspace,
     setupTuners: () => rows.filter((tuner) => tunerOperatorState(tuner) === 'setup'),
     settle: async () => {
       await pendingAction;
+      await settleTuning();
       const deadline = Date.now() + 30_000;
       while (isCurrent()) {
         await refresh(true);
@@ -32796,6 +32860,7 @@ async function renderTuners(options = {}) {
     if (tunerSetupWorkspace === setupController) tunerSetupWorkspace = null;
     renderContext.signal.removeEventListener('abort', dispose);
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    liveTune.close();
     centerKeydownCleanup?.();
     connections.forEach(connection => connection.close());
     connections.clear();
@@ -32927,6 +32992,9 @@ async function renderTuners(options = {}) {
 
   const selectedTuner = () => rows.find((row) => row.id === selectedId) || null;
   async function saveTunerSetting(tuner, setting, value, message = null) {
+    await settleTuning();
+    if (!isCurrent()) throw new Error('This tuner page has closed.');
+    settingSaves += 1;
     const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/settings/${setting.id}`;
     if (message) {
       message.className = 'tuners-setting-message ui-feedback ui-feedback-loading';
@@ -32934,9 +33002,16 @@ async function renderTuners(options = {}) {
       message.textContent = 'Saving…';
       message.hidden = false;
     }
-    await requestTunerJson(path, { method: 'PUT', body: { value } });
-    settingDrafts.delete(`${tuner.id}:${setting.id}`);
-    if (message) { message.textContent = ''; message.hidden = true; }
+    try {
+      await requestTunerJson(path, { method: 'PUT', body: { value, ...(tuner.operator_generation != null ?
+        { operator_generation: tuner.operator_generation } : {}) } });
+      settingDrafts.delete(`${tuner.id}:${setting.id}`);
+      if (setting.id === 'frequency_mhz') {
+        tuningEpoch += 1;
+        liveTune.reset();
+      }
+      if (message) { message.textContent = ''; message.hidden = true; }
+    } finally { settingSaves -= 1; }
     await refresh();
   }
 
@@ -32946,6 +33021,7 @@ async function renderTuners(options = {}) {
       drafts: settingDrafts, save: saveTunerSetting
     });
     centerKeydownCleanup = control.close;
+    centerControl = control;
     return control;
   }
 
@@ -32974,9 +33050,10 @@ async function renderTuners(options = {}) {
       const usability = tunerSettingUsability(setting, tuner, settings);
       const group = String(setting.group || '').toLowerCase();
       const actionSetting = setting.kind === 'action';
+      const setupCenterLock = setting.id === 'center_frequency_locked' && tunerOperatorState(tuner) === 'setup';
       const form = node('form', `tuners-setting${actionSetting ? ' tuners-setting-action' : ''}`);
       form.dataset.settingId = setting.id;
-      const control = actionSetting ? null : tunerSettingInput(setting,
+      const control = actionSetting ? null : tunerSettingInput(setupCenterLock ? { ...setting, label: 'Lock center in Live' } : setting,
         settingDrafts.has(draftKey) ? settingDrafts.get(draftKey) : null);
       if (control && group === 'gain') control.element.classList.add('tuners-gain-control');
       if (control && setting.id === 'automatic_ppm') {
@@ -33086,6 +33163,7 @@ async function renderTuners(options = {}) {
         form.setAttribute('aria-disabled', 'true');
       }
       if (usability.enabled) form.append(actions);
+      if (setupCenterLock) form.append(node('p', 'ui-field-detail', 'Temporarily unlocked in Setup.'));
       form.append(message);
       updateActions();
 
@@ -33117,6 +33195,7 @@ async function renderTuners(options = {}) {
   }
 
   async function changeOperatorState(tuner, state) {
+    await settleTuning();
     const path = `/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/state`;
     await requestTunerJson(path, { method: 'PUT', body: { state,
       ...(tuner.operator_generation != null ? { operator_generation: tuner.operator_generation } : {}) } });
@@ -33149,6 +33228,7 @@ async function renderTuners(options = {}) {
   }
 
   async function restoreStoppedChannels(tuner) {
+    await settleTuning();
     operationNotice = '';
     renderSelection();
     await requestTunerJson(`/api/v1/admin/tuners/${encodeURIComponent(tuner.id)}/restore`, {
@@ -33368,6 +33448,9 @@ async function renderTuners(options = {}) {
       button.append(main, indicators);
       button.addEventListener('click', () => {
         if (selectedId === row.id) return;
+        tuningEpoch += 1;
+        tuningOwner = null;
+        liveTune.reset();
         selectedId = row.id;
         operationNotice = '';
         renderSelection();
@@ -33441,10 +33524,10 @@ async function renderTuners(options = {}) {
       button.id = next === 'setup' && state === 'disabled' ? 'selected-tuner-start' :
         `selected-tuner-${next === 'disabled' ? 'disable' : next}`;
       button.setAttribute('aria-pressed', String(next === state));
-      const unavailable = transitioning || (state === 'disabled' && next === 'live');
+      const unavailable = transitioning || liveTune.busy || settingSaves > 0 || (state === 'disabled' && next === 'live');
       button.setAttribute('aria-disabled', String(unavailable));
       button.dataset.uiHint = unavailable ? (transitioning ? 'Wait for the tuner to finish changing state' :
-        'Start Setup first') : next === 'live' ? 'Available to channels' :
+        liveTune.busy || settingSaves > 0 ? 'Wait for tuner adjustments to finish' : 'Start Setup first') : next === 'live' ? 'Available to channels' :
         next === 'setup' ? 'Keep tuner on for adjustments; active channels stop' :
           'Stop channels and turn off tuner hardware';
       button.addEventListener('click', () => {
@@ -33527,6 +33610,7 @@ async function renderTuners(options = {}) {
 
   async function refresh(throwOnError = false) {
     const generation = ++refreshGeneration;
+    const tuneRevision = liveTune.revision;
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
     refreshTimer = null;
     try {
@@ -33545,7 +33629,7 @@ async function renderTuners(options = {}) {
       tunerCount.textContent = `${number(rows.length)} tuner${rows.length === 1 ? '' : 's'}`;
       analyzeButton.disabled = analyzing;
       if (!rows.some((row) => row.id === selectedId)) selectedId = rows[0]?.id || '';
-      if (typingCenter) {
+      if (typingCenter || liveTune.busy || tuneRevision !== liveTune.revision) {
         spectrum?.selectTarget(selectedTuner()?.spectrum_target_id || '');
       } else {
         renderSelection();
@@ -33640,8 +33724,22 @@ async function renderTuners(options = {}) {
       basicOperator: true,
       frequencyCursor: true,
       viewportControls: true,
-      wheelZoom: false,
       profileSelection: true,
+      canRetune: canTuneSelected,
+      retune: (frequencyHz, tuneOptions) => {
+        const tuner = selectedTuner();
+        const setting = tuner?.settings?.find((candidate) => candidate.id === 'frequency_mhz');
+        if (!setting || !canTuneSelected()) return;
+        if (!tuningOwner) tuningOwner = { id: tuner.id, generation: tuner.operator_generation, epoch: tuningEpoch };
+        const minimum = Number(setting.minimum) * 1_000_000;
+        const maximum = Number(setting.maximum) * 1_000_000;
+        const bounded = Math.min(Number.isFinite(maximum) ? maximum : Infinity,
+          Math.max(Number.isFinite(minimum) ? minimum : 1, frequencyHz));
+        liveTune.request(Math.round(bounded / 10) * 10, tuneOptions);
+      },
+      retuneFrequencyHz: () => liveTune.frequencyHz || Number(selectedTuner()?.frequency_hz),
+      retunePending: () => liveTune.busy,
+      cancelRetune: () => liveTune.cancel(),
       targetId: selectedTuner()?.spectrum_target_id || '',
       ...options.spectrumOptions,
       ...(guideMode ? { guideMode: true } : {})

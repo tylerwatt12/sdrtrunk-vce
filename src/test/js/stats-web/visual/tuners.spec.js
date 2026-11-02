@@ -367,8 +367,7 @@ test('embedded signal view reuses cursor and zoom with HiRes and LoRes controls'
   await expect(canvases).toHaveCount(2);
   await expect(embedded.locator('canvas[tabindex="0"]')).toHaveCount(2);
   await expect(embedded.locator('canvas[aria-keyshortcuts="+ - ArrowLeft ArrowRight R 0 Home"]')).toHaveCount(2);
-  await expect(embedded.locator('.visually-hidden')).toContainText('Use plus and minus keys to zoom');
-  await expect(embedded.locator('.visually-hidden')).not.toContainText('mouse wheel');
+  await expect(embedded.locator('.visually-hidden')).toContainText('Use the mouse wheel or plus and minus keys to zoom');
   await expect(embedded.locator('.tuner-spectrum-cursor-popup')).toHaveCount(1);
   await expect(embedded.locator('.tuner-spectrum-cursor-guide')).toHaveCount(2);
   await expect(embedded.getByRole('group', { name: 'Spectrum zoom' })).toBeVisible();

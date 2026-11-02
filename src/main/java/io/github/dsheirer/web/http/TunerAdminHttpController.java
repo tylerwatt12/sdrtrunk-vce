@@ -233,7 +233,11 @@ public final class TunerAdminHttpController
         }
         try
         {
-            JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("value", "lease_id"));
+            JsonNode request = WebHttpSupport.readJsonObject(exchange, Set.of("value", "lease_id", "operator_generation"));
+            JsonNode generation = request.get("operator_generation");
+            if(generation != null && (!generation.canConvertToLong() || !generation.isIntegralNumber() ||
+                generation.longValue() < 0))
+                throw new WebHttpSupport.RequestException(422, "invalid_tuner_setting", "operator_generation must be a nonnegative integer");
             JsonNode raw = request.get("value");
             if(raw == null || !(raw.isTextual() || raw.isNumber() || raw.isBoolean()))
             {
@@ -242,7 +246,8 @@ public final class TunerAdminHttpController
             }
             Object value = raw.isTextual() ? raw.textValue() : raw.isBoolean() ? raw.booleanValue() : raw.numberValue();
             String leaseId = optionalLease(request);
-            ApiHttpResponse.sendData(exchange, 200, mSettings.set(tuner, settingId, value, leaseId));
+            ApiHttpResponse.sendData(exchange, 200, mSettings.set(tuner, settingId, value, leaseId,
+                generation != null ? generation.longValue() : null));
         }
         catch(WebHttpSupport.RequestException exception)
         {

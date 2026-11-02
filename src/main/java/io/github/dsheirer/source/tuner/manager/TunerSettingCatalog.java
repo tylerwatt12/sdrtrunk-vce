@@ -121,7 +121,9 @@ public final class TunerSettingCatalog
         {
             List<Option> options = options(spec, configuration, controller, discovered);
             boolean modeEditable = editableForConfiguration(configuration, spec);
-            boolean dependencyEditable = dependencyEditable(configuration, spec.id());
+            boolean setupCenter = "frequency_mhz".equals(spec.id()) &&
+                discovered.getOperatorState() == DiscoveredTuner.OperatorState.SETUP;
+            boolean dependencyEditable = setupCenter || dependencyEditable(configuration, spec.id());
             boolean setupAllowed = !requiresSetup(configuration, spec.id()) ||
                 discovered.getOperatorState() != DiscoveredTuner.OperatorState.LIVE;
             boolean editable = (!spec.dynamicOptions() || !options.isEmpty()) && setupAllowed &&
@@ -137,7 +139,7 @@ public final class TunerSettingCatalog
                     rsp.getControlRsp().getMaximumLNASetting() : publicBound(spec, spec.maximum()),
                 spec.step(), spec.unit(), spec.scope(), editable, availability,
                 editable ? null : unavailableReason(discovered, configuration, spec, options,
-                    setupAllowed, modeEditable, dependencyEditable), dependencies(spec.id())));
+                    setupAllowed, modeEditable, dependencyEditable), setupCenter ? List.of() : dependencies(spec.id())));
         }
 
         if(hasFrequencyExtents(configuration))
@@ -199,7 +201,8 @@ public final class TunerSettingCatalog
         if(!editableForConfiguration(configuration, spec))
             throw new IllegalArgumentException("Setting is not editable in the current tuner mode");
         if(!dependencyEditable(configuration, settingId) &&
-            !(temporaryCenterUnlock && "frequency_mhz".equals(settingId)))
+            !((temporaryCenterUnlock || discovered.getOperatorState() == DiscoveredTuner.OperatorState.SETUP) &&
+                "frequency_mhz".equals(settingId)))
             throw new IllegalArgumentException("frequency_correction_ppm".equals(settingId) ?
                 "Turn off Auto PPM" : "Unlock center");
         Class<?> type = spec.valueType();

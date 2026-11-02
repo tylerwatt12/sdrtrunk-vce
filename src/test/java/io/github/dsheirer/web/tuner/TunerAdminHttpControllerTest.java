@@ -162,6 +162,34 @@ class TunerAdminHttpControllerTest
     }
 
     @Test
+    void staleFrequencySettingCannotRetuneANewerLiveOperatorChoice() throws Exception
+    {
+        try(ServerFixture fixture = new ServerFixture(new FakeManager(), true))
+        {
+            DiscoveredTuner tuner = fixture.mPhysical;
+            tuner.getTunerConfiguration().setCenterFrequencyLocked(false);
+            assertTrue(tuner.enterSetup());
+            long setupGeneration = tuner.getOperatorGeneration();
+            assertTrue(tuner.enterLive());
+            long originalCenter = tuner.getTuner().getTunerController().getFrequency();
+            long savedCenter = tuner.getTunerConfiguration().getFrequency();
+            String path = TunerAdminHttpController.PATH + "/" + TunerAdministrationService.opaqueId(tuner) +
+                "/settings/frequency_mhz";
+            var stale = fixture.send(path, "PUT", "{\"value\":120.1,\"operator_generation\":" + setupGeneration + "}");
+            assertEquals(409, stale.statusCode());
+            assertEquals("tuner_setting_unavailable", MAPPER.readTree(stale.body()).at("/error/code").asText());
+            assertEquals(savedCenter, tuner.getTunerConfiguration().getFrequency());
+            assertEquals(originalCenter, tuner.getTuner().getTunerController().getFrequency());
+            assertEquals(422, fixture.send(path, "PUT", "{\"value\":120.1,\"operator_generation\":-1}").statusCode());
+            assertEquals(422, fixture.send(path, "PUT", "{\"value\":120.1,\"operator_generation\":1.5}").statusCode());
+            assertEquals(422, fixture.send(path, "PUT", "{\"value\":120.1,\"operator_generation\":\"old\"}").statusCode());
+            assertEquals(200, fixture.send(path, "PUT", "{\"value\":120.1,\"operator_generation\":" +
+                tuner.getOperatorGeneration() + "}").statusCode());
+            assertEquals(120_100_000L, tuner.getTuner().getTunerController().getFrequency());
+        }
+    }
+
+    @Test
     void leavingStoppedPreservesSetupAndRejectsAnOlderOperatorGeneration() throws Exception
     {
         try(ServerFixture fixture = new ServerFixture(new FakeManager(), true))

@@ -17,18 +17,18 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: 'wait' });
 });
 
-function tuner(centerHz, operatorState, operatorGeneration) {
+function tuner(centerHz, operatorState, operatorGeneration, savedLock = false, recording = false) {
   return {
-    id: 'idle-a', name: 'Test receiver', tuner_class: 'AIRSPY', status: 'ENABLED',
+    id: 'idle-a', name: 'Test receiver', tuner_class: recording ? 'RECORDING' : 'AIRSPY', status: 'ENABLED',
     available: true, operator_state: operatorState, operator_generation: operatorGeneration,
     channel_count: 0, frequency_hz: centerHz,
-    spectrum_target_id: 'target-a', sample_rate_hz: SAMPLE_RATE_HZ,
+    spectrum_target_id: 'target-a', spectrum_available: true, sample_rate_hz: SAMPLE_RATE_HZ,
     minimum_frequency_hz: 24000000, maximum_frequency_hz: 1800000000,
     settings: [
       { id: 'frequency_mhz', label: 'Center frequency', value: centerHz / 1000000,
         editable: true, availability: 'setup', minimum: 24, maximum: 1800,
-        dependencies: [{ setting_id: 'center_frequency_locked', equals: false }] },
-      { id: 'center_frequency_locked', label: 'Lock center', kind: 'boolean', value: false,
+        dependencies: operatorState === 'setup' ? [] : [{ setting_id: 'center_frequency_locked', equals: false }] },
+      { id: 'center_frequency_locked', label: 'Lock center', kind: 'boolean', value: savedLock,
         editable: true, availability: 'live', dependencies: [] }
     ]
   };
@@ -201,7 +201,7 @@ async function installLiveStream(page) {
   }, { initialCenterHz: INITIAL_CENTER_HZ, sampleRateHz: SAMPLE_RATE_HZ, frequencyPath });
 }
 
-async function install(page) {
+async function install(page, options = {}) {
   const tourHistory = tourHistoryFixture({ welcome: 1, tuners: 3, 'tuner-spectrum': 5, dashboard: 3 });
   await page.addInitScript(() => {
     for (const [id, version] of [['welcome', 1], ['tuners', 3], ['tuner-spectrum', 5]]) {
@@ -210,7 +210,10 @@ async function install(page) {
   });
   const preferences = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
+  let personalPreferences = { ...structuredClone(preferences.defaults), appearance: { theme: 'light', hue: null } };
+  let preferenceRevision = 1;
   const state = { centerHz: INITIAL_CENTER_HZ, operatorState: 'setup', operatorGeneration: 1,
+    view: options.view || 'tuner-spectrum', savedLock: options.savedLock === true, recording: options.recording === true,
     requests: [], tunes: [], controls: [],
     browses: [], holdNextBrowse: false, failNextBrowse: false,
     heldControls: [], holdNextControl: false };
@@ -232,14 +235,16 @@ async function install(page) {
         'web-access': true, dashboard: true, 'tuner-spectrum': true, 'admin-tuners': true,
         'admin-channels': true, 'admin-aliases': true
       } });
-    if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json',
-      body: JSON.stringify({ revision: 1, preferences: { ...preferences.defaults,
-        appearance: { theme: 'light', hue: null } } }) });
+    if (path === '/api/v1/me/preferences') {
+      if (method === 'PUT') { personalPreferences = body; preferenceRevision += 1; }
+      return route.fulfill({ contentType: 'application/json',
+        body: JSON.stringify({ revision: preferenceRevision, preferences: personalPreferences }) });
+    }
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
     if (path === '/api/v1/admin/tuners') return respond({ tuners: [
-      tuner(state.centerHz, state.operatorState, state.operatorGeneration)
+      tuner(state.centerHz, state.operatorState, state.operatorGeneration, state.savedLock, state.recording)
     ] });
     if (path === '/api/v1/admin/tuners/idle-a/state' && method === 'PUT') {
       if (body.operator_generation != null && body.operator_generation !== state.operatorGeneration)
@@ -253,6 +258,9 @@ async function install(page) {
     if (path === '/api/v1/diagnostics/tuners') return respond({ rows: [{ target_id: 'target-a',
       label: 'Test receiver', center_frequency_hz: state.centerHz, sample_rate_hz: SAMPLE_RATE_HZ }] });
     if (path === frequencyPath && method === 'PUT') {
+      if (body.operator_generation != null && body.operator_generation !== state.operatorGeneration)
+        return route.fulfill({ status: 409, json: { error: { code: 'tuner_setting_unavailable',
+          message: 'The tuner mode changed. Review its current mode and try again.' } } });
       const record = { body, released: false };
       const gate = new Promise((release) => { record.release = () => { record.released = true; release(); }; });
       record.done = new Promise((complete) => { record.complete = complete; });
@@ -278,7 +286,7 @@ async function install(page) {
       if (body.takeover === true) state.takeover = true;
       const record = { body, snapshot: { lease_id: 'browse-a', expires_at_epoch_ms: Date.now() + 30000,
         takeover: state.takeover === true, can_tune: state.operatorState === 'setup',
-        tuner: tuner(state.centerHz, state.operatorState, state.operatorGeneration) }, fail: state.failNextBrowse };
+        tuner: tuner(state.centerHz, state.operatorState, state.operatorGeneration, state.savedLock, state.recording) }, fail: state.failNextBrowse };
       state.failNextBrowse = false;
       const gate = state.holdNextBrowse ? new Promise((release) => { record.release = release; }) : null;
       state.holdNextBrowse = false;
@@ -334,16 +342,16 @@ async function install(page) {
     state.heldControls.forEach((record) => record.release());
   };
   installedFixtures.set(page, state);
-  await page.goto('/app.html?view=tuner-spectrum');
-  await expect(page.getByRole('heading', { name: 'Browse Spectrum', exact: true })).toBeVisible();
-  await expect(page.locator('.spectrum-browse-center')).toContainText('0851.01250MHz');
-  await expect(page.getByRole('combobox', { name: 'Tuner', exact: true })).toBeEnabled();
+  await page.goto(`/app.html?view=${state.view}`);
+  await expect(page.getByRole('heading', { name: state.view === 'tuners' ? 'Tuners' : 'Browse Spectrum', exact: true })).toBeVisible();
+  await expect(page.locator('.tuners-center-frequency')).toContainText('0851.01250MHz');
+  if (state.view !== 'tuners') await expect(page.getByRole('combobox', { name: 'Tuner', exact: true })).toBeEnabled();
   // Require a continuing subscribed producer, then usable plots after lease/inventory refresh.
   await expect.poll(() => page.evaluate(() => window.spectrumDragStream.initialEmitted)).toBe(true);
   await expect.poll(() => page.evaluate(() => window.spectrumDragStream.emitted)).toBeGreaterThan(1);
   await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
   await expect(page.locator('.tuner-spectrum-waterfall .channel-diagnostic-overlay')).toBeHidden();
-  await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
+  if (state.view !== 'tuners') await expect(page.locator('.spectrum-browse-status')).toHaveText('Live');
   await expect(page.getByRole('button', { name: 'Zoom in', exact: true })).toBeEnabled();
   return state;
 }
@@ -382,8 +390,9 @@ test('one display choice changes both plots, disables manual controls and follow
   await expect(floor).toBeDisabled();
   await choice.locator('..').click();
   await expect(range).toHaveText(`FFT and waterfall: ${manual}`);
-  expect(state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method !== 'GET')
-    .map((request) => request.body).some((body) => Object.hasOwn(body.preferences?.tuner || {}, 'auto_range_on_retune'))).toBe(false);
+  expect(state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method === 'PUT')
+    .some((request) => request.body.tuner?.fft_auto_range_on_retune === false &&
+      request.body.tuner?.waterfall_auto_range_on_retune === false)).toBe(true);
   // Keep a real unsubscribe pending while hard navigation replaces its owning document.
   state.holdNextControl = true;
   await page.getByRole('link', { name: 'VCE home', exact: true }).click();
@@ -450,7 +459,9 @@ test('Live and Setup retain manual settings and automatic minimum on the same ce
   const automatic = await range.textContent();
   const choice = options.locator('input[name="auto_range_on_retune"]');
   await choice.locator('..').click();
-  await options.getByRole('slider', { name: 'Lower display limit', exact: true }).focus();
+  const floor = options.getByRole('slider', { name: 'Lower display limit', exact: true });
+  await expect(floor).toBeEnabled();
+  await floor.focus();
   await page.keyboard.press('ArrowRight');
   const manual = await options.locator('.tuner-spectrum-range-heading output').textContent();
   await expect(range).toHaveText(`FFT and waterfall: ${manual}`);
@@ -466,6 +477,8 @@ test('Live and Setup retain manual settings and automatic minimum on the same ce
   await page.evaluate(() => window.spectrumDragStream.holdPeriodicSamples(true));
   const beforeAutomaticFrame = await page.evaluate(() => window.spectrumDragStream.emitted);
   await choice.locator('..').click();
+  await expect(choice).toBeEnabled();
+  await expect(choice).toBeChecked();
   await expect(range).toHaveText(`FFT and waterfall: ${manual}`);
   expect(await page.evaluate(() => window.spectrumDragStream.emitted)).toBe(beforeAutomaticFrame);
   await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), INITIAL_CENTER_HZ);
@@ -525,7 +538,8 @@ async function moveDrag(page, gesture, ratio) {
 
 async function expectTuneCount(state, count) {
   await expect.poll(() => state.tunes.length).toBe(count);
-  state.tunes.forEach((record) => expect(record.body.lease_id).toBe('browse-a'));
+  state.tunes.forEach((record) => state.view === 'tuners' ?
+    expect(record.body.lease_id).toBeUndefined() : expect(record.body.lease_id).toBe('browse-a'));
 }
 
 async function settle(page) {
@@ -534,12 +548,113 @@ async function settle(page) {
 }
 
 async function editCenter(page, digits) {
-  const center = page.locator('.spectrum-browse-center .tuners-center-frequency');
+  const center = page.locator('.tuners-center-frequency');
   await center.focus();
   await center.locator('.tuners-frequency-digit').first().hover();
   await page.keyboard.type(digits);
   await page.keyboard.press('Enter');
 }
+
+for (const view of ['tuners', 'tuner-spectrum']) {
+  for (const surface of ['fft', 'waterfall']) {
+    test(`${view} Setup drag on ${surface} temporarily ignores the saved center lock and coalesces writes`, async ({ page }) => {
+      const state = await install(page, { view, savedLock: true });
+      try {
+        const center = page.locator('.tuners-center-frequency');
+        await expect(center).toHaveAttribute('aria-disabled', 'false');
+        const gesture = await beginDrag(page, plot(page, surface));
+        await moveDrag(page, gesture, 0.55);
+        await expectTuneCount(state, 1);
+        await moveDrag(page, gesture, 0.5);
+        const finalDeltaHz = await moveDrag(page, gesture, 0.4);
+        await page.mouse.up();
+        expect(state.tunes).toHaveLength(1);
+        await state.release(0);
+        await expectTuneCount(state, 2);
+        expect(state.tunes[1].body.value).toBe((INITIAL_CENTER_HZ + finalDeltaHz) / 1_000_000);
+        await state.release(1);
+        await expect(center).toContainText('0853.01250MHz');
+        expect(state.requests.some(({ path, method }) => method === 'PUT' && path.endsWith('/center_frequency_locked'))).toBe(false);
+      } finally { state.releaseAll(); }
+    });
+  }
+
+  test(`${view} Setup digit input and zoomed pan preserve the saved lock`, async ({ page }) => {
+    const state = await install(page, { view, savedLock: true });
+    try {
+      await editCenter(page, '085201250');
+      await expectTuneCount(state, 1);
+      expect(state.tunes[0].body.value).toBe(852.0125);
+      await state.release(0);
+      await expect(page.locator('.tuners-center-frequency')).toContainText('0852.01250MHz');
+      await page.evaluate(() => window.spectrumDragStream.emit());
+      await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
+      await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+      await expect(page.locator('.tuner-spectrum-layout')).toHaveClass(/zoomed/);
+      await expect.poll(() => state.controls.filter((parameters) => parameters?.viewport_start_hz != null).length).toBeGreaterThan(0);
+      const before = state.controls.filter((parameters) => parameters?.viewport_start_hz != null).at(-1);
+      const gesture = await beginDrag(page, plot(page));
+      await moveDrag(page, gesture, 0.5);
+      await page.mouse.up();
+      await expect.poll(() => state.controls.filter((parameters) => parameters?.viewport_start_hz != null)
+        .at(-1)?.viewport_start_hz).not.toBe(before?.viewport_start_hz);
+      expect(state.tunes).toHaveLength(1);
+      expect(state.savedLock).toBe(true);
+      expect(state.requests.some(({ path, method }) => method === 'PUT' && path.endsWith('/center_frequency_locked'))).toBe(false);
+    } finally { state.releaseAll(); }
+  });
+}
+
+test('Tuners keeps a partially typed center draft while refusing plot retuning', async ({ page }) => {
+  const state = await install(page, { view: 'tuners', savedLock: true });
+  const center = page.locator('.tuners-center-frequency');
+  await center.focus();
+  await center.locator('.tuners-frequency-digit').first().hover();
+  await page.keyboard.type('0852');
+  await expect(center).toHaveClass(/is-typing/);
+  const bounds = await plot(page).boundingBox();
+  await page.mouse.move(bounds.x + bounds.width * 0.6, bounds.y + bounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width * 0.4, bounds.y + bounds.height / 2);
+  await page.mouse.up();
+  await expect(center).toHaveClass(/is-typing/);
+  await expect(center).toContainText('0852.01250MHz');
+  expect(state.tunes).toHaveLength(0);
+});
+
+test('Tuners wheel zoom uses the shared plot threshold without retuning hardware', async ({ page }) => {
+  const state = await install(page, { view: 'tuners', savedLock: true });
+  await plot(page).hover();
+  for (let eventIndex = 0; eventIndex < 9; eventIndex += 1) {
+    await page.mouse.wheel(0, -200);
+    await page.waitForTimeout(25);
+  }
+  await expect(page.locator('.tuner-spectrum-layout')).not.toHaveClass(/zoomed/);
+  await page.mouse.wheel(0, -200);
+  await expect(page.locator('.tuner-spectrum-layout')).toHaveClass(/zoomed/);
+  expect(state.tunes).toHaveLength(0);
+});
+
+test('Tuners fences a queued drag write after another tab changes the tuner to Live', async ({ page }) => {
+  const state = await install(page, { view: 'tuners' });
+  try {
+    const gesture = await beginDrag(page, plot(page));
+    await moveDrag(page, gesture, 0.55);
+    await expectTuneCount(state, 1);
+    expect(state.tunes[0].body.operator_generation).toBe(1);
+    await moveDrag(page, gesture, 0.4);
+    await page.mouse.up();
+    state.operatorState = 'live';
+    state.operatorGeneration += 1;
+    await state.release(0);
+    await expect(page.getByText('The tuner mode changed. Review its current mode and try again.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Live', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    const writes = state.requests.filter(({ path, method }) => path === frequencyPath && method === 'PUT');
+    expect(writes.map(({ body }) => body.operator_generation)).toEqual([1, 1]);
+    expect(state.tunes).toHaveLength(1);
+    expect(state.operatorState).toBe('live');
+  } finally { state.releaseAll(); }
+});
 
 for (const surface of ['fft', 'waterfall']) {
   test(`${surface} drag tunes before release and coalesces a blocked request to the latest final center`, async ({ page }) => {
@@ -869,8 +984,10 @@ test('an old periodic lease snapshot cannot replace a final live tune that compl
   } finally { state.releaseAll(); }
 });
 
-test('manual center editing after a settled drag becomes the next gesture origin', async ({ page }) => {
-  const state = await install(page);
+for (const view of ['tuners', 'tuner-spectrum']) {
+test(`${view} manual center editing after a settled drag becomes the next gesture origin`, async ({ page }) => {
+  const state = await install(page, { view, savedLock: true });
+  const center = page.locator(view === 'tuners' ? '.tuners-center-host' : '.spectrum-browse-center');
   try {
     const canvas = plot(page);
     const first = await beginDrag(page, canvas);
@@ -878,16 +995,15 @@ test('manual center editing after a settled drag becomes the next gesture origin
     await expectTuneCount(state, 1);
     await page.mouse.up();
     await state.release(0);
-    await expect(page.locator('.spectrum-browse-center')).toHaveJSProperty('inert', false);
+    await expect(center).toHaveJSProperty('inert', false);
     await editCenter(page, '085412345');
     await expectTuneCount(state, 2);
     expect(state.tunes[1].body.value).toBe(854.12345);
     await state.release(1);
-    const center = page.locator('.spectrum-browse-center');
     await expect(center).toContainText('0854.12345MHz');
     await expect(center.locator('.tuners-center-frequency')).toHaveAttribute('aria-disabled', 'false');
     await expect(center).toHaveJSProperty('inert', false);
-    await expect(page.getByRole('combobox', { name: 'Tuner', exact: true })).toBeEnabled();
+    if (view !== 'tuners') await expect(page.getByRole('combobox', { name: 'Tuner', exact: true })).toBeEnabled();
     // The fixture emits on demand; model the next receiver STATE/FFT after the post-save waiting overlay.
     await page.evaluate((centerHz) => window.spectrumDragStream.emit(centerHz), state.centerHz);
     await expect(page.locator('.tuner-spectrum-fft .channel-diagnostic-overlay')).toBeHidden();
@@ -897,9 +1013,10 @@ test('manual center editing after a settled drag becomes the next gesture origin
     expect(state.tunes[2].body.value).toBe((854123450 + deltaHz) / 1000000);
     await page.mouse.up();
     await state.release(2);
-    await expect(page.locator('.spectrum-browse-center')).toContainText('0854.62345MHz');
+    await expect(center).toContainText('0854.62345MHz');
   } finally { state.releaseAll(); }
 });
+}
 
 test('retrying an expired lease during a held manual save restores editable center and live dragging', async ({ page }) => {
   await page.clock.install();

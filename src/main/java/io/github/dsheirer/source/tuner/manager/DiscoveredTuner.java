@@ -275,6 +275,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
                     return false;
                 }
             }
+            applyCenterLockForState(OperatorState.SETUP);
             return isAvailable() && hasTuner();
         }
         finally
@@ -295,6 +296,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
             {
                 return false;
             }
+            applyCenterLockForState(OperatorState.LIVE);
             mRestoreAllocationThread = null;
             mOperatorState = OperatorState.LIVE;
             return true;
@@ -361,6 +363,16 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
         }
     }
 
+    /** Lifecycle/settings workers only: Setup borrows the center lock without changing its saved Live preference. */
+    void applyCenterLockForState(OperatorState state)
+    {
+        if(hasTuner() && hasTunerConfiguration() && mTunerConfiguration.getTunerType() != TunerType.RECORDING)
+        {
+            getTuner().getTunerController().setCenterFrequencyLocked(
+                state != OperatorState.SETUP && mTunerConfiguration.isCenterFrequencyLocked());
+        }
+    }
+
     /**
      * Sets the enabled state of this discovered tuner
      */
@@ -394,24 +406,30 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
                 }
                 else
                 {
-                    mRestoreAllocationThread = null;
-                    mOperatorState = OperatorState.DISABLED;
-                    setTunerStatus(TunerStatus.DISABLED);
-                    stop();
+                    stopDisabledRuntime();
                 }
             }
             else if(!enabled)
             {
                 // Keep the explicit operator state coherent when a paired-device cascade already stopped hardware.
-                mRestoreAllocationThread = null;
-                mOperatorState = OperatorState.DISABLED;
-                setTunerStatus(TunerStatus.DISABLED);
-                stop();
+                stopDisabledRuntime();
             }
         }
         finally
         {
             mAllocationLifecycleLock.unlock();
+        }
+    }
+
+    private void stopDisabledRuntime()
+    {
+        try { applyCenterLockForState(OperatorState.DISABLED); }
+        finally
+        {
+            mRestoreAllocationThread = null;
+            mOperatorState = OperatorState.DISABLED;
+            setTunerStatus(TunerStatus.DISABLED);
+            stop();
         }
     }
 
@@ -462,6 +480,7 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
             if(hasTunerConfiguration() && mTunerConfiguration.getTunerType() != TunerType.RECORDING)
             {
                 getTuner().getTunerController().apply(mTunerConfiguration);
+                applyCenterLockForState(mOperatorState);
             }
 
             cacheDisplayName();

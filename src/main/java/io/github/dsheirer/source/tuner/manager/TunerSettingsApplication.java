@@ -342,12 +342,20 @@ final class TunerSettingsApplication
 
                     TunerSettingCatalog.write(configuration, settingId, value);
                     written = true;
-                    TunerSettingCatalog.apply(controller, configuration, settingId);
+                    if("center_frequency_locked".equals(settingId) &&
+                        tuner.getOperatorState() == DiscoveredTuner.OperatorState.SETUP)
+                        tuner.applyCenterLockForState(DiscoveredTuner.OperatorState.SETUP);
+                    else TunerSettingCatalog.apply(controller, configuration, settingId);
                     applied = true;
                 }
                 finally
                 {
-                    controller.getLock().unlock();
+                    try
+                    {
+                        if(tuner.getOperatorState() == DiscoveredTuner.OperatorState.SETUP)
+                            tuner.applyCenterLockForState(DiscoveredTuner.OperatorState.SETUP);
+                    }
+                    finally { controller.getLock().unlock(); }
                 }
             }
             else

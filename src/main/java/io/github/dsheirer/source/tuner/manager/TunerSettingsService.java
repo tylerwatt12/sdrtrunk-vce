@@ -233,7 +233,9 @@ public final class TunerSettingsService implements AutoCloseable
             if("center_frequency_locked".equals(descriptor.id()))
             {
                 return new TunerSettingCatalog.SettingDescriptor(descriptor.id(), descriptor.label(),
-                    descriptor.group(), descriptor.kind(), false, descriptor.options(), descriptor.minimum(),
+                    descriptor.group(), descriptor.kind(),
+                    tuner.getOperatorState() == DiscoveredTuner.OperatorState.SETUP ? descriptor.value() : false,
+                    descriptor.options(), descriptor.minimum(),
                     descriptor.maximum(), descriptor.step(), descriptor.unit(), descriptor.scope(), false,
                     descriptor.availability(), "Resume channels before changing center lock",
                     descriptor.dependencies());
@@ -268,10 +270,19 @@ public final class TunerSettingsService implements AutoCloseable
 
     public MutationResult set(DiscoveredTuner tuner, String settingId, Object submittedValue, String leaseId)
     {
+        return set(tuner, settingId, submittedValue, leaseId, null);
+    }
+
+    /** A queued browser adjustment must still belong to the operator mode in which it was requested. */
+    public MutationResult set(DiscoveredTuner tuner, String settingId, Object submittedValue, String leaseId,
+                              Long operatorGeneration)
+    {
         synchronized(mLifecycleLock)
         {
             ensureOpen();
             ensurePresent(tuner);
+            if(operatorGeneration != null && tuner.operatorGeneration() != operatorGeneration)
+                throw new SettingUnavailableException("The tuner mode changed. Review its current mode and try again.");
             if(lifecycleGroup(tuner).stream().anyMatch(DiscoveredTuner::isDiscoveryHeld))
             {
                 throw new SettingUnavailableException("Signal identification is using this tuner");
@@ -1076,7 +1087,12 @@ public final class TunerSettingsService implements AutoCloseable
         try
         {
             if(member.hasTuner())
-                member.getTuner().getTunerController().setCenterFrequencyLocked(state.runtimeLocked());
+            {
+                if(member.getTunerConfiguration() != null)
+                    member.applyCenterLockForState(member.getOperatorState());
+                else member.getTuner().getTunerController().setCenterFrequencyLocked(
+                    member.getOperatorState() != DiscoveredTuner.OperatorState.SETUP && state.runtimeLocked());
+            }
         }
         catch(RuntimeException restoreFailure)
         {
@@ -1786,6 +1802,8 @@ public final class TunerSettingsService implements AutoCloseable
     private void restoreOnce(DiscoveredTuner tuner, boolean goLiveOnFailure)
     {
         List<RememberedChannel> remembered = session(tuner).stoppedChannels;
+        // Allocation must honor the saved Live lock at the newly chosen center before the first channel restarts.
+        tuner.applyCenterLockForState(DiscoveredTuner.OperatorState.LIVE);
         tuner.beginRestoreAllocation();
         RestoreResult result;
         try
@@ -1800,6 +1818,7 @@ public final class TunerSettingsService implements AutoCloseable
         retainFailedChannels(tuner, remembered, result.failed());
         if(!goLiveOnFailure && !result.failed().isEmpty())
         {
+            tuner.applyCenterLockForState(DiscoveredTuner.OperatorState.SETUP);
             return;
         }
         if(!tuner.enterLive())

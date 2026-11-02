@@ -2,8 +2,8 @@
   "version": 1,
   "shards": 4,
   "workers": 2,
-  "caseCount": 1828,
-  "inventorySha256": "a4314d1f590d92a34fbf286c53a32accf132e7c16ec9b0e9b816a1ad50683ab0",
+  "caseCount": 1854,
+  "inventorySha256": "9e101a9c126e842c73a1d85a2e628b8ad427a33d7e94f91e1112078b4ba753aa",
   "files": {
     "access-landing.spec.js": {
       "durationMs": 12822,
@@ -644,6 +644,11 @@
       "durationMs": 35052,
       "caseCount": 20,
       "source": "measured"
+    },
+    "setup-tuning-parity.spec.js": {
+      "durationMs": 17235,
+      "caseCount": 9,
+      "source": "estimated"
     },
     "shared-player-presentation.spec.js": {
       "durationMs": 8603,

@@ -59,7 +59,7 @@ export function spectrumSteps(documentValue, preparePlayer, preparePage, canView
     { id: 'add-channel', title: 'Add what you found', capability: 'admin-channels',
       paragraphs: ['Detect a trunked system automatically, or open Create Channel in a new tab with this frequency to choose the protocol yourself.'] },
     { id: 'modes', title: 'Tune through the band',
-      paragraphs: ['Setup temporarily stops this tuner’s channels so you can tune freely. In the full view, click and drag to move the receiving window, or enter a center frequency above.',
+      paragraphs: ['Setup temporarily stops this tuner’s channels and unlocks its center frequency so you can tune freely. In the full view, click and drag to move the receiving window, or enter a center frequency above.',
         'Return to Live to resume channels stopped for Setup.'] },
     { id: 'display-options', title: 'Adjust the display',
       paragraphs: ['Open Display options to adjust signal visibility, frequency selection, and the detail shown in the plots.'] },
