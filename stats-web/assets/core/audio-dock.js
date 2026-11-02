@@ -455,9 +455,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     closeVolume(false);
     cancelPresentationMotion();
     const returnFocus = dock.contains(document.activeElement) || Boolean(focusedPresentationControl || focusedSourceControl);
+    const queueMovedToSidebar = panel === 'queue' && !mobileLayout.matches && context.contains(document.activeElement);
     render();
     if (!returnFocus || (restore.hidden && dock.hidden)) return;
-    if (superCollapsed && !mobileLayout.matches) restore.focus({ preventScroll: true });
+    if (queueMovedToSidebar) sidebarList.focus({ preventScroll: true });
+    else if (superCollapsed && !mobileLayout.matches) restore.focus({ preventScroll: true });
     else if (focusedPresentationControl || !document.activeElement.getClientRects().length) {
       (size === 'collapsed' ? slimExpand : handle).focus({ preventScroll: true });
       focusedPresentationControl = null;
@@ -656,7 +658,8 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
       if (!menuPanels.has(panel)) { menuReturnSize = size; contextInvoker = invoker || contextInvoker; }
     } else { menuReturnSize = null; contextInvoker = invoker || contextInvoker; }
     closeVolume(false); panel = value; panelKey = ''; setSize('full');
-    (value === 'menu' ? panelHost.querySelector('button') || back : back).focus({ preventScroll: true });
+    (value === 'queue' && !mobileLayout.matches ? sidebarList :
+      value === 'menu' ? panelHost.querySelector('button') || back : back).focus({ preventScroll: true });
   }
   function openPlayerMenu(invoker) {
     if (guidePresentation) return;
@@ -1124,8 +1127,11 @@ export function createAudioDock({ node, iconButton, uiToggleField, recordings, g
     } else if (spectrumFrame !== null) { window.cancelAnimationFrame(spectrumFrame); spectrumFrame = null; }
   }
   function renderPanel() {
-    context.hidden = !panel; hero.hidden = Boolean(panel);
-    if (!panel || size !== 'full' || dock.hidden) return;
+    // Desktop already has Up next alongside Now playing. The detailed queue
+    // is the phone's single queue view, where that sidebar is unavailable.
+    const queueInSidebar = panel === 'queue' && !mobileLayout.matches;
+    context.hidden = !panel || queueInSidebar; hero.hidden = Boolean(panel) && !queueInSidebar;
+    if (!panel || queueInSidebar || size !== 'full' || dock.hidden) return;
     const active = state(), call = current();
     const selected = (liveState.scanLists || []).filter(item => item.selected).length + (liveState.directListen?.selected ? 1 : 0);
     const names = { menu: 'Player menu', details: 'Call details', transcript: 'Transcript', queue: 'Queue', listening: 'Lists', direct: 'Direct Listen', settings: 'Listening settings', avoids: 'Avoid List' };

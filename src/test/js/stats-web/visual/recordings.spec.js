@@ -2842,13 +2842,19 @@ for (const theme of ['light', 'dark']) for (const width of [1280, 390]) {
     await expect.poll(() => page.evaluate(() => window.recordingPlays.at(-1))).toContain('/20/audio');
     expect(state.reviewIds).toEqual([17, 18, 19, 20]);
     await expect(page.locator('.audio-dock')).toBeVisible();
+    if (width > 900) {
+      await expect(page.locator('.audio-dock-hero')).toBeVisible();
+      await expect(page.locator('.audio-dock-context')).toBeHidden();
+      await expect(page.locator('.audio-dock-up-next .audio-dock-queue-item')).toHaveCount(3);
+    }
     const next = page.getByRole('button', { name: 'Next call', exact: true }).filter({ visible: true });
     for (const id of [19, 18, 17]) {
       await next.click();
       await expect.poll(() => page.evaluate(() => window.recordingPlays.at(-1))).toContain(`/${id}/audio`);
     }
     await expect(next).toBeDisabled();
-    await page.getByRole('button', { name: 'Back to player', exact: true }).focus();
+    if (width > 900) await page.getByRole('list', { name: 'Queued calls', exact: true }).focus();
+    else await page.getByRole('button', { name: 'Back to player', exact: true }).focus();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('button', { name: 'Review in playlist', exact: true })).toBeFocused();
     // Search while reviewing does not clear playback or selection.

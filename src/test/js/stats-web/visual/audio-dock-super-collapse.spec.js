@@ -183,7 +183,8 @@ for (const theme of ['light']) {
       expect(await page.evaluate(() => window.audioTest.recordings)).toEqual(transport);
       expect(state.preferenceWrites).toEqual(writes);
       if (value !== 'full') await size(page, 'full');
-      await expect(dock(page).locator('#audio-dock-context-title')).toHaveText('Queue');
+      await expect(dock(page).locator('.audio-dock-context')).toBeHidden();
+      await expect(dock(page).locator('.audio-dock-hero')).toBeVisible();
     });
   }
 }

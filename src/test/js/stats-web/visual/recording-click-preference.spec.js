@@ -10,15 +10,15 @@ async function clickMode(page) {
   await dock.getByRole('combobox', { name: 'Audio source', exact: true }).selectOption('recordings');
   await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
   await selectAudioPanel(dock, 'Queue');
-  const control = dock.locator('#audio-dock-panel').getByRole('combobox', { name: 'When a call is clicked', exact: true });
+  const control = dock.getByRole('combobox', { name: 'When a call is clicked', exact: true }).filter({ visible: true });
   await expect(control).toBeVisible();
   return control;
 }
 
 async function expectSelectedMode(page, mode) {
   const controls = page.locator('#audio-dock [data-click-mode]');
-  await expect.poll(() => controls.evaluateAll(items => items.map(item => item.value)))
-    .toEqual([mode, mode]);
+  await expect.poll(() => controls.evaluateAll(items => [...new Set(items.map(item => item.value))]))
+    .toEqual([mode]);
 }
 
 test('recording click mode follows the account across reloads and fresh browsers', async ({ page, browser }) => {

@@ -34,6 +34,13 @@ async function selectAudioPanel(dock, name) {
       await dock.locator('#audio-dock-size-handle').press('ArrowDown');
     }
     await dock.getByRole('button', { name: 'Open queue', exact: true }).filter({ visible: true }).click();
+    const sidebar = dock.locator('.audio-dock-up-next');
+    if (await sidebar.isVisible()) {
+      await expect(dock.locator('.audio-dock-context')).toBeHidden();
+      await expect(dock.locator('.audio-dock-hero')).toBeVisible();
+      await expect(sidebar.getByRole('list', { name: 'Queued calls', exact: true })).toBeFocused();
+      return;
+    }
   } else await dock.locator(selector).click();
   await expect(title).toHaveText(targetTitle);
 }

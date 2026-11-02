@@ -52,11 +52,10 @@ test('player and queued talkgroups retain their own system destinations and sepa
     path: `${process.env.WEB_REVIEW_DIR}/audio-dock-entity-links.png` });
 
   await selectAudioPanel(dock(page), 'Queue');
-  const queue = dock(page).locator('#audio-dock-panel .audio-dock-queue-item');
-  await expect(queue).toHaveCount(2);
-  await expectDestination(queue.first().getByRole('link', { name: 'Fire Dispatch', exact: true }),
-    page, recording.target_entity_ref);
-  await expectDestination(queue.last().getByRole('link', { name: 'Fire Dispatch', exact: true }),
+  await expect(dock(page).locator('.audio-dock-context')).toBeHidden();
+  await expectDestination(hero(page).getByRole('link'), page, recording.target_entity_ref);
+  await expect(queued).toHaveCount(1);
+  await expectDestination(queued.getByRole('link', { name: 'Fire Dispatch', exact: true }),
     page, otherSystem.target_entity_ref);
 });
 

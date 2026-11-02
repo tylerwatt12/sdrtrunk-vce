@@ -50,7 +50,7 @@ import { createSpectrumDisplayPreferences } from './core/spectrum-display-prefer
 import { createSpectrumAutoRange, spectrumTraceValue } from './features/spectrum-auto-range.js?v=4';
 import { createChannelSignalAutoRange } from './features/channel-signal-auto-range.js?v=2';
 import { smoothSpectrumValues } from './features/spectrum-smoothing.js?v=1';
-import { createAudioDock } from './core/audio-dock.js?v=49';
+import { createAudioDock } from './core/audio-dock.js?v=50';
 import { createAudioCommand, createAudioTransport, createAudioTiming, createAudioVolume, audioPlaybackAction } from './core/audio-controls.js?v=2';
 import { formatPagingToneSummary } from './core/call-audio-details.js?v=7';
 import { createRemoteSupportWorkspace, remoteSupportDescription } from './features/remote-support.js?v=6';

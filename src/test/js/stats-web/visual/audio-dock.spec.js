@@ -260,7 +260,7 @@ test('Scan Lists and Settings keep keyboard focus and values while calls arrive 
   await chooseRecording(page, 0, 'Continue from here');
   await fullControls(page);
   await selectPanel(page, 'Queue');
-  const clickedCallMode = dock(page).locator('#audio-dock-panel').getByRole('combobox', { name: 'When a call is clicked' });
+  const clickedCallMode = dock(page).getByRole('combobox', { name: 'When a call is clicked' }).filter({ visible: true });
   await clickedCallMode.focus();
   await clickedCallMode.selectOption('once');
   await expect(clickedCallMode).toBeFocused();
@@ -283,7 +283,7 @@ test('adding a recording to the queue preserves live playback and its selected s
   await selectDockSource(dock(page), 'recordings');
   await fullControls(page);
   await selectPanel(page, 'Queue');
-  await expect(dock(page).locator('#audio-dock-panel .audio-dock-queue-item')).toContainText('Fire Dispatch');
+  await expect(dock(page).locator('.audio-dock-up-next .audio-dock-queue-item')).toContainText('Fire Dispatch');
 });
 
 for (const [name, capabilities, expected] of [
@@ -414,6 +414,7 @@ test('sidebar inspector retains keyboard focus through queue advances and remove
 });
 
 test('repeated recordings retain separate queue row actions', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   await openAudioApp(page);
   await chooseRecording(page);
   await chooseRecording(page, 0, 'Add to queue');

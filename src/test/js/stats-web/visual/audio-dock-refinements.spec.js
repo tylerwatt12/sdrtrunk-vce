@@ -276,7 +276,8 @@ test('source and queue controls keep their own actions without cycling the heade
   await expect(player(page)).toHaveAttribute('data-source', 'live');
   await expect(player(page)).toHaveAttribute('data-state', 'full');
   await panel(page, 'Queue');
-  await expect(player(page).locator('#audio-dock-context-title')).toHaveText('Queue');
+  await expect(player(page).locator('.audio-dock-context')).toBeHidden();
+  await expect(player(page).locator('.audio-dock-hero')).toBeVisible();
   await expect(player(page)).toHaveAttribute('data-state', 'full');
 });
 

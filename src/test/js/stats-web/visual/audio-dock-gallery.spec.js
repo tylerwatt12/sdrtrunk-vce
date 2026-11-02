@@ -24,6 +24,29 @@ async function openGallery(page, { theme = 'light', source = 'live', state = 'fu
 }
 
 for (const theme of ['light', 'dark']) {
+  test(`desktop recording queue keeps Now playing and one Up next list in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    const dock = await openGallery(page, { theme, source: 'recordings', panel: 'queue', fixture: 'long' });
+    const sidebar = dock.locator('.audio-dock-up-next');
+    await expect(dock.locator('.audio-dock-hero')).toBeVisible();
+    await expect(dock.locator('.audio-dock-context')).toBeHidden();
+    await expect(sidebar.locator('.audio-dock-queue-item')).toHaveCount(3);
+    await expect(dock.getByRole('button', { name: 'Clear queue', exact: true }).filter({ visible: true })).toHaveCount(1);
+    await expectContrast(page, { rootSelector: '#audio-dock' });
+    await expectNoHorizontalOverflow(page);
+    await expect(dock).toHaveScreenshot(`recordings-single-queue-${theme}-desktop.png`);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(sidebar).toBeHidden();
+    await expect(dock.locator('.audio-dock-context')).toBeVisible();
+    await dock.getByRole('button', { name: 'Back to player', exact: true }).focus();
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await expect(dock.locator('.audio-dock-hero')).toBeVisible();
+    await expect(dock.locator('.audio-dock-context')).toBeHidden();
+    await expect(sidebar.getByRole('list', { name: 'Queued calls', exact: true })).toBeFocused();
+  });
+}
+
+for (const theme of ['light', 'dark']) {
   for (const width of [1280, 390]) {
     for (const source of ['live', 'recordings']) {
       test(`shared listening settings ${source} ${theme} ${width}px`, async ({ page }) => {

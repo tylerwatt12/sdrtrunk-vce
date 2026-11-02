@@ -15,7 +15,7 @@ async function queueChoice(page) {
   await dock.getByRole('combobox', { name: 'Audio source', exact: true }).selectOption('recordings');
   await dock.locator('#audio-dock-size-handle:visible, #audio-dock-slim-expand:visible').press('End');
   await selectAudioPanel(dock, 'Queue');
-  return dock.locator('#audio-dock-panel').getByRole('combobox', { name: 'When a call is clicked', exact: true });
+  return dock.getByRole('combobox', { name: 'When a call is clicked', exact: true }).filter({ visible: true });
 }
 
 test('guest title changes apply and both audio sources restore the shared browser volume', async ({ page }) => {

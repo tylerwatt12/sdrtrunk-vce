@@ -166,7 +166,8 @@ for (const viewport of viewports) {
     await expect(dock).toHaveAttribute('data-source', 'recordings');
     await expect(dock).toHaveAttribute('data-state', 'full');
     await selectAudioPanel(dock, 'Queue');
-    await expect(dock.locator('#audio-dock-context-title')).toHaveText('Queue');
+    if (viewport.width > 900) await expect(dock.locator('.audio-dock-context')).toBeHidden();
+    else await expect(dock.locator('#audio-dock-context-title')).toHaveText('Queue');
     await expect(dock).toHaveAttribute('data-state', 'full');
     await selectDockSource(dock, 'live');
     await expect(dock).toHaveAttribute('data-source', 'live');
