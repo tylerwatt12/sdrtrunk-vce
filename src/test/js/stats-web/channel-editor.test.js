@@ -36,6 +36,7 @@ vm.runInContext(`
   ${functionSource('function channelEditorVisibility(form)')}
   ${functionSource('function channelEditorDependencies(form)')}
   ${functionSource('function channelRestoreProtocolDefaults(form, profile)')}
+  const REMOTE_BITSTREAM_RECORDERS = new Set(['DEMODULATED_BIT_STREAM', 'TRAFFIC_DEMODULATED_BIT_STREAM']);
   ${functionSource('function channelIsRemote(channel)')}
   ${functionSource('function channelEnrichmentSupported(channel, profile)')}
   ${functionSource('function channelEnrichmentAvailability(channel, profile, account)')}
@@ -327,7 +328,9 @@ assert.equal(vm.runInContext("channelEditorSectionId(' RF source / backup ')", c
   'channel-editor-section-rf-source-backup');
 assert.equal(vm.runInContext("channelEditorSectionId('')", context), 'channel-editor-section-section');
 
-const remoteProfile = { id: 'p25-phase1', sections: [
+const remoteProfile = { id: 'p25-phase1',
+  recorders: ['BASEBAND', 'DEMODULATED_BIT_STREAM', 'MBE_CALL_SEQUENCE', 'TRAFFIC_BASEBAND',
+    'TRAFFIC_DEMODULATED_BIT_STREAM', 'TRAFFIC_MBE_CALL_SEQUENCE'], sections: [
   { id: 'general', label: 'General', fields: [{ path: 'name', type: 'text' }] },
   { id: 'source', label: 'Source', fields: [
     { path: 'source.frequencies_hz', type: 'frequency_list' },
@@ -363,11 +366,29 @@ assert.deepEqual(remoteSections.map((section) => [section.id, section.label,
   ['general', 'General', ['name']],
   ['source', 'Remote source', []],
   ['protocol', 'Decoder', ['settings.traffic_channel_pool_size', 'settings.use_bandplan_override']],
-  ['output', 'Event logs', ['event_logs']]
+  ['output', 'Logging & Recording', ['event_logs', 'recorders']]
 ]);
+assert.deepEqual(remoteSections.find((section) => section.id === 'output').fields
+  .find((field) => field.path === 'recorders').options, [
+  { value: 'DEMODULATED_BIT_STREAM', label: 'Demodulated bit stream' },
+  { value: 'TRAFFIC_DEMODULATED_BIT_STREAM', label: 'Traffic demodulated bit stream' }
+], 'Remote channels must offer only supported control and traffic bitstream recorders');
+context.namedRecorderProfile = { ...remoteProfile, sections: remoteProfile.sections.map(section => ({ ...section,
+  fields: section.fields.map(field => field.path === 'recorders' ? { ...field, options: [
+    { value: 'BASEBAND', label: 'Unsupported I/Q' },
+    { value: 'DEMODULATED_BIT_STREAM', label: 'Catalog control bits', help: 'Catalog metadata' },
+    { value: 'TRAFFIC_DEMODULATED_BIT_STREAM', label: 'Catalog traffic bits' }
+  ] } : field) })) };
+assert.deepEqual(JSON.parse(vm.runInContext(`JSON.stringify(channelEditorSections(namedRecorderProfile, remoteChannel)
+  .find(section => section.id === 'output').fields.find(field => field.path === 'recorders').options)`, context)), [
+  { value: 'DEMODULATED_BIT_STREAM', label: 'Catalog control bits', help: 'Catalog metadata' },
+  { value: 'TRAFFIC_DEMODULATED_BIT_STREAM', label: 'Catalog traffic bits' }
+], 'Remote recorder filtering must preserve the catalog labels and option metadata');
+
 assert.deepEqual(JSON.parse(vm.runInContext(
   `JSON.stringify(channelEditorSections(remoteProfile, { source: { source_type: 'TUNER' } }))`, context)),
   remoteProfile.sections, 'Local channel settings must remain available');
+context.remoteSelectedRecorders = [];
 context.remoteForm = {
   querySelector(selector) {
     const path = selector.match(/data-channel-path="([^"]+)"/)?.[1];
@@ -375,6 +396,7 @@ context.remoteForm = {
     if (path === 'settings.traffic_channel_pool_size') return { value: '12' };
     if (path === 'settings.use_bandplan_override') return { checked: true, dataset: {} };
     if (path === 'event_logs') return { querySelectorAll: () => [{ value: 'CALL_EVENT' }] };
+    if (path === 'recorders') return { querySelectorAll: () => context.remoteSelectedRecorders.map(value => ({ value })) };
     if (path === 'settings.channel_mode') return null;
     throw new Error(`Unexpected remote field ${path}`);
   }
@@ -393,6 +415,22 @@ assert.equal(remotePayload.settings.use_bandplan_override, true);
 assert.deepEqual(remotePayload.event_logs, ['CALL_EVENT']);
 assert.deepEqual(remotePayload.recorders, ['BASEBAND'],
   'An unrelated remote edit must not silently discard saved recorder selections');
+for (const selected of [
+  ['DEMODULATED_BIT_STREAM', 'TRAFFIC_DEMODULATED_BIT_STREAM'],
+  ['TRAFFIC_DEMODULATED_BIT_STREAM'], []
+]) {
+  context.remoteSelectedRecorders = selected;
+  context.remoteChannel = { ...remoteChannel,
+    recorders: ['BASEBAND', 'MBE_CALL_SEQUENCE', 'TRAFFIC_BASEBAND', 'TRAFFIC_MBE_CALL_SEQUENCE',
+      'DEMODULATED_BIT_STREAM'] };
+  const payload = JSON.parse(vm.runInContext(
+    'JSON.stringify(channelEditorPayload(remoteForm, remoteEditorProfile, remoteChannel))', context));
+  assert.deepEqual(payload.recorders,
+    ['BASEBAND', 'MBE_CALL_SEQUENCE', 'TRAFFIC_BASEBAND', 'TRAFFIC_MBE_CALL_SEQUENCE', ...selected],
+    'Remote bitstream selections must save while hidden I/Q and MBE flags retain their saved values');
+}
+context.remoteChannel = remoteChannel;
+
 
 const requiredOutput = JSON.parse(vm.runInContext(`JSON.stringify(channelEditorSectionPlan([
   { id: 'output', label: 'Logging & Recording', fields: [{ path: 'recorders', required: true }] }

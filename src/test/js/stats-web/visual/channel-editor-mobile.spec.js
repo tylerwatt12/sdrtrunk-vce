@@ -34,6 +34,21 @@ async function openEditor(page, theme, options = {}) {
       ] }
     ]
   };
+  if (options.remote) {
+    channel.protocol_id = 'p25-phase1';
+    channel.source = { source_type: 'REMOTE', sender_id: 'fixture-sender', feed_id: 'fixture-feed',
+      frequencies_hz: [851012500] };
+    channel.recorders = options.recorders || [];
+    profile.id = 'p25-phase1'; profile.label = 'P25 Phase 1'; profile.channel_kind = 'TRUNKED';
+    profile.sections.find(section => section.id === 'output').fields[0].options = [
+      { value: 'BASEBAND', label: 'Baseband I/Q' },
+      { value: 'DEMODULATED_BIT_STREAM', label: 'Demodulated bit stream' },
+      { value: 'MBE_CALL_SEQUENCE', label: 'MBE call sequence' },
+      { value: 'TRAFFIC_BASEBAND', label: 'Traffic baseband I/Q' },
+      { value: 'TRAFFIC_DEMODULATED_BIT_STREAM', label: 'Traffic demodulated bit stream' },
+      { value: 'TRAFFIC_MBE_CALL_SEQUENCE', label: 'Traffic MBE call sequence' }
+    ];
+  }
   if (options.ctcss) {
     channel.settings.ctcss_frequency_hz = options.ctcssFrequency ?? 0;
     profile.sections.find(section => section.id === 'protocol').fields.push({
@@ -75,6 +90,51 @@ async function openEditor(page, theme, options = {}) {
   await expect(dialog).toBeVisible();
   return dialog;
 }
+
+for (const [theme, viewport] of [['light', { width: 1280, height: 900 }],
+  ['dark', { width: 390, height: 844 }]]) {
+  test(`remote P25 exposes both bitstream recorders and preserves hidden saved formats in ${theme}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const writes = [];
+    const preserved = ['BASEBAND', 'MBE_CALL_SEQUENCE', 'TRAFFIC_BASEBAND', 'TRAFFIC_MBE_CALL_SEQUENCE'];
+    const dialog = await openEditor(page, theme, { remote: true, recorders: preserved,
+      onSave: payload => writes.push(payload) });
+    await dialog.locator('details[data-channel-section="output"] > summary').click();
+    const section = dialog.locator('fieldset[data-channel-section="output"]');
+    await expect(section.getByRole('checkbox')).toHaveCount(2);
+    for (const label of ['Baseband I/Q', 'Traffic baseband I/Q', 'MBE call sequence', 'Traffic MBE call sequence']) {
+      await expect(section.getByRole('checkbox', { name: label, exact: true })).toHaveCount(0);
+    }
+    const control = section.getByRole('checkbox', { name: 'Demodulated bit stream', exact: true });
+    const traffic = section.getByRole('checkbox', { name: 'Traffic demodulated bit stream', exact: true });
+    await expect(control).not.toBeChecked(); await expect(traffic).not.toBeChecked();
+    await control.press('Space'); await traffic.press('Space');
+    await expect(control).toBeChecked(); await expect(traffic).toBeChecked();
+    if (process.env.REMOTE_BITSTREAM_AUDIT_DIR) await dialog.screenshot({
+      path: path.join(process.env.REMOTE_BITSTREAM_AUDIT_DIR, `remote-recorders-${theme}.png`), animations: 'disabled'
+    });
+    await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(writes[0].recorders).toEqual([...preserved, 'DEMODULATED_BIT_STREAM', 'TRAFFIC_DEMODULATED_BIT_STREAM']);
+    expect(writes[0].source.source_type).toBe('REMOTE');
+  });
+}
+
+test('unrelated remote edit retains saved recorder flags and can disable one bitstream recorder', async ({ page }) => {
+  const writes = [];
+  const dialog = await openEditor(page, 'light', { remote: true,
+    recorders: ['BASEBAND', 'MBE_CALL_SEQUENCE', 'DEMODULATED_BIT_STREAM', 'TRAFFIC_DEMODULATED_BIT_STREAM'],
+    onSave: payload => writes.push(payload) });
+  await dialog.getByRole('textbox', { name: 'Name', exact: true }).fill('Updated remote channel');
+  await dialog.locator('details[data-channel-section="output"] > summary').click();
+  const control = dialog.getByRole('checkbox', { name: 'Demodulated bit stream', exact: true });
+  await expect(control).toBeChecked();
+  await control.press('Space');
+  await dialog.getByRole('button', { name: 'Save changes', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(writes[0].name).toBe('Updated remote channel');
+  expect(writes[0].recorders).toEqual(['BASEBAND', 'MBE_CALL_SEQUENCE', 'TRAFFIC_DEMODULATED_BIT_STREAM']);
+});
 
 test('analog CTCSS is a channel squelch selection and submits its standard numeric frequency', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

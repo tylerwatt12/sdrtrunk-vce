@@ -27277,6 +27277,8 @@ function channelEditorFieldValue(control, field) {
   return text || null;
 }
 
+const REMOTE_BITSTREAM_RECORDERS = new Set(['DEMODULATED_BIT_STREAM', 'TRAFFIC_DEMODULATED_BIT_STREAM']);
+
 function channelIsRemote(channel) {
   return String(channel?.source?.source_type || '').toUpperCase() === 'REMOTE';
 }
@@ -27285,14 +27287,15 @@ function channelEditorSections(profile, channel) {
   if (!channelIsRemote(channel)) return profile.sections;
   const applicable = new Set([
     'settings.traffic_channel_pool_size', 'settings.use_bandplan_override',
-    'observed.p25_site_identity', 'event_logs'
+    'observed.p25_site_identity', 'event_logs', 'recorders'
   ]);
   return profile.sections.map((section) => ({
     ...section,
-    label: section.id === 'source' ? 'Remote source' :
-      section.id === 'output' ? 'Event logs' : section.label,
-    fields: section.id === 'general' ? section.fields :
-      section.fields.filter((field) => applicable.has(field.path))
+    label: section.id === 'source' ? 'Remote source' : section.label,
+    fields: (section.id === 'general' ? section.fields :
+      section.fields.filter((field) => applicable.has(field.path))).map((field) => field.path === 'recorders' ?
+      { ...field, options: channelFieldOptions(field, profile, {})
+        .filter((entry) => REMOTE_BITSTREAM_RECORDERS.has(entry.value)) } : field)
   })).filter((section) => section.id === 'source' || section.fields.length);
 }
 
@@ -27311,6 +27314,10 @@ function channelEditorPayload(form, profile, channel = null) {
       label: channelEditorFieldLabel(field, conventional) });
     if (conventional && ['event_logs', 'recorders'].includes(field.path))
       value = value.filter((entry) => !String(entry).startsWith('TRAFFIC_'));
+    if (remote && field.path === 'recorders') {
+      value = [...(channel.recorders || []).filter((entry) => !REMOTE_BITSTREAM_RECORDERS.has(entry)),
+        ...value.filter((entry) => REMOTE_BITSTREAM_RECORDERS.has(entry))];
+    }
     if (field.path.startsWith('settings.')) payload.settings[field.path.substring(9)] = value;
     else if (field.path.startsWith('source.')) payload.source[field.path.substring(7)] = value;
     else payload[field.path] = value;
