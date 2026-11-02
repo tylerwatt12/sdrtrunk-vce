@@ -66,17 +66,18 @@ public class RecorderFactory
      */
     public static List<Module> getRecorders(UserPreferences userPreferences, Channel channel)
     {
-        // Remote sources provide packed dibits only. These channel recorders require I/Q samples, a local
-        // demodulated byte buffer, or a tuner source; alias-driven audio-call recording is handled separately.
-        if(channel.getSourceConfiguration() instanceof SourceConfigRemote)
-        {
-            return List.of();
-        }
-
+        // Remote sources provide packed dibits for bitstream recording. They do not provide I/Q samples or
+        // tuner-backed MBE call-sequence input; alias-driven audio-call recording is handled separately.
+        boolean remote = channel.getSourceConfiguration() instanceof SourceConfigRemote;
         List<Module> recorderModules = new ArrayList<>();
 
         for(RecorderType recorderType: channel.getRecordConfiguration().getRecorders())
         {
+            if(remote && recorderType != RecorderType.DEMODULATED_BIT_STREAM &&
+                recorderType != RecorderType.TRAFFIC_DEMODULATED_BIT_STREAM)
+            {
+                continue;
+            }
             long frequency = getFrequency(channel);
 
             switch(recorderType)
@@ -182,6 +183,10 @@ public class RecorderFactory
         else if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency)
         {
             return ((SourceConfigTunerMultipleFrequency)channel.getSourceConfiguration()).getFrequencies().get(0);
+        }
+        else if(channel.getSourceConfiguration() instanceof SourceConfigRemote remote)
+        {
+            return remote.getFrequency();
         }
 
         return 0;

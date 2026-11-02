@@ -20,6 +20,7 @@ import io.github.dsheirer.module.Module;
 import io.github.dsheirer.module.decode.dmr.DecodeConfigDMR;
 import io.github.dsheirer.module.decode.dmr.audio.DMRCallSequenceRecorder;
 import io.github.dsheirer.module.decode.p25.phase1.DecodeConfigP25Phase1;
+import io.github.dsheirer.module.decode.p25.phase2.DecodeConfigP25Phase2;
 import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.directory.DirectoryPreference;
 import io.github.dsheirer.record.binary.BinaryRecorder;
@@ -84,27 +85,64 @@ class RecorderFactoryRoleSelectionTest
     }
 
     @Test
-    void remoteBitstreamChannelsPreserveRecorderSelectionsWithoutCreatingRawRecorders()
+    void remoteP25ChannelsSelectExactlyOneRoleAppropriateBitstreamRecorderAndPreserveSelections() throws Exception
     {
-        for(Channel.ChannelType type: List.of(Channel.ChannelType.STANDARD, Channel.ChannelType.TRAFFIC))
+        List<RecorderType> selected = List.of(RecorderType.BASEBAND, RecorderType.DEMODULATED_BIT_STREAM,
+            RecorderType.MBE_CALL_SEQUENCE, RecorderType.TRAFFIC_BASEBAND,
+            RecorderType.TRAFFIC_DEMODULATED_BIT_STREAM, RecorderType.TRAFFIC_MBE_CALL_SEQUENCE);
+        for(boolean phase2: List.of(false, true))
         {
-            Channel channel = new Channel("Remote P25", type);
-            channel.setDecodeConfiguration(new DecodeConfigP25Phase1());
-            SourceConfigRemote source = new SourceConfigRemote();
-            source.setSenderId("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
-            source.setFeedId("11111111-2222-4333-8444-555555555555");
-            source.setFrequency(FREQUENCY);
-            channel.setSourceConfiguration(source);
-            RecordConfiguration saved = new RecordConfiguration();
-            List<RecorderType> selected = List.of(RecorderType.BASEBAND, RecorderType.DEMODULATED_BIT_STREAM,
-                RecorderType.MBE_CALL_SEQUENCE, RecorderType.TRAFFIC_BASEBAND,
-                RecorderType.TRAFFIC_DEMODULATED_BIT_STREAM, RecorderType.TRAFFIC_MBE_CALL_SEQUENCE);
-            selected.forEach(saved::addRecorder);
-            channel.setRecordConfiguration(saved);
+            for(Channel.ChannelType type: List.of(Channel.ChannelType.STANDARD, Channel.ChannelType.TRAFFIC))
+            {
+                Channel channel = remoteChannel(type, phase2, selected.toArray(RecorderType[]::new));
+                List<Module> modules = RecorderFactory.getRecorders(preferences(), channel);
 
-            assertTrue(RecorderFactory.getRecorders(preferences(), channel).isEmpty());
-            assertEquals(selected, channel.getRecordConfiguration().getRecorders());
+                assertEquals(1, modules.size(), "Both role settings must not activate two recorders for one chain");
+                BinaryRecorder recorder = assertInstanceOf(BinaryRecorder.class, modules.getFirst());
+                var frequency = BinaryRecorder.class.getDeclaredField("mFrequency");
+                frequency.setAccessible(true);
+                assertEquals(FREQUENCY, frequency.getLong(recorder));
+                assertEquals(selected, channel.getRecordConfiguration().getRecorders());
+            }
         }
+    }
+
+    @Test
+    void remoteP25ChannelsRejectIQAndMbeRecorderKindsForBothPhasesAndRoles()
+    {
+        for(boolean phase2: List.of(false, true))
+        {
+            for(Channel.ChannelType type: List.of(Channel.ChannelType.STANDARD, Channel.ChannelType.TRAFFIC))
+            {
+                Channel channel = remoteChannel(type, phase2, RecorderType.BASEBAND, RecorderType.TRAFFIC_BASEBAND,
+                    RecorderType.MBE_CALL_SEQUENCE, RecorderType.TRAFFIC_MBE_CALL_SEQUENCE);
+                assertTrue(RecorderFactory.getRecorders(preferences(), channel).isEmpty());
+            }
+        }
+    }
+
+    @Test
+    void remoteP25ChannelsDoNotActivateTheOtherRolesBitstreamRecorder()
+    {
+        for(boolean phase2: List.of(false, true))
+        {
+            assertTrue(RecorderFactory.getRecorders(preferences(), remoteChannel(Channel.ChannelType.STANDARD,
+                phase2, RecorderType.TRAFFIC_DEMODULATED_BIT_STREAM)).isEmpty());
+            assertTrue(RecorderFactory.getRecorders(preferences(), remoteChannel(Channel.ChannelType.TRAFFIC,
+                phase2, RecorderType.DEMODULATED_BIT_STREAM)).isEmpty());
+        }
+    }
+
+    private static Channel remoteChannel(Channel.ChannelType type, boolean phase2, RecorderType... recorderTypes)
+    {
+        Channel channel = channel(type, recorderTypes);
+        channel.setDecodeConfiguration(phase2 ? new DecodeConfigP25Phase2() : new DecodeConfigP25Phase1());
+        SourceConfigRemote source = new SourceConfigRemote();
+        source.setSenderId("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+        source.setFeedId("11111111-2222-4333-8444-555555555555");
+        source.setFrequency(FREQUENCY);
+        channel.setSourceConfiguration(source);
+        return channel;
     }
 
     private UserPreferences preferences()
