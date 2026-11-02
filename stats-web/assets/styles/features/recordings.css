@@ -113,6 +113,7 @@
   .recordings-call-source, .recordings-call-frequency, .recordings-call-identity,
   .recordings-call-reception, .recordings-call-status, .recordings-transcript-preview) { color: var(--recording-played-ink); }
 .recordings-call-playing { background: var(--recording-active-fill); box-shadow: inset var(--space-1) 0 0 var(--recording-active-marker); }
+.recordings-call-playing .recordings-call-select:not(:checked):not(:indeterminate) { border-color: var(--muted); }
 .recordings-transcript-preview { grid-column: 1 / -1; margin: 0; padding: var(--space-2) 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; white-space: pre-wrap; line-height: var(--line-height-body); }
 .recordings-transcript-empty { color: var(--muted); font-size: var(--font-size-meta); }
 .read-only-modal.recordings-filters-modal { width: min(740px, calc(100vw - var(--space-5))); }

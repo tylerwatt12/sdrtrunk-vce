@@ -503,13 +503,8 @@ function winningSite(row) {
 function recordingContextFacts(row) {
   const system = value(row, 'system_key', 'radio_system_key') || row.radio_system_entity_ref?.key || '';
   const channel = value(row, 'channel_id') || row.channel_entity_ref?.key || '';
-  const site = row.audio_from && typeof row.audio_from === 'object' ? row.audio_from : row;
-  const coordinates = [value(site, 'wacn'), value(site, 'system_id', 'sysid'),
-    value(site, 'rfss_id', 'rfss'), value(site, 'site_id')];
   const definitions = [
-    ['system', 'System', systemLabel(row), system],
     ['channel', 'Channel', value(row, 'channel_name', 'analog_channel_name'), [system, channel]],
-    ['site', 'Site', winningSite(row), [system, row.site_entity_ref?.key || '', ...coordinates]],
     ['protocol', 'Protocol', row.protocol && row.protocol !== 'UNKNOWN' ? protocolLabel(row.protocol) : '', row.protocol]
   ];
   return definitions.filter(([, , text]) => text != null && String(text).trim()).map(([field, title, text, identity]) => ({

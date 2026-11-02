@@ -1499,7 +1499,8 @@ test('page summary shows common facts once across dates and omits facts that var
   await openRecordings(page, { calls: [linkedCall, otherSite] });
   const summary = page.locator('.recordings-call-context');
   await expect(summary).toHaveCount(1);
-  await expect(summary.locator('.recordings-call-context-field[data-field="system"]')).toContainText('Metro Public Safety');
+  await expect(page.locator('.recordings-call-context, .recordings-call-reception')
+    .locator('[data-field="system"], [data-field="site"]')).toHaveCount(0);
   await expect(summary.locator('.recordings-call-context-field[data-field="protocol"]')).toContainText('P25 Phase 2');
   await expect(summary.locator('.recordings-call-context-field[data-field="channel"], .recordings-call-context-field[data-field="site"]')).toHaveCount(0);
   await expect(page.locator('.recordings-call-columns')).toHaveCount(1);
@@ -1508,13 +1509,13 @@ test('page summary shows common facts once across dates and omits facts that var
   await expect(page.locator('.recordings-call').nth(1)).toContainText('South Ridge');
 });
 
-test('page summary keeps all four facts when every call shares them', async ({ page }) => {
+test('page summary keeps channel and protocol when every call shares them', async ({ page }) => {
   await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18,
     start_ms: call.start_ms - 60_000, source_id: 30915 }] });
   const summary = page.locator('.recordings-call-context');
   await expect(summary).toHaveCount(1);
-  await expect(summary.locator('.recordings-call-context-field')).toHaveCount(4);
-  for (const field of ['system', 'channel', 'site', 'protocol']) {
+  await expect(summary.locator('.recordings-call-context-field')).toHaveCount(2);
+  for (const field of ['channel', 'protocol']) {
     await expect(summary.locator(`[data-field="${field}"]`)).toHaveCount(1);
   }
   await expect(page.locator('.recordings-call-columns')).toHaveCount(1);
@@ -1525,9 +1526,9 @@ test('page summary omits missing fields instead of borrowing another call’s da
     channel_name: null, site_name: null, protocol: null };
   await openRecordings(page, { calls: [linkedCall, missing] });
   const summary = page.locator('.recordings-call-context');
-  await expect(summary).toHaveCount(1);
-  await expect(summary.locator('.recordings-call-context-field')).toHaveCount(1);
-  await expect(summary.locator('[data-field="system"]')).toContainText('Metro Public Safety');
+  await expect(summary).toHaveCount(0);
+  await expect(page.locator('.recordings-call').first().locator('[data-field="channel"]')).toHaveText('North Ridge Channel');
+  await expect(page.locator('.recordings-call').nth(1).locator('.recordings-call-reception')).toHaveCount(0);
   await expect(page.locator('.recordings-call-columns')).toHaveCount(1);
 });
 
@@ -1560,7 +1561,7 @@ test('page summary stays attached to displayed calls through pending filter remo
   const state = await openRecordings(page, { calls: [linkedCall, { ...linkedCall, id: 18 }], query: { system_key: systemKey } });
   const summary = page.locator('.recordings-call-context');
   await expect(summary).toHaveCount(1);
-  await expect(summary).toContainText('Metro Public Safety');
+  await expect(summary).toContainText('North Ridge Channel');
   const displayed = await summary.textContent();
   const systemChip = page.locator('.recordings-selected-filters .recordings-filter-chip[aria-label*="System:"]');
   await expect(systemChip.locator('.recordings-filter-chip-label')).toHaveText('Metro Public Safety');
@@ -1638,7 +1639,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     await expect(rows.first().locator('a')).toHaveCount(0);
     await expect(rows.first().locator('.recordings-call-identity')).toContainText('1201');
     await expect(rows.first().locator('.recordings-call-source')).toContainText('ENG 4');
-    await expect(page.locator('.recordings-call-context').first()).toContainText('Metro Public Safety');
+    await expect(page.locator('.recordings-call-context').first()).toContainText('North Ridge Channel');
     await expect(rows.first()).toHaveClass(/recordings-call-playing/);
     await expect(rows.nth(1)).toHaveClass(/recordings-call-queued/);
     const queuedStatus = rows.nth(1).locator('.recordings-call-status');
@@ -1650,7 +1651,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
         const probe = document.createElement('span'); probe.style.color = `var(${token})`;
         document.body.append(probe); const result = getComputedStyle(probe).color; probe.remove(); return result;
       };
-      return { accent: color('--accent'), queued: color('--recording-queue-marker'), line: color('--line'),
+      return { active: color('--recording-active-marker'), queued: color('--recording-queue-marker'), line: color('--line'),
         rows: elements.map(element => {
           const paint = getComputedStyle(element), status = getComputedStyle(element.querySelector('.recordings-call-status'));
           return { marker: paint.boxShadow, top: paint.borderTopWidth, right: paint.borderRightWidth,
@@ -1658,9 +1659,9 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
             statusClip: status.clipPath, statusDisplay: status.display, statusWidth: status.width };
         }) };
     });
-    expect(rowPaint.rows[0].marker).toContain(rowPaint.accent);
+    expect(rowPaint.rows[0].marker).toContain(rowPaint.active);
     expect(rowPaint.rows[1].marker).toContain(rowPaint.queued);
-    expect(rowPaint.queued).not.toBe(rowPaint.accent);
+    expect(rowPaint.queued).not.toBe(rowPaint.active);
     for (const paint of rowPaint.rows) {
       expect(paint.top).toBe('0px'); expect(paint.right).toBe('0px'); expect(paint.left).toBe('0px');
       expect(paint.bottomColor).toBe(rowPaint.line); expect(paint.outline).toBe('none');
@@ -1724,10 +1725,10 @@ for (const [theme, width] of [['light', 1280], ['dark', 320]]) {
     await recordingAction(page, rows.first(), 'Add to queue');
     await expect(rows.first()).toHaveClass(/recordings-call-playing/);
     await expect(rows.first()).toHaveClass(/recordings-call-queued/);
-    await expect(rows.first().locator('.recordings-call-status')).not.toHaveClass(/visually-hidden/);
-    expect(await rows.first().evaluate(element => getComputedStyle(element).boxShadow)).toContain(rowPaint.accent);
+    await expect(rows.first().locator('.recordings-call-status')).toBeHidden();
+    expect(await rows.first().evaluate(element => getComputedStyle(element).boxShadow)).toContain(rowPaint.active);
     await recordingAction(page, rows.first(), 'Play once');
-    await expect(rows.locator('.recordings-call-status.visually-hidden')).toHaveCount(0);
+    await expect(rows.nth(1).locator('.recordings-call-status')).toBeHidden();
     await expect(page.locator('.recordings-call-queued')).toHaveCount(0);
   });
 }
