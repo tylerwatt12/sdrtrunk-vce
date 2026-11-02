@@ -61,6 +61,9 @@ public final class ApplicationDatabaseMigrator
     public static final int EXIT_MIGRATION_FAILED = 5;
 
     private static final String PORTABLE_PREFERENCES_KEY = "portable_java_preferences_v1";
+    private static final String NO_ACTIVITY_JOURNAL_ATTEMPT = "activity_journal_disabled_attempt";
+    private static final String MANUAL_ACTIVITY_RECOVERY = "The Activity update was attempted without an undo journal. " +
+        "Keep this installation stopped and restore your complete manual backup before trying again.";
     private static final String NOW_PLAYING_PREFERENCES_NODE =
         "user/io/github/dsheirer/preference/nowplaying";
     private static final int MAXIMUM_PORTABLE_PREFERENCES_BYTES = 4_194_304;
@@ -326,20 +329,44 @@ public final class ApplicationDatabaseMigrator
     public static String migrateTransferred(Path database, Path source, Path target,
                                      io.github.dsheirer.portable.PortableDataRootLock lock) throws IOException, SQLException
     {
+        return migrateTransferred(database, source, target, lock, false);
+    }
+
+    /** Explicit one-attempt format-68 Activity conversion; recovery for an interrupted attempt is manual. */
+    public static String migrateTransferred(Path database, Path source, Path target,
+        io.github.dsheirer.portable.PortableDataRootLock lock, boolean noActivityJournal) throws IOException, SQLException
+    {
+        return migrateTransferred(database, source, target, lock, noActivityJournal, null);
+    }
+
+    static String migrateTransferred(Path database, Path source, Path target,
+        io.github.dsheirer.portable.PortableDataRootLock lock, boolean noActivityJournal, Consumer<String> observer)
+        throws IOException, SQLException
+    {
         if(lock == null || !lock.getDataRoot().equals(target))
             throw new IOException("The transferred VCE profile must remain locked during its update.");
         lock.rebindMovedRoot(target);
         PortableProfileTransfer.requireActivation(source, target);
+        var transfer = PortableProfileTransfer.resume(target, lock);
+        if(transfer.metadata(NO_ACTIVITY_JOURNAL_ATTEMPT) != null) throw new IOException(MANUAL_ACTIVITY_RECOVERY);
+        if(noActivityJournal && transfer.phase() != PortableProfileTransfer.Phase.ACTIVATING)
+            throw new IOException("The one-attempt Activity update requires an activating profile transfer.");
         try(ByteArrayOutputStream bytes = new ByteArrayOutputStream();
             PrintStream output = new PrintStream(bytes, true, StandardCharsets.UTF_8))
         {
             migrateOwnedCompleteProfileCopy(database, new DataRootRelocation(source, target, true), output,
-                MigrationContent.FULL, true);
+                MigrationContent.FULL, true, noActivityJournal ? transfer : null, observer);
             return bytes.toString(StandardCharsets.UTF_8);
         }
         catch(UnsupportedDatabaseFormatException unsupported)
         {
             throw new SQLException(unsupported.getMessage(), unsupported);
+        }
+        catch(IOException | SQLException | RuntimeException | Error failure)
+        {
+            if(transfer.metadata(NO_ACTIVITY_JOURNAL_ATTEMPT) != null)
+                throw new IOException(MANUAL_ACTIVITY_RECOVERY, failure);
+            throw failure;
         }
     }
 
@@ -356,6 +383,14 @@ public final class ApplicationDatabaseMigrator
 
     private static void migrateOwnedCompleteProfileCopy(Path database, DataRootRelocation relocation,
                                                         PrintStream output, MigrationContent content, boolean transferred)
+        throws IOException, SQLException, UnsupportedDatabaseFormatException
+    {
+        migrateOwnedCompleteProfileCopy(database, relocation, output, content, transferred, null, null);
+    }
+
+    private static void migrateOwnedCompleteProfileCopy(Path database, DataRootRelocation relocation,
+        PrintStream output, MigrationContent content, boolean transferred,
+        PortableProfileTransfer.Transfer noActivityJournalTransfer, Consumer<String> observer)
         throws IOException, SQLException, UnsupportedDatabaseFormatException
     {
         if(Files.isSymbolicLink(database))
@@ -378,7 +413,8 @@ public final class ApplicationDatabaseMigrator
         output.println("Checking the owned complete profile's schema and configuration.");
         output.println("Whole-file physical-integrity, derived-history, and foreign-key sweeps are not run " +
             "for this owned profile; use explicit maintenance for those checks.");
-        MigrationTimings timings = new MigrationTimings(output::println);
+        Consumer<String> progress = line -> { output.println(line); if(observer != null) observer.accept(line); };
+        MigrationTimings timings = new MigrationTimings(progress);
 
         try(Connection connection = open(database))
         {
@@ -391,6 +427,18 @@ public final class ApplicationDatabaseMigrator
                 if(source.version() >= 63)
                     io.github.dsheirer.database.ConfigurationHistoryDatabase.validatePairIdentity(database);
                 plan = DatabaseMigrationChain.planInPlace(connection, source).withContent(content);
+                if(noActivityJournalTransfer != null)
+                {
+                    if(!transferred || content != MigrationContent.FULL || source.version() != 68 ||
+                        DatabaseFormatCatalog.CURRENT_VERSION != 69 || !source.markerPresent() ||
+                        !io.github.dsheirer.database.ConfigurationHistoryDatabase.isPairedConfiguration(connection) ||
+                        plan.steps().stream().anyMatch(step -> !(step.sourceVersion() == 68 &&
+                            ((step.targetVersion() == 69 && step.id().equals("activity-encryption-state-v1")) ||
+                             (step.targetVersion() == 68 && step.id().equals("repair-portable-preferences"))))))
+                        throw new SQLException("The one-attempt Activity update requires a paired format-68 to format-69 transfer.");
+                    DatabaseFormatCatalog.inspect(connection);
+                    validateConfiguration(connection, database);
+                }
                 phase.complete();
             }
             printPreflight(output, plan, relocation);
@@ -399,7 +447,7 @@ public final class ApplicationDatabaseMigrator
             LegacyReceiverSettingsMigration.Snapshot legacy = LegacyReceiverSettingsMigration.capture(
                 database.getParent().getParent(), legacyKeys);
             MigrationSummary migration = migrateInTransaction(connection, source, relocation, database, true,
-                output::println, null, legacy, Map.of(), content, timings);
+                progress, null, legacy, Map.of(), content, timings, noActivityJournalTransfer);
             //The transaction has checked the exact final schema, required settings and configuration before COMMIT.
             //Finalize this private stage for atomic promotion without scanning retained history again.
             try(var phase = timings.phase("Finalize owned-profile journals and database pair activation"))
@@ -652,8 +700,33 @@ public final class ApplicationDatabaseMigrator
             MigrationTimings timings)
         throws IOException, SQLException
     {
+        return migrateInTransaction(connection, expectedSource, relocation, database, inPlace, progress, backup,
+            legacy, recoveryDefaults, content, timings, null);
+    }
+
+    private static MigrationSummary migrateInTransaction(Connection connection,
+            DatabaseFormatCatalog.DetectedFormat expectedSource, DataRootRelocation relocation, Path database,
+            boolean inPlace, Consumer<String> progress, BackupAction backup,
+            LegacyReceiverSettingsMigration.Snapshot legacy, Map<String,String> recoveryDefaults, MigrationContent content,
+            MigrationTimings timings, PortableProfileTransfer.Transfer noActivityJournalTransfer)
+        throws IOException, SQLException
+    {
         MigrationSummary committed = null;
         prepareActivityUpgrade(connection, expectedSource, database);
+        boolean noActivityJournal = noActivityJournalTransfer != null;
+        if(noActivityJournal)
+        {
+            // Admission and normal WAL recovery have finished. Latch the one allowed attempt before disabling undo.
+            if(!hasAttachedActivity(connection)) throw new SQLException("The Activity companion is not attached.");
+            String marker = io.github.dsheirer.database.ConfigurationHistorySchema.metadata(connection, "activity",
+                DatabaseFormatCatalog.FORMAT_VERSION_KEY);
+            if(!List.of("63", "64", "65", "66", "67", "68").contains(marker))
+                throw new SQLException("The one-attempt Activity update requires an admitted format-63 through format-68 companion.");
+            requireJournalMode(connection, "main", "DELETE");
+            noActivityJournalTransfer.metadata(Map.of(NO_ACTIVITY_JOURNAL_ATTEMPT, "true"));
+            requireJournalMode(connection, "activity", "OFF");
+            progress.accept("Activity undo journal disabled for this one-attempt update; recovery requires your manual backup.");
+        }
         try(Statement statement = connection.createStatement())
         {
             boolean transactionOpen = false;
@@ -721,14 +794,14 @@ public final class ApplicationDatabaseMigrator
                 SqliteIdentityRepair.Inspection identityRepair = SqliteIdentityRepair.Inspection.none();
                 try(var phase = timings.phase("Prepare legacy settings, configuration and identity repairs"))
                 {
-                    recoveredLegacySettings = legacy.recoverSelected(connection, recoveryDefaults);
-                    if(inPlace)
+                    recoveredLegacySettings = noActivityJournal ? 0 : legacy.recoverSelected(connection, recoveryDefaults);
+                    if(inPlace && !noActivityJournal)
                     {
                         //Factory inserts need usable sequence state before their adjacent step. This checks only
                         //configuration allocator rows and indexed maxima; it never walks retained receiver history.
                         identityRepair = SqliteIdentityRepair.repairAllocators(connection);
                     }
-                    else if(expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
+                    else if(!noActivityJournal && expectedSource.version() < DatabaseFormatCatalog.CURRENT_VERSION)
                     {
                         //Historical steps can seed factory configuration. Normalize exhausted allocator state and
                         //isolate JSON-unsafe configuration identities before any such insert occurs.
@@ -794,8 +867,11 @@ public final class ApplicationDatabaseMigrator
                         //All historical layouts have now reached current configuration semantics. Repair this bounded
                         //component once; omit full derived-history, physical-integrity and foreign-key sweeps.
                         portablePreferences = updatePortableDirectoryPreferences(connection, relocation);
-                        administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection, false);
-                        currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
+                        if(!noActivityJournal)
+                        {
+                            administrativeRepair = CurrentDatabaseAdministrativeRepair.repair(connection, false);
+                            currentRepair = CurrentDatabaseBestEffortRepair.repair(connection);
+                        }
                     }
                     if(checkConstraintsRelaxed)
                     {
@@ -865,9 +941,11 @@ public final class ApplicationDatabaseMigrator
                     committed = summary;
                     phase.complete();
                 }
+                if(noActivityJournal) requireJournalMode(connection, "activity", "DELETE");
                 try { progress.accept("Database update committed"); }
                 catch(RuntimeException | Error ignored)
                 {
+                    if(noActivityJournal) throw ignored;
                     reportCleanupWarning(progress, "Database update committed; completion observer reported a warning");
                 }
                 if(foreignKeysRelaxed)
@@ -878,7 +956,7 @@ public final class ApplicationDatabaseMigrator
             }
             catch(IOException | SQLException | RuntimeException | Error e)
             {
-                if(transactionOpen)
+                if(transactionOpen && !noActivityJournal)
                 {
                     try
                     {
@@ -923,7 +1001,7 @@ public final class ApplicationDatabaseMigrator
         }
         catch(IOException | SQLException | RuntimeException | Error failure)
         {
-            if(committed != null)
+            if(committed != null && !noActivityJournal)
             {
                 reportCleanupWarning(progress, "Database update committed; completion cleanup reported a warning");
                 return committed;
@@ -1831,6 +1909,18 @@ public final class ApplicationDatabaseMigrator
             {
                 throw new SQLException("Unable to finalize the staged database journal.");
             }
+        }
+    }
+
+    private static void requireJournalMode(Connection connection, String schema, String mode) throws SQLException
+    {
+        if(!List.of("main", "activity").contains(schema) || !List.of("DELETE", "OFF").contains(mode))
+            throw new SQLException("Unknown migration journal policy");
+        try(Statement statement = connection.createStatement();
+            ResultSet result = statement.executeQuery("PRAGMA " + schema + ".journal_mode=" + mode))
+        {
+            if(!result.next() || !mode.equalsIgnoreCase(result.getString(1)))
+                throw new SQLException("Unable to apply the required " + schema + " migration journal mode");
         }
     }
 

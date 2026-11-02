@@ -136,7 +136,7 @@ class Format68To69DatabaseMigrationTest
     }
 
     /** Compare retained data independently of the deliberately replaced encryption field and format metadata. */
-    private static Map<String,List<String>> snapshot(Connection connection) throws Exception
+    static Map<String,List<String>> snapshot(Connection connection) throws Exception
     {
         Map<String,List<String>> result = new LinkedHashMap<>();
         List<String> tables = new ArrayList<>();

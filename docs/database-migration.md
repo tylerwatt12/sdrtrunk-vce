@@ -1189,6 +1189,14 @@ and reports actual effects. Ordinary startup and owned-profile upgrades do not p
 or derived-history scans. Damage detectable only through such scans can surface later; explicit inspection and the
 strict copy-import engine retain their fuller checks.
 
+An explicitly selected transferred-profile format-68-to-69 update can disable the Activity undo journal for a single
+attempt. Configuration keeps its normal journal, and the exact target schema and retained-history meanings stay
+unchanged. The existing transfer receipt records the attempt before undo protection is disabled. A failed attempt
+may leave Activity partially changed or corrupted; it cannot be retried, and startup remains blocked until the user
+restores their manual backup. Successful conversion restores Activity journaling before the profile is admitted.
+Normal graphical, headless and copy-import transactions keep their existing journal behavior. Index growth and
+sorting still require workspace in this explicit mode; its smaller allowance is not a guaranteed SQLite peak.
+
 Headless `--upgrade-current --backup-confirmed` retains full content and acknowledges the operator's complete
 manual installation backup. `--upgrade-managed-recordings --backup-confirmed` uses the same policy for a catalog
 update. Neither creates an additional automatic upgrade backup; recovery after a committed update requires the

@@ -180,6 +180,90 @@ class OwnedMigrationWorkspaceTest
         assertArrayEquals(before, Files.readAllBytes(unknown));
     }
 
+    @Test void explicitNoActivityJournalRetainsIndexAndConfigurationAllowanceWithoutChangingSource() throws Exception
+    {
+        Path database = Format68TestDatabase.create(temporary.resolve("no-activity-journal.sqlite"));
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        long configurationBytes = Files.size(database), historyBytes = Files.size(history);
+        long expected = historyBytes + 2 * configurationBytes + 64L * 1024 * 1024;
+        byte[] configuration = Files.readAllBytes(database), activity = Files.readAllBytes(history);
+        assertEquals(2 * (configurationBytes + historyBytes),
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, false));
+        assertEquals(expected,
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
+        assertArrayEquals(configuration, Files.readAllBytes(database));
+        assertArrayEquals(activity, Files.readAllBytes(history));
+
+        growDetailedEvents(history);
+        activity = Files.readAllBytes(history);
+        long grown = ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true);
+        assertEquals(expected + Files.size(history) - historyBytes, grown,
+            "The explicit mode removes Activity undo space, not all Activity working space");
+        Path journal = Path.of(history + "-journal");
+        Files.write(journal, new byte[512]); // A cold, zero-header journal requires no SQLite recovery.
+        assertEquals(grown + 512,
+            ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
+        assertArrayEquals(new byte[512], Files.readAllBytes(journal));
+        assertArrayEquals(configuration, Files.readAllBytes(database));
+        assertArrayEquals(activity, Files.readAllBytes(history));
+        assertFalse(Files.exists(database.getParent().resolve("backups")));
+    }
+
+    @Test void explicitNoActivityJournalIncludesBothCommittedWalsWithoutChangingJournalModes() throws Exception
+    {
+        Path database = Format68TestDatabase.create(temporary.resolve("no-activity-journal-wal.sqlite"));
+        Path history = ActivityDatabasePath.forConfiguration(database);
+        try(var configuration = DriverManager.getConnection("jdbc:sqlite:" + database);
+            var activity = DriverManager.getConnection("jdbc:sqlite:" + history);
+            var configStatement = configuration.createStatement(); var activityStatement = activity.createStatement())
+        {
+            for(var statement: List.of(configStatement, activityStatement))
+            {
+                statement.execute("PRAGMA journal_mode=WAL");
+                statement.execute("PRAGMA wal_autocheckpoint=0");
+            }
+            configStatement.executeUpdate("UPDATE application_settings SET updated_at_ms=updated_at_ms+1");
+            activityStatement.executeUpdate("UPDATE receiver_activity_event SET encrypted=1-encrypted");
+            Path configWal = Path.of(database + "-wal"), activityWal = Path.of(history + "-wal");
+            assertTrue(Files.size(configWal) > 0 && Files.size(activityWal) > 0);
+            var files = List.of(database, history, configWal, activityWal);
+            var before = new ArrayList<byte[]>();
+            for(Path file: files) before.add(Files.readAllBytes(file));
+            long expected = Files.size(history) + Files.size(activityWal) +
+                2 * (Files.size(database) + Files.size(configWal)) + 64L * 1024 * 1024;
+            assertEquals(expected,
+                ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
+            for(int index = 0; index < files.size(); index++)
+                assertArrayEquals(before.get(index), Files.readAllBytes(files.get(index)));
+            for(var statement: List.of(configStatement, activityStatement))
+                try(var mode = statement.executeQuery("PRAGMA journal_mode"))
+                { assertTrue(mode.next()); assertEquals("wal", mode.getString(1)); }
+        }
+    }
+
+    @Test void explicitNoActivityJournalRejectsOtherFormatsAndContentsWithoutChangingThem() throws Exception
+    {
+        for(int version: List.of(62, 63, 69))
+        {
+            Path database = temporary.resolve("unsupported-no-journal-" + version + ".sqlite");
+            if(version == 62) Format62TestDatabase.create(database);
+            else if(version == 63) Format63TestDatabase.create(database);
+            else Format69TestDatabase.create(database);
+            byte[] before = Files.readAllBytes(database);
+            Path history = ActivityDatabasePath.forConfiguration(database);
+            byte[] historyBefore = Files.exists(history) ? Files.readAllBytes(history) : null;
+            assertThrows(IllegalArgumentException.class,
+                () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL, true));
+            assertArrayEquals(before, Files.readAllBytes(database));
+            if(historyBefore != null) assertArrayEquals(historyBefore, Files.readAllBytes(history));
+        }
+        Path database = Format68TestDatabase.create(temporary.resolve("settings-only-no-journal.sqlite"));
+        byte[] before = Files.readAllBytes(database);
+        assertThrows(IllegalArgumentException.class, () -> ApplicationMigrationService.requiredOwnedMigrationWorkspace(
+            database, MigrationContent.CONFIGURATION_ONLY, true));
+        assertArrayEquals(before, Files.readAllBytes(database));
+    }
+
     private static void growDetailedEvents(Path database) throws SQLException
     {
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);

@@ -676,6 +676,35 @@ public final class ApplicationMigrationService
         return requiredOwnedMigrationWorkspace(normalized, content, readStartupPlan(normalized));
     }
 
+    /**
+     * Workspace for the explicit transferred-profile mode without an Activity undo journal. Only the admitted
+     * paired format-68-to-69 conversion supports this choice. Configuration keeps its journal. The remaining
+     * allowance retains one complete Activity footprint for changed/COW pages, three narrow partial-index rebuilds
+     * and their sequential sort work, plus configuration transaction/settings space. This is an operational
+     * allowance, not a guaranteed SQLite peak; callers must budget free headroom separately and stop before using it.
+     * Planning stays read-only and refuses a hot journal that needs recovery. No backup or headroom is included.
+     */
+    public static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content,
+        boolean noActivityJournal) throws IOException, SQLException
+    {
+        if(!noActivityJournal) return requiredOwnedMigrationWorkspace(database, content);
+        Objects.requireNonNull(content, "Migration contents cannot be null");
+        Path normalized = Objects.requireNonNull(database, "Database cannot be null").toAbsolutePath().normalize();
+        if(content != MigrationContent.FULL)
+            throw new IllegalArgumentException("Disabling the Activity undo journal requires a full retained-profile upgrade.");
+        var plan = readStartupPlan(normalized, false);
+        if(plan.source().version() != 68 || plan.target().version() != 69 ||
+            plan.steps().stream().filter(step -> step.sourceVersion() == 68 && step.targetVersion() == 69 &&
+                "activity-encryption-state-v1".equals(step.id())).count() != 1 ||
+            !plan.steps().stream().allMatch(step -> step.sourceVersion() == 68 &&
+                (step.targetVersion() == 69 && "activity-encryption-state-v1".equals(step.id()) ||
+                    step.targetVersion() == 68 && "repair-portable-preferences".equals(step.id()))) ||
+            !ConfigurationHistoryDatabase.isPairedConfiguration(normalized))
+            throw new IllegalArgumentException("Disabling the Activity undo journal supports only the paired format-68-to-69 upgrade.");
+        return safeAdd(safeAdd(sqliteFileFootprint(ActivityDatabasePath.forConfiguration(normalized)),
+            safeMultiply(sqliteFileFootprint(normalized), 2)), FREE_SPACE_MARGIN_BYTES);
+    }
+
     /** Reuses an admitted plan while its caller still owns the same stopped profile. */
     static long requiredOwnedMigrationWorkspace(Path database, MigrationContent content,
         DatabaseMigrationChain.PreflightReport plan) throws IOException
@@ -736,10 +765,17 @@ public final class ApplicationMigrationService
     public static DatabaseMigrationChain.PreflightReport readStartupPlan(Path database)
         throws IOException, SQLException
     {
+        return readStartupPlan(database, true);
+    }
+
+    private static DatabaseMigrationChain.PreflightReport readStartupPlan(Path database, boolean allowJournalRecovery)
+        throws IOException, SQLException
+    {
         Path normalized = database.toAbsolutePath().normalize();
         SqliteDatabaseSnapshot.requireSourceUsable(normalized);
         ApplicationDatabaseMigrator.requireSingleFilesystemLinkWhenSupported(normalized);
-        boolean recoveryRequired = Files.isRegularFile(Path.of(normalized + "-journal"), LinkOption.NOFOLLOW_LINKS);
+        boolean recoveryRequired = allowJournalRecovery &&
+            Files.isRegularFile(Path.of(normalized + "-journal"), LinkOption.NOFOLLOW_LINKS);
         SQLiteConfig config = new SQLiteConfig();
         config.setReadOnly(!recoveryRequired);
         config.setBusyTimeout(SdrTrunkDatabase.BUSY_TIMEOUT_MILLISECONDS);
