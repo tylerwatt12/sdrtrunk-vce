@@ -1,18 +1,22 @@
 /* Copyright (C) 2026 Dennis Sheirer. SPDX-License-Identifier: GPL-3.0-or-later */
 package io.github.dsheirer.audio.broadcast;
 
+import static io.github.dsheirer.test.BroadcastRouteTestSupport.route;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mpatric.mp3agic.ID3v24Tag;
+import com.mpatric.mp3agic.Mp3File;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import io.github.dsheirer.alias.Alias;
 import io.github.dsheirer.alias.AliasListDefinition;
 import io.github.dsheirer.alias.AliasListFamily;
 import io.github.dsheirer.alias.AliasModel;
+import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.talkgroup.StreamAsTalkgroup;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
 import io.github.dsheirer.audio.broadcast.broadcastify.BroadcastifyCallBroadcaster;
@@ -21,17 +25,29 @@ import io.github.dsheirer.audio.broadcast.openmhz.OpenMHzBroadcaster;
 import io.github.dsheirer.audio.broadcast.openmhz.OpenMHzConfiguration;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerBroadcaster;
 import io.github.dsheirer.audio.broadcast.rdioscanner.RdioScannerConfiguration;
+import io.github.dsheirer.audio.call.AudioCallId;
+import io.github.dsheirer.audio.call.AudioCallSnapshot;
+import io.github.dsheirer.audio.call.CallEncryptionState;
+import io.github.dsheirer.audio.call.CallLegId;
+import io.github.dsheirer.audio.call.CallLegSource;
+import io.github.dsheirer.audio.call.CompletedAudioCall;
+import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.configuration.AliasListConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.FrequencyConfigurationIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
 import io.github.dsheirer.module.decode.p25.identifier.radio.APCO25FullyQualifiedRadioIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.talkgroup.APCO25Talkgroup;
 import io.github.dsheirer.protocol.Protocol;
+import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.wave.AudioMetadataUtils;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -39,6 +55,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,6 +64,7 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.prefs.Preferences;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -74,6 +93,18 @@ class NumericIdUploadContractTest
         for(Probe probe: probes()) verifyUpload(Provider.OPENMHZ, probe);
     }
 
+    @Test
+    void realStreamingMp3NamesUseConfiguredThenOtaWithoutChangingProviderIdsOrOtaFields() throws Exception
+    {
+        for(Provider provider: Provider.values())
+        {
+            verifyUpload(provider, probes().get(0), null, "OTA NXDN Unit");
+            verifyUpload(provider, probes().get(0), "Configured Unit", "OTA NXDN Unit");
+            verifyUpload(provider, probes().get(4), null, "OTA Type-D Unit");
+            verifyUpload(provider, probes().get(6), null, "OTA P25 Unit");
+        }
+    }
+
     private static List<Probe> probes()
     {
         PatchGroup patch = new PatchGroup(APCO25Talkgroup.create(100));
@@ -100,11 +131,16 @@ class NumericIdUploadContractTest
 
     private void verifyUpload(Provider provider, Probe probe) throws Exception
     {
+        verifyUpload(provider, probe, null, null);
+    }
+
+    private void verifyUpload(Provider provider, Probe probe, String configuredSource, String otaName) throws Exception
+    {
         AliasListDefinition definition = new AliasListDefinition("Numeric export fixture",
             probe.source().getProtocol() == Protocol.NXDN ? AliasListFamily.NXDN : AliasListFamily.P25);
         definition.setId(7);
         AliasModel aliases = new AliasModel();
-        List<Alias> configured = List.of();
+        List<Alias> configured = new ArrayList<>();
         if(probe.streamAs() != null)
         {
             Alias mapped = new Alias("0xABCD dispatch");
@@ -112,22 +148,43 @@ class NumericIdUploadContractTest
             mapped.setAliasListDefinition(definition);
             mapped.setMatchIdentifier(new Talkgroup(Protocol.NXDN, ((Number)probe.target().getValue()).intValue()));
             mapped.setStreamTalkgroupAlias(new StreamAsTalkgroup(probe.streamAs()));
-            configured = List.of(mapped);
+            configured.add(mapped);
+        }
+        if(configuredSource != null)
+        {
+            Alias source = new Alias(configuredSource);
+            source.setId(2);
+            source.setAliasListDefinition(definition);
+            source.setMatchIdentifier(new Radio(probe.source().getProtocol(),
+                ((Number)probe.source().getValue()).intValue()));
+            configured.add(source);
         }
         aliases.replaceCommittedConfiguration(List.of(definition), configured);
-        IdentifierCollection identifiers = new IdentifierCollection(List.of(probe.source(), probe.target(),
+        List<Identifier> captured = new ArrayList<>(List.of(probe.source(), probe.target(),
             AliasListConfigurationIdentifier.create(definition.getId(), definition.getName()),
             FrequencyConfigurationIdentifier.create(461_125_000L)));
+        if(otaName != null)
+        {
+            TalkerAliasIdentifier raw = probe.source().getProtocol() == Protocol.NXDN ?
+                new NXDNTalkerAliasIdentifier(otaName) : P25TalkerAliasIdentifier.create(otaName);
+            TalkerAliasIdentifier bound = raw.bindTo((RadioIdentifier)probe.source());
+            assertNotNull(bound);
+            captured.add(bound);
+        }
+        IdentifierCollection identifiers = new IdentifierCollection(captured);
         byte[] tagBytes = AudioMetadataUtils.getMP3ID3(AudioMetadataUtils.getMetadataMap(identifiers,
             aliases.getAliasList(definition.getName())));
         ID3v24Tag tags = new ID3v24Tag(tagBytes);
         String expectedTitle = probe.basicTitle() + (probe.streamAs() != null ? "\"0xABCD dispatch\"" : "");
         assertEquals(expectedTitle, tags.getTitle(), probe.name());
-        assertEquals(probe.sourceText(), tags.getArtist(), probe.name());
+        String expectedArtist = probe.sourceText() + (configuredSource != null ? " " + configuredSource :
+            otaName != null ? " " + otaName : "");
+        assertEquals(expectedArtist, tags.getArtist(), probe.name());
         ByteArrayOutputStream transport = new ByteArrayOutputStream();
         transport.write(tagBytes);
         transport.write("synthetic transport audio".getBytes(StandardCharsets.US_ASCII));
-        byte[] audioBytes = transport.toByteArray();
+        byte[] audioBytes = otaName != null ? actualStreamingMp3(probe, aliases, definition, identifiers,
+            configuredSource) : transport.toByteArray();
         //Rdio derives its uploaded basename from the final two underscore-separated spool tokens.
         Path path = mTemporaryFolder.resolve("temporary_streaming_file_" + provider + "_" + probe.name() + ".mp3");
         Files.write(path, audioBytes);
@@ -174,7 +231,9 @@ class NumericIdUploadContractTest
             broadcaster.receive(recording);
             assertTrue(streamed.await(5, TimeUnit.SECONDS), provider + " " + probe.name());
             Map<String,byte[]> fields = requestFields.get();
-            assertEquals(provider.fields, fields.keySet(), "The provider's existing field schema must remain intact");
+            Set<String> expectedFields = new HashSet<>(provider.fields);
+            if(provider == Provider.BROADCASTIFY && otaName != null) expectedFields.add("srcId_alias");
+            assertEquals(expectedFields, fields.keySet(), "The provider's existing field schema must remain intact");
             String target = probe.streamAs() != null ? probe.streamAs().toString() :
                 provider == Provider.BROADCASTIFY ? probe.apiTarget() : probe.apiTarget().split(",")[0];
             assertEquals(target, text(fields, provider.targetField), probe.name());
@@ -183,12 +242,14 @@ class NumericIdUploadContractTest
             if(provider != Provider.BROADCASTIFY)
             {
                 assertEquals(probe.patches(), text(fields, provider == Provider.RDIO ? "patches" : "patch_list"));
-                assertEquals("", text(fields, provider == Provider.RDIO ? "talkerAlias" : "talker_alias"),
-                    "Numeric serialization must not invent an OTA name");
+                assertEquals(otaName != null ? otaName : "",
+                    text(fields, provider == Provider.RDIO ? "talkerAlias" : "talker_alias"),
+                    "The separate OTA upload field keeps the decoded name even when a configured Artist wins");
             }
+            else if(otaName != null) assertEquals(otaName, text(fields, "srcId_alias"));
             assertArrayEquals(audioBytes, uploadedAudio.get(), "Providers must transport the existing MP3 tags unchanged");
             assertEquals(expectedTitle, new ID3v24Tag(uploadedAudio.get()).getTitle());
-            assertEquals(probe.sourceText(), new ID3v24Tag(uploadedAudio.get()).getArtist());
+            assertEquals(expectedArtist, new ID3v24Tag(uploadedAudio.get()).getArtist());
             assertEquals(probe.target(), identifiers.getToIdentifier(), "Provider remapping must not replace decoded identity");
             assertEquals(1, broadcaster.getStreamedAudioCount());
         }
@@ -196,6 +257,60 @@ class NumericIdUploadContractTest
         {
             broadcaster.stop();
             server.stop(0);
+        }
+    }
+
+    /** Runs the actual background streaming encoder, with fresh synthetic audio and isolated preferences. */
+    private byte[] actualStreamingMp3(Probe probe, AliasModel aliases, AliasListDefinition definition,
+                                      IdentifierCollection identifiers, String configuredSource) throws Exception
+    {
+        assertTrue(Preferences.userRoot().getClass().getName().contains("SqlitePreferencesFactory"),
+            "Streaming preference changes require the isolated SQLite test preference factory");
+        UserPreferences preferences = new UserPreferences();
+        Path previousStreaming = preferences.getDirectoryPreference().getDirectoryStreaming();
+        Path previousJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        PatchGroupStreamingOption previousPatch = preferences.getCallManagementPreference().getPatchGroupStreamingOption();
+        Path output = Files.createTempDirectory(mTemporaryFolder, "encoded-stream-");
+        long ended = System.currentTimeMillis();
+        AudioCallId id = new AudioCallId(71, 71, 0);
+        var destination = route("Numeric ID and name upload fixture");
+        AudioCallSnapshot snapshot = new AudioCallSnapshot(id, null, aliases.getAliasList(definition.getName()),
+            identifiers, Set.of(destination), ended - 1_000, ended, 1, 1, ended - 1_000, ended,
+            false, true, CallEncryptionState.CLEAR, false, null, VoiceCallQuality.EMPTY,
+            CallLegId.from(id), CallLegSource.UNKNOWN, null);
+        CompletedAudioCall call = new CompletedAudioCall(snapshot, List.of(new float[8_000]));
+        assertEquals(configuredSource, snapshot.recordingMetadata().sourceAlias(),
+            "A learned OTA name must not be relabeled as a configured source alias");
+        AtomicReference<AudioRecording> encoded = new AtomicReference<>();
+        CountDownLatch complete = new CountDownLatch(1);
+        AudioStreamingManager streaming = new AudioStreamingManager(recording -> {
+            encoded.set(recording);
+            complete.countDown();
+        }, BroadcastFormat.MP3, preferences);
+        try
+        {
+            preferences.getDirectoryPreference().setDirectoryStreaming(output);
+            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getCallManagementPreference().setPatchGroupStreamingOption(PatchGroupStreamingOption.PATCH_GROUP);
+            streaming.start();
+            streaming.receive(call);
+            assertTrue(complete.await(10, TimeUnit.SECONDS), "Real streaming encoding for " + probe.name());
+            AudioRecording recording = encoded.get();
+            Mp3File mp3 = new Mp3File(recording.getPath().toString());
+            assertTrue(mp3.getFrameCount() > 0, "The upload must contain genuinely encoded MP3 frames");
+            assertEquals(Set.of(destination), Set.copyOf(recording.getBroadcastChannels()));
+            assertEquals(probe.source(), recording.getIdentifierCollection().getFromIdentifier());
+            assertEquals(probe.target(), recording.getIdentifierCollection().getToIdentifier());
+            assertEquals(configuredSource, snapshot.recordingMetadata().sourceAlias());
+            return Files.readAllBytes(recording.getPath());
+        }
+        finally
+        {
+            streaming.stop();
+            preferences.getDirectoryPreference().setDirectoryStreaming(previousStreaming);
+            if(previousJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(previousJmbe);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getCallManagementPreference().setPatchGroupStreamingOption(previousPatch);
         }
     }
 

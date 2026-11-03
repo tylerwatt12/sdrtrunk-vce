@@ -4,9 +4,25 @@ MP3 and WAV audio recordings include named VCE fields whenever the recorded audi
 facts. There is no separate setting to enable these fields. An unavailable or invalid value is omitted, rather
 than written as an empty string, `UNKNOWN`, or a guessed value.
 
-The fields supplement existing recording metadata. Filenames, standard ID3 fields, and WAV `LIST/INFO` fields retain
-their existing values and formatting, including the home-system radio-ID simplification. A standard field can retain
-its familiar display text while a VCE field preserves a structured identity for software to read.
+The fields supplement existing recording metadata. Filenames, standard ID3 fields, and WAV `LIST/INFO` fields keep
+their existing structure. Numeric radio and talkgroup IDs use decimal text; P25 qualified identities use the captured
+local ID, and NXDN Type-D identities retain the complete packed address.
+
+## Radio Names
+
+The standard Artist tag contains the source ID followed by its configured radio alias, when that alias has a name.
+If the configured name is blank or missing, the writer uses an available over-the-air (OTA) name: a name transmitted
+by the radio. The OTA name must belong to the completed call's source radio and available system/channel context.
+For example, source `19` with name `Engine One` produces `19 Engine One`. If neither name is available, Artist
+contains only `19`. Text source IDs retain their existing text.
+
+This rule applies across protocols that provide OTA names, including P25, NXDN and DMR, without a setting. It uses
+the name captured with the call, which may have been learned earlier, rather than looking up the directory's latest
+name when writing the file. A missing or mismatched name is omitted.
+
+New saved MP3 and WAV files and temporary MP3 files created for streaming uploads use the same rule. Existing
+recordings are not rewritten. OTA names do not change filenames or add a VCE field. The web interface's personal
+source-name preference controls display independently of the names embedded in audio files.
 
 ## Storage
 

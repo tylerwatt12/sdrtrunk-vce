@@ -31,6 +31,7 @@ import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierClass;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Role;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroupIdentifier;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
@@ -149,7 +150,14 @@ public class AudioMetadataUtils
                 sb.append(BasicRecordingContract.sourceIdentifier(from));
 
                 List<String> fromAliases = captured != null ? aliasNames(captured.sourceAlias()) :
-                    BasicRecordingContract.recordingAliases(aliasList, from).stream().map(Alias::toString).toList();
+                    BasicRecordingContract.recordingAliases(aliasList, from).stream().map(Alias::toString)
+                        .filter(name -> name != null && !name.isBlank()).toList();
+
+                //Keep configured names first; a learned name must belong to this captured source and context.
+                if(fromAliases.isEmpty())
+                {
+                    fromAliases = aliasNames(TalkerAliasIdentifier.valueFor(identifierCollection));
+                }
 
                 for(String alias: fromAliases)
                 {

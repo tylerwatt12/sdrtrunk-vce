@@ -33,11 +33,14 @@ import io.github.dsheirer.alias.id.radio.Radio;
 import io.github.dsheirer.alias.id.radio.RadioRange;
 import io.github.dsheirer.alias.id.radio.P25Subscriber;
 import io.github.dsheirer.alias.id.talkgroup.Talkgroup;
+import io.github.dsheirer.audio.call.AudioCallRecordingMetadata;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.identifier.Role;
 import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
+import io.github.dsheirer.identifier.configuration.ChannelConfigurationIdentifier;
 import io.github.dsheirer.identifier.radio.ResolvedRadioIdentity;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
@@ -56,6 +59,7 @@ import io.github.dsheirer.module.decode.mdc1200.identifier.MDC1200Identifier;
 import io.github.dsheirer.module.decode.nbfm.NBFMTalkgroup;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNRadioIdentifier;
 import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkgroupIdentifier;
+import io.github.dsheirer.module.decode.nxdn.identifier.NXDNTalkerAliasIdentifier;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25System;
 import io.github.dsheirer.module.decode.p25.identifier.APCO25Wacn;
 import io.github.dsheirer.module.decode.p25.identifier.patch.APCO25PatchGroup;
@@ -206,6 +210,85 @@ class AudioMetadataUtilsTest
             assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(alias)),
                 aliasList()), null, null);
         }
+    }
+
+    @Test
+    void configuredSourceTextWinsAndBlankConfiguredNamesUseValidatedOtaText() throws Exception
+    {
+        var source = APCO25RadioIdentifier.createFrom(200);
+        var identifiers = new IdentifierCollection(List.of(source,
+            P25TalkerAliasIdentifier.create("0xABCD R\u00e9ception \u6771").bindTo(source)));
+
+        for(String name: List.of("Configured Unit", "", "   "))
+        {
+            AliasList aliases = aliasList();
+            addAlias(aliases, name, new Radio(Protocol.APCO25, 200));
+            var captured = AudioCallRecordingMetadata.captureAtSnapshot(aliases, identifiers);
+            String expected = name.isBlank() ? "200 0xABCD R\u00e9ception \u6771" : "200 Configured Unit";
+
+            assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, aliases), expected, null);
+            assertIdentities(AudioMetadataUtils.getCapturedMetadataMap(identifiers, captured), expected, null);
+            assertEquals(name.strip(), captured.sourceAlias(),
+                "Recording fallback must not turn a learned name into a configured alias");
+        }
+
+        var captured = AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers);
+        assertIdentities(AudioMetadataUtils.getCapturedMetadataMap(identifiers, captured),
+            "200 0xABCD R\u00e9ception \u6771", null);
+        assertNull(captured.sourceAlias());
+    }
+
+    @Test
+    void missingUnboundWrongRadioAndWrongProtocolNamesLeaveOnlyTheSourceId() throws Exception
+    {
+        var source = APCO25RadioIdentifier.createFrom(200);
+        for(var identifiers: List.of(
+            new IdentifierCollection(List.of(source)),
+            new IdentifierCollection(List.of(source, P25TalkerAliasIdentifier.create("UNBOUND"))),
+            new IdentifierCollection(List.of(source, P25TalkerAliasIdentifier.create("OTHER RADIO")
+                .bindTo(APCO25RadioIdentifier.createFrom(201)))),
+            new IdentifierCollection(List.of(source, DmrTalkerAliasIdentifier.create("OTHER PROTOCOL")
+                .bindTo(DMRRadio.createFrom(200)))),
+            new IdentifierCollection(List.of(source, P25TalkerAliasIdentifier.create("   ")))))
+        {
+            assertIdentities(AudioMetadataUtils.getCapturedMetadataMap(identifiers,
+                AudioCallRecordingMetadata.captureAtSnapshot(null, identifiers)), "200", null);
+        }
+    }
+
+    @Test
+    void recordingFallbackRejectsNamesFromAnotherNetworkOrSavedChannel() throws Exception
+    {
+        var source = APCO25RadioIdentifier.createFrom(200);
+        var networkAlias = P25TalkerAliasIdentifier.create("OTHER NETWORK")
+            .bindTo(source, "p25:bee00:123");
+        var firstChannel = new ChannelConfigurationIdentifier("00000000-0000-0000-0000-000000000001");
+        var secondChannel = new ChannelConfigurationIdentifier("00000000-0000-0000-0000-000000000002");
+        var channelAlias = P25TalkerAliasIdentifier.create("OTHER CHANNEL")
+            .bindTo(new IdentifierCollection(List.of(source, firstChannel)));
+
+        for(var identifiers: List.of(
+            new IdentifierCollection(List.of(source, networkAlias, APCO25Wacn.create(0xBEE00),
+                APCO25System.create(0x124))),
+            new IdentifierCollection(List.of(source, channelAlias, secondChannel))))
+        {
+            assertIdentities(AudioMetadataUtils.getMetadataMap(identifiers, null), "200", null);
+        }
+    }
+
+    @Test
+    void equalNxdnNumbersInDifferentTypeDomainsCannotShareTheRecordingName() throws Exception
+    {
+        var typeC = NXDNRadioIdentifier.createFrom(4121);
+        var typeD = NXDNRadioIdentifier.createTypeDFrom(4121);
+        var raw = new NXDNTalkerAliasIdentifier("HOME REPEATER UNIT");
+
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(typeD,
+            raw.bindTo(typeD))), null), "4121 HOME REPEATER UNIT", null);
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(typeD,
+            raw.bindTo(typeC))), null), "4121", null);
+        assertIdentities(AudioMetadataUtils.getMetadataMap(new IdentifierCollection(List.of(typeC,
+            raw.bindTo(typeD))), null), "4121", null);
     }
 
     @Test

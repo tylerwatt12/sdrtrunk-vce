@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.mpatric.mp3agic.ID3v24Tag;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.dsheirer.audio.call.AudioCallId;
 import io.github.dsheirer.bits.CorrectedBinaryMessage;
 import io.github.dsheirer.module.decode.p25.P25IdentityResolver;
@@ -44,6 +45,10 @@ import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.identifier.Identifier;
 import io.github.dsheirer.identifier.IdentifierCollection;
+import io.github.dsheirer.identifier.alias.DmrTalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.P25TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.alias.TalkerAliasIdentifier;
+import io.github.dsheirer.identifier.radio.RadioIdentifier;
 import io.github.dsheirer.identifier.patch.PatchGroup;
 import io.github.dsheirer.identifier.configuration.ChannelNameConfigurationIdentifier;
 import io.github.dsheirer.identifier.configuration.DecoderTypeConfigurationIdentifier;
@@ -247,6 +252,139 @@ class VceRecordingMetadataFileTest
             preferences.getRecordPreference().setRecordingMode(previous);
         }
     }
+
+    @Test
+    void configuredSourceNameOrValidatedOtaFallbackReachesMp3AndWaveWithoutChangingOtherContracts() throws Exception
+    {
+        List<OtaFileCase> cases = List.of(
+            new OtaFileCase("p25-phase1", APCO25RadioIdentifier.createFrom(19), APCO25Talkgroup.create(31),
+                DecoderType.P25_PHASE1, TrunkedIdentityDomain.STANDARD, P25TalkerAliasIdentifier.create("LAB OTA P25")),
+            new OtaFileCase("p25-phase2", APCO25RadioIdentifier.createFrom(19), APCO25Talkgroup.create(31),
+                DecoderType.P25_PHASE2, TrunkedIdentityDomain.STANDARD, P25TalkerAliasIdentifier.create("LAB OTA P25")),
+            new OtaFileCase("nxdn-zero", NXDNRadioIdentifier.createFrom(19), NXDNTalkgroupIdentifier.createTo(0),
+                DecoderType.NXDN, TrunkedIdentityDomain.NXDN_TYPE_C, new NXDNTalkerAliasIdentifier("LAB OTA NXDN")),
+            new OtaFileCase("nxdn-type-d", NXDNRadioIdentifier.createTypeDFrom(4098),
+                NXDNTalkgroupIdentifier.createTypeDTo(2049), DecoderType.NXDN, TrunkedIdentityDomain.NXDN_TYPE_D,
+                new NXDNTalkerAliasIdentifier("LAB OTA NXDN")),
+            new OtaFileCase("dmr", io.github.dsheirer.module.decode.dmr.identifier.DMRRadio.createFrom(19),
+                DMRTalkgroup.create(31), DecoderType.DMR, TrunkedIdentityDomain.STANDARD,
+                DmrTalkerAliasIdentifier.create("LAB OTA DMR")));
+        List<Map<String,Object>> evidence = new ArrayList<>();
+        String evidenceDirectory = System.getProperty("sdrtrunk.test.recordingOtaEvidence");
+        Path evidenceRoot = evidenceDirectory != null && !evidenceDirectory.isBlank() ?
+            Path.of(evidenceDirectory) : null;
+        if(evidenceRoot != null) Files.createDirectories(evidenceRoot);
+
+        int sequence = 200;
+        for(OtaFileCase item: cases)
+        {
+            Protocol protocol = item.source().getProtocol();
+            var family = protocol == Protocol.NXDN ? io.github.dsheirer.alias.AliasListFamily.NXDN :
+                protocol == Protocol.DMR ? io.github.dsheirer.alias.AliasListFamily.DMR :
+                    io.github.dsheirer.alias.AliasListFamily.P25;
+            for(boolean configured: List.of(false, true))
+            {
+                AliasList aliases = new AliasList(new io.github.dsheirer.alias.AliasListDefinition("LAB ALIASES", family));
+                Alias sourceAlias = new Alias("LAB CONFIGURED SOURCE");
+                sourceAlias.setMatchIdentifier(new Radio(protocol, item.source().getValue()));
+                if(configured) aliases.addAlias(sourceAlias);
+                Alias targetAlias = new Alias("LAB TARGET");
+                targetAlias.setMatchIdentifier(new Talkgroup(protocol, (Integer)item.destination().getValue()));
+                aliases.addAlias(targetAlias);
+                List<Identifier> captured = new ArrayList<>(List.of(
+                    SystemConfigurationIdentifier.create("LABSYSTEM"), SiteConfigurationIdentifier.create("001-007"),
+                    ChannelNameConfigurationIdentifier.create("LABCHANNEL"),
+                    DecoderTypeConfigurationIdentifier.create(item.decoder()),
+                    FrequencyConfigurationIdentifier.create(461125000L), item.source(), item.destination()));
+                boolean p25 = protocol == Protocol.APCO25 || protocol == Protocol.APCO25_PHASE2;
+                if(p25)
+                {
+                    captured.add(APCO25Wacn.create(0xBEE00));
+                    captured.add(APCO25System.create(0x456));
+                }
+                IdentifierCollection identity = new IdentifierCollection(captured);
+                captured.add(item.ota().bindTo(identity));
+                IdentifierCollection identifiers = new IdentifierCollection(captured);
+                CallLegSource receiver = p25 ? source(item.decoder(), 0xBEE00, 0x456, 1, 7) :
+                    new CallLegSource(item.decoder(), "00000000-0000-0000-0000-000000000098", "LABCHANNEL", null,
+                        0, null, item.domain(), null, false);
+                AudioCallId id = new AudioCallId(sequence++, 1, item.decoder() == DecoderType.P25_PHASE2 ? 1 : 0);
+                AudioCallSnapshot snapshot = new AudioCallSnapshot(id, null, aliases, identifiers, Set.of(),
+                    1000L, 2000L, 1, 1, 1000L, 2000L, false, true, CallEncryptionState.UNKNOWN, true, null,
+                    VoiceCallQuality.EMPTY, CallLegId.from(id), receiver, null);
+                CompletedAudioCall call = new CompletedAudioCall(snapshot,
+                    call(identifiers, receiver, VoiceCallQuality.EMPTY, CallEncryptionState.UNKNOWN, 0).audioBuffers());
+                String capturedName = configured ? "LAB CONFIGURED SOURCE" : null;
+                assertEquals(capturedName, call.snapshot().recordingMetadata().sourceAlias());
+                sourceAlias.setName("EDITED AFTER SNAPSHOT");
+                targetAlias.setName("EDITED AFTER SNAPSHOT");
+                String artist = item.source().getValue() + " " + (configured ? capturedName : item.ota().getValue());
+                String title = item.destination().getValue() + "\"LAB TARGET\"";
+                Map<String,String> extra = new LinkedHashMap<>();
+                if(p25)
+                {
+                    extra.put("VCE_P25_WUID", "19");
+                    extra.put("VCE_P25_RX_WACN", "BEE00");
+                    extra.put("VCE_P25_RX_SYSID", "456");
+                    extra.put("VCE_P25_RX_RFSS", "1");
+                    extra.put("VCE_P25_RX_SITE", "7");
+                }
+                extra.put("VCE_TALKGROUP", item.destination().getValue().toString());
+                extra.put("VCE_FREQUENCY_HZ", "461125000");
+                extra.put("VCE_PROTOCOL", p25 ? "APCO25" : protocol.name());
+                if(p25) extra.put("VCE_P25_PHASE", item.decoder() == DecoderType.P25_PHASE2 ? "2" : "1");
+                if(item.decoder() == DecoderType.P25_PHASE2) extra.put("VCE_TIMESLOT", "1");
+                String caseName = item.name() + (configured ? "-configured" : "-ota-fallback");
+                for(RecordFormat format: RecordFormat.values())
+                {
+                    Path folder = Files.createDirectory(mDirectory.resolve(caseName + "-" + format));
+                    Path file = BasicRecordingContract.nextPath(folder, identifiers, format, 1000L, 1);
+                    assertTrue(file.getFileName().toString().matches("\\d{8}_\\d{6}_LABSYSTEM_001-007_LABCHANNEL__TO_" +
+                        item.destination().getValue() + "_FROM_" + item.source().getValue() + "\\" + format.getExtension()),
+                        "Only actual numeric IDs belong in the existing filename schema");
+                    AudioCallRecorder.write(call, file, format, new UserPreferences());
+                    Recording recording = readRecording(Files.readAllBytes(file), format);
+                    ID3v24Tag tag = new ID3v24Tag(recording.id3());
+                    assertEquals(artist, tag.getArtist(), caseName);
+                    assertEquals(title, tag.getTitle(), caseName);
+                    assertEquals("LABSYSTEM", tag.getGrouping());
+                    assertEquals("LABCHANNEL", tag.getAlbum());
+                    assertEquals(extra, recording.vceFields(), "OTA fallback must not add or repurpose VCE fields");
+                    assertEquals(Set.of("TCOM", "TCON", "TIT1", "TALB", "TIT2", "TPE1", "TDAT", "TYER", "COMM"),
+                        recording.frames().stream().filter(frame -> !frame.name().equals("TXXX"))
+                            .map(Frame::name).collect(java.util.stream.Collectors.toSet()),
+                        "OTA fallback keeps the existing basic ID3 field set");
+                    if(format == RecordFormat.WAVE)
+                    {
+                        Map<String,String> info = waveInfoFields(recording.waveChunks().get("LIST"));
+                        assertEquals(artist, info.get("IART"));
+                        assertEquals(title, info.get("INAM"));
+                    }
+                    assertEquals(capturedName, call.snapshot().recordingMetadata().sourceAlias(),
+                        "A learned OTA name must never become a configured alias in the call metadata");
+                    if(evidenceRoot != null)
+                    {
+                        Path directory = evidenceRoot.resolve(caseName);
+                        Files.createDirectories(directory);
+                        Path destination = directory.resolve(file.getFileName());
+                        Files.copy(file, destination);
+                        evidence.add(Map.of("case", caseName,
+                            "file", evidenceRoot.relativize(destination).toString().replace('\\', '/'),
+                            "format", format.name(), "sourceId", item.source().getValue(),
+                            "targetId", item.destination().getValue(), "artist", artist, "title", title));
+                    }
+                }
+            }
+        }
+        if(evidenceRoot != null)
+        {
+            Files.writeString(evidenceRoot.resolve("manifest.json"), new ObjectMapper().writerWithDefaultPrettyPrinter()
+                .writeValueAsString(Map.of("syntheticAudioOnly", true, "fixtures", evidence)));
+        }
+    }
+
+    private record OtaFileCase(String name, RadioIdentifier source, Identifier<?> destination,
+                               DecoderType decoder, TrunkedIdentityDomain domain, TalkerAliasIdentifier ota) {}
 
     private record NumericCase(String name, Identifier<?> source, Identifier<?> destination,
                                int expectedSource, int expectedTarget, TrunkedIdentityDomain domain) {}
