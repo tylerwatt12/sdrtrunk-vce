@@ -14,7 +14,7 @@ import { recordingsSteps } from './pages/recordings.js?v=6';
 import { topicsSteps } from './pages/topics.js?v=1';
 import { mapSteps, mapOverviewPresentation } from './pages/map.js?v=1';
 import { networkVisualizerSteps, networkVisualizerOverviewPresentation } from './pages/network-visualizer.js?v=3';
-import { adminSteps, administrationChoices, selectedAdministrationSection } from './pages/admin.js?v=2';
+import { adminSteps, administrationChoices, selectedAdministrationSection } from './pages/admin.js?v=3';
 
 // Every page starts here. Register its step builder when the guide is ready;
 // placeholders are available through Help but never open automatically.

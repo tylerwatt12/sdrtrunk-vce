@@ -136,7 +136,7 @@ const cases = [...routes, ...administration, ...additionalCases];
 const operationalFields = {
   streaming: ['patch_group_streaming_option'],
   'admin-recordings': ['audio_record_format'],
-  'admin-audio-quality': ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio'],
+  'admin-audio-quality': ['mp3_setting', 'mp3_input_audio_format'],
   'admin-activity': ['stats_logging_enabled', 'stats_detailed_history_enabled', 'stats_logging_retention_days']
 };
 

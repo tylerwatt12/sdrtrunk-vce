@@ -108,7 +108,7 @@ export function createAdministrationGuideData({ signal, now = Date.now() } = {})
       { severity: 'healthy', scope: 'City Site', label: 'Control-channel decode quality', value: 97.3, unit: '%' }
     ] }] };
   const operational = { revision: REVISION, settings: { patch_group_streaming_option: 'PATCH_GROUP',
-    audio_record_format: 'MP3', mp3_setting: 'CBR_16', mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: true,
+    audio_record_format: 'MP3', mp3_setting: 'CBR_16', mp3_input_audio_format: 'SR_16000',
     stats_logging_enabled: true, stats_detailed_history_enabled: true, stats_logging_retention_days: 30 }, options: {
     patch_group_streaming_options: [{ value: 'PATCH_GROUP', label: 'Patch Group' }, { value: 'TALKGROUPS', label: 'Individual Talkgroups' }],
     audio_record_formats: [{ value: 'MP3', label: 'MP3' }, { value: 'WAVE', label: 'WAVE' }],

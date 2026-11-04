@@ -16,7 +16,7 @@ function preferences() {
     revision: 'a'.repeat(64),
     settings: {
       patch_group_streaming_option: 'PATCH_GROUP', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
-      mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false,
+      mp3_input_audio_format: 'SR_16000',
       stats_logging_enabled: true,
       stats_detailed_history_enabled: false, stats_logging_retention_days: 30
     },

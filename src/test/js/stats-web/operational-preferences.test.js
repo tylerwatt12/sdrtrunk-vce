@@ -27,7 +27,7 @@ const envelope = {
   revision,
   settings: {
     patch_group_streaming_option: 'INDIVIDUAL', audio_record_format: 'MP3', mp3_setting: 'CBR_16',
-    mp3_input_audio_format: 'SR_16000', mp3_normalize_audio: false,
+    mp3_input_audio_format: 'SR_16000',
     stats_logging_enabled: true,
     stats_detailed_history_enabled: false, stats_logging_retention_days: 30
   },
@@ -58,8 +58,6 @@ async function main() {
     /settings this page could not read/);
   assert.throws(() => context.decodeOperationalPreferencesEnvelope({ ...envelope, settings: {} }),
     /settings this page could not read/);
-  assert.throws(() => context.decodeOperationalPreferencesEnvelope({ ...envelope,
-    settings: { ...envelope.settings, mp3_normalize_audio: 'false' } }), /settings this page could not read/);
 
   assert.equal((await context.requestOperationalPreference()).revision, revision);
   assert.equal(calls.at(-1).path, '/api/v1/admin/operational-preferences');
@@ -70,6 +68,7 @@ async function main() {
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), { value: false });
 
   assert.equal(Object.hasOwn(envelope.settings, 'audio_continuous_agc'), false);
+  assert.doesNotMatch(application, /mp3_normalize_audio|Even out analog MP3 volume/);
   assert.doesNotMatch(application, /Continuous automatic gain|createVoiceEnhancementSettings|voice-enhancement\.js/);
 
   response = { ok: false, status: 409, json: async () => envelope };

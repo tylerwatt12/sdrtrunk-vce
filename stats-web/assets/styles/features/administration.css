@@ -295,10 +295,6 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.operational-preferences-focused .operational-preference-form[data-preference="mp3_normalize_audio"] {
-  grid-column: 1 / -1;
-}
-
 .operational-preference-lane-heading {
   padding-bottom: var(--space-2);
 }

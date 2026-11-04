@@ -54,7 +54,7 @@ const sectionCopy = Object.freeze({
     'Managed provides a searchable library for browser playback. Classic produces individual files for external tools such as Trunking Recorder.',
     'Retention controls how much managed history remains available; alias recording settings determine which calls are saved.'],
   'audio-quality': ['Adjust how recorded and streamed calls sound and how much storage or bandwidth they use.',
-    'Volume normalization can help when some calls are much quieter than others. Paging-tone detection adds information useful for identifying and finding supported tone-bearing calls.'],
+    'Paging-tone detection adds information useful for identifying and finding supported tone-bearing calls.'],
   transcription: ['Transcripts let you find a conversation by words you remember hearing.',
     'VCE sends eligible managed recordings to your configured speech-to-text service, including eligible older recordings. The progress panel helps identify a backlog or service problem.'],
   'push-setup': ['Set up delivery so devices subscribed through Topics can receive alerts.',

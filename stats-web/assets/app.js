@@ -20,8 +20,8 @@ import { createActionWorkflow, actionFailureMessage } from './core/action-workfl
 import { createMySettingsWorkspace } from './features/my-settings.js?v=5';
 import { createStatusAlertControl, receiverHealthDisabledCodesForSave } from './core/preference-controls.js?v=1';
 import { patchElementTree, reconcileKeyedChildren } from './core/dom-reconcile.js?v=1';
-import { createGuideController } from './guides/controller.js?v=49';
-import { adminSectionForStep } from './guides/pages/admin.js?v=2';
+import { createGuideController } from './guides/controller.js?v=50';
+import { adminSectionForStep } from './guides/pages/admin.js?v=3';
 import { createGuideSampleData } from './guides/sample-data.js?v=2';
 import { getAliasesGuideData } from './guides/aliases-presentation.js?v=3';
 import { getScanListsGuideData } from './guides/scan-lists-data.js?v=5';
@@ -8259,7 +8259,7 @@ async function prepareAdministrationGuideSample(section, context) {
   if (!allowed) throw new Error('The Administration section is unavailable.');
   const parent = captureRenderContext();
   const { createAdministrationGuideData, ADMINISTRATION_GUIDE_IDS } =
-    await import('./guides/administration-data.js?v=3');
+    await import('./guides/administration-data.js?v=4');
   if (context.signal.aborted || !context.isCurrent() || !renderIsCurrent(parent)) return () => {};
   const controller = new AbortController();
   const resources = createAdministrationGuideResources(controller.signal);
@@ -8497,7 +8497,7 @@ async function prepareWorkspaceGuideSample(view, section, context) {
     ] : tuners ? [
       Promise.resolve(null), import('./guides/tuners-presentation.js?v=3')
     ] : streaming ? [
-      import('./features/streaming.js?v=18'), import('./guides/streaming-presentation.js?v=2')
+      import('./features/streaming.js?v=18'), import('./guides/streaming-presentation.js?v=3')
     ] : [
       import('./features/radioreference-import.js?v=43'), import('./guides/radioreference-presentation.js?v=1')
     ]);
@@ -30403,14 +30403,13 @@ function decodeOperationalPreferencesEnvelope(value) {
   const options = value?.options;
   const fields = [
     'patch_group_streaming_option', 'audio_record_format', 'mp3_setting', 'mp3_input_audio_format',
-    'mp3_normalize_audio', 'stats_logging_enabled', 'stats_detailed_history_enabled',
+    'stats_logging_enabled', 'stats_detailed_history_enabled',
     'stats_logging_retention_days'
   ];
   if (!value || !/^[0-9a-f]{64}$/.test(String(value.revision || '')) ||
       !settings || typeof settings !== 'object' || Array.isArray(settings) ||
       !options || typeof options !== 'object' || Array.isArray(options) ||
       !fields.every((field) => Object.hasOwn(settings, field)) ||
-      typeof settings.mp3_normalize_audio !== 'boolean' ||
       !Array.isArray(options.patch_group_streaming_options) ||
       !Array.isArray(options.audio_record_formats) || !Array.isArray(options.mp3_settings) ||
       !options.mp3_input_audio_formats_by_setting ||
@@ -30488,8 +30487,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
       { id: 'mp3_setting', label: 'MP3 bit rate and quality', kind: 'select', options: 'mp3_settings',
         detail: 'Higher bit rates improve quality but use more storage and network bandwidth. Choices depend on ' +
           'the sample rate.' },
-      { id: 'mp3_input_audio_format', label: 'MP3 sample rate and bit depth', kind: 'select' },
-      { id: 'mp3_normalize_audio', label: 'Even out analog MP3 volume', kind: 'boolean' }
+      { id: 'mp3_input_audio_format', label: 'MP3 sample rate and bit depth', kind: 'select' }
     ] },
     { area: 'activity', title: 'Saved activity',
       description: '', fields: [
@@ -36229,7 +36227,7 @@ async function renderAdmin(options = {}) {
     body.append(node('div', 'ui-notice',
       'MP3 settings apply to recordings and outgoing streams. Managed recordings use MP3.'));
     await Promise.all([callFiltering.load(), pagingTones.load(), renderAdminOperationalPreferences(renderContext, {
-      target: body, fields: ['mp3_setting', 'mp3_input_audio_format', 'mp3_normalize_audio']
+      target: body, fields: ['mp3_setting', 'mp3_input_audio_format']
     })]);
     if (renderIsCurrent(renderContext)) {
       const actions = node('div', 'ui-action-row');
