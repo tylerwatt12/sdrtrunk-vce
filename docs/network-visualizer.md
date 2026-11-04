@@ -52,9 +52,9 @@ listening. Use the website's **Map** page for decoded geographic positions when 
 routine calls while letting only emergencies and affiliation changes move the camera. Choices are saved in this
 browser for the current web profile.
 
-Calls and grants are highlighted by default, with automatic camera attention disabled for them. Their dashed lines
-show heard activity separately from accepted affiliations. The Calls and grants choices control routine highlights
-and camera attention. Current calls still appear in the scene.
+Calls are highlighted by default, with automatic camera attention disabled. The **Calls** choices control their
+highlights and camera attention. Grants keep radios, talkgroups, and dashed channel-activity links visible without
+adding call counts or drawing attention. Current calls still appear in the scene when highlighting is off.
 
 In **Auto**, the camera slowly orbits inside a system while idle. A new action selected for **Zoom to** can briefly focus its radio or
 talkgroup before returning to the centered view. Attention stays inside the system you are viewing.
@@ -75,10 +75,10 @@ Nodes cannot be dragged to new positions.
 ## Read action counts and busy talkgroups
 
 The **Actions** panel counts affiliation changes, emergencies, denials, busy or queued responses, radio checks,
-pages, logouts, patch changes, and calls and grants. Each category has independent attention choices; counts
+pages, logouts, patch changes, and calls. Each category has independent attention choices; counts
 continue regardless of those choices.
 
-**Top Talkgroups** ranks up to 20 talkgroups in the selected system by calls and grants observed since this page
+**Top Talkgroups** ranks up to 20 talkgroups in the selected system by calls observed since this page
 opened. The rankings update while the panel is closed, and talkgroup names link to their detail pages.
 
 An emergency means an emergency event was observed. It does not indicate a continuing emergency state.

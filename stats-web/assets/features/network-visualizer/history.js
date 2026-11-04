@@ -390,17 +390,19 @@ function applyRoutineActivity(state, system, row, result, initial, action, inges
   const radio = radioIdentity ? ensureRadio(state, system, row, radioIdentity, role) : null;
   if (!radio && !group) return;
   const atMs = finite(row.observed_at_ms);
-  if (!initial && group) {
-    const previous = state.talkgroupCallCounts.get(group.key);
-    state.talkgroupCallCounts.set(group.key, { key: group.key, systemKey: group.systemKey,
-      identityKey: group.identityKey, nativeId: group.nativeId, label: group.label,
-      callCount: (previous?.callCount || 0) + 1 });
-  }
   if (radio && group && (atMs > (radio.activityAtMs || 0) ||
       atMs === radio.activityAtMs && row.id > (radio.activityId || 0))) {
     if (!radio.activityGroupKey && !radio.visualGroupKey) radio.activityGroupKey = group.key;
     radio.callGroupKey = group.key;
     radio.activityAtMs = atMs; radio.activityId = row.id;
+  }
+  // Grants retain assignment context; only Calls own call totals and attention.
+  if (action !== 'CALL') return;
+  if (!initial && group) {
+    const previous = state.talkgroupCallCounts.get(group.key);
+    state.talkgroupCallCounts.set(group.key, { key: group.key, systemKey: group.systemKey,
+      identityKey: group.identityKey, nativeId: group.nativeId, label: group.label,
+      callCount: (previous?.callCount || 0) + 1 });
   }
   const entity = group || radio;
   const event = { key: `call:${entity.key}`, category: 'call',
@@ -439,8 +441,9 @@ function applyP25ActivityRows(state, rows, options = {}) {
     const action = actionOf(row);
     if (!isP25Trunked(row) || !ACTIONS.has(action)) { result.ignored++; continue; }
     result.accepted++; result.changed = true;
-    if (!initial && action !== 'JOIN') countAction(state, action.startsWith('PATCH') ? 'patch' :
-      P25_ROUTINE_ACTIONS.includes(action) ? 'call' : action.toLowerCase());
+    if (!initial && action !== 'JOIN' && action !== 'GRANT') {
+      countAction(state, action.startsWith('PATCH') ? 'patch' : action.toLowerCase());
+    }
     if (action === 'DENIAL' && !targetRadioKey(row) && !sourceRadioKey(row)) {
       continue;
     }

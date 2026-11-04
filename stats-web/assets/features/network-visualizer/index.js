@@ -11,7 +11,7 @@ import {
   p25ActionCount,
   p25TopTalkgroups,
   mostActiveP25System
-} from './history.js?v=22';
+} from './history.js?v=23';
 import { createP25ActivityFeed } from './live.js?v=6';
 import { createP25CameraCoordinator } from './camera.js?v=5';
 import { createP25Renderer } from './renderer.js?v=19';
@@ -20,7 +20,7 @@ import {
   P25_EVENT_SETTINGS,
   normalizeP25EventSettings,
   enabledP25EventCategories
-} from './settings.js?v=5';
+} from './settings.js?v=6';
 
 
 function textButton(node, label, className = 'ui-button ui-button-secondary') {
@@ -129,7 +129,7 @@ function createP25Visualizer(dependencies = {}) {
     ['Radio', 'm12 3 9 17H3ZM12 3v13m0 0L3 20m9-4 9 4'],
     ['Last accepted affiliation', 'M2 12h20'],
     ['Earlier affiliation', 'M2 12h20', { opacity: '0.4' }],
-    ['Call activity', 'M2 12h20', { 'stroke-dasharray': '4 3' }]
+    ['Channel activity', 'M2 12h20', { 'stroke-dasharray': '4 3' }]
   ]) {
     const entry = node('span');
     const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -654,7 +654,7 @@ function createP25Visualizer(dependencies = {}) {
     if (talkgroupsOpening) return;
     talkgroupsOpening = true;
     try {
-      const { createP25TalkgroupsPanel } = await import('./talkgroups.js?v=2');
+      const { createP25TalkgroupsPanel } = await import('./talkgroups.js?v=3');
       if (closed) return;
       talkgroupsPanel ||= createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
         getTalkgroups: key => p25TopTalkgroups(state, key), renderTalkgroup: dependencies.renderTalkgroup,

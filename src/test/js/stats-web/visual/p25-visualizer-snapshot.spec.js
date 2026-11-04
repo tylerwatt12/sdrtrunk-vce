@@ -43,12 +43,12 @@ test('Actions counts observed actions once and saves independent choices without
   await expect(actions.locator('.network-visualizer-action')).toHaveCount(10);
   const calls = actions.locator('[data-category="call"]');
   await expect(calls.locator('.ui-pill')).toHaveText('0');
-  await expect(calls.getByRole('checkbox', { name: 'Zoom to Calls and grants', exact: true })).not.toBeChecked();
+  await expect(calls.getByRole('checkbox', { name: 'Zoom to Calls', exact: true })).not.toBeChecked();
   await append(page, 1, 3, [row(2), row(3)]);
   await expect(calls.locator('.ui-pill')).toHaveText('2');
   await append(page, 1, 3, [row(2), row(3)]);
   await expect(calls.locator('.ui-pill')).toHaveText('2');
-  const highlight = calls.getByRole('checkbox', { name: 'Highlight Calls and grants', exact: true });
+  const highlight = calls.getByRole('checkbox', { name: 'Highlight Calls', exact: true });
   await highlight.focus();
   await highlight.press('Space');
   await actions.getByRole('button', { name: 'Save choices', exact: true }).click();

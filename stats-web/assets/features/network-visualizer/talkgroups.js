@@ -10,7 +10,7 @@ export function createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
   const closeButton = iconButton('icon-close', 'Close top talkgroups');
   header.append(heading, closeButton);
   const list = node('ol', 'network-visualizer-panel-list');
-  list.setAttribute('aria-label', 'Talkgroups by calls and grants since this page opened');
+  list.setAttribute('aria-label', 'Talkgroups by calls since this page opened');
   const status = node('div', 'network-visualizer-action');
   panel.append(header, status, list);
   host.append(panel);
@@ -27,7 +27,7 @@ export function createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
       document.activeElement.closest('[data-talkgroup-key]')?.dataset.talkgroupKey : null;
     signature = nextSignature;
     scope.textContent = system ?
-      `${system.name || system.identity || system.label} · Calls and grants since this page opened · Top 20` :
+      `${system.name || system.identity || system.label} · Calls since this page opened · Top 20` :
       'Select a system to see its call activity.';
     if (introduction) introduction.textContent = scope.textContent;
     list.replaceChildren(...groups.map(group => {
@@ -35,7 +35,7 @@ export function createP25TalkgroupsPanel({ node, iconButton, openReadOnlyModal,
       item.dataset.talkgroupKey = group.key;
       const rowHeading = node('div', 'network-visualizer-action-heading');
       const count = node('span', 'ui-pill', formatCount(group.callCount));
-      count.setAttribute('aria-label', `${formatCount(group.callCount)} calls and grants since this page opened`);
+      count.setAttribute('aria-label', `${formatCount(group.callCount)} calls since this page opened`);
       rowHeading.append(renderTalkgroup(group, system), count);
       item.append(rowHeading);
       return item;

@@ -54,7 +54,7 @@ async function append(page, groups, options = {}) {
       const [, wacn, system] = owner.split(':');
       for (let index = 0; index < entry.count; index++) {
         const id = after + rows.length + 1;
-        rows.push({ id, observed_at_ms: Date.now(), action: options.action || (index % 2 ? 'GRANT' : 'CALL'),
+        rows.push({ id, observed_at_ms: Date.now(), action: options.action || 'CALL',
           protocol: 'P25', channel_kind: 'TRUNKED_SITE', radio_system_key: owner,
           system_name: owner === defaultSystem ? defaultName : 'Other System', configuration_id: channelId,
           source_identity_key: `v1-r-${wacn}-${system}-30914`, source_native_id: 30914,
@@ -84,16 +84,20 @@ async function evidence(page, testInfo, filename) {
   await page.screenshot({ path: directory ? path.join(directory, filename) : testInfo.outputPath(filename) });
 }
 
-test('Top Talkgroups ranks new calls and grants immediately without stored totals, polling, or duplicate counts', async ({ page }) => {
+test('Top Talkgroups ranks new calls immediately and keeps grants out of session totals', async ({ page }, testInfo) => {
   const fixture = await mount(page);
   const toggle = toggleOf(page), panel = panelOf(page);
   expect(fixture.talkgroupRequests).toEqual([]);
   await toggle.click();
-  await expect(panel).toContainText('Calls and grants since this page opened');
+  await expect(panel).toContainText('Calls since this page opened');
   await expect(panel.locator('li')).toHaveCount(0);
   await expect(panel).not.toContainText('1,487');
+  await append(page, [group(1201, 'Fire Dispatch', 1)], { action: 'GRANT' });
   await append(page, sampleGroups);
   await expect(panel.locator('li')).toHaveCount(3);
+  await expect(panel.locator('.ui-pill')).toHaveText(['3', '2', '1']);
+  await page.clock.fastForward(1_000);
+  await append(page, [group(1201, 'Fire Dispatch', 1)], { action: 'GRANT' });
   await expect(panel.locator('.ui-pill')).toHaveText(['3', '2', '1']);
   await expect(panel.getByRole('link', { name: 'Fire Dispatch', exact: true })).toHaveAttribute('href', /group-identity/);
   await expect(panel).toContainText('1201');
@@ -107,6 +111,7 @@ test('Top Talkgroups ranks new calls and grants immediately without stored total
   await page.evaluate(payload => window.fixtureSendLiveFrame(7, 'activity_append', payload), latest);
   await page.clock.fastForward(30_100);
   await expect(panel.locator('.ui-pill')).toHaveText(['4', '3', '1']);
+  await evidence(page, testInfo, 'calls-only-talkgroups-light-1280.png');
   clean(fixture);
 });
 
@@ -132,7 +137,7 @@ test('closed and hidden panels accumulate session counts and preserve unsaved Ac
   const actionsToggle = page.getByRole('button', { name: 'Actions', exact: true });
   await actionsToggle.click();
   const actions = page.locator('.network-visualizer-events');
-  const callHighlight = actions.getByRole('checkbox', { name: 'Highlight Calls and grants', exact: true });
+  const callHighlight = actions.getByRole('checkbox', { name: 'Highlight Calls', exact: true });
   await callHighlight.focus();
   await callHighlight.press('Space');
   await expect(actions.locator('form')).toHaveClass(/is-dirty/);

@@ -20,8 +20,7 @@ const P25_EVENT_SETTINGS = Object.freeze([
     highlight: true, autoZoom: false }),
   Object.freeze({ id: 'logout', action: 'LOGOUT', label: 'Logout',
     highlight: true, autoZoom: false }),
-  Object.freeze({ id: 'call', label: 'Calls and grants',
-    detail: 'Call and control-channel grant activity.',
+  Object.freeze({ id: 'call', label: 'Calls',
     highlight: true, autoZoom: false })
 ]);
 

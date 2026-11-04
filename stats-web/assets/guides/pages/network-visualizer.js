@@ -10,7 +10,7 @@ export function networkVisualizerSteps(documentValue, preparePlayer, preparePage
   const steps = [
     { id: 'shapes', title: 'Read the system', paragraphs: [], items: [
       { label: 'Shapes', text: 'The sphere represents the system, cubes are talkgroups, and pyramids are radios.' },
-      { label: 'Connections', text: 'Solid lines show the last accepted affiliation. Faint lines show earlier affiliations; dashed lines show call activity.' }
+      { label: 'Connections', text: 'Solid lines show the last accepted affiliation. Faint lines show earlier affiliations; dashed lines show call or grant activity.' }
     ], owner: '.network-visualizer-stage' },
     { id: 'actions-button', title: 'Choose which actions draw attention',
       paragraphs: ['Open Actions to see how often each action occurs and choose what the view follows.'],

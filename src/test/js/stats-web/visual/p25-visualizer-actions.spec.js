@@ -39,6 +39,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
     const actions = page.locator('.network-visualizer-events');
     await expect(actions.locator('[data-category="emergency"] .ui-pill')).toHaveText('1');
     await expect(actions.locator('[data-category="call"] .ui-pill')).toHaveText('1');
+    await actions.locator('[data-category="call"]').scrollIntoViewIfNeeded();
     const directory = process.env.P25_ACTIONS_EVIDENCE;
     if (directory) fs.mkdirSync(directory, { recursive: true });
     await page.screenshot({ path: directory ? path.join(directory, `actions-${theme}-${width}.png`) :
@@ -55,7 +56,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], [
       const { applyThemeHue } = await import('/assets/core/theme.js?v=2');
       applyThemeHue(null);
     });
-    const callHighlight = actions.getByRole('checkbox', { name: 'Highlight Calls and grants', exact: true });
+    const callHighlight = actions.getByRole('checkbox', { name: 'Highlight Calls', exact: true });
     await callHighlight.focus();
     await callHighlight.press('Space');
     await expect(callHighlight).not.toBeChecked();

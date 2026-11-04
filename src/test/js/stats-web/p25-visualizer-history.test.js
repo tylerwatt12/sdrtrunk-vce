@@ -55,7 +55,7 @@ async function main() {
   assert.deepEqual(history.P25_ROUTINE_ACTIONS, ['CALL', 'GRANT']);
   const defaults = settings.defaultP25EventSettings();
   assert.deepEqual(defaults.call, { highlight: true, autoZoom: false },
-    'routine calls and grants are highlighted by default without requesting camera attention');
+    'calls are highlighted by default without requesting camera attention');
   const callsEnabled = settings.normalizeP25EventSettings({ call: { highlight: true, autoZoom: false } });
   assert.equal(settings.enabledP25EventCategories(callsEnabled, 'highlight').has('call'), true);
   assert.equal(settings.enabledP25EventCategories(callsEnabled, 'autoZoom').has('call'), false);
@@ -133,17 +133,23 @@ async function main() {
   });
   assert.equal(history.nextP25HighlightExpiry(timingState, 10_000), 11_200);
   assert.equal(history.buildP25Graph(timingState, SYSTEM_A, 11_200).nodes.some((node) => node.signalAction), false);
-  applyRows(timingState, [row(71, 'GRANT')], {
+  const laterGrant = applyRows(timingState, [row(71, 'GRANT')], {
     atMs: 10_800, highlightCategories: highlightedCategories, grantActivityTimeoutMs: 1_200
   });
-  assert.equal(history.nextP25HighlightExpiry(timingState, 10_800), 12_000,
-    'another call or grant extends its visible activity timeout');
-  applyRows(timingState, [row(71, 'GRANT')], {
+  assert.equal(history.nextP25HighlightExpiry(timingState, 10_800), 11_200,
+    'a later grant cannot extend the Call highlight');
+  assert.deepEqual(laterGrant.focusCandidates, [], 'a grant cannot request another camera reaction');
+  applyRows(timingState, [row(72, 'CALL')], {
+    atMs: 10_850, highlightCategories: highlightedCategories, grantActivityTimeoutMs: 1_200
+  });
+  assert.equal(history.nextP25HighlightExpiry(timingState, 10_850), 12_050,
+    'a distinct Call still extends its visible activity timeout');
+  applyRows(timingState, [row(72, 'CALL')], {
     atMs: 11_900, highlightCategories: highlightedCategories, grantActivityTimeoutMs: 1_200
   });
-  assert.equal(history.nextP25HighlightExpiry(timingState, 11_900), 12_000,
+  assert.equal(history.nextP25HighlightExpiry(timingState, 11_900), 12_050,
     'repeated delivery of the same saved row must not extend activity');
-  assert.equal(history.nextP25HighlightExpiry(timingState, 12_000), 0);
+  assert.equal(history.nextP25HighlightExpiry(timingState, 12_050), 0);
 
   applyRows(timingState, [row(73, 'EMERGENCY')], { atMs: 13_000 });
   applyRows(timingState, [row(74, 'CALL')], {
@@ -154,7 +160,7 @@ async function main() {
   const streamed = history.createP25HistoryState();
   const streamedOptions = { atMs: 20_000, highlightAtObservationTime: true,
     grantActivityTimeoutMs: 1_200, highlightCategories: new Set(['call']) };
-  const fresh = applyRows(streamed, [row(80, 'GRANT', { observed_at_ms: 19_800 })],
+  const fresh = applyRows(streamed, [row(80, 'CALL', { observed_at_ms: 19_800 })],
     streamedOptions);
   assert.equal(history.nextP25HighlightExpiry(streamed, 20_000), 21_000,
     'stream delivery preserves the remaining global timeout after the observation');
@@ -166,17 +172,65 @@ async function main() {
   assert.equal(history.buildP25Graph(streamed, SYSTEM_A, 20_000).nodes.find((value) =>
     value.id === `${SYSTEM_A}:v1-g-303`).signalAction, '',
   'old catch-up calls remain in history without receiving a fresh green highlight');
-  applyRows(streamed, [row(82, 'GRANT', { observed_at_ms: 20_700 })], {
+  applyRows(streamed, [row(82, 'CALL', { observed_at_ms: 20_700 })], {
     ...streamedOptions, atMs: 20_900
   });
   assert.equal(history.nextP25HighlightExpiry(streamed, 20_900), 21_900,
-    'fresh subsequent grants keep activity continuously lit until the latest observation expires');
+    'fresh subsequent Calls keep activity continuously lit until the latest observation expires');
   const unknownSource = history.createP25HistoryState();
   applyRows(unknownSource, [row(52, 'GRANT', {
     source_identity_key: null, source_radio_id: null, source_alias_name: null
   })], { initial: true });
   assert.equal(unknownSource.groups.size, 1);
   assert.equal(unknownSource.radios.size, 0, 'a source-less grant must not fabricate a subscriber radio');
+
+  for (const actions of [['GRANT', 'CALL'], ['CALL', 'GRANT']]) {
+    const pair = actions.map((action, index) => row(index + 1, action, { observed_at_ms: 10_000 }));
+    const options = { atMs: 10_000, grantActivityTimeoutMs: 1_200 };
+    const paired = history.createP25HistoryState();
+    const result = applyRows(paired, pair, options);
+    assert.equal(history.p25ActionCount(paired, 'call'), 1, 'a Grant/Call pair adds one Call action');
+    assert.equal(history.p25TopTalkgroups(paired, SYSTEM_A)[0].callCount, 1);
+    assert.equal(result.focusCandidates.length, 1, 'only the Call requests attention');
+    assert.equal(result.focusCandidates[0].id, pair.find(value => value.action === 'CALL').id);
+    const split = history.createP25HistoryState();
+    const first = applyRows(split, [pair[0]], options);
+    const second = applyRows(split, [pair[1]], { ...options, atMs: 10_500 });
+    assert.equal(history.p25ActionCount(split, 'call'), 1, 'separate stream batches add one Call');
+    assert.equal(history.p25TopTalkgroups(split, SYSTEM_A)[0].callCount, 1);
+    assert.equal(first.focusCandidates.length + second.focusCandidates.length, 1);
+    assert.equal(history.nextP25HighlightExpiry(split, 10_500), actions[0] === 'CALL' ? 11_200 : 11_700,
+      'only Call arrival starts the highlight, regardless of Grant delivery order');
+  }
+
+  const grantContext = history.createP25HistoryState();
+  const dataGrant = applyRows(grantContext, [row(1, 'GRANT', { event_type: 'DATA_CALL' })], { atMs: 10_000 });
+  assert.equal(grantContext.afterId, 1, 'grant-only observations still advance the stream cursor');
+  assert.equal(grantContext.radios.size, 1);
+  assert.equal(grantContext.groups.size, 1);
+  assert.deepEqual(history.buildP25Graph(grantContext, SYSTEM_A, 10_000).links.map(link => link.kind), ['activity'],
+    'a grant-only assignment retains its heard-on link');
+  assert.deepEqual(dataGrant.focusCandidates, []);
+  assert.equal(history.p25ActionCount(grantContext, 'call'), 0);
+  assert.equal(history.nextP25HighlightExpiry(grantContext, 10_000), 0);
+  assert.deepEqual(history.p25TopTalkgroups(grantContext, SYSTEM_A), []);
+  applyRows(grantContext, [row(2, 'EMERGENCY')], { atMs: 11_000 });
+  const emergencyExpiry = history.nextP25HighlightExpiry(grantContext, 11_000);
+  applyRows(grantContext, [row(3, 'GRANT')], { atMs: 11_100 });
+  assert.equal(history.nextP25HighlightExpiry(grantContext, 11_100), emergencyExpiry,
+    'a grant cannot replace an emergency highlight');
+  assert.equal([...grantContext.radios.values()][0].signalAction, 'emergency');
+  assert.equal(history.p25ActionCount(grantContext, 'movement'), 0);
+
+  const orderedContext = history.createP25HistoryState();
+  applyRows(orderedContext, [row(1, 'CALL', { observed_at_ms: 20_000 })]);
+  applyRows(orderedContext, [row(2, 'GRANT', { observed_at_ms: 19_000,
+    target_identity_key: 'v1-g-202', target_id: 202 })]);
+  assert.equal([...orderedContext.radios.values()][0].callGroupKey, `${SYSTEM_A}:v1-g-101`,
+    'a delayed older grant cannot replace a newer heard-on relationship');
+  applyRows(orderedContext, [row(3, 'CALL', { observed_at_ms: 20_000 })]);
+  assert.equal(history.p25ActionCount(orderedContext, 'call'), 2,
+    'distinct Calls remain independent even when their time and participants match');
 
   const labelRow = row(60, 'EMERGENCY', {
     radio_system_key: 'p25:bee00:123', source_alias_name: '', source_talker_alias: '',
@@ -438,17 +492,18 @@ async function main() {
     row(5, 'CALL', { target_identity_key: 'v1-g-202', target_id: 202, target_alias_name: 'Tactical' }),
     row(6, 'GRANT', { target_identity_key: 'v1-g-202', target_id: 202, target_alias_name: 'Tactical' })], quietChoices);
   assert.deepEqual(history.p25TopTalkgroups(sessionCalls).map(group => [group.key, group.callCount]), [
-    [`${SYSTEM_A}:v1-g-101`, 2], [`${SYSTEM_A}:v1-g-202`, 2], [`${SYSTEM_B}:v1-g-101`, 1]
-  ], 'each accepted call or grant counts once, with stable identity ties and separate systems');
-  assert.equal(history.p25ActionCount(sessionCalls, 'call'), 5, 'talkgroup totals use the same observations as Actions');
+    [`${SYSTEM_A}:v1-g-101`, 1], [`${SYSTEM_A}:v1-g-202`, 1], [`${SYSTEM_B}:v1-g-101`, 1]
+  ], 'only Calls count, with stable identity ties and separate systems');
+  assert.equal(history.p25ActionCount(sessionCalls, 'call'), 3, 'talkgroup totals use the same Calls as Actions');
   const sourceLessGrant = history.createP25HistoryState();
   applyRows(sourceLessGrant, [row(1, 'GRANT', { source_identity_key: null, source_radio_id: null })], quietChoices);
-  assert.equal(history.p25TopTalkgroups(sourceLessGrant, SYSTEM_A)[0].callCount, 1,
-    'a valid talkgroup grant counts even when its transmitting radio is unknown');
+  assert.deepEqual(history.p25TopTalkgroups(sourceLessGrant, SYSTEM_A), [],
+    'a source-less grant retains context without adding a Call');
+  assert.equal(sourceLessGrant.groups.size, 1);
   assert.equal(sourceLessGrant.radios.size, 0);
   assert.deepEqual(history.p25TopTalkgroups(sessionCalls, SYSTEM_A, 1)[0], {
     key: `${SYSTEM_A}:v1-g-101`, systemKey: SYSTEM_A, identityKey: 'v1-g-101', nativeId: 101,
-    label: 'Dispatch', callCount: 2
+    label: 'Dispatch', callCount: 1
   });
   assert.equal(history.p25TopTalkgroups(sessionCalls, SYSTEM_B)[0].label, 'County Dispatch');
   assert.deepEqual(history.p25TopTalkgroups(sessionCalls, 'unknown'), []);
@@ -469,9 +524,9 @@ async function main() {
   }] }]);
   const renamedTop = history.p25TopTalkgroups(sessionCalls, SYSTEM_A);
   assert.equal(renamedTop[0].label, 'Renamed Dispatch', 'current scene aliases take precedence over earlier observed labels');
-  assert.equal(renamedTop[0].callCount, 2, 'Live snapshots and repaints do not add calls');
+  assert.equal(renamedTop[0].callCount, 1, 'Live snapshots and repaints do not add calls');
   renamedTop[0].callCount = 999;
-  assert.equal(history.p25TopTalkgroups(sessionCalls, SYSTEM_A)[0].callCount, 2, 'display results cannot mutate the session totals');
+  assert.equal(history.p25TopTalkgroups(sessionCalls, SYSTEM_A)[0].callCount, 1, 'display results cannot mutate the session totals');
   history.applyP25LiveTables(sessionCalls, []);
   history.expireP25History(sessionCalls, Date.now() + 1);
   assert.equal(sessionCalls.groups.size, 0, 'idle graph entities can expire independently of the ranking');
