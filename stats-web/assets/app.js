@@ -12908,6 +12908,8 @@ function scanListCoverageTree(coverage) {
   if (unmatched.length) {
     const rules = node('div', 'scanner-unmatched-rules ui-surface');
     rules.append(node('strong', '', 'Unmatched talkgroups'));
+    rules.append(node('span', 'ui-muted',
+      'Channels that use these alias lists may also be heard here, if no matching alias was found'));
     unmatched.forEach((item) => rules.append(node('span', 'ui-muted', `${item.name} · ${semanticLabel(item.family)}`)));
     host.append(rules);
   }
