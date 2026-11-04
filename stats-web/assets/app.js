@@ -30489,7 +30489,7 @@ async function renderAdminOperationalPreferences(renderContext = captureRenderCo
         detail: 'Higher bit rates improve quality but use more storage and network bandwidth. Choices depend on ' +
           'the sample rate.' },
       { id: 'mp3_input_audio_format', label: 'MP3 sample rate and bit depth', kind: 'select' },
-      { id: 'mp3_normalize_audio', label: 'Even out MP3 volume', kind: 'boolean' }
+      { id: 'mp3_normalize_audio', label: 'Even out analog MP3 volume', kind: 'boolean' }
     ] },
     { area: 'activity', title: 'Saved activity',
       description: '', fields: [

@@ -510,6 +510,7 @@ test('audio quality retains MP3 choices, draft fields, and revision saves withou
   const quality = page.locator('form[data-preference="mp3_setting"]');
   const sampleRate = page.locator('form[data-preference="mp3_input_audio_format"]');
   const normalize = page.locator('form[data-preference="mp3_normalize_audio"]');
+  await expect(normalize.getByText('Even out analog MP3 volume', { exact: true })).toBeVisible();
   await expect(quality.locator('option')).toHaveText(['16 kbps', 'Variable']);
   await expect(sampleRate.locator('option')).toHaveText(['8 kHz', '16 kHz']);
   await normalize.locator('.ui-toggle').click();
