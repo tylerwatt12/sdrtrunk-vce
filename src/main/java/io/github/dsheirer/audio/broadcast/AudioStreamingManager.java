@@ -101,8 +101,8 @@ public class AudioStreamingManager
                                  Consumer<CompletedAudioCall> streamedCallConsumer)
     {
         this(listener, broadcastFormat, userPreferences, streamedCallConsumer, ThreadPool.SCHEDULED,
-            (call, path, preferences, identifiers, normalizeAudio) ->
-                AudioCallRecorder.write(call, path, RecordFormat.MP3, preferences, identifiers, normalizeAudio));
+            (call, path, preferences, identifiers) ->
+                AudioCallRecorder.write(call, path, RecordFormat.MP3, preferences, identifiers));
     }
 
     AudioStreamingManager(Listener<AudioRecording> listener, BroadcastFormat broadcastFormat,
@@ -227,8 +227,7 @@ public class AudioStreamingManager
             try
             {
                 // The recorder renders the installed library's supplied format on this bounded output worker.
-                boolean normalizeAudio = mUserPreferences.getMP3Preference().isNormalizeAudioBeforeEncode();
-                mRecordingWriter.write(completedAudioCall, path, mUserPreferences, identifierCollection, normalizeAudio);
+                mRecordingWriter.write(completedAudioCall, path, mUserPreferences, identifierCollection);
 
                 if(!Files.isRegularFile(path) || Files.size(path) <= 0)
                 {
@@ -710,6 +709,6 @@ public class AudioStreamingManager
     interface StreamingRecordingWriter
     {
         void write(CompletedAudioCall completedAudioCall, Path path, UserPreferences userPreferences,
-                   IdentifierCollection identifierCollection, boolean normalizeAudio) throws IOException;
+                   IdentifierCollection identifierCollection) throws IOException;
     }
 }

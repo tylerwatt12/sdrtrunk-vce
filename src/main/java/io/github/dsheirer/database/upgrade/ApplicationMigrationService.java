@@ -727,7 +727,7 @@ public final class ApplicationMigrationService
         {
             // Cover the small owner's rollback pages and converted preference/settings growth. The existing
             // 64-MiB slack is working space for bounded settings growth, not the separately budgeted 5-GiB headroom.
-            // Format 70 updates only Activity's small metadata row; retained event/index pages are untouched.
+            // Formats 70 and 71 update only Activity's small metadata row; retained event/index pages are untouched.
             return safeAdd(safeMultiply(sqliteFileFootprint(normalized), 2), FREE_SPACE_MARGIN_BYTES);
         }
         // Legacy configuration-only in-place conversion still deletes history in a transaction. Unknown steps
@@ -746,6 +746,7 @@ public final class ApplicationMigrationService
             case 66 -> "format-66-to-67".equals(step.id());
             case 67 -> "remote-link-destinations-v1".equals(step.id());
             case 69 -> "call-owned-voice-activity-v1".equals(step.id());
+            case 70 -> "retired-mp3-normalization-v1".equals(step.id());
             default -> false;
         };
     }

@@ -32,7 +32,7 @@ public class MP3SilenceGenerator implements ISilenceGenerator
      */
     public MP3SilenceGenerator(InputAudioFormat inputAudioFormat, MP3Setting setting)
     {
-        mMP3AudioConverter = new MP3AudioConverter(inputAudioFormat, setting, false);
+        mMP3AudioConverter = new MP3AudioConverter(inputAudioFormat, setting);
         generateFrame();
     }
 

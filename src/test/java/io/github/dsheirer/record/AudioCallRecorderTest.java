@@ -27,6 +27,7 @@ import io.github.dsheirer.audio.call.CallLegSource;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
+import io.github.dsheirer.audio.convert.MP3AudioConverter;
 import io.github.dsheirer.audio.convert.MP3Setting;
 import io.github.dsheirer.audio.output.JmbeAudioOutput;
 import io.github.dsheirer.identifier.IdentifierCollection;
@@ -43,6 +44,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.preference.record.RecordingMode;
 import io.github.dsheirer.protocol.Protocol;
 import io.github.dsheirer.record.wave.WaveWriter;
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -75,12 +77,12 @@ class AudioCallRecorderTest
                 List<float[]> raw = List.of(new float[]{.01f, -.02f}, new float[]{.03f, -.1f});
                 CompletedAudioCall call = callWithAudio(decoder, raw);
                 Path ordinary = mDirectory.resolve(decoder.name() + "-ordinary.wav");
-                AudioCallRecorder.write(call, ordinary, RecordFormat.WAVE, preferences, false);
+                AudioCallRecorder.write(call, ordinary, RecordFormat.WAVE, preferences);
                 Path standalone = mDirectory.resolve(decoder.name() + "-standalone.wav");
                 AudioCallRecorder.recordWAVE(call, standalone, call.snapshot().identifierCollection());
                 Path supplied = mDirectory.resolve(decoder.name() + "-rendered.wav");
                 AudioCallRecorder.writeRendered(call, JmbeAudioOutput.nativeAudio(call), supplied, RecordFormat.WAVE,
-                    preferences, call.snapshot().identifierCollection(), false);
+                    preferences, call.snapshot().identifierCollection());
                 byte[] pcm = waveChunk(Files.readAllBytes(ordinary), "data");
                 assertArrayEquals(pcm, waveChunk(Files.readAllBytes(standalone), "data"), decoder.toString());
                 assertArrayEquals(pcm, waveChunk(Files.readAllBytes(supplied), "data"), decoder.toString());
@@ -100,7 +102,7 @@ class AudioCallRecorderTest
     }
 
     @Test
-    void digitalMp3IgnoresAdditionalNormalizationWhileAnalogRetainsItsOption() throws Exception
+    void mp3PreservesPreparedDigitalLevelsAndRawAnalogLevels() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
         Path originalLibrary = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
@@ -115,22 +117,24 @@ class AudioCallRecorderTest
                 DecoderType.P25_PHASE2, DecoderType.DMR, DecoderType.NXDN, DecoderType.AM, DecoderType.NBFM))
             {
                 float[] raw = new float[8000];
-                for(int i = 0; i < raw.length; i++) raw[i] = (float)(.01 * Math.sin(2 * Math.PI * 700 * i / 8000));
+                float[] expected = new float[raw.length];
+                boolean analog = decoder == DecoderType.AM || decoder == DecoderType.NBFM;
+                for(int i = 0; i < raw.length; i++)
+                {
+                    raw[i] = (float)(.01 * Math.sin(2 * Math.PI * 700 * i / 8000));
+                    expected[i] = raw[i] * (analog ? 1.0f : 5.0f);
+                }
                 float[] before = raw.clone();
                 CompletedAudioCall call = callWithAudio(decoder, List.of(raw));
-                Path ordinary = mDirectory.resolve(decoder.name() + "-ordinary.mp3");
-                AudioCallRecorder.recordMP3(call, ordinary, preferences, call.snapshot().identifierCollection(), false);
-                Path normalized = mDirectory.resolve(decoder.name() + "-normalized.mp3");
-                AudioCallRecorder.recordMP3(call, normalized, preferences, call.snapshot().identifierCollection(), true);
-                byte[] ordinaryAudio = mp3Payload(Files.readAllBytes(ordinary));
-                byte[] normalizedAudio = mp3Payload(Files.readAllBytes(normalized));
-                assertTrue(ordinaryAudio.length > 0);
-                if(decoder == DecoderType.AM || decoder == DecoderType.NBFM)
-                    assertFalse(Arrays.equals(ordinaryAudio, normalizedAudio),
-                        "Analog MP3 normalization must remain effective: " + decoder);
-                else
-                    assertArrayEquals(ordinaryAudio, normalizedAudio,
-                        "Digital MP3 must not receive a second normalization: " + decoder);
+                Path recorded = mDirectory.resolve(decoder.name() + ".mp3");
+                AudioCallRecorder.recordMP3(call, recorded, preferences, call.snapshot().identifierCollection());
+                ByteArrayOutputStream expectedAudio = new ByteArrayOutputStream();
+                for(byte[] frame : new MP3AudioConverter(InputAudioFormat.SR_8000, MP3Setting.CBR_16)
+                    .convert(List.of(expected))) expectedAudio.write(frame);
+                byte[] recordedAudio = mp3Payload(Files.readAllBytes(recorded));
+                assertTrue(recordedAudio.length > 0);
+                assertArrayEquals(expectedAudio.toByteArray(), recordedAudio,
+                    "MP3 encoding must retain its prepared input levels: " + decoder);
                 assertArrayEquals(before, raw, "Encoding must preserve native PCM: " + decoder);
             }
         }
@@ -142,7 +146,6 @@ class AudioCallRecorderTest
             preferences.getMP3Preference().setMP3Setting(originalSetting);
         }
     }
-
 
     @Test
     void supplied16kWritesTruthfulWaveAndMp3WithoutDoublingDurationOrMutatingNativeCall() throws Exception
@@ -164,7 +167,7 @@ class AudioCallRecorderTest
         Path wav = mDirectory.resolve("supplied.wav");
         UserPreferences preferences = new UserPreferences();
         AudioCallRecorder.writeRendered(call, supplied, wav, RecordFormat.WAVE, preferences,
-            call.snapshot().identifierCollection(), false);
+            call.snapshot().identifierCollection());
         byte[] wave = Files.readAllBytes(wav);
         ByteBuffer format = ByteBuffer.wrap(waveChunk(wave, "fmt ")).order(ByteOrder.LITTLE_ENDIAN);
         assertEquals(16000, format.getInt(4));
@@ -179,7 +182,7 @@ class AudioCallRecorderTest
             preferences.getMP3Preference().setAudioSampleRate(InputAudioFormat.SR_16000);
             Path mp3 = mDirectory.resolve("supplied.mp3");
             AudioCallRecorder.writeRendered(call, supplied, mp3, RecordFormat.MP3, preferences,
-                call.snapshot().identifierCollection(), false);
+                call.snapshot().identifierCollection());
             Mp3File recorded = new Mp3File(mp3.toString());
             assertEquals(16000, recorded.getSampleRate(), "Supplied audio must not be silently treated as 8 kHz");
             assertTrue(recorded.getLengthInMilliseconds() >= 11900 && recorded.getLengthInMilliseconds() < 12300,
@@ -190,7 +193,7 @@ class AudioCallRecorderTest
             preferences.getMP3Preference().setAudioSampleRate(InputAudioFormat.SR_8000);
             Path constrained = mDirectory.resolve("supplied-target8k.mp3");
             AudioCallRecorder.writeRendered(call, supplied, constrained, RecordFormat.MP3, preferences,
-                call.snapshot().identifierCollection(), false);
+                call.snapshot().identifierCollection());
             Mp3File downsampled = new Mp3File(constrained.toString());
             assertEquals(8000, downsampled.getSampleRate(), "Explicit destination constraints are honored");
             assertTrue(downsampled.getLengthInMilliseconds() >= 11900 && downsampled.getLengthInMilliseconds() < 12400,

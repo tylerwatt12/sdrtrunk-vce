@@ -367,7 +367,7 @@ public final class ConfigurationOnlyDatabaseSnapshot
             int historyVersion = Integer.parseInt(ConfigurationHistorySchema.metadata(activity,
                 DatabaseFormatCatalog.FORMAT_VERSION_KEY));
             if(version < historyVersion || version >= 69 && historyVersion < 69 ||
-                version >= 70 && historyVersion < 70)
+                version >= 70 && historyVersion < 70 || version >= 71 && historyVersion < 71)
                 throw new SQLException("The configuration and activity database versions are incompatible.");
             activity.rollback();
         }

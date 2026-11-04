@@ -18,7 +18,6 @@
  */
 package io.github.dsheirer.audio.convert;
 
-import io.github.dsheirer.audio.AudioUtils;
 import io.github.dsheirer.dsp.filter.resample.RealResampler;
 import io.github.dsheirer.sample.ConversionUtils;
 import java.util.ArrayList;
@@ -43,29 +42,24 @@ public class MP3AudioConverter
     private byte[] mOutputFramesBuffer;
     private InputAudioFormat mInputAudioFormat;
 
-    private boolean mNormalizeAudio;
-
     /**
      * Constructs an instance.
      *
      * @param inputAudioFormat for the desired input sample rate and bit size (resampled from default 8 kHz as needed)
      * @param setting to configure the LAME encoder
-     * @param normalizeAudio to normalize the audio gain prior to encoding
      */
-    public MP3AudioConverter(InputAudioFormat inputAudioFormat, MP3Setting setting, boolean normalizeAudio)
+    public MP3AudioConverter(InputAudioFormat inputAudioFormat, MP3Setting setting)
     {
-        this(inputAudioFormat, setting, normalizeAudio, 8000);
+        this(inputAudioFormat, setting, 8000);
     }
 
     /** Encodes PCM using its actual source clock; resamples only when the requested encoder clock differs. */
-    public MP3AudioConverter(InputAudioFormat inputAudioFormat, MP3Setting setting, boolean normalizeAudio,
-                             int sourceSampleRate)
+    public MP3AudioConverter(InputAudioFormat inputAudioFormat, MP3Setting setting, int sourceSampleRate)
     {
         if(sourceSampleRate < 8000 || sourceSampleRate > 96000)
             throw new IllegalArgumentException("Unsupported source sample rate");
         mInputAudioFormat = inputAudioFormat;
         mEncoder = LameFactory.getLameEncoder(inputAudioFormat, setting);
-        mNormalizeAudio = normalizeAudio;
         if((int)mInputAudioFormat.getSampleRate() != sourceSampleRate)
             mResampler = new RealResampler(sourceSampleRate, mInputAudioFormat.getSampleRate(), 8192, 512);
 
@@ -93,11 +87,6 @@ public class MP3AudioConverter
     public List<byte[]> encode(List<float[]> audioPackets)
     {
         List<byte[]> converted = new ArrayList<>();
-
-        if(mNormalizeAudio)
-        {
-            audioPackets = AudioUtils.normalize(audioPackets);
-        }
 
         if(mResampler != null)
         {

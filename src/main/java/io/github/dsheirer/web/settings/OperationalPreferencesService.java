@@ -51,7 +51,7 @@ public final class OperationalPreferencesService
     public synchronized Snapshot snapshot()
     {
         Settings settings = new Settings(mCalls.getPatchGroupStreamingOption(), mRecord.getAudioRecordFormat(),
-            mMp3.getMP3Setting(), mMp3.getAudioSampleRate(), mMp3.isNormalizeAudioBeforeEncode(),
+            mMp3.getMP3Setting(), mMp3.getAudioSampleRate(),
             mApplication.isStatsLoggingEnabled(), mApplication.isStatsDetailedHistoryEnabled(),
             mApplication.getStatsLoggingRetentionDays());
         return new Snapshot(revision(settings), settings, options());
@@ -95,10 +95,6 @@ public final class OperationalPreferencesService
                         "That sample rate and bit depth are not available with the current MP3 bit rate and quality");
                 }
                 if(format != current.mp3InputAudioFormat()) mMp3.setAudioSampleRate(format);
-            }
-            case MP3_NORMALIZE_AUDIO -> {
-                boolean normalize = requireBoolean(value);
-                if(normalize != current.mp3NormalizeAudio()) mMp3.setNormalizeAudioBeforeEncode(normalize);
             }
             case STATS_LOGGING_ENABLED -> {
                 boolean enabled = requireBoolean(value);
@@ -152,7 +148,7 @@ public final class OperationalPreferencesService
     {
         String canonical = String.join("\u0000", settings.patchGroupStreamingOption().name(),
             settings.audioRecordFormat().name(), settings.mp3Setting().name(),
-            settings.mp3InputAudioFormat().name(), Boolean.toString(settings.mp3NormalizeAudio()),
+            settings.mp3InputAudioFormat().name(),
             Boolean.toString(settings.statsLoggingEnabled()),
             Boolean.toString(settings.statsDetailedHistoryEnabled()),
             Integer.toString(settings.statsLoggingRetentionDays()));
@@ -193,7 +189,6 @@ public final class OperationalPreferencesService
         AUDIO_RECORD_FORMAT("audio_record_format"),
         MP3_SETTING("mp3_setting"),
         MP3_INPUT_AUDIO_FORMAT("mp3_input_audio_format"),
-        MP3_NORMALIZE_AUDIO("mp3_normalize_audio"),
         STATS_LOGGING_ENABLED("stats_logging_enabled"),
         STATS_DETAILED_HISTORY_ENABLED("stats_detailed_history_enabled"),
         STATS_LOGGING_RETENTION_DAYS("stats_logging_retention_days");
@@ -216,7 +211,7 @@ public final class OperationalPreferencesService
     }
 
     public record Settings(PatchGroupStreamingOption patchGroupStreamingOption, RecordFormat audioRecordFormat,
-                           MP3Setting mp3Setting, InputAudioFormat mp3InputAudioFormat, boolean mp3NormalizeAudio,
+                           MP3Setting mp3Setting, InputAudioFormat mp3InputAudioFormat,
                            boolean statsLoggingEnabled, boolean statsDetailedHistoryEnabled,
                            int statsLoggingRetentionDays)
     {

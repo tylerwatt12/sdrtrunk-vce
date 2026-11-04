@@ -51,6 +51,8 @@ class OperationalPreferencesServiceTest
     {
         assertThrows(IllegalArgumentException.class,
             () -> OperationalPreferencesService.Field.fromPath("audio_continuous_agc"));
+        assertThrows(IllegalArgumentException.class,
+            () -> OperationalPreferencesService.Field.fromPath("mp3_normalize_audio"));
     }
 
     @Test
@@ -122,7 +124,6 @@ class OperationalPreferencesServiceTest
     {
         private MP3Setting mSetting = MP3Setting.CBR_16;
         private InputAudioFormat mFormat = InputAudioFormat.SR_16000;
-        private boolean mNormalize;
         int mWrites;
 
         Mp3() { super(ignored -> {}); }
@@ -130,8 +131,6 @@ class OperationalPreferencesServiceTest
         @Override public void setMP3Setting(MP3Setting value) { mSetting = value; mWrites++; }
         @Override public InputAudioFormat getAudioSampleRate() { return mFormat; }
         @Override public void setAudioSampleRate(InputAudioFormat value) { mFormat = value; mWrites++; }
-        @Override public boolean isNormalizeAudioBeforeEncode() { return mNormalize; }
-        @Override public void setNormalizeAudioBeforeEncode(boolean value) { mNormalize = value; mWrites++; }
     }
 
     static final class Application extends ApplicationPreference

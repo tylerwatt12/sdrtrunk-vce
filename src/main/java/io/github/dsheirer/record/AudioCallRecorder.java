@@ -60,36 +60,19 @@ public class AudioCallRecorder
                              UserPreferences userPreferences, IdentifierCollection identifierCollection)
         throws IOException
     {
-        write(completedAudioCall, path, recordFormat, userPreferences, identifierCollection,
-            userPreferences.getMP3Preference().isNormalizeAudioBeforeEncode());
-    }
-
-    public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
-                             UserPreferences userPreferences, boolean normalizeAudio) throws IOException
-    {
-        write(completedAudioCall, path, recordFormat, userPreferences,
-            completedAudioCall.snapshot().identifierCollection(), normalizeAudio);
-    }
-
-    /** Uses the worker's captured normalization choice, independent of later preference changes. */
-    public static void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
-                             UserPreferences userPreferences, IdentifierCollection identifierCollection,
-                             boolean normalizeAudio) throws IOException
-    {
         writeRendered(completedAudioCall, JmbeAudioOutput.render(completedAudioCall,
                 userPreferences.getJmbeLibraryPreference().getPathJmbeLibrary()), path, recordFormat,
-            userPreferences, identifierCollection, normalizeAudio);
+            userPreferences, identifierCollection);
     }
 
     /** Output-worker seam: metadata always comes from the native call, PCM and its clock from the output view. */
     public static void writeRendered(CompletedAudioCall call, RenderedAudio audio, Path path, RecordFormat format,
-                                     UserPreferences preferences, IdentifierCollection identifiers,
-                                     boolean normalizeAudio) throws IOException
+                                     UserPreferences preferences, IdentifierCollection identifiers) throws IOException
     {
         audio = JmbeAudioOutput.applyGain(call, audio);
         switch(format)
         {
-            case MP3 -> recordMP3(call, audio, path, preferences, identifiers, normalizeAudio);
+            case MP3 -> recordMP3(call, audio, path, preferences, identifiers);
             case WAVE -> recordWAVE(call, audio, path, identifiers);
             default -> throw new IllegalArgumentException("Unrecognized recording format [" + format.name() + "]");
         }
@@ -98,19 +81,11 @@ public class AudioCallRecorder
     public static void recordMP3(CompletedAudioCall completedAudioCall, Path path, UserPreferences userPreferences,
                                  IdentifierCollection identifierCollection) throws IOException
     {
-        recordMP3(completedAudioCall, path, userPreferences, identifierCollection,
-            userPreferences.getMP3Preference().isNormalizeAudioBeforeEncode());
-    }
-
-    public static void recordMP3(CompletedAudioCall completedAudioCall, Path path, UserPreferences userPreferences,
-                                 IdentifierCollection identifierCollection, boolean normalizeAudio) throws IOException
-    {
-        write(completedAudioCall, path, RecordFormat.MP3, userPreferences, identifierCollection, normalizeAudio);
+        write(completedAudioCall, path, RecordFormat.MP3, userPreferences, identifierCollection);
     }
 
     private static void recordMP3(CompletedAudioCall completedAudioCall, RenderedAudio audio, Path path,
-                                  UserPreferences userPreferences, IdentifierCollection identifierCollection,
-                                  boolean normalizeAudio) throws IOException
+                                  UserPreferences userPreferences, IdentifierCollection identifierCollection) throws IOException
     {
         if(completedAudioCall.hasAudio())
         {
@@ -127,10 +102,7 @@ public class AudioCallRecorder
                 InputAudioFormat inputAudioFormat = userPreferences.getMP3Preference().getAudioSampleRate();
                 MP3Setting mp3Setting = userPreferences.getMP3Preference().getMP3Setting();
                 // MP3 retains its explicit destination format. The converter resamples from the supplied clock.
-                // Digital voice already has its common call-wide gain; the analog MP3 option must not amplify it again.
-                MP3AudioConverter converter = new MP3AudioConverter(inputAudioFormat, mp3Setting,
-                    normalizeAudio && !JmbeAudioOutput.isDigital(completedAudioCall),
-                    audio.sampleRate());
+                MP3AudioConverter converter = new MP3AudioConverter(inputAudioFormat, mp3Setting, audio.sampleRate());
 
                 for(byte[] mp3Frame: converter.convert(audio.buffers()))
                 {

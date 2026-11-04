@@ -129,7 +129,8 @@ password resets. A browser with earlier local tour history can add that history 
 Remote Links pairing and connection settings and paging-tone detection are stored in the application database.
 Upgrading an older profile or importing its complete data folder imports their former JSON values when the database
 has no saved value. The original files remain unchanged. The update removes retired application-managed
-voice-enhancement and continuous-gain choices; the selected JMBE library owns its audio processing and output format.
+voice-enhancement, continuous-gain and MP3-normalization choices. Digital calls share peak-preserving output gain;
+the selected JMBE library continues to supply its audio processing and output format.
 Unused legacy model-selection files are not read or imported.
 Choose the complete folder so eligible settings that an older build kept outside SQLite can be inspected with it.
 
@@ -273,7 +274,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -385,6 +386,20 @@ counters, settings and allocators survive; old Active entries are neither matche
 migrator advances the matching configuration and Activity format markers in its existing transaction without a
 retained-history scan, rewrite, rebuild or compaction. The frozen populated format-69 fixture remains supported,
 and normal startup validates without migration. New growth is reduced; ordinary retention governs old observations.
+
+The format 70-to-71 step retires the optional MP3 normalization stage. It removes only
+`audio.mp3.normalize.before.encode` from the exact `user/io/github/dsheirer/preference/mp3` node of
+`portable_java_preferences_v1`. An emptied node is removed; unrelated nodes and values, MP3 format and quality,
+recording and streaming choices, credentials and the original preference timestamp are preserved. Preflight names
+the retirement and completion counts the preference actually removed. Independently unreadable portable settings
+retain the existing bounded component-repair policy.
+
+No table, column or index changes. Both matching configuration and Activity format markers advance in the existing
+transaction without scanning or rewriting retained Activity, rebuilding indexes or changing planner statistics.
+Every historical row, relationship, counter, allocator, recording and catalog survives. Fresh databases contain no
+retired choice, the populated format-70 fixture remains frozen, and current startup validates without deleting or
+repairing obsolete values. Digital output uses the shared peak-preserving gain; MP3 encoding adds no second gain
+adjustment, and analog MP3 encoding no longer has an optional normalization stage.
 
 ## Shared Upgrade And Import Boundary
 
@@ -1097,7 +1112,7 @@ availability; measured zero remains distinct from unavailable. The adjacent form
 existing field, row, relationship, transcript, index, counter and allocator. Historical quality remains unknown;
 the update neither reads audio files nor guesses measurements. The populated format-11 fixture remains frozen and
 supported. The main application database is independently at
-format 70; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
+format 71; recording-catalog migrations do not change it. Recognized older catalogs are updated in one transaction
 at the pre-receiver setup boundary under the same manual-backup policy, without an additional automatic upgrade
 backup. Normal catalog startup validates only. A catalog upgrade failure offers retry or continuation with
 Managed Recordings unavailable, so optional catalog trouble does not prevent ordinary receiving.
@@ -1263,7 +1278,7 @@ as the vault, JMBE library, optional modules, converted legacy JSON settings, an
 legacy copy scope excludes recording audio, logs, streaming output, screenshots, and the Managed Recordings catalog;
 their selected sources remain unchanged.
 Remote Links settings and paging-tone choices already in the application database are preserved for every import scope.
-The adjacent update removes retired voice-enhancement and continuous-gain choices and reports their counts.
+The adjacent updates remove retired voice-enhancement, continuous-gain and MP3-normalization choices and report their counts.
 Remote Links network
 destinations and stable channel/sender identities are preserved without path remapping. An unavailable optional artifact is
 reported and skipped independently rather than discarding an otherwise valid migrated database. Public selectors

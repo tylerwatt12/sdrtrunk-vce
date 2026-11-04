@@ -35,13 +35,10 @@ public class MP3Preference extends Preference
 {
     private static final String PREFERENCE_KEY_AUDIO_MP3_SETTING = "audio.mp3.setting";
     private static final String PREFERENCE_KEY_AUDIO_MP3_SAMPLE_RATE = "audio.mp3.sample.rate";
-    private static final String PREFERENCE_KEY_AUDIO_MP3_NORMALIZE_BEFORE_ENCODE = "audio.mp3.normalize.before.encode";
     private static final Logger mLog = LoggerFactory.getLogger(MP3Preference.class);
     private Preferences mPreferences = Preferences.userNodeForPackage(MP3Preference.class);
     private InputAudioFormat mInputAudioFormat;
     private MP3Setting mMP3Setting;
-
-    private Boolean mNormalizeAudio;
 
     /**
      * Constructs this preference with an update listener
@@ -149,28 +146,4 @@ public class MP3Preference extends Preference
         notifyPreferenceUpdated();
     }
 
-    /**
-     * Indicates if the user prefers to normalize audio before encoding to MP3
-     * @return true to normalize
-     */
-    public boolean isNormalizeAudioBeforeEncode()
-    {
-        if(mNormalizeAudio == null)
-        {
-            mNormalizeAudio = mPreferences.getBoolean(PREFERENCE_KEY_AUDIO_MP3_NORMALIZE_BEFORE_ENCODE, false);
-        }
-
-        return mNormalizeAudio;
-    }
-
-    /**
-     * Sets the preferenced to normalize audio before encoding to MP3.
-     * @param normalizeAudio true to normalize
-     */
-    public void setNormalizeAudioBeforeEncode(boolean normalizeAudio)
-    {
-        mNormalizeAudio = normalizeAudio;
-        mPreferences.putBoolean(PREFERENCE_KEY_AUDIO_MP3_NORMALIZE_BEFORE_ENCODE, normalizeAudio);
-        notifyPreferenceUpdated();
-    }
 }

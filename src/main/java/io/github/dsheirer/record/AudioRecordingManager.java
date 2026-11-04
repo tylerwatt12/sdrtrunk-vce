@@ -235,7 +235,6 @@ public class AudioRecordingManager
                         //Tone metadata is optional; an observer failure must not discard the audio recording.
                     }
                     //A worker-only encoding view keeps the elected raw PCM available for ML and tone evidence.
-                    boolean normalizeAudio = mUserPreferences.getMP3Preference().isNormalizeAudioBeforeEncode();
                     path = managed ? getManagedRecordingPath(completedAudioCall) :
                         BasicRecordingContract.nextPath(getRecordingBasePath(),
                             completedAudioCall.snapshot().identifierCollection(), recordFormat, writerTimestamp,
@@ -253,7 +252,7 @@ public class AudioRecordingManager
                     {
                         try
                         {
-                            mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences, normalizeAudio);
+                            mRecordingWriter.write(completedAudioCall, path, recordFormat, mUserPreferences);
                             break;
                         }
                         catch(FileAlreadyExistsException collision)
@@ -593,6 +592,6 @@ public class AudioRecordingManager
     interface RecordingWriter
     {
         void write(CompletedAudioCall completedAudioCall, Path path, RecordFormat recordFormat,
-                   UserPreferences userPreferences, boolean normalizeAudio) throws IOException;
+                   UserPreferences userPreferences) throws IOException;
     }
 }

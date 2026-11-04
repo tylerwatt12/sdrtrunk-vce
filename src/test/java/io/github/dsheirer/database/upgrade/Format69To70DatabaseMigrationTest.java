@@ -48,7 +48,7 @@ class Format69To70DatabaseMigrationTest
         assertArrayEquals(configurationBytes, Files.readAllBytes(configuration));
         assertArrayEquals(historyBytes, Files.readAllBytes(history));
         var plan = ApplicationMigrationService.readStartupPlan(configuration);
-        assertEquals(List.of("call-owned-voice-activity-v1"), plan.steps().stream().map(
+        assertEquals(CurrentFormatTestDatabase.migrationStepIdsFrom(69), plan.steps().stream().map(
             DatabaseMigrationChain.StepPreflight::id).toList());
         assertTrue(plan.steps().getFirst().effects().stream().allMatch(effect -> effect.affectedRows() >= 0),
             "Preflight declares a prospective policy without counting retained history");
@@ -57,7 +57,8 @@ class Format69To70DatabaseMigrationTest
         }));
         assertPreserved(configuration, beforeConfiguration, 69); assertPreserved(history, beforeHistory, 69);
         ApplicationDatabaseMigrator.migrateInPlace(configuration, null);
-        assertPreserved(configuration, beforeConfiguration, 70); assertPreserved(history, beforeHistory, 70);
+        assertPreserved(configuration, beforeConfiguration, DatabaseFormatCatalog.CURRENT_VERSION);
+        assertPreserved(history, beforeHistory, DatabaseFormatCatalog.CURRENT_VERSION);
         try(var connection = open(history))
         {
             assertEquals(btrees, schemaObjects(connection));
@@ -119,7 +120,7 @@ class Format69To70DatabaseMigrationTest
         for(Path database: List.of(configuration, ActivityDatabasePath.forConfiguration(configuration)))
             try(var connection = open(database))
             {
-                assertEquals(70, DatabaseFormatCatalog.requireCurrent(connection).version());
+                assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
                 assertThrows(java.sql.SQLException.class, () -> SqliteSchemaValidator.fingerprint(connection,
                     "unexpected_companion"));
                 assertThrows(java.sql.SQLException.class, () ->

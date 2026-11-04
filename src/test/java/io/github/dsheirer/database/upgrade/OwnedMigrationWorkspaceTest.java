@@ -105,7 +105,7 @@ class OwnedMigrationWorkspaceTest
 
     @Test void boundedCurrentPreferenceRepairUsesConfigurationButNoOpNeedsNoMigrationWorkspace() throws Exception
     {
-        Path database = Format70TestDatabase.create(temporary.resolve("preference-repair.sqlite"));
+        Path database = Format71TestDatabase.create(temporary.resolve("preference-repair.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(database);
         assertEquals(0, ApplicationMigrationService.requiredOwnedMigrationWorkspace(database, MigrationContent.FULL));
         try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database);

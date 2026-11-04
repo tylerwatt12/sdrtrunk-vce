@@ -116,8 +116,8 @@ public class AudioStreamingManagerTest
         ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
         List<AudioRecording> delivered = new ArrayList<>();
         AudioStreamingManager manager = new AudioStreamingManager(delivered::add, BroadcastFormat.MP3,
-            preferences, null, scheduler, (completed, path, prefs, identifiers, normalize) ->
-                AudioCallRecorder.write(completed, path, RecordFormat.MP3, prefs, identifiers, normalize));
+            preferences, null, scheduler, (completed, path, prefs, identifiers) ->
+                AudioCallRecorder.write(completed, path, RecordFormat.MP3, prefs, identifiers));
         try
         {
             preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
@@ -165,8 +165,8 @@ public class AudioStreamingManagerTest
         ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
         List<AudioRecording> delivered = new ArrayList<>();
         AudioStreamingManager manager = new AudioStreamingManager(delivered::add, BroadcastFormat.MP3,
-            preferences, null, scheduler, (completed, path, prefs, identifiers, normalize) ->
-                AudioCallRecorder.write(completed, path, RecordFormat.MP3, prefs, identifiers, normalize));
+            preferences, null, scheduler, (completed, path, prefs, identifiers) ->
+                AudioCallRecorder.write(completed, path, RecordFormat.MP3, prefs, identifiers));
         try
         {
             preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
@@ -242,9 +242,9 @@ public class AudioStreamingManagerTest
         List<AudioRecording> delivered = new ArrayList<>();
         List<CompletedAudioCall> observed = new ArrayList<>();
         AudioStreamingManager manager = new AudioStreamingManager(delivered::add, BroadcastFormat.MP3,
-            preferences, observed::add, scheduler, (call, path, prefs, identifiers, normalize) ->
+            preferences, observed::add, scheduler, (call, path, prefs, identifiers) ->
                 io.github.dsheirer.record.AudioCallRecorder.write(call, path, io.github.dsheirer.record.RecordFormat.MP3,
-                    prefs, identifiers, normalize));
+                    prefs, identifiers));
         CompletedAudioCall source = withDecoder(withAudioBuffers(List.of(new float[8000])), DecoderType.P25_PHASE2);
         try
         {
@@ -276,45 +276,6 @@ public class AudioStreamingManagerTest
     }
 
     @Test
-    void streamingWorkerKeepsCapturedNormalizationDespitePreferenceChanges() throws Exception
-    {
-        UserPreferences preferences = new UserPreferences();
-        Path originalDirectory = preferences.getDirectoryPreference().getDirectoryStreaming();
-        Path originalJmbe = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
-        boolean originalNormalize = preferences.getMP3Preference().isNormalizeAudioBeforeEncode();
-        ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
-        List<Boolean> normalization = new ArrayList<>();
-        AtomicInteger delivered = new AtomicInteger();
-        AudioStreamingManager manager = new AudioStreamingManager(recording -> delivered.incrementAndGet(),
-            BroadcastFormat.MP3, preferences, null, scheduler,
-            (call, path, prefs, identifiers, normalizeAudio) -> {
-                prefs.getMP3Preference().setNormalizeAudioBeforeEncode(false);
-                normalization.add(normalizeAudio);
-                Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
-            });
-        try
-        {
-            preferences.getDirectoryPreference().setDirectoryStreaming(mTemporaryFolder);
-            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
-            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(true);
-            manager.start();
-            manager.receive(withDecoder(withAudioBuffers(List.of(new float[]{0.1f, -0.2f})), DecoderType.P25_PHASE2));
-            manager.new AudioSegmentProcessor().run();
-            assertEquals(List.of(true), normalization);
-            assertEquals(1, delivered.get(), "The recording worker must retain captured normalization");
-        }
-        finally
-        {
-            manager.stop();
-            scheduler.shutdownNow();
-            preferences.getDirectoryPreference().setDirectoryStreaming(originalDirectory);
-            if(originalJmbe != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalJmbe);
-            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
-            preferences.getMP3Preference().setNormalizeAudioBeforeEncode(originalNormalize);
-        }
-    }
-
-    @Test
     void streamingWriterReceivesNativeImbeEvidenceBeforeOutputProcessing() throws Exception
     {
         UserPreferences preferences = new UserPreferences();
@@ -323,7 +284,7 @@ public class AudioStreamingManagerTest
         List<CompletedAudioCall> written = new ArrayList<>();
         List<CompletedAudioCall> observed = new ArrayList<>();
         AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
-            preferences, observed::add, scheduler, (call, path, userPreferences, identifiers, normalizeAudio) -> {
+            preferences, observed::add, scheduler, (call, path, userPreferences, identifiers) -> {
                 written.add(call);
                 Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW);
             });
@@ -529,8 +490,8 @@ public class AudioStreamingManagerTest
         UserPreferences preferences = new UserPreferences();
         ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
         AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
-            preferences, null, scheduler, (call, path, userPreferences, identifiers, normalizeAudio) ->
-                AudioCallRecorder.write(call, path, RecordFormat.MP3, userPreferences, identifiers, normalizeAudio));
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) ->
+                AudioCallRecorder.write(call, path, RecordFormat.MP3, userPreferences, identifiers));
         CompletedAudioCall call = getCompletedAudioCall();
         long sourceBytes = 100L * 500L * Float.BYTES;
 
@@ -571,7 +532,7 @@ public class AudioStreamingManagerTest
         UserPreferences preferences = new UserPreferences();
         ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
         AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
-            preferences, null, scheduler, (call, path, userPreferences, identifiers, normalizeAudio) -> {});
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) -> {});
         CompletedAudioCall template = getCompletedAudioCall();
         AudioCallSnapshot snapshot = template.snapshot();
         AudioCallSnapshot noBroadcastRoute = new AudioCallSnapshot(snapshot.callId(), snapshot.linkedCallId(),
@@ -604,8 +565,8 @@ public class AudioStreamingManagerTest
         UserPreferences preferences = new UserPreferences();
         ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
         AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
-            preferences, null, scheduler, (call, path, userPreferences, identifiers, normalizeAudio) ->
-                AudioCallRecorder.write(call, path, RecordFormat.MP3, userPreferences, identifiers, normalizeAudio));
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) ->
+                AudioCallRecorder.write(call, path, RecordFormat.MP3, userPreferences, identifiers));
         float[] sharedEightMiBBuffer = new float[2 * 1024 * 1024];
         CompletedAudioCall call = withAudioBuffers(List.of(sharedEightMiBBuffer));
 
@@ -646,10 +607,10 @@ public class AudioStreamingManagerTest
         AtomicInteger delivered = new AtomicInteger();
         AudioStreamingManager successful = new AudioStreamingManager(recording -> delivered.incrementAndGet(),
             BroadcastFormat.MP3, preferences, null, scheduler,
-            (call, path, userPreferences, identifiers, normalizeAudio) ->
+            (call, path, userPreferences, identifiers) ->
                 Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW));
         AudioStreamingManager failed = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
-            preferences, null, scheduler, (call, path, userPreferences, identifiers, normalizeAudio) -> {
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) -> {
                 throw new IOException("expected test failure");
             });
 
@@ -691,7 +652,7 @@ public class AudioStreamingManagerTest
         ManualStreamingScheduler scheduler = new ManualStreamingScheduler();
         AtomicReference<AudioRecording> delivered = new AtomicReference<>();
         AudioStreamingManager manager = new AudioStreamingManager(delivered::set, BroadcastFormat.MP3,
-            preferences, null, scheduler, (call, path, userPreferences, identifiers, normalizeAudio) ->
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) ->
                 Files.write(path, new byte[]{1}, StandardOpenOption.CREATE_NEW));
         CompletedAudioCall template = getCompletedAudioCall();
         ResolvedCallPolicy policy = new ResolvedCallPolicy(false, false,
@@ -735,7 +696,7 @@ public class AudioStreamingManagerTest
         CountDownLatch releaseWriter = new CountDownLatch(1);
         AtomicInteger writes = new AtomicInteger();
         AudioStreamingManager manager = new AudioStreamingManager(recording -> {}, BroadcastFormat.MP3,
-            preferences, null, scheduler, (call, path, userPreferences, identifiers, normalizeAudio) -> {
+            preferences, null, scheduler, (call, path, userPreferences, identifiers) -> {
                 if(writes.getAndIncrement() == 0)
                 {
                     writerEntered.countDown();
