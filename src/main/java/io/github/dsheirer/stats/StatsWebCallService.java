@@ -20,7 +20,6 @@ import io.github.dsheirer.audio.output.JmbeAudioOutput;
 import io.github.dsheirer.audio.tone.CompletedToneSequence;
 import io.github.dsheirer.audio.tone.ToneSummaryPayload;
 import io.github.dsheirer.audio.tone.P25PagingToneService;
-import io.github.dsheirer.dsp.gain.PeakAudioGain;
 import io.github.dsheirer.module.decode.DecoderType;
 import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.identifier.Form;
@@ -680,8 +679,6 @@ final class StatsWebCallService implements AutoCloseable
         }
 
         //All analysis and inference remain on this one bounded low-priority worker. Native call PCM is read-only.
-        boolean phase1 = snapshot.callLegSource().decoderType() == DecoderType.P25_PHASE1 ||
-            snapshot.callLegSource().decoderType() == DecoderType.P25_CONVENTIONAL;
         //The shared receiver observer owns both PCM detection and encoded-tone interpretation.
         AudioCallSnapshot nativeSnapshot = call.nativeAudioSnapshot();
         CompletedToneSequence tones = lookupTones(nativeSnapshot);
@@ -703,10 +700,10 @@ final class StatsWebCallService implements AutoCloseable
             mOutputFailures.incrementAndGet();
             rendered = JmbeAudioOutput.nativeAudio(call);
         }
+        rendered = JmbeAudioOutput.applyGain(processingCall, rendered);
         List<float[]> output = rendered.buffers();
         int sampleRate = rendered.sampleRate();
-        float gain = phase1 ? new PeakAudioGain(5.0f, 0.95f).calculateGain(output) : 1.0f;
-        byte[] wave = wave(output, checkedWaveLength(output), sampleRate, gain);
+        byte[] wave = wave(output, checkedWaveLength(output), sampleRate);
 
         if(wave == null)
         {
@@ -1252,10 +1249,10 @@ final class StatsWebCallService implements AutoCloseable
     private static byte[] wave(CompletedAudioCall call, int waveLength)
     {
         List<float[]> audioBuffers = call != null ? call.audioBuffers() : null;
-        return wave(audioBuffers, waveLength, SAMPLE_RATE, 1.0f);
+        return wave(audioBuffers, waveLength, SAMPLE_RATE);
     }
 
-    private static byte[] wave(List<float[]> audioBuffers, int waveLength, int sampleRate, float gain)
+    private static byte[] wave(List<float[]> audioBuffers, int waveLength, int sampleRate)
     {
 
         if(audioBuffers == null || waveLength < WAVE_HEADER_BYTES || waveLength > MAXIMUM_CALL_AUDIO_BYTES)
@@ -1288,7 +1285,6 @@ final class StatsWebCallService implements AutoCloseable
 
             for(float sample: audioBuffer)
             {
-                sample *= gain;
                 wave.putShort(sample > 1.0f ? Short.MAX_VALUE : sample < -1.0f ? (short)-Short.MAX_VALUE :
                     (short)(sample * Short.MAX_VALUE));
             }

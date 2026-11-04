@@ -130,6 +130,41 @@ class StatsWebCallServiceTest
     }
 
     @Test
+    void allDigitalProtocolsUseOneCallWideGainWithNativeAndFailedOutputs() throws Exception
+    {
+        for(boolean failedOutput : new boolean[] {false, true})
+        {
+            java.util.function.Function<CompletedAudioCall,JmbeAudioOutput.RenderedAudio> renderer = failedOutput ?
+                ignored -> { throw new IllegalStateException("Output failed"); } : null;
+            try(StatsWebCallService service = started(new StatsWebCallService(null, null, renderer, ignored -> null));
+                FeedClient client = listen(service, Set.of()))
+            {
+                for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_CONVENTIONAL,
+                    DecoderType.P25_PHASE2, DecoderType.DMR, DecoderType.NXDN))
+                {
+                    CompletedAudioCall template = withSource(call(),
+                        new CallLegSource(decoder, null, null, null, 0, null, null, null, false));
+                    float[] samples = new float[800];
+                    float[] levels = {.02f, -.01f, .08f, -.16f};
+                    for(int index = 0; index < samples.length; index++) samples[index] = levels[index % levels.length];
+                    CompletedAudioCall source = new CompletedAudioCall(template.snapshot(), List.of(samples));
+                    service.receive(source);
+                    var metadata = client.awaitCall();
+                    ByteBuffer wave = ByteBuffer.wrap(service.get(String.valueOf(metadata.get("call_id"))).wave())
+                        .order(ByteOrder.LITTLE_ENDIAN);
+                    for(int index = 0; index < levels.length; index++)
+                        assertEquals((short)(levels[index] * 5.0f * Short.MAX_VALUE),
+                            wave.getShort(44 + index * Short.BYTES), decoder.name());
+                    assertEquals(8000, metadata.get("audio_sample_rate"));
+                    assertEquals(100L, metadata.get("duration_ms"));
+                    for(int index = 0; index < samples.length; index++)
+                        assertEquals(levels[index % levels.length], samples[index], "Native PCM stays unchanged");
+                }
+            }
+        }
+    }
+
+    @Test
     void suppliedAudioFormatIsUsedWithoutChangingNativeCallOrCachedOutput() throws Exception
     {
         var rate = new java.util.concurrent.atomic.AtomicInteger(8000);
@@ -159,6 +194,8 @@ class StatsWebCallServiceTest
                 byte[] wave = service.get(String.valueOf(supplied.get("call_id"))).wave();
                 assertEquals(44 + outputRate / 10 * 2, wave.length);
                 assertEquals(outputRate, ByteBuffer.wrap(wave).order(ByteOrder.LITTLE_ENDIAN).getInt(24));
+                assertEquals((short)(.5f * Short.MAX_VALUE),
+                    ByteBuffer.wrap(wave).order(ByteOrder.LITTLE_ENDIAN).getShort(44));
                 assertFalse(supplied.containsKey("voice_model"));
                 assertFalse(supplied.containsKey("voice_enhancement"));
                 assertFalse(supplied.containsKey("continuous_agc"));

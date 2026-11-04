@@ -11,6 +11,7 @@
 
 package io.github.dsheirer.module.decode.nxdn.audio;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -31,6 +32,7 @@ import io.github.dsheirer.module.decode.nxdn.layer3.type.AudioCodec;
 import io.github.dsheirer.preference.UserPreferences;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -210,6 +212,46 @@ class NXDNAudioModuleTest
     }
 
     @Test
+    void preservesNativeCodecLevelsWithoutScalingOrClamping()
+    {
+        float[] decoded = Arrays.copyOf(new float[]{0.8f, -0.6f, 0.3f, -0.2f, 0.1f, -0.05f}, 160);
+        float[] expected = decoded.clone();
+        IAudioCodec codec = new TestAudioCodec(decoded);
+        NXDNAudioModule module = new NXDNAudioModule(new UserPreferences(), AliasList.empty("native-levels"))
+        {
+            @Override
+            protected boolean hasAudioCodec()
+            {
+                return true;
+            }
+
+            @Override
+            public IAudioCodec getAudioCodec()
+            {
+                return codec;
+            }
+        };
+        List<AudioCallEvent> events = new ArrayList<>();
+        module.setAudioCallEventListener(events::add);
+
+        try
+        {
+            module.receive(voiceCall(1_000L, 101, 202, LICH.RTCH_OUTBOUND_SINGLE_FACCH1_FACCH1));
+            module.receive(audio(1_200L, LICH.RTCH_OUTBOUND_SUPER_VOICE_VOICE));
+            AudioCallEvent audio = events.stream()
+                .filter(event -> event.eventType() == AudioCallEventType.AUDIO_FRAME).findFirst().orElseThrow();
+
+            assertArrayEquals(expected, audio.audioFrame(), "Decoder observers must receive native codec PCM");
+            assertArrayEquals(expected, decoded, "Decoder processing must preserve the codec's PCM buffer");
+            assertEquals(1_200L, audio.voiceFrameTimestamp());
+        }
+        finally
+        {
+            module.dispose();
+        }
+    }
+
+    @Test
     void pendingPreEncryptionAudioDropsOldestAtFixedBoundAndReset() throws ReflectiveOperationException
     {
         NXDNAudioModule module = new NXDNAudioModule(new UserPreferences(), AliasList.empty("bounded"))
@@ -373,6 +415,18 @@ class NXDNAudioModuleTest
 
     private static final class TestAudioCodec implements IAudioCodec
     {
+        private final float[] mAudio;
+
+        private TestAudioCodec()
+        {
+            this(new float[160]);
+        }
+
+        private TestAudioCodec(float[] audio)
+        {
+            mAudio = audio;
+        }
+
         @Override
         public String getCodecName()
         {
@@ -382,7 +436,7 @@ class NXDNAudioModuleTest
         @Override
         public float[] getAudio(byte[] frame)
         {
-            return new float[160];
+            return mAudio;
         }
 
         @Override
@@ -393,7 +447,7 @@ class NXDNAudioModuleTest
                 @Override
                 public float[] getAudio()
                 {
-                    return new float[160];
+                    return mAudio;
                 }
 
                 @Override

@@ -21,6 +21,70 @@ class JmbeAudioOutputTest
 {
     @TempDir Path directory;
 
+    @Test void allDigitalProtocolsUseOneCallWideGainWithoutFlatteningOrMutatingNativeSamples()
+    {
+        for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_CONVENTIONAL,
+            DecoderType.P25_PHASE2, DecoderType.DMR, DecoderType.NXDN))
+        {
+            List<float[]> quiet = List.of(new float[]{.01f, -.02f}, new float[]{.03f, -.1f});
+            CompletedAudioCall quietCall = call(decoder, quiet);
+            assertTrue(JmbeAudioOutput.isDigital(quietCall), decoder.toString());
+            var quietOutput = JmbeAudioOutput.applyGain(quietCall, JmbeAudioOutput.nativeAudio(quietCall));
+            assertArrayEquals(new float[]{.05f, -.1f}, quietOutput.buffers().get(0), .000001f, decoder.toString());
+            assertArrayEquals(new float[]{.15f, -.5f}, quietOutput.buffers().get(1), .000001f, decoder.toString());
+            assertNotSame(quiet.getFirst(), quietOutput.buffers().getFirst());
+            assertArrayEquals(new float[]{.01f, -.02f}, quiet.get(0));
+            assertArrayEquals(new float[]{.03f, -.1f}, quiet.get(1));
+            var independentOutput = JmbeAudioOutput.applyGain(quietCall, JmbeAudioOutput.nativeAudio(quietCall));
+            assertArrayEquals(quietOutput.buffers().getFirst(), independentOutput.buffers().getFirst(),
+                "Independent outputs must not compound gain");
+
+            List<float[]> loud = List.of(new float[]{.1f, -.2f}, new float[]{.4f, -.8f});
+            CompletedAudioCall loudCall = call(decoder, loud);
+            var loudOutput = JmbeAudioOutput.applyGain(loudCall, JmbeAudioOutput.nativeAudio(loudCall));
+            assertArrayEquals(new float[]{.11875f, -.2375f}, loudOutput.buffers().get(0), .000001f,
+                "Every buffer must use the peak of the whole call: " + decoder);
+            assertArrayEquals(new float[]{.475f, -.95f}, loudOutput.buffers().get(1), .000001f,
+                "Loud peaks must preserve their relative levels: " + decoder);
+            assertTrue(Math.abs(loudOutput.buffers().get(1)[1]) <= .95f);
+            assertArrayEquals(new float[]{.1f, -.2f}, loud.get(0));
+            assertArrayEquals(new float[]{.4f, -.8f}, loud.get(1));
+            assertEquals(8000, loudOutput.sampleRate());
+        }
+    }
+
+    @Test void analogAndUnidentifiedAudioRetainTheirExistingLevels()
+    {
+        for(DecoderType decoder : new DecoderType[]{DecoderType.AM, DecoderType.NBFM, null})
+        {
+            float[] samples = {.01f, -.2f, .4f};
+            CompletedAudioCall call = call(decoder, List.of(samples));
+            assertFalse(JmbeAudioOutput.isDigital(call));
+            var output = JmbeAudioOutput.applyGain(call, JmbeAudioOutput.nativeAudio(call));
+            assertSame(samples, output.buffers().getFirst());
+            assertArrayEquals(new float[]{.01f, -.2f, .4f}, samples);
+        }
+    }
+
+    @Test void suppliedFormatsAndProviderFallbackReceiveTheSameDigitalGain()
+    {
+        float[] samples = {.01f, -.02f, .03f, -.1f};
+        CompletedAudioCall call = call(DecoderType.NXDN, List.of(samples));
+        var supplied = JmbeAudioOutput.renderWithProcessor(call, new JmbeAudioOutputProcessor(new Resampled()));
+        float[] suppliedBefore = supplied.buffers().getFirst().clone();
+        var output = JmbeAudioOutput.applyGain(call, supplied);
+        assertEquals(16000, output.sampleRate());
+        assertArrayEquals(new float[]{.05f, .05f, -.1f, -.1f, .15f, .15f, -.5f, -.5f},
+            output.buffers().getFirst(), .000001f);
+        assertArrayEquals(suppliedBefore, supplied.buffers().getFirst());
+        var fallback = JmbeAudioOutput.renderWithProcessor(call,
+            new JmbeAudioOutputProcessor(new Invalid("throws")));
+        var fallbackOutput = JmbeAudioOutput.applyGain(call, fallback);
+        assertEquals(8000, fallbackOutput.sampleRate());
+        assertArrayEquals(new float[]{.05f, -.1f, .15f, -.5f}, fallbackOutput.buffers().getFirst(), .000001f);
+        assertArrayEquals(new float[]{.01f, -.02f, .03f, -.1f}, samples);
+    }
+
     @Test void absentCapabilityPreservesDefaultAndSuppliedFormatUsesNoVersionRecognition() throws Exception
     {
         CompletedAudioCall call = call();
@@ -101,19 +165,34 @@ class JmbeAudioOutputTest
         Counting(AtomicInteger calls) { this.calls = calls; }
         public Map<String,Object> process(float[] input, int rate, String codec) { calls.incrementAndGet(); return Map.of(); }
     }
+    public static class Resampled
+    {
+        public Map<String,Object> process(float[] input, int rate, String codec)
+        {
+            assertEquals("AMBE_PLUS_2", codec);
+            float[] output = new float[input.length * 2];
+            for(int i = 0; i < output.length; i++) output[i] = input[i / 2];
+            return Map.of("samples", output, "sample_rate", 16000);
+        }
+    }
     private static long count(JmbeAudioOutput.RenderedAudio audio)
     {
         return audio.buffers().stream().mapToLong(buffer -> buffer.length).sum();
     }
     static CompletedAudioCall call()
     {
+        float[] samples = new float[8000];
+        for(int i=0;i<samples.length;i++) samples[i] = (float)(.1 * Math.sin(2*Math.PI*700*i/8000));
+        return call(DecoderType.P25_PHASE1, List.of(samples));
+    }
+
+    private static CompletedAudioCall call(DecoderType decoder, List<float[]> samples)
+    {
         var id = new AudioCallId(1L, 1L, 0);
-        var source = new CallLegSource(DecoderType.P25_PHASE1, null, null, null, 0, null, null, null, false);
+        var source = new CallLegSource(decoder, null, null, null, 0, null, null, null, false);
         var snapshot = new AudioCallSnapshot(id, null, null, null, Set.of(), 1000, 2000,
             1, 1, 1000, 2000, false, true, CallEncryptionState.CLEAR, true, null,
             VoiceCallQuality.EMPTY, CallLegId.from(id), source, null);
-        float[] samples = new float[8000];
-        for(int i=0;i<samples.length;i++) samples[i] = (float)(.1 * Math.sin(2*Math.PI*700*i/8000));
-        return new CompletedAudioCall(snapshot, List.of(samples));
+        return new CompletedAudioCall(snapshot, samples);
     }
 }

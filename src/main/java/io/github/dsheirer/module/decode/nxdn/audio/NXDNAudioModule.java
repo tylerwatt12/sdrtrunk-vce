@@ -38,7 +38,6 @@ import io.github.dsheirer.audio.codec.mbe.decrypt.VoiceFrameDecryptorFactory;
 import io.github.dsheirer.audio.squelch.SquelchState;
 import io.github.dsheirer.audio.squelch.SquelchStateEvent;
 import io.github.dsheirer.bits.BinaryMessage;
-import io.github.dsheirer.dsp.gain.NonClippingGain;
 import io.github.dsheirer.identifier.encryption.EncryptionKey;
 import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.nxdn.layer2.Framing;
@@ -77,7 +76,6 @@ public class NXDNAudioModule extends AmbeAudioModule
     private static final Logger LOGGER = LoggerFactory.getLogger(NXDNAudioModule.class);
     static final int MAX_PENDING_AUDIO_MESSAGES = 64;
     private final SquelchStateListener mSquelchStateListener = new SquelchStateListener();
-    private final NonClippingGain mGain = new NonClippingGain(5.0f, 0.95f);
     private final Deque<Audio> mCachedAudioMessages = new ArrayDeque<>(MAX_PENDING_AUDIO_MESSAGES);
     private final NXDNCallSequenceRecorder.EncryptionContextTracker mEncryptionContextTracker =
         new NXDNCallSequenceRecorder.EncryptionContextTracker();
@@ -372,7 +370,7 @@ public class NXDNAudioModule extends AmbeAudioModule
                         byte[] decodedFrame = mEncryptionState.isEncrypted() ? mDecryptor.decrypt(frame) : frame;
                         IAudioWithMetadata audioWithMetadata =
                             getAudioCodec().getAudioWithMetadata(decodedFrame);
-                        float[] generatedAudio = mGain.apply(audioWithMetadata.getAudio());
+                        float[] generatedAudio = audioWithMetadata.getAudio();
                         long toneFrameBefore = mToneFrameSequence;
                         addAudio(generatedAudio, getVoiceFrameQuality(audioWithMetadata), timestamp);
                         if(mToneFrameSequence != toneFrameBefore)

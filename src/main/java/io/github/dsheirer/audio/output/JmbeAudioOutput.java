@@ -4,6 +4,7 @@ package io.github.dsheirer.audio.output;
 import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.codec.mbe.JmbeAudioOutputProcessor;
 import io.github.dsheirer.audio.codec.mbe.JmbeLibraryLoader;
+import io.github.dsheirer.dsp.gain.PeakAudioGain;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -13,6 +14,7 @@ import java.util.List;
 public final class JmbeAudioOutput
 {
     public static final int NATIVE_SAMPLE_RATE = 8000;
+    private static final PeakAudioGain DIGITAL_GAIN = new PeakAudioGain(5.0f, 0.95f);
     private JmbeAudioOutput() {}
 
     public static RenderedAudio render(CompletedAudioCall call, Path library)
@@ -60,6 +62,22 @@ public final class JmbeAudioOutput
     public static RenderedAudio nativeAudio(CompletedAudioCall call)
     {
         return new RenderedAudio(call.audioBuffers(), NATIVE_SAMPLE_RATE);
+    }
+
+    /**
+     * Applies one completed-call gain after output selection, on an output worker. Digital voice uses at most
+     * fivefold gain with headroom for peaks. Native PCM, packet timing and supplied sample rates stay intact.
+     * Each output destination calls this once, including when optional JMBE processing falls back to native audio.
+     */
+    public static RenderedAudio applyGain(CompletedAudioCall call, RenderedAudio audio)
+    {
+        return isDigital(call) ? new RenderedAudio(DIGITAL_GAIN.process(audio.buffers()), audio.sampleRate()) : audio;
+    }
+
+    public static boolean isDigital(CompletedAudioCall call)
+    {
+        var decoder = call.nativeAudioSnapshot().callLegSource().decoderType();
+        return decoder != null && decoder.providesMBEAudioFrames();
     }
 
     private static String codec(CompletedAudioCall call)

@@ -28,6 +28,7 @@ import io.github.dsheirer.audio.call.CompletedAudioCall;
 import io.github.dsheirer.audio.call.VoiceCallQuality;
 import io.github.dsheirer.audio.convert.InputAudioFormat;
 import io.github.dsheirer.audio.convert.MP3Setting;
+import io.github.dsheirer.audio.output.JmbeAudioOutput;
 import io.github.dsheirer.identifier.IdentifierCollection;
 import io.github.dsheirer.identifier.configuration.SystemConfigurationIdentifier;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -59,6 +60,88 @@ import org.junit.jupiter.api.io.TempDir;
 class AudioCallRecorderTest
 {
     @TempDir Path mDirectory;
+
+    @Test
+    void digitalWaveEntryPointsApplyTheSameGainExactlyOnce() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalLibrary = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        try
+        {
+            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_CONVENTIONAL,
+                DecoderType.P25_PHASE2, DecoderType.DMR, DecoderType.NXDN))
+            {
+                List<float[]> raw = List.of(new float[]{.01f, -.02f}, new float[]{.03f, -.1f});
+                CompletedAudioCall call = callWithAudio(decoder, raw);
+                Path ordinary = mDirectory.resolve(decoder.name() + "-ordinary.wav");
+                AudioCallRecorder.write(call, ordinary, RecordFormat.WAVE, preferences, false);
+                Path standalone = mDirectory.resolve(decoder.name() + "-standalone.wav");
+                AudioCallRecorder.recordWAVE(call, standalone, call.snapshot().identifierCollection());
+                Path supplied = mDirectory.resolve(decoder.name() + "-rendered.wav");
+                AudioCallRecorder.writeRendered(call, JmbeAudioOutput.nativeAudio(call), supplied, RecordFormat.WAVE,
+                    preferences, call.snapshot().identifierCollection(), false);
+                byte[] pcm = waveChunk(Files.readAllBytes(ordinary), "data");
+                assertArrayEquals(pcm, waveChunk(Files.readAllBytes(standalone), "data"), decoder.toString());
+                assertArrayEquals(pcm, waveChunk(Files.readAllBytes(supplied), "data"), decoder.toString());
+                ByteBuffer samples = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN);
+                for(float expected : new float[]{.05f, -.1f, .15f, -.5f})
+                    assertEquals(expected, samples.getShort() / (float)Short.MAX_VALUE, .00004f,
+                        "WAV must contain one fivefold boost: " + decoder);
+                assertArrayEquals(new float[]{.01f, -.02f}, raw.get(0));
+                assertArrayEquals(new float[]{.03f, -.1f}, raw.get(1));
+            }
+        }
+        finally
+        {
+            if(originalLibrary != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalLibrary);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+        }
+    }
+
+    @Test
+    void digitalMp3IgnoresAdditionalNormalizationWhileAnalogRetainsItsOption() throws Exception
+    {
+        UserPreferences preferences = new UserPreferences();
+        Path originalLibrary = preferences.getJmbeLibraryPreference().getPathJmbeLibrary();
+        InputAudioFormat originalRate = preferences.getMP3Preference().getAudioSampleRate();
+        MP3Setting originalSetting = preferences.getMP3Preference().getMP3Setting();
+        try
+        {
+            preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getMP3Preference().setAudioSampleRate(InputAudioFormat.SR_8000);
+            preferences.getMP3Preference().setMP3Setting(MP3Setting.CBR_16);
+            for(DecoderType decoder : List.of(DecoderType.P25_PHASE1, DecoderType.P25_CONVENTIONAL,
+                DecoderType.P25_PHASE2, DecoderType.DMR, DecoderType.NXDN, DecoderType.AM, DecoderType.NBFM))
+            {
+                float[] raw = new float[8000];
+                for(int i = 0; i < raw.length; i++) raw[i] = (float)(.01 * Math.sin(2 * Math.PI * 700 * i / 8000));
+                float[] before = raw.clone();
+                CompletedAudioCall call = callWithAudio(decoder, List.of(raw));
+                Path ordinary = mDirectory.resolve(decoder.name() + "-ordinary.mp3");
+                AudioCallRecorder.recordMP3(call, ordinary, preferences, call.snapshot().identifierCollection(), false);
+                Path normalized = mDirectory.resolve(decoder.name() + "-normalized.mp3");
+                AudioCallRecorder.recordMP3(call, normalized, preferences, call.snapshot().identifierCollection(), true);
+                byte[] ordinaryAudio = mp3Payload(Files.readAllBytes(ordinary));
+                byte[] normalizedAudio = mp3Payload(Files.readAllBytes(normalized));
+                assertTrue(ordinaryAudio.length > 0);
+                if(decoder == DecoderType.AM || decoder == DecoderType.NBFM)
+                    assertFalse(Arrays.equals(ordinaryAudio, normalizedAudio),
+                        "Analog MP3 normalization must remain effective: " + decoder);
+                else
+                    assertArrayEquals(ordinaryAudio, normalizedAudio,
+                        "Digital MP3 must not receive a second normalization: " + decoder);
+                assertArrayEquals(before, raw, "Encoding must preserve native PCM: " + decoder);
+            }
+        }
+        finally
+        {
+            if(originalLibrary != null) preferences.getJmbeLibraryPreference().setPathJmbeLibrary(originalLibrary);
+            else preferences.getJmbeLibraryPreference().resetPathJmbeLibrary();
+            preferences.getMP3Preference().setAudioSampleRate(originalRate);
+            preferences.getMP3Preference().setMP3Setting(originalSetting);
+        }
+    }
 
 
     @Test
@@ -345,6 +428,23 @@ class AudioCallRecorderTest
             audio.add(samples);
         }
         return new CompletedAudioCall(snapshot, audio);
+    }
+
+    private static CompletedAudioCall callWithAudio(DecoderType decoder, List<float[]> audio)
+    {
+        CompletedAudioCall template = callWithQuality();
+        var source = new CallLegSource(decoder, null, null, null, 0, null, null, null, false);
+        CompletedAudioCall context = callWithContext(source, template.snapshot().identifierCollection(),
+            template.snapshot().identifierCollection(), null);
+        return new CompletedAudioCall(context.snapshot(), audio);
+    }
+
+    private static byte[] mp3Payload(byte[] bytes)
+    {
+        assertEquals("ID3", new String(bytes, 0, 3, StandardCharsets.US_ASCII));
+        int offset = 10 + ((bytes[6] & 0x7F) << 21) + ((bytes[7] & 0x7F) << 14) +
+            ((bytes[8] & 0x7F) << 7) + (bytes[9] & 0x7F);
+        return Arrays.copyOfRange(bytes, offset, bytes.length);
     }
 
     private static CompletedAudioCall callWithContext(CallLegSource source, IdentifierCollection observed,
