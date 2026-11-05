@@ -387,8 +387,10 @@ function verifyParallelPreparationWiring() {
   assert.match(contracts, /run: node --test tools\/test\/web-visual-shards\.test\.cjs/);
   assert.match(contracts, /python -m unittest discover -s tools\/release/);
   assert.match(contracts, /python -m unittest discover -s tools\/build/);
-  assert.match(job('package'), /needs: \[validate, catalog\]/,
-    'Packaging can overlap checks only after the same catalog has been prepared.');
+  assert.match(job('package'), /needs: \[validate, catalog, ci\]/,
+    'Packaging must wait for the complete CI gate, including all migration checks.');
+  assert.doesNotMatch(job('package'), /always\(\)|continue-on-error/,
+    'A failed or skipped CI gate must not be bypassed for packaging.');
   assert.match(job('package'), /ref: \$\{\{ github\.sha \}\}/);
   assert.match(job('smoke'), /needs: package/);
   assert.match(job('ready'), /needs: \[validate, ci, package, smoke\]/,
