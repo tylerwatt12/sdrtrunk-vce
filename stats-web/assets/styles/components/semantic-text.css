@@ -31,3 +31,20 @@
 a.ui-link-text {
   color: inherit;
 }
+
+/* Entity names are the navigation target; adjacent actions refine the current view. */
+.ui-entity-link { color: var(--ink); font-weight: var(--font-weight-medium); text-decoration: none; overflow-wrap: anywhere; }
+.ui-entity-link:hover { color: var(--link); text-decoration: underline; }
+.ui-entity-link > svg {
+  display: inline;
+  width: var(--font-size-label);
+  height: var(--font-size-label);
+  margin-left: var(--space-1);
+  vertical-align: baseline;
+  color: var(--muted);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

@@ -1576,12 +1576,16 @@ export function createRecordingsFeature(deps) {
   function openCallActions(row) {
     let call = row, modal, expanded = false, activeTab = 'overview', loaded = false;
     const body = node('div', 'recordings-call-menu'); body.dataset.expanded = 'false';
-    body.append(node('p', 'recordings-dialog-help', `${dateTime(millis(row))} · ${duration(row)} · ${protocolLabel(row.protocol)}`));
+    const metadata = node('div', 'recordings-call-metadata');
+    metadata.append(node('span', '', `${dateTime(millis(row))} · ${duration(row)}`),
+      node('span', 'ui-pill ui-pill-compact', protocolLabel(row.protocol)));
+    body.append(metadata);
     const run = perform => { let done = false; const next = () => { if (!done) { done = true; perform(); } }; if (modal.close(next)) next(); };
-    const playbackSection = node('section', 'recordings-call-action-section'); playbackSection.setAttribute('aria-label', 'Playback');
+    const playbackSection = node('section', 'ui-surface-inset recordings-call-action-section'); playbackSection.setAttribute('aria-label', 'Playback');
     const playbackActions = node('div', 'ui-action-row ui-action-row-start recordings-call-playback'); playbackActions.dataset.guideTarget = 'rec-playback';
     for (const [mode, title, icon] of [['once', 'Play once', 'icon-play'], ['continue', 'Continue from here', 'icon-forward'], ['queue', 'Add to queue', 'icon-plus']]) {
-      const control = addGlyph(button(node, title, () => run(() => playbackAction(call, mode))), icon);
+      const appearance = mode === 'once' ? 'ui-button-primary' : mode === 'continue' ? 'ui-button-tonal' : 'ui-button-quiet';
+      const control = addGlyph(button(node, title, () => run(() => playbackAction(call, mode)), `ui-button ${appearance}`), icon);
       control.setAttribute('aria-label', title); playbackActions.append(control);
     }
     playbackSection.append(playbackActions, node('p', 'recordings-dialog-help', 'Play once and Continue from here replace the queue.')); body.append(playbackSection);
@@ -1589,7 +1593,7 @@ export function createRecordingsFeature(deps) {
     const heading = node('div', 'recordings-call-information-header'); heading.append(node('h3', 'ui-section-heading', 'Call information'));
     const toggle = addGlyph(button(node, 'Show more', () => {
       expanded = !expanded; if (expanded) activeTab = 'overview'; renderInformation(); if (expanded) void loadDetails();
-    }, 'ui-button ui-button-link ui-button-compact'), 'icon-chevron-down');
+    }, 'ui-button ui-button-link'), 'icon-chevron-down');
     toggle.dataset.guideTarget = 'rec-details-button'; toggle.setAttribute('aria-expanded', 'false'); toggle.setAttribute('aria-controls', `recording-${row.id}-information`); heading.append(toggle);
     const informationContent = node('div', 'recordings-dialog-content'); informationContent.id = `recording-${row.id}-information`;
     const tabs = node('nav', 'ui-segmented recordings-detail-tabs'); tabs.dataset.guideTarget = 'rec-details'; tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Call information');
@@ -1623,23 +1627,28 @@ export function createRecordingsFeature(deps) {
       for (const entity of callEntities(call)) {
         const line = node('div', 'recordings-call-entity'); line.dataset.entity = entity.key;
         const identity = node('div', 'recordings-call-entity-identity');
-        const text = node('div', 'recordings-call-entity-value'); text.append(node('span', '', entity.text));
+        const text = node('div', 'recordings-call-entity-value');
+        const destination = canViewRadio?.() ? entityRefHref?.(entity.reference) : null;
+        if (destination) {
+          const open = anchor(entity.text, destination, 'ui-entity-link');
+          open.setAttribute('aria-label', `Open ${entity.title.toLowerCase()} page`);
+          open.dataset.uiHint = `Open ${entity.text}`;
+          if (iconGlyph) open.append(iconGlyph('icon-open-details'));
+          text.append(open);
+        } else text.append(node('span', '', entity.text));
         if (expanded && entity.extra && String(entity.extra) !== entity.text) text.append(node('small', '', String(entity.extra)));
         identity.append(node('span', '', entity.title), text);
         const actions = node('div', 'ui-action-row recordings-call-entity-actions');
         const filter = resultFilterLink('Filter', entity.reference, call, entity.field, entity.text);
         const filterAction = typeof filter === 'string' ? button(node, 'Filter') : filter;
-        filterAction.classList.add('ui-button', 'ui-button-secondary', 'ui-button-compact');
+        filterAction.replaceChildren();
+        filterAction.classList.remove('ui-button-secondary');
+        filterAction.classList.add('ui-button', 'ui-button-inset', 'ui-icon-button', 'ui-icon-button-compact');
         filterAction.setAttribute('aria-label', `Filter by ${entity.title.toLowerCase()}`);
         filterAction.dataset.uiHint = `Filter recordings by ${entity.text}`;
         if (typeof filter === 'string') { filterAction.disabled = true; filterAction.dataset.uiHint = 'This recording has no usable filter identity.'; }
         addGlyph(filterAction, 'icon-filter'); actions.append(filterAction);
-        const destination = canViewRadio?.() ? entityRefHref?.(entity.reference) : null;
-        const open = destination ? anchor('Open page', destination, 'ui-button ui-button-link ui-button-compact') : button(node, 'Open page', null, 'ui-button ui-button-link ui-button-compact');
-        open.setAttribute('aria-label', `Open ${entity.title.toLowerCase()} page`);
-        open.dataset.uiHint = destination ? `Open ${entity.text}` : !canViewRadio?.() ? 'Radio pages are unavailable for this account.' : 'No matching details page is available for this recorded identity.';
-        if (!destination) open.disabled = true;
-        addGlyph(open, 'icon-open-details'); actions.append(open); line.append(identity, actions); entities.append(line);
+        line.append(identity, actions); entities.append(line);
       }
       panels.get('overview').append(entities);
       if (expanded) {
@@ -1695,15 +1704,16 @@ export function createRecordingsFeature(deps) {
         });
       } catch (_) { if (modal.dialog.isConnected) retry.hidden = false; }
     }
+    const toolsSection = node('section', 'recordings-call-action-section');
     const tools = node('div', 'ui-action-row ui-action-row-start recordings-call-tools');
     const source = recordingResultFilter(row, recordingSourceReference(row), 'source');
     const target = recordingResultFilter(row, recordingHasTalkgroup(row) ? row.target_entity_ref : row.channel_entity_ref, recordingHasTalkgroup(row) ? 'target' : 'channel');
     if (source && target) tools.append(addGlyph(button(node, recordingHasTalkgroup(row) ? 'Filter talkgroup + radio' : 'Filter channel + radio', () => run(() => {
       applyResultFilters({ ...resultSearchFilters(target, 'target'), ...resultSearchFilters(source, 'source') });
-    })), 'icon-filter'));
+    }), 'ui-button ui-button-tonal'), 'icon-filter'));
     const channel = row.channel_id || row.channel_entity_ref?.key;
     const liveActions = node('div', 'ui-action-row ui-action-row-start recordings-call-live-actions');
-    liveActions.append(addGlyph(anchor('Go to Live', href('live', channel ? { channel } : {}), 'ui-button ui-button-secondary'), 'icon-live'));
+    liveActions.append(addGlyph(anchor('Go to Live', href('live', channel ? { channel } : {}), 'ui-button ui-button-link ui-button-link-comfortable'), 'icon-live'));
     const directListen = recordingDirectListenControl?.(row); if (directListen) liveActions.append(directListen);
     tools.append(liveActions);
     for (const item of row.auxiliary_identifiers || []) if (item.kind === 'tone' && item.protocol === 'DCS') {
@@ -1711,15 +1721,21 @@ export function createRecordingsFeature(deps) {
         applyResultFilters({ dcs_code: String(item.value) });
       })));
     }
-    body.append(tools, node('p', 'recordings-dialog-help', 'Filtering keeps your time range and other filters.'));
-    const context = node('section', 'recordings-call-context-search');
-    context.append(addGlyph(button(node, 'Search around this call · ±30 min', () => run(() => {
+    toolsSection.append(tools, node('p', 'recordings-dialog-help', 'Filtering keeps your time range and other filters.'));
+    body.append(toolsSection);
+    const context = addGlyph(button(node, '', () => run(() => {
       Object.keys(search).forEach(key => { search[key] = ''; }); selectedSuggestions.clear();
       Object.assign(search, target?.filters || {}, { transcript: '', text_range: 'time', range: 'custom', from_ms: String(millis(row) - 1_800_000), to_ms: String(millis(row) + 1_800_000) });
       replaceSearchForm(); submitSearch();
-    }), 'ui-button ui-button-link'), 'icon-replay'), node('p', 'recordings-dialog-help', `New search${target ? ` for this ${recordingHasTalkgroup(row) ? 'talkgroup' : 'channel'}` : ''}. Resets other filters.`));
+    }), 'ui-link-tile ui-link-tile-action ui-modal-context-footer'), 'icon-replay');
+    context.setAttribute('aria-label', 'Search around this call · ±30 min');
+    const contextCopy = node('span', 'ui-link-tile-copy');
+    contextCopy.append(node('span', 'ui-link-tile-label', 'Search around this call · ±30 min'),
+      node('span', 'ui-link-tile-context', `New search${target ? ` for this ${recordingHasTalkgroup(row) ? 'talkgroup' : 'channel'}` : ''}. Resets other filters.`));
+    context.append(contextCopy);
+    if (iconGlyph) context.append(iconGlyph('icon-arrow-right'));
     body.append(context); renderInformation();
-    modal = openReadOnlyModal('Call actions', body, { id: 'recordings-call-actions', className: 'recordings-actions-modal' });
+    modal = openReadOnlyModal('Call actions', body, { id: 'recordings-call-actions', className: 'ui-modal-focused recordings-actions-modal' });
     if (!modal) return modal;
     modal.showMore = async () => { expanded = true; activeTab = 'overview'; renderInformation(); await loadDetails(); };
     return modal;

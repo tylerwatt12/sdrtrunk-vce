@@ -338,6 +338,23 @@
   border-color: var(--primary-control);
 }
 
+/* Filled secondary actions keep the shared control lifecycle and focus treatment. */
+.ui-button-tonal,
+.ui-button-inset {
+  background: var(--control-tonal-fill);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.ui-button-inset { background: var(--ui-inset-fill); }
+
+.ui-button-tonal:hover:not(:disabled, [aria-disabled="true"]),
+.ui-button-inset:hover:not(:disabled, [aria-disabled="true"]) {
+  background: var(--accent-soft);
+  border-color: transparent;
+  box-shadow: none;
+}
+
 .ui-button-primary:hover:not(:disabled, [aria-disabled="true"]) {
   color: var(--primary-control-ink);
   background: var(--primary-control-hover);
@@ -1219,6 +1236,10 @@ a.ui-link-tile {
   gap: var(--space-1);
 }
 
+.ui-link-tile-action { color: var(--accent); }
+.ui-link-tile-action > .ui-link-tile-copy { flex: 1; }
+.ui-link-tile-action .ui-link-tile-label { font-size: var(--font-size-body); }
+
 .ui-link-tile-label {
   font-size: var(--font-size-secondary);
   font-weight: var(--font-weight-medium);
@@ -1656,6 +1677,7 @@ a.ui-link-tile {
   text-decoration: underline;
 }
 .ui-button-link.ui-button-danger-quiet { color: var(--danger); }
+.ui-button-link-comfortable { min-height: var(--control-height-comfortable); }
 
 /* Fixed permissions retain their native value and options in a compact read-only treatment. */
 .ui-select.ui-select-static:disabled {

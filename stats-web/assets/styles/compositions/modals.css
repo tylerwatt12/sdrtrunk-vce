@@ -68,6 +68,26 @@ body.modal-open {
   width: min(var(--modal-size-medium), 96vw);
 }
 
+/* Focused detail dialogs keep the heading and content on one continuous surface. */
+.read-only-modal.ui-modal-focused {
+  --modal-content-padding: var(--space-5);
+  width: min(var(--modal-focused-width), calc(100vw - var(--modal-viewport-inset)));
+  border-radius: var(--modal-focused-radius);
+}
+.ui-modal-focused .modal-header {
+  align-items: flex-start;
+  padding: var(--space-5) var(--space-5) var(--space-2);
+  border-bottom: 0;
+}
+.ui-modal-focused .modal-header h2 { font-size: var(--modal-focused-title-size); }
+.ui-modal-focused .modal-close { align-self: flex-start; }
+.ui-modal-focused .modal-content { padding-top: 0; }
+.ui-modal-context-footer {
+  margin: 0 calc(-1 * var(--modal-content-padding)) calc(-1 * var(--modal-content-padding));
+  padding: var(--space-4) var(--modal-content-padding);
+  border-radius: 0;
+}
+
 .read-only-modal.frequency-action-modal {
   width: min(var(--modal-size-small), 96vw);
 }
@@ -534,6 +554,13 @@ body.modal-open {
 }
 
 @media (max-width: 560px) {
+  .read-only-modal.ui-modal-focused {
+    --modal-content-padding: var(--space-4);
+    width: 100vw;
+    border-radius: 0;
+  }
+  .ui-modal-focused .modal-header { padding: var(--space-5) var(--space-4) var(--space-2); }
+
   .modal-backdrop {
     padding: 0;
   }

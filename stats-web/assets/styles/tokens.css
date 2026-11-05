@@ -392,6 +392,13 @@
   --guide-coverage-missed-pattern: repeating-linear-gradient(0deg, var(--guide-coverage-missed) 0 3px, transparent 3px 5px);
   --modal-backdrop-strong: rgb(9 18 27 / 90%);
   --modal-content-padding: var(--space-4);
+  --modal-focused-width: 660px;
+  --modal-focused-radius: 18px;
+  --modal-focused-title-size: 22px;
+  --detail-row-min-height: 56px;
+  --detail-label-width: 100px;
+  --detail-label-width-phone: 74px;
+  --control-tonal-fill: var(--surface-2);
   --modal-viewport-gap: 22px;
   --modal-viewport-inset: 44px;
   --primary-control: var(--accent);

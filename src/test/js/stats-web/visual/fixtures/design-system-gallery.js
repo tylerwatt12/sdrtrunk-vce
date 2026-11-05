@@ -681,6 +681,11 @@ const modalSize = parameters.get('modal-size');
 if (['small', 'medium'].includes(modalSize)) {
   document.querySelector('.visual-modal-example .read-only-modal')?.classList.add(`modal-size-${modalSize}`);
 }
+if (modalSize === 'focused') {
+  const dialog = document.querySelector('.visual-modal-example .read-only-modal');
+  dialog?.classList.add('ui-modal-focused');
+  dialog?.querySelector('.modal-close')?.classList.add('ui-button-quiet');
+}
 
 if (view === 'awaiting-apply') {
   const example = document.createElement('main');

@@ -41,7 +41,7 @@ import {
 import { radioReferenceLocalityCache } from './features/radioreference-locality-cache.js?v=1';
 import { openRadioReferenceConnect, radioReferencePremiumSignup } from './features/radioreference-connect.js?v=3';
 import { createActivityCallPlayback } from './features/activity-call-playback.js?v=2';
-import { createRecordingsFeature } from './features/recordings.js?v=79';
+import { createRecordingsFeature } from './features/recordings.js?v=80';
 import { spectrumSearchIdentityFacts, spectrumSearchMapDraft, spectrumSearchProtocolLabel } from './features/spectrum-search-data.js?v=1';
 import { createDiscoveryRadioReferenceContext, createDiscoveryRadioReferenceWait, discoveryRadioReferencePending, discoverySnapshotIsCurrent, discoveryCleanupAlreadyClosed, createDiscoveryCompletion, createDiscoveryAliasListChoice, discoveryAliasImportMatch, discoveryAliasImportTargets, discoveryRadioReferenceResult, discoveryRadioReferenceSystemUrl, ALIAS_LIST_NAME_MAX_LENGTH, discoveryAliasListName, discoveryAliasImportResults, discoveryAliasImportForSelection, importDiscoveryAliases } from './features/discovery-radioreference.js?v=19';
 import { requestChannelAction, requestChannelAdminMutation } from './core/channel-actions.js?v=2';
@@ -2533,7 +2533,7 @@ function openReadOnlyModal(title, body, options = {}) {
   const heading = node('h2', '', title);
   heading.id = titleId;
   const close = iconButton('icon-close', options.closeLabel || `Close ${title}`,
-    'ui-button ui-button-secondary ui-icon-button modal-close');
+    `ui-button ${dialog.classList.contains('ui-modal-focused') ? 'ui-button-quiet' : 'ui-button-secondary'} ui-icon-button modal-close`);
   header.append(heading, close);
   const contentNode = node('div', 'modal-content');
   contentNode.append(valueNode(body));

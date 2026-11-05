@@ -2107,6 +2107,19 @@ for (const theme of ['light', 'dark']) test(`unified call actions expands in pla
   await page.locator('.recordings-call-info').click();
   const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
   await expectCallActionDescriptions(actions);
+  await expect(actions.getByRole('button', { name: 'Play once', exact: true })).toHaveClass(/ui-button-primary/);
+  for (const entity of await actions.locator('.recordings-call-entity').all()) {
+    const filter = entity.locator('.ui-icon-button');
+    await expect(filter).toHaveText('');
+    await expect(filter).toHaveAccessibleName(/^Filter by /);
+    await expect(entity.getByText('Open page', { exact: true })).toHaveCount(0);
+  }
+  for (const width of [1280, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(actions).toHaveScreenshot(`recordings-actions-focused-${theme}-${width}.png`, componentScreenshot);
+    expect(await actions.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+    await expectContrast(page, { rootSelector: '.recordings-actions-modal', reportName: `focused-call-actions-${theme}-${width}` });
+  }
   await actions.getByRole('button', { name: 'Show more', exact: true }).click();
   await expect(page.getByRole('dialog')).toHaveCount(1);
   await expect(actions.getByRole('tab')).toHaveText(['Overview', 'Transcript', 'Identities', 'Call quality', 'Technical', 'Recording']);
@@ -2125,6 +2138,61 @@ for (const theme of ['light', 'dark']) test(`unified call actions expands in pla
     await actions.getByRole('button', { name: 'Show more', exact: true }).click();
     await expect(actions.getByRole('tab', { name: 'Overview', exact: true })).toHaveAttribute('aria-selected', 'true');
   }
+});
+
+test('focused call actions keep filled surfaces and labels readable across themes and hues', async ({ page }) => {
+  await openRecordings(page, { call: linkedCall });
+  await page.locator('.recordings-call-info').click();
+  for (const theme of ['light', 'dark']) for (const width of [1280, 390]) for (const hue of [null, 75, 220, 315]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.evaluate(async ({ theme, hue }) => {
+      document.documentElement.dataset.theme = theme;
+      (await import('/assets/core/theme.js')).applyThemeHue(hue);
+    }, { theme, hue });
+    await expectContrast(page, { rootSelector: '.recordings-actions-modal', reportName: `focused-${theme}-${width}-${hue}` });
+  }
+  const sweep = await page.evaluate(async () => {
+    const { applyThemeHue } = await import('/assets/core/theme.js');
+    const root = document.documentElement;
+    const dialog = document.querySelector('.recordings-actions-modal');
+    const labels = [...dialog.querySelectorAll('button,a,p,.recordings-call-entity-identity > span,.recordings-call-metadata > span')]
+      .filter(element => element.getClientRects().length && !element.disabled && element.getAttribute('aria-disabled') !== 'true');
+    const resting = document.createElement('style');
+    resting.textContent = '.recordings-actions-modal * { transition: none; }'; document.head.append(resting);
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    const colors = new Map();
+    const rgba = value => {
+      if (colors.has(value)) return colors.get(value);
+      context.clearRect(0, 0, 1, 1); context.fillStyle = value; context.fillRect(0, 0, 1, 1);
+      const result = [...context.getImageData(0, 0, 1, 1).data]; colors.set(value, result); return result;
+    };
+    let styles, paints;
+    const style = element => styles.get(element) || (styles.set(element, getComputedStyle(element)), styles.get(element));
+    const background = element => {
+      if (!element) return [255, 255, 255];
+      if (paints.has(element)) return paints.get(element);
+      const layer = rgba(style(element).backgroundColor), parent = background(element.parentElement);
+      const paint = layer.slice(0, 3).map((value, index) => value * layer[3] / 255 + parent[index] * (1 - layer[3] / 255));
+      paints.set(element, paint); return paint;
+    };
+    const luminance = rgb => rgb.slice(0, 3).map(value => {
+      const channel = value / 255; return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+    }).reduce((total, value, index) => total + value * [.2126, .7152, .0722][index], 0);
+    let minimum = Infinity, checked = 0;
+    for (const theme of ['light', 'dark']) for (let hue = 0; hue < 360; hue++) {
+      root.dataset.theme = theme; applyThemeHue(hue);
+      styles = new WeakMap(); paints = new WeakMap();
+      for (const element of labels) {
+        const ink = luminance(rgba(style(element).color)), fill = luminance(background(element));
+        minimum = Math.min(minimum, (Math.max(ink, fill) + .05) / (Math.min(ink, fill) + .05));
+      }
+      checked++;
+    }
+    resting.remove(); return { minimum, checked };
+  });
+  expect(sweep.checked).toBe(720);
+  expect(sweep.minimum).toBeGreaterThanOrEqual(4.5);
 });
 
 test('successful and failed searches and cursor paging preserve playback and queue', async ({ page }) => {
