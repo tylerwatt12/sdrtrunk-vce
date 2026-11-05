@@ -32,6 +32,7 @@ import java.util.Arrays;
  */
 public class P25P1DemodulatorLSM
 {
+    private static final int SYMBOL_RATE = 4800;
     private static final float HALF_PI = (float)(Math.PI / 2.0);
     private static final float MAX_PLL = (float)(Math.PI / 3.0); //+/- 800 Hz
     private static final float OBJECTIVE_MAGNITUDE = 1.0f;
@@ -229,7 +230,7 @@ public class P25P1DemodulatorLSM
                 //display the measured carrier offset value in the channel display
                 if(mMessageFramer.processWithSoftSyncDetect(softSymbol, hardSymbol))
                 {
-                    mFeedbackDecoder.processPLLError(pll);
+                    mFeedbackDecoder.processSymbolPLLError(pll, SYMBOL_RATE);
                 }
 
                 mDibitAssembler.receive(hardSymbol);

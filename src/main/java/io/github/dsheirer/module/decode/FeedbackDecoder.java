@@ -33,15 +33,21 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
     private static final double TWO_PI = 2 * Math.PI;
     private Listener<SourceEvent> mSourceEventListener;
     private volatile SymbolObserver[] mSymbolObservers = new SymbolObserver[0];
-    private double mSampleRate;
+    private double mPLLSampleRate;
 
     /**
-     * Sets the final decimated sample rate used to translate PLL phase error into frequency correction hertz.
+     * Sets the rate for phase errors measured between adjacent decimated samples.
+     * Symbol-interval measurements use {@link #processSymbolPLLError(float, int)} instead.
      * @param rate in hertz
      */
     protected void setDecimatedSampleRate(double rate)
     {
-        mSampleRate = rate;
+        if(!Double.isFinite(rate) || rate <= 0)
+        {
+            throw new IllegalArgumentException("PLL sample rate must be finite and positive");
+        }
+
+        mPLLSampleRate = rate;
     }
 
     /**
@@ -80,12 +86,33 @@ public abstract class FeedbackDecoder extends PrimaryDecoder implements ISourceE
     }
 
     /**
-     * Processes the current phase-locked loop (PLL) measurement and sends a channel-local correction request.
-     * @param pllError as measured in the decoder, in radians.
+     * Sends a correction for phase error measured over one symbol, independent of the IQ sample rate.
+     * @param pllError radians per symbol
+     * @param symbolRate symbols per second
      */
-    public void processPLLError(float pllError)
+    public void processSymbolPLLError(float pllError, int symbolRate)
     {
-        long correctionRequestHertz = (long)(mSampleRate / TWO_PI * pllError);
+        if(symbolRate <= 0)
+        {
+            throw new IllegalArgumentException("PLL symbol rate must be positive");
+        }
+
+        long correctionRequestHertz = (long)(symbolRate / TWO_PI * pllError);
+        broadcast(SourceEvent.frequencyCorrectionRequest(correctionRequestHertz));
+    }
+
+    /**
+     * Sends a correction for phase error measured between adjacent decimated samples, as in an FM discriminator.
+     * @param pllError radians per sample
+     */
+    public void processSamplePLLError(float pllError)
+    {
+        if(mPLLSampleRate <= 0)
+        {
+            throw new IllegalStateException("PLL sample rate has not been configured");
+        }
+
+        long correctionRequestHertz = (long)(mPLLSampleRate / TWO_PI * pllError);
         broadcast(SourceEvent.frequencyCorrectionRequest(correctionRequestHertz));
     }
 

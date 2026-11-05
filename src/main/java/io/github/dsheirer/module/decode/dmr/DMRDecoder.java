@@ -138,7 +138,6 @@ public class DMRDecoder extends FeedbackDecoder implements IByteBufferProvider, 
         mDecimationFilterQ = DecimationFilterFactory.getRealDecimationFilter(decimation);
 
         float decimatedSampleRate = (float)sampleRate / decimation;
-        setDecimatedSampleRate(decimatedSampleRate);
         float rrcAlpha = Math.abs((float)(5760.0 / decimatedSampleRate));
         int symbolLength = (int)Math.floor((-44 * rrcAlpha) + 33);
         symbolLength += symbolLength % 2; //Make the symbol length even

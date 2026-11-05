@@ -46,6 +46,7 @@ import org.apache.commons.math3.stat.descriptive.moment.StandardDeviation;
  */
 public class P25P1DemodulatorC4FM
 {
+    private static final int SYMBOL_RATE = 4800;
     private static final float EQUALIZER_LOOP_GAIN = 0.15f;
     private static final float EQUALIZER_MAXIMUM_PLL = (float)(Math.PI / 3.0); //+/- 800 Hz
     private static final float EQUALIZER_MAXIMUM_GAIN = 1.25f;
@@ -312,7 +313,7 @@ public class P25P1DemodulatorC4FM
                             mEqualizer.apply(correctionCandidate);
 
                             //broadcast equalizer balance as the current frequency offset
-                            mFeedbackDecoder.processPLLError(mEqualizer.mPll);
+                            mFeedbackDecoder.processSymbolPLLError(mEqualizer.mPll, SYMBOL_RATE);
                         }
 
                         if(correctionCandidate.isValid() || correctionCandidate.hasHighQualityDetectionScore() ||

@@ -61,6 +61,7 @@ import org.apache.commons.math3.stat.descriptive.moment.StandardDeviation;
  */
 public class DMRSoftSymbolProcessor
 {
+    private static final int SYMBOL_RATE = 4800;
     private static final int BUFFER_PROTECTED_REGION_DIBITS = 92;
     private static final int BUFFER_WORKSPACE_LENGTH_DIBITS = 25; //This can be adjusted for efficiency
     private static final int BUFFER_LENGTH_DIBITS = BUFFER_PROTECTED_REGION_DIBITS + BUFFER_WORKSPACE_LENGTH_DIBITS;
@@ -560,7 +561,7 @@ public class DMRSoftSymbolProcessor
         mEqualizerBalance = Math.min(mEqualizerBalance, MAXIMUM_EQUALIZER_BALANCE);
         mEqualizerBalance = Math.max(mEqualizerBalance, -MAXIMUM_EQUALIZER_BALANCE);
 
-        mFeedbackDecoder.processPLLError(mEqualizerBalance);
+        mFeedbackDecoder.processSymbolPLLError(mEqualizerBalance, SYMBOL_RATE);
 
         //Constrain gain between 1.0f and 1.35f
         mEqualizerGain = Math.min(mEqualizerGain, MAXIMUM_EQUALIZER_GAIN);

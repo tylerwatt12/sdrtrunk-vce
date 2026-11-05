@@ -204,7 +204,7 @@ public class NXDNSymbolProcessor
                     // sample equalizer's balance value as a pseudo-PLL error measurement.
                     if(mMessageFramer.process(symbol))
                     {
-                        mFeedbackDecoder.processPLLError(mSampleEqualizer.balance());
+                        mFeedbackDecoder.processSamplePLLError(mSampleEqualizer.balance());
                     }
 
                     mDibitAssembler.receive(symbol);

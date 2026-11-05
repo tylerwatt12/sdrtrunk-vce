@@ -12,6 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.module.decode.DecoderType;
+import io.github.dsheirer.module.decode.FeedbackDecoder;
 import io.github.dsheirer.sample.complex.ComplexSamples;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
@@ -28,6 +30,70 @@ import org.junit.jupiter.api.Test;
 
 class ChannelFrequencyErrorManagerTest
 {
+    @Test
+    void symbolPhaseFeedbackConvergesWithTheExistingAveragingAndStepLimit() throws Exception
+    {
+        for(double initialOffset: new double[]{-100, -7, -2, 2, 7, 100})
+        {
+            try(Rig rig = new Rig())
+            {
+                rig.parent.setEnabled(false);
+                rig.source.start();
+                FeedbackDecoder decoder = new FeedbackDecoder()
+                {
+                    @Override public String getProtocolDescription() { return "P25 correction loop test"; }
+                    @Override public DecoderType getDecoderType() { return DecoderType.P25_PHASE1; }
+                };
+                decoder.setSourceEventListener(rig.source.getSourceEventListener());
+
+                for(int tick = 0; tick < 30; tick++)
+                {
+                    long previous = rig.source.appliedCorrection;
+                    double residual = initialOffset + previous;
+
+                    //The decoder supplies phase over one symbol. The unchanged manager consumes actual hertz.
+                    for(int measurement = 0; measurement < 6; measurement++)
+                    {
+                        decoder.processSymbolPLLError((float)(-2 * Math.PI * residual / 4800), 4800);
+                    }
+
+                    rig.parent.tick();
+                    assertTrue(Math.abs(rig.source.appliedCorrection - previous) <= 10);
+                }
+
+                assertTrue(Math.abs(initialOffset + rig.source.appliedCorrection) < 2,
+                    "initialOffset=" + initialOffset + " applied=" + rig.source.appliedCorrection);
+                long settled = rig.source.appliedCorrection;
+
+                for(int measurement = 0; measurement < 6; measurement++)
+                {
+                    decoder.processSymbolPLLError((float)(-2 * Math.PI * (initialOffset + settled) / 4800), 4800);
+                }
+
+                rig.parent.tick();
+                assertEquals(settled, rig.source.appliedCorrection);
+            }
+        }
+    }
+
+    @Test
+    void channelManagerAppliesSmallHertzRequestsWithoutSampleRateCompensation() throws Exception
+    {
+        try(Rig rig = new Rig())
+        {
+            rig.source.start();
+
+            for(int measurement = 0; measurement < 6; measurement++)
+            {
+                rig.request(2);
+            }
+
+            rig.parent.tick();
+            assertEquals(2, rig.source.appliedCorrection);
+            assertEquals(2L, rig.source.getFrequencyCorrectionSnapshot().requestedAdjustmentHz());
+        }
+    }
+
     @Test
     void distinguishesNoMeasurementFromZeroAndRetainsTheLastMeasurement() throws Exception
     {
