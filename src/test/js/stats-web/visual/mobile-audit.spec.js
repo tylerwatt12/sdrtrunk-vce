@@ -133,7 +133,8 @@ for (const width of [320, 390, 430]) {
     const queueBounds = await queue.boundingBox();
     expect(queueBounds.x).toBeGreaterThanOrEqual(0);
     expect(queueBounds.x + queueBounds.width).toBeLessThanOrEqual(width);
-    expect(queueBounds.y).toBeGreaterThanOrEqual(transportBounds.y + transportBounds.height);
+    const currentTransportBounds = await transport.boundingBox();
+    expect(queueBounds.y).toBeGreaterThanOrEqual(currentTransportBounds.y + currentTransportBounds.height);
     expect(queueBounds.height).toBeLessThanOrEqual(280);
     expect(await queue.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await queue.focus();

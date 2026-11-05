@@ -97,7 +97,7 @@ for (const viewport of [{ width: 320, height: 740 }, { width: 390, height: 844 }
   });
 }
 
-test('recording facts and transcript remain available and applying a dock filter resets playback', async ({ page }) => {
+test('recording facts and transcript remain available while a dock filter changes the search', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const state = await openAudioApp(page);
   await chooseRecording(page);
@@ -150,10 +150,10 @@ test('recording facts and transcript remain available and applying a dock filter
   await expect(page).toHaveURL(/view=recordings/);
   await expect(player).toHaveAttribute('data-state', 'full');
   await expect(player).toHaveAttribute('data-source', 'recordings');
-  await expect(player).toContainText('Nothing queued');
-  await expect(player).not.toContainText('Engine 4');
+  await expect(player).toContainText('0 queued');
+  await expect(player).toContainText('Engine 4');
   await selectPanel(page, 'Transcript');
-  await expect(player).not.toContainText(transcript.text);
+  await expect(player).toContainText(transcript.text);
 });
 
 for (const [name, changes, expected] of [

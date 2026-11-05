@@ -108,7 +108,7 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: 'operator', tier: 'admin', primary: true, guide_dismissal_scope: 'live-regression-fixture',
-        capabilities: { live: true, radio: true, 'call-audio': true, 'user-settings': true } } } });
+        capabilities: { 'web-access': true, live: true, radio: true, 'call-audio': true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       if (request.method() === 'PUT') {
         expect(request.headers()['if-match']).toBe(`"${revision}"`);
@@ -220,7 +220,7 @@ test('Live idle-row options require visible idle rows on load, toggle, save and 
   await page.goto('/app.html?view=settings');
   await page.getByRole('button', { name: 'Reset personal preferences', exact: true }).filter({ visible: true }).press('Enter');
   const resetDialog = page.getByRole('dialog', { name: 'Reset personal preferences', exact: true });
-  await resetDialog.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).click();
+  await resetDialog.getByRole('button', { name: 'Reset personal preferences', exact: true }).click();
   await expect(resetDialog).toBeHidden();
   await page.goto('/app.html?view=live&channel=metro-north');
   dialog = await presentationDialog(page);
@@ -652,14 +652,16 @@ test('Live density keeps a failed draft, reloads a conflict and resets to Normal
   await expect(liveTable(page)).toHaveAttribute('data-row-density', 'dense');
   expect(app.preferences().presentation.live_channel_sort).toBe('frequency');
   await page.goto('/app.html?view=settings');
+  await expect(page.locator('.ui-settings-workspace-focused')).toBeVisible();
   const sections = page.getByRole('combobox', { name: 'Section', exact: true });
-  await expect(sections).toBeVisible();
-  await sections.selectOption('pages');
-  await expect(page.locator('.ui-settings-destinations')).toContainText('Row density, sorting and decoded details');
+  if (await sections.isVisible()) await sections.selectOption('pages');
+  else await page.getByRole('button', { name: 'Page preferences', exact: true }).click();
+  await expect(page.locator('.ui-settings-destinations')).toContainText('Live → Presentation');
+  await expect(page.getByRole('button', { name: 'Open Live presentation', exact: true })).toBeVisible();
   await expect(page.locator('.user-settings-summary')).toHaveCount(0);
   await page.getByRole('button', { name: 'Reset personal preferences', exact: true }).filter({ visible: true }).click();
   const reset = page.getByRole('dialog', { name: 'Reset personal preferences', exact: true });
-  await reset.getByRole('button', { name: 'Reset All Personal Preferences', exact: true }).click();
+  await reset.getByRole('button', { name: 'Reset personal preferences', exact: true }).click();
   await expect(reset).toBeHidden();
   await expect(page.locator('.ui-settings-workspace-focused')).toBeVisible();
   await page.goto('/app.html?view=live&channel=metro-north');

@@ -272,6 +272,7 @@ async function install(page, options = {}) {
             message: 'Receiver rejected this tune. Try again.' } }) });
         else {
           state.centerHz = Math.round(body.value * 1000000);
+          await page.evaluate(centerHz => window.spectrumDragStream.updateReceiver(centerHz), state.centerHz);
           await respond({});
         }
       } catch (_) { /* Navigation may abort the request under test. */ }
@@ -1000,6 +1001,7 @@ test(`${view} manual center editing after a settled drag becomes the next gestur
     await expectTuneCount(state, 2);
     expect(state.tunes[1].body.value).toBe(854.12345);
     await state.release(1);
+    await expect(center.locator('.tuners-frequency-digits')).not.toHaveAttribute('aria-busy', 'true');
     await expect(center).toContainText('0854.12345MHz');
     await expect(center.locator('.tuners-center-frequency')).toHaveAttribute('aria-disabled', 'false');
     await expect(center).toHaveJSProperty('inert', false);

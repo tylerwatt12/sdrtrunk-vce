@@ -1294,8 +1294,9 @@ class StatsApiV1HttpContractTest
                 INSERT INTO receiver_activity_event (
                     channel_id, radio_system_id, observed_at_ms, action_code,
                     source_observed_local_id, target_observed_local_id, target_kind_code,
-                    source_identity_summary_id, source_identity_kind_code, target_identity_summary_id
-                ) VALUES (2, 2, 2000, 12, 2, 56735, 1, 22, 2, 21)
+                    source_identity_summary_id, source_identity_kind_code, target_identity_summary_id,
+                    encryption_state
+                ) VALUES (2, 2, 2000, 12, 2, 56735, 1, 22, 2, 21, 1)
                 """);
             statement.executeUpdate("""
                 INSERT INTO trunked_signaling_activity_bucket (

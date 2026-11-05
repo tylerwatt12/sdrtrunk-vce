@@ -247,6 +247,10 @@ test('phone Filters expand inline with keyboard and preserve nested choices unti
     expect(state.requests.at(-1)).not.toHaveProperty(key);
   await expect(summary).toHaveCount(0);
   await expect(filters.locator('.recordings-filter-count')).toBeHidden();
+  // Incident selections survive searches and filter resets until explicitly cleared.
+  await expect(page.locator('.recordings-call-select')).toBeChecked();
+  await expect(page.locator('.recordings-selected')).toBeVisible();
+  await page.getByRole('button', { name: 'Clear selection', exact: true }).click();
   await expect(page.locator('.recordings-call-select')).not.toBeChecked();
   await expect(page.locator('.recordings-selected')).toBeHidden();
   await filters.click();
@@ -391,7 +395,8 @@ test('explicit talkgroup searches preserve applied dates, full text, duration, s
     talkgroup_identity_key: `v1-g-00001-001-${calls[25].talkgroup_id}`, system_key: systemKey });
   expect(state.requests.at(-1)).not.toHaveProperty('cursor');
   await expect(page.locator('.recordings-call-select:checked')).toHaveCount(0);
-  await expect(page.locator('.recordings-selected')).toBeHidden();
+  await expect(page.locator('.recordings-selected')).toBeVisible();
+  await expect(page.locator('.recordings-selected')).toContainText('5 selected');
   await expect(page.locator('.recordings-pager').last().getByRole('button', { name: 'Previous', exact: true })).toBeDisabled();
   await expect(page.getByLabel('From', { exact: true })).toHaveValue('2026-09-28T00:00');
   await expect(page.getByLabel('To', { exact: true })).toHaveValue('2026-09-29T00:00');

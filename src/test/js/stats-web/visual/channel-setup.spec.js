@@ -394,11 +394,13 @@ test('remote P25 editor shows applicable controls and preserves its linked sourc
     .toContainText('The sending VCE controls tuning');
   for (const label of ['Preferred Tuner', 'Frequency rotation delay', 'Modulation',
     'Learn announced control channels', 'Ignore data calls',
-    'Skip encrypted traffic channels (performance)', 'Recordings']) {
+    'Skip encrypted traffic channels (performance)']) {
     await expect(remoteDialog.getByLabel(label, { exact: true })).toHaveCount(0);
   }
   await remoteDialog.locator('details[data-channel-section="output"] > summary').click();
   await expect(remoteDialog.locator('[data-channel-path="event_logs"]')).toBeVisible();
+  await expect(remoteDialog.getByRole('checkbox', { name: 'Demodulated bit stream', exact: true })).toBeVisible();
+  await expect(remoteDialog.getByRole('checkbox', { name: 'Traffic demodulated bit stream', exact: true })).toBeVisible();
   await remoteDialog.getByLabel('Name', { exact: true }).fill('Remote Control Renamed');
   await remoteDialog.getByRole('button', { name: 'Save changes' }).click();
   await expect(remoteDialog).toHaveCount(0);

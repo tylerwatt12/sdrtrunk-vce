@@ -174,7 +174,8 @@ async function openRecordings(page, options = {}) {
       transcription_model: '', transcription_min_duration_ms: 500,
       transcription_key_configured: Boolean(options.keyConfigured), ...options.settings }
   };
-  const preferences = structuredClone(defaultPreferences);
+  let preferences = structuredClone(defaultPreferences);
+  let preferenceRevision = 1;
   preferences.appearance.theme = options.theme || 'light';
   preferences.appearance.hue = options.hue ?? null;
   await page.route('**/api/v1/**', async (route) => {
@@ -190,7 +191,13 @@ async function openRecordings(page, options = {}) {
           radio: options.radio !== false, 'call-audio': options.directListen === true,
           'direct-listen': options.directListen === true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
-      await route.fulfill({ json: { revision: 1, preferences } });
+      if (route.request().method() === 'PUT') {
+        const body = route.request().postDataJSON();
+        expect(route.request().headers()['if-match']).toBe(`"${preferenceRevision}"`);
+        preferences = body;
+        preferenceRevision++;
+      }
+      await route.fulfill({ json: { revision: preferenceRevision, preferences } });
     } else if (pathname === '/api/v1/recordings/status') {
       await route.fulfill({ json: { data: { mode: state.mode, available: state.available,
         has_calls: state.hasCalls } } });
@@ -2314,7 +2321,7 @@ test('recordings accents follow every color scheme in day and night themes', asy
       const duration = getComputedStyle(document.querySelector('.recordings-call-duration'));
       colors.push({ theme, scheme: scheme.name, accent: color('--accent'), primary: color('--primary-control'),
         primaryInk: color('--primary-control-ink'), buttonBackground: primary.backgroundColor, buttonInk: primary.color,
-        line: color('--line'), queueMarker: color('--recording-queue-marker'),
+        line: color('--line'), activeMarker: color('--recording-active-marker'), queueMarker: color('--recording-queue-marker'),
         interestBorder: interest.borderTopColor, cardBorder: card.borderBottomColor, cardShadow: card.boxShadow,
         queueShadow: queued.boxShadow,
         durationWeight: Number(duration.fontWeight) });
@@ -2327,9 +2334,9 @@ test('recordings accents follow every color scheme in day and night themes', asy
     expect(palette.buttonInk, `${palette.theme} ${palette.scheme} Search label`).toBe(palette.primaryInk);
     expect(palette.interestBorder, `${palette.theme} ${palette.scheme} High Interest`).toBe(palette.accent);
     expect(palette.cardBorder, `${palette.theme} ${palette.scheme} row separator`).toBe(palette.line);
-    expect(palette.cardShadow, `${palette.theme} ${palette.scheme} playing marker`).toContain(palette.accent);
+    expect(palette.cardShadow, `${palette.theme} ${palette.scheme} playing marker`).toContain(palette.activeMarker);
     expect(palette.queueShadow, `${palette.theme} ${palette.scheme} queued marker`).toContain(palette.queueMarker);
-    expect(palette.queueMarker).not.toBe(palette.accent);
+    expect(palette.queueMarker).not.toBe(palette.activeMarker);
     for (const shadow of [palette.cardShadow, palette.queueShadow]) {
       expect(shadow).toContain('inset');
       expect(shadow.replace(/(?:rgba?|oklch|color)\([^)]*\)/g, '')).not.toContain(',');
@@ -2364,7 +2371,7 @@ test('recordings accents follow every color scheme in day and night themes', asy
       if (theme === 'dark') root.dataset.theme = 'dark'; else delete root.dataset.theme;
       for (let hue = 0; hue < 360; hue++) {
         applyThemeHue(hue, root);
-        const marker = token('--recording-queue-marker'), ink = rgba(marker), playing = rgba(token('--accent'));
+        const marker = token('--recording-queue-marker'), ink = rgba(marker), playing = rgba(token('--recording-active-marker'));
         if (ink.slice(0, 3).every((value, index) => value === playing[index])) indistinguishable++;
         if (!getComputedStyle(queued).boxShadow.includes(marker)) unapplied++;
         const light = luminance(ink), dark = luminance(background(queued));

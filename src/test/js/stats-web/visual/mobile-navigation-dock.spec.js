@@ -109,9 +109,9 @@ for (const viewport of viewports) {
       else await expect(page.getByRole('button', { name: 'Appearance', exact: true })).toHaveAttribute('aria-current', 'page');
       await expect(page.getByRole('form', { name: 'Appearance', exact: true })).toBeVisible();
       await expect(page.locator('.user-settings-summary')).toHaveCount(0);
-      if (await category.isVisible()) await category.selectOption('status');
-      else await page.getByRole('button', { name: 'Status icon', exact: true }).click();
-      await expect(page.getByRole('form', { name: 'Status icon', exact: true })).toBeVisible();
+      if (await category.isVisible()) await category.selectOption('listening');
+      else await page.getByRole('button', { name: 'Listening settings', exact: true }).click();
+      await expect(page.getByRole('form', { name: 'Listening settings', exact: true })).toBeVisible();
       await expect(reset).toBeVisible();
       await reset.click();
       await expect(page.getByRole('dialog', { name: 'Reset personal preferences', exact: true })).toBeVisible();
@@ -121,7 +121,7 @@ for (const viewport of viewports) {
     });
 }
 
-test('My Settings drawer entry follows authentication and user-settings access', async ({ page }) => {
+test('My Settings drawer entry is available to accounts without the retired user-settings capability', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openAudioApp(page, { authenticated: false, admin: false });
   await page.locator('#navigation-toggle').click();
@@ -132,16 +132,14 @@ test('My Settings drawer entry follows authentication and user-settings access',
   await page.locator('#primary-navigation [data-nav-group="settings"] > summary').click();
   const settings = page.locator('#primary-navigation a[data-view="settings"]');
   await expect(settings).toBeVisible();
-  await expect(settings).toHaveClass(/access-locked/);
-  await expect(settings.locator('.nav-lock')).toBeVisible();
+  await expect(settings).not.toHaveClass(/access-locked/);
+  await expect(settings.locator('.nav-lock')).toBeHidden();
   await expect(settings).toHaveAccessibleName('My Settings');
   await expect(settings).toHaveAccessibleDescription(
-    'Adjust your display and personal listening preferences. Access required');
+    'Adjust your display and personal listening preferences.');
   await settings.click();
-  await expect(page.getByRole('heading', { name: 'Access denied', exact: true })).toBeVisible();
-  await expect(page.getByText('fixture-listener is signed in with User access, which does not include My Settings.',
-    { exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'My Settings', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'My Settings', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Access denied', exact: true })).toHaveCount(0);
 });
 
 test('desktop Settings menu and account shortcut both reach My Settings', async ({ page }) => {

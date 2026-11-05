@@ -36,7 +36,9 @@ class StatsWebPresentationUiContractTest
         {
             assertTrue(live.contains(setting), () -> "Missing Live preference " + setting);
         }
-        assertTrue(live.contains("These choices affect only this signed-in user."));
+        assertTrue(live.contains("These choices apply for this page."));
+        assertTrue(live.contains("These choices are saved in this browser."));
+        assertTrue(live.contains("These choices are saved with your account."));
         assertTrue(live.contains("Conventional channels are always shown."));
     }
 

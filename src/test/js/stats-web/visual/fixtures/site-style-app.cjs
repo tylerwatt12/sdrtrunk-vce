@@ -321,7 +321,8 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
   const draftPreferences = structuredClone(preferenceSchema.defaults);
   draftPreferences.appearance.theme = theme;
   options.configurePreferences?.(draftPreferences);
-  const preferences = preferenceSchema.validate(draftPreferences);
+  let preferences = preferenceSchema.validate(draftPreferences);
+  let preferenceRevision = 1;
   const state = { unexpected: [], requests: [], pageErrors: [] };
   state.tourDismissals = { version: 1, dismissed: {} };
   page.on('pageerror', error => state.pageErrors.push(error.message));
@@ -369,7 +370,16 @@ async function installSiteStyleApplication(page, theme = 'light', liveInitialSna
       return respond(state.tourDismissals);
     }
     if (p === '/api/v1/activity/message-types') return respond([]);
-    if (p === '/api/v1/me/preferences') return route.fulfill({ json: { revision: 1, preferences } });
+    if (p === '/api/v1/me/preferences') {
+      if (request.method() === 'PUT') {
+        const write = request.postDataJSON();
+        if (request.headers()['if-match'] !== `"${preferenceRevision}"`) return route.fulfill({ status: 409,
+          json: { error: { message: 'Preferences changed.' } } });
+        preferences = preferenceSchema.validate(write);
+        preferenceRevision++;
+      }
+      return route.fulfill({ json: { revision: preferenceRevision, preferences } });
+    }
     if (p === '/api/v1/auth/session') return respond({ configured: true, authenticated: true,
       username: 'fixture-admin', tier: 'admin', primary: true, csrf_token: 'fixture-csrf',
       guide_dismissal_scope: state.guideDismissalScope ?? 'account-1-100',

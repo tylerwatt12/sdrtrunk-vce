@@ -171,6 +171,9 @@ async function install(page, state = {}) {
   if (state.liveSpectrum) await installLiveSpectrumStream(page);
   const preferenceModule = await import(pathToFileURL(resolve(root,
     'stats-web/assets/core/preference-schema.js')).href);
+  let preferenceRevision = 1;
+  let preferences = { ...structuredClone(preferenceModule.defaults),
+    appearance: { hue: null, theme: state.theme || 'light' } };
   await page.route('**/assets/app.js*', (route) => route.fulfill({ contentType: 'text/javascript',
     body: `${app}\nexport { openSpectrumDiscoveryWizard, openTunerFrequencyActions };` }));
   await page.route('**/api/v1/**', async (route) => {
@@ -187,9 +190,14 @@ async function install(page, state = {}) {
         'admin-channels': true, 'admin-aliases': true, 'admin-settings': state.adminSettings !== false,
         ...(state.listening ? { live: true, 'call-audio': true, recordings: true } : {})
       } });
-    if (path === '/api/v1/me/preferences') return route.fulfill({ contentType: 'application/json',
-      body: JSON.stringify({ revision: 1, preferences: { ...preferenceModule.defaults,
-        appearance: { hue: null, theme: state.theme || 'light' } } }) });
+    if (path === '/api/v1/me/preferences') {
+      if (request.method() === 'PUT') {
+        expect(request.headers()['if-match']).toBe(`"${preferenceRevision}"`);
+        preferences = preferenceModule.validate(body);
+        preferenceRevision++;
+      }
+      return route.fulfill({ json: { revision: preferenceRevision, preferences } });
+    }
     if (path === '/api/v1/spectrum-snap-presets') return route.fulfill({ contentType: 'application/json',
       body: JSON.stringify({ revision: 1, country_code: 'US', country_label: 'United States',
         countries: [{ code: 'US', label: 'United States' }], scopes: [] }) });
@@ -1806,7 +1814,10 @@ for (const theme of ['light']) for (const width of [1280, 390]) {
     await choice.locator('..').click();
     await expect(choice).not.toBeChecked();
     await expect(panel.getByRole('slider', { name: 'Lower display limit' })).toBeEnabled();
-    expect(state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method !== 'GET')).toHaveLength(0);
+    const saves = state.requests.filter((request) => request.path === '/api/v1/me/preferences' && request.method === 'PUT');
+    expect(saves).toHaveLength(1);
+    expect(saves[0].body.tuner).toMatchObject({
+      fft_auto_range_on_retune: false, waterfall_auto_range_on_retune: false });
     const styles = await panel.locator('.settings-field-control, .admin-toggle-control').evaluateAll((controls) =>
       controls.filter((control) => !control.hidden).map((control) => {
         const style = getComputedStyle(control);

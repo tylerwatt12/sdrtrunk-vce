@@ -202,7 +202,8 @@ test('receiver settings read as separate output and activity workflows', async (
     .toHaveAttribute('aria-current', 'page');
   const workspace = page.locator('.operational-preferences');
   await expect(workspace).toHaveClass(/operational-preferences-focused/);
-  await expect(workspace.locator('form[data-preference]')).toHaveCount(3);
+  await expect(workspace.locator('form[data-preference]')).toHaveCount(2);
+  await expect(workspace.locator('form[data-preference="mp3_normalize_audio"]')).toHaveCount(0);
   await expect(workspace.getByRole('button', { name: 'Reload saved settings', exact: true })).toBeVisible();
   await expect(page.locator('[data-paging-tone-detection] input')).toBeEnabled();
   await expect(page.locator('[data-paging-tone-detection] [role=alert]')).toBeHidden();
