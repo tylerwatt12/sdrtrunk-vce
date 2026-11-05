@@ -33,6 +33,7 @@ class Format66To67DatabaseMigrationTest
     {
         Path database = Format66TestDatabase.create(directory.resolve("prior.sqlite"));
         byte[] activity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
+        var expectedActivity = ActivityMigrationPreservation.capture(database);
         byte[] original = Files.readAllBytes(database);
         assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(original, Files.readAllBytes(database));
@@ -60,10 +61,11 @@ class Format66To67DatabaseMigrationTest
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
         }
+        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
         ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
-        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+        ActivityMigrationPreservation.assertCurrent(database, expectedActivity);
         byte[] current = Files.readAllBytes(database);
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
         assertArrayEquals(current, Files.readAllBytes(database));
@@ -73,16 +75,18 @@ class Format66To67DatabaseMigrationTest
     {
         Path database = Format66TestDatabase.create(directory.resolve("retry.sqlite"));
         var before = readPreferences(database);
-        byte[] activity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
+        var expectedActivity = ActivityMigrationPreservation.capture(database);
+        var originalActivity = ActivityMigrationPreservation.original(database);
         assertThrows(IllegalStateException.class, () -> ApplicationDatabaseMigrator.migrateInPlace(database, phase -> {
             if(phase.equals("Validating the updated schema and configuration"))
                 throw new IllegalStateException("injected precommit failure");
         }));
         try(var connection = open(database)) { assertEquals(66, DatabaseFormatCatalog.inspect(connection).version()); }
         assertEquals(before, readPreferences(database));
+        assertEquals(originalActivity, ActivityMigrationPreservation.original(database));
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
         assertConverted(before, readPreferences(database));
-        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+        ActivityMigrationPreservation.assertCurrent(database, expectedActivity);
         ConfigurationHistoryDatabase.validatePair(database);
     }
 

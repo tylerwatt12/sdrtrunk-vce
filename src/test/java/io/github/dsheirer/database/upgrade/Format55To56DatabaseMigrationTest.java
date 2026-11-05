@@ -346,6 +346,7 @@ class Format55To56DatabaseMigrationTest
             {
                 while(rows.next())
                 {
+                    if(splitProjection && CurrentFormatTestDatabase.changedEncryptionStatistic(table, rows)) continue;
                     String key = rows.getString(1);
                     if(table.equals("database_metadata") && DatabaseFormatCatalog.FORMAT_VERSION_KEY.equals(key)) continue;
                     if(applyRetirement && table.equals("application_settings") && VOICE_KEY.equals(key)) continue;

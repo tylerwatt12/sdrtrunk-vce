@@ -500,7 +500,8 @@ class MigrationContentTest
                         if(convertedFields && (table.equals("web_user") &&
                             List.of("preferences_json", "preferences_revision").contains(column) ||
                             table.equals("configuration_channel") && column.equals("analog_activity_reset_ms"))) continue;
-                        Object value = rows.getObject(index);
+                        Object value = convertedFields ? CurrentFormatTestDatabase.retainedValue(table, rows, index,
+                            DatabaseFormatCatalog.CURRENT_VERSION) : rows.getObject(index);
                         fields.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                     }
                     values.add(java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
@@ -527,10 +528,12 @@ class MigrationContentTest
         assertEquals(before.keySet(), after.keySet());
         for(var entry: before.entrySet())
         {
-            assertEquals(JSON.readTree(Format65WebUserPreferencesCodec.migrateFromFormat64(
-                    Format62WebUserPreferencesCodec.migrateFromFormat61(entry.getValue().json()).json()).json()),
-                JSON.readTree(after.get(entry.getKey()).json()));
-            assertEquals(entry.getValue().revision() + 2, after.get(entry.getKey()).revision());
+            String converted = Format62WebUserPreferencesCodec.migrateFromFormat61(entry.getValue().json()).json();
+            converted = Format65WebUserPreferencesCodec.migrateFromFormat64(converted).json();
+            converted = Format66WebUserPreferencesCodec.migrateFromFormat65(converted).json();
+            converted = Format67WebUserPreferencesCodec.migrateFromFormat66(converted).json();
+            assertEquals(JSON.readTree(converted), JSON.readTree(after.get(entry.getKey()).json()));
+            assertEquals(entry.getValue().revision() + 4, after.get(entry.getKey()).revision());
         }
     }
 

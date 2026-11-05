@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 import io.github.dsheirer.record.managed.ManagedRecordingSchema;
 import java.lang.reflect.InvocationTargetException;
@@ -32,7 +33,9 @@ class ManagedRecordingCatalogReportTest
 
         assertTrue(result.migrated());
         assertTrue(result.report().contains("Contents: Recording catalog entries and metadata"));
-        assertTrue(result.report().contains("Backup: " + result.backup()));
+        assertNotNull(result.backup());
+        assertTrue(Files.isRegularFile(result.backup()));
+        assertTrue(result.report().contains("Recovery backup retained:"));
         assertTrue(result.report().contains("Migration report saved: logs/migration-reports/"));
         Path report = savedReports(root).getFirst();
         String saved = Files.readString(report);

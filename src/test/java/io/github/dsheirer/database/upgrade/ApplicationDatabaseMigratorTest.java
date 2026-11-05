@@ -1594,7 +1594,7 @@ class ApplicationDatabaseMigratorTest
         CommandResult result = run(database);
 
         assertTrue(result.exitCode() != ApplicationDatabaseMigrator.EXIT_SUCCESS);
-        assertTrue(result.error().contains("exact format-63 schema"), result::error);
+        assertTrue(result.error().contains("exact format-" + DatabaseFormatCatalog.CURRENT_VERSION + " schema"), result::error);
 
         try(Connection connection = open(database))
         {

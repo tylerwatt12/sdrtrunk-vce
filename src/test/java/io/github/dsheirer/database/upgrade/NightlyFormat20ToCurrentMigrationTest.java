@@ -304,8 +304,14 @@ class NightlyFormat20ToCurrentMigrationTest
         Map<String,TableContents> contents = new LinkedHashMap<>();
         for(var table: tables.entrySet())
         {
-            String projection = table.getValue().stream().map(name -> "\"" + name + "\"")
+            String ordering = table.getValue().stream().map(name -> "\"" + name + "\"")
                 .collect(java.util.stream.Collectors.joining(","));
+            String projection = table.getValue().stream().map(name -> {
+                if(table.getKey().equals("receiver_activity_event") && name.equals("encrypted"))
+                    return excludeNicknameDefault ? "encryption_state AS encrypted" :
+                        "CASE WHEN encrypted=1 OR event_type_code IN (6,8,10,17,20,26) THEN 2 ELSE 0 END AS encrypted";
+                return "\"" + name + "\"";
+            }).collect(java.util.stream.Collectors.joining(","));
             String filter = switch(table.getKey()) {
                 case "database_metadata" -> " WHERE key NOT IN ('database_format_version'," +
                     "'database_role','configuration_history_pair_id')";
@@ -328,7 +334,7 @@ class NightlyFormat20ToCurrentMigrationTest
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             long count = 0;
             try(Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(
-                select + " ORDER BY " + projection))
+                select + " ORDER BY " + ordering))
             {
                 while(rows.next())
                 {

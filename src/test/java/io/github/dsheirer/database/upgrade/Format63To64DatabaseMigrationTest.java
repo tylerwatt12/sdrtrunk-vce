@@ -20,25 +20,56 @@ class Format63To64DatabaseMigrationTest
     private static final String RECEIVER = "tuner-0123456789abcdef0123456789abcdef";
     @TempDir Path directory;
 
-    @Test void currentProfileUpgradeKeepsActivityFileUnchangedAndInitializesOnlyEmptyNames() throws Exception
+    @Test void currentProfileUpgradePreservesActivityAndInitializesOnlyEmptyNames() throws Exception
     {
         Path database = Format63TestDatabase.create(directory.resolve("sdrtrunk.sqlite"));
-        byte[] activity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
+        var expectedActivity = ActivityMigrationPreservation.capture(database);
         byte[] configuration = Files.readAllBytes(database);
         assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(configuration, Files.readAllBytes(database));
         var report = ApplicationDatabaseMigrator.migrateInPlace(database, null);
         assertTrue(report.helperOutput().contains("receiver nickname settings"));
         ConfigurationHistoryDatabase.validatePair(database);
-        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+        ActivityMigrationPreservation.assertCurrent(database, expectedActivity);
         assertEquals(java.util.Map.of(), new ReceiverNicknameStore(database).snapshot());
         assertCurrentConfiguration(database);
+    }
+
+    @Test void adjacentNicknameStepLeavesActivityBytesUntouched() throws Exception
+    {
+        Path database = Format63TestDatabase.create(directory.resolve("nickname-only.sqlite"));
+        byte[] activity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + database))
+        {
+            connection.setAutoCommit(false);
+            new Format63To64DatabaseMigration().migrate(connection);
+            DatabaseFormatCatalog.stamp(connection, 64);
+            connection.commit();
+        }
+        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+        ConfigurationHistoryDatabase.validatePairIdentity(database);
+    }
+
+    @Test void fullUpgradePreservationRejectsAnUnrelatedHistoryChange() throws Exception
+    {
+        Path database = Format63TestDatabase.create(directory.resolve("changed-history.sqlite"));
+        var expected = ActivityMigrationPreservation.capture(database);
+        ApplicationDatabaseMigrator.migrateInPlace(database, null);
+        ActivityMigrationPreservation.assertCurrent(database, expected);
+        try(var connection = DriverManager.getConnection("jdbc:sqlite:" + ActivityDatabasePath.forConfiguration(database));
+            var statement = connection.createStatement())
+        {
+            assertEquals(1, statement.executeUpdate("UPDATE receiver_activity_event SET observed_at_ms=observed_at_ms+1 " +
+                "WHERE id=(SELECT id FROM receiver_activity_event ORDER BY id LIMIT 1)"));
+        }
+        assertThrows(AssertionError.class, () -> ActivityMigrationPreservation.assertCurrent(database, expected));
     }
 
     @Test void failedUpgradeRollsBackAndUnchangedSourceCanBeRetried() throws Exception
     {
         Path database = Format63TestDatabase.create(directory.resolve("retry.sqlite"));
-        byte[] activity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
+        var expectedActivity = ActivityMigrationPreservation.capture(database);
+        var originalActivity = ActivityMigrationPreservation.original(database);
         assertThrows(IllegalStateException.class, () -> ApplicationDatabaseMigrator.migrateInPlace(database, phase -> {
             if(phase.equals("Validating the updated schema and configuration"))
                 throw new IllegalStateException("injected precommit failure");
@@ -49,9 +80,10 @@ class Format63To64DatabaseMigrationTest
             assertFalse(new io.github.dsheirer.database.settings.ApplicationSettingsStore(database)
                 .contains("receiver.nicknames"));
         }
+        assertEquals(originalActivity, ActivityMigrationPreservation.original(database));
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
         assertCurrentConfiguration(database);
-        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+        ActivityMigrationPreservation.assertCurrent(database, expectedActivity);
     }
 
     @Test void priorMonolithTraversesBothAdjacentStepsAndMatchesFreshCurrentRoles() throws Exception

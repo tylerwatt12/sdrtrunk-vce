@@ -286,6 +286,14 @@ public final class CurrentFormatTestDatabase
         return false;
     }
 
+    /** Format 69 refreshes samples for these indexes only; frozen earlier segments retain all samples. */
+    static boolean changedEncryptionStatistic(String table, ResultSet rows) throws SQLException
+    {
+        return table.equals("sqlite_stat1") && rows.getString("idx") != null &&
+            List.of("idx_receiver_activity_event_encryption", "idx_receiver_activity_event_system_encrypted_time",
+                "idx_receiver_activity_event_channel_encrypted_time").contains(rows.getString("idx"));
+    }
+
     /** Compare the exact declared preference conversion while preserving every other account field. */
     static Object retainedValue(String table, ResultSet rows, int column) throws Exception
     {
@@ -295,6 +303,24 @@ public final class CurrentFormatTestDatabase
     /** Frozen single-file comparisons stop at 62; full-current comparisons include later declared upgrades. */
     static Object retainedValue(String table, ResultSet rows, int column, int targetFormat) throws Exception
     {
+        if(targetFormat >= 69 && table.equals("receiver_activity_event") &&
+            rows.getMetaData().getColumnName(column).equals("encrypted"))
+            return rows.getInt(column) == 1 || List.of(6,8,10,17,20,26).contains(rows.getInt("event_type_code")) ? 2 : 0;
+        if(targetFormat >= 71 && table.equals("application_settings") &&
+            rows.getString(1).equals("portable_java_preferences_v1") &&
+            rows.getMetaData().getColumnName(column).equals("settings_json"))
+        {
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            var root = mapper.readTree(rows.getString(column));
+            String node = "user/io/github/dsheirer/preference/mp3";
+            if(root.get(node) instanceof com.fasterxml.jackson.databind.node.ObjectNode mp3 &&
+                mp3.has("audio.mp3.normalize.before.encode"))
+            {
+                mp3.remove("audio.mp3.normalize.before.encode");
+                if(mp3.isEmpty()) ((com.fasterxml.jackson.databind.node.ObjectNode)root).remove(node);
+            }
+            return mapper.writeValueAsString(root);
+        }
         if(targetFormat >= 68 && table.equals("application_settings") &&
             rows.getString(1).equals("remote.links") && rows.getMetaData().getColumnName(column).equals("settings_json"))
         {
@@ -320,6 +346,17 @@ public final class CurrentFormatTestDatabase
             if(targetFormat >= 65 && version == 12)
             {
                 preferences = Format65WebUserPreferencesCodec.migrateFromFormat64(preferences).json();
+                version = 13;
+                revisions++;
+            }
+            if(targetFormat >= 66 && version == 13)
+            {
+                preferences = Format66WebUserPreferencesCodec.migrateFromFormat65(preferences).json();
+                version = 14; revisions++;
+            }
+            if(targetFormat >= 67 && version == 14)
+            {
+                preferences = Format67WebUserPreferencesCodec.migrateFromFormat66(preferences).json();
                 revisions++;
             }
             if(name.equals("preferences_json")) return preferences;

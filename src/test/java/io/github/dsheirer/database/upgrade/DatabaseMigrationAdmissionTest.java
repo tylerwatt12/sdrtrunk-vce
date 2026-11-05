@@ -33,7 +33,7 @@ class DatabaseMigrationAdmissionTest
             var report = DatabaseMigrationChain.migrate(counted, admitted, false, ignored -> {});
             DatabaseFormatCatalog.requireCurrent(counted);
             assertEquals(report.steps().size() + 2, scans.get(),
-                "One initial admission, each exact adjacent target, and one final strict admission");
+                "One initial main-schema admission, each exact adjacent target, and one final strict admission");
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, report.target().version());
             connection.rollback();
         }
@@ -206,7 +206,7 @@ class DatabaseMigrationAdmissionTest
                             (statementProxy, statementMethod, statementArguments) -> {
                                 if(statementMethod.getName().equals("executeQuery") && statementArguments != null &&
                                     statementArguments[0] instanceof String sql &&
-                                    sql.contains("SELECT type, name, sql") && sql.contains("FROM sqlite_master"))
+                                    sql.contains("SELECT type, name, sql") && sql.contains("FROM main.sqlite_master"))
                                     scans.incrementAndGet();
                                 try { return statementMethod.invoke(statement, statementArguments); }
                                 catch(InvocationTargetException exception) { throw exception.getCause(); }

@@ -267,6 +267,7 @@ class Format51To52DatabaseMigrationTest
             {
                 while(rows.next())
                 {
+                    if(targetFormat >= 69 && CurrentFormatTestDatabase.changedEncryptionStatistic(table, rows)) continue;
                     List<String> row=new ArrayList<>();
                     for(int column=1;column<=rows.getMetaData().getColumnCount();column++)
                     {
@@ -332,8 +333,13 @@ class Format51To52DatabaseMigrationTest
         for(var entry: expected.entrySet())
         {
             // The existing validator compares complete SQL while permitting insignificant stored whitespace.
-            SqliteSchemaValidator.validateDefinitions(connection, List.of(entry.getValue().definition()),
-                actual.get(entry.getKey()).schema());
+            var definition = entry.getValue().definition();
+            if(DatabaseFormatCatalog.inspect(connection).version() >= 69 && List.of("idx_receiver_activity_event_encryption", "idx_receiver_activity_event_system_encrypted_time",
+                "idx_receiver_activity_event_channel_encrypted_time").contains(entry.getKey()))
+                definition = new SqliteSchemaValidator.Definition("index", entry.getKey(),
+                    definition.sql().replaceAll("\\bencrypted\\b", "encryption_state")
+                        .replace("encryption_state = 1", "encryption_state = 2"));
+            SqliteSchemaValidator.validateDefinitions(connection, List.of(definition), actual.get(entry.getKey()).schema());
         }
     }
 

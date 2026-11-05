@@ -68,7 +68,7 @@ class Format8To9DatabaseMigrationTest
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=13
+                WHERE json_extract(preferences_json, '$.version')=15
                   AND json_extract(preferences_json, '$.guides.automatic_page_guides')=1
                   AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
                   AND json_extract(preferences_json, '$.playback.call_display_hangtime_seconds')=5
@@ -78,7 +78,7 @@ class Format8To9DatabaseMigrationTest
                       '$.presentation.retain_last_call_on_idle_rows')=1
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
-                  AND preferences_revision=13
+                  AND preferences_revision=15
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
@@ -272,7 +272,11 @@ class Format8To9DatabaseMigrationTest
                     '$.guides',
                     '$.playback.target_grouping',
                     '$.playback.target_burst_limit',
-                    '$.playback.call_display_hangtime_seconds') AS row_value
+                    '$.playback.call_display_hangtime_seconds',
+                    '$.playback.recording_click_mode',
+                    '$.live_workspace', '$.p25_visualizer',
+                    '$.tuner.fft_auto_range_on_retune',
+                    '$.tuner.waterfall_auto_range_on_retune') AS row_value
                 FROM web_user ORDER BY id)
             """);
     }
