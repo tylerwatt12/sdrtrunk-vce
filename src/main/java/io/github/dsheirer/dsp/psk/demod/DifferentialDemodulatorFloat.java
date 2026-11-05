@@ -22,14 +22,13 @@ package io.github.dsheirer.dsp.psk.demod;
 import io.github.dsheirer.dsp.filter.interpolator.Interpolator;
 import io.github.dsheirer.dsp.filter.interpolator.InterpolatorFactory;
 import io.github.dsheirer.dsp.fm.IDemodulator;
+import java.util.Arrays;
 
 /**
  * Differential demodulator base class
  */
 public abstract class DifferentialDemodulatorFloat implements IDemodulator
 {
-    private int mSymbolRate;
-    private float mSampleRate;
     private float mSamplesPerSymbol;
     protected float[] mIBuffer = new float[20]; //Initial size 20 for array copy, but gets resized on first buffer
     protected float[] mQBuffer = new float[20];
@@ -37,7 +36,6 @@ public abstract class DifferentialDemodulatorFloat implements IDemodulator
     protected int mBufferOverlap;
     protected int mInterpolationOffset;
     protected final Interpolator mInterpolator = InterpolatorFactory.getInterpolator();
-    private DifferentialDemodulatorFloatScalar mScalar;
 
    /**
      * Constructor
@@ -46,9 +44,7 @@ public abstract class DifferentialDemodulatorFloat implements IDemodulator
      */
     protected DifferentialDemodulatorFloat(double sampleRate, int symbolRate)
     {
-        mSampleRate = (float) sampleRate;
-        mSymbolRate = symbolRate;
-        mSamplesPerSymbol = mSampleRate / mSymbolRate;
+        mSamplesPerSymbol = (float)sampleRate / symbolRate;
         mMu = mSamplesPerSymbol % 1; //Fractional part of the samples per symbol rate
         //At mu=0 the interpolator selects offset+3. Compare samples one full symbol apart.
         mInterpolationOffset = (int) Math.floor(mSamplesPerSymbol) - 3;
@@ -62,31 +58,65 @@ public abstract class DifferentialDemodulatorFloat implements IDemodulator
     }
 
     /**
-     * Scalar implementation for fallback when the sample buffer size is not compatible with the vector implementation.
-     * @return scalar implementation lazy instantiated when needed.
+     * Preserves stream history and appends the next I/Q block for both scalar and vector calculations.
      */
-    protected DifferentialDemodulatorFloatScalar getScalarImplementation()
+    protected final void prepareBuffers(float[] i, float[] q)
     {
-        if(mScalar == null)
+        int sampleLength = i.length;
+        int bufferOverlap = mBufferOverlap;
+        //Copy previous buffer residual samples to beginning of buffer.
+        System.arraycopy(mIBuffer, mIBuffer.length - bufferOverlap, mIBuffer, 0, bufferOverlap);
+        System.arraycopy(mQBuffer, mQBuffer.length - bufferOverlap, mQBuffer, 0, bufferOverlap);
+
+        //Resize I/Q buffers if necessary
+        int requiredBufferLength = sampleLength + bufferOverlap;
+        if(mIBuffer.length != requiredBufferLength)
         {
-            mScalar = new DifferentialDemodulatorFloatScalar(mSampleRate, mSymbolRate);
+            mIBuffer = Arrays.copyOf(mIBuffer, requiredBufferLength);
+            mQBuffer = Arrays.copyOf(mQBuffer, requiredBufferLength);
         }
 
-        return mScalar;
+        //Append new samples to the residual samples from the previous buffer.
+        System.arraycopy(i, 0, mIBuffer, bufferOverlap, sampleLength);
+        System.arraycopy(q, 0, mQBuffer, bufferOverlap, sampleLength);
     }
 
     /**
-     * Demodulates a buffer that cannot fill a vector, preserving the same stream history across both implementations.
+     * Shared scalar calculation, including fallback for input lengths that cannot fill a vector.
+     * Uses this demodulator's history directly so switching implementations cannot resume stale buffers.
      */
-    protected float[] demodulateScalar(float[] i, float[] q)
+    protected final float[] demodulateScalar(float[] i, float[] q)
     {
-        DifferentialDemodulatorFloatScalar scalar = getScalarImplementation();
-        scalar.mIBuffer = mIBuffer;
-        scalar.mQBuffer = mQBuffer;
-        float[] phases = scalar.demodulate(i, q);
-        mIBuffer = scalar.mIBuffer;
-        mQBuffer = scalar.mQBuffer;
-        return phases;
+        int sampleLength = i.length;
+        float mu = mMu;
+        prepareBuffers(i, q);
+
+        float[] decodedPhases = new float[i.length];
+        float iPrevious;
+        float qPreviousConjugate;
+        float iCurrent;
+        float qCurrent;
+        float differentialI;
+        float differentialQ;
+
+        //Differential demodulation.
+        for(int x = 0; x < sampleLength; x++)
+        {
+            iPrevious = mIBuffer[x];
+            qPreviousConjugate = -mQBuffer[x]; //Complex Conjugate
+
+            int offset = mInterpolationOffset + x;
+            iCurrent = mInterpolator.filter(mIBuffer, offset, mu);
+            qCurrent = mInterpolator.filter(mQBuffer, offset, mu);
+
+            //Multiply current complex sample by the complex conjugate of previous complex sample.
+            differentialI = (iPrevious * iCurrent) - (qPreviousConjugate * qCurrent);
+            differentialQ = (iPrevious * qCurrent) + (iCurrent * qPreviousConjugate);
+
+            decodedPhases[x] = (float)Math.atan2(differentialQ, differentialI);
+        }
+
+        return decodedPhases;
     }
 
     /**

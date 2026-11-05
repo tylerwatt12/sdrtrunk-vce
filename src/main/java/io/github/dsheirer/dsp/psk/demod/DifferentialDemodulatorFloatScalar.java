@@ -19,8 +19,6 @@
 
 package io.github.dsheirer.dsp.psk.demod;
 
-import java.util.Arrays;
-
 /**
  * Differential demodulator that uses scalar calculations for demodulating the sample stream.
  */
@@ -39,52 +37,6 @@ public class DifferentialDemodulatorFloatScalar extends DifferentialDemodulatorF
     @Override
     public float[] demodulate(float[] i, float[] q)
     {
-        int sampleLength = i.length;
-        int bufferOverlap = mBufferOverlap;
-        float mu = mMu;
-
-        //Copy previous buffer residual samples to beginning of buffer.
-        System.arraycopy(mIBuffer, mIBuffer.length - bufferOverlap, mIBuffer, 0, bufferOverlap);
-        System.arraycopy(mQBuffer, mQBuffer.length - bufferOverlap, mQBuffer, 0, bufferOverlap);
-
-        //Resize I/Q buffers if necessary
-        int requiredBufferLength = sampleLength + bufferOverlap;
-        if(mIBuffer.length != requiredBufferLength)
-        {
-            mIBuffer = Arrays.copyOf(mIBuffer, requiredBufferLength);
-            mQBuffer = Arrays.copyOf(mQBuffer, requiredBufferLength);
-        }
-
-        //Append new samples to the residual samples from the previous buffer.
-        System.arraycopy(i, 0, mIBuffer, bufferOverlap, sampleLength);
-        System.arraycopy(q, 0, mQBuffer, bufferOverlap, sampleLength);
-        //mIDecoded, mQDecoded and mPhase will be filled below during the decoding process.
-
-        float[] decodedPhases = new float[i.length];
-        float iPrevious;
-        float qPreviousConjugate;
-        float iCurrent;
-        float qCurrent;
-        float differentialI;
-        float differentialQ;
-
-        //Differential demodulation.
-        for(int x = 0; x < sampleLength; x++)
-        {
-            iPrevious = mIBuffer[x];
-            qPreviousConjugate = -mQBuffer[x]; //Complex Conjugate
-
-            int offset = mInterpolationOffset + x;
-            iCurrent = mInterpolator.filter(mIBuffer, offset, mu);
-            qCurrent = mInterpolator.filter(mQBuffer, offset, mu);
-
-            //Multiply current complex sample by the complex conjugate of previous complex sample.
-            differentialI = (iPrevious * iCurrent) - (qPreviousConjugate * qCurrent);
-            differentialQ = (iPrevious * qCurrent) + (iCurrent * qPreviousConjugate);
-
-            decodedPhases[x] = (float)Math.atan2(differentialQ, differentialI);
-        }
-
-        return decodedPhases;
+        return demodulateScalar(i, q);
     }
 }

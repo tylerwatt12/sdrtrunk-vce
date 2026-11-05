@@ -19,7 +19,6 @@
 
 package io.github.dsheirer.dsp.psk.demod;
 
-import java.util.Arrays;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -51,24 +50,9 @@ public class DifferentialDemodulatorFloatVector256 extends DifferentialDemodulat
         }
 
         int sampleLength = i.length;
-        int bufferOverlap = mBufferOverlap;
         float mu = mMu;
 
-        //Copy previous buffer residual samples to beginning of buffer.
-        System.arraycopy(mIBuffer, mIBuffer.length - bufferOverlap, mIBuffer, 0, bufferOverlap);
-        System.arraycopy(mQBuffer, mQBuffer.length - bufferOverlap, mQBuffer, 0, bufferOverlap);
-
-        //Resize I/Q buffers if necessary
-        int requiredBufferLength = sampleLength + bufferOverlap;
-        if(mIBuffer.length != requiredBufferLength)
-        {
-            mIBuffer = Arrays.copyOf(mIBuffer, requiredBufferLength);
-            mQBuffer = Arrays.copyOf(mQBuffer, requiredBufferLength);
-        }
-
-        //Append new samples to the residual samples from the previous buffer.
-        System.arraycopy(i, 0, mIBuffer, bufferOverlap, sampleLength);
-        System.arraycopy(q, 0, mQBuffer, bufferOverlap, sampleLength);
+        prepareBuffers(i, q);
 
         float[] interpolatedI = new float[VECTOR_SPECIES.length()];
         float[] interpolatedQ = new float[VECTOR_SPECIES.length()];
