@@ -618,7 +618,6 @@ export function createRecordingsFeature(deps) {
   let pagerHosts = [];
   let selectedFiltersHost = null;
   let filterCountHost = null;
-  let filterSummary = null;
   let filterDisclosure = null;
   let disposeFilterPosition = null;
   let selectedHost = null;
@@ -1890,12 +1889,6 @@ export function createRecordingsFeature(deps) {
       filterCountHost.textContent = String(chips.length);
       filterCountHost.hidden = chips.length === 0;
     }
-    if (filterSummary) {
-      const labels = chips.filter(chip => chip.key !== 'range').map(chip => chip.displayText || chip.text);
-      filterSummary.textContent = [searchPeriodLabel(appliedSearch || search), ...labels.slice(0, 2),
-        labels.length > 2 ? `+${labels.length - 2} more` : ''].filter(Boolean).join(' · ');
-      filterSummary.dataset.uiHint = [searchPeriodLabel(appliedSearch || search), ...labels].join(' · ');
-    }
     for (const chip of chips) {
       const chipId = JSON.stringify([chip.key, chip.selection || '', chip.channel || '']);
       const applied = appliedSearch || currentFilters;
@@ -2761,8 +2754,6 @@ export function createRecordingsFeature(deps) {
     filterCountHost = node('span', 'ui-pill ui-pill-compact recordings-filter-count');
     filterCountHost.hidden = true;
     filterToggle.append(filterCountHost);
-    filterSummary = node('p', 'recordings-filter-summary');
-    filterSummary.setAttribute('aria-label', 'Applied search');
     const filterToolbar = node('div', 'ui-action-row ui-action-row-start recordings-filter-toolbar');
     const actions = node('div', 'recordings-search-actions');
     draftFeedback = node('p', 'recordings-draft-feedback'); draftFeedback.setAttribute('aria-live', 'polite');
@@ -2790,7 +2781,7 @@ export function createRecordingsFeature(deps) {
     fields.append(transcriptField, syntax, textRangeField, timeField, override, custom, high, system, targets, paths, radios, tones, quality, more,
       ...(selectedFiltersHost ? [selectedFiltersHost] : []));
     sidebar.append(fields, actions);
-    filterToolbar.append(filterTitle, filterToggle, filterSummary);
+    filterToolbar.append(filterTitle, filterToggle);
     const filterSection = node('section', 'recordings-filter-section ui-surface');
     filterSection.setAttribute('aria-label', 'Recording filters');
     filterSection.append(filterToolbar, sidebar);

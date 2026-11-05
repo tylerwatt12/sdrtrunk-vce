@@ -1351,7 +1351,7 @@ for (const theme of ['light', 'dark']) for (const device of ['desktop', 'phone']
       await expect(filters).toBeVisible();
       await expect(filters).toHaveAttribute('aria-expanded', 'false');
       await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toBeHidden();
-      await expect(page.locator('.recordings-filter-summary')).toContainText('Past 24 hours');
+      await expect(page.locator('.recordings-filter-summary')).toHaveCount(0);
       await expect(page.locator('.recordings-call').first()).toBeInViewport();
     }
     await expect(page.getByRole('button', { name: /Share|Activity|Address|Receiver node/ })).toHaveCount(0);
@@ -1454,7 +1454,7 @@ test('results group context and selection with the pager before the first call',
   await expect(results.getByRole('heading', { name: 'All recordings', exact: true })).toHaveCount(0);
   await expect(results.locator('.recordings-results-scope')).toHaveText('Past 24 hours');
   await expect(results.locator('.recordings-results-actions').getByRole('combobox')).toHaveCount(2);
-  await expect(page.locator('.recordings-filter-summary')).toContainText('Past 24 hours');
+  await expect(page.locator('.recordings-filter-summary')).toHaveCount(0);
   await expect(page.locator('.recordings-search-panel .recordings-selected-filters')).toBeVisible();
   await expect(results.locator('.recordings-page-selection')).toHaveText('Select page');
   const state = results.locator('.recordings-results-state');
@@ -2717,7 +2717,7 @@ for (const theme of ['light']) {
     await expect(page.getByRole('dialog', { name: 'Filters', exact: true })).toHaveCount(0);
     await expect(page.locator('.modal-backdrop')).toHaveCount(0);
     await expect(page.locator('#recordings-filters-toggle')).toHaveAttribute('aria-expanded', 'true');
-    await expect(page.locator('.recordings-filter-summary')).toContainText('dispatch');
+    await expect(page.locator('.recordings-selected-filters')).toContainText('dispatch');
     await expectSearchHalo(searchButton(page), false);
   });
 }
@@ -2768,7 +2768,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     expect(state.requestedFilters).toHaveLength(1);
     await searchNow(page, state);
     expect(state.requestedFilters.at(-1)).toMatchObject({ has_quality: 'true', min_quality_percent: '95.5', max_quality_percent: '100' });
-    await expect(page.locator('.recordings-filter-summary')).toContainText('Voice quality: 95.5–100%');
+    await expect(page.locator('.recordings-selected-filters')).toContainText('Voice quality: 95.5–100%');
 
     quality = await openPicker(page, 'quality', 'Quality');
     await quality.getByRole('combobox', { name: 'Quality measurements', exact: true }).selectOption('false');
@@ -2781,7 +2781,7 @@ for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 320], [
     expect(state.requestedFilters.at(-1).has_quality).toBe('false');
     expect(state.requestedFilters.at(-1)).not.toHaveProperty('min_quality_percent');
     expect(state.requestedFilters.at(-1)).not.toHaveProperty('max_quality_percent');
-    await expect(page.locator('.recordings-filter-summary')).toContainText('Quality unavailable');
+    await expect(page.locator('.recordings-selected-filters')).toContainText('Quality unavailable');
     await page.getByRole('button', { name: 'Clear filters', exact: true }).click();
     await expect.poll(() => state.requestedFilters.at(-1).has_quality).toBeUndefined();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
@@ -2792,7 +2792,7 @@ test('recording quality URL filters preserve zero and old recordings show unavai
   const state = await openRecordings(page, { call: linkedCall, query: { has_quality: 'true', min_quality_percent: '0', max_quality_percent: '0' } });
   await expect.poll(() => state.requestedFilters.length).toBe(1);
   expect(state.requestedFilters[0]).toMatchObject({ has_quality: 'true', min_quality_percent: '0', max_quality_percent: '0' });
-  await expect(page.locator('.recordings-filter-summary')).toContainText('Voice quality: 0–0%');
+  await expect(page.locator('.recordings-selected-filters')).toContainText('Voice quality: 0–0%');
   await openCallDetails(page);
   const actions = page.getByRole('dialog', { name: 'Call actions', exact: true });
   await selectRecordingDetailTab(actions, 'Call quality');

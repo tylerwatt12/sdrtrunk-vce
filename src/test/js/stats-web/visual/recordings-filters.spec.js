@@ -169,7 +169,7 @@ test('phone Filters expand inline with keyboard and preserve nested choices unti
   const filterTarget = await filters.boundingBox();
   expect(filterTarget.width).toBeGreaterThanOrEqual(44);
   expect(filterTarget.height).toBeGreaterThanOrEqual(44);
-  await expect(summary).toContainText('Past 24 hours');
+  await expect(summary).toHaveCount(0);
   await expect(page.getByRole('searchbox', { name: 'Full text', exact: true })).toBeHidden();
   const collapsedChevron = await filters.evaluate(element => getComputedStyle(element, '::before').transform);
   await filters.focus();
@@ -205,8 +205,6 @@ test('phone Filters expand inline with keyboard and preserve nested choices unti
   await expect(panel).toBeHidden();
   await expect(filters).toHaveAttribute('aria-expanded', 'false');
   await expect(filters).toBeFocused();
-  await expect(summary).not.toContainText('dispatch');
-  await expect(summary).not.toContainText('Metro Public Safety');
   expect(state.requests).toHaveLength(1);
 
   await filters.click();
@@ -226,7 +224,7 @@ test('phone Filters expand inline with keyboard and preserve nested choices unti
   await expect(filters).toHaveAttribute('aria-expanded', 'true');
   expect(state.requests.at(-1)).toMatchObject({ transcript: 'dispatch', system_key: systemKey });
   expect(JSON.parse(state.requests.at(-1).radios)).toMatchObject([{ id: call.source_id, system_key: systemKey }]);
-  await expect(summary).toContainText('Past 7 days');
+  await expect(summary).toHaveCount(0);
   await expect(filters.locator('.recordings-filter-count')).toHaveText(/^[1-9]\d*$/);
   await filters.click();
   await expect(page.locator('.recordings-call').first()).toBeInViewport();
@@ -247,7 +245,7 @@ test('phone Filters expand inline with keyboard and preserve nested choices unti
   await expect(page.locator('.modal-backdrop')).toHaveCount(0);
   for (const key of ['transcript', 'system_key', 'radios', 'radio_role', 'radio_identity_key', 'radio_id'])
     expect(state.requests.at(-1)).not.toHaveProperty(key);
-  await expect(summary).toHaveText('Past 24 hours');
+  await expect(summary).toHaveCount(0);
   await expect(filters.locator('.recordings-filter-count')).toBeHidden();
   await expect(page.locator('.recordings-call-select')).not.toBeChecked();
   await expect(page.locator('.recordings-selected')).toBeHidden();
