@@ -29,10 +29,13 @@ class Format65To66DatabaseMigrationTest
     private static final ObjectMapper JSON = new ObjectMapper();
     @TempDir Path directory;
 
-    @Test void preservesPersonalChoicesAccountRowsAndUnchangedActivityAcrossRollbackAndRetry() throws Exception
+    @Test void preservesPersonalChoicesAccountRowsAndActivityAcrossRollbackAndRetry() throws Exception
     {
         Path database = Format65TestDatabase.create(directory.resolve("prior.sqlite"));
         byte[] activity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
+        Map<String,List<String>> expectedActivity;
+        try(var connection = open(ActivityDatabasePath.forConfiguration(database)))
+        { expectedActivity = retainedRows(connection, true); }
         byte[] original = Files.readAllBytes(database);
         assertThrows(SQLException.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(database));
         assertArrayEquals(original, Files.readAllBytes(database));
@@ -60,29 +63,43 @@ class Format65To66DatabaseMigrationTest
             assertConverted(before, preferences(connection));
             assertEquals(retained, retainedRows(connection));
         }
+        // The adjacent preference-only step must still leave Activity byte-for-byte untouched.
+        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
         ConfigurationHistoryDatabase.validatePair(database);
         SdrTrunkDatabaseStartup.validateGlobalDatabase(database);
-        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+        assertActivityPreserved(database, expectedActivity);
         byte[] current = Files.readAllBytes(database);
+        byte[] currentActivity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
         assertArrayEquals(current, Files.readAllBytes(database));
+        assertArrayEquals(currentActivity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
     }
 
     @Test void migratorFailureRollsBackAndAnUnchangedSourceCanBeRetried() throws Exception
     {
         Path database = Format65TestDatabase.create(directory.resolve("retry.sqlite"));
         var before = readPreferences(database);
-        byte[] activity = Files.readAllBytes(ActivityDatabasePath.forConfiguration(database));
+        Map<String,List<String>> originalActivity;
+        try(var connection = open(ActivityDatabasePath.forConfiguration(database)))
+        { originalActivity = retainedRows(connection); }
+        Map<String,List<String>> expectedActivity;
+        try(var connection = open(ActivityDatabasePath.forConfiguration(database)))
+        { expectedActivity = retainedRows(connection, true); }
         assertThrows(IllegalStateException.class, () -> ApplicationDatabaseMigrator.migrateInPlace(database, phase -> {
             if(phase.equals("Validating the updated schema and configuration"))
                 throw new IllegalStateException("injected precommit failure");
         }));
         try(var connection = open(database)) { assertEquals(65, DatabaseFormatCatalog.inspect(connection).version()); }
         assertEquals(before, readPreferences(database));
+        try(var connection = open(ActivityDatabasePath.forConfiguration(database)))
+        {
+            assertEquals(originalActivity, retainedRows(connection));
+            assertEquals(63, DatabaseFormatCatalog.inspect(connection).version());
+        }
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
         assertConvertedToCurrent(before, readPreferences(database));
-        assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
+        assertActivityPreserved(database, expectedActivity);
         ConfigurationHistoryDatabase.validatePair(database);
     }
 
@@ -197,7 +214,21 @@ class Format65To66DatabaseMigrationTest
             assertEquals(entry.getValue().updatedAt(), actual.updatedAt());
         }
     }
+    private static void assertActivityPreserved(Path database, Map<String,List<String>> expected) throws Exception
+    {
+        try(var connection = open(ActivityDatabasePath.forConfiguration(database)))
+        {
+            assertEquals(expected, retainedRows(connection));
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
+            try(var statement = connection.createStatement(); var result = statement.executeQuery("PRAGMA quick_check"))
+            { assertTrue(result.next()); assertEquals("ok", result.getString(1)); }
+            try(var statement = connection.createStatement(); var result = statement.executeQuery("PRAGMA foreign_key_check"))
+            { assertFalse(result.next()); }
+        }
+    }
     private static Map<String,List<String>> retainedRows(Connection connection) throws Exception
+    { return retainedRows(connection, false); }
+    private static Map<String,List<String>> retainedRows(Connection connection, boolean convertEncryption) throws Exception
     {
         Map<String,List<String>> result = new LinkedHashMap<>();
         try(var statement = connection.createStatement(); var tables = statement.executeQuery(
@@ -211,12 +242,20 @@ class Format65To66DatabaseMigrationTest
                     while(rows.next())
                     {
                         if(table.equals("database_metadata") && DatabaseFormatCatalog.FORMAT_VERSION_KEY.equals(rows.getString(1))) continue;
+                        // The encryption conversion intentionally reanalyses only these three replaced indexes.
+                        if(table.equals("sqlite_stat1") && rows.getString("idx") != null && List.of("idx_receiver_activity_event_encryption",
+                            "idx_receiver_activity_event_system_encrypted_time",
+                            "idx_receiver_activity_event_channel_encrypted_time").contains(rows.getString("idx"))) continue;
                         List<String> fields = new ArrayList<>();
                         for(int i=1;i<=rows.getMetaData().getColumnCount();i++)
                         {
                             String name=rows.getMetaData().getColumnName(i);
                             if(table.equals("web_user") && List.of("preferences_json","preferences_revision").contains(name)) continue;
                             Object value=rows.getObject(i);
+                            // The later 68-to-69 step preserves the row but replaces the encryption meaning.
+                            if(convertEncryption && table.equals("receiver_activity_event") && name.equals("encrypted"))
+                                value = rows.getInt(i) == 1 || List.of(6,8,10,17,20,26).contains(
+                                    rows.getInt("event_type_code")) ? 2 : 0;
                             fields.add(value instanceof byte[] bytes ? java.util.HexFormat.of().formatHex(bytes) : String.valueOf(value));
                         }
                         values.add(java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
