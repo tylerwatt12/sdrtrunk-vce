@@ -2558,7 +2558,7 @@ function openReadOnlyModal(title, body, options = {}) {
       if (typeof onClosed === 'function') onClosed();
     };
     const closed = closeReadOnlyModal(false, true, finished);
-    if (closed) options.onDismiss?.();
+    if (closed) finished(true);
     return closed;
   };
   const focusable = () => [...new Set([...dialog.querySelectorAll(

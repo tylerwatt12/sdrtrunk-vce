@@ -113,7 +113,8 @@ async function installDismissalHarness(page) {
       control.setAttribute('aria-label', label);
       return control;
     };
-    const state = { cleanups: 0, restorations: 0, loads: 0, actions: 0, renders: 0, parentCloses: 0 };
+    const state = { cleanups: 0, restorations: 0, loads: 0, actions: 0, renders: 0, parentCloses: 0,
+      dismissals: 0, continuations: 0 };
     const shared = new Function('node', 'valueNode', 'iconButton', 'routeFoundation', 'render',
       `let activeReadOnlyModal = null; let route = new URLSearchParams(location.search);
        const aliasEditorWorkspaceController = null;
@@ -134,7 +135,8 @@ async function installDismissalHarness(page) {
       [navigate, replace, guarded].forEach(control => { control.type = 'button'; });
       form.append(draft, navigate, replace, guarded);
       const parent = shared.openReadOnlyModal('Draft editor', form, {
-        id: 'draft-editor', onClose: () => { state.parentCloses += 1; }
+        id: 'draft-editor', onClose: () => { state.parentCloses += 1; },
+        onDismiss: () => { state.dismissals += 1; }
       });
       state.parent = parent;
       draft.addEventListener('input', () => parent.setDirty(true));
@@ -167,6 +169,39 @@ async function installDismissalHarness(page) {
   }, { source: modalFoundation, navigation: navigateSource });
   await page.getByRole('button', { name: 'Edit draft', exact: true }).click();
 }
+
+test('modal close continuations run once after immediate and confirmed closes', async ({ page }) => {
+  await installDismissalHarness(page);
+  const close = () => page.evaluate(() => window.dismissalTest.parent.close(() => {
+    window.dismissalTest.continuations += 1;
+  }));
+  const counts = () => page.evaluate(() => {
+    const { continuations, dismissals, parentCloses } = window.dismissalTest;
+    return { continuations, dismissals, parentCloses };
+  });
+  const editor = page.getByRole('dialog', { name: 'Draft editor', exact: true });
+  await page.evaluate(() => window.dismissalTest.parent.setBusy(true));
+  expect(await close()).toBe(false);
+  expect(await counts()).toEqual({ continuations: 0, dismissals: 0, parentCloses: 0 });
+  await expect(editor).toBeVisible();
+  await page.evaluate(() => window.dismissalTest.parent.setBusy(false));
+  expect(await close()).toBe(true);
+  await expect(editor).toHaveCount(0);
+  expect(await counts()).toEqual({ continuations: 1, dismissals: 1, parentCloses: 1 });
+  expect(await close()).toBe(false);
+  expect(await counts()).toEqual({ continuations: 1, dismissals: 1, parentCloses: 1 });
+
+  await page.getByRole('button', { name: 'Edit draft', exact: true }).click();
+  await editor.getByRole('textbox', { name: 'Draft name', exact: true }).fill('Unsaved draft');
+  expect(await close()).toBe(false);
+  await page.getByRole('button', { name: 'Keep editing', exact: true }).click();
+  await expect(editor).toBeVisible();
+  expect(await counts()).toEqual({ continuations: 1, dismissals: 1, parentCloses: 1 });
+  expect(await close()).toBe(false);
+  await page.getByRole('button', { name: 'Discard changes', exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  expect(await counts()).toEqual({ continuations: 2, dismissals: 2, parentCloses: 2 });
+});
 
 async function installSourceRadioActionHarness(page, theme) {
   await page.goto(`/design-system.html?theme=${theme}&view=gallery`);
