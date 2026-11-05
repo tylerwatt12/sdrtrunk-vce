@@ -50,7 +50,8 @@ public abstract class DifferentialDemodulatorFloat implements IDemodulator
         mSymbolRate = symbolRate;
         mSamplesPerSymbol = mSampleRate / mSymbolRate;
         mMu = mSamplesPerSymbol % 1; //Fractional part of the samples per symbol rate
-        mInterpolationOffset = (int) Math.floor(mSamplesPerSymbol) - 4; //Interpolate at the middle of 8x samples
+        //At mu=0 the interpolator selects offset+3. Compare samples one full symbol apart.
+        mInterpolationOffset = (int) Math.floor(mSamplesPerSymbol) - 3;
         mBufferOverlap = (int) Math.floor(mSamplesPerSymbol) + 4;
 
         while(mInterpolationOffset < 0)
@@ -72,6 +73,20 @@ public abstract class DifferentialDemodulatorFloat implements IDemodulator
         }
 
         return mScalar;
+    }
+
+    /**
+     * Demodulates a buffer that cannot fill a vector, preserving the same stream history across both implementations.
+     */
+    protected float[] demodulateScalar(float[] i, float[] q)
+    {
+        DifferentialDemodulatorFloatScalar scalar = getScalarImplementation();
+        scalar.mIBuffer = mIBuffer;
+        scalar.mQBuffer = mQBuffer;
+        float[] phases = scalar.demodulate(i, q);
+        mIBuffer = scalar.mIBuffer;
+        mQBuffer = scalar.mQBuffer;
+        return phases;
     }
 
     /**

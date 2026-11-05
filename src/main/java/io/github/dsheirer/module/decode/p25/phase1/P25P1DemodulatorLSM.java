@@ -129,15 +129,15 @@ public class P25P1DemodulatorLSM
         int bufferReserve = mBufferReserve;
         int requiredLength = i.length + bufferReserve;
 
+        //Preserve the old tail before a shorter input can truncate it during resizing.
+        System.arraycopy(mBufferI, bufferPointer, mBufferI, 0, bufferReserve);
+        System.arraycopy(mBufferQ, bufferPointer, mBufferQ, 0, bufferReserve);
+
         if(mBufferI.length != requiredLength)
         {
             mBufferI = Arrays.copyOf(mBufferI, requiredLength);
             mBufferQ = Arrays.copyOf(mBufferQ, requiredLength);
         }
-
-        //Transfer extra reserve samples from last processing iteration to the front of the I/Q buffers
-        System.arraycopy(mBufferI, bufferPointer, mBufferI, 0, bufferReserve);
-        System.arraycopy(mBufferQ, bufferPointer, mBufferQ, 0, bufferReserve);
 
         //Copy incoming I/Q samples to the processing buffers
         System.arraycopy(i, 0, mBufferI, bufferReserve, i.length);

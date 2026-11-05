@@ -46,7 +46,7 @@ public class DifferentialDemodulatorFloatVector512 extends DifferentialDemodulat
     {
         if(i.length % VECTOR_SPECIES.length() != 0)
         {
-            return getScalarImplementation().demodulate(i,q);
+            return demodulateScalar(i, q);
         }
 
         int sampleLength = i.length;
