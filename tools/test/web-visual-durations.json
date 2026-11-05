@@ -2,8 +2,8 @@
   "version": 1,
   "shards": 4,
   "workers": 2,
-  "caseCount": 1854,
-  "inventorySha256": "9e101a9c126e842c73a1d85a2e628b8ad427a33d7e94f91e1112078b4ba753aa",
+  "caseCount": 1861,
+  "inventorySha256": "56d17cdc771d69fc341e5415561a44cf6f166b23f7d423781c8a51256f5caa2e",
   "files": {
     "access-landing.spec.js": {
       "durationMs": 12822,
@@ -319,6 +319,11 @@
       "durationMs": 14418,
       "caseCount": 8,
       "source": "measured"
+    },
+    "focused-dialog.spec.js": {
+      "durationMs": 7660,
+      "caseCount": 4,
+      "source": "estimated"
     },
     "form-workflows.spec.js": {
       "durationMs": 9994,
