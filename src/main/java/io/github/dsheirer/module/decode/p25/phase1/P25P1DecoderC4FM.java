@@ -140,9 +140,11 @@ public class P25P1DecoderC4FM extends FeedbackDecoder implements IByteBufferProv
 
         float decimatedSampleRate = (float)sampleRate / decimation;
         int symbolLength = 16;
-        float rrcAlpha = 0.2f;
+        float rrcAlpha = 0.5f;
 
-        float[] taps = FilterFactory.getRootRaisedCosine(decimatedSampleRate / SYMBOL_RATE,
+        //This helper halves its samples-per-symbol argument; 1.5x selects a 6400-baud receive filter.
+        //This empirical C4FM filter leaves the actual 4800-symbol/s clock unchanged.
+        float[] taps = FilterFactory.getRootRaisedCosine(1.5 * decimatedSampleRate / SYMBOL_RATE,
                 symbolLength, rrcAlpha);
         mPulseShapingFilterI = FilterFactory.getPulseShapingFilter(taps);
         mPulseShapingFilterQ = FilterFactory.getPulseShapingFilter(taps);
