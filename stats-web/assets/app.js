@@ -32731,7 +32731,11 @@ async function renderTuners(options = {}) {
   const tunerListActions = node('div', 'tuners-sidebar-actions ui-action-row');
   tunerListActions.append(rescanUsbButton, tunerCount);
   const tunerListPanel = node('div', 'tuners-sidebar-panel');
-  tunerListPanel.append(tunerListActions, listBody);
+  const rescanFeedback = node('div');
+  rescanFeedback.hidden = true;
+  tunerListPanel.append(tunerListActions, rescanFeedback, listBody);
+  const rescanWorkflow = createActionWorkflow({ surface: tunerListActions, feedback: rescanFeedback,
+    controls: () => [rescanUsbButton] });
   const left = section('Receiver tuners', tunerListPanel, sectionActionHost(addTunerButton));
   left.classList.add('tuners-receivers');
   const right = node('div', 'tuners-main');
@@ -33704,17 +33708,32 @@ async function renderTuners(options = {}) {
     }
   });
   rescanUsbButton.addEventListener('click', async () => {
-    rescanUsbButton.disabled = true;
+    if (guideMode || !isCurrent()) return;
     try {
-      await requestTunerJson('/api/v1/admin/tuners/rescan', { method: 'POST' });
-      operationNotice = 'USB tuner rescan requested.';
-      await refresh();
-    } catch (error) {
-      operationNotice = error.message || 'Could not rescan USB tuners.';
-      renderSelection();
-    } finally {
-      rescanUsbButton.disabled = false;
-    }
+      await rescanWorkflow.run(async () => {
+        await requestTunerJson('/api/v1/admin/tuners/rescan', { method: 'POST', signal: renderContext.signal });
+        const deadline = Date.now() + 60_000;
+        while (isCurrent()) {
+          const result = await requestTunerJson('/api/v1/admin/tuners/rescan', { signal: renderContext.signal });
+          const status = result?.data?.status ?? result?.status;
+          if (status === 'complete') return;
+          if (status === 'failed') {
+            throw new Error('USB scan could not recover every tuner. Check tuner errors, then try again. Restart the receiver if USB shutdown did not finish.');
+          }
+          if (status !== 'scanning' || Date.now() >= deadline) {
+            throw new Error('USB scan has not confirmed completion. Refresh the tuner list before trying again.');
+          }
+          await new Promise((resolve, reject) => {
+            const abort = () => { clearTimeout(timer); renderContext.signal.removeEventListener('abort', abort); reject(new DOMException('Aborted', 'AbortError')); };
+            const timer = setTimeout(() => { renderContext.signal.removeEventListener('abort', abort); resolve(); }, 500);
+            renderContext.signal.addEventListener('abort', abort, { once: true });
+            if (renderContext.signal.aborted) abort();
+          });
+        }
+      }, { pending: 'Scanning USB tuners…', success: 'USB scan complete. Tuner list updated.',
+        onSuccess: () => { if (isCurrent()) return refresh(true); },
+        onError: () => { if (isCurrent()) return refresh(); } });
+    } catch { /* The shared workflow keeps the failure visible for retry. */ }
   });
   const ready = refresh();
   try {

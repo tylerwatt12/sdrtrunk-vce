@@ -127,6 +127,10 @@ async function mockTuners(page, mutations, state = {}) {
         frequencies_hz: [851012500] });
       return;
     }
+    if (path === '/api/v1/admin/tuners/rescan' && request.method() === 'GET') {
+      await respond({ status: state.rescanPending ? 'scanning' : state.rescanFailed ? 'failed' : 'complete', updated: 2 });
+      return;
+    }
     if (path === '/api/v1/admin/tuners/rescan' && request.method() === 'POST') {
       mutations.push({ type: 'rescan' });
       await respond({ status: 'scanning' }, 202);
@@ -234,6 +238,34 @@ async function mockTuners(page, mutations, state = {}) {
     }
     await respond({});
   });
+}
+
+for (const [theme, width] of [['light', 1280], ['dark', 1280], ['light', 390], ['dark', 390]]) {
+test(`USB rescan waits for completion and keeps failures visible for retry in ${theme} at ${width}px`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  const mutations = [];
+  const state = { rescanPending: true };
+  await mockTuners(page, mutations, state);
+  await page.goto('/app.html?view=tuners');
+  await page.locator('html').evaluate((element, value) => { element.dataset.theme = value; }, theme);
+  const button = page.getByRole('button', { name: 'Rescan USB', exact: true });
+  await button.click();
+  await expect(button).toBeDisabled();
+  await expect(page.getByText('Scanning USB tuners…', { exact: true })).toBeVisible();
+  expect(mutations.filter((item) => item.type === 'rescan')).toHaveLength(1);
+  state.rescanPending = false;
+  await expect(page.getByText('USB scan complete. Tuner list updated.', { exact: true })).toBeVisible();
+  await expect(button).toBeEnabled();
+  state.rescanFailed = true;
+  await button.click();
+  await expect(page.getByText(/USB scan could not recover every tuner/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('usb-rescan.png'), fullPage: true });
+  await expect(button).toBeEnabled();
+  state.rescanFailed = false;
+  await button.click();
+  await expect(page.getByText('USB scan complete. Tuner list updated.', { exact: true })).toBeVisible();
+  expect(mutations.filter((item) => item.type === 'rescan')).toHaveLength(3);
+});
 }
 
 test('receiver nickname saves and clears without changing tuner mode or hardware name', async ({ page }) => {
