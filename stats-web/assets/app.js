@@ -2557,8 +2557,9 @@ function openReadOnlyModal(title, body, options = {}) {
       options.onDismiss?.();
       if (typeof onClosed === 'function') onClosed();
     };
+    // Immediate closes return true; the continuation resumes a deferred discard decision.
     const closed = closeReadOnlyModal(false, true, finished);
-    if (closed) finished(true);
+    if (closed) options.onDismiss?.();
     return closed;
   };
   const focusable = () => [...new Set([...dialog.querySelectorAll(
@@ -33413,7 +33414,8 @@ async function renderTuners(options = {}) {
         nickname.value = savedNickname;
       }, { saving: 'Saving nickname…', onSuccess: () => {
         if (!isCurrent()) return;
-        modal.close(() => { operationNotice = 'Nickname saved'; void refresh(); });
+        const refreshAfterClose = () => { operationNotice = 'Nickname saved'; void refresh(); };
+        if (modal.close(refreshAfterClose)) refreshAfterClose();
       }, onError: (error) => ({ message: error.message || 'Could not save the nickname. Try again.' }) }));
     });
     if (modal.ready && !await modal.ready) return;

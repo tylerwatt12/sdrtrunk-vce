@@ -172,9 +172,12 @@ async function installDismissalHarness(page) {
 
 test('modal close continuations run once after immediate and confirmed closes', async ({ page }) => {
   await installDismissalHarness(page);
-  const close = () => page.evaluate(() => window.dismissalTest.parent.close(() => {
-    window.dismissalTest.continuations += 1;
-  }));
+  const close = () => page.evaluate(() => {
+    const finish = () => { window.dismissalTest.continuations += 1; };
+    const closed = window.dismissalTest.parent.close(finish);
+    if (closed) finish();
+    return closed;
+  });
   const counts = () => page.evaluate(() => {
     const { continuations, dismissals, parentCloses } = window.dismissalTest;
     return { continuations, dismissals, parentCloses };
