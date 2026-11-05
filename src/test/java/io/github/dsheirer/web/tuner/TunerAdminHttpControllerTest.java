@@ -337,10 +337,22 @@ class TunerAdminHttpControllerTest
             assertEquals(1, manager.mRescanRequests);
             assertEquals(false, manager.mRescan.isDone(), "HTTP must not wait for USB discovery");
 
+            assertEquals("scanning", MAPPER.readTree(fixture.send(TunerAdminHttpController.RESCAN_PATH,
+                "GET", null).body()).at("/data/status").asText());
+            manager.mRescan.complete(2);
+            var completed = MAPPER.readTree(fixture.send(TunerAdminHttpController.RESCAN_PATH, "GET", null).body());
+            assertEquals("complete", completed.at("/data/status").asText());
+            assertEquals(2, completed.at("/data/updated").asInt());
             manager.mRescan = CompletableFuture.completedFuture(TunerManager.USB_RESCAN_UNAVAILABLE);
             assertEquals(503, fixture.send(TunerAdminHttpController.RESCAN_PATH, "POST", null).statusCode());
             assertEquals(400, fixture.send(TunerAdminHttpController.RESCAN_PATH, "POST", "{}").statusCode());
-            assertEquals(405, fixture.send(TunerAdminHttpController.RESCAN_PATH, "GET", null).statusCode());
+            assertEquals("failed", MAPPER.readTree(fixture.send(TunerAdminHttpController.RESCAN_PATH,
+                "GET", null).body()).at("/data/status").asText());
+            manager.mRescan = CompletableFuture.failedFuture(new IllegalStateException("private native detail"));
+            fixture.send(TunerAdminHttpController.RESCAN_PATH, "POST", null);
+            String failure = fixture.send(TunerAdminHttpController.RESCAN_PATH, "GET", null).body();
+            assertFalse(failure.contains("private native detail"));
+            assertEquals("failed", MAPPER.readTree(failure).at("/data/status").asText());
         }
     }
 

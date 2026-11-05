@@ -42,10 +42,91 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 import org.junit.jupiter.api.Test;
 import org.usb4java.LibUsb;
+import org.usb4java.Device;
+import org.usb4java.DeviceHandle;
+import org.usb4java.Context;
 import org.usb4java.Transfer;
 
 class USBTunerControllerLifecycleTest
 {
+    @Test
+    void blockedDeliveryWorkerPreventsReplacementEvenAfterNativeResourcesAreReleased() throws Exception
+    {
+        TestController controller = new TestController();
+        UsbNativeBufferIngress ingress = nativeBufferIngress(controller);
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        controller.addDirectBufferListener(buffer -> {
+            entered.countDown();
+            try { release.await(); }
+            catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
+        });
+        long generation = ingress.start(controller.mTransferBuffer.capacity(), 1, controller.getNativeBufferFactory());
+        try
+        {
+            var samples = ingress.copy(controller.mTransferBuffer, controller.mTransferBuffer.capacity(), 1, generation);
+            assertTrue(ingress.offer(samples));
+            assertTrue(entered.await(1, TimeUnit.SECONDS));
+            controller.stop();
+            assertFalse(controller.isUsbShutdownComplete());
+        }
+        finally
+        {
+            release.countDown();
+            ingress.close();
+            assertTrue(ingress.awaitTermination(1, TimeUnit.SECONDS));
+        }
+        assertTrue(controller.isUsbShutdownComplete());
+    }
+
+    @Test
+    void repeatedPartialStartupFailuresReleaseEachOwnedNativeResourceExactlyOnce() throws Exception
+    {
+        for(int cycle = 0; cycle < 50; cycle++)
+        {
+            for(int stage = 0; stage < 5; stage++)
+            {
+                final int failureStage = stage;
+                AtomicInteger unrefs = new AtomicInteger(), releases = new AtomicInteger();
+                AtomicInteger closes = new AtomicInteger(), exits = new AtomicInteger();
+                TestController controller = new TestController()
+                {
+                    @Override void openDevice() throws SourceException
+                    {
+                        try
+                        {
+                            setField(this, "mContextInitialized", failureStage > 0);
+                            setField(this, "mDeviceReferenceOwned", failureStage == 1);
+                            if(failureStage >= 2) setField(this, "mDeviceHandle", new DeviceHandle());
+                            setField(this, "mInterfaceClaimed", failureStage >= 3);
+                            setField(this, "mDeviceStartAttempted", failureStage >= 4);
+                        }
+                        catch(Exception e) { throw new AssertionError(e); }
+                        throw new SourceException("simulated partial startup failure");
+                    }
+                    @Override void releaseDeviceReference(Device device) { unrefs.incrementAndGet(); }
+                    @Override void releaseInterface(DeviceHandle handle) { releases.incrementAndGet(); }
+                    @Override void closeHandle(DeviceHandle handle) { closes.incrementAndGet(); }
+                    @Override void exitContext(Context context) { exits.incrementAndGet(); }
+                };
+                assertThrows(SourceException.class, controller::start);
+                assertTrue(controller.isUsbShutdownComplete());
+                controller.stop();
+                assertEquals(stage == 1 ? 1 : 0, unrefs.get());
+                assertEquals(stage >= 3 ? 1 : 0, releases.get());
+                assertEquals(stage >= 2 ? 1 : 0, closes.get());
+                assertEquals(stage > 0 ? 1 : 0, exits.get());
+                assertTrue(nativeBufferIngress(controller).awaitTermination(1, TimeUnit.SECONDS));
+            }
+        }
+    }
+
+    private static void setField(USBTunerController controller, String name, Object value) throws Exception
+    {
+        Field field = USBTunerController.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(controller, value);
+    }
+
     @Test
     void copyFailureStillRewindsAndResubmitsTransfer() throws Exception
     {

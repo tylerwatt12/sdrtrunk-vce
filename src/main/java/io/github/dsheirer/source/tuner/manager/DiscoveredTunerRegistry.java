@@ -95,6 +95,13 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
         }
     }
 
+    /** Called by the serialized USB lifecycle worker after stop; never queues a stale stop against a replacement. */
+    void removeStoppedUsbTuner(DiscoveredUSBTuner tuner)
+    {
+        if(!tuner.isUsbStopComplete()) throw new IllegalStateException("USB resources are still owned");
+        if(mTuners.remove(tuner)) tuner.removeTunerStatusListener(this);
+    }
+
     public void release()
     {
         List<DiscoveredTuner> tuners = snapshot();
@@ -115,6 +122,8 @@ public final class DiscoveredTunerRegistry implements Listener<TunerEvent>, IDis
     {
         if(current == TunerStatus.REMOVED)
         {
+            // USB reconciliation owns final removal, after native shutdown has been proven complete.
+            if(tuner instanceof DiscoveredUSBTuner) return;
             // RSPduo master/slave mode shares one physical device; either removal retires both logical tuners.
             if(tuner instanceof DiscoveredRspDuoTuner1 master &&
                 master.getDeviceInfo().getDeviceSelectionMode().isMasterMode())

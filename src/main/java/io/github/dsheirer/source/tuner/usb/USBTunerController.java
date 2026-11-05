@@ -67,6 +67,10 @@ public abstract class USBTunerController extends TunerController
     protected int mBus;
     protected String mPortAddress;
     private volatile Context mDeviceContext = new Context();
+    private boolean mContextInitialized;
+    private boolean mDeviceReferenceOwned;
+    private boolean mInterfaceClaimed;
+    private boolean mDeviceStartAttempted;
     private Device mDevice;
     private DeviceHandle mDeviceHandle;
     private DeviceDescriptor mDeviceDescriptor;
@@ -193,6 +197,35 @@ public abstract class USBTunerController extends TunerController
      */
     public final void start() throws SourceException
     {
+        try
+        {
+            openDevice();
+        }
+        catch(Exception e)
+        {
+            // Also protect direct controller callers from leaking partial initialization on a failed open.
+            stop();
+            if(e instanceof SourceException sourceException) throw sourceException;
+            throw new SourceException("Unable to initialize USB tuner", e);
+        }
+    }
+
+    /** Lifecycle-only, non-blocking check: both native ownership and the sample-delivery worker must be retired. */
+    public final boolean isUsbShutdownComplete()
+    {
+        if(mDeviceContext != null) return false;
+        try { return mNativeBufferIngress.awaitTermination(0, TimeUnit.MILLISECONDS); }
+        catch(InterruptedException exception) { Thread.currentThread().interrupt(); return false; }
+    }
+
+    // Lifecycle-only native boundaries. None is called by sample transfer callbacks.
+    void releaseDeviceReference(Device device) { LibUsb.unrefDevice(device); }
+    void releaseInterface(DeviceHandle handle) { LibUsb.releaseInterface(handle, USB_INTERFACE); }
+    void closeHandle(DeviceHandle handle) { LibUsb.close(handle); }
+    void exitContext(Context context) { LibUsb.exit(context); }
+
+    void openDevice() throws SourceException
+    {
         if(mDeviceContext == null)
         {
             throw new SourceException("Device cannot be reused once it has been shutdown");
@@ -205,7 +238,9 @@ public abstract class USBTunerController extends TunerController
             throw new SourceException("Can't initialize libusb library - " + LibUsb.errorName(status));
         }
 
+        mContextInitialized = true;
         mDevice = findDevice();
+        mDeviceReferenceOwned = true;
 
         if(mDevice == null)
         {
@@ -237,7 +272,8 @@ public abstract class USBTunerController extends TunerController
 
         //Now that we have opened the device and added an additional reference, remove the original reference placed on
         // the device during the findDevice() operation
-        LibUsb.unrefDevice(mDevice);
+        releaseDeviceReference(mDevice);
+        mDeviceReferenceOwned = false;
 
         if(status == LibUsb.ERROR_ACCESS)
         {
@@ -266,7 +302,6 @@ public abstract class USBTunerController extends TunerController
             if(status != LibUsb.SUCCESS)
             {
                 mLog.error("Unable to detach kernel driver for USB tuner device - bus:" + mBus + " port:" + mPortAddress);
-                mDeviceHandle = null;
                 mDeviceDescriptor = null;
                 throw new SourceException("Can't detach kernel driver");
             }
@@ -278,13 +313,11 @@ public abstract class USBTunerController extends TunerController
         if(status == LibUsb.ERROR_BUSY)
         {
             mLog.error("Unable to set USB configuration on tuner - device is busy (in use by another application)");
-            mDeviceHandle = null;
             mDeviceDescriptor = null;
             throw new SourceException("USB tuner is in-use by another application");
         }
         else if(status != LibUsb.SUCCESS)
         {
-            mDeviceHandle = null;
             mDeviceDescriptor = null;
             throw new SourceException("Can't set configuration (ie reset) on the USB tuner - " + LibUsb.errorName(status));
         }
@@ -294,19 +327,19 @@ public abstract class USBTunerController extends TunerController
 
         if(status == LibUsb.ERROR_BUSY)
         {
-            mDeviceHandle = null;
             mDeviceDescriptor = null;
             throw new SourceException("USB tuner is in-use by another application");
         }
         else if(status != LibUsb.SUCCESS)
         {
-            mDeviceHandle = null;
             mDeviceDescriptor = null;
             throw new SourceException("Can't claim interface on USB tuner - " + LibUsb.errorName(status));
         }
 
+        mInterfaceClaimed = true;
         //Set running true for deviceStart() operations that require it.
         mRunning = true;
+        mDeviceStartAttempted = true;
 
         try
         {
@@ -341,7 +374,7 @@ public abstract class USBTunerController extends TunerController
             if(streamingStopped)
             {
                 mNativeBufferBroadcaster.clear();
-                deviceStop();
+                if(mDeviceStartAttempted) deviceStop();
                 safeToRelease.set(true);
             }
         }, "sdrtrunk USB tuner shutdown - bus [" + mBus + "] port [" + mPortAddress + "]");
@@ -399,14 +432,22 @@ public abstract class USBTunerController extends TunerController
 
             if(mDeviceHandle != null)
             {
-                LibUsb.releaseInterface(mDeviceHandle, USB_INTERFACE);
-                LibUsb.close(mDeviceHandle);
+                if(mInterfaceClaimed) releaseInterface(mDeviceHandle);
+                mInterfaceClaimed = false;
+                closeHandle(mDeviceHandle);
                 mDeviceHandle = null;
                 mDevice = null;
                 mDeviceDescriptor = null;
             }
 
-            LibUsb.exit(mDeviceContext);
+            if(mDeviceReferenceOwned)
+            {
+                releaseDeviceReference(mDevice);
+                mDeviceReferenceOwned = false;
+            }
+            mDevice = null;
+            mDeviceDescriptor = null;
+            if(mContextInitialized) exitContext(mDeviceContext);
             mDeviceContext = null;
         }
         catch(InterruptedException ie)
@@ -421,6 +462,12 @@ public abstract class USBTunerController extends TunerController
                 getLock().unlock();
             }
         }
+        try
+        {
+            if(!mNativeBufferIngress.awaitTermination(USB_EVENT_STOP_TIMEOUT_MS, TimeUnit.MILLISECONDS))
+                mLog.warn("USB sample-delivery worker has not stopped; tuner replacement remains blocked");
+        }
+        catch(InterruptedException exception) { Thread.currentThread().interrupt(); }
     }
 
     /**
@@ -541,44 +588,23 @@ public abstract class USBTunerController extends TunerController
      */
     private Device findDevice() throws SourceException
     {
-        Device foundDevice = null;
-
         DeviceList deviceList = new DeviceList();
         int count = LibUsb.getDeviceList(mDeviceContext, deviceList);
-
         if(count >= 0)
         {
-            for(Device device: deviceList)
+            try
             {
-                int bus = LibUsb.getBusNumber(device);
-                int port = LibUsb.getPortNumber(device);
-
-                if(port > 0)
+                for(Device device: deviceList)
                 {
-                    String portAddress = TunerManager.getPortAddress(device);
-
-                    if(mBus == bus && mPortAddress != null && mPortAddress.equals(portAddress))
-                    {
-                        foundDevice = device;
-                    }
-                    else
-                    {
-                        LibUsb.unrefDevice(device);
-                    }
-                }
-                else
-                {
-                    LibUsb.unrefDevice(device);
+                    if(LibUsb.getPortNumber(device) > 0 && mBus == LibUsb.getBusNumber(device) &&
+                        mPortAddress != null && mPortAddress.equals(TunerManager.getPortAddress(device)))
+                        return LibUsb.refDevice(device);
                 }
             }
-        }
-
-        //Free the device list but don't auto-unref all the devices ... we already did that during iteration
-        LibUsb.freeDeviceList(deviceList, false);
-
-        if(foundDevice != null)
-        {
-            return foundDevice;
+            finally
+            {
+                LibUsb.freeDeviceList(deviceList, true);
+            }
         }
 
         throw new SourceException("LibUsb couldn't discover USB device [" + mBus + ":" + mPortAddress +

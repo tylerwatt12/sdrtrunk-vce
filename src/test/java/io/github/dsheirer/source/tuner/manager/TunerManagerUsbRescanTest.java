@@ -28,6 +28,56 @@ import org.junit.jupiter.api.Test;
 class TunerManagerUsbRescanTest
 {
     @Test
+    void failedHotplugScanDoesNotCreateAnAutomaticRetryLoop() throws Exception
+    {
+        CountDownLatch started = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicInteger scans = new AtomicInteger();
+        TestTunerManager manager = new TestTunerManager(() -> {
+            scans.incrementAndGet();
+            started.countDown();
+            await(release);
+            throw new IllegalStateException("test enumeration failure");
+        });
+        try
+        {
+            manager.new HotplugEventSupport(() -> {}, null).processEvent(null, null,
+                org.usb4java.LibUsb.HOTPLUG_EVENT_DEVICE_LEFT, null);
+            assertTrue(started.await(1, TimeUnit.SECONDS));
+            var active = manager.requestUsbTunerRescan();
+            release.countDown();
+            org.junit.jupiter.api.Assertions.assertThrows(java.util.concurrent.ExecutionException.class,
+                () -> active.get(1, TimeUnit.SECONDS));
+            assertTrue(manager.stopUsbRescanWorker(1, TimeUnit.SECONDS));
+            assertEquals(1, scans.get());
+        }
+        finally { release.countDown(); manager.stopUsbRescanWorker(1, TimeUnit.SECONDS); }
+    }
+
+    @Test
+    void hotplugDuringScanIsCoalescedWithoutNativeWorkOnCallbackThread() throws Exception
+    {
+        CountDownLatch started = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicInteger scans = new AtomicInteger();
+        TestTunerManager manager = new TestTunerManager(() -> {
+            if(scans.incrementAndGet() == 1) { started.countDown(); await(release); }
+            return 0;
+        });
+        try
+        {
+            var result = manager.requestUsbTunerRescan();
+            assertTrue(started.await(1, TimeUnit.SECONDS));
+            // Null native arguments prove the callback does not retain, dereference, or open the device.
+            var callback = manager.new HotplugEventSupport(() -> {}, null);
+            for(int event = 0; event < 100; event++)
+                callback.processEvent(null, null, org.usb4java.LibUsb.HOTPLUG_EVENT_DEVICE_ARRIVED, null);
+            release.countDown();
+            assertEquals(0, result.get(2, TimeUnit.SECONDS));
+            assertEquals(2, scans.get());
+        }
+        finally { release.countDown(); manager.stopUsbRescanWorker(1, TimeUnit.SECONDS); }
+    }
+
+    @Test
     void concurrentRequestsShareOneBackgroundScan() throws Exception
     {
         CountDownLatch started = new CountDownLatch(1);

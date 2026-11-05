@@ -22,6 +22,9 @@ package io.github.dsheirer.source.tuner.manager;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerClass;
 import io.github.dsheirer.source.tuner.TunerFactory;
+import io.github.dsheirer.source.tuner.ITunerErrorListener;
+import io.github.dsheirer.source.tuner.Tuner;
+import io.github.dsheirer.source.tuner.usb.USBTunerController;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,6 +36,9 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
 {
     private Logger mLog = LoggerFactory.getLogger(DiscoveredUSBTuner.class);
     private TunerClass mTunerClass;
+    private USBTunerController mRetiredController;
+    private long mRuntimeGeneration;
+    private int mDeviceAddress = -1;
     private int mBus;
     private String mPortAddress;
 
@@ -46,6 +52,25 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
         mTunerClass = tunerClass;
         mBus = bus;
         mPortAddress = portAddress;
+    }
+
+    void setDeviceAddress(int address) { mDeviceAddress = address; }
+
+    boolean isSameAttachment(DiscoveredUSBTuner other)
+    {
+        return isAt(other.getBus(), other.getPortAddress()) && getTunerClass() == other.getTunerClass() &&
+            mDeviceAddress == other.mDeviceAddress;
+    }
+
+    /** A new attachment at the same port reuses saved settings and the operator's current mode. */
+    void recoverAttachment(DiscoveredUSBTuner attached)
+    {
+        withLifecycleLock(() -> {
+            mDeviceAddress = attached.mDeviceAddress;
+            if(!isEnabled()) return;
+            setErrorMessage("USB device reconnected");
+            restart();
+        });
     }
 
     /**
@@ -100,7 +125,11 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
         {
             try
             {
-                mTuner = TunerFactory.getUsbTuner(getTunerClass(), getPortAddress(), getBus(), this);
+                if(!isUsbStopComplete())
+                    throw new SourceException("Previous USB shutdown did not finish. Restart the receiver before retrying.");
+                mRetiredController = null;
+                mRuntimeGeneration++;
+                mTuner = createTuner();
                 mTuner.start();
             }
             catch(SourceException se)
@@ -110,6 +139,45 @@ public class DiscoveredUSBTuner extends DiscoveredTuner
                 mLog.error("Unable to start tuner [" + getTunerClass() + "] - error: " + getErrorMessage());
             }
         }
+    }
+
+    /** Creates a fresh controller only after the preceding controller has relinquished native ownership. */
+    protected Tuner createTuner() throws SourceException
+    {
+        return TunerFactory.getUsbTuner(getTunerClass(), getPortAddress(), getBus(), createRuntimeListener());
+    }
+
+    protected ITunerErrorListener createRuntimeListener()
+    {
+        long generation = mRuntimeGeneration;
+        return new ITunerErrorListener()
+        {
+            @Override public void setErrorMessage(String message)
+            {
+                withLifecycleLock(() -> {
+                    if(generation == mRuntimeGeneration) DiscoveredUSBTuner.this.setErrorMessage(message);
+                });
+            }
+            @Override public void tunerRemoved()
+            {
+                withLifecycleLock(() -> {
+                    if(generation == mRuntimeGeneration) DiscoveredUSBTuner.this.tunerRemoved();
+                });
+            }
+        };
+    }
+
+    @Override
+    protected void runtimeStopped(Tuner tuner)
+    {
+        mRuntimeGeneration++;
+        if(tuner.getTunerController() instanceof USBTunerController usb && !usb.isUsbShutdownComplete())
+            mRetiredController = usb;
+    }
+
+    boolean isUsbStopComplete()
+    {
+        return mRetiredController == null || mRetiredController.isUsbShutdownComplete();
     }
 
     @Override

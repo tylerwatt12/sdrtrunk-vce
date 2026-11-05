@@ -83,8 +83,11 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
                 setTunerStatus(TunerStatus.ENABLED);
                 return true;
             }
-            mEnabled = false;
-            mOperatorState = OperatorState.DISABLED;
+            if(!(this instanceof DiscoveredUSBTuner))
+            {
+                mEnabled = false;
+                mOperatorState = OperatorState.DISABLED;
+            }
             stop();
             return false;
         }
@@ -632,10 +635,15 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
     @Override
     public void setErrorMessage(String errorMessage)
     {
-        mErrorMessage = errorMessage;
-        mLog.info("Tuner Error - Stopping - " + getId() + " Error: " + errorMessage);
-        stop();
-        setTunerStatus(TunerStatus.ERROR);
+        mAllocationLifecycleLock.lock();
+        try
+        {
+            mErrorMessage = errorMessage;
+            mLog.info("Tuner Error - Stopping - " + getId() + " Error: " + errorMessage);
+            stop();
+            setTunerStatus(TunerStatus.ERROR);
+        }
+        finally { mAllocationLifecycleLock.unlock(); }
     }
 
     @Override
@@ -673,23 +681,33 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
      */
     public void restart()
     {
-        if(getTunerStatus() == TunerStatus.ERROR)
+        mAllocationLifecycleLock.lock();
+        try
         {
+            if(getTunerStatus() != TunerStatus.ERROR || !isEnabled()) return;
+            stop();
+            mOperatorGeneration++;
             mErrorMessage = null;
-
-            if(isEnabled())
-            {
-                if(startAndApplyConfiguration())
-                {
-                    setTunerStatus(TunerStatus.ENABLED);
-                }
-            }
-            else
-            {
-                setTunerStatus(TunerStatus.DISABLED);
-            }
+            // Startup must not mistake the previous error for a new initialization failure.
+            setTunerStatus(TunerStatus.DISABLED, false);
+            if(startAndApplyConfiguration()) setTunerStatus(TunerStatus.ENABLED);
+        }
+        finally
+        {
+            mAllocationLifecycleLock.unlock();
         }
     }
+
+    /** USB runtime notifications recheck their generation while serialized with replacement and operator changes. */
+    protected final void withLifecycleLock(Runnable operation)
+    {
+        mAllocationLifecycleLock.lock();
+        try { operation.run(); }
+        finally { mAllocationLifecycleLock.unlock(); }
+    }
+
+    /** Lifecycle hook retains ownership of incompletely released native USB resources. */
+    protected void runtimeStopped(Tuner tuner) { }
 
     /**
      * Stop this discovered tuner, notify registered listeners/consumers and release any resources that it is using.
@@ -703,7 +721,9 @@ public abstract class DiscoveredTuner implements ITunerErrorListener
             if(hasTuner())
             {
                 mLog.info("Stopping Tuner: " + getId());
-                getTuner().stop();
+                Tuner stopped = getTuner();
+                stopped.stop();
+                runtimeStopped(stopped);
                 mTuner = null;
             }
         }

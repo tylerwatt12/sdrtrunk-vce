@@ -78,13 +78,13 @@ public abstract class Tuner implements ISourceEventProcessor, ITunerErrorListene
             }
             catch(SourceException se)
             {
-                mRunning.set(false);
+                stop();
                 //Rethrow the source exception
                 throw se;
             }
             catch(Exception e)
             {
-                mRunning.set(false);
+                stop();
                 //Wrap any other exceptions in a new source exception
                 mLog.error("Error starting " + getTunerClass() + " tuner", e);
                 throw new SourceException("Unable to start " + getTunerClass() + " tuner", e);

@@ -41,6 +41,7 @@ public final class TunerAdminHttpController
     private static final Pattern NICKNAME_PATH = Pattern.compile("^" + PATH + "/(tuner-[0-9a-f]{32})/nickname$");
     private static final Pattern SETTING_PATH = Pattern.compile("^" + PATH +
         "/(tuner-[0-9a-f]{32})/settings/([a-z][a-z0-9_]*)$");
+    private volatile CompletableFuture<Integer> mLastRescan;
     private final TunerAdministrationService mAdministration;
     private final TunerSettingsService mSettings;
     private final TunerManager mManager;
@@ -157,9 +158,29 @@ public final class TunerAdminHttpController
 
     private void rescan(HttpExchange exchange) throws IOException
     {
+        if("GET".equals(exchange.getRequestMethod()))
+        {
+            if(WebHttpSupport.hasRequestBody(exchange))
+            {
+                ApiHttpResponse.sendError(exchange, 400, "invalid_request", "GET requests cannot include a body");
+                return;
+            }
+            CompletableFuture<Integer> scan = mLastRescan;
+            if(scan == null) ApiHttpResponse.sendData(exchange, 200, Map.of("status", "idle"));
+            else if(!scan.isDone()) ApiHttpResponse.sendData(exchange, 200, Map.of("status", "scanning"));
+            else
+            {
+                Integer result;
+                try { result = scan.getNow(TunerManager.USB_RESCAN_FAILED); }
+                catch(RuntimeException exception) { result = TunerManager.USB_RESCAN_FAILED; }
+                ApiHttpResponse.sendData(exchange, 200, result != null && result >= 0 ?
+                    Map.of("status", "complete", "updated", result) : Map.of("status", "failed"));
+            }
+            return;
+        }
         if(!"POST".equals(exchange.getRequestMethod()))
         {
-            WebHttpSupport.methodNotAllowed(exchange, "POST");
+            WebHttpSupport.methodNotAllowed(exchange, "GET, POST");
             return;
         }
         if(WebHttpSupport.hasRequestBody(exchange))
@@ -168,7 +189,12 @@ public final class TunerAdminHttpController
             return;
         }
         // The manager queues bounded USB work; never wait for discovery on the HTTP request thread.
-        CompletableFuture<Integer> requested = mManager.requestUsbTunerRescan();
+        CompletableFuture<Integer> requested;
+        synchronized(this)
+        {
+            requested = mManager.requestUsbTunerRescan();
+            mLastRescan = requested;
+        }
         try
         {
             Integer immediate = requested.isDone() ? requested.getNow(null) : null;
