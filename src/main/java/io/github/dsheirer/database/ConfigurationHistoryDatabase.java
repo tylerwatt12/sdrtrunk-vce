@@ -23,7 +23,7 @@ public final class ConfigurationHistoryDatabase
     public static String historyFingerprint(int version) throws SQLException
     {
         if(version >= 63 && version <= 68) return FORMAT_63_HISTORY_FINGERPRINT;
-        if(version == 69 || version == 70 || version == 71) return HISTORY_FINGERPRINT;
+        if(version >= 69 && version <= 72) return HISTORY_FINGERPRINT;
         throw new SQLException("Unsupported activity database format");
     }
 

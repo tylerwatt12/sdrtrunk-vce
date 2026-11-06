@@ -48,7 +48,7 @@ class Format66To67DatabaseMigrationTest
             var effects = new Format66To67DatabaseMigration().migrateAndReport(connection);
             DatabaseFormatCatalog.stamp(connection, 67);
             assertEquals(before.size(), effects.getFirst().affectedRows());
-            assertConverted(before, preferences(connection));
+            assertConverted(before, preferences(connection), false);
             assertEquals(retained, retainedRows(connection));
             assertEquals(ConfigurationHistoryDatabase.CONFIGURATION_FINGERPRINT, SqliteSchemaValidator.fingerprint(connection));
             assertEquals(67, DatabaseFormatCatalog.inspect(connection).version());
@@ -58,7 +58,7 @@ class Format66To67DatabaseMigrationTest
             new Format66To67DatabaseMigration().migrate(connection);
             DatabaseFormatCatalog.stamp(connection, 67);
             connection.commit();
-            assertConverted(before, preferences(connection));
+            assertConverted(before, preferences(connection), false);
             assertEquals(retained, retainedRows(connection));
         }
         assertArrayEquals(activity, Files.readAllBytes(ActivityDatabasePath.forConfiguration(database)));
@@ -85,7 +85,7 @@ class Format66To67DatabaseMigrationTest
         assertEquals(before, readPreferences(database));
         assertEquals(originalActivity, ActivityMigrationPreservation.original(database));
         ApplicationDatabaseMigrator.migrateInPlace(database, null);
-        assertConverted(before, readPreferences(database));
+        assertConverted(before, readPreferences(database), true);
         ActivityMigrationPreservation.assertCurrent(database, expectedActivity);
         ConfigurationHistoryDatabase.validatePair(database);
     }
@@ -106,7 +106,7 @@ class Format66To67DatabaseMigrationTest
                     effect.affectedRows() == 1));
                 for(var entry: preferences(connection).entrySet())
                 {
-                    assertEquals("automatic", WebUserPreferencesCodec.decode(entry.getValue().json()).liveWorkspace().detailsVisibility());
+                    assertEquals("automatic", JSON.readTree(entry.getValue().json()).path("live_workspace").path("details_visibility").textValue());
                     assertTrue(entry.getValue().revision() > 0);
                 }
                 assertEquals(retained, retainedRows(connection));
@@ -182,18 +182,19 @@ class Format66To67DatabaseMigrationTest
         { while(rows.next()) result.put(rows.getLong(1), new Preference(rows.getString(2), rows.getLong(3), rows.getLong(4))); }
         return result;
     }
-    private static void assertConverted(Map<Long,Preference> before, Map<Long,Preference> after) throws Exception
+    private static void assertConverted(Map<Long,Preference> before, Map<Long,Preference> after, boolean current) throws Exception
     {
         assertEquals(before.keySet(), after.keySet());
         for(var entry: before.entrySet())
         {
             ObjectNode expected = (ObjectNode)JSON.readTree(entry.getValue().json());
             addExpectedDefaults(expected);
+            if(current) expected = (ObjectNode)JSON.readTree(Format72WebUserPreferencesCodec.migrateFromFormat71(expected.toString()));
             Preference actual = after.get(entry.getKey());
             assertEquals(expected, JSON.readTree(actual.json()));
-            assertEquals(entry.getValue().revision()+1, actual.revision());
+            assertEquals(entry.getValue().revision()+(current ? 2 : 1), actual.revision());
             assertEquals(entry.getValue().updatedAt(), actual.updatedAt());
-            assertEquals("automatic", WebUserPreferencesCodec.decode(actual.json()).liveWorkspace().detailsVisibility());
+            assertEquals("automatic", JSON.readTree(actual.json()).path("live_workspace").path("details_visibility").textValue());
         }
     }
     private static Map<String,List<String>> retainedRows(Connection connection) throws Exception

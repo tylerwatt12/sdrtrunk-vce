@@ -207,10 +207,10 @@ class Format65To66DatabaseMigrationTest
         for(var entry: before.entrySet())
         {
             String next = Format66WebUserPreferencesCodec.migrateFromFormat65(entry.getValue().json()).json();
-            String current = Format67WebUserPreferencesCodec.migrateFromFormat66(next).json();
+            String current = Format72WebUserPreferencesCodec.migrateFromFormat71(Format67WebUserPreferencesCodec.migrateFromFormat66(next).json());
             Preference actual = after.get(entry.getKey());
             assertEquals(JSON.readTree(current), JSON.readTree(actual.json()));
-            assertEquals(entry.getValue().revision()+2, actual.revision());
+            assertEquals(entry.getValue().revision()+3, actual.revision());
             assertEquals(entry.getValue().updatedAt(), actual.updatedAt());
         }
     }

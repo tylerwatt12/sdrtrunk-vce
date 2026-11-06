@@ -22,7 +22,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
                                  HealthAlerts healthAlerts, Guides guides, Map<String,TableLayout> tables,
                                  LiveWorkspace liveWorkspace, P25Visualizer p25Visualizer)
 {
-    public static final int CURRENT_VERSION = 15;
+    public static final int CURRENT_VERSION = 16;
     public static final int MINIMUM_APPEARANCE_HUE = 0;
     public static final int MAXIMUM_APPEARANCE_HUE = 359;
     public static final int MAXIMUM_JSON_BYTES = 131_072;
@@ -75,17 +75,16 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
 
     public static WebUserPreferences defaults()
     {
-        return defaults(true, true, true, "percentage",
+        return defaults(true, "percentage",
             DEFAULT_LIVE_DETAIL_ROW_LIMIT);
     }
 
-    public static WebUserPreferences defaults(boolean showEncryptionDetails, boolean showControlDecodeQuality,
-                                               boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
+    public static WebUserPreferences defaults(boolean showEncryptionDetails, String decodeQualityDisplayMode,
                                                int liveDetailRowLimit)
     {
         return new WebUserPreferences(CURRENT_VERSION, new Appearance("light", null), new PageTitles(true),
             new Playback(1.0, List.of(), true, DEFAULT_TARGET_BURST_LIMIT, DEFAULT_CALL_DISPLAY_HANGTIME_SECONDS, "queue"), new Scanner("normal"),
-            new Presentation(showEncryptionDetails, showControlDecodeQuality, showVoiceDecodeQuality,
+            new Presentation(showEncryptionDetails,
                 decodeQualityDisplayMode, liveDetailRowLimit, true, false, false, "talker_alias", "order_appeared", "normal"),
             new Tuner(-140, 0, 1, true, true, false, false, "balanced", true, true), new HealthAlerts(List.of()),
             new Guides(true), Map.of(), LiveWorkspace.defaults(), P25Visualizer.defaults());
@@ -167,8 +166,7 @@ public record WebUserPreferences(int version, Appearance appearance, PageTitles 
         }
     }
 
-    public record Presentation(boolean showEncryptionDetails, boolean showControlDecodeQuality,
-                               boolean showVoiceDecodeQuality, String decodeQualityDisplayMode,
+    public record Presentation(boolean showEncryptionDetails, String decodeQualityDisplayMode,
                                int liveDetailRowLimit, boolean showOnlyActiveTrunkedChannels,
                                boolean retainLastCallOnIdleRows, boolean clearVoiceQualityWhenIdle,
                                String sourceNameDisplay, String liveChannelSort, String liveRowDensity)

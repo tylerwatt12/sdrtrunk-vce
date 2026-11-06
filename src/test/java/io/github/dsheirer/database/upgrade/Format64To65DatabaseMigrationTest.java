@@ -200,9 +200,10 @@ class Format64To65DatabaseMigrationTest
             playback.put("call_display_hangtime_seconds", 5);
             playback.put("recording_click_mode", "queue");
             expected = (ObjectNode)JSON.readTree(Format67WebUserPreferencesCodec.migrateFromFormat66(expected.toString()).json());
+            expected = (ObjectNode)JSON.readTree(Format72WebUserPreferencesCodec.migrateFromFormat71(expected.toString()));
             Preference actual = after.get(entry.getKey());
             assertEquals(expected, JSON.readTree(actual.json()));
-            assertEquals(entry.getValue().revision()+3, actual.revision());
+            assertEquals(entry.getValue().revision()+4, actual.revision());
             assertEquals(entry.getValue().updatedAt(), actual.updatedAt());
             assertEquals("queue", WebUserPreferencesCodec.decode(actual.json()).playback().recordingClickMode());
         }

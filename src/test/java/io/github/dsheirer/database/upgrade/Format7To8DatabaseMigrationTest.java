@@ -63,13 +63,13 @@ class Format7To8DatabaseMigrationTest
             assertEquals("format-7-to-8", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=15
+                WHERE json_extract(preferences_json, '$.version')=16
                   AND json_extract(preferences_json, '$.guides.automatic_page_guides')=1
                   AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
                   AND json_type(preferences_json, '$.health_alerts.disabled_codes')='array'
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=15
+                  AND preferences_revision=16
                 """));
             assertEquals(existingPreferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
@@ -213,8 +213,6 @@ class Format7To8DatabaseMigrationTest
                            json_extract(preferences_json, '$.playback.target_burst_limit')) || ':' ||
                        json_extract(preferences_json, '$.scanner.detail_mode') || ':' ||
                        json_extract(preferences_json, '$.presentation.show_encryption_details') || ':' ||
-                       json_extract(preferences_json, '$.presentation.show_control_decode_quality') || ':' ||
-                       json_extract(preferences_json, '$.presentation.show_voice_decode_quality') || ':' ||
                        json_extract(preferences_json, '$.presentation.decode_quality_display_mode') || ':' ||
                        json_extract(preferences_json, '$.presentation.live_detail_row_limit') || ':' ||
                        json_extract(preferences_json, '$.tuner.floor_db') || ':' ||

@@ -960,7 +960,7 @@ class ApplicationMigrationServiceTest
         assertTrue(result.completedWithRepairsOrSkippedItems());
         assertCurrentFormat(targetDatabase);
         // Rebased revision plus the later preference upgrades, including hangtime, recording clicks and workspace.
-        assertEquals("10", scalar(targetDatabase,
+        assertEquals("11", scalar(targetDatabase,
             "SELECT preferences_revision FROM web_user WHERE primary_admin=1"));
         assertEquals("1", scalar(targetDatabase, "SELECT COUNT(*) FROM web_user WHERE primary_admin=1"));
         assertArrayEquals(sourceHash, sha256(sourceDatabase));
@@ -1364,6 +1364,7 @@ class ApplicationMigrationServiceTest
                     Format23WebUserPreferencesCodec.migrateToFormat31(preferencesBefore))))).json()).json();
         expectedPreferences = Format66WebUserPreferencesCodec.migrateFromFormat65(expectedPreferences).json();
         expectedPreferences = Format67WebUserPreferencesCodec.migrateFromFormat66(expectedPreferences).json();
+        expectedPreferences = Format72WebUserPreferencesCodec.migrateFromFormat71(expectedPreferences);
         assertEquals(expectedPreferences, scalar(database,
             "SELECT preferences_json FROM web_user WHERE username='operator'"));
         assertCurrentFormat(database);

@@ -34,14 +34,14 @@ class Format70To71DatabaseMigrationTest
         String source = JSON.writeValueAsString(Map.of(NODE, Map.of(KEY, "true", "audio.mp3.setting", "CBR_16"),
             "unrelated/node", Map.of(KEY, "preserve", "keep", "yes")));
         Map<String,List<String>> beforeConfiguration, beforeHistory, beforeObjects;
-        try(var connection = open(configuration)) { save(connection, source); beforeConfiguration = snapshot(connection, true); }
+        try(var connection = open(configuration)) { save(connection, source); beforeConfiguration = snapshot(connection, true, true); }
         try(var connection = open(history)) { beforeHistory = snapshot(connection, false); beforeObjects = objects(connection); }
         byte[] configurationBytes = Files.readAllBytes(configuration), historyBytes = Files.readAllBytes(history);
         assertThrows(Exception.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(configuration));
         assertArrayEquals(configurationBytes, Files.readAllBytes(configuration));
         assertArrayEquals(historyBytes, Files.readAllBytes(history));
         var plan = ApplicationMigrationService.readStartupPlan(configuration);
-        assertEquals(List.of("retired-mp3-normalization-v1"), plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
+        assertEquals(List.of("retired-mp3-normalization-v1", "format-71-to-72"), plan.steps().stream().map(DatabaseMigrationChain.StepPreflight::id).toList());
         assertTrue(plan.steps().getFirst().effects().stream().anyMatch(effect -> effect.kind() == DatabaseMigrationEffect.Kind.DROP));
         try(var connection = open(configuration); var attach = connection.prepareStatement("ATTACH DATABASE ? AS activity"))
         {
@@ -60,7 +60,7 @@ class Format70To71DatabaseMigrationTest
         ApplicationDatabaseMigrator.migrateInPlace(configuration, null);
         try(var connection = open(configuration))
         {
-            assertEquals(71, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(DatabaseFormatCatalog.current().fingerprint(), SqliteSchemaValidator.fingerprint(connection));
             assertEquals(beforeConfiguration, snapshot(connection, true));
             var expected = JSON.readTree(source);
@@ -71,7 +71,7 @@ class Format70To71DatabaseMigrationTest
         }
         try(var connection = open(history))
         {
-            assertEquals(71, DatabaseFormatCatalog.requireCurrent(connection).version());
+            assertEquals(DatabaseFormatCatalog.CURRENT_VERSION, DatabaseFormatCatalog.requireCurrent(connection).version());
             assertEquals(beforeHistory, snapshot(connection, false)); assertEquals(beforeObjects, objects(connection));
             integrity(connection);
         }
@@ -161,6 +161,8 @@ class Format70To71DatabaseMigrationTest
         try(var query = connection.createStatement(); var violations = query.executeQuery("PRAGMA foreign_key_check")) { assertFalse(violations.next()); }
     }
     private static Map<String,List<String>> snapshot(Connection connection, boolean omitPortable) throws Exception
+    { return snapshot(connection, omitPortable, false); }
+    private static Map<String,List<String>> snapshot(Connection connection, boolean omitPortable, boolean upgradedPreferences) throws Exception
     {
         Map<String,List<String>> result = new LinkedHashMap<>(); List<String> tables = new ArrayList<>();
         try(var query = connection.createStatement(); var values = query.executeQuery("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name"))
@@ -178,6 +180,12 @@ class Format70To71DatabaseMigrationTest
                     for(int index = 1; index <= values.getMetaData().getColumnCount(); index++)
                     {
                         Object value = values.getObject(index);
+                        if(upgradedPreferences && table.equals("web_user"))
+                        {
+                            String column = values.getMetaData().getColumnName(index);
+                            if(column.equals("preferences_json")) value = Format72WebUserPreferencesCodec.migrateFromFormat71((String)value);
+                            if(column.equals("preferences_revision")) value = ((Number)value).longValue() + 1;
+                        }
                         String text = value instanceof byte[] bytes ? HexFormat.of().formatHex(bytes) : String.valueOf(value);
                         row.append(text.length()).append(':').append(text).append('|');
                     }

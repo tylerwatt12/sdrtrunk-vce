@@ -68,7 +68,7 @@ class Format8To9DatabaseMigrationTest
             assertEquals("format-8-to-9", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=15
+                WHERE json_extract(preferences_json, '$.version')=16
                   AND json_extract(preferences_json, '$.guides.automatic_page_guides')=1
                   AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
                   AND json_extract(preferences_json, '$.playback.call_display_hangtime_seconds')=5
@@ -78,7 +78,7 @@ class Format8To9DatabaseMigrationTest
                       '$.presentation.retain_last_call_on_idle_rows')=1
                   AND json_extract(preferences_json,
                       '$.presentation.clear_voice_quality_when_idle')=0
-                  AND preferences_revision=15
+                  AND preferences_revision=16
                 """));
             assertEquals(preferencesBefore, existingPreferenceDigest(connection));
             assertEquals(securityBefore.replace(":operator:ADMIN:0:", ":operator:USER:0:"),
@@ -261,6 +261,8 @@ class Format8To9DatabaseMigrationTest
                     '$.playback.conversation_burst_limit',
                         coalesce(json_extract(preferences_json, '$.playback.conversation_burst_limit'),
                             json_extract(preferences_json, '$.playback.target_burst_limit'))),
+                    '$.presentation.show_control_decode_quality',
+                    '$.presentation.show_voice_decode_quality',
                     '$.presentation.show_only_active_trunked_channels',
                     '$.presentation.retain_last_call_on_idle_rows',
                     '$.presentation.clear_voice_quality_when_idle',

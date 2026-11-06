@@ -747,6 +747,7 @@ public final class ApplicationMigrationService
             case 67 -> "remote-link-destinations-v1".equals(step.id());
             case 69 -> "call-owned-voice-activity-v1".equals(step.id());
             case 70 -> "retired-mp3-normalization-v1".equals(step.id());
+            case 71 -> "format-71-to-72".equals(step.id());
             default -> false;
         };
     }

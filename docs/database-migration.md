@@ -274,7 +274,7 @@ ambiguous markerless state instead of guessing which build produced it.
 Migration steps form one ordered chain:
 
 ```text
-format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 (current)
+format 2 (Alpha 12 family) -> format 3 -> format 4 -> format 5 -> format 6 -> format 7 -> format 8 -> format 9 -> format 10 -> format 11 -> format 12 -> format 13 -> format 14 -> format 15 -> format 16 -> format 17 -> format 18 -> format 19 -> format 20 -> format 21 -> format 22 -> format 23 -> format 24 -> format 25 -> format 26 -> format 27 -> format 28 -> format 29 -> format 30 -> format 31 -> format 32 -> format 33 -> format 34 -> format 35 -> format 36 -> format 37 -> format 38 -> format 39 -> format 40 -> format 41 -> format 42 -> format 43 -> format 44 -> format 45 -> format 46 -> format 47 -> format 48 -> format 49 -> format 50 -> format 51 -> format 52 -> format 53 -> format 54 -> format 55 -> format 56 -> format 57 -> format 58 -> format 59 -> format 60 -> format 61 -> format 62 -> format 63 -> format 64 -> format 65 -> format 66 -> format 67 -> format 68 -> format 69 -> format 70 -> format 71 -> format 72 (current)
 ```
 
 Each step owns exactly one `N -> N+1` transformation. The runner repeatedly applies the next registered step until it
@@ -400,6 +400,16 @@ Every historical row, relationship, counter, allocator, recording and catalog su
 retired choice, the populated format-70 fixture remains frozen, and current startup validates without deleting or
 repairing obsolete values. Digital output uses the shared peak-preserving gain; MP3 encoding adds no second gain
 adjustment, and analog MP3 encoding no longer has an optional normalization stage.
+
+The format 71-to-72 step removes the separate control-channel and voice-channel decode-quality switches from
+personal web preferences, advancing the preference document to version 16 and its revision once. The Live table's
+**Decode %** column selector controls visibility of both readings. Other usable personal settings, table layouts,
+account timestamps, credentials and receiver configuration are preserved. The existing bounded repair policy defaults
+only unusable documents or revisions. Guest browser preferences use the corresponding adjacent conversion.
+
+No table or index changes. The migrator updates bounded account preference documents and both format markers in its
+existing transaction, without scanning or rewriting retained Activity. Format 71 remains a frozen supported source;
+normal startup validates the new contract without converting older preferences.
 
 ## Shared Upgrade And Import Boundary
 

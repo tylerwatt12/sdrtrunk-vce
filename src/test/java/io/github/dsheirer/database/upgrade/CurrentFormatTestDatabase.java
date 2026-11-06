@@ -357,6 +357,11 @@ public final class CurrentFormatTestDatabase
             if(targetFormat >= 67 && version == 14)
             {
                 preferences = Format67WebUserPreferencesCodec.migrateFromFormat66(preferences).json();
+                version = 15; revisions++;
+            }
+            if(targetFormat >= 72 && version == 15)
+            {
+                preferences = Format72WebUserPreferencesCodec.migrateFromFormat71(preferences);
                 revisions++;
             }
             if(name.equals("preferences_json")) return preferences;

@@ -1157,10 +1157,8 @@ class ApplicationDatabaseMigratorTest
             SELECT value FROM database_metadata WHERE key='initial_admin_setup'
             """));
         assertTrue(new WebAccessService(database).authenticate("admin", password).isPresent());
-        assertEquals("0:0:1:detailed:125", scalar(database, """
+        assertEquals("0:detailed:125", scalar(database, """
             SELECT json_extract(preferences_json, '$.presentation.show_encryption_details') || ':' ||
-                   json_extract(preferences_json, '$.presentation.show_control_decode_quality') || ':' ||
-                   json_extract(preferences_json, '$.presentation.show_voice_decode_quality') || ':' ||
                    json_extract(preferences_json, '$.presentation.decode_quality_display_mode') || ':' ||
                    json_extract(preferences_json, '$.presentation.live_detail_row_limit')
             FROM web_user WHERE username='admin'

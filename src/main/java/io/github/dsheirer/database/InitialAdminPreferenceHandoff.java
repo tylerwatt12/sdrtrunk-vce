@@ -121,7 +121,7 @@ final class InitialAdminPreferenceHandoff
                 }
             }
 
-            return present ? Optional.of(WebUserPreferences.defaults(encryption, control, voice, mode, rowLimit)) :
+            return present ? Optional.of(WebUserPreferences.defaults(encryption, mode, rowLimit)) :
                 Optional.empty();
         }
     }

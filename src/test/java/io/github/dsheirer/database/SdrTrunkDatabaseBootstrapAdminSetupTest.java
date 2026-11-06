@@ -122,7 +122,7 @@ class SdrTrunkDatabaseBootstrapAdminSetupTest
             statement.executeUpdate();
         }
 
-        WebUserPreferences migrated = WebUserPreferences.defaults(false, false, true, "detailed", 125);
+        WebUserPreferences migrated = WebUserPreferences.defaults(false, "detailed", 125);
         char[] password = "persisted handoff password".toCharArray();
         var primary = new WebAccessService(database).provisionOrResetPrimaryAdmin(password, migrated);
 

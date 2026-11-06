@@ -26,7 +26,7 @@ class Format69To70DatabaseMigrationTest
     {
         Path configuration = Format69TestDatabase.create(directory.resolve("prior.sqlite"));
         Path history = ActivityDatabasePath.forConfiguration(configuration);
-        Map<String,List<String>> beforeHistory, beforeConfiguration, btrees;
+        Map<String,List<String>> beforeHistory, beforeConfiguration, expectedConfiguration, btrees;
         try(var connection = open(history); var statement = connection.createStatement())
         {
             // Identical-looking historical observations still have no exact parent-call association.
@@ -42,7 +42,7 @@ class Format69To70DatabaseMigrationTest
             statement.executeUpdate("UPDATE sqlite_sequence SET seq=900000000100 WHERE name='receiver_activity_event'");
             beforeHistory = snapshot(connection); btrees = schemaObjects(connection);
         }
-        try(var connection = open(configuration)) { beforeConfiguration = snapshot(connection); }
+        try(var connection = open(configuration)) { beforeConfiguration = snapshot(connection); expectedConfiguration = snapshot(connection, true); }
         byte[] configurationBytes = Files.readAllBytes(configuration), historyBytes = Files.readAllBytes(history);
         assertThrows(Exception.class, () -> SdrTrunkDatabaseStartup.validateGlobalDatabaseForStartup(configuration));
         assertArrayEquals(configurationBytes, Files.readAllBytes(configuration));
@@ -57,7 +57,7 @@ class Format69To70DatabaseMigrationTest
         }));
         assertPreserved(configuration, beforeConfiguration, 69); assertPreserved(history, beforeHistory, 69);
         ApplicationDatabaseMigrator.migrateInPlace(configuration, null);
-        assertPreserved(configuration, beforeConfiguration, DatabaseFormatCatalog.CURRENT_VERSION);
+        assertPreserved(configuration, expectedConfiguration, DatabaseFormatCatalog.CURRENT_VERSION);
         assertPreserved(history, beforeHistory, DatabaseFormatCatalog.CURRENT_VERSION);
         try(var connection = open(history))
         {
@@ -137,6 +137,8 @@ class Format69To70DatabaseMigrationTest
 
     /** Complete fixture contents, including encryption, children, planner statistics and allocators. */
     private static Map<String,List<String>> snapshot(Connection connection) throws Exception
+    { return snapshot(connection, false); }
+    private static Map<String,List<String>> snapshot(Connection connection, boolean upgradedPreferences) throws Exception
     {
         Map<String,List<String>> result = new LinkedHashMap<>(); List<String> tables = new ArrayList<>();
         try(var query = connection.createStatement(); var values = query.executeQuery(
@@ -154,6 +156,12 @@ class Format69To70DatabaseMigrationTest
                     for(int index = 1; index <= values.getMetaData().getColumnCount(); index++)
                     {
                         Object value = values.getObject(index);
+                        if(upgradedPreferences && table.equals("web_user"))
+                        {
+                            String column = values.getMetaData().getColumnName(index);
+                            if(column.equals("preferences_json")) value = Format72WebUserPreferencesCodec.migrateFromFormat71((String)value);
+                            if(column.equals("preferences_revision")) value = ((Number)value).longValue() + 1;
+                        }
                         String text = value instanceof byte[] bytes ? HexFormat.of().formatHex(bytes) : String.valueOf(value);
                         row.append(text.length()).append(':').append(text).append('|');
                     }

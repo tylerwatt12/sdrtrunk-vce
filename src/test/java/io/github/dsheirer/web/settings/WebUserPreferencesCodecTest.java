@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 class WebUserPreferencesCodecTest
 {
     private static final String DEFAULT_JSON = """
-        {"version":15,"appearance":{"theme":"light","hue":null},"page_titles":{"prepend_playing_call":true},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4,"call_display_hangtime_seconds":5,"recording_click_mode":"queue"},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"show_control_decode_quality":true,"show_voice_decode_quality":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false,"source_name_display":"talker_alias","live_channel_sort":"order_appeared","live_row_density":"normal"},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced","fft_auto_range_on_retune":true,"waterfall_auto_range_on_retune":true},"health_alerts":{"disabled_codes":[]},"guides":{"automatic_page_guides":true},"tables":{},"live_workspace":{"details_panel_percent":25,"details_visibility":"automatic","details_active_tab":"events","picker_collapsed":false,"active_channel_table_id":null,"event_filters":{"excluded_leaf_keys":[],"excluded_timeslots":[],"excluded_validity":[],"search":""},"message_filters":{"excluded_leaf_keys":[],"excluded_timeslots":[],"excluded_validity":[],"search":""}},"p25_visualizer":{"events":{"emergency":{"highlight":true,"auto_zoom":true},"movement":{"highlight":true,"auto_zoom":true},"denial":{"highlight":true,"auto_zoom":false},"patch":{"highlight":true,"auto_zoom":true},"busy":{"highlight":true,"auto_zoom":true},"queued":{"highlight":true,"auto_zoom":true},"check":{"highlight":true,"auto_zoom":false},"page":{"highlight":true,"auto_zoom":false},"logout":{"highlight":true,"auto_zoom":false},"call":{"highlight":true,"auto_zoom":false}}}}""";
+        {"version":16,"appearance":{"theme":"light","hue":null},"page_titles":{"prepend_playing_call":true},"playback":{"volume":1.0,"selected_scan_list_ids":[],"target_grouping":true,"target_burst_limit":4,"call_display_hangtime_seconds":5,"recording_click_mode":"queue"},"scanner":{"detail_mode":"normal"},"presentation":{"show_encryption_details":true,"decode_quality_display_mode":"percentage","live_detail_row_limit":200,"show_only_active_trunked_channels":true,"retain_last_call_on_idle_rows":false,"clear_voice_quality_when_idle":false,"source_name_display":"talker_alias","live_channel_sort":"order_appeared","live_row_density":"normal"},"tuner":{"floor_db":-140,"ceiling_db":0,"waterfall_speed":1.0,"snap_frequency":true,"smooth_fft":true,"highlight_waterfall_channels":false,"show_idle_channels":false,"profile":"balanced","fft_auto_range_on_retune":true,"waterfall_auto_range_on_retune":true},"health_alerts":{"disabled_codes":[]},"guides":{"automatic_page_guides":true},"tables":{},"live_workspace":{"details_panel_percent":25,"details_visibility":"automatic","details_active_tab":"events","picker_collapsed":false,"active_channel_table_id":null,"event_filters":{"excluded_leaf_keys":[],"excluded_timeslots":[],"excluded_validity":[],"search":""},"message_filters":{"excluded_leaf_keys":[],"excluded_timeslots":[],"excluded_validity":[],"search":""}},"p25_visualizer":{"events":{"emergency":{"highlight":true,"auto_zoom":true},"movement":{"highlight":true,"auto_zoom":true},"denial":{"highlight":true,"auto_zoom":false},"patch":{"highlight":true,"auto_zoom":true},"busy":{"highlight":true,"auto_zoom":true},"queued":{"highlight":true,"auto_zoom":true},"check":{"highlight":true,"auto_zoom":false},"page":{"highlight":true,"auto_zoom":false},"logout":{"highlight":true,"auto_zoom":false},"call":{"highlight":true,"auto_zoom":false}}}}""";
 
     @Test
     void defaultsHaveTheExactVersionFifteenSnakeCaseWireShape() throws Exception
@@ -53,7 +53,7 @@ class WebUserPreferencesCodecTest
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
             "\"recording_click_mode\":\"queue\"", "\"recording_click_mode\":\"queue\",\"unknown\":true")));
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
-            "\"version\":15", "\"version\":13")));
+            "\"version\":16", "\"version\":13")));
         assertThrows(IllegalArgumentException.class, () -> new WebUserPreferences.Playback(
             1.0, List.of(), true, 4, 5, "unknown"));
     }
@@ -109,7 +109,7 @@ class WebUserPreferencesCodecTest
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
             ",\"guides\":{\"automatic_page_guides\":true}", "")));
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
-            "\"version\":15", "\"version\":11")));
+            "\"version\":16", "\"version\":11")));
     }
 
     @Test
@@ -154,7 +154,7 @@ class WebUserPreferencesCodecTest
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
             DEFAULT_JSON.replace("\"appearance\":{\"theme\":\"light\",\"hue\":null}", "\"appearance\":null")));
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(
-            DEFAULT_JSON.replace("\"version\":15", "\"version\":7")));
+            DEFAULT_JSON.replace("\"version\":16", "\"version\":7")));
     }
 
     @Test
@@ -234,7 +234,7 @@ class WebUserPreferencesCodecTest
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
             "\"live_row_density\":\"normal\"", "\"live_row_density\":\"normal\",\"live_row_density\":\"dense\"")));
         assertThrows(java.io.IOException.class, () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
-            "\"version\":15", "\"version\":10")));
+            "\"version\":16", "\"version\":10")));
     }
 
     @Test
@@ -316,8 +316,8 @@ class WebUserPreferencesCodecTest
     void rejectsUnknownDuplicateAndNonIntegerFields()
     {
         assertThrows(java.io.IOException.class,
-            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":15",
-                "\"version\":15,\"unknown\":true")));
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":16",
+                "\"version\":16,\"unknown\":true")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"theme\":\"light\"",
                 "\"theme\":\"light\",\"theme\":\"dark\"")));
@@ -325,7 +325,7 @@ class WebUserPreferencesCodecTest
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"live_detail_row_limit\":200",
                 "\"live_detail_row_limit\":200.5")));
         assertThrows(java.io.IOException.class,
-            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":15", "\"version\":3")));
+            () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace("\"version\":16", "\"version\":3")));
         assertThrows(java.io.IOException.class,
             () -> WebUserPreferencesCodec.decode(DEFAULT_JSON.replace(
                 ",\"target_grouping\":true", "")));

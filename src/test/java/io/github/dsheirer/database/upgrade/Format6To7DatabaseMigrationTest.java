@@ -65,14 +65,14 @@ class Format6To7DatabaseMigrationTest
             assertEquals("format-6-to-7", report.steps().getFirst().id());
             assertEquals("3", scalar(connection, """
                 SELECT COUNT(*) FROM web_user
-                WHERE json_extract(preferences_json, '$.version')=15
+                WHERE json_extract(preferences_json, '$.version')=16
                   AND json_extract(preferences_json, '$.guides.automatic_page_guides')=1
                   AND json_extract(preferences_json, '$.presentation.live_row_density')='normal'
                   AND json_extract(preferences_json, '$.playback.target_grouping')=1
                   AND json_extract(preferences_json, '$.playback.target_burst_limit')=4
                   AND json_array_length(json_extract(preferences_json,
                       '$.health_alerts.disabled_codes'))=0
-                  AND preferences_revision=15
+                  AND preferences_revision=16
                 """));
             assertEquals("1.0:0:1.0:0", scalar(connection, """
                 SELECT min(json_extract(preferences_json, '$.playback.volume')) || ':' ||
@@ -83,10 +83,8 @@ class Format6To7DatabaseMigrationTest
                            '$.playback.selected_scan_list_ids')))
                 FROM web_user
                 """));
-            assertEquals("0:0:1:detailed:125", scalar(connection, """
+            assertEquals("0:detailed:125", scalar(connection, """
                 SELECT json_extract(preferences_json, '$.presentation.show_encryption_details') || ':' ||
-                       json_extract(preferences_json, '$.presentation.show_control_decode_quality') || ':' ||
-                       json_extract(preferences_json, '$.presentation.show_voice_decode_quality') || ':' ||
                        json_extract(preferences_json, '$.presentation.decode_quality_display_mode') || ':' ||
                        json_extract(preferences_json, '$.presentation.live_detail_row_limit')
                 FROM web_user WHERE username='listener'
@@ -164,7 +162,7 @@ class Format6To7DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "unusable per-user browser preferences", 1);
-            assertEquals("14", scalar(connection,
+            assertEquals("15", scalar(connection,
                 "SELECT preferences_revision FROM web_user WHERE id=1"));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());
@@ -179,7 +177,7 @@ class Format6To7DatabaseMigrationTest
             DatabaseMigrationChain.MigrationReport report = DatabaseMigrationChain.migrate(connection);
             assertEffect(report.steps().getFirst().effects(), DatabaseMigrationEffect.Kind.DEFAULT,
                 "unusable per-user browser preferences", 1);
-            assertEquals("14", scalar(connection,
+            assertEquals("15", scalar(connection,
                 "SELECT preferences_revision FROM web_user WHERE id=1"));
             assertEquals(DatabaseFormatCatalog.CURRENT_VERSION,
                 DatabaseFormatCatalog.requireCurrent(connection).version());

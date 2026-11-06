@@ -214,7 +214,7 @@ final class CurrentDatabaseAdministrativeRepair
     {
         int databaseVersion = DatabaseFormatCatalog.inspectForMigration(connection).version();
         return databaseVersion <= 30 ? 7 : databaseVersion <= 34 ? 8 : databaseVersion == 35 ? 9 : databaseVersion <= 42 ? 10 : databaseVersion <= 61 ? 11 : databaseVersion <= 64 ? 12 :
-            WebUserPreferences.CURRENT_VERSION;
+            databaseVersion == 65 ? 13 : databaseVersion == 66 ? 14 : databaseVersion <= 71 ? 15 : WebUserPreferences.CURRENT_VERSION;
     }
 
     private static boolean invalidSpectrumSettings(Connection connection) throws SQLException
@@ -716,6 +716,9 @@ final class CurrentDatabaseAdministrativeRepair
                 case 10 -> Format36WebUserPreferencesCodec.defaults();
                 case 11 -> Format43WebUserPreferencesCodec.defaults();
                 case 12 -> Format62WebUserPreferencesCodec.defaults();
+                case 13 -> Format65WebUserPreferencesCodec.defaults();
+                case 14 -> Format66WebUserPreferencesCodec.defaults();
+                case 15 -> Format67WebUserPreferencesCodec.defaults();
                 default -> WebUserPreferencesCodec.encode(WebUserPreferences.defaults());
             };
         }

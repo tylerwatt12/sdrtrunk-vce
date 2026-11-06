@@ -532,8 +532,9 @@ class MigrationContentTest
             converted = Format65WebUserPreferencesCodec.migrateFromFormat64(converted).json();
             converted = Format66WebUserPreferencesCodec.migrateFromFormat65(converted).json();
             converted = Format67WebUserPreferencesCodec.migrateFromFormat66(converted).json();
+            converted = Format72WebUserPreferencesCodec.migrateFromFormat71(converted);
             assertEquals(JSON.readTree(converted), JSON.readTree(after.get(entry.getKey()).json()));
-            assertEquals(entry.getValue().revision() + 4, after.get(entry.getKey()).revision());
+            assertEquals(entry.getValue().revision() + 5, after.get(entry.getKey()).revision());
         }
     }
 
