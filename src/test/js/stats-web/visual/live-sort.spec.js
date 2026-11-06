@@ -109,7 +109,7 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
     if (pathname === '/api/v1/auth/session') {
       await route.fulfill({ json: { data: { configured: true, authenticated: true,
         username: 'operator', tier: 'admin', primary: true, guide_dismissal_scope: 'live-regression-fixture',
-        capabilities: { 'web-access': true, live: true, radio: true, 'call-audio': true } } } });
+        capabilities: { 'web-access': true, live: true, radio: true, 'call-audio': true, 'direct-listen': true } } } });
     } else if (pathname === '/api/v1/me/preferences') {
       if (request.method() === 'PUT') {
         expect(request.headers()['if-match']).toBe(`"${revision}"`);
@@ -814,3 +814,46 @@ for (const [theme, width, height] of [['light', 1440, 950], ['dark', 1440, 950],
     await expect.poll(() => page.evaluate(() => window.fixtureSubscriptions?.decode_events?.configuration_id)).toBeUndefined();
   });
 }
+
+
+test('Live hints stay open while reception updates and only conventional channel rows offer headphones', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const sample = structuredClone(snapshot);
+  const site = sample.tables[0];
+  site.entity_ref = { kind: 'channel', key: '11111111-1111-4111-8111-111111111111' };
+  const row = site.rows[0];
+  Object.assign(row, { decode_health_pct: 98, tags: ['ALTERNATE_CONTROL'] });
+  sample.tables.push({ table_id: 'conventional', title: 'Conventional', channel_running: true,
+    rows: [{ key: 'weather', channel_name: 'Weather', tags: ['CONVENTIONAL'],
+      entity_ref: { kind: 'channel', key: '22222222-2222-4222-8222-222222222222' },
+      status: 'IDLE', frequency_hz: 162550000 }] });
+  await openLive(page, 'light', {}, sample);
+  await page.getByRole('tab', { name: 'Show Classic live channels', exact: true }).click();
+  const table = liveTable(page);
+  await expect(table.locator('td[data-column="channel"]').filter({ hasText: 'Weather' })
+    .locator('[data-direct-listen-target-key]')).toHaveCount(1);
+  await expect(table.locator('td[data-column="channel"]').filter({ hasText: 'Metro North' })
+    .locator('[data-direct-listen-target-key]')).toHaveCount(0);
+
+  await page.locator('.live-channels-section').getByRole('button', { name: 'Choose table columns', exact: true }).click();
+  const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
+  await chooser.getByRole('checkbox', { name: 'Show Tags column', exact: true }).check();
+  await expect(table.locator('td[data-column="tags"]').filter({ hasText: /^AC$/ })).toHaveCount(1);
+  await page.keyboard.press('Escape');
+
+  const cell = table.locator('td[data-column="decode-health"]').filter({ hasText: 'CC 98.0%' });
+  await cell.hover();
+  const hint = page.locator('.ui-icon-hint:popover-open');
+  await expect(hint).toContainText('CC uses a rolling 30-second');
+  const anchor = await cell.elementHandle();
+  for (const [index, quality] of [91, 83, 95].entries()) {
+    row.decode_health_pct = quality;
+    sample.revision = index + 2;
+    await page.evaluate(next => window.fixtureSendLiveSnapshot(next), sample);
+    await expect(table.locator('td[data-column="decode-health"]').filter({ hasText: `CC ${quality}.0%` })).toHaveCount(1);
+    expect(await anchor.evaluate(element => element.isConnected && element.hasAttribute('aria-describedby'))).toBe(true);
+    await expect(hint).toContainText('CC uses a rolling 30-second');
+  }
+  await page.keyboard.press('Escape');
+  await expect(hint).toHaveCount(0);
+});

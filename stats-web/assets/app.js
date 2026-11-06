@@ -313,7 +313,7 @@ const CHANNEL_TAG_DISPLAY = Object.freeze({
   CONFIGURED: { abbreviation: 'CFG', description: 'Configured frequency' },
   CONTROL: { abbreviation: 'CC', description: 'Observed control channel', className: 'role-primary' },
   CURRENT_CONTROL: { abbreviation: 'CC', description: 'Current control channel', className: 'role-primary' },
-  ALTERNATE_CONTROL: { abbreviation: 'ACC', description: 'Alternate control channel', className: 'role-secondary' },
+  ALTERNATE_CONTROL: { abbreviation: 'AC', description: 'Alternate control channel', className: 'role-secondary' },
   VOICE: { abbreviation: 'VC', description: 'Observed voice traffic', className: 'role-voice' },
   DATA: { abbreviation: 'DAT', description: 'Observed data traffic', className: 'role-data' },
   DATA_ANNOUNCED: { abbreviation: 'DAT-A', description: 'Announced data channel', className: 'role-data-announced' },
@@ -3558,9 +3558,21 @@ function table(rows, columns, emptyText = 'No rows', options = {}) {
             return;
           }
           const nextCell = renderTableCell(data, column);
-          if (!previousCell) current.append(nextCell);
-          else if (!previousCell.isEqualNode(nextCell)) previousCell.replaceWith(nextCell);
-          else previousCell.tableReconcileKey = nextCell.tableReconcileKey;
+          if (!previousCell) {
+            current.append(nextCell);
+            return;
+          }
+          // Keep the cell as the tooltip anchor while its displayed value changes.
+          if (previousCell.className !== nextCell.className) previousCell.className = nextCell.className;
+          const hint = nextCell.dataset.uiHint;
+          if (hint === undefined) previousCell.removeAttribute('data-ui-hint');
+          else if (previousCell.dataset.uiHint !== hint) previousCell.dataset.uiHint = hint;
+          const children = [...nextCell.childNodes];
+          if (previousCell.childNodes.length !== children.length ||
+              children.some((child, index) => !child.isEqualNode(previousCell.childNodes[index]))) {
+            previousCell.replaceChildren(...children);
+          }
+          previousCell.tableReconcileKey = nextCell.tableReconcileKey;
         });
         while (current.children.length > columns.length) current.lastElementChild.remove();
       } else {
@@ -20224,8 +20236,9 @@ function liveIdentityValue(row, kind) {
 function liveConventionalChannelValue(row, { actionFirst = false } = {}) {
   const label = String(row?.channel_name || '');
   const target = capabilityAllowed(ACCESS_CAPABILITIES.RADIO) ? entityRefHref(row?.entity_ref) : '';
-  return withDirectListenAction(label && target ? anchor(label, target, 'live-channel-link') : label,
-    row, row.entity_ref, { channelOnly: true, label, actionFirst });
+  const value = label && target ? anchor(label, target, 'live-channel-link') : label;
+  return channelTagSet(row.tags).has('CONVENTIONAL') ?
+    withDirectListenAction(value, row, row.entity_ref, { channelOnly: true, label, actionFirst }) : value;
 }
 
 function liveRemoteOriginLabel(origin) {
@@ -20600,7 +20613,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       liveChannelValue(row, liveShowRowRemoteOrigin(tables.get(activeTableId))),
       title: (row) => row.channel_name || '', sortValue: (row) => row.channel_name || '',
       reconcileKey: (row) => JSON.stringify([row.channel_name, row.entity_ref, row.remote_origin || null,
-        liveShowRowRemoteOrigin(tables.get(activeTableId))]) },
+        channelTagSet(row.tags).has('CONVENTIONAL'), liveShowRowRemoteOrigin(tables.get(activeTableId))]) },
     { id: 'lcn', label: 'LCN', render: (row) =>
       channelTagSet(row.tags).has('CONVENTIONAL') ? '' : row.lcn ?? '',
       className: channelStateClass, sortValue: (row) => row.lcn ?? '' },
