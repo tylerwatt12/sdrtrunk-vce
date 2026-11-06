@@ -170,6 +170,8 @@ test('a complete version-14 guest document upgrades to the current typed profile
   const storage = browser();
   const prior = copy(schema.defaults);
   prior.version = 14;
+  prior.presentation.show_control_decode_quality = true;
+  prior.presentation.show_voice_decode_quality = true;
   delete prior.live_workspace; delete prior.p25_visualizer;
   delete prior.tuner.fft_auto_range_on_retune; delete prior.tuner.waterfall_auto_range_on_retune;
   prior.appearance.theme = 'dark'; prior.playback.volume = 0.6;

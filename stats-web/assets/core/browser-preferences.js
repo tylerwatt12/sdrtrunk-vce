@@ -1,9 +1,10 @@
-import { guestDefaults } from './preference-registry.js?v=1';
+import { guestDefaults } from './preference-registry.js?v=2';
 
 export const GUEST_PROFILE_STORAGE_KEY = 'sdrtrunk-vce-guest-preferences-v1';
-export const CURRENT_GUEST_PREFERENCE_VERSION = 15;
+export const CURRENT_GUEST_PREFERENCE_VERSION = 16;
 export const GUEST_PREFERENCE_MIGRATIONS = Object.freeze([
-  Object.freeze({ from: 14, to: 15, convert: migrateVersion14To15 })
+  Object.freeze({ from: 14, to: 15, convert: migrateVersion14To15 }),
+  Object.freeze({ from: 15, to: 16, convert: migrateVersion15To16 })
 ]);
 const migrationsByVersion = new Map(GUEST_PREFERENCE_MIGRATIONS.map(step => [step.from, step]));
 const LEGACY_TABLES_KEY = 'sdrtrunk-vce-anonymous-table-layouts';
@@ -51,6 +52,19 @@ function migrateVersion14To15(value) {
     live_workspace: { details_panel_percent: 25, details_visibility: 'automatic', details_active_tab: 'events',
       picker_collapsed: false, active_channel_table_id: null, event_filters: filters(), message_filters: filters() },
     p25_visualizer: { events } };
+}
+
+function migrateVersion15To16(value) {
+  if (value?.version !== 15 || !exactFields(value.presentation, version14Fields.presentation) ||
+      typeof value.presentation.show_control_decode_quality !== 'boolean' ||
+      typeof value.presentation.show_voice_decode_quality !== 'boolean') {
+    throw new TypeError('The version-15 browser presentation fields are invalid.');
+  }
+  const next = copy(value);
+  next.version = 16;
+  delete next.presentation.show_control_decode_quality;
+  delete next.presentation.show_voice_decode_quality;
+  return next;
 }
 
 function changedValues(before, after, path = []) {

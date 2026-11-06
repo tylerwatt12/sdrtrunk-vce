@@ -322,8 +322,24 @@
     return normalize(columns, upgraded).reset ? saved : upgraded;
   }
 
-  /** Preserve known Live layouts when the optional receiver column is introduced. */
+  /** Preserve known Live layouts when receiver and separate LCN columns are introduced. */
   function upgradeTableLayout(type, columns, saved) {
+    if (type === 'live-channels' && columns.some(column => column.id === 'lcn') &&
+        Array.isArray(saved?.schema) && !saved.schema.includes('lcn')) {
+      const priorColumns = columns.filter(column => column.id !== 'lcn');
+      const prior = upgradeTableLayout(type, priorColumns, saved);
+      const layout = normalize(priorColumns, prior);
+      if (layout.reset) return saved;
+      const next = persisted(layout);
+      next.schema = schema(columns);
+      next.column_order = next.column_order.flatMap(id => id === 'channel' ? ['channel', 'lcn'] : [id]);
+      next.hidden_columns = next.hidden_columns.map(id => id === 'channel' ? 'lcn' : id);
+      if (Object.hasOwn(next.column_widths, 'channel')) {
+        next.column_widths.lcn = next.column_widths.channel;
+        delete next.column_widths.channel;
+      }
+      return next;
+    }
     const previousSchema = PARTY_COLUMN_UPGRADES['live-channels'].current;
     if (type !== 'live-channels' || !sameSchema(schema(columns), [...previousSchema, 'receiver'])) {
       return mergePartyColumns(type, columns, saved);

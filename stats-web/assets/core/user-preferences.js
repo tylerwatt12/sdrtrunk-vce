@@ -1,5 +1,5 @@
-import { createBrowserPreferences } from './browser-preferences.js?v=2';
-import { guestDefaults } from './preference-registry.js?v=1';
+import { createBrowserPreferences } from './browser-preferences.js?v=3';
+import { guestDefaults } from './preference-registry.js?v=2';
 
   const ENDPOINT = '/api/v1/me/preferences';
 

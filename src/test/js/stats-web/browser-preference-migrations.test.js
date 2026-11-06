@@ -88,11 +88,11 @@ test('stored migration dispatch uses frozen step defaults rather than later defa
   const restored = adapter.load();
   assert.equal(restored.persistence, 'browser');
   const step = browser.GUEST_PREFERENCE_MIGRATIONS.find(migration => migration.from === prior.version);
-  assert.deepEqual(restored.preferences, schema.validate(step.convert(prior)));
+  assert.deepEqual(restored.preferences, schema.validate(browser.GUEST_PREFERENCE_MIGRATIONS.find(migration => migration.from === 15).convert(step.convert(prior))));
   assert.deepEqual(adapter.readTourHistory(), history);
   const saved = JSON.parse(store.records.get(browser.GUEST_PROFILE_STORAGE_KEY));
   assert.equal(saved.version, 1, 'The envelope does not change');
-  assert.equal(saved.preferences.version, 15);
+  assert.equal(saved.preferences.version, 16);
   assert.deepEqual(saved.tour_history, history);
 });
 
@@ -125,7 +125,7 @@ test('unregistered and newer guest versions never advance or overwrite their ori
   for (const record of [
     { version: 2, preferences: version14() },
     { version: 1, preferences: { ...version14(), version: 13 } },
-    { version: 1, preferences: { ...schema.defaults, version: 16 } },
+    { version: 1, preferences: { ...schema.defaults, version: 17 } },
     { version: 1, preferences: { ...version14(), version: '14' } }
   ]) {
     const original = JSON.stringify(record);
@@ -135,4 +135,19 @@ test('unregistered and newer guest versions never advance or overwrite their ori
     adapter.update(profile => { profile.appearance.theme = 'dark'; });
     assert.equal(store.records.get(browser.GUEST_PROFILE_STORAGE_KEY), original);
   }
+});
+
+
+test('version-15 retirement preserves all other choices and removes both quality switches', async () => {
+  const [browser, schema] = await modules;
+  const prior = browser.GUEST_PREFERENCE_MIGRATIONS.find(step => step.from === 14).convert(version14());
+  prior.presentation.show_control_decode_quality = false;
+  const original = clone(prior);
+  const converted = browser.GUEST_PREFERENCE_MIGRATIONS.find(step => step.from === 15).convert(prior);
+  const expected = clone(original);
+  expected.version = 16;
+  delete expected.presentation.show_control_decode_quality;
+  delete expected.presentation.show_voice_decode_quality;
+  assert.deepEqual(schema.validate(converted), expected);
+  assert.deepEqual(prior, original);
 });

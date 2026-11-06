@@ -2159,7 +2159,7 @@ async function main() {
 
   const decodedDefaults = preferenceSchema.validate(JSON.parse(JSON.stringify(preferenceSchema.defaults)));
   assert.deepEqual(decodedDefaults, {
-    version: 15,
+    version: 16,
     appearance: { theme: 'light', hue: null },
     page_titles: { prepend_playing_call: true },
     guides: { automatic_page_guides: true },
@@ -2170,8 +2170,7 @@ async function main() {
     scanner: { detail_mode: 'normal' },
     presentation: {
       source_name_display: 'talker_alias',
-      show_encryption_details: true, show_control_decode_quality: true,
-      show_voice_decode_quality: true, decode_quality_display_mode: 'percentage', live_detail_row_limit: 200,
+      show_encryption_details: true, decode_quality_display_mode: 'percentage', live_detail_row_limit: 200,
       show_only_active_trunked_channels: true, live_channel_sort: 'order_appeared', live_row_density: 'normal',
       retain_last_call_on_idle_rows: false,
       clear_voice_quality_when_idle: false
@@ -2427,6 +2426,17 @@ async function main() {
   assert.throws(() => tableLayouts.tableId('Live Channels'), /valid stable ID/);
   assert.throws(() => tableLayouts.schema([{ id: 'same' }, { id: 'same' }]), /unique/);
   assert.throws(() => tableLayouts.schema([{ label: 'No ID' }]), /valid stable ID/);
+  const oldLiveColumns = ['status', 'tags', 'channel', 'frequency', 'signal', 'decode-health',
+    'source', 'target', 'decoder', 'receiver'].map(id => ({ id }));
+  const splitLiveColumns = oldLiveColumns.flatMap(column => column.id === 'channel' ? [column, { id: 'lcn' }] : [column]);
+  const oldLiveLayout = tableLayouts.persisted(tableLayouts.setHidden(tableLayouts.setHidden(
+    tableLayouts.resize(tableLayouts.normalize(oldLiveColumns, null), 'channel', 190), 'decode-health', true), 'channel', true));
+  const splitLiveLayout = tableLayouts.upgradeTableLayout('live-channels', splitLiveColumns, oldLiveLayout);
+  assert.equal(tableLayouts.normalize(splitLiveColumns, splitLiveLayout).reset, false);
+  assert.deepEqual(splitLiveLayout.hidden_columns, ['lcn', 'decode-health']);
+  assert.equal(splitLiveLayout.column_widths.lcn, 190);
+  assert.equal(splitLiveLayout.column_widths.channel, undefined);
+  assert.deepEqual(splitLiveLayout.column_order.slice(2, 4), ['channel', 'lcn']);
   const schemaRegistry = new Map();
   assert.deepEqual(tableLayouts.registerSchema(schemaRegistry, 'sample', columns),
     ['name', 'frequency', 'status']);
@@ -2640,7 +2650,7 @@ async function main() {
     const submitted = JSON.parse(options.body);
     assert.equal(options.headers['If-Match'], '"7"');
     assert.ok(submitted.tables.sample);
-    assert.equal(submitted.presentation.show_voice_decode_quality, false);
+    assert.equal(submitted.presentation.show_encryption_details, false);
     return response(200, { revision: 8, preferences: submitted });
   });
   const layoutSave = controller.update((profile) => {
@@ -2649,7 +2659,7 @@ async function main() {
     };
   });
   const settingsSave = controller.update((profile) => {
-    profile.presentation.show_voice_decode_quality = false;
+    profile.presentation.show_encryption_details = false;
   });
   slowLayoutSave.resolve(response(200, { revision: 7, preferences: {
     ...controller.snapshot().preferences,
@@ -2659,7 +2669,7 @@ async function main() {
   } }));
   await Promise.all([layoutSave, settingsSave]);
   assert.ok(controller.snapshot().preferences.tables.sample);
-  assert.equal(controller.snapshot().preferences.presentation.show_voice_decode_quality, false);
+  assert.equal(controller.snapshot().preferences.presentation.show_encryption_details, false);
 
   queuedResponses.push((_url, options) => {
     const submitted = JSON.parse(options.body);
