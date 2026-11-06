@@ -349,18 +349,10 @@ body[data-view="live"] .channel-diagnostic-readouts {
   table-layout: fixed;
 }
 
-.channels-live-table th:nth-child(1),
-.channels-live-table td:nth-child(1),
-.channels-live-table th:nth-child(2),
-.channels-live-table td:nth-child(2),
-.channels-live-table th:nth-child(3),
-.channels-live-table td:nth-child(3),
-.channels-live-table th:nth-child(5),
-.channels-live-table td:nth-child(5),
-.channels-live-table th:nth-child(7),
-.channels-live-table td:nth-child(7),
-.channels-live-table th:nth-child(8),
-.channels-live-table td:nth-child(8) { text-align: center; }
+.channels-live-table :is(th, td):is([data-column="status"], [data-column="tags"],
+    [data-column="lcn"], [data-column="signal"], [data-column="source"], [data-column="target"]) {
+  text-align: center;
+}
 
 .channels-live-table td {
   white-space: nowrap;
@@ -1159,10 +1151,11 @@ body[data-view="live"] .channel-diagnostic-readouts {
   }
 
   .channels-live-table td[data-column="channel"] {
-    grid-column: 1 / span 6;
+    grid-column: 1 / -1;
+    order: 25;
   }
 
-  .channels-live-table tr.live-row-trunked td[data-column="channel"] {
+  .channels-live-table td[data-column="lcn"] {
     display: none;
   }
 

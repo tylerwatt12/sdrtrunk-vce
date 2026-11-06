@@ -1,12 +1,12 @@
 import * as routeFoundation from './core/routes.js?v=12';
-import * as preferenceSchema from './core/preference-schema.js?v=11';
+import * as preferenceSchema from './core/preference-schema.js?v=12';
 import { formatSourceName } from './core/source-names.js?v=1';
 import { receiverDisplayName } from './core/receiver-names.js?v=1';
 import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
-import { Controller as UserPreferenceController } from './core/user-preferences.js?v=3';
-import * as tableLayouts from './core/table-layout.js?v=6';
-import * as tableDefaults from './core/table-defaults.js?v=33';
+import { Controller as UserPreferenceController } from './core/user-preferences.js?v=4';
+import * as tableLayouts from './core/table-layout.js?v=7';
+import * as tableDefaults from './core/table-defaults.js?v=34';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=3';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -14290,6 +14290,7 @@ function liveDetailSelection(tableValue, row, bindingRow = row) {
   return {
     kind,
     role,
+    tableId: tableValue.table_id,
     logicalKey: kind === LIVE_DETAIL_SELECTION_KINDS.CONTROL ? `CONTROL:${configurationId}` :
       `EXACT:${configurationId}:${bindingFrequencyHz || ''}:${bindingTimeslot || ''}`,
     transportKey: `${configurationId}:${bindingFrequencyHz || ''}:${bindingTimeslot || ''}`,
@@ -14343,7 +14344,7 @@ function liveDetailSelectionDelta(previous, next) {
 }
 
 function liveDetailSelectionUnchanged(previous, next) {
-  return ['kind', 'role', 'logicalKey', 'transportKey', 'rowKey', 'configurationId',
+  return ['kind', 'role', 'tableId', 'logicalKey', 'transportKey', 'rowKey', 'configurationId',
     'bindingFrequencyHz', 'bindingTimeslot', 'radioSystemKey', 'remote', 'label', 'channelLabel']
     .every((field) => previous?.[field] === next?.[field]);
 }
@@ -20257,9 +20258,7 @@ function liveRemoteOriginBadge(origin) {
 }
 
 function liveChannelValue(row, showRemoteOrigin = true) {
-  const conventional = channelTagSet(row.tags).has('CONVENTIONAL');
-  const value = conventional ? liveConventionalChannelValue(row) :
-    (row.lcn == null || row.lcn === '' ? '' : String(row.lcn));
+  const value = liveConventionalChannelValue(row);
   const remote = showRemoteOrigin ? liveRemoteOriginBadge(row.remote_origin) : null;
   if (!remote) return value;
   const wrapper = node('span', 'live-channel-origin');
@@ -20273,6 +20272,7 @@ function liveReceiverLabel(row) {
 }
 
 function liveChannelViewMeta(value, label = '') {
+  if (value?.table_id === 'classic') return 'Active trunked channels and running conventional channels';
   if (value?.table_id === 'conventional') {
     const count = Number(value?.rows_total ?? value?.rows?.length ?? 0);
     return `${number(count)} channel${count === 1 ? '' : 's'}`;
@@ -20417,13 +20417,39 @@ function livePresentedRow(row, presentation) {
 }
 
 function livePresentedTableRows(tableValue, presentation) {
+  presentation = liveViewPresentation(presentation, tableValue?.table_id);
   const rows = Array.isArray(tableValue?.rows) ? tableValue.rows : [];
   const tableId = String(tableValue?.table_id || '');
-  const displayed = presentation.show_only_active_trunked_channels && tableId !== 'conventional' ?
-    rows.filter(liveRowIsActive) : [...rows];
+  const namedRows = rows.map(row => row.channel_name || tableId === 'conventional' ? row :
+    { ...row, channel_name: tableValue.channel_name || tableValue.title, entity_ref: row.entity_ref || tableValue.entity_ref });
+  const displayed = presentation.show_only_active_trunked_channels && !['conventional', 'classic'].includes(tableId) ?
+    namedRows.filter(liveRowIsActive) : namedRows;
   const sort = liveChannelSortMethod(presentation);
   return displayed.sort((left, right) => liveCompareChannelRows(left, right, sort))
     .map((row) => livePresentedRow(row, presentation));
+}
+
+function liveClassicTable(tables) {
+  const rows = [];
+  for (const value of tables.values()) {
+    if (value.table_id === 'classic' || value.channel_running === false) continue;
+    for (const row of value.rows || []) {
+      if (value.table_id !== 'conventional' && !liveRowIsActive(row)) continue;
+      rows.push({ ...row, key: JSON.stringify([value.table_id, row.key]),
+        origin_table_id: value.table_id, origin_row_key: row.key,
+        channel_name: row.channel_name || value.channel_name || value.title,
+        entity_ref: row.entity_ref || value.entity_ref,
+        remote_origin: row.remote_origin || value.remote_origin });
+    }
+  }
+  return { table_id: 'classic', title: 'Classic', channel_running: true, rows };
+}
+
+function liveViewPresentation(presentation, tableId) {
+  return tableId === 'classic' ? { ...presentation, show_only_active_trunked_channels: true,
+    live_channel_sort: 'order_appeared', retain_last_call_on_idle_rows: false,
+    clear_voice_quality_when_idle: false } : presentation.show_only_active_trunked_channels ?
+    { ...presentation, retain_last_call_on_idle_rows: false, clear_voice_quality_when_idle: false } : presentation;
 }
 
 function createLivePresentationScheduler(paint) {
@@ -20473,8 +20499,6 @@ function liveChannelsSection(onSelectionChange, options = {}) {
   const dismissedStoppedTables = new Set();
   const presentation = options.presentation || activeUserPreferences().presentation;
   const decodeDisplay = {
-    show_control: presentation.show_control_decode_quality,
-    show_voice: presentation.show_voice_decode_quality,
     mode: presentation.decode_quality_display_mode
   };
   const showEncryptionDetails = presentation.show_encryption_details;
@@ -20489,10 +20513,10 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     VOICE_QUALITY_WARMUP_FRAMES;
   const decodeQualityValues = (row) => {
     const values = [];
-    if (decodeDisplay.show_control && row.decode_health_pct != null) {
+    if (row.decode_health_pct != null) {
       values.push(Number(row.decode_health_pct));
     }
-    if (decodeDisplay.show_voice && row.vc_quality_pct != null && voiceQualityReady(row)) {
+    if (row.vc_quality_pct != null && voiceQualityReady(row)) {
       values.push(Number(row.vc_quality_pct));
     }
     return values.filter(Number.isFinite);
@@ -20500,7 +20524,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
   const decodeQualityText = (row) => {
     const values = [];
     const detailed = decodeDisplay.mode === 'detailed';
-    if (decodeDisplay.show_control && row.decode_health_pct != null) {
+    if (row.decode_health_pct != null) {
       let value = `CC ${Number(row.decode_health_pct).toFixed(1)}%`;
       if (detailed) {
         value += ` · ${Number(row.cc_valid_frames || 0)}/${Number(row.cc_invalid_frames || 0)}/` +
@@ -20509,7 +20533,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       }
       values.push(value);
     }
-    if (decodeDisplay.show_voice && row.vc_quality_pct != null) {
+    if (row.vc_quality_pct != null) {
       if (!voiceQualityReady(row)) {
         values.push('VC -');
         return values.join(' · ');
@@ -20545,11 +20569,11 @@ function liveChannelsSection(onSelectionChange, options = {}) {
   };
   const decodeQualityTitle = (row) => {
     const values = [];
-    if (decodeDisplay.show_control && row.decode_health_pct != null) {
+    if (row.decode_health_pct != null) {
       values.push('CC uses a rolling 30-second control-channel window. Detail order: valid frames / ' +
         'invalid frames / corrected bits / sync-loss bits / dropped bits.');
     }
-    if (decodeDisplay.show_voice && row.vc_quality_pct != null) {
+    if (row.vc_quality_pct != null) {
       values.push('VC uses 20 ms voice frames. Detail order: decoded / repeated / concealed / missing frames · ' +
         'FEC detected corrections / inspected protected bits.');
     }
@@ -20561,7 +20585,8 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       (tags.has('ALTERNATE_CONTROL') ? 'control-alternate' : '');
   };
   const activityRowClass = (row) => [
-    selection?.rowKey === row.key ? 'selected' : '',
+    selection?.tableId === (row.origin_table_id || activeTableId) &&
+      selection?.rowKey === (row.origin_row_key || row.key) ? 'selected' : '',
     channelTagSet(row.tags).has('CONVENTIONAL') ? '' : 'live-row-trunked'
   ].filter(Boolean).join(' ');
   const decodeQualityClass = (row) => {
@@ -20580,11 +20605,12 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       sortValue: channelTagText },
     { id: 'channel', label: 'Channel', render: (row) =>
       liveChannelValue(row, liveShowRowRemoteOrigin(tables.get(activeTableId))),
-      title: (row) => channelTagSet(row.tags).has('CONVENTIONAL') ? row.channel_name || '' : '',
-      className: channelStateClass, sortValue: (row) =>
-        channelTagSet(row.tags).has('CONVENTIONAL') ? (row.channel_name || '') : (row.lcn || ''),
-      reconcileKey: (row) => JSON.stringify([row.channel_name, row.lcn, row.remote_origin || null,
-        row.tags, liveShowRowRemoteOrigin(tables.get(activeTableId))]) },
+      title: (row) => row.channel_name || '', sortValue: (row) => row.channel_name || '',
+      reconcileKey: (row) => JSON.stringify([row.channel_name, row.entity_ref, row.remote_origin || null,
+        liveShowRowRemoteOrigin(tables.get(activeTableId))]) },
+    { id: 'lcn', label: 'LCN', render: (row) =>
+      channelTagSet(row.tags).has('CONVENTIONAL') ? '' : row.lcn ?? '',
+      className: channelStateClass, sortValue: (row) => row.lcn ?? '' },
     { id: 'frequency', label: 'MHz', fullLabel: 'Frequency MHz',
       render: (row) => frequency(row.frequency_hz), className: channelStateClass,
       sortValue: (row) => Number(row.frequency_hz || 0) },
@@ -20644,13 +20670,14 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     'No active channels observed' : 'No channels observed', {
     type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
     ...(guideMode ? { layout: { ...tableDefaults.layout('live-channels', columns), column_widths: {
-      status: 68, tags: 56, channel: 72, frequency: 88, signal: 92, 'decode-health': 110,
+      status: 68, tags: 56, channel: 150, lcn: 72, frequency: 88, signal: 92, 'decode-health': 110,
       source: 128, target: 132, decoder: 62 } } } : {}),
     sortable: false,
     rowClass: activityRowClass,
     onRowClick: (row) => {
-      const value = tables.get(activeTableId);
-      if (value) selectRow(value, row);
+      const value = tables.get(row.origin_table_id || activeTableId);
+      const original = row.origin_table_id ? value?.rows?.find(item => item.key === row.origin_row_key) : row;
+      if (value && original) selectRow(value, original);
     },
     wrapperClass: 'table-scroll', tableClass: 'channels-live-table ui-data-table-compact', mobileCards: true,
     layoutMenuHost: titleActions
@@ -20734,7 +20761,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     pickerEmpty.hidden = visibleTabs.length > 0;
   };
   const updatePickerSummary = () => {
-    const running = [...tables.values()].filter((value) => value.channel_running !== false).length;
+    const running = [...tables.values()].filter((value) => value.table_id !== 'classic' && value.channel_running !== false).length;
     pickerSummary.textContent = `${number(tables.size)} view${tables.size === 1 ? '' : 's'} · ` +
       `${number(running)} running`;
     updatePickerResults();
@@ -20751,7 +20778,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     selectedViewMeta.textContent = meta;
     pickerToggleLabel.textContent = label;
     selectedViewActions.replaceChildren();
-    if (value?.table_id !== 'conventional' && capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) {
+    if (!['conventional', 'classic'].includes(value?.table_id) && capabilityAllowed(ACCESS_CAPABILITIES.RADIO)) {
       const channelTarget = entityTarget(value?.entity_ref);
       const qualityTarget = entityTarget(value?.entity_ref, { channel: 'quality' });
       if (channelTarget) selectedViewActions.append(
@@ -20806,14 +20833,15 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     const nextSelection = liveDetailRowSelection(value, row);
     if (!nextSelection || liveDetailSelectionUnchanged(selection, nextSelection)) return;
     selection = nextSelection;
-    clearRowSelection.hidden = value.table_id !== 'conventional';
+    clearRowSelection.hidden = !['conventional', 'classic'].includes(activeTableId);
     if (renderSelection) liveTable.tableController.render();
     onSelectionChange(selection);
   };
 
   const showTable = (tableId, closeMobilePicker = false, persist = false) => {
-    const value = tables.get(tableId);
+    const value = tableId === 'classic' ? liveClassicTable(tables) : tables.get(tableId);
     if (!value) return;
+    if (tableId === 'classic') tables.set(tableId, value);
     activeTableId = tableId;
     clearSelection();
     if (persist) {
@@ -20850,7 +20878,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
   const updateVisibleRows = (value) => {
     if (value.table_id !== activeTableId) return;
     const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
-    reconcileSelection(displayed);
+    if (value.table_id !== 'classic') reconcileSelection(displayed);
     liveTable.tableController.reconcileRows(displayed.rows);
     updateSelectedView(value);
   };
@@ -20903,7 +20931,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       tab.dataset.tableId = value.table_id;
       tab.append(select);
       tabNodes.set(value.table_id, tab);
-      if(value.table_id === 'conventional') tabBar.prepend(tab);
+      if(value.table_id === 'classic') tabBar.prepend(tab);
       else tabBar.append(tab);
     }
     const label = value.title || value.channel_name || value.table_id;
@@ -20920,6 +20948,13 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     }
     const quality = tab.querySelector('.channels-tab-quality');
     const stateLabel = tab.querySelector('.channels-tab-state-label');
+    if (value.table_id === 'classic') {
+      quality.hidden = true;
+      stateLabel.textContent = 'Live';
+      select.setAttribute('aria-label', 'Show Classic live channels');
+      updateVisibleRows(value);
+      return;
+    }
     const currentControl = liveCurrentControlRow(value);
     const qualityObservedAt = Number(currentControl?.quality_observed_at_ms || 0);
     const qualityFresh = currentControl && value.control_active && qualityObservedAt > 0 &&
@@ -21011,7 +21046,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     if (activeTableId) return;
     const preferred = requestedChannel ? null : preferredTableId;
     const fallback = tables.has(preferred) ? preferred :
-      (tables.has('conventional') ? 'conventional' : tables.keys().next().value);
+      (tables.has('conventional') ? 'conventional' : [...tables.keys()].find(id => id !== 'classic') || 'classic');
     if (fallback) showTable(fallback);
   };
 
@@ -21023,7 +21058,7 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     if (activeTableId === tableId) {
       activeTableId = null;
       clearSelection();
-      const next = tables.has('conventional') ? 'conventional' : tables.keys().next().value;
+      const next = tables.has('conventional') ? 'conventional' : [...tables.keys()].find(id => id !== 'classic') || 'classic';
       if (next) showTable(next);
       else {
         liveTable.tableController.replaceRows([]);
@@ -21043,6 +21078,8 @@ function liveChannelsSection(onSelectionChange, options = {}) {
       if (value) upsertTable(value);
     });
     tableIds.filter((tableId) => !tables.has(tableId)).forEach(removeTable);
+    upsertTable(activeTableId === 'classic' ? liveClassicTable(tables) :
+      { table_id: 'classic', title: 'Classic', channel_running: true, rows: [] });
     applyingSnapshot = false;
     showFallbackTable();
     if (pickerSummaryDirty) {
@@ -21059,24 +21096,26 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     }
     // Capture every ordered update immediately; only presentation is coalesced.
     tables.set(value.table_id, value);
-    if (value.table_id === activeTableId && selection) {
-      reconcileSelection({ ...value, rows: livePresentedTableRows(value, presentation) });
+    if (value.table_id === selection?.tableId) {
+      reconcileSelection(activeTableId === 'classic' ? value :
+        { ...value, rows: livePresentedTableRows(value, presentation) });
     }
     presentationScheduler.queue(value.table_id);
   };
   const receiveRemoval = (tableId) => {
     tables.delete(tableId);
-    if (tableId === activeTableId) clearSelection(false);
+    if (tableId === selection?.tableId) clearSelection(false);
     if (tabNodes.has(tableId)) presentationScheduler.queue(tableId);
     else presentationScheduler.discard(tableId);
   };
 
+  upsertTable(liveClassicTable(tables));
   const activitySubscription = subscribeActivity({
     snapshot: (snapshot) => {
       const values = Array.isArray(snapshot?.tables) ? snapshot.tables : [];
       const tableIds = new Set(values.map((value) => String(value?.table_id || '')).filter(Boolean));
       [...tables.keys()].forEach((tableId) => {
-        if (!tableIds.has(tableId)) receiveRemoval(tableId);
+        if (tableId !== 'classic' && !tableIds.has(tableId)) receiveRemoval(tableId);
       });
       values.forEach(receiveTable);
     },
@@ -21135,7 +21174,6 @@ async function renderLive(workspaceOptions = {}) {
   const options = guideMode ? { ...workspaceOptions, uiState: sampleUiState,
     storeUiState: update => Object.assign(sampleUiState, update), registerConnection,
     presentation: { ...activeUserPreferences().presentation, show_only_active_trunked_channels: false,
-      show_control_decode_quality: true, show_voice_decode_quality: true,
       decode_quality_display_mode: 'compact', show_encryption_details: false } } : {
     registerConnection, storeUiState: createLiveUiStateWriter(renderContext)
   };
@@ -31919,35 +31957,33 @@ function openStatusIconSettings(returnFocusSelector = null) {
 function openLivePresentationSettings(returnFocusSelector = null) {
   const snapshot = userPreferenceController.snapshot();
   if (!snapshot.loaded) return;
+  const classic = liveChannelActivityActiveTableId === 'classic';
   let current = snapshot.preferences.presentation;
+  const displayed = liveViewPresentation(current, classic ? 'classic' : null);
   const form = node('form', 'admin-form live-presentation-form');
   const message = node('div', 'admin-form-message');
   message.setAttribute('role', 'status');
   const encryption = preferenceCheckbox('show-encryption-details', 'Show encryption algorithm and key ID',
     current.show_encryption_details,
     'Show the encryption algorithm and key ID reported in received signaling. A key ID is not encryption key material.');
-  const controlQuality = preferenceCheckbox('show-control-quality', 'Show control-channel decode quality',
-    current.show_control_decode_quality,
-    'Add the rolling control-channel quality reading to Live rows.');
-  const voiceQuality = preferenceCheckbox('show-voice-quality', 'Show voice-channel decode quality',
-    current.show_voice_decode_quality,
-    'Add call-level voice quality when enough frames have been received.');
   const activeOnly = preferenceCheckbox('show-only-active-trunked', 'Show only active trunked channels',
-    current.show_only_active_trunked_channels,
+    displayed.show_only_active_trunked_channels,
     'Hide inactive trunked rows. Conventional channels are always shown.');
   const callSort = preferenceSelect('live-channel-sort', [
     ['lcn', 'LCN'], ['order_appeared', 'Order appeared'], ['frequency', 'Frequency']
-  ], liveChannelSortMethod(current));
+  ], liveChannelSortMethod(displayed));
   const rowDensity = preferenceSelect('live-row-density', [['normal', 'Normal'], ['dense', 'Dense']],
     current.live_row_density);
   const retainLastCall = preferenceCheckbox('retain-last-call-on-idle', 'Retain the last call on idle rows',
-    current.retain_last_call_on_idle_rows,
+    displayed.retain_last_call_on_idle_rows,
     'Keep the last source, target, alias, talker, encryption algorithm, and key ID visible after a row becomes idle.');
   const clearIdleQuality = preferenceCheckbox('clear-idle-voice-quality',
-    'Clear voice quality when a row becomes idle', current.clear_voice_quality_when_idle,
+    'Clear voice quality when a row becomes idle', displayed.clear_voice_quality_when_idle,
     'Hide the completed call\'s voice-quality result after its row becomes idle.');
   const syncIdleRowOptions = () => {
-    const disabled = activeOnly.input.checked;
+    activeOnly.input.disabled = classic;
+    callSort.disabled = classic;
+    const disabled = classic || activeOnly.input.checked;
     [retainLastCall.input, clearIdleQuality.input].forEach((input) => {
       if (disabled) setUiToggle(input, false);
       input.disabled = disabled;
@@ -31969,9 +32005,8 @@ function openLivePresentationSettings(returnFocusSelector = null) {
   rowLimit.value = String(current.live_detail_row_limit);
   const apply = (presentation) => {
     current = presentation;
+    presentation = liveViewPresentation(presentation, classic ? 'classic' : null);
     setUiToggle(encryption.input, presentation.show_encryption_details);
-    setUiToggle(controlQuality.input, presentation.show_control_decode_quality);
-    setUiToggle(voiceQuality.input, presentation.show_voice_decode_quality);
     setUiToggle(activeOnly.input, presentation.show_only_active_trunked_channels);
     callSort.value = liveChannelSortMethod(presentation);
     rowDensity.value = presentation.live_row_density;
@@ -31996,9 +32031,11 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     formField('Row density', rowDensity),
     activeOnly.control, formField('Sort calls by', callSort,
       'Active-only view defaults to Order appeared; showing idle rows defaults to LCN.'),
-    node('p', 'ui-field-detail', 'Turn off “Show only active trunked channels” to use idle-row options.'),
+    node('p', 'ui-field-detail', classic ?
+      'Classic shows active trunked channels and all running conventional channels in order appeared. These choices are fixed in Classic.' :
+      'Turn off “Show only active trunked channels” to use idle-row options.'),
     retainLastCall.control, clearIdleQuality.control,
-    encryption.control, controlQuality.control, voiceQuality.control, fields);
+    encryption.control, fields);
   form.append(node('p', 'live-presentation-intro',
     snapshot.scope === 'guest' ? snapshot.persistence === 'memory' ? 'These choices apply for this page.' :
       'These choices are saved in this browser.' : 'These choices are saved with your account.'),
@@ -32012,8 +32049,6 @@ function openLivePresentationSettings(returnFocusSelector = null) {
     event.preventDefault();
     const submitted = {
       show_encryption_details: encryption.input.checked,
-      show_control_decode_quality: controlQuality.input.checked,
-      show_voice_decode_quality: voiceQuality.input.checked,
       decode_quality_display_mode: qualityMode.value,
       live_detail_row_limit: Number(rowLimit.value),
       show_only_active_trunked_channels: activeOnly.input.checked,
@@ -32022,6 +32057,10 @@ function openLivePresentationSettings(returnFocusSelector = null) {
       retain_last_call_on_idle_rows: !activeOnly.input.checked && retainLastCall.input.checked,
       clear_voice_quality_when_idle: !activeOnly.input.checked && clearIdleQuality.input.checked
     };
+    if (classic) {
+      for (const key of ['show_only_active_trunked_channels', 'live_channel_sort',
+        'retain_last_call_on_idle_rows', 'clear_voice_quality_when_idle']) submitted[key] = current[key];
+    }
     const densityOnly = Object.entries(submitted).every(([key, value]) =>
       key === 'live_row_density' || value === current[key]);
     await savePreferenceForm(workflow, modal, (preferences) => {

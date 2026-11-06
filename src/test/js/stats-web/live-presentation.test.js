@@ -57,6 +57,8 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('livePresentedRow')}
   ${functionSource('liveChannelSortMethod')}
   ${functionSource('liveCompareChannelRows')}
+  ${functionSource('liveViewPresentation')}
+  ${functionSource('liveClassicTable')}
   ${functionSource('livePresentedTableRows')}
   ${functionSource('liveIdentityRenderKey')}
   ${functionSource('liveDetailSelectionUnchanged')}
@@ -75,7 +77,7 @@ const behavior = vm.runInNewContext(`(() => {
   ${functionSource('groupIdentityLabel')}
   ${functionSource('activityTargetKind')}
   return { liveRowIsActive, livePresentedRow, liveChannelSortMethod, liveCompareChannelRows,
-    livePresentedTableRows,
+    livePresentedTableRows, liveClassicTable, liveViewPresentation,
     liveIdentityRenderKey, liveDetailSelectionUnchanged, liveRequestedChannelMatch,
     livePickerNavigationIndex, liveDetailsPanelPercent,
     liveRemoteOriginLabel,
@@ -442,7 +444,7 @@ assert.match(channels, /liveDetailSelectionUnchanged\(selection, nextSelection\)
   'Repeated snapshots must not redispatch an unchanged selected row');
 assert.match(channels, /liveTable\.tableController\.reconcileRows\(displayed\.rows\)/,
   'Live updates must reconcile stable row cells instead of rebuilding the table body');
-assert.match(channels, /if \(!tableIds\.has\(tableId\)\) receiveRemoval\(tableId\)/,
+assert.match(channels, /if \(tableId !== 'classic' && !tableIds\.has\(tableId\)\) receiveRemoval\(tableId\)/,
   'A resync must remove local tables absent from the authoritative snapshot');
 assert.match(channels,
   /const nextSelection = liveDetailSelectionAfterRowsChanged\(displayed, selection\)/,
@@ -471,9 +473,8 @@ assert.match(channels, /rowClass: activityRowClass/,
 assert.match(channels,
   /channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\) \? '' : 'live-row-trunked'/,
   'Only trunked rows may hide their LCN in the compact mobile presentation');
-assert.match(channelValue,
-  /const conventional = channelTagSet\(row\.tags\)\.has\('CONVENTIONAL'\);[\s\S]*const value = conventional \? liveConventionalChannelValue\(row\) :[\s\S]*String\(row\.lcn\)/,
-  'Conventional channel names must remain distinct from trunked LCN values');
+assert.match(channelValue, /const value = liveConventionalChannelValue\(row\)/,
+  'Channel names are distinct from the separate LCN column');
 assert.match(channelValue,
   /const remote = showRemoteOrigin \? liveRemoteOriginBadge\(row\.remote_origin\) : null;[\s\S]*wrapper\.append\(remote\)/,
   'Mixed Live rows keep their cloud badge without replacing the channel value');

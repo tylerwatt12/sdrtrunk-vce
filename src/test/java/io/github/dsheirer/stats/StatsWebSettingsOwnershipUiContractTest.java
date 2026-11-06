@@ -110,8 +110,8 @@ class StatsWebSettingsOwnershipUiContractTest
 
         assertTrue(livePresentation.contains("openReadOnlyModal('Live presentation'"));
         assertTrue(livePresentation.contains("show_encryption_details"));
-        assertTrue(livePresentation.contains("show_control_decode_quality"));
-        assertTrue(livePresentation.contains("show_voice_decode_quality"));
+        assertFalse(livePresentation.contains("show_control_decode_quality"));
+        assertFalse(livePresentation.contains("show_voice_decode_quality"));
         assertTrue(livePresentation.contains("decode_quality_display_mode"));
         assertTrue(livePresentation.contains("live_detail_row_limit"));
         assertTrue(livePresentation.contains("show_only_active_trunked_channels"));

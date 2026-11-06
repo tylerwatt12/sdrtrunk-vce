@@ -254,7 +254,7 @@ const TABLE_DEFAULTS = Object.freeze({
     grow: [...ALIAS_GROW, 'alias-list']
   },
   'live-channels': { widths: {
-    status: 105, tags: 100, channel: 150, frequency: 96, signal: 95,
+    status: 105, tags: 100, channel: 240, lcn: 100, frequency: 96, signal: 95,
     'decode-health': { normal: 105, detailed: 260 },
     source: 240, target: 240, decoder: 78, receiver: 180
   }, hidden: ['tags', 'receiver'], grow: ['channel', 'source', 'target'] },

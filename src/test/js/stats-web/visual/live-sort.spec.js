@@ -80,6 +80,7 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
       const url = new URL(typeof input === 'string' ? input : input.url, location.href);
       if (url.pathname === '/api/v1/live/multiplex/control') {
         const body = JSON.parse(options?.body || '{}');
+        window.fixtureSubscriptions = body.subscriptions;
         const requested = body.subscriptions?.channel_activity;
         const nextParameters = requested ? JSON.stringify(requested) : null;
         if (nextParameters !== activityParameters) {
@@ -93,7 +94,7 @@ async function openLive(page, theme = 'light', presentation = {}, liveSnapshot =
       activityParameters = null;
       const stream = new ReadableStream({
         start(controller) {
-          window.fixtureSendLiveSnapshot = () => controller.enqueue(frame(1, 'snapshot', liveSnapshot));
+          window.fixtureSendLiveSnapshot = (next = liveSnapshot) => controller.enqueue(frame(1, 'snapshot', next));
           controller.enqueue(frame(0, 'ready', { client_id: url.searchParams.get('client_id') }));
           window.fixtureSendLiveSnapshot();
         }
@@ -704,4 +705,101 @@ for (const theme of ['light']) {
       expect(app.receiverWrites).toEqual([]);
     });
   }
+}
+
+
+for (const [theme, width, height] of [['light', 1440, 950], ['dark', 1440, 950], ['dark', 390, 844]]) {
+  test(`Classic combines channels, locks its options and selects original details — ${theme} ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    const mixed = structuredClone(snapshot);
+    mixed.tables[0].channel_name = 'Metro North';
+    mixed.tables[0].entity_ref = { kind: 'channel', key: '11111111-1111-4111-8111-111111111111' };
+    mixed.tables[0].rows.forEach(row => Object.assign(row, { source_id: 101, target_id: 202,
+      source_alias: 'Engine 1', target_alias: 'Fire Dispatch', tags: ['VOICE'],
+      decode_health_pct: 98, vc_quality_pct: 94, vc_decoded_frames: 120 }));
+    mixed.tables.push({ table_id: 'metro-south', configuration_id: 'metro-south', title: 'Metro South',
+      channel_running: true, rows: [{ key: 'lcn-20', configuration_id: 'metro-south', lcn: 20,
+        frequency_hz: 851037500, status: 'CALL', activation_order: 4, tags: ['VOICE'],
+        source_id: 101, source_alias: 'Patrol 1', target_id: 202, target_alias: 'Police Dispatch' }] },
+      { table_id: 'conventional', title: 'Conventional', channel_running: true, rows: [
+        { key: 'idle', configuration_id: 'weather', channel_name: 'Weather', status: 'IDLE',
+          frequency_hz: 162550000, tags: ['CONVENTIONAL'], source_alias: 'Previous caller',
+          activation_order: 0 },
+        { key: 'active', configuration_id: 'fire', channel_name: 'Fireground', status: 'CALL',
+          frequency_hz: 154100000, tags: ['CONVENTIONAL'], activation_order: 5 }] },
+      { table_id: 'stopped', title: 'Stopped site', channel_running: false, rows: [
+        { key: 'stale', configuration_id: 'stopped', lcn: 1, status: 'CALL', activation_order: 6 }] });
+    const app = await openLive(page, theme, { show_only_active_trunked_channels: false,
+      live_channel_sort: 'frequency', retain_last_call_on_idle_rows: true,
+      clear_voice_quality_when_idle: true }, mixed);
+    if (width < 761) await page.locator('.live-picker-toggle').click();
+    await page.getByRole('tab', { name: 'Show Classic live channels', exact: true }).click();
+    const rows = page.locator('.channels-live-table tbody tr[data-id]');
+    await expect(rows).toHaveCount(6);
+    await expect.poll(() => rows.evaluateAll(nodes => nodes.map(node => JSON.parse(node.dataset.id))))
+      .toEqual([['metro-north', 'lcn-20'], ['metro-north', 'lcn-30'], ['metro-north', 'lcn-10'],
+        ['metro-south', 'lcn-20'], ['conventional', 'active'], ['conventional', 'idle']]);
+    await expect(rows.nth(3)).toContainText('Metro South');
+    await expect(rows.nth(3)).toContainText('Police Dispatch');
+    await expect(rows.nth(5)).toContainText('Weather');
+    await expect(rows.nth(5)).not.toContainText('Previous caller');
+    await expect(rows.nth(0).locator('[data-column="channel"]')).toContainText('Metro North');
+    await expect(rows.nth(0).locator('[data-column="lcn"]')).toHaveText('20');
+    await expect(rows.nth(0).locator('[data-column="channel"] a.live-channel-link'))
+      .toHaveAttribute('href', '/?view=channel&configuration_id=11111111-1111-4111-8111-111111111111');
+    await expect(rows.nth(0).locator('.live-decode-quality-text')).toHaveText('CC 98.0% · VC 94.0%');
+    if (width > 760) {
+      await page.locator('.live-channels-section').getByRole('button', { name: 'Choose table columns', exact: true }).click();
+      const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
+      const quality = chooser.getByRole('checkbox', { name: 'Show Decode % column', exact: true });
+      await quality.uncheck();
+      await expect(rows.nth(0).locator('[data-column="decode-health"]')).toHaveCount(0);
+      await quality.check();
+      await expect(rows.nth(0).locator('.live-decode-quality-text')).toHaveText('CC 98.0% · VC 94.0%');
+      await page.keyboard.press('Escape');
+    }
+    // Selecting a row switches only the one lower details panel to its actual channel.
+    await rows.nth(3).click();
+    if (width < 761) await page.getByRole('button', { name: 'Expand live details', exact: true }).click();
+    await expect.poll(() => page.evaluate(() => window.fixtureSubscriptions?.decode_events?.configuration_id))
+      .toBe('metro-south');
+    await rows.nth(0).click();
+    await expect.poll(() => page.evaluate(() => window.fixtureSubscriptions?.decode_events?.configuration_id))
+      .toBe('metro-north');
+    await rows.nth(5).click();
+    await expect.poll(() => page.evaluate(() => window.fixtureSubscriptions?.decode_events?.configuration_id))
+      .toBe('weather');
+    const dialog = await presentationDialog(page);
+    const activeOnly = dialog.getByRole('checkbox', { name: 'Show only active trunked channels', exact: true });
+    await expect(activeOnly).toBeChecked(); await expect(activeOnly).toBeDisabled();
+    await expect(dialog.getByRole('combobox', { name: /^Sort calls by/ })).toHaveValue('order_appeared');
+    await expect(dialog.getByRole('combobox', { name: /^Sort calls by/ })).toBeDisabled();
+    await expectIdleRowOptions(dialog, true);
+    await expect(dialog.getByRole('checkbox', { name: 'Show control-channel decode quality', exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole('checkbox', { name: 'Show voice-channel decode quality', exact: true })).toHaveCount(0);
+    await dialog.screenshot({ path: test.info().outputPath(`classic-settings-${theme}-${width}.png`) });
+    // Saving an unrelated preference must not overwrite the choices used by individual views.
+    await dialog.getByRole('combobox', { name: 'Row density', exact: true }).selectOption('dense');
+    await savePresentation(dialog);
+    expect(app.preferences().presentation).toMatchObject({ show_only_active_trunked_channels: false,
+      live_channel_sort: 'frequency', retain_last_call_on_idle_rows: true, clear_voice_quality_when_idle: true });
+    expect(app.preferences().presentation).not.toHaveProperty('show_voice_decode_quality');
+    expect(app.preferences().presentation).not.toHaveProperty('show_control_decode_quality');
+    await expect(rows).toHaveCount(6);
+    // A completed trunked row leaves Classic while its selected channel remains in the details panel.
+    await rows.nth(0).click();
+    const ended = structuredClone(mixed);
+    ended.revision = 2;
+    Object.assign(ended.tables[0].rows[2], { status: 'IDLE', activation_order: 0 });
+    await page.evaluate(next => window.fixtureSendLiveSnapshot(next), ended);
+    await expect(rows).toHaveCount(5);
+    await expect.poll(() => page.evaluate(() => window.fixtureSubscriptions?.decode_events?.configuration_id)).toBe('metro-north');
+    if (width < 761) await page.getByRole('button', { name: 'Collapse live details', exact: true }).click();
+    await page.locator('.channels-live .table-scroll').evaluate(element => { element.scrollTop = 0; });
+    await page.screenshot({ path: test.info().outputPath(`classic-${theme}-${width}.png`) });
+    await page.evaluate(() => window.fixtureSendLiveSnapshot({ revision: 3, tables: [] }));
+    await expect(rows).toHaveCount(0);
+    await expect(page.locator('.live-selected-view-title')).toHaveText('Classic');
+    await expect.poll(() => page.evaluate(() => window.fixtureSubscriptions?.decode_events?.configuration_id)).toBeUndefined();
+  });
 }
