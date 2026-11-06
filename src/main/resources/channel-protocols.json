@@ -132,7 +132,7 @@
       "sections":[
         {"id":"general","label":"General","fields":[{"path":"system","label":"System","type":"text","max_length":256},{"path":"site","label":"Site","type":"text","max_length":256},{"path":"name","label":"Name","type":"text","required":true,"max_length":256},{"path":"radio_resolve_id","label":"RadioResolve ID","type":"uuid","nullable":true},{"path":"alias_list_id","label":"Alias List","type":"dynamic_select","options_source":"alias_lists","required":true}]},
         {"id":"source","label":"Source","fields":[{"path":"source.frequencies_hz","label":"Frequency","type":"frequency_list","minimum_items":1,"maximum_items":1,"required":true},{"path":"source.preferred_tuner","label":"Preferred Tuner","type":"dynamic_select","options_source":"tuners","nullable":true}]},
-        {"id":"protocol","label":"Decoder","fields":[{"path":"settings.modulation","label":"Modulation","type":"enum","default":"CQPSK","options":[{"value":"C4FM","label":"C4FM"},{"value":"CQPSK","label":"CQPSK"}]}]},
+        {"id":"protocol","label":"Decoder","fields":[{"path":"settings.modulation","label":"Modulation","type":"enum","default":"C4FM","options":[{"value":"C4FM","label":"C4FM"},{"value":"CQPSK","label":"CQPSK"}]}]},
         {"id":"output","label":"Logging & Recording","fields":[{"path":"event_logs","label":"Event logs","type":"multi_select"},{"path":"recorders","label":"Recordings","type":"multi_select"}]}
       ]
     },
