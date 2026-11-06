@@ -54,6 +54,7 @@ public final class SpectrumSearchHardware
         default boolean fixedWindow() { return false; }
         boolean valid();
         <T> T handoff(long centerHz, Supplier<T> start);
+        void releaseBrowse();
         @Override void close();
     }
 
@@ -192,6 +193,14 @@ public final class SpectrumSearchHardware
                 return mSettings.handoffBrowse(selected, browseId, hold, start).join();
             }
             finally { closed = true; hold.close(); }
+        }
+
+        public void releaseBrowse()
+        {
+            // The hold has already closed. Release only this search's browse session.
+            if(!mSettings.ownsBrowse(selected, browseId)) return;
+            try { mSettings.releaseBrowse(selected, browseId, false).join(); }
+            catch(TunerSettingsService.BrowseOwnershipLostException ignored) { /* The old session is gone. */ }
         }
 
         public void close()

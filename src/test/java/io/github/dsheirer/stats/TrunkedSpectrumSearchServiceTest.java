@@ -164,6 +164,7 @@ class TrunkedSpectrumSearchServiceTest
         { observations++; return Arrays.stream(frequencies).mapToObj(f -> new SpectrumPeakDetector.Peak(f,-30,10,10)).toList(); }
         public P25DiscoveryProbe.Session probe(long frequency) { throw new AssertionError("Generic test seam owns checking"); }
         public boolean valid() { return valid; } public <T>T handoff(long center,Supplier<T> start) { valid = false; return start.get(); }
+        public void releaseBrowse() { }
         public void close() { valid = false; closes.incrementAndGet(); }
     }
     private static class Channels implements SpectrumSearchService.Channels
@@ -187,6 +188,7 @@ class TrunkedSpectrumSearchServiceTest
         public ChannelAdministrationService.DiscoveryCreated create(ChannelDefinition definition,io.github.dsheirer.module.decode.p25.P25SiteIdentity identity,String alias,long revision,boolean auto) { throw new AssertionError(); }
         public ChannelAdministrationService.DiscoveryCreated createTrunked(ChannelDefinition definition,TrunkedDiscoveryEvidence evidence,String alias,long expected,boolean auto)
         { assertEquals(revision,expected); saved = definition; revision++; return new ChannelAdministrationService.DiscoveryCreated("saved",definition.aliasListId() != 0 ? definition.aliasListId() : 1, createsAliasList && definition.aliasListId() == 0); }
+        public ChannelAdministrationService.LifecycleResult startSaved(String id) { throw new AssertionError(); }
         public ChannelAdministrationService.LifecycleResult start(String id,String tuner,Tuner runtime,boolean handoff) { throw new AssertionError(); }
     }
 }

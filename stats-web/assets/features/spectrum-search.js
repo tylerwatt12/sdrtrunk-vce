@@ -555,7 +555,10 @@ export function openSpectrumSearchWizard(ui, context = {}) {
       if (discoverySnapshotIsCurrent(observedJob || job, job, { active: current(), busy })) {
         if (previous && leaseRenewalLostOwnership(cause)) {
           if (lease?.lease_id === previous.lease_id) lease = null;
-          showExpired();
+          if (liveJob()) {
+            updateContext();
+            scheduleRenewal();
+          } else showExpired();
           return;
         }
         if (isExpired(cause)) showExpired();

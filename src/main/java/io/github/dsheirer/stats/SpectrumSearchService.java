@@ -38,7 +38,7 @@ public final class SpectrumSearchService implements AutoCloseable
     static final int MAX_CANDIDATES = 32;
     static final long MAX_TOTAL_HZ = 150_000_000;
     static final long MAX_SCAN_MS = 900_000;
-    static final long RESULT_AGE_MS = 900_000;
+    static final long MAX_RESERVATION_MS = 1_800_000;
     static final long IDLE_MS = 60_000;
     private final Object mLock = new Object();
     private final Channels mChannels;
@@ -100,6 +100,10 @@ public final class SpectrumSearchService implements AutoCloseable
             {
                 return channels.createDiscovered(definition, identity, aliasName, revision, autoStart);
             }
+            public ChannelAdministrationService.LifecycleResult startSaved(String id)
+            {
+                return channels.setProcessing(List.of(id), true).results().getFirst();
+            }
             public ChannelAdministrationService.LifecycleResult start(String id, String tunerId, Tuner runtime, boolean handoff)
             {
                 var selected = tuners.find(tunerId);
@@ -160,7 +164,8 @@ public final class SpectrumSearchService implements AutoCloseable
         {
             expireLocked();
             if(mClosed) throw new IllegalStateException("Signal search is unavailable");
-            if(mJob != null) throw new IllegalStateException("Another signal search is already in progress");
+            if(mJob != null && (!mJob.reservationReleased || mJob.commandBusy || mJob.cancelled.get()))
+                throw new IllegalStateException("Another signal search is already in progress");
             var lease = mHardware.open(tunerId, browseLeaseId);
             try
             {
@@ -174,6 +179,7 @@ public final class SpectrumSearchService implements AutoCloseable
                 job.worker = new Thread(() -> scan(job), "spectrum-search");
                 job.worker.setDaemon(true);
                 job.worker.setPriority(Thread.MIN_PRIORITY);
+                if(mJob != null) cancelLocked(mJob);
                 mJob = job;
                 job.worker.start();
                 return snapshot(job);
@@ -187,13 +193,7 @@ public final class SpectrumSearchService implements AutoCloseable
         synchronized(mLock)
         {
             Job job = requireJob(id);
-            job.expiresAt = Math.min(job.maximumExpiresAt, mClock.getAsLong() + IDLE_MS);
-            if(!job.handedOff && !job.commandBusy && "complete".equals(job.phase) && !job.lease.valid())
-            {
-                job.phase = "failed";
-                job.reason = "The search receiver changed. Run the search again.";
-                cancelLocked(job);
-            }
+            renewReservation(job);
             return snapshot(job);
         }
     }
@@ -311,7 +311,7 @@ public final class SpectrumSearchService implements AutoCloseable
 
     public Snapshot save(String id, SaveRequest request)
     {
-        Job job = beginCommand(id);
+        Job job = beginCommand(id, false);
         try
         {
             List<Row> selected = selected(job, request.candidates().stream().map(SaveCandidate::candidateId).toList());
@@ -328,7 +328,11 @@ public final class SpectrumSearchService implements AutoCloseable
                     throw new IllegalArgumentException("Choose an Alias List once for each selected system");
             long revision = mChannels.revision();
             if(request.revision() != revision)
+            {
+                refreshGroups(job);
+                job.revision = revision;
                 throw new ChannelAdministrationService.StaleRevisionException(request.revision(), revision);
+            }
             List<PendingSave> pending = new ArrayList<>();
             List<ChannelAdministrationService.DiscoveryRequest> prepared = new ArrayList<>();
             for(int index = 0; index < selected.size(); index++)
@@ -341,8 +345,6 @@ public final class SpectrumSearchService implements AutoCloseable
                 String name = edit.name() != null && !edit.name().isBlank() ? edit.name().strip() : row.name();
                 try
                 {
-                    if(mClock.getAsLong() - row.health.checkedAtMs() > RESULT_AGE_MS)
-                        throw new IllegalStateException("This result is too old. Run the search again");
                     row.known = mChannels.knownTrunked(row.evidence);
                     if(row.known == null) row.known = mChannels.known(row.frequency);
                     if(row.known != null)
@@ -442,7 +444,7 @@ public final class SpectrumSearchService implements AutoCloseable
 
     public Snapshot start(String id, List<String> candidateIds, String firstCandidateId)
     {
-        Job job = beginCommand(id);
+        Job job = beginCommand(id, true);
         try
         {
             List<Row> rows = selected(job, candidateIds);
@@ -455,7 +457,24 @@ public final class SpectrumSearchService implements AutoCloseable
             rows.stream().filter(row -> row != first).forEach(ordered::add);
             rows = ordered;
             if(rows.stream().allMatch(row -> row.running)) { synchronized(mLock) { return snapshot(job); } }
-            if(!job.handedOff)
+            if(job.reservationExpired || !job.handedOff && !job.lease.valid())
+            {
+                try
+                {
+                    releaseReservation(job);
+                    for(Row row: rows)
+                    {
+                        if(job.cancelled.get()) break;
+                        if(!row.running) startRow(row, () -> mChannels.startSaved(row.saved.configurationId()));
+                    }
+                }
+                catch(RuntimeException exception)
+                {
+                    rows.stream().filter(row -> !row.running).forEach(row -> row.startError =
+                        "The channel is saved. The search receiver could not be released; try again.");
+                }
+            }
+            else if(!job.handedOff)
             {
                 try { job.lease.handoff(probeCenter(first.frequency, job.lease), () -> { startRows(job, ordered); return null; }); }
                 catch(RuntimeException exception)
@@ -483,14 +502,20 @@ public final class SpectrumSearchService implements AutoCloseable
                 row.startError = "Saved for later: this frequency is outside the selected receiver's current window.";
                 continue;
             }
-            try
-            {
-                var result = mChannels.start(row.saved.configurationId(), job.tunerId, job.lease.tuner(), !job.handedOff);
-                row.running = result.success() && result.state() == ChannelAdministrationService.ProcessingState.RUNNING;
-                if(!row.running) row.startError = "The channel is saved but could not start on this receiver.";
-            }
-            catch(RuntimeException exception) { row.startError = "The channel is saved but the receiver is unavailable."; }
+            startRow(row, () -> mChannels.start(row.saved.configurationId(), job.tunerId, job.lease.tuner(), !job.handedOff));
         }
+    }
+
+    private static void startRow(Row row, Supplier<ChannelAdministrationService.LifecycleResult> start)
+    {
+        row.startError = null;
+        try
+        {
+            var result = start.get();
+            row.running = result.success() && result.state() == ChannelAdministrationService.ProcessingState.RUNNING;
+            if(!row.running) row.startError = "The channel is saved but could not start; open the channel to try later.";
+        }
+        catch(RuntimeException exception) { row.startError = "The channel is saved but the receiver is unavailable."; }
     }
 
     private void refreshGroups(Job job)
@@ -538,25 +563,55 @@ public final class SpectrumSearchService implements AutoCloseable
         try { closeActiveSession(); }
         finally { mExpiry.shutdownNow(); mDirectoryWorker.shutdownNow(); mAliasImporter.clear(); }
     }
-    private void expire()
+    void expire()
     {
         Job job;
-        synchronized(mLock) { expireLocked(); job = mJob != null && mJob.cancelled.get() ? mJob : null; }
-        if(job != null)
+        boolean cancelled;
+        synchronized(mLock)
         {
-            try
+            expireLocked();
+            job = mJob;
+            if(job == null) return;
+            cancelled = job.cancelled.get();
+            if(!cancelled && (!job.reservationExpired || job.startBusy || job.reservationReleased)) return;
+        }
+        try
+        {
+            if(cancelled)
             {
                 quiesce(job);
                 synchronized(mLock) { if(mJob == job) mJob = null; }
             }
-            catch(RuntimeException exception) { /* Keep ownership and retry cleanup on the next bounded expiry pass. */ }
+            else releaseReservation(job);
         }
+        catch(RuntimeException exception) { /* Retry cleanup on the next bounded expiry pass. */ }
     }
+
     private void expireLocked()
     {
-        if(mJob != null && mClock.getAsLong() > mJob.expiresAt &&
-            (!mJob.commandBusy || mClock.getAsLong() >= mJob.maximumExpiresAt)) cancelLocked(mJob);
+        if(mJob == null || mClock.getAsLong() < mJob.expiresAt) return;
+        if(mJob.resultsPublished) mJob.reservationExpired = true;
+        else cancelLocked(mJob);
     }
+
+    private void renewReservation(Job job)
+    {
+        if(!job.reservationExpired)
+            job.expiresAt = Math.min(job.reservationDeadline, mClock.getAsLong() + IDLE_MS);
+    }
+
+    private static void releaseReservation(Job job)
+    {
+        synchronized(job.cleanupLock)
+        {
+            if(job.reservationReleased) return;
+            closeLease(job);
+            job.lease.releaseBrowse();
+            job.reservationExpired = true;
+            job.reservationReleased = true;
+        }
+    }
+
     private void cancelLocked(Job job)
     {
         job.cancelled.set(true);
@@ -591,7 +646,7 @@ public final class SpectrumSearchService implements AutoCloseable
             throw new SearchExpiredException();
         return mJob;
     }
-    private Job beginCommand(String id)
+    private Job beginCommand(String id, boolean starting)
     {
         synchronized(mLock)
         {
@@ -600,9 +655,9 @@ public final class SpectrumSearchService implements AutoCloseable
                 "Restart VCE before adding or listening to more channels");
             if(!"complete".equals(job.phase)) throw new IllegalStateException("Finish searching before adding channels");
             if(job.commandBusy) throw new IllegalStateException("Another result operation is still running");
-            if(!job.handedOff && !job.lease.valid()) throw new IllegalStateException("The search receiver changed; begin again");
             job.commandBusy = true;
-            job.expiresAt = Math.min(job.maximumExpiresAt, mClock.getAsLong() + IDLE_MS);
+            job.startBusy = starting;
+            renewReservation(job);
             return job;
         }
     }
@@ -614,7 +669,9 @@ public final class SpectrumSearchService implements AutoCloseable
             synchronized(mLock)
             {
                 job.commandBusy = false;
-                job.expiresAt = Math.min(job.maximumExpiresAt, mClock.getAsLong() + IDLE_MS);
+                job.startBusy = false;
+                expireLocked();
+                renewReservation(job);
                 mLock.notifyAll();
             }
         }
@@ -644,7 +701,7 @@ public final class SpectrumSearchService implements AutoCloseable
             row.known, row.known == null && row.saved == null, row.saved != null,
             row.saved != null ? row.saved.configurationId() : null, row.saved != null ? row.saved.aliasListId() : null,
             row.autoStart, row.running, row.saveError, row.startError, row.evidence.protocolId(), row.evidence.variant(), row.evidence, row.directory)).toList() : List.of();
-        return new Snapshot(job.id, job.tunerId, job.lease.targetId(), job.phase, job.reason, job.truncatedReason, job.restartRequired, job.revision,
+        return new Snapshot(job.id, job.tunerId, job.targetId, job.phase, job.reason, job.truncatedReason, job.restartRequired, job.revision,
             job.expiresAt, new Progress(job.completedWindows, job.windows.size() * 2, job.currentFrequency,
                 job.checkedSignals, job.totalSignals), rows, complete ? List.copyOf(job.groups.values()) : List.of(),
             job.aliasImport.snapshot());
@@ -707,7 +764,7 @@ public final class SpectrumSearchService implements AutoCloseable
     {
         return peaks.stream().filter(peak -> Math.abs(peak.frequencyHz() - frequency) <= 6250).findFirst().orElse(null);
     }
-    private static String preferred(Job job) { return job.lease.tuner() != null ? job.lease.tuner().getPreferredName() : null; }
+    private static String preferred(Job job) { return job.preferredTuner; }
     private static P25DiscoveryProbe.Status check(SpectrumSearchHardware.Lease lease, long frequency,
                                                  BooleanSupplier cancelled) throws InterruptedException
     {
@@ -859,6 +916,7 @@ public final class SpectrumSearchService implements AutoCloseable
         ChannelAdministrationService.DiscoveryReview review(long frequency, String preferred, P25SiteIdentity identity, String modulation);
         ChannelAdministrationService.DiscoveryCreated create(ChannelDefinition definition, P25SiteIdentity identity,
             String aliasName, long revision, boolean autoStart);
+        ChannelAdministrationService.LifecycleResult startSaved(String id);
         ChannelAdministrationService.LifecycleResult start(String id, String tunerId, Tuner runtime, boolean handoff);
     }
     private static final class Job
@@ -866,10 +924,10 @@ public final class SpectrumSearchService implements AutoCloseable
         final String id = UUID.randomUUID().toString();
         io.github.dsheirer.service.radioreference.RadioReferenceDirectoryService.DiscoveryCatalog directoryCatalog;
         Integer stateId;
-        final String tunerId;
+        final String tunerId, targetId, preferredTuner;
         final SpectrumSearchHardware.Lease lease;
         final List<Range> ranges;
-        final long dwellMs, scanDeadline, maximumExpiresAt;
+        final long dwellMs, scanDeadline, reservationDeadline;
         final AtomicBoolean cancelled = new AtomicBoolean();
         final Object cleanupLock = new Object();
         final Map<String,Row> rows = new LinkedHashMap<>();
@@ -885,14 +943,19 @@ public final class SpectrumSearchService implements AutoCloseable
         volatile long revision;
         int completedWindows, checkedSignals, totalSignals;
         Long currentFrequency;
-        boolean commandBusy, resultsPublished;
+        boolean commandBusy, startBusy, resultsPublished;
+        volatile boolean reservationExpired, reservationReleased;
         boolean leaseReleased;
         volatile boolean handedOff;
         volatile boolean restartRequired;
         Job(String tunerId, SpectrumSearchHardware.Lease lease, List<Range> ranges, long dwellMs, long now)
         {
             this.tunerId = tunerId; this.lease = lease; this.ranges = ranges; this.dwellMs = dwellMs;
-            scanDeadline = now + MAX_SCAN_MS; maximumExpiresAt = scanDeadline + RESULT_AGE_MS; expiresAt = now + IDLE_MS;
+            targetId = lease.targetId();
+            preferredTuner = lease.tuner() != null ? lease.tuner().getPreferredName() : null;
+            scanDeadline = now + MAX_SCAN_MS;
+            reservationDeadline = now + MAX_RESERVATION_MS;
+            expiresAt = now + IDLE_MS;
         }
     }
     private static final class Row

@@ -2503,18 +2503,22 @@ test('renews the browse lease while a save is pending', async ({ page }) => {
   await expect(dialog(page)).toContainText('1 channel added');
 });
 
-test('a confirmed receiver lease conflict expires the search instead of retrying stale ownership', async ({ page }) => {
+test('completed results can be added after the receiver lease is lost', async ({ page }) => {
   await page.clock.install();
   const state = await install(page);
   await complete(page);
   state.failNextBrowseRenewConflict = true;
   await page.clock.fastForward(11000);
-  await expect(dialog(page).getByRole('heading', { name: 'This search expired' })).toBeVisible();
+  await expect.poll(() => state.failNextBrowseRenewConflict).toBe(false);
   const renewals = state.requests.filter((request) =>
     request.path === '/api/v1/admin/tuners/idle-b/browse' && request.body.lease_id === 'lease-1').length;
   await page.clock.fastForward(20000);
   expect(state.requests.filter((request) =>
     request.path === '/api/v1/admin/tuners/idle-b/browse' && request.body.lease_id === 'lease-1')).toHaveLength(renewals);
+  await dialog(page).getByRole('checkbox', { name: 'Select County North', exact: true }).check();
+  await dialog(page).getByRole('button', { name: /^Review \d+ channels?$/ }).click();
+  await addChannels(page);
+  await expect(dialog(page)).toContainText('1 channel added');
 });
 
 test('no idle receiver, failed search and empty results provide an actionable next step', async ({ page }) => {

@@ -682,23 +682,35 @@ class SpectrumSearchServiceTest
     }
 
     @Test
-    void saveMustFinishBeforeStartingAndOldEvidenceCannotCreateAChannel() throws Exception
+    void completedResultsCanBeSavedAndStartedAfterTheReservationDeadline() throws Exception
     {
         try(Fixture fixture = new Fixture(A))
         {
             var completed = fixture.complete(fixture.open().jobId());
-            assertThrows(IllegalStateException.class, () -> fixture.service.start(completed.jobId(),
-                List.of(completed.candidates().getFirst().candidateId()), null));
-            // Keep the review session alive while scan evidence itself becomes too old.
-            for(int step = 0; step < 16; step++)
+            var ids = List.of(completed.candidates().getFirst().candidateId());
+            assertThrows(IllegalStateException.class, () -> fixture.service.start(completed.jobId(), ids, null));
+            for(int step = 0; step < 30; step++)
             {
-                fixture.clock.addAndGet(59000);
+                fixture.clock.addAndGet(59_000);
                 fixture.service.status(completed.jobId());
             }
-            var result = fixture.service.save(completed.jobId(), saveRequest(completed, Map.of()));
-            assertFalse(result.candidates().getFirst().saved());
-            assertTrue(result.candidates().getFirst().saveError().contains("too old"));
-            assertEquals(0, fixture.channels.definitions.size());
+            assertTrue(fixture.lease.valid());
+            fixture.clock.addAndGet(30_000);
+            fixture.service.expire();
+            assertFalse(fixture.lease.valid());
+            assertEquals(1, fixture.lease.browseReleases.get());
+
+            var results = fixture.service.status(completed.jobId());
+            assertEquals("complete", results.phase());
+            var saved = fixture.service.save(completed.jobId(), saveRequest(results, Map.of()));
+            assertTrue(saved.candidates().getFirst().saved());
+            assertTrue(fixture.channels.normalStarts.isEmpty());
+            assertTrue(fixture.channels.starts.isEmpty());
+
+            var started = fixture.service.start(completed.jobId(), ids, null);
+            assertTrue(started.candidates().getFirst().running());
+            assertEquals(List.of(saved.candidates().getFirst().configurationId()), fixture.channels.normalStarts);
+            assertEquals(0, fixture.lease.handoffs.get());
         }
     }
 
@@ -752,21 +764,21 @@ class SpectrumSearchServiceTest
     }
 
     @Test
-    void receiverLossAfterSaveRetainsThePublishedCommitLedger() throws Exception
+    void receiverLossAllowsSavingAndRetainsThePublishedCommitLedger() throws Exception
     {
         try(Fixture fixture = new Fixture(A, B))
         {
             var completed = fixture.complete(fixture.open().jobId());
-            var saved = fixture.service.save(completed.jobId(), saveRequest(completed, Map.of()));
             fixture.lease.valid = false;
-            var failed = fixture.service.status(saved.jobId());
-            assertEquals("failed", failed.phase());
-            assertEquals(2, failed.candidates().size());
-            assertTrue(failed.candidates().stream().allMatch(SpectrumSearchService.Candidate::saved));
+            var saved = fixture.service.save(completed.jobId(), saveRequest(completed, Map.of()));
+            var retained = fixture.service.status(saved.jobId());
+            assertEquals("complete", retained.phase());
+            assertEquals(2, retained.candidates().size());
+            assertTrue(retained.candidates().stream().allMatch(SpectrumSearchService.Candidate::saved));
             assertEquals(saved.candidates().stream().map(SpectrumSearchService.Candidate::configurationId).toList(),
-                failed.candidates().stream().map(SpectrumSearchService.Candidate::configurationId).toList());
-            assertEquals(1, failed.aliasGroups().size());
-            assertFalse(failed.candidates().stream().anyMatch(SpectrumSearchService.Candidate::running));
+                retained.candidates().stream().map(SpectrumSearchService.Candidate::configurationId).toList());
+            assertEquals(1, retained.aliasGroups().size());
+            assertFalse(retained.candidates().stream().anyMatch(SpectrumSearchService.Candidate::running));
         }
     }
 
@@ -1180,6 +1192,9 @@ class SpectrumSearchServiceTest
         public boolean valid() { return valid; }
         public <T> T handoff(long frequency, Supplier<T> start)
         { handoffs.incrementAndGet(); center = frequency; try { return start.get(); } finally { valid = false; } }
+        final AtomicInteger browseReleases = new AtomicInteger();
+        public void releaseBrowse() { browseReleases.incrementAndGet(); }
+
         public void close()
         {
             closed.incrementAndGet();
@@ -1254,6 +1269,14 @@ class SpectrumSearchServiceTest
                 "saved-" + definitions.size(), aliasId);
             return new ChannelAdministrationService.DiscoveryCreated("saved-" + definitions.size(), aliasId);
         }
+        final List<String> normalStarts = new ArrayList<>();
+
+        public ChannelAdministrationService.LifecycleResult startSaved(String id)
+        {
+            normalStarts.add(id);
+            return new ChannelAdministrationService.LifecycleResult(id, true, ChannelAdministrationService.ProcessingState.RUNNING, null);
+        }
+
         public ChannelAdministrationService.LifecycleResult start(String id, String tunerId, Tuner runtime, boolean handoff)
         {
             assertEquals("test-receiver", tunerId);
