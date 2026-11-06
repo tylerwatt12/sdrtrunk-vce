@@ -727,7 +727,11 @@ test('automatic Live table fallbacks preserve the explicit preferred table', () 
     let liveChannelActivityActiveTableId = null;
     const saveUiState = value => writes.push(value);
     const clearSelection = () => {}, updateSelectedView = () => {}, closePicker = () => {};
-    const presentation = {}, liveTable = { tableController: { replaceRows() {} } };
+    const presentation = {};
+    const makeLiveTable = () => ({ tableController: { replaceRows() {} } });
+    const host = { replaceChildren() {} };
+    const cleanupTableLayoutMenu = () => {};
+    let layoutType = 'live-channels', liveTable = makeLiveTable();
     ${show};
     ${fallback};
     return { showTable, showFallbackTable, writes,

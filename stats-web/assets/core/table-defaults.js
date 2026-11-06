@@ -52,6 +52,16 @@ const RETAINED_BANDS = {
   grow: ['item']
 };
 
+const LIVE_CHANNELS = {
+  widths: {
+    status: 105, tags: 100, channel: 240, lcn: 100, frequency: 96, signal: 95,
+    'decode-health': { normal: 105, detailed: 260 },
+    source: 240, target: 240, decoder: 78, receiver: 180
+  },
+  hidden: ['tags', 'receiver'],
+  grow: ['channel', 'source', 'target']
+};
+
 const TABLE_DEFAULTS = Object.freeze({
   'tuner-allocation-decisions': {
     widths: { outcome: 165, site: 200, time: 135, reason: 320, action: 128 },
@@ -254,11 +264,8 @@ const TABLE_DEFAULTS = Object.freeze({
     widths: { ...ALIAS_WIDTHS, 'alias-list': 210, family: 120 },
     grow: [...ALIAS_GROW, 'alias-list']
   },
-  'live-channels': { widths: {
-    status: 105, tags: 100, channel: 240, lcn: 100, frequency: 96, signal: 95,
-    'decode-health': { normal: 105, detailed: 260 },
-    source: 240, target: 240, decoder: 78, receiver: 180
-  }, hidden: ['tags', 'receiver'], grow: ['channel', 'source', 'target'] },
+  'live-channels': LIVE_CHANNELS,
+  'live-channels.trunked': { ...LIVE_CHANNELS, hidden: [...LIVE_CHANNELS.hidden, 'channel'] },
   'alias-editor-configure': {
     widths: ALIAS_WIDTHS, grow: ALIAS_GROW
   },

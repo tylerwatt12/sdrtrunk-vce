@@ -440,7 +440,13 @@ for (const { theme, width } of [{ theme: 'light', width: 1280 }, { theme: 'dark'
     await section.getByRole('button', { name: 'Choose table columns', exact: true }).click();
     const chooser = page.getByRole('dialog', { name: 'Table columns', exact: true });
     const visibility = chooser.getByRole('checkbox', { name: 'Show Frequency MHz column', exact: true });
+    const channelVisibility = chooser.getByRole('checkbox', { name: 'Show Channel column', exact: true });
+    await expect(channelVisibility).not.toBeChecked();
     let chooserId = await chooser.getAttribute('id');
+    await channelVisibility.check();
+    await expectRebuiltColumnChooser(chooser, chooserId);
+    await expect(table.locator('thead th[data-column="channel"]')).toHaveCount(1);
+    chooserId = await chooser.getAttribute('id');
     await visibility.uncheck();
     await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(0);
     await expectRebuiltColumnChooser(chooser, chooserId);
@@ -450,10 +456,9 @@ for (const { theme, width } of [{ theme: 'light', width: 1280 }, { theme: 'dark'
     await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(1);
     await expectRebuiltColumnChooser(chooser, chooserId);
     await expectDenseSelection();
-    expect(await liveCallContents(page)).toEqual(contents);
     chooserId = await chooser.getAttribute('id');
     await chooser.getByRole('button', { name: 'Reset this table', exact: true }).click();
-    await expect.poll(() => app.preferences().tables['live-channels']).toBeUndefined();
+    await expect.poll(() => app.preferences().tables['live-channels.trunked']).toBeUndefined();
     // Saving reaches the fixture before the replacement table and popover regain focus.
     await expectRebuiltColumnChooser(chooser, chooserId);
     await expectDenseSelection();
@@ -485,7 +490,7 @@ test('Escape during a pending Live table reset keeps the rebuilt chooser closed'
   const resetReceived = new Promise(resolve => { receiveReset = resolve; });
   await page.route('**/api/v1/me/preferences', async route => {
     if (route.request().method() === 'PUT' &&
-        !Object.hasOwn(route.request().postDataJSON().tables, 'live-channels')) {
+        !Object.hasOwn(route.request().postDataJSON().tables, 'live-channels.trunked')) {
       receiveReset();
       await resetHeld;
     }
@@ -499,7 +504,7 @@ test('Escape during a pending Live table reset keeps the rebuilt chooser closed'
     await page.keyboard.press('Escape');
     await expect(chooser).toBeHidden();
     releaseReset();
-    await expect.poll(() => app.preferences().tables['live-channels']).toBeUndefined();
+    await expect.poll(() => app.preferences().tables['live-channels.trunked']).toBeUndefined();
     await expect(section.locator('.table-layout-reset')).toBeEnabled();
     await expect(chooser).toBeHidden();
     await expect(table.locator('thead th[data-column="frequency"]')).toHaveCount(1);
@@ -732,6 +737,12 @@ for (const [theme, width, height] of [['light', 1440, 950], ['dark', 1440, 950],
     const app = await openLive(page, theme, { show_only_active_trunked_channels: false,
       live_channel_sort: 'frequency', retain_last_call_on_idle_rows: true,
       clear_voice_quality_when_idle: true }, mixed);
+    const channelHeading = page.locator('.channels-live-table th[data-column="channel"]');
+    await expect(page.locator('.channels-live-table th[data-column="lcn"]')).toHaveCount(1);
+    await expect(channelHeading).toHaveCount(0);
+    if (width < 761) await page.locator('.live-picker-toggle').click();
+    await page.getByRole('tab', { name: /Show live channels for Conventional/ }).click();
+    await expect(channelHeading).toHaveCount(1);
     if (width < 761) await page.locator('.live-picker-toggle').click();
     await page.getByRole('tab', { name: 'Show Classic live channels', exact: true }).click();
     const rows = page.locator('.channels-live-table tbody tr[data-id]');

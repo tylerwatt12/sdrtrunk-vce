@@ -269,8 +269,8 @@ test('dedicated remote Live detail has one origin cue; mixed rows retain theirs'
   await expect(selected.locator('.live-selected-view-title')).toContainText('Metro North');
   await expect(selected.locator('.live-selected-view-title .live-remote-origin')).toHaveCount(0);
   await expect(selected.locator('.live-selected-view-meta')).not.toContainText('Received from another receiver.');
-  await expect(selected.locator('td[data-column="channel"]')).toHaveCount(2);
-  await expect(selected.locator('td[data-column="channel"] .live-remote-origin')).toHaveCount(0);
+  await expect(selected.locator('td[data-column="channel"]')).toHaveCount(0);
+  await expect(selected.locator('td[data-column="lcn"]')).toHaveCount(2);
   await expect(selected).toHaveScreenshot('live-selected-remote-detail-light.png');
 
   // The floating desktop dock can be reduced to inspect the page beneath it.

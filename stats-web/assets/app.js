@@ -6,7 +6,7 @@ import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=4';
 import * as tableLayouts from './core/table-layout.js?v=7';
-import * as tableDefaults from './core/table-defaults.js?v=35';
+import * as tableDefaults from './core/table-defaults.js?v=36';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=3';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -20659,10 +20659,10 @@ function liveChannelsSection(onSelectionChange, options = {}) {
   let pickerTabSequence = 0;
   let selectedViewSignature = '';
   let pickerSummaryDirty = false;
-  const liveTable = makeTable([], columns, presentation.show_only_active_trunked_channels ?
+  const makeLiveTable = (layoutType, rows) => makeTable(rows, columns, presentation.show_only_active_trunked_channels ?
     'No active channels observed' : 'No channels observed', {
-    type: 'live-channels', widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
-    ...(guideMode ? { layout: { ...tableDefaults.layout('live-channels', columns), column_widths: {
+    type: layoutType, widthVariant: decodeDisplay.mode, rowKey: (row) => row.key,
+    ...(guideMode ? { layout: { ...tableDefaults.layout(layoutType, columns), column_widths: {
       status: 68, tags: 56, channel: 150, lcn: 72, frequency: 88, signal: 92, 'decode-health': 110,
       source: 128, target: 132, decoder: 62 } } } : {}),
     sortable: false,
@@ -20675,6 +20675,8 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     wrapperClass: 'table-scroll', tableClass: 'channels-live-table ui-data-table-compact', mobileCards: true,
     layoutMenuHost: titleActions
   });
+  let layoutType = 'live-channels';
+  let liveTable = makeLiveTable(layoutType, []);
   const host = node('div', 'channels-live');
   host.id = 'live-channel-table-panel';
   host.setAttribute('role', 'tabpanel');
@@ -20836,14 +20838,24 @@ function liveChannelsSection(onSelectionChange, options = {}) {
     if (!value) return;
     if (tableId === 'classic') tables.set(tableId, value);
     activeTableId = tableId;
-    clearSelection();
+    clearSelection(false);
     if (persist) {
       preferredTableId = tableId;
       saveUiState({ active_channel_table_id: tableId });
     }
     if (!guideMode) liveChannelActivityActiveTableId = tableId;
     const displayed = { ...value, rows: livePresentedTableRows(value, presentation) };
-    liveTable.tableController.replaceRows(displayed.rows);
+    const nextLayoutType = ['conventional', 'classic'].includes(tableId) ?
+      'live-channels' : 'live-channels.trunked';
+    if (nextLayoutType !== layoutType) {
+      cleanupTableLayoutMenu(liveTable.tableController);
+      liveTable.tableController.widthObserver?.disconnect();
+      layoutType = nextLayoutType;
+      liveTable = makeLiveTable(layoutType, displayed.rows);
+      host.replaceChildren(liveTable);
+    } else {
+      liveTable.tableController.replaceRows(displayed.rows);
+    }
     const currentControl = displayed.control_active ? liveCurrentControlRow(displayed) : null;
     if (currentControl) selectRow(displayed, currentControl);
     tabNodes.forEach((tab, id) => {
