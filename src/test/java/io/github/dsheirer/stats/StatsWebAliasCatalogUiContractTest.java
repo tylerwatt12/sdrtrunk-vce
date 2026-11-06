@@ -137,9 +137,9 @@ class StatsWebAliasCatalogUiContractTest
             "color", "icon", "matcher", "matcher-type", "identity-type", "protocol", "protocol-variant",
             "identifier", "exact", "ranged", "value", "minimum", "maximum", "text-value",
             "numeric-value", "tone-sequence", "scan-lists", "record", "broadcast-channels",
-            "stream-as-talkgroup", "behavior", "overlap"})
+            "stream-as-talkgroup", "overlap"})
         {
-            assertTrue(configuration.contains("'" + facet + "'"), () -> "Missing custom Alias facet " + facet);
+            assertTrue((configuration + function(source, "function aliasCallHandlingColumns()")).contains("'" + facet + "'"), () -> "Missing custom Alias facet " + facet);
         }
     }
 

@@ -7,10 +7,11 @@ const table = (page) => page.locator('.alias-editor-table-host table');
 const rowIds = (page) => table(page).locator('tbody tr').evaluateAll(rows => rows.map(row => row.dataset.id));
 const search = (page) => page.locator('.alias-editor-filter-toolbar input[name="q"]');
 
-async function installAliases(page, { paged = false, pageSize = 100 } = {}) {
+async function installAliases(page, { paged = false, pageSize = 100, theme = 'light' } = {}) {
   await page.setViewportSize({ width: 1280, height: 900 });
   const preferences = structuredClone((await import(pathToFileURL(resolve(__dirname,
     '../../../../../stats-web/assets/core/preference-schema.js')).href)).defaults);
+  preferences.appearance.theme = theme;
   await page.addInitScript(() => {
     for (const id of ['welcome', 'channel-setup', 'aliases']) {
       localStorage.setItem(`sdrtrunk-vce-guide:v1:alias-admin:alias-view-tabs-fixture:${id}:${id === 'aliases' ? 5 : id === 'channel-setup' ? 4 : 1}`, '1');
@@ -20,7 +21,11 @@ async function installAliases(page, { paged = false, pageSize = 100 } = {}) {
     alias_count: paged ? 202 : 102, assigned_channel_count: 0 };
   const aliases = paged ? Array.from({ length: 202 }, (_, index) => ({
     alias_id: index + 1, alias_list_id: 1, name: `Fire Unit ${String(index + 1).padStart(3, '0')}`,
-    group: 'Fire', matcher_type: 'TALKGROUP', identifier_display: `TG ${index + 1}`, recordable: true,
+    group: 'Fire', matcher_type: 'TALKGROUP', identifier_display: `TG ${index + 1}`,
+    description: index % 3 ? 'County fire operations' : null,
+    scan_lists: index % 3 ? ['Dispatch', 'Fireground'].slice(0, index % 3) : [],
+    record_enabled: index % 2, broadcast_channels: index % 2 ? ['County feed'] : [],
+    stream_as_talkgroup: index % 2 ? 1201 : null,
     logical_call_count: 300 - index, signaling_observation_count: (index + 1) * 2,
     last_evidence_ms: 1_700_000_000_000
   })) : [
@@ -45,8 +50,16 @@ async function installAliases(page, { paged = false, pageSize = 100 } = {}) {
         ordered = ordered.filter(alias => (!q || alias.name.toLowerCase().includes(q)) &&
           (!url.searchParams.get('group') || alias.group === url.searchParams.get('group')));
         const key = url.searchParams.get('sort') || 'name';
-        ordered.sort((left, right) => key === 'name' ? left.name.localeCompare(right.name) : Number(left[key]) - Number(right[key]));
-        if (url.searchParams.get('direction') === 'desc') ordered.reverse();
+        const direction = url.searchParams.get('direction') === 'desc' ? -1 : 1;
+        const value = alias => key === 'scan_lists' ? alias.scan_lists.length :
+          key === 'stream_destinations' ? alias.broadcast_channels.length :
+            key === 'record' ? alias.record_enabled : alias[key];
+        ordered.sort((left, right) => {
+          const a = value(left), b = value(right);
+          if (a == null || b == null) return a == null && b == null ? left.alias_id - right.alias_id : a == null ? 1 : -1;
+          const comparison = typeof a === 'string' ? a.localeCompare(b) : Number(a) - Number(b);
+          return comparison * direction || left.alias_id - right.alias_id;
+        });
       }
       const offset = paged ? Number(url.searchParams.get('offset') || 0) : 100;
       const limit = paged ? pageSize : 100;
@@ -114,11 +127,11 @@ test('Explicit name order keeps the current Alias results when switching column 
   await views.getByRole('link', { name: 'Custom' }).click();
   await expect(views.getByRole('link', { name: 'Custom' })).toHaveAttribute('aria-current', 'page');
   await expect(table).toHaveAttribute('data-table-type', 'alias-editor-custom');
-  await expect(table.locator('th[data-column="behavior"]')).toHaveCount(0);
+  await expect(table.locator('th[data-column="record"]')).toHaveCount(0);
   expect(await rowIds()).toEqual(['101', '102']);
   await views.getByRole('link', { name: 'Configure' }).click();
   await expect(views.getByRole('link', { name: 'Configure' })).toHaveAttribute('aria-current', 'page');
-  await expect(table.locator('th[data-column="behavior"]')).toBeVisible();
+  await expect(table.locator('th[data-column="record"]')).toBeVisible();
   expect(aliasQueries).toHaveLength(2);
   for (const query of aliasQueries) {
     const parameters = new URLSearchParams(query);
@@ -225,7 +238,7 @@ test('Explicit Calls sorting carries across Alias tabs without replacing the cur
   await views(page).getByRole('link', { name: 'Custom', exact: true }).click();
   await expect(table(page)).toHaveAttribute('data-table-type', 'alias-editor-custom');
   await views(page).getByRole('link', { name: 'Configure', exact: true }).click();
-  await expect(table(page).locator('th[data-column="behavior"]')).toBeVisible();
+  await expect(table(page).locator('th[data-column="record"]')).toBeVisible();
   expect(await rowIds(page)).toEqual(expected);
   expect(queries).toHaveLength(2);
   for (const query of queries) {
@@ -271,9 +284,42 @@ test('Explicit name paging preserves its order through tabs and browser history'
   await expectRows(page, ['5', '6']);
   await expectTabRoute(page, 'Configure', { sort: 'name', direction: 'asc', offset: 4 });
   await views(page).getByRole('link', { name: 'Configure', exact: true }).click();
-  await expect(table(page).locator('th[data-column="behavior"]')).toBeVisible();
+  await expect(table(page).locator('th[data-column="record"]')).toBeVisible();
   await expectRows(page, ['5', '6']);
   expect(currentRoute(page).get('sort')).toBe('name');
   expect(currentRoute(page).get('direction')).toBe('asc');
   expect(currentRoute(page).get('offset')).toBe('4');
 });
+
+for (const appearance of [
+  { theme: 'light', width: 1440, height: 900 },
+  { theme: 'dark', width: 390, height: 844 }
+]) {
+  test(`Configure sorts each separate call handling column (${appearance.theme}, ${appearance.width}px)`, async ({ page }) => {
+    const queries = await installAliases(page, { paged: true, theme: appearance.theme });
+    await page.setViewportSize({ width: appearance.width, height: appearance.height });
+    await page.emulateMedia({ colorScheme: appearance.theme });
+    await page.goto('/app.html?view=aliases&list=1&aliasTab=configure&offset=100');
+    await expect(table(page).locator('tbody tr')).toHaveCount(100);
+    await expect(table(page).locator('th[data-column="behavior"]')).toHaveCount(0);
+    await expect(table(page).locator('th[data-column="overlap"] a')).toHaveCount(0);
+    for (const [column, sort] of [
+      ['description', 'description'], ['scan-lists', 'scan_lists'], ['record', 'record'],
+      ['broadcast-channels', 'stream_destinations'], ['stream-as-talkgroup', 'stream_as_talkgroup']
+    ]) {
+      for (const direction of ['desc', 'asc']) {
+        const header = table(page).locator(`th[data-column="${column}"]`);
+        await header.locator('a').click();
+        await expect(header).toHaveAttribute('aria-sort', direction === 'desc' ? 'descending' : 'ascending');
+        const query = new URLSearchParams(queries.at(-1));
+        expect(query.get('sort')).toBe(sort);
+        expect(query.get('direction')).toBe(direction);
+        expect(query.get('offset')).toBeNull();
+        expect(query.get('limit')).toBe('100');
+        expect(query.get('include_activity')).toBe('false');
+      }
+    }
+    await table(page).locator('th[data-column="stream-as-talkgroup"]').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `build/alias-config-${appearance.theme}.png` });
+  });
+}

@@ -18,9 +18,10 @@ const COLUMN_WIDTHS = Object.freeze({
 
 const ALIAS_WIDTHS = Object.freeze({
   select: 48, alias: 190, description: 260, identifier: 180,
-  matcher: 120, group: 180, behavior: 145, overlap: 92
+  matcher: 120, group: 180, 'scan-lists': 190, record: 90,
+  'broadcast-channels': 210, 'stream-as-talkgroup': 180, overlap: 92
 });
-const ALIAS_GROW = ['alias', 'description', 'group', 'behavior'];
+const ALIAS_GROW = ['alias', 'description', 'group', 'scan-lists', 'broadcast-channels'];
 const ACTIVITY_DEFAULTS = {
   widths: { duration: 88, action: 110, event: 180, tones: 280, source: 240, target: 240, channel: 320, related: 120 },
   hidden: ['tones', 'encryption'],

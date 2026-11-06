@@ -80,15 +80,30 @@ final class StatsAliasCatalog
             ELSE ''
         END
         """.strip();
-    private static final Map<String,String> SORT_COLUMNS = Map.of(
-        "name", "lower(coalesce(alias.name, ''))",
-        "list", "lower(alias_list.name)",
-        "family", "alias_list.family",
-        "type", "identity_type",
-        "matcher", "alias.matcher_type",
-        "value", IDENTIFIER_SORT_SQL,
-        "group", "lower(coalesce(alias.group_name, ''))"
+    // Membership primary/unique keys start with alias_id: each count is an indexed lookup.
+    // Keep configuration sorting independent of call history and hydrate collections only after paging.
+    private static final Map<String,String> SORT_COLUMNS = Map.ofEntries(
+        Map.entry("name", "lower(coalesce(alias.name, ''))"),
+        Map.entry("list", "lower(alias_list.name)"),
+        Map.entry("family", "alias_list.family"),
+        Map.entry("type", "identity_type"),
+        Map.entry("matcher", "alias.matcher_type"),
+        Map.entry("value", IDENTIFIER_SORT_SQL),
+        Map.entry("group", "lower(coalesce(alias.group_name, ''))"),
+        Map.entry("description", "lower(nullif(trim(alias.description), ''))"),
+        Map.entry("record", "alias.record_enabled"),
+        Map.entry("scan_lists", "(SELECT count(*) FROM alias_scan_list_membership membership " +
+            "WHERE membership.alias_id = alias.id)"),
+        Map.entry("stream_destinations", "(SELECT count(*) FROM alias_broadcast_channel route " +
+            "WHERE route.alias_id = alias.id)"),
+        Map.entry("stream_as_talkgroup", "alias.stream_as_talkgroup")
     );
+
+    private static boolean nullableConfigurationSort(String sort)
+    {
+        return "description".equals(sort) || "stream_as_talkgroup".equals(sort);
+    }
+
     private static final Map<String,String> METRIC_SORT_FIELDS = Map.ofEntries(
         Map.entry("logical_call_count", "logical_call_count"),
         Map.entry("recorded_logical_call_count", "recorded_logical_call_count"),
@@ -599,7 +614,12 @@ final class StatsAliasCatalog
             }
 
             String direction = request.descending(false) ? " DESC" : " ASC";
-            sql.append(" ORDER BY ").append(sort).append(direction).append(", alias.id ASC LIMIT ? OFFSET ?");
+            sql.append(" ORDER BY ");
+            if(nullableConfigurationSort(requestedSort))
+            {
+                sql.append(sort).append(" IS NULL ASC, ");
+            }
+            sql.append(sort).append(direction).append(", alias.id ASC LIMIT ? OFFSET ?");
         }
         parameters.add(limit);
         parameters.add(offset);
@@ -847,6 +867,13 @@ final class StatsAliasCatalog
                 case "matcher" -> "matcher_type";
                 case "value" -> "_identifier_sort";
                 case "group" -> "lower(coalesce(`group`, ''))";
+                case "description" -> "lower(nullif(trim(description), ''))";
+                case "record" -> "record_enabled";
+                case "stream_as_talkgroup" -> "stream_as_talkgroup";
+                case "scan_lists" -> "(SELECT count(*) FROM alias_scan_list_membership membership " +
+                    "WHERE membership.alias_id = activity_alias.alias_id)";
+                case "stream_destinations" -> "(SELECT count(*) FROM alias_broadcast_channel route " +
+                    "WHERE route.alias_id = activity_alias.alias_id)";
                 default -> throw new StatsApiException(400, "invalid_parameter", "sort is not supported", "sort");
             };
         }
@@ -863,7 +890,7 @@ final class StatsAliasCatalog
                 .append(" AS _page_sort FROM activity_alias WHERE 1=1");
             addMetricFilters(sql, parameters, request);
             sql.append(" ORDER BY ");
-            if(metricSort && !descending)
+            if((metricSort && !descending) || nullableConfigurationSort(requestedSort))
             {
                 sql.append(sort).append(" IS NULL ASC, ");
             }
@@ -871,7 +898,7 @@ final class StatsAliasCatalog
             parameters.add(limit);
             parameters.add(offset);
             sql.append(" SELECT activity_alias.* FROM page_alias JOIN activity_alias USING(alias_id) ORDER BY ");
-            if(metricSort && !descending)
+            if((metricSort && !descending) || nullableConfigurationSort(requestedSort))
             {
                 sql.append("page_alias._page_sort IS NULL ASC, ");
             }
@@ -888,9 +915,8 @@ final class StatsAliasCatalog
             }
             else
             {
-                //SQLite naturally places NULL after every numeric value for descending order.  The explicit
-                //discriminator is only needed for ascending order, where product semantics require NULL last.
-                if(metricSort && !descending)
+                //Keep unavailable metric values and empty configuration values after populated values.
+                if((metricSort && !descending) || nullableConfigurationSort(requestedSort))
                 {
                     sql.append(sort).append(" IS NULL ASC, ");
                 }

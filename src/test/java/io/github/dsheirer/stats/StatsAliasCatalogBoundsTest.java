@@ -118,6 +118,126 @@ class StatsAliasCatalogBoundsTest
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void configurationSortsStayBoundedWithOneHundredThousandPopulatedAliases() throws Exception
+    {
+        Path database = mTemporaryFolder.resolve("configuration-sorts.sqlite");
+        SdrTrunkTestDatabase.create(database);
+        try(Connection connection = StatsPairedTestDatabase.open(database);
+            Statement statement = connection.createStatement())
+        {
+            statement.executeUpdate("DELETE FROM alias_list_unmatched_talkgroup_scan_list_membership");
+            statement.executeUpdate("DELETE FROM alias");
+            statement.executeUpdate("DELETE FROM alias_list");
+            statement.executeUpdate("DELETE FROM scan_list");
+            statement.executeUpdate("INSERT INTO alias_list(id,name,family) VALUES (1,'Large','DMR')");
+            statement.executeUpdate("""
+                INSERT INTO scan_list(id,sort_order,name,published,is_default)
+                VALUES (1,0,'Dispatch',1,0),(2,1,'Fire',1,0)
+                """);
+            for(int destination = 1; destination <= 3; destination++)
+            {
+                statement.executeUpdate("""
+                    INSERT INTO configuration_broadcast_stream(configuration_id,sort_order,config_json)
+                    VALUES ('00000000-0000-4000-8000-%012d',%d,'{"name":"Stream %d"}')
+                    """.formatted(destination, destination, destination));
+            }
+            statement.executeUpdate("""
+                WITH RECURSIVE sequence(value) AS (
+                    VALUES(1) UNION ALL SELECT value+1 FROM sequence WHERE value<100000)
+                INSERT INTO alias(id,alias_list_id,name,description,matcher_type,protocol,value,
+                    record_enabled,stream_as_talkgroup)
+                SELECT value,1,printf('Alias %%06d',value),
+                    CASE WHEN value%%10=0 THEN ' ' WHEN value%%10=9 THEN NULL
+                         ELSE printf('%%s %%06d', CASE WHEN value%%2=0 THEN 'ZONE' ELSE 'zone' END,
+                             100000-value) END,
+                    'TALKGROUP','DMR',value,value%%2,
+                    CASE WHEN value%%5=0 THEN NULL ELSE value%%100 END
+                FROM sequence
+                """.replace("%%", "%"));
+            statement.executeUpdate("""
+                INSERT INTO alias_scan_list_membership(alias_id,scan_list_id)
+                SELECT alias.id,list.id FROM alias CROSS JOIN scan_list list WHERE list.id<=alias.id%3
+                """);
+            statement.executeUpdate("""
+                INSERT INTO alias_broadcast_channel(alias_id,broadcast_configuration_id)
+                SELECT alias.id,stream.configuration_id FROM alias
+                CROSS JOIN configuration_broadcast_stream stream WHERE stream.sort_order<=alias.id%4
+                """);
+            String membershipPlan = queryPlan(connection,
+                "SELECT count(*) FROM alias_scan_list_membership WHERE alias_id=?", 1);
+            String streamPlan = queryPlan(connection,
+                "SELECT count(*) FROM alias_broadcast_channel WHERE alias_id=?", 1);
+            assertTrue(membershipPlan.contains("SEARCH"), membershipPlan);
+            assertTrue(streamPlan.contains("SEARCH"), streamPlan);
+            assertTrue(!membershipPlan.contains("SCAN "), membershipPlan);
+            assertTrue(!streamPlan.contains("SCAN "), streamPlan);
+
+            List<Integer> ids = java.util.stream.IntStream.rangeClosed(1,100000).boxed().toList();
+            StatsAliasCatalog catalog = new StatsAliasCatalog(new StatsAliasResolver());
+            for(String sort: List.of("name", "description", "record", "scan_lists", "stream_destinations",
+                "stream_as_talkgroup"))
+            {
+                for(boolean descending: List.of(false,true))
+                {
+                    java.util.Comparator<Integer> values = switch(sort)
+                    {
+                        case "description" -> java.util.Comparator.comparing(id ->
+                            id % 10 == 0 || id % 10 == 9 ? null : 100000-id,
+                            java.util.Comparator.nullsLast(descending ?
+                                java.util.Comparator.<Integer>reverseOrder() : java.util.Comparator.<Integer>naturalOrder()));
+                        case "record" -> java.util.Comparator.comparingInt(id -> id % 2);
+                        case "scan_lists" -> java.util.Comparator.comparingInt(id -> id % 3);
+                        case "stream_destinations" -> java.util.Comparator.comparingInt(id -> id % 4);
+                        case "stream_as_talkgroup" -> java.util.Comparator.comparing(id ->
+                            id % 5 == 0 ? null : id % 100,
+                            java.util.Comparator.nullsLast(descending ?
+                                java.util.Comparator.<Integer>reverseOrder() : java.util.Comparator.<Integer>naturalOrder()));
+                        default -> java.util.Comparator.naturalOrder();
+                    };
+                    if(descending && !List.of("description","stream_as_talkgroup").contains(sort))
+                    {
+                        values = values.reversed();
+                    }
+                    List<Integer> expected = ids.stream().sorted(values.thenComparingInt(id -> id)).toList();
+                    for(int offset: List.of(0,50000,99900))
+                    {
+                        long start = System.nanoTime();
+                        Map<String,Object> page = catalog.aliases(connection, new StatsRequest(Map.of(
+                            "list","1", "include_activity","false", "sort",sort,
+                            "direction",descending ? "desc" : "asc", "limit","100",
+                            "offset",String.valueOf(offset))));
+                        double elapsedMs = (System.nanoTime()-start)/1_000_000.0;
+                        System.out.printf("CONFIG_SORT sort=%s direction=%s offset=%d ms=%.2f%n",
+                            sort,descending ? "desc" : "asc",offset,elapsedMs);
+                        List<Map<String,Object>> rows = (List<Map<String,Object>>)page.get("rows");
+                        assertEquals(expected.subList(offset,offset+100).stream().map(Integer::longValue).toList(),
+                            rows.stream().map(row -> ((Number)row.get("alias_id")).longValue()).toList(),
+                            sort + " descending=" + descending + " offset=" + offset);
+                        assertEquals(offset<99900, page.get("has_more"));
+                        assertTrue(rows.stream().noneMatch(row -> row.containsKey("logical_call_count")));
+                    }
+                    // Custom/Activity use the same routed sort keys and must preserve configuration ordering.
+                    Map<String,Object> activity = catalog.aliases(connection, new StatsRequest(Map.of(
+                        "list","1", "sort",sort, "direction",descending ? "desc" : "asc", "limit","5")));
+                    List<Map<String,Object>> rows = (List<Map<String,Object>>)activity.get("rows");
+                    assertEquals(expected.subList(0,5).stream().map(Integer::longValue).toList(),
+                        rows.stream().map(row -> ((Number)row.get("alias_id")).longValue()).toList());
+                }
+            }
+            Map<String,Object> filtered = catalog.aliases(connection, new StatsRequest(Map.of(
+                "list","1", "include_activity","false", "sort","scan_lists", "direction","desc",
+                "record","enabled", "q","Alias 000", "limit","100")));
+            List<Map<String,Object>> filteredRows = (List<Map<String,Object>>)filtered.get("rows");
+            assertTrue(filteredRows.stream().allMatch(row -> ((Number)row.get("alias_id")).intValue()%2==1));
+            assertEquals(ids.stream().filter(id -> id<1000 && id%2==1)
+                .sorted(java.util.Comparator.<Integer>comparingInt(id -> id%3).reversed()
+                    .thenComparingInt(id -> id)).limit(100).map(Integer::longValue).toList(),
+                filteredRows.stream().map(row -> ((Number)row.get("alias_id")).longValue()).toList());
+        }
+    }
+
+    @Test
     void analyticalExportSplitsWideListSelectionsWithoutChangingUnavailableMetrics() throws Exception
     {
         Path database = mTemporaryFolder.resolve("wide-export.sqlite");

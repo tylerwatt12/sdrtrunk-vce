@@ -6,7 +6,7 @@ import { createMessageTypeCatalog } from './core/message-types.js?v=1';
 import { systemCallTitle, callCountDateRows, CALL_COUNT_HELP } from './core/call-count-labels.js?v=1';
 import { Controller as UserPreferenceController } from './core/user-preferences.js?v=4';
 import * as tableLayouts from './core/table-layout.js?v=7';
-import * as tableDefaults from './core/table-defaults.js?v=34';
+import * as tableDefaults from './core/table-defaults.js?v=35';
 import { createTableOverflow } from './core/table-overflow.js?v=2';
 import { Controller as PageTitleController } from './core/page-title.js?v=3';
 import { href as entityRefHref } from './core/entity-ref.js?v=1';
@@ -4138,22 +4138,6 @@ function aliasMetricTime(row, field) {
   return Number(row[field]) > 0 ? dateTime(row[field]) : '—';
 }
 
-function aliasBehavior(row) {
-  const values = [];
-  const scanLists = Array.isArray(row.scan_lists) ? row.scan_lists.filter(Boolean) : [];
-  if (scanLists.length) {
-    values.push(badge(scanLists.length === 1 ? `Scan · ${scanLists[0]}` : `Scan Lists ×${scanLists.length}`,
-      'state-current', scanLists.join(', ')));
-  }
-  if (Number(row.record_enabled)) values.push(badge('Record', 'state-current'));
-  const destinations = Array.isArray(row.broadcast_channels) ? row.broadcast_channels.length : 0;
-  if (destinations) values.push(badge(`Stream ×${identifierNumber(destinations)}`, 'state-current'));
-  if (row.stream_as_talkgroup !== null && row.stream_as_talkgroup !== undefined) {
-    values.push(badge(`As TG ${identifierNumber(row.stream_as_talkgroup)}`));
-  }
-  return values.length ? badgeGroup(values) : badge('No call actions', 'state-historical');
-}
-
 function aliasDetailLink(row) {
   const id = Number(row.alias_id);
   const label = String(row.name || '').trim() || `Alias ${identifierNumber(id)}`;
@@ -4196,6 +4180,22 @@ function aliasJoinedValues(values) {
   return Array.isArray(values) && values.length ? values.join(', ') : '—';
 }
 
+function aliasCallHandlingColumns() {
+  return [
+    { id: 'scan-lists', label: 'Scan Lists', group: 'Call Handling', sort: 'scan_lists',
+      fullLabel: 'Scan Lists · sort by count',
+      render: (row) => aliasJoinedValues(row.scan_lists), className: 'alias-cell' },
+    { id: 'record', label: 'Record', group: 'Call Handling', sort: 'record',
+      render: (row) => yesNoKnown(row.record_enabled) },
+    { id: 'broadcast-channels', label: 'Stream Destinations', group: 'Call Handling',
+      sort: 'stream_destinations', fullLabel: 'Stream Destinations · sort by count',
+      render: (row) => aliasJoinedValues(row.broadcast_channels), className: 'alias-cell' },
+    { id: 'stream-as-talkgroup', label: 'Stream as Talkgroup', group: 'Call Handling',
+      sort: 'stream_as_talkgroup', render: (row) => aliasRawValue(row.stream_as_talkgroup),
+      className: 'numeric' }
+  ];
+}
+
 function aliasCustomConfigurationColumns() {
   const raw = (id, label, field, fullLabel = '') => ({
     id, label, field, group: 'Raw Matcher Values', fullLabel,
@@ -4211,7 +4211,7 @@ function aliasCustomConfigurationColumns() {
     { id: 'alias', label: 'Alias', group: 'Identity', render: aliasDetailLink,
       className: 'alias-cell', sortValue: (row) => row.name || '' },
     { id: 'description', label: 'Description', group: 'Appearance', render: (row) =>
-      availableValue(row.description), className: 'alias-cell' },
+      availableValue(row.description), className: 'alias-cell', sort: 'description' },
     { id: 'group', label: 'Group', group: 'Appearance', render: (row) =>
       availableValue(row.group), className: 'alias-cell' },
     { id: 'color', label: 'Color', group: 'Appearance', render: aliasColorValue },
@@ -4239,14 +4239,7 @@ function aliasCustomConfigurationColumns() {
     raw('numeric-value', 'Numeric Value', 'numeric_value'),
     { id: 'tone-sequence', label: 'Tone Sequence', group: 'Raw Matcher Values', render: (row) =>
       availableValue(row.tone_sequence) },
-    { id: 'scan-lists', label: 'Scan Lists', group: 'Call Handling', render: (row) =>
-      aliasJoinedValues(row.scan_lists), className: 'alias-cell' },
-    { id: 'record', label: 'Record', group: 'Call Handling', render: (row) => yesNoKnown(row.record_enabled) },
-    { id: 'broadcast-channels', label: 'Stream Destinations', group: 'Call Handling', render: (row) =>
-      aliasJoinedValues(row.broadcast_channels), className: 'alias-cell' },
-    { id: 'stream-as-talkgroup', label: 'Stream as Talkgroup', group: 'Call Handling', render: (row) =>
-      aliasRawValue(row.stream_as_talkgroup) },
-    { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
+    ...aliasCallHandlingColumns(),
     { id: 'overlap', label: 'Overlap', group: 'Validation', render: aliasConflictButton }
   ];
 }
@@ -5097,7 +5090,7 @@ function aliasEditorBaseColumns(rows, onSelectionChange) {
     { id: 'alias', label: 'Alias', group: 'Configuration', render: aliasDetailLink,
       className: 'alias-cell', sort: 'name', sortValue: (row) => row.name || '' },
     { id: 'description', label: 'Description', group: 'Configuration', render: (row) =>
-      availableValue(row.description), className: 'alias-cell' },
+      availableValue(row.description), className: 'alias-cell', sort: 'description' },
     { id: 'identifier', label: 'Identifier', group: 'Configuration', render: (row) =>
       availableValue(row.identifier_display), sort: 'value', className: 'numeric',
       sortValue: (row) => row.identifier_display || '' },
@@ -5122,7 +5115,7 @@ function aliasEditorColumns(view, rows, onSelectionChange) {
     return [...selection, ...definitions];
   }
   return [...base,
-    { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
+    ...aliasCallHandlingColumns(),
     { id: 'overlap', label: 'Overlap', group: 'Validation', render: aliasConflictButton }];
 }
 
@@ -5134,7 +5127,7 @@ function scanListMemberColumns(rows, onSelectionChange) {
       className: 'alias-cell', sort: 'list', sortValue: (row) => row.alias_list_name || '' },
     { id: 'family', label: 'Family', group: 'Configuration', key: 'family', sort: 'family' });
   columns.push(
-    { id: 'behavior', label: 'Behavior', group: 'Call Handling', render: aliasBehavior },
+    ...aliasCallHandlingColumns(),
     { id: 'overlap', label: 'Overlap', group: 'Validation', render: aliasConflictButton });
   return columns;
 }
