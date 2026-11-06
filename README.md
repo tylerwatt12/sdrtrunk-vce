@@ -11,8 +11,10 @@ or tablet. If you already use sdrtrunk, VCE can import your existing playlist so
 
 **[Download Nightly](https://github.com/tylerwatt12/sdrtrunk-vce/releases/tag/nightly)** ·
 [Numbered Alpha releases](https://github.com/tylerwatt12/sdrtrunk-vce/releases?q=alpha) ·
-[Support development](https://github.com/sponsors/tylerwatt12) ·
 [Report an issue](https://github.com/tylerwatt12/sdrtrunk-vce/issues)
+
+[![Donate via GitHub Sponsors](https://img.shields.io/badge/Donate-GitHub%20Sponsors-EA4AAA?style=for-the-badge&logo=githubsponsors&logoColor=white)](https://github.com/sponsors/tylerwatt12?metadata_project=sdrtrunk-vce)
+[![Donate via Ko-fi](https://img.shields.io/badge/Donate-Ko--fi-FF6433?style=for-the-badge&logo=kofi&logoColor=white)](https://ko-fi.com/kd8zmm)
 
 ![VCE Live view showing radio activity grouped by system and site](docs/screenshots/readme-live.jpg)
 
@@ -207,7 +209,9 @@ Read the [portable setup and storage guide](docs/portable-startup-and-storage.md
 
 ## Support development
 
-If VCE makes your radio setup more useful, **[support its development through GitHub Sponsors](https://github.com/sponsors/tylerwatt12)**.
+If VCE makes your radio setup more useful, support its development through **[Ko-fi](https://ko-fi.com/kd8zmm)**
+or **[GitHub Sponsors](https://github.com/sponsors/tylerwatt12?metadata_project=sdrtrunk-vce)**. The GitHub Sponsors
+link tags your sponsorship for SDRTrunk VCE.
 
 Contributions help offset the AI-assisted development costs of this independent fork, including Codex subscriptions,
 coding tools, and model/API usage. Unused funds are saved for those future costs. Sponsorship is optional; VCE remains
