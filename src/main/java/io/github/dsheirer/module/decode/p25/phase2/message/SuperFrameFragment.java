@@ -26,10 +26,6 @@ import io.github.dsheirer.message.IMessage;
 import io.github.dsheirer.module.decode.p25.phase2.message.isch.IISCH;
 import io.github.dsheirer.module.decode.p25.phase2.message.isch.ISCHDecoder;
 import io.github.dsheirer.module.decode.p25.phase2.message.isch.SISCH;
-import io.github.dsheirer.module.decode.p25.phase2.message.mac.MacMessage;
-import io.github.dsheirer.module.decode.p25.phase2.timeslot.AbstractSignalingTimeslot;
-import io.github.dsheirer.module.decode.p25.phase2.timeslot.FacchTimeslot;
-import io.github.dsheirer.module.decode.p25.phase2.timeslot.SacchTimeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.ScramblingSequence;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.Timeslot;
 import io.github.dsheirer.module.decode.p25.phase2.timeslot.TimeslotFactory;
@@ -66,10 +62,12 @@ public class SuperFrameFragment implements IMessage
     private IISCH mIISCH2;
     private SISCH mSISCH1;
     private SISCH mSISCH2;
+    private Timeslot mTimeslotA;
+    private Timeslot mTimeslotB;
+    private Timeslot mTimeslotC;
+    private Timeslot mTimeslotD;
     private List<Timeslot> mTimeslots;
     private ScramblingSequence mScramblingSequence;
-    private Timeslot[] mPhysicalTimeslots;
-    private int mTimeslotOffset;
 
 
     /**
@@ -179,8 +177,10 @@ public class SuperFrameFragment implements IMessage
     public void resetTimeslots()
     {
         mTimeslots = null;
-        mPhysicalTimeslots = null;
-        mTimeslotOffset = 0;
+        mTimeslotA = null;
+        mTimeslotB = null;
+        mTimeslotC = null;
+        mTimeslotD = null;
     }
 
     /**
@@ -188,7 +188,12 @@ public class SuperFrameFragment implements IMessage
      */
     public Timeslot getTimeslotA()
     {
-        return getPhysicalTimeslots()[0];
+        if(mTimeslotA == null)
+        {
+            mTimeslotA = getTimeslot(TIMESLOT_A_START, CHANNEL_B_ISCH_START, 0, 1);
+        }
+
+        return mTimeslotA;
     }
 
     /**
@@ -196,7 +201,12 @@ public class SuperFrameFragment implements IMessage
      */
     public Timeslot getTimeslotB()
     {
-        return getPhysicalTimeslots()[1];
+        if(mTimeslotB == null)
+        {
+            mTimeslotB = getTimeslot(TIMESLOT_B_START, CHANNEL_C_ISCH_START, 1, 2);
+        }
+
+        return mTimeslotB;
     }
 
     /**
@@ -204,7 +214,12 @@ public class SuperFrameFragment implements IMessage
      */
     public Timeslot getTimeslotC()
     {
-        return getPhysicalTimeslots()[2];
+        if(mTimeslotC == null)
+        {
+            mTimeslotC = getTimeslot(TIMESLOT_C_START, CHANNEL_D_ISCH_START, 2, isFinalFragment() ? 2 : 1);
+        }
+
+        return mTimeslotC;
     }
 
     /**
@@ -212,7 +227,12 @@ public class SuperFrameFragment implements IMessage
      */
     public Timeslot getTimeslotD()
     {
-        return getPhysicalTimeslots()[3];
+        if(mTimeslotD == null)
+        {
+            mTimeslotD = getTimeslot(TIMESLOT_D_START, TIMESLOT_D_END, 3, isFinalFragment() ? 1 : 2);
+        }
+
+        return mTimeslotD;
     }
 
     public List<Timeslot> getTimeslots()
@@ -284,15 +304,13 @@ public class SuperFrameFragment implements IMessage
      *
      * @param start bit of the timeslot
      * @param end bit for the message (exclusive)
-     * @param index of the physical timeslot within this fragment (0-3)
-     * @param timeslot logical channel (1 or 2)
-     * @param offset of this fragment within the superframe (0, 4 or 8)
+     * @param index of the timeslot (0-11)
      * @return timeslot parser instance
      */
-    private Timeslot getTimeslot(int start, int end, int index, int timeslot, int offset)
+    private Timeslot getTimeslot(int start, int end, int index, int timeslot)
     {
         CorrectedBinaryMessage message = getMessage().getSubMessage(start, end);
-        BinaryMessage timeslotSequence = mScramblingSequence.getTimeslotSequence(offset + index);
+        BinaryMessage timeslotSequence = mScramblingSequence.getTimeslotSequence(getTimeslotOffset() + index);
         long remainingSlots = 3L - index;
         long timeslotTimestamp = Math.max(1L,
             getTimestamp() - remainingSlots * RADIO_SLOT_DURATION_MILLISECONDS);
@@ -300,9 +318,9 @@ public class SuperFrameFragment implements IMessage
     }
 
     /**
-     * Timeslot offset reported by the I-ISCH, or -1 when neither I-ISCH decodes.
+     * Indicates the timeslot (index) offset to apply to each of the timeslots in this fragment
      */
-    private int getIschTimeslotOffset()
+    private int getTimeslotOffset()
     {
         if(getIISCH1().isValid())
         {
@@ -314,110 +332,7 @@ public class SuperFrameFragment implements IMessage
             return getIISCH2().getIschSequence().getTimeslotOffset();
         }
 
-        return -1;
-    }
-
-    /**
-     * Scores decoded signaling: valid FACCH/SACCH messages passed RS and CRC and count 4; other formats count 1.
-     */
-    private int scoreTimeslots(Timeslot[] timeslots)
-    {
-        int score = 0;
-
-        for(Timeslot timeslot : timeslots)
-        {
-            if(timeslot instanceof AbstractSignalingTimeslot signalingTimeslot)
-            {
-                //VCE rejects FACCH/SACCH after RS failure, so every valid MAC here passed both RS and CRC.
-                int weight = timeslot instanceof FacchTimeslot || timeslot instanceof SacchTimeslot ? 4 : 1;
-
-                for(MacMessage macMessage : signalingTimeslot.getMacMessages())
-                {
-                    if(macMessage.isValid())
-                    {
-                        score += weight;
-                    }
-                }
-            }
-        }
-
-        return score;
-    }
-
-    /**
-     * Creates physical slots for one candidate scrambling phase, with their logical ownership and timestamps.
-     */
-    private Timeslot[] createPhysicalTimeslots(int offset)
-    {
-        boolean finalFragment = offset == 8;
-        return new Timeslot[]{
-            getTimeslot(TIMESLOT_A_START, CHANNEL_B_ISCH_START, 0, 1, offset),
-            getTimeslot(TIMESLOT_B_START, CHANNEL_C_ISCH_START, 1, 2, offset),
-            getTimeslot(TIMESLOT_C_START, CHANNEL_D_ISCH_START, 2, finalFragment ? 2 : 1, offset),
-            getTimeslot(TIMESLOT_D_START, TIMESLOT_D_END, 3, finalFragment ? 1 : 2, offset)
-        };
-    }
-
-    /**
-     * Resolves the scrambling phase using valid signaling, with I-ISCH breaking ties. Without a vote, retains
-     * I-ISCH or offset zero when neither header decodes. The selected slot parsers are reused by all accessors.
-     */
-    private Timeslot[] getPhysicalTimeslots()
-    {
-        if(mPhysicalTimeslots == null)
-        {
-            int ischOffset = getIschTimeslotOffset();
-            int fallback = ischOffset < 0 ? 0 : ischOffset;
-            int best = fallback;
-            //Evaluate the header/default first to retain its tie priority; other offsets stay in ascending order.
-            Timeslot[] selected = createPhysicalTimeslots(fallback);
-            boolean hasSignaling = false;
-
-            for(Timeslot timeslot : selected)
-            {
-                if(timeslot instanceof AbstractSignalingTimeslot)
-                {
-                    hasSignaling = true;
-                    break;
-                }
-            }
-
-            //The factory selects each slot type before descrambling. Without signaling, no phase can supply a vote.
-            if(hasSignaling)
-            {
-                int bestScore = scoreTimeslots(selected);
-
-                for(int candidate = 0; candidate <= 8; candidate += 4)
-                {
-                    if(candidate == fallback)
-                    {
-                        continue;
-                    }
-
-                    Timeslot[] timeslots = createPhysicalTimeslots(candidate);
-                    int score = scoreTimeslots(timeslots);
-
-                    if(score > bestScore)
-                    {
-                        best = candidate;
-                        bestScore = score;
-                        selected = timeslots;
-                    }
-                }
-            }
-
-            //Publish the winning objects themselves, already carrying their actual slot ownership and timestamps.
-            mTimeslotOffset = best;
-            mPhysicalTimeslots = selected;
-        }
-
-        return mPhysicalTimeslots;
-    }
-
-    private int getTimeslotOffset()
-    {
-        getPhysicalTimeslots();
-        return mTimeslotOffset;
+        return 0;
     }
 
     /**
@@ -426,10 +341,18 @@ public class SuperFrameFragment implements IMessage
      */
     private boolean isFinalFragment()
     {
-        //TIA-102.BBAC-A (2019), 3.1.1/Figure 1: physical slots 10/11 have inverted logical channel ownership.
-        //Use the same resolved position for descrambling and routing, including when payload validation replaces
-        //an unreadable or incorrect I-ISCH. With no payload vote the resolved offset retains the I-ISCH fallback.
-        return getTimeslotOffset() == 8;
+        if(getIISCH1().isValid())
+        {
+            return getIISCH1().getIschSequence().isFinalFragment();
+        }
+
+        if(getIISCH2().isValid())
+        {
+            return getIISCH2().getIschSequence().isFinalFragment();
+        }
+
+        //Can't determine, so higher probability is that it's not the final fragment
+        return false;
     }
 
     /**
